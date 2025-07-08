@@ -1,0 +1,227 @@
+/* Banner Layout */
+.banner {
+  background-color: #1a1a1a;
+  padding: 32px;
+  border-radius: 0px;
+  border: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 120px;
+  flex-wrap: wrap;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Silk Background */
+.silkBackground {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  opacity: 0.7;
+}
+
+/* Content Layer */
+.contentLayer {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 32px;
+}
+
+/* Content Section */
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.title {
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #ffffff;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.subtitle {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: #e0e0e0;
+  max-width: 400px;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Countdown Container */
+.countdown {
+  display: flex;
+  gap: 32px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.countdownItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-width: 60px;
+}
+
+.countdownNumber {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+  margin: 0 0 4px 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.countdownLabel {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: #a0a0a0;
+  text-transform: capitalize;
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Standalone Countdown (no banner) */
+.standalone {
+  background: transparent;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: auto;
+  position: relative;
+  overflow: hidden;
+}
+
+.standalone .contentLayer {
+  justify-content: center;
+  align-items: center;
+}
+
+/* Completed State */
+.completed {
+  opacity: 0.6;
+}
+
+.completedMessage {
+  font-size: 24px;
+  font-weight: 600;
+  color: #ffffff;
+  text-align: center;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .banner {
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px 16px;
+    text-align: center;
+  }
+  
+  .contentLayer {
+    flex-direction: column;
+    gap: 24px;
+    text-align: center;
+  }
+  
+  .content {
+    align-items: center;
+  }
+  
+  .countdown {
+    gap: 16px;
+    justify-content: center;
+  }
+  
+  .countdownNumber {
+    font-size: 32px;
+  }
+  
+  .title {
+    font-size: 32px;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .banner {
+    flex-direction: row;
+    gap: 32px;
+    padding: 32px 24px;
+  }
+  
+  .contentLayer {
+    flex-direction: row;
+    gap: 32px;
+  }
+  
+  .countdown {
+    gap: 24px;
+  }
+  
+  .countdownNumber {
+    font-size: 36px;
+  }
+  
+  .title {
+    font-size: 40px;
+  }
+}
+
+@media (min-width: 1025px) {
+  .banner {
+    flex-direction: row;
+    gap: 32px;
+    padding: 32px;
+  }
+  
+  .contentLayer {
+    flex-direction: row;
+    gap: 32px;
+  }
+  
+  .countdown {
+    gap: 32px;
+  }
+  
+  .countdownNumber {
+    font-size: 40px;
+  }
+  
+  .title {
+    font-size: 48px;
+  }
+}
+
+/* Animations */
+.countdownNumber {
+  transition: all 0.2s ease;
+}
+
+.countdownItem:hover .countdownNumber {
+  transform: translateY(-1px);
+  opacity: 0.8;
+}
+
+.countdownItem:active .countdownNumber {
+  transform: translateY(0px);
+  opacity: 0.9;
+} 

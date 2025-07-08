@@ -1,0 +1,194 @@
+{
+  "section": "Trending Markets",
+  "description": "Design system for trending market cards with gradient backgrounds and modern styling",
+  "colors": {
+    "backgrounds": {
+      "card1_gradient": {
+        "type": "linear-gradient",
+        "colors": ["#8B5CF6", "#F59E0B", "#3B82F6"],
+        "description": "Purple to orange to blue gradient"
+      },
+      "card2_gradient": {
+        "type": "linear-gradient", 
+        "colors": ["#6366F1", "#8B5CF6", "#10B981"],
+        "description": "Indigo to purple to emerald gradient"
+      },
+      "card3_gradient": {
+        "type": "linear-gradient",
+        "colors": ["#8B5CF6", "#EC4899", "#F59E0B"],
+        "description": "Purple to pink to orange gradient"
+      },
+      "card4_gradient": {
+        "type": "linear-gradient",
+        "colors": ["#F59E0B", "#EC4899", "#3B82F6"],
+        "description": "Orange to pink to blue gradient"
+      },
+      "section_background": "#0F0F0F"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#E5E7EB",
+      "accent": "#F3F4F6"
+    }
+  },
+  "typography": {
+    "section_title": {
+      "fontSize": "24px",
+      "fontWeight": "600",
+      "lineHeight": "1.2",
+      "color": "#FFFFFF",
+      "marginBottom": "24px"
+    },
+    "market_name": {
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "color": "#FFFFFF",
+      "lineHeight": "1.2"
+    },
+    "market_symbol": {
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "color": "#FFFFFF",
+      "opacity": 0.7
+    },
+    "price_label": {
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "color": "#FFFFFF",
+      "opacity": 0.7
+    },
+    "price_value": {
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "color": "#FFFFFF"
+    },
+    "percentage_change": {
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "positive_color": "#10B981",
+      "negative_color": "#EF4444"
+    }
+  },
+  "layout": {
+    "grid": {
+      "type": "grid",
+      "columns": "repeat(auto-fit, minmax(280px, 1fr))",
+      "gap": "20px",
+      "gridTemplateColumns": "repeat(4, 1fr)"
+    },
+    "container": {
+      "maxWidth": "1200px",
+      "margin": "0 auto",
+      "padding": "0 24px"
+    }
+  },
+  "components": {
+    "market_card": {
+      "width": "280px",
+      "height": "240px",
+      "borderRadius": "16px",
+      "padding": "20px",
+      "position": "relative",
+      "overflow": "hidden",
+      "display": "flex",
+      "flexDirection": "column",
+      "justifyContent": "space-between",
+      "cursor": "pointer",
+      "transition": "transform 0.2s ease-in-out"
+    },
+    "card_header": {
+      "display": "flex",
+      "alignItems": "center",
+      "gap": "12px"
+    },
+    "market_icon": {
+      "width": "40px",
+      "height": "40px",
+      "borderRadius": "12px",
+      "background": "rgba(255, 255, 255, 0.1)",
+      "backdropFilter": "blur(10px)",
+      "display": "flex",
+      "alignItems": "center",
+      "justifyContent": "center",
+      "overflow": "hidden"
+    },
+    "market_info": {
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "2px"
+    },
+    "card_footer": {
+      "display": "flex",
+      "justifyContent": "space-between",
+      "alignItems": "flex-end",
+      "gap": "16px"
+    },
+    "prices": {
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "6px",
+      "flex": 1
+    },
+    "price_row": {
+      "display": "flex",
+      "justifyContent": "space-between",
+      "alignItems": "center"
+    },
+    "percentage": {
+      "padding": "4px 8px",
+      "borderRadius": "6px",
+      "display": "flex",
+      "alignItems": "center",
+      "gap": "2px",
+      "backdropFilter": "blur(10px)",
+      "positive_background": "rgba(16, 185, 129, 0.15)",
+      "negative_background": "rgba(239, 68, 68, 0.15)"
+    },
+    "nft_graphic": {
+      "position": "absolute",
+      "top": "20px",
+      "right": "20px",
+      "width": "60px",
+      "height": "60px",
+      "opacity": 0.8
+    }
+  },
+  "spacing": {
+    "xs": "4px",
+    "sm": "8px",
+    "md": "16px",
+    "lg": "20px",
+    "xl": "24px",
+    "xxl": "32px"
+  },
+  "effects": {
+    "card_hover": {
+      "transform": "translateY(-4px)",
+      "transition": "transform 0.2s ease-in-out"
+    },
+    "gradient_overlay": {
+      "background": "linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 50%)",
+      "position": "absolute",
+      "top": 0,
+      "left": 0,
+      "right": 0,
+      "bottom": 0,
+      "borderRadius": "inherit"
+    }
+  },
+  "responsive": {
+    "mobile": {
+      "gridColumns": "1fr",
+      "cardWidth": "100%",
+      "gap": "16px"
+    },
+    "tablet": {
+      "gridColumns": "repeat(2, 1fr)",
+      "gap": "18px"
+    },
+    "desktop": {
+      "gridColumns": "repeat(4, 1fr)",
+      "gap": "20px"
+    }
+  }
+} 

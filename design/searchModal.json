@@ -1,0 +1,200 @@
+{
+  "searchModal": {
+    "colors": {
+      "background": {
+        "primary": "#0f1419",
+        "secondary": "#1a1d23",
+        "card": "#232936",
+        "overlay": "rgba(0, 0, 0, 0.8)",
+        "gradient": "linear-gradient(135deg, #1a1d23 0%, #0f1419 100%)"
+      },
+      "gradients": {
+        "backgroundGlow": "radial-gradient(ellipse at center, rgba(138, 43, 226, 0.1) 0%, rgba(75, 0, 130, 0.05) 40%, rgba(10, 11, 30, 1) 70%)",
+        "cardHover": "linear-gradient(135deg, rgba(138, 43, 226, 0.1) 0%, rgba(75, 0, 130, 0.05) 100%)",
+        "searchGlow": "linear-gradient(90deg, rgba(138, 43, 226, 0.2) 0%, rgba(75, 0, 130, 0.2) 100%)"
+      },
+      "text": {
+        "primary": "#ffffff",
+        "secondary": "#8a919e",
+        "muted": "#5a6470",
+        "accent": "#2081e2",
+        "success": "#00d4aa",
+        "error": "#eb5757"
+      },
+      "interactive": {
+        "searchBorder": "#353840",
+        "searchBorderFocus": "#2081e2",
+        "cardBorder": "#2d3748",
+        "cardHover": "#2a3441",
+        "buttonHover": "rgba(32, 129, 226, 0.1)"
+      },
+      "status": {
+        "positive": "#00d4aa",
+        "negative": "#eb5757",
+        "neutral": "#8a919e"
+      }
+    },
+    "typography": {
+      "fontFamily": {
+        "primary": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        "mono": "'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace"
+      },
+      "fontSize": {
+        "xs": "11px",
+        "sm": "12px",
+        "base": "14px",
+        "lg": "16px",
+        "xl": "18px",
+        "2xl": "20px",
+        "3xl": "24px"
+      },
+      "fontWeight": {
+        "normal": "400",
+        "medium": "500",
+        "semibold": "600",
+        "bold": "700"
+      },
+      "lineHeight": {
+        "tight": "1.2",
+        "normal": "1.4",
+        "relaxed": "1.6"
+      }
+    },
+    "spacing": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "16px",
+      "lg": "24px",
+      "xl": "32px",
+      "2xl": "48px",
+      "3xl": "64px"
+    },
+    "borderRadius": {
+      "sm": "4px",
+      "md": "8px",
+      "lg": "12px",
+      "xl": "16px",
+      "2xl": "20px",
+      "full": "50%"
+    },
+    "shadows": {
+      "sm": "0 1px 3px rgba(0, 0, 0, 0.1)",
+      "md": "0 4px 12px rgba(0, 0, 0, 0.15)",
+      "lg": "0 8px 30px rgba(0, 0, 0, 0.2)",
+      "xl": "0 20px 60px rgba(0, 0, 0, 0.3)",
+      "modal": "0 25px 50px -12px rgba(0, 0, 0, 0.5)"
+    },
+    "components": {
+      "modal": {
+        "maxWidth": "720px",
+        "maxHeight": "80vh",
+        "padding": "32px",
+        "borderRadius": "20px",
+        "backdropBlur": "20px"
+      },
+      "searchInput": {
+        "height": "56px",
+        "padding": "16px 20px",
+        "borderRadius": "12px",
+        "fontSize": "16px",
+        "borderWidth": "1px",
+        "iconSize": "20px",
+        "iconOffset": "20px"
+      },
+      "sectionHeader": {
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "textTransform": "uppercase",
+        "letterSpacing": "0.5px",
+        "marginBottom": "16px",
+        "color": "#8a919e"
+      },
+      "recentSearchItem": {
+        "height": "48px",
+        "padding": "12px 16px",
+        "borderRadius": "8px",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "spacing": "12px"
+      },
+      "collectionCard": {
+        "padding": "16px",
+        "borderRadius": "12px",
+        "borderWidth": "1px",
+        "spacing": "16px",
+        "minHeight": "72px"
+      },
+      "tokenCard": {
+        "padding": "16px",
+        "borderRadius": "12px",
+        "borderWidth": "1px",
+        "spacing": "16px",
+        "minHeight": "72px"
+      },
+      "avatar": {
+        "size": "40px",
+        "borderRadius": "8px"
+      },
+      "priceDisplay": {
+        "fontSize": "14px",
+        "fontWeight": "600",
+        "fontFamily": "'SF Mono', Consolas, monospace"
+      },
+      "changeIndicator": {
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "padding": "2px 6px",
+        "borderRadius": "4px"
+      }
+    },
+    "layout": {
+      "grid": {
+        "columns": "1fr",
+        "gap": "16px"
+      },
+      "sections": {
+        "searchSection": {
+          "marginBottom": "32px"
+        },
+        "recentSearches": {
+          "marginBottom": "32px"
+        },
+        "trendingCollections": {
+          "marginBottom": "32px"
+        },
+        "topTokens": {
+          "marginBottom": "16px"
+        }
+      },
+      "contentArea": {
+        "maxHeight": "500px",
+        "overflowY": "auto",
+        "padding": "0 4px"
+      }
+    },
+    "animations": {
+      "modal": {
+        "enter": "opacity 0.2s ease-out, transform 0.2s ease-out",
+        "exit": "opacity 0.15s ease-in, transform 0.15s ease-in"
+      },
+      "card": {
+        "hover": "background-color 0.15s ease, transform 0.15s ease"
+      },
+      "input": {
+        "focus": "border-color 0.2s ease, box-shadow 0.2s ease"
+      }
+    },
+    "accessibility": {
+      "focusRing": {
+        "color": "#2081e2",
+        "width": "2px",
+        "offset": "2px",
+        "style": "solid"
+      },
+      "reducedMotion": {
+        "respectUserPreference": true,
+        "fallbackDuration": "0.01s"
+      }
+    }
+  }
+} 

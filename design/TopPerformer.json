@@ -1,0 +1,149 @@
+{
+  "component": "TopPerformer",
+  "description": "Profile cards for top performers with dark theme design",
+  "colorScheme": {
+    "primary": {
+      "background": "#000000",
+      "cardBackground": "#1a1a1a",
+      "cardBackgroundHover": "#2a2a2a"
+    },
+    "text": {
+      "primary": "#ffffff",
+      "secondary": "#9ca3af",
+      "accent": "#f3f4f6"
+    },
+    "borders": {
+      "cardBorder": "#333333",
+      "cardBorderHover": "#4a4a4a"
+    },
+    "interactive": {
+      "iconColor": "#6b7280",
+      "iconColorHover": "#9ca3af"
+    }
+  },
+  "typography": {
+    "name": {
+      "fontFamily": "system-ui, -apple-system, sans-serif",
+      "fontSize": "20px",
+      "fontWeight": "600",
+      "lineHeight": "1.4",
+      "color": "#ffffff"
+    },
+    "role": {
+      "fontFamily": "system-ui, -apple-system, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "lineHeight": "1.3",
+      "color": "#9ca3af"
+    },
+    "description": {
+      "fontFamily": "system-ui, -apple-system, sans-serif",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "lineHeight": "1.2",
+      "color": "#6b7280"
+    }
+  },
+  "spacing": {
+    "cardPadding": "24px",
+    "cardMargin": "20px",
+    "avatarMargin": "20px",
+    "textSpacing": "6px",
+    "gridGap": "20px"
+  },
+  "layout": {
+    "cardWidth": "360px",
+    "cardHeight": "140px",
+    "cardDisplay": "flex",
+    "cardAlignItems": "center",
+    "cardJustifyContent": "flex-start",
+    "gridColumns": "repeat(auto-fit, minmax(360px, 1fr))",
+    "gridTemplateRows": "auto"
+  },
+  "visualEffects": {
+    "borderRadius": {
+      "card": "12px",
+      "avatar": "50%"
+    },
+    "shadows": {
+      "card": "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+      "cardHover": "0 8px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.04)"
+    },
+    "transitions": {
+      "card": "all 0.2s ease-in-out",
+      "icon": "color 0.2s ease-in-out"
+    }
+  },
+  "interactiveElements": {
+    "card": {
+      "cursor": "pointer",
+      "hoverTransform": "translateY(-2px)",
+      "hoverScale": "1.02"
+    },
+    "linkIcon": {
+      "position": "absolute",
+      "top": "16px",
+      "right": "16px",
+      "size": "18px",
+      "opacity": "0.7",
+      "opacityHover": "1"
+    }
+  },
+  "avatarProperties": {
+    "size": "72px",
+    "borderRadius": "50%",
+    "border": "2px solid #333333",
+    "marginRight": "20px",
+    "flexShrink": "0"
+  },
+  "contentLayout": {
+    "textContainer": {
+      "flex": "1",
+      "display": "flex",
+      "flexDirection": "column",
+      "justifyContent": "center",
+      "alignItems": "flex-start"
+    },
+    "nameContainer": {
+      "marginBottom": "4px"
+    },
+    "roleContainer": {
+      "marginBottom": "2px"
+    }
+  },
+  "responsiveBreakpoints": {
+    "mobile": {
+      "cardWidth": "100%",
+      "cardPadding": "20px",
+      "avatarSize": "60px",
+      "gridColumns": "1fr"
+    },
+    "tablet": {
+      "cardWidth": "320px",
+      "gridColumns": "repeat(auto-fit, minmax(320px, 1fr))"
+    },
+    "desktop": {
+      "cardWidth": "360px",
+      "gridColumns": "repeat(auto-fit, minmax(360px, 1fr))"
+    }
+  },
+  "states": {
+    "default": {
+      "backgroundColor": "#1a1a1a",
+      "borderColor": "#333333",
+      "transform": "translateY(0)",
+      "boxShadow": "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
+    },
+    "hover": {
+      "backgroundColor": "#2a2a2a",
+      "borderColor": "#4a4a4a",
+      "transform": "translateY(-2px)",
+      "boxShadow": "0 8px 25px -5px rgba(0, 0, 0, 0.3)"
+    },
+    "active": {
+      "backgroundColor": "#333333",
+      "borderColor": "#555555",
+      "transform": "translateY(-1px)"
+    }
+  }
+} 

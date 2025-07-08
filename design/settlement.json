@@ -1,0 +1,309 @@
+{
+  "designSystem": {
+    "name": "Settlement Interface Design System",
+    "description": "Design system extracted from countdown timer/launch sale banner interface",
+    "version": "1.0.0"
+  },
+  "colors": {
+    "primary": {
+      "background": "#1a1a1a",
+      "backgroundAlt": "#0f0f0f",
+      "surface": "#2a2a2a"
+    },
+    "text": {
+      "primary": "#ffffff",
+      "secondary": "#e0e0e0",
+      "muted": "#a0a0a0",
+      "accent": "#ffffff"
+    },
+    "semantic": {
+      "success": "#10b981",
+      "warning": "#f59e0b",
+      "error": "#ef4444",
+      "info": "#3b82f6"
+    }
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      "secondary": "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif"
+    },
+    "fontSizes": {
+      "hero": "48px",
+      "title": "32px",
+      "subtitle": "16px",
+      "body": "14px",
+      "caption": "12px",
+      "countdownNumber": "40px",
+      "countdownLabel": "14px"
+    },
+    "fontWeights": {
+      "light": 300,
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700
+    },
+    "lineHeights": {
+      "tight": 1.2,
+      "normal": 1.4,
+      "relaxed": 1.6,
+      "loose": 1.8
+    },
+    "hierarchy": {
+      "h1": {
+        "fontSize": "48px",
+        "fontWeight": 700,
+        "lineHeight": 1.2,
+        "color": "#ffffff"
+      },
+      "h2": {
+        "fontSize": "32px",
+        "fontWeight": 600,
+        "lineHeight": 1.3,
+        "color": "#ffffff"
+      },
+      "subtitle": {
+        "fontSize": "16px",
+        "fontWeight": 400,
+        "lineHeight": 1.4,
+        "color": "#e0e0e0"
+      },
+      "body": {
+        "fontSize": "14px",
+        "fontWeight": 400,
+        "lineHeight": 1.5,
+        "color": "#a0a0a0"
+      }
+    }
+  },
+  "spacing": {
+    "scale": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "16px",
+      "lg": "24px",
+      "xl": "32px",
+      "2xl": "48px",
+      "3xl": "64px",
+      "4xl": "96px"
+    },
+    "component": {
+      "padding": {
+        "sm": "8px",
+        "md": "16px",
+        "lg": "24px",
+        "xl": "32px"
+      },
+      "margin": {
+        "sm": "8px",
+        "md": "16px",
+        "lg": "24px",
+        "xl": "32px"
+      },
+      "gap": {
+        "sm": "8px",
+        "md": "16px",
+        "lg": "24px",
+        "xl": "32px"
+      }
+    }
+  },
+  "layout": {
+    "containerMaxWidth": "1200px",
+    "gridSystem": {
+      "columns": 12,
+      "gutter": "24px",
+      "breakpoints": {
+        "sm": "640px",
+        "md": "768px",
+        "lg": "1024px",
+        "xl": "1280px"
+      }
+    },
+    "banner": {
+      "height": "auto",
+      "padding": "32px",
+      "display": "flex",
+      "justifyContent": "space-between",
+      "alignItems": "center",
+      "flexWrap": "wrap"
+    },
+    "countdown": {
+      "display": "flex",
+      "gap": "32px",
+      "alignItems": "center"
+    }
+  },
+  "components": {
+    "banner": {
+      "backgroundColor": "#1a1a1a",
+      "padding": "32px",
+      "borderRadius": "0px",
+      "border": "none",
+      "display": "flex",
+      "justifyContent": "space-between",
+      "alignItems": "center",
+      "minHeight": "120px"
+    },
+    "countdown": {
+      "container": {
+        "display": "flex",
+        "gap": "32px",
+        "alignItems": "center",
+        "justifyContent": "flex-end"
+      },
+      "item": {
+        "display": "flex",
+        "flexDirection": "column",
+        "alignItems": "center",
+        "textAlign": "center",
+        "minWidth": "60px"
+      },
+      "number": {
+        "fontSize": "40px",
+        "fontWeight": 700,
+        "lineHeight": 1,
+        "color": "#ffffff",
+        "marginBottom": "4px"
+      },
+      "label": {
+        "fontSize": "14px",
+        "fontWeight": 400,
+        "lineHeight": 1.2,
+        "color": "#a0a0a0",
+        "textTransform": "capitalize"
+      }
+    },
+    "title": {
+      "fontSize": "48px",
+      "fontWeight": 700,
+      "lineHeight": 1.2,
+      "color": "#ffffff",
+      "marginBottom": "8px"
+    },
+    "subtitle": {
+      "fontSize": "16px",
+      "fontWeight": 400,
+      "lineHeight": 1.4,
+      "color": "#e0e0e0",
+      "maxWidth": "400px"
+    }
+  },
+  "visualEffects": {
+    "borderRadius": {
+      "none": "0px",
+      "sm": "4px",
+      "md": "8px",
+      "lg": "12px",
+      "xl": "16px",
+      "full": "9999px"
+    },
+    "shadows": {
+      "none": "none",
+      "sm": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+      "md": "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+      "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
+      "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.1)"
+    },
+    "gradients": {
+      "none": "none",
+      "subtle": "linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%)",
+      "dark": "linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%)"
+    }
+  },
+  "responsive": {
+    "breakpoints": {
+      "mobile": "0px",
+      "tablet": "768px",
+      "desktop": "1024px",
+      "wide": "1280px"
+    },
+    "behavior": {
+      "banner": {
+        "mobile": {
+          "flexDirection": "column",
+          "gap": "24px",
+          "padding": "24px 16px",
+          "textAlign": "center"
+        },
+        "tablet": {
+          "flexDirection": "row",
+          "gap": "32px",
+          "padding": "32px 24px"
+        },
+        "desktop": {
+          "flexDirection": "row",
+          "gap": "32px",
+          "padding": "32px"
+        }
+      },
+      "countdown": {
+        "mobile": {
+          "gap": "16px",
+          "fontSize": "32px"
+        },
+        "tablet": {
+          "gap": "24px",
+          "fontSize": "36px"
+        },
+        "desktop": {
+          "gap": "32px",
+          "fontSize": "40px"
+        }
+      }
+    }
+  },
+  "states": {
+    "default": {
+      "opacity": 1,
+      "transform": "none",
+      "transition": "all 0.2s ease"
+    },
+    "hover": {
+      "opacity": 0.8,
+      "transform": "translateY(-1px)",
+      "transition": "all 0.2s ease"
+    },
+    "active": {
+      "opacity": 0.9,
+      "transform": "translateY(0px)",
+      "transition": "all 0.1s ease"
+    },
+    "disabled": {
+      "opacity": 0.5,
+      "cursor": "not-allowed",
+      "transform": "none"
+    }
+  },
+  "animations": {
+    "transitions": {
+      "fast": "0.1s ease",
+      "normal": "0.2s ease",
+      "slow": "0.3s ease"
+    },
+    "easing": {
+      "linear": "linear",
+      "easeIn": "ease-in",
+      "easeOut": "ease-out",
+      "easeInOut": "ease-in-out"
+    }
+  },
+  "notes": {
+    "extractedFrom": "Launch sale banner with countdown timer interface",
+    "designApproach": "Dark theme, minimal design with clean typography and structured countdown layout",
+    "keyFeatures": [
+      "Dark background with high contrast white text",
+      "Structured countdown timer with numerical emphasis",
+      "Horizontal layout with left-aligned content and right-aligned timer",
+      "Clean, minimal aesthetic with no decorative elements",
+      "Responsive-ready spacing and typography scales"
+    ],
+    "assumptions": [
+      "Font family inferred as modern sans-serif (Inter/SF Pro Display)",
+      "Specific hex colors estimated based on visual appearance",
+      "Responsive behavior designed for common breakpoints",
+      "Interactive states added for potential UI elements"
+    ]
+  }
+} 

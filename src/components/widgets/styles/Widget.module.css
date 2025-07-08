@@ -1,0 +1,189 @@
+/* Design System Values from Widgets.json */
+
+.container {
+  background-color: #000000;
+  color: #FFFFFF;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.card {
+  background-color: #111111;
+  border: 1px solid #333333;
+  border-radius: 6px;
+  padding: 12px;
+  transition: all 0.2s ease;
+  height: 180px;
+  display: flex;
+  flex-direction: column;
+}
+
+.card:hover {
+  border-color: #444444;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+}
+
+.marketCard {
+  background-color: #111111;
+  border: 1px solid #333333;
+  border-radius: 6px;
+  padding: 14px;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 84px;
+}
+
+.marketCard:hover {
+  border-color: #444444;
+  transform: translateY(-1px);
+}
+
+.marketCap {
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: #FFFFFF;
+}
+
+.marketCapSmall {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #FFFFFF;
+}
+
+.sectionHeader {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #FFFFFF;
+}
+
+.sectionHeaderSmall {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #FFFFFF;
+}
+
+.tokenName {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #FFFFFF;
+}
+
+.tokenNameSmall {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #FFFFFF;
+}
+
+.tokenNameTiny {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #FFFFFF;
+}
+
+.price {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #FFFFFF;
+}
+
+.priceSmall {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #FFFFFF;
+}
+
+.priceTiny {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #FFFFFF;
+}
+
+.percentage {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.label {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: #888888;
+}
+
+.labelSmall {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.3;
+  color: #888888;
+}
+
+.tokenListItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+}
+
+.tokenListItem:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.positive {
+  color: #26C281;
+}
+
+.negative {
+  color: #E74C3C;
+}
+
+.viewMoreLink {
+  font-size: 14px;
+  color: #888888;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.2s ease;
+}
+
+.viewMoreLink:hover {
+  color: #FFFFFF;
+}
+
+.viewMoreLinkSmall {
+  font-size: 11px;
+  color: #888888;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  transition: color 0.2s ease;
+}
+
+.viewMoreLinkSmall:hover {
+  color: #FFFFFF;
+} 

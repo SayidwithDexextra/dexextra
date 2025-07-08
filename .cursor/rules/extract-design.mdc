@@ -1,0 +1,26 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+OBJECTIVE:
+
+Extract a comprehensive and reusable design system from the provided image, excluding specific visual content (e.g., text labels, icons, or images). The goal is to create a reference document (in JSON format) that developers and AI systems can use as a styling foundation for consistent UI development across projects.
+
+Instructions:Analyze the Image:
+
+Examine the pasted image to identify and document the following design elements:Color Schemes and Palettes: Identify primary, secondary, and accent colors, including hex codes or RGB values where discernible.
+Font Hierarchy and Typography Standards: Determine font families, sizes, weights (e.g., bold, regular), line heights, and any established hierarchy (e.g., headings, body text, captions).
+Spacing and Margin Conventions: Note consistent padding, margins, and spacing units (e.g., 8px, 16px) used between elements.
+Structural Layouts: Identify grid systems, card designs, wrapper elements, or other layout patterns (e.g., 12-column grid, flexbox structures).
+Interactive Elements: Document styles for buttons, forms, inputs, data tables, etc., including states (e.g., hover, active, disabled) and their styling properties.
+Visual Effects: Capture corner rounding (e.g., border-radius in pixels), drop shadows, gradients, or other styling treatments applied to elements.
+
+Generate a Design System JSON File:  Create a structured JSON file that systematically documents the identified design principles.
+Ensure the file enables consistent visual language reproduction by including reusable properties and values.
+Save the output to a design directory with the filename design.json.
+
+Guidelines:  Focus solely on abstract design properties (e.g., colors as hex codes, spacing as units) rather than specific content or branding.
+Use clear, developer-friendly naming conventions (e.g., primaryColor, headingFontSize).
+If an element is unclear or absent, mark it as null with a comment explaining the assumption.
+

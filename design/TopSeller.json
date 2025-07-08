@@ -1,0 +1,178 @@
+{
+  "section": "Top Sellers",
+  "description": "Design system for ranked seller list with profile images, usernames, and ETH values",
+  "colors": {
+    "backgrounds": {
+      "section_background": "#0F0F0F",
+      "row_background": "transparent",
+      "row_hover": "rgba(255, 255, 255, 0.05)"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#9CA3AF",
+      "username": "#E5E7EB",
+      "eth_value": "#FFFFFF",
+      "rank_number": "#6B7280"
+    },
+    "accents": {
+      "profile_ring": "rgba(255, 255, 255, 0.1)",
+      "divider": "rgba(255, 255, 255, 0.08)"
+    }
+  },
+  "typography": {
+    "section_title": {
+      "fontSize": "24px",
+      "fontWeight": "600",
+      "lineHeight": "1.2",
+      "color": "#FFFFFF",
+      "marginBottom": "24px"
+    },
+    "rank_number": {
+      "fontSize": "16px",
+      "fontWeight": "500",
+      "color": "#6B7280",
+      "minWidth": "24px"
+    },
+    "username": {
+      "fontSize": "15px",
+      "fontWeight": "500",
+      "color": "#E5E7EB"
+    },
+    "eth_value": {
+      "fontSize": "15px",
+      "fontWeight": "600",
+      "color": "#FFFFFF"
+    }
+  },
+  "layout": {
+    "container": {
+      "maxWidth": "400px",
+      "margin": "0",
+      "padding": "0"
+    },
+    "list": {
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "16px"
+    },
+    "row": {
+      "display": "flex",
+      "alignItems": "center",
+      "padding": "12px 16px",
+      "borderRadius": "8px",
+      "transition": "background-color 0.2s ease-in-out",
+      "cursor": "pointer"
+    }
+  },
+  "components": {
+    "seller_row": {
+      "display": "flex",
+      "alignItems": "center",
+      "gap": "12px",
+      "padding": "12px 16px",
+      "borderRadius": "8px",
+      "minHeight": "56px"
+    },
+    "rank_badge": {
+      "display": "flex",
+      "alignItems": "center",
+      "justifyContent": "center",
+      "minWidth": "24px",
+      "fontSize": "16px",
+      "fontWeight": "500",
+      "color": "#6B7280"
+    },
+    "profile_image": {
+      "width": "40px",
+      "height": "40px",
+      "borderRadius": "50%",
+      "border": "1px solid rgba(255, 255, 255, 0.1)",
+      "overflow": "hidden",
+      "flexShrink": 0
+    },
+    "user_info": {
+      "display": "flex",
+      "flexDirection": "column",
+      "flex": 1,
+      "minWidth": 0
+    },
+    "eth_display": {
+      "display": "flex",
+      "alignItems": "center",
+      "gap": "4px",
+      "fontSize": "15px",
+      "fontWeight": "600",
+      "color": "#FFFFFF"
+    }
+  },
+  "spacing": {
+    "xs": "4px",
+    "sm": "8px",
+    "md": "12px",
+    "lg": "16px",
+    "xl": "20px",
+    "xxl": "24px"
+  },
+  "effects": {
+    "row_hover": {
+      "backgroundColor": "rgba(255, 255, 255, 0.05)",
+      "transition": "background-color 0.2s ease-in-out"
+    },
+    "profile_shadow": {
+      "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.15)"
+    }
+  },
+  "states": {
+    "default": {
+      "backgroundColor": "transparent"
+    },
+    "hover": {
+      "backgroundColor": "rgba(255, 255, 255, 0.05)"
+    },
+    "active": {
+      "backgroundColor": "rgba(255, 255, 255, 0.08)"
+    }
+  },
+  "responsive": {
+    "mobile": {
+      "container": {
+        "maxWidth": "100%",
+        "padding": "0 16px"
+      },
+      "row": {
+        "padding": "12px 0"
+      },
+      "profile_image": {
+        "width": "36px",
+        "height": "36px"
+      }
+    },
+    "tablet": {
+      "container": {
+        "maxWidth": "380px"
+      },
+      "profile_image": {
+        "width": "40px",
+        "height": "40px"
+      }
+    },
+    "desktop": {
+      "container": {
+        "maxWidth": "400px"
+      },
+      "profile_image": {
+        "width": "40px",
+        "height": "40px"
+      }
+    }
+  },
+  "data_structure": {
+    "seller_item": {
+      "rank": "number",
+      "username": "string (includes @ prefix)",
+      "profileImage": "string (image URL)",
+      "ethValue": "string (e.g., '3.43 ETH')",
+      "userId": "string (unique identifier)"
+    }
+  }
+} 

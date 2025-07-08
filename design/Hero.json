@@ -1,0 +1,220 @@
+{
+  "designSystem": {
+    "name": "Hero Section Design System",
+    "version": "1.0.0",
+    "description": "Design system extracted from NFT marketplace hero section",
+    
+    "colorPalette": {
+      "primary": {
+        "background": "#000000",
+        "backgroundOverlay": "rgba(0, 0, 0, 0.6)",
+        "cardBackground": "rgba(0, 0, 0, 0.8)",
+        "glassMorphism": "rgba(255, 255, 255, 0.1)"
+      },
+      "text": {
+        "primary": "#FFFFFF",
+        "secondary": "#B8B8B8",
+        "muted": "#8A8A8A"
+      },
+      "accent": {
+        "verification": "#00D4FF",
+        "success": "#00FF88",
+        "warning": "#FFB800",
+        "gradient": "linear-gradient(135deg, #FF6B6B, #4ECDC4, #45B7D1, #96CEB4, #FECA57)"
+      }
+    },
+
+    "typography": {
+      "fontFamily": {
+        "primary": "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        "mono": "Monaco, 'Cascadia Code', 'Roboto Mono', monospace"
+      },
+      "hierarchy": {
+        "hero": {
+          "fontSize": "2.5rem",
+          "fontWeight": "700",
+          "lineHeight": "1.2",
+          "letterSpacing": "-0.02em"
+        },
+        "subtitle": {
+          "fontSize": "1rem",
+          "fontWeight": "400",
+          "lineHeight": "1.4",
+          "opacity": "0.8"
+        },
+        "label": {
+          "fontSize": "0.75rem",
+          "fontWeight": "500",
+          "lineHeight": "1.3",
+          "textTransform": "uppercase",
+          "letterSpacing": "0.05em"
+        },
+        "value": {
+          "fontSize": "1.125rem",
+          "fontWeight": "600",
+          "lineHeight": "1.3"
+        },
+        "counter": {
+          "fontSize": "1.25rem",
+          "fontWeight": "700",
+          "lineHeight": "1.2",
+          "fontFamily": "mono"
+        }
+      }
+    },
+
+    "spacing": {
+      "unit": "8px",
+      "scale": {
+        "xs": "4px",
+        "sm": "8px",
+        "md": "16px",
+        "lg": "24px",
+        "xl": "32px",
+        "2xl": "48px",
+        "3xl": "64px"
+      },
+      "component": {
+        "cardPadding": "24px",
+        "sectionGap": "16px",
+        "itemGap": "8px"
+      }
+    },
+
+    "layout": {
+      "container": {
+        "maxWidth": "1200px",
+        "margin": "0 auto",
+        "padding": "0 16px"
+      },
+      "hero": {
+        "minHeight": "80vh",
+        "display": "flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+        "position": "relative"
+      },
+      "card": {
+        "maxWidth": "400px",
+        "width": "100%",
+        "position": "relative",
+        "zIndex": "10"
+      },
+      "grid": {
+        "statsGrid": {
+          "display": "grid",
+          "gridTemplateColumns": "repeat(3, 1fr)",
+          "gap": "16px"
+        }
+      }
+    },
+
+    "components": {
+      "card": {
+        "background": "rgba(0, 0, 0, 0.8)",
+        "backdropFilter": "blur(20px)",
+        "borderRadius": "16px",
+        "border": "1px solid rgba(255, 255, 255, 0.1)",
+        "padding": "24px",
+        "boxShadow": "0 8px 32px rgba(0, 0, 0, 0.3)"
+      },
+      "verificationBadge": {
+        "background": "#00D4FF",
+        "borderRadius": "50%",
+        "width": "20px",
+        "height": "20px",
+        "display": "inline-flex",
+        "alignItems": "center",
+        "justifyContent": "center",
+        "marginLeft": "8px"
+      },
+      "statItem": {
+        "display": "flex",
+        "flexDirection": "column",
+        "gap": "4px",
+        "textAlign": "center"
+      },
+      "countdown": {
+        "display": "flex",
+        "alignItems": "center",
+        "gap": "4px",
+        "fontFamily": "mono",
+        "fontSize": "1.25rem",
+        "fontWeight": "700"
+      }
+    },
+
+    "effects": {
+      "borderRadius": {
+        "small": "8px",
+        "medium": "12px",
+        "large": "16px",
+        "full": "50%"
+      },
+      "shadows": {
+        "card": "0 8px 32px rgba(0, 0, 0, 0.3)",
+        "subtle": "0 2px 8px rgba(0, 0, 0, 0.1)",
+        "elevated": "0 16px 64px rgba(0, 0, 0, 0.4)"
+      },
+      "blur": {
+        "backdrop": "blur(20px)",
+        "subtle": "blur(8px)",
+        "strong": "blur(40px)"
+      },
+      "transitions": {
+        "fast": "150ms ease-out",
+        "medium": "250ms ease-out",
+        "slow": "400ms ease-out"
+      }
+    },
+
+    "interactive": {
+      "states": {
+        "hover": {
+          "transform": "translateY(-2px)",
+          "boxShadow": "0 12px 40px rgba(0, 0, 0, 0.4)",
+          "transition": "all 250ms ease-out"
+        },
+        "active": {
+          "transform": "translateY(0)",
+          "transition": "all 150ms ease-out"
+        },
+        "focus": {
+          "outline": "2px solid #00D4FF",
+          "outlineOffset": "2px"
+        }
+      }
+    },
+
+    "background": {
+      "hero": {
+        "type": "image",
+        "overlay": "rgba(0, 0, 0, 0.6)",
+        "backgroundSize": "cover",
+        "backgroundPosition": "center",
+        "backgroundRepeat": "no-repeat"
+      },
+      "fallback": {
+        "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+      }
+    },
+
+    "responsiveBreakpoints": {
+      "mobile": "320px",
+      "tablet": "768px",
+      "desktop": "1024px",
+      "large": "1200px"
+    },
+
+    "accessibility": {
+      "minContrast": "4.5:1",
+      "focusIndicator": {
+        "color": "#00D4FF",
+        "width": "2px",
+        "style": "solid",
+        "offset": "2px"
+      },
+      "minimumTouchTarget": "44px"
+    }
+  }
+} 

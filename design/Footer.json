@@ -1,0 +1,197 @@
+{
+  "metadata": {
+    "componentName": "Footer",
+    "description": "Design system extracted from footer/navigation bar with status indicators, navigation links, and user information",
+    "version": "1.0.0",
+    "extractedFrom": "Footer navigation bar image"
+  },
+  "colors": {
+    "background": {
+      "primary": "#000000",
+      "description": "Dark black background for the footer bar"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#CCCCCC",
+      "accent": "#00FF88",
+      "warning": "#FFB800",
+      "description": "White for primary text, gray for secondary, green for status indicators, amber for highlights"
+    },
+    "indicators": {
+      "live": "#00FF88",
+      "success": "#00FF88",
+      "neutral": "#FFFFFF",
+      "description": "Green for live/active status indicators"
+    },
+    "icons": {
+      "primary": "#FFFFFF",
+      "secondary": "#CCCCCC",
+      "description": "White and gray tones for iconography"
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "primary": "system-ui, -apple-system, sans-serif",
+      "description": "System default sans-serif font stack"
+    },
+    "fontSize": {
+      "small": "12px",
+      "medium": "14px",
+      "large": "16px",
+      "description": "Consistent font sizing across footer elements"
+    },
+    "fontWeight": {
+      "regular": "400",
+      "medium": "500",
+      "semiBold": "600",
+      "description": "Font weights for different hierarchy levels"
+    },
+    "lineHeight": {
+      "tight": "1.2",
+      "normal": "1.4",
+      "description": "Line height for compact footer layout"
+    }
+  },
+  "spacing": {
+    "padding": {
+      "container": "12px 16px",
+      "element": "8px 12px",
+      "icon": "4px",
+      "description": "Padding values for container and individual elements"
+    },
+    "margin": {
+      "elementGap": "16px",
+      "sectionGap": "24px",
+      "iconGap": "6px",
+      "description": "Margins between elements and sections"
+    },
+    "gap": {
+      "small": "8px",
+      "medium": "16px",
+      "large": "24px",
+      "description": "Gap values for flex/grid layouts"
+    }
+  },
+  "layout": {
+    "structure": {
+      "display": "flex",
+      "flexDirection": "row",
+      "justifyContent": "space-between",
+      "alignItems": "center",
+      "width": "100%",
+      "height": "48px",
+      "description": "Horizontal flex layout spanning full width"
+    },
+    "sections": {
+      "left": {
+        "display": "flex",
+        "alignItems": "center",
+        "gap": "24px",
+        "description": "Left section with status indicators and navigation"
+      },
+      "center": {
+        "display": "flex",
+        "alignItems": "center",
+        "gap": "16px",
+        "description": "Center section for additional navigation items"
+      },
+      "right": {
+        "display": "flex",
+        "alignItems": "center",
+        "gap": "16px",
+        "description": "Right section for user info and controls"
+      }
+    }
+  },
+  "components": {
+    "statusIndicator": {
+      "display": "flex",
+      "alignItems": "center",
+      "gap": "6px",
+      "padding": "4px 8px",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "color": "#00FF88",
+      "description": "Live status indicator with green dot and text"
+    },
+    "navigationLink": {
+      "padding": "4px 8px",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "color": "#FFFFFF",
+      "textDecoration": "none",
+      "cursor": "pointer",
+      "description": "Standard navigation link styling"
+    },
+    "valueDisplay": {
+      "display": "flex",
+      "alignItems": "center",
+      "gap": "8px",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "color": "#FFFFFF",
+      "description": "Numeric value display (prices, balances, etc.)"
+    },
+    "iconButton": {
+      "width": "20px",
+      "height": "20px",
+      "padding": "2px",
+      "cursor": "pointer",
+      "color": "#FFFFFF",
+      "description": "Small icon buttons for actions"
+    }
+  },
+  "interactions": {
+    "hover": {
+      "navigationLink": {
+        "color": "#CCCCCC",
+        "transition": "color 0.2s ease",
+        "description": "Subtle color change on hover"
+      },
+      "iconButton": {
+        "opacity": "0.8",
+        "transition": "opacity 0.2s ease",
+        "description": "Opacity change on hover"
+      }
+    },
+    "active": {
+      "navigationLink": {
+        "color": "#00FF88",
+        "description": "Green color for active/selected state"
+      }
+    }
+  },
+  "visualEffects": {
+    "borderRadius": {
+      "small": "4px",
+      "medium": "6px",
+      "description": "Subtle rounding for interactive elements"
+    },
+    "shadows": {
+      "none": "none",
+      "description": "No shadows used in this footer design"
+    },
+    "transitions": {
+      "default": "all 0.2s ease",
+      "description": "Smooth transitions for interactive states"
+    }
+  },
+  "responsive": {
+    "breakpoints": {
+      "mobile": {
+        "maxWidth": "768px",
+        "modifications": {
+          "fontSize": "12px",
+          "padding": "8px 12px",
+          "gap": "12px"
+        }
+      },
+      "tablet": {
+        "maxWidth": "1024px",
+        "modifications": {
+          "gap": "16px"
+        }
+      }
+    }
+  }
+} 

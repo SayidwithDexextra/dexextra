@@ -1,0 +1,265 @@
+{
+  "name": "AccountBar Design System",
+  "version": "1.0.0",
+  "description": "Design system extracted from crypto wallet account bar interface",
+  "colorPalette": {
+    "primary": {
+      "background": "#000000",
+      "backgroundSecondary": "#1a1a1a",
+      "text": "#ffffff",
+      "textSecondary": "#a0a0a0",
+      "textTertiary": "#666666"
+    },
+    "accent": {
+      "success": "#00ff88",
+      "successText": "#00cc6a",
+      "error": "#ff4444",
+      "errorText": "#cc3333",
+      "neutral": "#888888"
+    },
+    "interactive": {
+      "buttonBackground": "#333333",
+      "buttonBackgroundHover": "#444444",
+      "buttonText": "#ffffff",
+      "tabActive": "#ffffff",
+      "tabInactive": "#666666"
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "primary": "system-ui, -apple-system, sans-serif",
+      "monospace": "SF Mono, Monaco, monospace"
+    },
+    "fontSize": {
+      "xs": "12px",
+      "sm": "14px",
+      "md": "16px",
+      "lg": "20px",
+      "xl": "24px",
+      "xxl": "32px"
+    },
+    "fontWeight": {
+      "regular": "400",
+      "medium": "500",
+      "semibold": "600",
+      "bold": "700"
+    },
+    "lineHeight": {
+      "tight": "1.2",
+      "normal": "1.4",
+      "relaxed": "1.6"
+    },
+    "hierarchy": {
+      "walletAddress": {
+        "fontSize": "16px",
+        "fontWeight": "500",
+        "fontFamily": "monospace",
+        "color": "#ffffff"
+      },
+      "balanceAmount": {
+        "fontSize": "32px",
+        "fontWeight": "700",
+        "color": "#ffffff",
+        "lineHeight": "1.2"
+      },
+      "balanceLabel": {
+        "fontSize": "20px",
+        "fontWeight": "400",
+        "color": "#ffffff"
+      },
+      "fiatValue": {
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "color": "#a0a0a0"
+      },
+      "tokenName": {
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "color": "#ffffff"
+      },
+      "tokenAmount": {
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "color": "#a0a0a0"
+      },
+      "tokenValue": {
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "color": "#ffffff"
+      },
+      "percentageChange": {
+        "fontSize": "14px",
+        "fontWeight": "500"
+      }
+    }
+  },
+  "spacing": {
+    "unit": "8px",
+    "scale": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "16px",
+      "lg": "24px",
+      "xl": "32px",
+      "xxl": "48px"
+    },
+    "layout": {
+      "containerPadding": "24px",
+      "sectionSpacing": "32px",
+      "itemSpacing": "16px",
+      "compactSpacing": "8px"
+    }
+  },
+  "borderRadius": {
+    "none": "0px",
+    "sm": "8px",
+    "md": "12px",
+    "lg": "16px",
+    "xl": "24px",
+    "full": "9999px"
+  },
+  "layout": {
+    "maxWidth": "400px",
+    "minWidth": "320px",
+    "header": {
+      "height": "auto",
+      "padding": "16px 24px"
+    },
+    "tabBar": {
+      "height": "48px",
+      "padding": "0 24px"
+    },
+    "actionButtons": {
+      "height": "auto",
+      "padding": "24px",
+      "gap": "12px"
+    },
+    "tokenList": {
+      "padding": "0 24px",
+      "itemHeight": "64px",
+      "itemPadding": "16px 0"
+    }
+  },
+  "components": {
+    "walletHeader": {
+      "display": "flex",
+      "alignItems": "center",
+      "justifyContent": "space-between",
+      "padding": "16px 24px",
+      "backgroundColor": "#000000"
+    },
+    "tabNavigation": {
+      "display": "flex",
+      "borderBottom": "1px solid #333333",
+      "padding": "0 24px"
+    },
+    "tab": {
+      "padding": "12px 0",
+      "marginRight": "32px",
+      "borderBottom": "2px solid transparent",
+      "fontSize": "16px",
+      "fontWeight": "500",
+      "cursor": "pointer",
+      "active": {
+        "borderBottomColor": "#ffffff",
+        "color": "#ffffff"
+      },
+      "inactive": {
+        "color": "#666666"
+      }
+    },
+    "balanceDisplay": {
+      "textAlign": "center",
+      "padding": "24px",
+      "backgroundColor": "#000000"
+    },
+    "actionButton": {
+      "width": "72px",
+      "height": "72px",
+      "borderRadius": "12px",
+      "backgroundColor": "#333333",
+      "border": "none",
+      "cursor": "pointer",
+      "display": "flex",
+      "flexDirection": "column",
+      "alignItems": "center",
+      "justifyContent": "center",
+      "gap": "8px",
+      "hover": {
+        "backgroundColor": "#444444"
+      }
+    },
+    "actionButtonGrid": {
+      "display": "grid",
+      "gridTemplateColumns": "repeat(4, 1fr)",
+      "gap": "12px",
+      "padding": "24px"
+    },
+    "tokenListItem": {
+      "display": "flex",
+      "alignItems": "center",
+      "padding": "16px 0",
+      "borderBottom": "1px solid #1a1a1a"
+    },
+    "tokenIcon": {
+      "width": "40px",
+      "height": "40px",
+      "borderRadius": "50%",
+      "marginRight": "12px",
+      "position": "relative"
+    },
+    "tokenInfo": {
+      "flex": "1",
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "4px"
+    },
+    "tokenValue": {
+      "textAlign": "right",
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "4px"
+    },
+    "percentageChange": {
+      "positive": {
+        "color": "#00ff88"
+      },
+      "negative": {
+        "color": "#ff4444"
+      },
+      "neutral": {
+        "color": "#888888"
+      }
+    }
+  },
+  "interactions": {
+    "hover": {
+      "transition": "all 0.2s ease-in-out",
+      "buttonHover": {
+        "backgroundColor": "#444444",
+        "transform": "translateY(-1px)"
+      }
+    },
+    "active": {
+      "buttonActive": {
+        "backgroundColor": "#555555",
+        "transform": "translateY(0)"
+      }
+    },
+    "focus": {
+      "outline": "2px solid #00ff88",
+      "outlineOffset": "2px"
+    }
+  },
+  "shadows": {
+    "none": "none",
+    "sm": "0 1px 2px 0 rgba(0, 0, 0, 0.1)",
+    "md": "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+    "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.1)"
+  },
+  "breakpoints": {
+    "mobile": "320px",
+    "tablet": "768px",
+    "desktop": "1024px"
+  }
+} 

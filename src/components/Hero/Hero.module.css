@@ -1,0 +1,246 @@
+/* Hero Container */
+.hero {
+  min-height: 50vh;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  padding-bottom: 48px;
+  margin: 16px;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+/* 3D Background */
+.hero3DBackground {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Ensure overlay still works */
+.hero::before {
+  z-index: 2;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1;
+}
+
+/* Container */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px;
+  position: relative;
+  z-index: 10;
+}
+
+/* Hero Card */
+.card {
+  max-width: 400px;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(20px);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  position: relative;
+  z-index: 20;
+  transition: all 250ms ease-out;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+/* Header Section */
+.header {
+  margin-bottom: 24px;
+}
+
+.titleContainer {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.title {
+  font-size: 4rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: #ffffff;
+  margin: 0;
+  font-family: 'Times New Roman', Times, serif;
+  text-transform: uppercase;
+}
+
+.subHeading {
+  font-size: 1rem;
+  color: #ffffff;
+  margin: 0;
+  font-family: 'Times New Roman', Times, serif;
+  text-align: center;
+}
+
+
+.verificationBadge {
+  background: #00d4ff;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.verificationIcon {
+  width: 12px;
+  height: 12px;
+  color: #000000;
+}
+
+.author {
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: #b8b8b8;
+  opacity: 0.8;
+  margin: 0;
+}
+
+/* Stats Grid */
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.statItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.statLabel {
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8a8a8a;
+  margin: 0;
+}
+
+.statValue {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #ffffff;
+  margin: 0;
+}
+
+/* Countdown */
+.countdown {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #ffffff;
+  justify-content: center;
+}
+
+.countdownSeparator {
+  color: #b8b8b8;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .hero {
+    min-height: 70vh;
+    padding: 16px;
+  }
+  
+  .card {
+    max-width: 100%;
+    padding: 20px;
+  }
+  
+  .title {
+    font-size: 2rem;
+  }
+  
+  .statsGrid {
+    gap: 12px;
+  }
+  
+  .statValue {
+    font-size: 1rem;
+  }
+  
+  .countdown {
+    font-size: 1.125rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .title {
+    font-size: 1.75rem;
+  }
+  
+  .statsGrid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  
+  .statItem {
+    flex-direction: row;
+    justify-content: space-between;
+    text-align: left;
+  }
+}
+
+/* Focus States for Accessibility */
+.card:focus-within {
+  outline: 2px solid #00d4ff;
+  outline-offset: 2px;
+}
+
+/* Animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card {
+  animation: fadeInUp 600ms ease-out;
+} 

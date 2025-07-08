@@ -1,0 +1,318 @@
+/* CSS Variables from Design System */
+.card {
+  --card-bg: #ffffff;
+  --card-radius: 32px;
+  --card-padding: 24px;
+  --card-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  --card-gap: 32px;
+  --transition-default: all 0.3s ease;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --text-accent: #000000;
+}
+
+/* Main Card Container */
+.productCard {
+  background: white;
+  border-radius: var(--card-radius);
+  box-shadow: none;
+  transition: var(--transition-default);
+  cursor: pointer;
+  overflow: hidden;
+  width: 100%;
+  max-width: 480px;
+  height: auto;
+  min-height: 560px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 20px;
+  color: #000000 !important;
+}
+
+.productCard:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+/* Image Area */
+.imageContainer {
+  height: 260px;
+  overflow: hidden;
+  border-radius:  0px 0px 20px 20px  ;
+  position: relative;
+  margin: 0 0 24px 0;
+  background: #f8f9fa;
+}
+
+.productImage {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+  border-radius: var(--card-radius) var(--card-radius) 20px 20px;
+}
+
+.productCard:hover .productImage {
+  transform: scale(1.01);
+}
+
+/* Content Area */
+.content {
+  padding: 24px 20px 20px 20px;
+  height: auto;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  justify-content: space-between;
+}
+
+/* Divider after title section */
+.titleSection {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding-bottom: 20px;
+}
+
+/* Author and Price section with dividers */
+.authorPriceSection {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 20px 0;
+}
+
+/* Action section */
+.actionSection {
+  padding-top: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Typography */
+.category {
+  font-size: 11px;
+  font-weight: 400;
+  color: #000000;
+  line-height: 1.4;
+  margin-bottom: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 600;
+  color: #000000;
+  line-height: 1.25;
+  margin-bottom: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: auto;
+}
+
+.subtitle {
+  font-size: 14px;
+  font-weight: 400;
+  color: #000000;
+  line-height: 1.4;
+  margin-bottom: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.author {
+  font-size: 13px;
+  font-weight: 400;
+  color: #000000;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* Author and Price Row */
+.authorPriceRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0;
+}
+
+/* Price Section */
+.priceContainer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.priceLabel {
+  font-size: 13px;
+  font-weight: 400;
+  color: #000000;
+}
+
+.price {
+  font-size: 30px;
+  font-weight: 700;
+  color: #000000;
+  line-height: 1.1;
+}
+
+.currency {
+  font-size: 13px;
+  font-weight: 400;
+  color: #000000;
+  margin-left: 3px;
+}
+
+/* Action Element */
+.action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #000000;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  justify-self: flex-start;
+  margin-top: auto;
+}
+
+.action:hover {
+  color: #000000;
+  transform: translateX(6px);
+}
+
+.actionIcon {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.3s ease;
+  stroke-width: 1.5;
+}
+
+.action:hover .actionIcon {
+  transform: translateX(4px);
+}
+
+
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+  .productCard {
+    max-width: 460px;
+  }
+}
+
+@media (max-width: 768px) {
+  .productCard {
+    max-width: 440px;
+    min-height: 520px;
+  }
+  
+  .imageContainer {
+    height: 200px;
+    margin-bottom: 20px;
+  }
+  
+  .title {
+    font-size: 20px;
+  }
+  
+  .subtitle {
+    font-size: 13px;
+  }
+  
+  .price {
+    font-size: 26px;
+  }
+  
+  .content {
+    padding: 20px 16px 16px 16px;
+    min-height: 200px;
+  }
+  
+  .titleSection {
+    padding-bottom: 16px;
+  }
+  
+  .authorPriceSection {
+    padding: 16px 0;
+  }
+  
+  .actionSection {
+    padding-top: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .productCard {
+    max-width: 420px;
+    min-height: 480px;
+  }
+  
+  .imageContainer {
+    height: 180px;
+    margin-bottom: 16px;
+  }
+  
+  .title {
+    font-size: 18px;
+  }
+  
+  .subtitle {
+    font-size: 12px;
+  }
+  
+  .price {
+    font-size: 24px;
+  }
+  
+  .content {
+    padding: 16px 14px 14px 14px;
+    min-height: 180px;
+  }
+  
+  .category {
+    font-size: 10px;
+    margin-bottom: 10px;
+  }
+  
+  .author {
+    font-size: 12px;
+  }
+  
+  .priceLabel,
+  .currency {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 360px) {
+  .productCard {
+    max-width: 400px;
+    min-height: 460px;
+  }
+  
+  .imageContainer {
+    height: 160px;
+  }
+  
+  .title {
+    font-size: 16px;
+  }
+  
+  .price {
+    font-size: 22px;
+  }
+} 

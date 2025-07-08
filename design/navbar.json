@@ -1,0 +1,173 @@
+{
+  "colorScheme": {
+    "primary": {
+      "background": "#1a1a1a",
+      "backgroundSecondary": "#2a2a2a",
+      "text": "#ffffff",
+      "textSecondary": "#a0a0a0",
+      "textMuted": "#666666"
+    },
+    "accent": {
+      "blue": "#4a90e2",
+      "purple": "#8b5cf6",
+      "pink": "#ec4899",
+      "gradient": "linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)"
+    },
+    "status": {
+      "success": "#10b981",
+      "warning": "#f59e0b",
+      "error": "#ef4444"
+    }
+  },
+  "typography": {
+    "fontFamily": {
+      "primary": "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+      "monospace": "'SF Mono', Monaco, 'Cascadia Code', monospace"
+    },
+    "fontSize": {
+      "xs": "12px",
+      "sm": "14px",
+      "base": "16px",
+      "lg": "18px",
+      "xl": "20px",
+      "2xl": "24px"
+    },
+    "fontWeight": {
+      "normal": "400",
+      "medium": "500",
+      "semibold": "600",
+      "bold": "700"
+    },
+    "lineHeight": {
+      "tight": "1.25",
+      "normal": "1.5",
+      "relaxed": "1.75"
+    }
+  },
+  "spacing": {
+    "unit": "4px",
+    "scale": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "12px",
+      "lg": "16px",
+      "xl": "20px",
+      "2xl": "24px",
+      "3xl": "32px",
+      "4xl": "48px"
+    }
+  },
+  "layout": {
+    "sidebar": {
+      "width": "280px",
+      "minWidth": "240px",
+      "maxWidth": "320px",
+      "padding": "24px 16px"
+    },
+    "containerSpacing": {
+      "horizontal": "16px",
+      "vertical": "24px"
+    }
+  },
+  "components": {
+    "walletHeader": {
+      "padding": "16px",
+      "borderRadius": "12px",
+      "background": "#2a2a2a",
+      "marginBottom": "24px",
+      "iconSize": "48px",
+      "avatarBorderRadius": "8px"
+    },
+    "navigationItem": {
+      "height": "48px",
+      "padding": "12px 16px",
+      "borderRadius": "8px",
+      "iconSize": "20px",
+      "gap": "12px",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "states": {
+        "default": {
+          "background": "transparent",
+          "color": "#a0a0a0"
+        },
+        "hover": {
+          "background": "rgba(255, 255, 255, 0.05)",
+          "color": "#ffffff"
+        },
+        "active": {
+          "background": "rgba(74, 144, 226, 0.1)",
+          "color": "#4a90e2"
+        }
+      }
+    },
+    "premiumBanner": {
+      "height": "64px",
+      "borderRadius": "12px",
+      "background": "linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)",
+      "padding": "16px",
+      "marginTop": "24px",
+      "marginBottom": "16px",
+      "fontSize": "18px",
+      "fontWeight": "600",
+      "color": "#ffffff"
+    },
+    "downloadSection": {
+      "padding": "16px 0",
+      "borderTop": "1px solid #2a2a2a",
+      "marginTop": "16px"
+    },
+    "downloadButton": {
+      "height": "48px",
+      "borderRadius": "8px",
+      "border": "1px solid #2a2a2a",
+      "background": "transparent",
+      "padding": "12px 16px",
+      "fontSize": "16px",
+      "fontWeight": "500",
+      "color": "#ffffff",
+      "display": "flex",
+      "alignItems": "center",
+      "justifyContent": "center",
+      "gap": "8px"
+    },
+    "apiLink": {
+      "fontSize": "14px",
+      "color": "#4a90e2",
+      "textDecoration": "none",
+      "fontWeight": "500",
+      "marginTop": "12px",
+      "display": "inline-block"
+    }
+  },
+  "shadows": {
+    "subtle": "0 1px 3px rgba(0, 0, 0, 0.1)",
+    "medium": "0 4px 6px rgba(0, 0, 0, 0.1)",
+    "large": "0 10px 15px rgba(0, 0, 0, 0.1)"
+  },
+  "borders": {
+    "radius": {
+      "sm": "4px",
+      "md": "8px",
+      "lg": "12px",
+      "xl": "16px"
+    },
+    "width": {
+      "thin": "1px",
+      "medium": "2px",
+      "thick": "3px"
+    }
+  },
+  "transitions": {
+    "fast": "150ms ease-in-out",
+    "normal": "200ms ease-in-out",
+    "slow": "300ms ease-in-out"
+  },
+  "zIndex": {
+    "dropdown": "10",
+    "sticky": "20",
+    "modal": "30",
+    "popover": "40",
+    "tooltip": "50"
+  }
+} 

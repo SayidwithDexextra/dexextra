@@ -1,0 +1,215 @@
+/* CryptoMarketTicker CSS Module - Based on CryptomarketTicker.json Design System */
+
+/* CSS Variables from design system */
+.container {
+  --ticker-bg: #000000;
+  --ticker-text: #FFFFFF;
+  --ticker-text-muted: #CCCCCC;
+  --ticker-positive: #00C851;
+  --ticker-negative: #FF4444;
+  --ticker-speed: 60px;
+  --ticker-gap: 32px;
+  --ticker-height: 40px;
+}
+
+/* Main container */
+.container {
+  width: 100%;
+  max-width: 100vw;
+  height: var(--ticker-height);
+  background-color: var(--ticker-bg);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  font-family: monospace, 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', sans-serif;
+  color: var(--ticker-text);
+  line-height: 1.2;
+  box-sizing: border-box;
+}
+
+/* Scrolling ticker wrapper */
+.ticker {
+  display: flex;
+  align-items: center;
+  gap: var(--ticker-gap);
+  white-space: nowrap;
+  animation: marquee linear infinite;
+  animation-duration: var(--ticker-duration, 60s);
+  will-change: transform;
+  flex-shrink: 0;
+  width: max-content;
+}
+
+/* Pause animation on hover */
+.ticker.paused {
+  animation-play-state: paused;
+}
+
+/* Individual ticker item */
+.tickerItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: auto;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+/* Hover effect for ticker items */
+.tickerItem:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Symbol styling */
+.symbol {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ticker-text);
+  letter-spacing: 0px;
+}
+
+/* Separator styling */
+.separator {
+  font-size: 13px;
+  color: var(--ticker-text-muted);
+  margin: 0 4px;
+  font-weight: 400;
+}
+
+/* Price styling */
+.price {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ticker-text);
+  letter-spacing: -0.01em;
+}
+
+/* Change percentage styling */
+.change {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0px;
+}
+
+/* Positive change color */
+.change.positive {
+  color: var(--ticker-positive);
+}
+
+/* Negative change color */
+.change.negative {
+  color: var(--ticker-negative);
+}
+
+/* Loading state */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ticker-text-muted);
+  font-family: monospace, 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', sans-serif;
+}
+
+/* Error state */
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ticker-negative);
+  font-family: monospace, 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', sans-serif;
+}
+
+/* Seamless marquee animation with duplicated content */
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+/* Responsive design - Mobile */
+@media (max-width: 480px) {
+  .container {
+    --ticker-gap: 24px;
+  }
+  
+  .symbol,
+  .price {
+    font-size: 12px;
+  }
+  
+  .change,
+  .separator {
+    font-size: 11px;
+  }
+  
+  .ticker {
+    animation-duration: calc(var(--ticker-duration, 60s) * 1.5);
+  }
+}
+
+/* Responsive design - Tablet */
+@media (min-width: 481px) and (max-width: 768px) {
+  .container {
+    --ticker-gap: 28px;
+  }
+  
+  .symbol,
+  .price {
+    font-size: 13px;
+  }
+  
+  .change,
+  .separator {
+    font-size: 12px;
+  }
+  
+  .ticker {
+    animation-duration: calc(var(--ticker-duration, 60s) * 1.2);
+  }
+}
+
+/* Responsive design - Desktop */
+@media (min-width: 769px) {
+  .container {
+    --ticker-gap: 32px;
+  }
+  
+  .symbol,
+  .price {
+    font-size: 14px;
+  }
+  
+  .change {
+    font-size: 13px;
+  }
+  
+  .separator {
+    font-size: 13px;
+  }
+}
+
+/* Reduced motion support for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .ticker {
+    animation: none;
+    overflow-x: auto;
+    scroll-behavior: smooth;
+  }
+  
+  .container {
+    overflow-x: auto;
+  }
+} 

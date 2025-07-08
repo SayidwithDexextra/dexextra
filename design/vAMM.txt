@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+interface IPriceOracle {
+    function getPrice() external view returns (uint256);
+}
+
+contract vAMM {
+    address public owner;
+    IPriceOracle public oracle;
+    address public collateralToken; // e.g., USDC
+    uint256 public initialPrice;
+    uint256 public expiry;
+
+    struct Position {
+        int256 size; // Positive = LONG, Negative = SHORT
+        uint256 entryPrice;
+        uint256 collateral;
+    }
+
+    mapping(address => Position) public positions;
+    mapping(address => uint256) public balances;
+
+    uint256 public virtualLong = 1e6;
+    uint256 public virtualShort = 1e6;
+    uint256 public constant FEE = 3e16; // 0.03% trading fee
+
+    constructor(
+        address _oracle,
+        address _collateralToken,
+        uint256 _initialPrice,
+        uint256 _expiry
+    ) {
+        owner = msg.sender;
+        oracle = IPriceOracle(_oracle);
+        collateralToken = _collateralToken;
+        initialPrice = _initialPrice;
+        expiry = _expiry;
+    }
+
+    function getPrice() public view returns (uint256) {
+        return (virtualShort * 1e18) / virtualLong;
+    }
+
+    function depositCollateral(uint256 amount) external {
+        require(amount > 0, "invalid amount");
+        IERC20(collateralToken).transferFrom(msg.sender, address(this), amount);
+        balances[msg.sender] += amount;
+    }
+
+    function openPosition(uint256 collateralAmount, bool isLong) external {
+        require(collateralAmount > 0, "invalid collateral");
+        require(balances[msg.sender] >= collateralAmount, "insufficient balance");
+
+        uint256 price = getPrice();
+        balances[msg.sender] -= collateralAmount;
+
+        int256 size = int256((collateralAmount * 1e18) / price); // simulate leveraged position
+        Position storage pos = positions[msg.sender];
+
+        if (isLong) {
+            pos.size += size;
+            virtualShort += uint256(size);
+        } else {
+            pos.size -= size;
+            virtualLong += uint256(size);
+        }
+
+        pos.entryPrice = price;
+        pos.collateral += collateralAmount;
+    }
+
+    function closePosition() external {
+        Position storage pos = positions[msg.sender];
+        require(pos.size != 0, "no position");
+
+        uint256 currentPrice = getPrice();
+        uint256 pnl;
+        if (pos.size > 0) {
+            pnl = uint256(pos.size) * (currentPrice - pos.entryPrice) / 1e18;
+            virtualShort -= uint256(pos.size);
+        } else {
+            pnl = uint256(-pos.size) * (pos.entryPrice - currentPrice) / 1e18;
+            virtualLong -= uint256(-pos.size);
+        }
+
+        uint256 payout = pos.collateral + pnl;
+        balances[msg.sender] += payout;
+
+        delete positions[msg.sender];
+    }
+
+    function withdraw(uint256 amount) external {
+        require(balances[msg.sender] >= amount, "insufficient");
+        balances[msg.sender] -= amount;
+        IERC20(collateralToken).transfer(msg.sender, amount);
+    }
+
+    function settle() external {
+        require(block.timestamp >= expiry, "not expired");
+        uint256 oraclePrice = oracle.getPrice();
+
+        Position storage pos = positions[msg.sender];
+        require(pos.size != 0, "no position");
+
+        uint256 pnl;
+        if (pos.size > 0) {
+            pnl = uint256(pos.size) * (oraclePrice - pos.entryPrice) / 1e18;
+        } else {
+            pnl = uint256(-pos.size) * (pos.entryPrice - oraclePrice) / 1e18;
+        }
+
+        uint256 payout = pos.collateral + pnl;
+        balances[msg.sender] += payout;
+
+        delete positions[msg.sender];
+    }
+}
