@@ -1,0 +1,306 @@
+{
+  "name": "StatusModalDesign",
+  "version": "1.0.0",
+  "description": "Design system extracted from success and error modal cards featuring modern, rounded card layouts with distinct color schemes and typography",
+  
+  "colorPalette": {
+    "success": {
+      "primary": "#4ADE80",
+      "primaryHover": "#22C55E",
+      "background": "#4ADE80",
+      "backgroundGradient": "linear-gradient(135deg, #4ADE80 0%, #22C55E 100%)",
+      "text": "#1F2937",
+      "textSecondary": "#374151",
+      "button": "#22C55E",
+      "buttonHover": "#16A34A",
+      "buttonText": "#FFFFFF",
+      "icon": "#1F2937",
+      "iconBackground": "rgba(31, 41, 55, 0.1)"
+    },
+    "error": {
+      "primary": "#000000",
+      "primaryHover": "#1A1A1A",
+      "background": "#000000",
+      "backgroundGradient": "linear-gradient(135deg, #000000 0%, #1A1A1A 100%)",
+      "text": "#FFFFFF",
+      "textSecondary": "#E5E7EB",
+      "button": "#4B5563",
+      "buttonHover": "#6B7280",
+      "buttonText": "#FFFFFF",
+      "icon": "#FFFFFF",
+      "iconBackground": "rgba(255, 255, 255, 0.1)"
+    },
+    "neutral": {
+      "white": "#FFFFFF",
+      "gray50": "#F9FAFB",
+      "gray100": "#F3F4F6",
+      "gray200": "#E5E7EB",
+      "gray300": "#D1D5DB",
+      "gray400": "#9CA3AF",
+      "gray500": "#6B7280",
+      "gray600": "#4B5563",
+      "gray700": "#374151",
+      "gray800": "#1F2937",
+      "gray900": "#111827"
+    }
+  },
+
+  "typography": {
+    "fontFamily": {
+      "primary": "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif",
+      "secondary": "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif"
+    },
+    "fontSize": {
+      "xs": "12px",
+      "sm": "14px",
+      "base": "16px",
+      "lg": "18px",
+      "xl": "20px",
+      "2xl": "24px",
+      "3xl": "30px",
+      "4xl": "36px",
+      "5xl": "48px"
+    },
+    "fontWeight": {
+      "light": "300",
+      "normal": "400",
+      "medium": "500",
+      "semibold": "600",
+      "bold": "700",
+      "extrabold": "800"
+    },
+    "lineHeight": {
+      "tight": "1.25",
+      "normal": "1.5",
+      "relaxed": "1.75",
+      "loose": "2.0"
+    },
+    "letterSpacing": {
+      "tight": "-0.025em",
+      "normal": "0",
+      "wide": "0.025em"
+    }
+  },
+
+  "spacing": {
+    "xs": "4px",
+    "sm": "8px",
+    "md": "16px",
+    "lg": "24px",
+    "xl": "32px",
+    "2xl": "48px",
+    "3xl": "64px",
+    "4xl": "80px",
+    "5xl": "96px"
+  },
+
+  "layout": {
+    "borderRadius": {
+      "none": "0px",
+      "sm": "4px",
+      "md": "8px",
+      "lg": "12px",
+      "xl": "16px",
+      "2xl": "24px",
+      "3xl": "32px",
+      "4xl": "48px",
+      "full": "9999px"
+    },
+    "shadows": {
+      "sm": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+      "md": "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+      "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+      "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+      "2xl": "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+      "inner": "inset 0 2px 4px 0 rgba(0, 0, 0, 0.06)"
+    },
+    "backdrop": {
+      "blur": "backdrop-blur-sm",
+      "opacity": "bg-opacity-60"
+    }
+  },
+
+  "components": {
+    "statusModal": {
+      "container": {
+        "width": "320px",
+        "maxWidth": "90vw",
+        "minHeight": "200px",
+        "borderRadius": "layout.borderRadius.2xl",
+        "padding": "spacing.xl",
+        "textAlign": "center",
+        "position": "relative",
+        "zIndex": "50"
+      },
+      "backdrop": {
+        "backgroundColor": "rgba(0, 0, 0, 0.4)",
+        "position": "fixed",
+        "inset": "0",
+        "zIndex": "40"
+      },
+      "icon": {
+        "container": {
+          "width": "48px",
+          "height": "48px",
+          "borderRadius": "layout.borderRadius.full",
+          "marginBottom": "spacing.md",
+          "marginX": "auto",
+          "display": "flex",
+          "alignItems": "center",
+          "justifyContent": "center"
+        },
+        "size": {
+          "width": "24px",
+          "height": "24px"
+        }
+      },
+      "title": {
+        "fontSize": "typography.fontSize.xl",
+        "fontWeight": "typography.fontWeight.bold",
+        "lineHeight": "typography.lineHeight.tight",
+        "marginBottom": "spacing.md"
+      },
+      "message": {
+        "fontSize": "typography.fontSize.sm",
+        "fontWeight": "typography.fontWeight.normal",
+        "lineHeight": "typography.lineHeight.normal",
+        "marginBottom": "spacing.lg"
+      },
+      "button": {
+        "padding": "spacing.sm spacing.lg",
+        "borderRadius": "layout.borderRadius.xl",
+        "fontSize": "typography.fontSize.sm",
+        "fontWeight": "typography.fontWeight.semibold",
+        "border": "none",
+        "cursor": "pointer",
+        "transition": "all 0.2s ease-in-out",
+        "minWidth": "100px"
+      },
+      "autoClose": {
+        "enabled": true,
+        "delay": "2000ms",
+        "exitAnimationDuration": "300ms"
+      },
+      "textTruncation": {
+        "title": {
+          "maxLength": "25 characters",
+          "overflow": "ellipsis"
+        },
+        "message": {
+          "maxLength": "80 characters",
+          "maxLines": 2,
+          "overflow": "ellipsis"
+        }
+      }
+    },
+    "successModal": {
+      "container": {
+        "background": "colorPalette.success.backgroundGradient",
+        "boxShadow": "layout.shadows.2xl"
+      },
+      "icon": {
+        "container": {
+          "backgroundColor": "colorPalette.success.iconBackground"
+        },
+        "color": "colorPalette.success.icon"
+      },
+      "title": {
+        "color": "colorPalette.success.text"
+      },
+      "message": {
+        "color": "colorPalette.success.textSecondary"
+      },
+      "button": {
+        "backgroundColor": "colorPalette.success.button",
+        "color": "colorPalette.success.buttonText",
+        "hover": {
+          "backgroundColor": "colorPalette.success.buttonHover"
+        }
+      }
+    },
+    "errorModal": {
+      "container": {
+        "background": "colorPalette.error.backgroundGradient",
+        "boxShadow": "layout.shadows.2xl"
+      },
+      "icon": {
+        "container": {
+          "backgroundColor": "colorPalette.error.iconBackground"
+        },
+        "color": "colorPalette.error.icon"
+      },
+      "title": {
+        "color": "colorPalette.error.text"
+      },
+      "message": {
+        "color": "colorPalette.error.textSecondary"
+      },
+      "button": {
+        "backgroundColor": "colorPalette.error.button",
+        "color": "colorPalette.error.buttonText",
+        "hover": {
+          "backgroundColor": "colorPalette.error.buttonHover"
+        }
+      }
+    }
+  },
+
+  "animations": {
+    "modalPopEnter": {
+      "duration": "400ms",
+      "easing": "cubic-bezier(0.16, 1, 0.3, 1)",
+      "keyframes": {
+        "0%": {
+          "opacity": "0",
+          "transform": "scale(0.8) translateY(-20px)"
+        },
+        "50%": {
+          "opacity": "1",
+          "transform": "scale(1.05) translateY(0)"
+        },
+        "100%": {
+          "opacity": "1",
+          "transform": "scale(1) translateY(0)"
+        }
+      }
+    },
+    "modalExit": {
+      "duration": "200ms",
+      "easing": "cubic-bezier(0.4, 0, 0.6, 1)",
+      "keyframes": {
+        "0%": {
+          "opacity": "1",
+          "transform": "scale(1) translateY(0)"
+        },
+        "100%": {
+          "opacity": "0",
+          "transform": "scale(0.8) translateY(-20px)"
+        }
+      }
+    },
+    "backdropEnter": {
+      "duration": "200ms",
+      "easing": "ease-out",
+      "keyframes": {
+        "0%": {
+          "opacity": "0"
+        },
+        "100%": {
+          "opacity": "1"
+        }
+      }
+    },
+    "backdropExit": {
+      "duration": "300ms",
+      "easing": "ease-out",
+      "keyframes": {
+        "0%": {
+          "opacity": "1"
+        },
+        "100%": {
+          "opacity": "0"
+        }
+      }
+    }
+  }
+} 

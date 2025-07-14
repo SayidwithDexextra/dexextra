@@ -11,7 +11,7 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Dexextra - Futures Crypto Trading",
+  title: "Dexetra - Futures Crypto Trading",
   description: "A modern crypto wallet dashboard built with Next.js",
 };
 

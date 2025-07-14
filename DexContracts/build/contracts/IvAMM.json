@@ -1,0 +1,1532 @@
+{
+  "contractName": "IvAMM",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "collateralAmount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "isLong",
+          "type": "bool"
+        },
+        {
+          "internalType": "uint256",
+          "name": "leverage",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "minPrice",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "maxPrice",
+          "type": "uint256"
+        }
+      ],
+      "name": "openPosition",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "positionSize",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "sizeToClose",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "minPrice",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "maxPrice",
+          "type": "uint256"
+        }
+      ],
+      "name": "closePosition",
+      "outputs": [
+        {
+          "internalType": "int256",
+          "name": "pnl",
+          "type": "int256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getMarkPrice",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getFundingRate",
+      "outputs": [
+        {
+          "internalType": "int256",
+          "name": "",
+          "type": "int256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "updateFunding",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "name": "getPosition",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "int256",
+              "name": "size",
+              "type": "int256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "entryPrice",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "entryFundingIndex",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "lastInteractionTime",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IvAMM.Position",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getFundingState",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "int256",
+              "name": "fundingRate",
+              "type": "int256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "fundingIndex",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "lastFundingTime",
+              "type": "uint256"
+            },
+            {
+              "internalType": "int256",
+              "name": "premiumFraction",
+              "type": "int256"
+            }
+          ],
+          "internalType": "struct IvAMM.FundingState",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "user",
+          "type": "address"
+        }
+      ],
+      "name": "getUnrealizedPnL",
+      "outputs": [
+        {
+          "internalType": "int256",
+          "name": "",
+          "type": "int256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "size",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "isLong",
+          "type": "bool"
+        }
+      ],
+      "name": "getPriceImpact",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "pause",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "unpause",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "metadata": "{\"compiler\":{\"version\":\"0.8.20+commit.a1b79de6\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"sizeToClose\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"minPrice\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxPrice\",\"type\":\"uint256\"}],\"name\":\"closePosition\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"pnl\",\"type\":\"int256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getFundingRate\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getFundingState\",\"outputs\":[{\"components\":[{\"internalType\":\"int256\",\"name\":\"fundingRate\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"fundingIndex\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"lastFundingTime\",\"type\":\"uint256\"},{\"internalType\":\"int256\",\"name\":\"premiumFraction\",\"type\":\"int256\"}],\"internalType\":\"struct IvAMM.FundingState\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getMarkPrice\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"}],\"name\":\"getPosition\",\"outputs\":[{\"components\":[{\"internalType\":\"int256\",\"name\":\"size\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"entryPrice\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"entryFundingIndex\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"lastInteractionTime\",\"type\":\"uint256\"}],\"internalType\":\"struct IvAMM.Position\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"size\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"isLong\",\"type\":\"bool\"}],\"name\":\"getPriceImpact\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"user\",\"type\":\"address\"}],\"name\":\"getUnrealizedPnL\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"collateralAmount\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"isLong\",\"type\":\"bool\"},{\"internalType\":\"uint256\",\"name\":\"leverage\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"minPrice\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"maxPrice\",\"type\":\"uint256\"}],\"name\":\"openPosition\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"positionSize\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"pause\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"unpause\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"updateFunding\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}],\"devdoc\":{\"details\":\"Interface for the virtual Automated Market Maker\",\"kind\":\"dev\",\"methods\":{\"closePosition(uint256,uint256,uint256)\":{\"details\":\"Closes a position partially or fully\"},\"getFundingRate()\":{\"details\":\"Gets current funding rate\"},\"getFundingState()\":{\"details\":\"Gets funding state\"},\"getMarkPrice()\":{\"details\":\"Gets current mark price\"},\"getPosition(address)\":{\"details\":\"Gets position data for a user\"},\"getPriceImpact(uint256,bool)\":{\"details\":\"Gets the price impact for a trade\"},\"getUnrealizedPnL(address)\":{\"details\":\"Calculates unrealized PnL for a position\"},\"openPosition(uint256,bool,uint256,uint256,uint256)\":{\"details\":\"Opens or modifies a position\"},\"pause()\":{\"details\":\"Emergency pause trading\"},\"unpause()\":{\"details\":\"Resume trading\"},\"updateFunding()\":{\"details\":\"Updates funding rate\"}},\"title\":\"IvAMM\",\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"version\":1}},\"settings\":{\"compilationTarget\":{\"project:/contracts/IvAMM.sol\":\"IvAMM\"},\"evmVersion\":\"shanghai\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\"},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[]},\"sources\":{\"project:/contracts/IvAMM.sol\":{\"keccak256\":\"0x34c86881d82b0125ecbab37fd088606263c9c6c1b8a5009e85ebce3e8767afe1\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://9a8c7b35d4c7bdc837e6192057e0b356e0adf0821d9917c94c5961fa13e995e2\",\"dweb:/ipfs/QmaxEpjp68Zr8SjLZfkVKDc7dBe7Rcu4vYKCVV4fY9d4dm\"]}},\"version\":1}",
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "immutableReferences": {},
+  "generatedSources": [],
+  "deployedGeneratedSources": [],
+  "sourceMap": "",
+  "deployedSourceMap": "",
+  "source": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\n/**\n * @title IvAMM\n * @dev Interface for the virtual Automated Market Maker\n */\ninterface IvAMM {\n    struct Position {\n        int256 size; // Positive = LONG, Negative = SHORT\n        uint256 entryPrice;\n        uint256 entryFundingIndex;\n        uint256 lastInteractionTime;\n    }\n\n    struct FundingState {\n        int256 fundingRate; // Current funding rate (per hour)\n        uint256 fundingIndex; // Cumulative funding index\n        uint256 lastFundingTime;\n        int256 premiumFraction; // Premium/discount relative to index price\n    }\n\n    /**\n     * @dev Opens or modifies a position\n     */\n    function openPosition(\n        uint256 collateralAmount,\n        bool isLong,\n        uint256 leverage,\n        uint256 minPrice,\n        uint256 maxPrice\n    ) external returns (uint256 positionSize);\n\n    /**\n     * @dev Closes a position partially or fully\n     */\n    function closePosition(\n        uint256 sizeToClose,\n        uint256 minPrice,\n        uint256 maxPrice\n    ) external returns (int256 pnl);\n\n    /**\n     * @dev Gets current mark price\n     */\n    function getMarkPrice() external view returns (uint256);\n\n    /**\n     * @dev Gets current funding rate\n     */\n    function getFundingRate() external view returns (int256);\n\n    /**\n     * @dev Updates funding rate\n     */\n    function updateFunding() external;\n\n    /**\n     * @dev Gets position data for a user\n     */\n    function getPosition(address user) external view returns (Position memory);\n\n    /**\n     * @dev Gets funding state\n     */\n    function getFundingState() external view returns (FundingState memory);\n\n    /**\n     * @dev Calculates unrealized PnL for a position\n     */\n    function getUnrealizedPnL(address user) external view returns (int256);\n\n    /**\n     * @dev Gets the price impact for a trade\n     */\n    function getPriceImpact(uint256 size, bool isLong) external view returns (uint256);\n\n    /**\n     * @dev Emergency pause trading\n     */\n    function pause() external;\n\n    /**\n     * @dev Resume trading\n     */\n    function unpause() external;\n} ",
+  "sourcePath": "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/IvAMM.sol",
+  "ast": {
+    "absolutePath": "project:/contracts/IvAMM.sol",
+    "exportedSymbols": {
+      "IvAMM": [
+        243
+      ]
+    },
+    "id": 244,
+    "license": "MIT",
+    "nodeType": "SourceUnit",
+    "nodes": [
+      {
+        "id": 137,
+        "literals": [
+          "solidity",
+          "^",
+          "0.8",
+          ".20"
+        ],
+        "nodeType": "PragmaDirective",
+        "src": "32:24:2"
+      },
+      {
+        "abstract": false,
+        "baseContracts": [],
+        "canonicalName": "IvAMM",
+        "contractDependencies": [],
+        "contractKind": "interface",
+        "documentation": {
+          "id": 138,
+          "nodeType": "StructuredDocumentation",
+          "src": "58:80:2",
+          "text": " @title IvAMM\n @dev Interface for the virtual Automated Market Maker"
+        },
+        "fullyImplemented": false,
+        "id": 243,
+        "linearizedBaseContracts": [
+          243
+        ],
+        "name": "IvAMM",
+        "nameLocation": "149:5:2",
+        "nodeType": "ContractDefinition",
+        "nodes": [
+          {
+            "canonicalName": "IvAMM.Position",
+            "id": 147,
+            "members": [
+              {
+                "constant": false,
+                "id": 140,
+                "mutability": "mutable",
+                "name": "size",
+                "nameLocation": "194:4:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 147,
+                "src": "187:11:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_int256",
+                  "typeString": "int256"
+                },
+                "typeName": {
+                  "id": 139,
+                  "name": "int256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "187:6:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_int256",
+                    "typeString": "int256"
+                  }
+                },
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 142,
+                "mutability": "mutable",
+                "name": "entryPrice",
+                "nameLocation": "253:10:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 147,
+                "src": "245:18:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 141,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "245:7:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 144,
+                "mutability": "mutable",
+                "name": "entryFundingIndex",
+                "nameLocation": "281:17:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 147,
+                "src": "273:25:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 143,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "273:7:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 146,
+                "mutability": "mutable",
+                "name": "lastInteractionTime",
+                "nameLocation": "316:19:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 147,
+                "src": "308:27:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 145,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "308:7:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "visibility": "internal"
+              }
+            ],
+            "name": "Position",
+            "nameLocation": "168:8:2",
+            "nodeType": "StructDefinition",
+            "scope": 243,
+            "src": "161:181:2",
+            "visibility": "public"
+          },
+          {
+            "canonicalName": "IvAMM.FundingState",
+            "id": 156,
+            "members": [
+              {
+                "constant": false,
+                "id": 149,
+                "mutability": "mutable",
+                "name": "fundingRate",
+                "nameLocation": "385:11:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 156,
+                "src": "378:18:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_int256",
+                  "typeString": "int256"
+                },
+                "typeName": {
+                  "id": 148,
+                  "name": "int256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "378:6:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_int256",
+                    "typeString": "int256"
+                  }
+                },
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 151,
+                "mutability": "mutable",
+                "name": "fundingIndex",
+                "nameLocation": "449:12:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 156,
+                "src": "441:20:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 150,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "441:7:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 153,
+                "mutability": "mutable",
+                "name": "lastFundingTime",
+                "nameLocation": "507:15:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 156,
+                "src": "499:23:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_uint256",
+                  "typeString": "uint256"
+                },
+                "typeName": {
+                  "id": 152,
+                  "name": "uint256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "499:7:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  }
+                },
+                "visibility": "internal"
+              },
+              {
+                "constant": false,
+                "id": 155,
+                "mutability": "mutable",
+                "name": "premiumFraction",
+                "nameLocation": "539:15:2",
+                "nodeType": "VariableDeclaration",
+                "scope": 156,
+                "src": "532:22:2",
+                "stateVariable": false,
+                "storageLocation": "default",
+                "typeDescriptions": {
+                  "typeIdentifier": "t_int256",
+                  "typeString": "int256"
+                },
+                "typeName": {
+                  "id": 154,
+                  "name": "int256",
+                  "nodeType": "ElementaryTypeName",
+                  "src": "532:6:2",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_int256",
+                    "typeString": "int256"
+                  }
+                },
+                "visibility": "internal"
+              }
+            ],
+            "name": "FundingState",
+            "nameLocation": "355:12:2",
+            "nodeType": "StructDefinition",
+            "scope": 243,
+            "src": "348:257:2",
+            "visibility": "public"
+          },
+          {
+            "documentation": {
+              "id": 157,
+              "nodeType": "StructuredDocumentation",
+              "src": "611:52:2",
+              "text": " @dev Opens or modifies a position"
+            },
+            "functionSelector": "eaf1f1e6",
+            "id": 172,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "openPosition",
+            "nameLocation": "677:12:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 168,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 159,
+                  "mutability": "mutable",
+                  "name": "collateralAmount",
+                  "nameLocation": "707:16:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 172,
+                  "src": "699:24:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 158,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "699:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                },
+                {
+                  "constant": false,
+                  "id": 161,
+                  "mutability": "mutable",
+                  "name": "isLong",
+                  "nameLocation": "738:6:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 172,
+                  "src": "733:11:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  },
+                  "typeName": {
+                    "id": 160,
+                    "name": "bool",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "733:4:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_bool",
+                      "typeString": "bool"
+                    }
+                  },
+                  "visibility": "internal"
+                },
+                {
+                  "constant": false,
+                  "id": 163,
+                  "mutability": "mutable",
+                  "name": "leverage",
+                  "nameLocation": "762:8:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 172,
+                  "src": "754:16:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 162,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "754:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                },
+                {
+                  "constant": false,
+                  "id": 165,
+                  "mutability": "mutable",
+                  "name": "minPrice",
+                  "nameLocation": "788:8:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 172,
+                  "src": "780:16:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 164,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "780:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                },
+                {
+                  "constant": false,
+                  "id": 167,
+                  "mutability": "mutable",
+                  "name": "maxPrice",
+                  "nameLocation": "814:8:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 172,
+                  "src": "806:16:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 166,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "806:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "689:139:2"
+            },
+            "returnParameters": {
+              "id": 171,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 170,
+                  "mutability": "mutable",
+                  "name": "positionSize",
+                  "nameLocation": "855:12:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 172,
+                  "src": "847:20:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 169,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "847:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "846:22:2"
+            },
+            "scope": 243,
+            "src": "668:201:2",
+            "stateMutability": "nonpayable",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 173,
+              "nodeType": "StructuredDocumentation",
+              "src": "875:60:2",
+              "text": " @dev Closes a position partially or fully"
+            },
+            "functionSelector": "b35648d7",
+            "id": 184,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "closePosition",
+            "nameLocation": "949:13:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 180,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 175,
+                  "mutability": "mutable",
+                  "name": "sizeToClose",
+                  "nameLocation": "980:11:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 184,
+                  "src": "972:19:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 174,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "972:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                },
+                {
+                  "constant": false,
+                  "id": 177,
+                  "mutability": "mutable",
+                  "name": "minPrice",
+                  "nameLocation": "1009:8:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 184,
+                  "src": "1001:16:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 176,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1001:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                },
+                {
+                  "constant": false,
+                  "id": 179,
+                  "mutability": "mutable",
+                  "name": "maxPrice",
+                  "nameLocation": "1035:8:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 184,
+                  "src": "1027:16:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 178,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1027:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "962:87:2"
+            },
+            "returnParameters": {
+              "id": 183,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 182,
+                  "mutability": "mutable",
+                  "name": "pnl",
+                  "nameLocation": "1075:3:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 184,
+                  "src": "1068:10:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_int256",
+                    "typeString": "int256"
+                  },
+                  "typeName": {
+                    "id": 181,
+                    "name": "int256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1068:6:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_int256",
+                      "typeString": "int256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1067:12:2"
+            },
+            "scope": 243,
+            "src": "940:140:2",
+            "stateMutability": "nonpayable",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 185,
+              "nodeType": "StructuredDocumentation",
+              "src": "1086:47:2",
+              "text": " @dev Gets current mark price"
+            },
+            "functionSelector": "60409632",
+            "id": 190,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "getMarkPrice",
+            "nameLocation": "1147:12:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 186,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "1159:2:2"
+            },
+            "returnParameters": {
+              "id": 189,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 188,
+                  "mutability": "mutable",
+                  "name": "",
+                  "nameLocation": "-1:-1:-1",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 190,
+                  "src": "1185:7:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 187,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1185:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1184:9:2"
+            },
+            "scope": 243,
+            "src": "1138:56:2",
+            "stateMutability": "view",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 191,
+              "nodeType": "StructuredDocumentation",
+              "src": "1200:49:2",
+              "text": " @dev Gets current funding rate"
+            },
+            "functionSelector": "95196f7e",
+            "id": 196,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "getFundingRate",
+            "nameLocation": "1263:14:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 192,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "1277:2:2"
+            },
+            "returnParameters": {
+              "id": 195,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 194,
+                  "mutability": "mutable",
+                  "name": "",
+                  "nameLocation": "-1:-1:-1",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 196,
+                  "src": "1303:6:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_int256",
+                    "typeString": "int256"
+                  },
+                  "typeName": {
+                    "id": 193,
+                    "name": "int256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1303:6:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_int256",
+                      "typeString": "int256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1302:8:2"
+            },
+            "scope": 243,
+            "src": "1254:57:2",
+            "stateMutability": "view",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 197,
+              "nodeType": "StructuredDocumentation",
+              "src": "1317:44:2",
+              "text": " @dev Updates funding rate"
+            },
+            "functionSelector": "1ebf4eb5",
+            "id": 200,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "updateFunding",
+            "nameLocation": "1375:13:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 198,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "1388:2:2"
+            },
+            "returnParameters": {
+              "id": 199,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "1399:0:2"
+            },
+            "scope": 243,
+            "src": "1366:34:2",
+            "stateMutability": "nonpayable",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 201,
+              "nodeType": "StructuredDocumentation",
+              "src": "1406:53:2",
+              "text": " @dev Gets position data for a user"
+            },
+            "functionSelector": "16c19739",
+            "id": 209,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "getPosition",
+            "nameLocation": "1473:11:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 204,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 203,
+                  "mutability": "mutable",
+                  "name": "user",
+                  "nameLocation": "1493:4:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 209,
+                  "src": "1485:12:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address",
+                    "typeString": "address"
+                  },
+                  "typeName": {
+                    "id": 202,
+                    "name": "address",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1485:7:2",
+                    "stateMutability": "nonpayable",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_address",
+                      "typeString": "address"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1484:14:2"
+            },
+            "returnParameters": {
+              "id": 208,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 207,
+                  "mutability": "mutable",
+                  "name": "",
+                  "nameLocation": "-1:-1:-1",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 209,
+                  "src": "1522:15:2",
+                  "stateVariable": false,
+                  "storageLocation": "memory",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_struct$_Position_$147_memory_ptr",
+                    "typeString": "struct IvAMM.Position"
+                  },
+                  "typeName": {
+                    "id": 206,
+                    "nodeType": "UserDefinedTypeName",
+                    "pathNode": {
+                      "id": 205,
+                      "name": "Position",
+                      "nameLocations": [
+                        "1522:8:2"
+                      ],
+                      "nodeType": "IdentifierPath",
+                      "referencedDeclaration": 147,
+                      "src": "1522:8:2"
+                    },
+                    "referencedDeclaration": 147,
+                    "src": "1522:8:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_struct$_Position_$147_storage_ptr",
+                      "typeString": "struct IvAMM.Position"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1521:17:2"
+            },
+            "scope": 243,
+            "src": "1464:75:2",
+            "stateMutability": "view",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 210,
+              "nodeType": "StructuredDocumentation",
+              "src": "1545:42:2",
+              "text": " @dev Gets funding state"
+            },
+            "functionSelector": "edf1a21f",
+            "id": 216,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "getFundingState",
+            "nameLocation": "1601:15:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 211,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "1616:2:2"
+            },
+            "returnParameters": {
+              "id": 215,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 214,
+                  "mutability": "mutable",
+                  "name": "",
+                  "nameLocation": "-1:-1:-1",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 216,
+                  "src": "1642:19:2",
+                  "stateVariable": false,
+                  "storageLocation": "memory",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_struct$_FundingState_$156_memory_ptr",
+                    "typeString": "struct IvAMM.FundingState"
+                  },
+                  "typeName": {
+                    "id": 213,
+                    "nodeType": "UserDefinedTypeName",
+                    "pathNode": {
+                      "id": 212,
+                      "name": "FundingState",
+                      "nameLocations": [
+                        "1642:12:2"
+                      ],
+                      "nodeType": "IdentifierPath",
+                      "referencedDeclaration": 156,
+                      "src": "1642:12:2"
+                    },
+                    "referencedDeclaration": 156,
+                    "src": "1642:12:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_struct$_FundingState_$156_storage_ptr",
+                      "typeString": "struct IvAMM.FundingState"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1641:21:2"
+            },
+            "scope": 243,
+            "src": "1592:71:2",
+            "stateMutability": "view",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 217,
+              "nodeType": "StructuredDocumentation",
+              "src": "1669:64:2",
+              "text": " @dev Calculates unrealized PnL for a position"
+            },
+            "functionSelector": "544305bf",
+            "id": 224,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "getUnrealizedPnL",
+            "nameLocation": "1747:16:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 220,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 219,
+                  "mutability": "mutable",
+                  "name": "user",
+                  "nameLocation": "1772:4:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 224,
+                  "src": "1764:12:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_address",
+                    "typeString": "address"
+                  },
+                  "typeName": {
+                    "id": 218,
+                    "name": "address",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1764:7:2",
+                    "stateMutability": "nonpayable",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_address",
+                      "typeString": "address"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1763:14:2"
+            },
+            "returnParameters": {
+              "id": 223,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 222,
+                  "mutability": "mutable",
+                  "name": "",
+                  "nameLocation": "-1:-1:-1",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 224,
+                  "src": "1801:6:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_int256",
+                    "typeString": "int256"
+                  },
+                  "typeName": {
+                    "id": 221,
+                    "name": "int256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1801:6:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_int256",
+                      "typeString": "int256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1800:8:2"
+            },
+            "scope": 243,
+            "src": "1738:71:2",
+            "stateMutability": "view",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 225,
+              "nodeType": "StructuredDocumentation",
+              "src": "1815:57:2",
+              "text": " @dev Gets the price impact for a trade"
+            },
+            "functionSelector": "d2e7b978",
+            "id": 234,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "getPriceImpact",
+            "nameLocation": "1886:14:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 230,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 227,
+                  "mutability": "mutable",
+                  "name": "size",
+                  "nameLocation": "1909:4:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 234,
+                  "src": "1901:12:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 226,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1901:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                },
+                {
+                  "constant": false,
+                  "id": 229,
+                  "mutability": "mutable",
+                  "name": "isLong",
+                  "nameLocation": "1920:6:2",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 234,
+                  "src": "1915:11:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_bool",
+                    "typeString": "bool"
+                  },
+                  "typeName": {
+                    "id": 228,
+                    "name": "bool",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1915:4:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_bool",
+                      "typeString": "bool"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1900:27:2"
+            },
+            "returnParameters": {
+              "id": 233,
+              "nodeType": "ParameterList",
+              "parameters": [
+                {
+                  "constant": false,
+                  "id": 232,
+                  "mutability": "mutable",
+                  "name": "",
+                  "nameLocation": "-1:-1:-1",
+                  "nodeType": "VariableDeclaration",
+                  "scope": 234,
+                  "src": "1951:7:2",
+                  "stateVariable": false,
+                  "storageLocation": "default",
+                  "typeDescriptions": {
+                    "typeIdentifier": "t_uint256",
+                    "typeString": "uint256"
+                  },
+                  "typeName": {
+                    "id": 231,
+                    "name": "uint256",
+                    "nodeType": "ElementaryTypeName",
+                    "src": "1951:7:2",
+                    "typeDescriptions": {
+                      "typeIdentifier": "t_uint256",
+                      "typeString": "uint256"
+                    }
+                  },
+                  "visibility": "internal"
+                }
+              ],
+              "src": "1950:9:2"
+            },
+            "scope": 243,
+            "src": "1877:83:2",
+            "stateMutability": "view",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 235,
+              "nodeType": "StructuredDocumentation",
+              "src": "1966:47:2",
+              "text": " @dev Emergency pause trading"
+            },
+            "functionSelector": "8456cb59",
+            "id": 238,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "pause",
+            "nameLocation": "2027:5:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 236,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "2032:2:2"
+            },
+            "returnParameters": {
+              "id": 237,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "2043:0:2"
+            },
+            "scope": 243,
+            "src": "2018:26:2",
+            "stateMutability": "nonpayable",
+            "virtual": false,
+            "visibility": "external"
+          },
+          {
+            "documentation": {
+              "id": 239,
+              "nodeType": "StructuredDocumentation",
+              "src": "2050:38:2",
+              "text": " @dev Resume trading"
+            },
+            "functionSelector": "3f4ba83a",
+            "id": 242,
+            "implemented": false,
+            "kind": "function",
+            "modifiers": [],
+            "name": "unpause",
+            "nameLocation": "2102:7:2",
+            "nodeType": "FunctionDefinition",
+            "parameters": {
+              "id": 240,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "2109:2:2"
+            },
+            "returnParameters": {
+              "id": 241,
+              "nodeType": "ParameterList",
+              "parameters": [],
+              "src": "2120:0:2"
+            },
+            "scope": 243,
+            "src": "2093:28:2",
+            "stateMutability": "nonpayable",
+            "virtual": false,
+            "visibility": "external"
+          }
+        ],
+        "scope": 244,
+        "src": "139:1984:2",
+        "usedErrors": [],
+        "usedEvents": []
+      }
+    ],
+    "src": "32:2092:2"
+  },
+  "compiler": {
+    "name": "solc",
+    "version": "0.8.20+commit.a1b79de6.Emscripten.clang"
+  },
+  "networks": {},
+  "schemaVersion": "3.4.16",
+  "updatedAt": "2025-07-10T16:59:14.173Z",
+  "devdoc": {
+    "details": "Interface for the virtual Automated Market Maker",
+    "kind": "dev",
+    "methods": {
+      "closePosition(uint256,uint256,uint256)": {
+        "details": "Closes a position partially or fully"
+      },
+      "getFundingRate()": {
+        "details": "Gets current funding rate"
+      },
+      "getFundingState()": {
+        "details": "Gets funding state"
+      },
+      "getMarkPrice()": {
+        "details": "Gets current mark price"
+      },
+      "getPosition(address)": {
+        "details": "Gets position data for a user"
+      },
+      "getPriceImpact(uint256,bool)": {
+        "details": "Gets the price impact for a trade"
+      },
+      "getUnrealizedPnL(address)": {
+        "details": "Calculates unrealized PnL for a position"
+      },
+      "openPosition(uint256,bool,uint256,uint256,uint256)": {
+        "details": "Opens or modifies a position"
+      },
+      "pause()": {
+        "details": "Emergency pause trading"
+      },
+      "unpause()": {
+        "details": "Resume trading"
+      },
+      "updateFunding()": {
+        "details": "Updates funding rate"
+      }
+    },
+    "title": "IvAMM",
+    "version": 1
+  },
+  "userdoc": {
+    "kind": "user",
+    "methods": {},
+    "version": 1
+  }
+}

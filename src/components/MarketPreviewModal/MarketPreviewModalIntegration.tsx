@@ -65,7 +65,11 @@ const MarketPreviewModalIntegration: React.FC = () => {
           currency={selectedProduct.currency}
           description={selectedProduct.subtitle || 'High-quality design templates perfect for your next project. Created by professional designers with attention to detail and modern aesthetics.'}
           category="Digital Product"
-          templates={mockTemplates}
+          templates={mockTemplates.map(t => ({
+            id: t.id,
+            title: t.title,
+            image: t.image ?? ''
+          }))}
           onGoToProduct={handleGoToProduct}
         />
       )}

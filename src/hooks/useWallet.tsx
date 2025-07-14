@@ -12,8 +12,10 @@ import {
   removeListeners,
   getBalance,
   generateAvatar,
+  diagnoseWalletIssues,
 } from '@/lib/wallet'
 import { fetchWalletPortfolio } from '@/lib/tokenService'
+import { ProfileApi } from '@/lib/profileApi'
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined)
 
@@ -29,6 +31,7 @@ const initialWalletData: WalletData = {
   chainId: null,
   ensName: null,
   avatar: null,
+  userProfile: null,
 }
 
 const initialPortfolio: WalletPortfolio = {
@@ -62,15 +65,62 @@ export function WalletProvider({ children }: WalletProviderProps) {
   // Define a stable refreshBalance function that doesn't depend on walletData.address
   const refreshBalance = useCallback(async (): Promise<void> => {
     const address = currentAddressRef.current
+    if (!address) {
+      console.warn('No address available for balance refresh')
+      return
+    }
+
+    try {
+      console.log('Refreshing balance for:', address)
+      const balance = await getBalance(address)
+      setWalletData(prev => ({ ...prev, balance }))
+      console.log('Balance refreshed successfully:', balance)
+    } catch (error) {
+      console.error('Error refreshing balance:', error)
+      
+      // Run diagnostics if balance fetch fails repeatedly
+      console.log('Running diagnostics due to balance fetch failure...')
+      await diagnoseWalletIssues()
+      
+      // Set balance to '0' on error to prevent UI issues
+      setWalletData(prev => ({ ...prev, balance: '0' }))
+    }
+  }, []) // No dependencies to avoid infinite loops
+
+  // Create or get user profile for connected wallet
+  const createOrGetUserProfile = useCallback(async (walletAddress: string): Promise<void> => {
+    try {
+      console.log('Creating/getting user profile for:', walletAddress)
+      const userProfile = await ProfileApi.createOrGetProfile(walletAddress)
+      
+      setWalletData(prev => ({ 
+        ...prev, 
+        userProfile 
+      }))
+      
+      console.log('User profile created/retrieved:', userProfile)
+    } catch (error) {
+      console.error('Error creating/getting user profile:', error)
+      // Don't throw error - profile creation failure shouldn't prevent wallet connection
+      // User can create profile later through the settings page
+    }
+  }, [])
+
+  // Refresh user profile data
+  const refreshProfile = useCallback(async (): Promise<void> => {
+    const address = currentAddressRef.current
     if (!address) return
 
     try {
-      const balance = await getBalance(address)
-      setWalletData(prev => ({ ...prev, balance }))
+      const userProfile = await ProfileApi.getProfile(address)
+      setWalletData(prev => ({ 
+        ...prev, 
+        userProfile 
+      }))
     } catch (error) {
-      console.error('Error refreshing balance:', error)
+      console.error('Error refreshing user profile:', error)
     }
-  }, []) // No dependencies to avoid infinite loops
+  }, [])
 
   // Initialize wallet providers and check for existing connection
   useEffect(() => {
@@ -84,6 +134,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
         const existingConnection = await checkConnection()
         if (existingConnection) {
           setWalletData(existingConnection)
+          
+          // If wallet is already connected, also load the user profile
+          if (existingConnection.address) {
+            await createOrGetUserProfile(existingConnection.address)
+          }
         }
       } catch (error) {
         console.error('Error initializing wallet:', error)
@@ -123,17 +178,35 @@ export function WalletProvider({ children }: WalletProviderProps) {
     const handleAccountsChanged = async (accounts: string[]) => {
       if (accounts.length === 0) {
         // Wallet disconnected
+        console.log('Wallet disconnected - accounts changed to empty')
         setWalletData(initialWalletData)
       } else {
         // Account changed
         const address = accounts[0]
-        const balance = await getBalance(address)
+        console.log('Account changed to:', address)
+        
+        let balance = '0'
+        try {
+          balance = await getBalance(address)
+        } catch (error) {
+          console.error('Error getting balance for new account:', error)
+          // Continue with balance as '0' rather than failing completely
+        }
+        
         setWalletData(prev => ({
           ...prev,
           address,
           balance,
           avatar: generateAvatar(address),
         }))
+        
+        // Load user profile for the new account
+        try {
+          await createOrGetUserProfile(address)
+        } catch (error) {
+          console.error('Error loading user profile for new account:', error)
+          // Profile loading failure shouldn't prevent account switching
+        }
       }
     }
 
@@ -160,35 +233,66 @@ export function WalletProvider({ children }: WalletProviderProps) {
     setWalletData(prev => ({ ...prev, isConnecting: true }))
 
     try {
+      console.log('Attempting to connect wallet:', providerName || 'auto-detect')
+      
       let targetProvider: WalletProvider | undefined
       
       if (providerName) {
         targetProvider = providers.find(p => p.name === providerName)
+        if (!targetProvider) {
+          console.error('Requested provider not found:', providerName)
+          console.log('Available providers:', providers.map(p => p.name))
+        }
       } else {
         // Use first available provider
         targetProvider = providers.find(p => p.isInstalled)
+        console.log('Auto-selected provider:', targetProvider?.name)
       }
 
       if (!targetProvider) {
+        console.error('No wallet provider available')
+        console.log('Available providers:', providers.length)
+        console.log('Installed providers:', providers.filter(p => p.isInstalled).map(p => p.name))
+        
+        // Run diagnostics to help user understand the issue
+        await diagnoseWalletIssues()
         throw new Error('No wallet provider available')
       }
 
       if (!targetProvider.isInstalled) {
+        console.error(`${targetProvider.name} is not installed`)
         throw new Error(`${targetProvider.name} is not installed`)
       }
 
+      console.log('Connecting to:', targetProvider.name)
       await targetProvider.connect()
       
       // Re-check connection to get updated data
+      console.log('Verifying connection...')
       const connection = await checkConnection()
       if (connection) {
         setWalletData(connection)
         
         // Store connection preference
         localStorage.setItem('walletProvider', targetProvider.name)
+        
+        // Create or get user profile for the connected wallet
+        if (connection.address) {
+          await createOrGetUserProfile(connection.address)
+        }
+        
+        console.log('Wallet connected successfully:', connection.address)
+      } else {
+        console.error('Connection verification failed')
+        throw new Error('Connection verification failed')
       }
     } catch (error: unknown) {
       console.error('Connection error:', error)
+      
+      // Run diagnostics on connection failure
+      console.log('Running diagnostics due to connection failure...')
+      await diagnoseWalletIssues()
+      
       setWalletData(prev => ({ ...prev, isConnecting: false }))
       throw error
     }
@@ -240,6 +344,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
     disconnect,
     refreshBalance,
     refreshPortfolio,
+    refreshProfile,
     formatAddress,
     formatBalance,
   }

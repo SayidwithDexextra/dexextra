@@ -57,7 +57,7 @@ function generateMockTokenData(symbol: string): TokenData {
 
   // Map common token symbols to names and chains
   const tokenMap: Record<string, { name: string; chain: string; logo?: string }> = {
-    'BTC': { name: 'Bitcoin', chain: 'BITCOIN', logo: '/bitcoin.png' },
+    'BTC': { name: 'Bitcoin', chain: 'BITCOIN', logo: 'https://assets.coingecko.com/coins/images/1/standard/bitcoin.png?1696501400' },
     'ETH': { name: 'Ethereum', chain: 'ETHEREUM', logo: '/ethereum.png' },
     'SOL': { name: 'Solana', chain: 'SOLANA', logo: '/solana.png' },
     'USDC': { name: 'USD Coin', chain: 'ETHEREUM', logo: '/usdc.png' },

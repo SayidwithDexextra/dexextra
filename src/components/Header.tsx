@@ -6,9 +6,9 @@ import SearchModal from './SearchModal'
 
 // Search Icon Component
 const SearchIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
-    <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="11" cy="11" r="8" stroke="#ffffff" strokeWidth="2"/>
+    <path d="m21 21-4.35-4.35" stroke="#ffffff" strokeWidth="2" strokeLinecap="round"/>
   </svg>
 )
 
@@ -49,8 +49,8 @@ export default function Header() {
         <div className="flex items-center flex-1 max-w-xl">
           <div className="relative w-full max-w-sm">
             <div 
-              className="absolute left-2.5 top-1/2 transform -translate-y-1/2"
-              style={{ color: '#666666' }}
+              className="absolute left-3 top-1/2 transform -translate-y-1/2 z-10 pointer-events-none"
+              style={{ color: '#ffffff' }}
             >
               <SearchIcon />
             </div>
@@ -60,13 +60,13 @@ export default function Header() {
               value=""
               readOnly
               onClick={() => setIsSearchModalOpen(true)}
-              className="w-full pl-8 pr-10 py-1.5 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer"
+              className="w-full pl-10 pr-12 py-2 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer"
               style={{
-                height: '32px',
+                height: '40px',
                 backgroundColor: '#2a2a2a',
                 borderColor: '#444444',
                 color: '#ffffff',
-                fontSize: '13px',
+                fontSize: '14px',
                 minWidth: '240px'
               }}
               onMouseEnter={(e) => {
@@ -81,7 +81,7 @@ export default function Header() {
               }}
             />
             <div 
-              className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-xs px-1.5 py-0.5 rounded"
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs px-1.5 py-0.5 rounded"
               style={{
                 color: '#666666',
                 backgroundColor: 'rgba(255, 255, 255, 0.08)',

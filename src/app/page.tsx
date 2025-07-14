@@ -1,18 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import CryptoMarketTicker from '@/components/CryptoMarketTicker/CryptoMarketTicker';
 import Hero from '@/components/Hero/Hero';
 import Widget from '@/components/widgets/Widget';
 import { ProductCard, ProductCardData } from '@/components/ProductCard';
 import { MarketPreviewModal } from '@/components/MarketPreviewModal';
+import MarketTickerCardContainer from '@/components/MarketTickerCard/MarketTickerCardContainer';
+import { MarketTickerCardData } from '@/components/MarketTickerCard/types';
+import { useVAMMMarkets, VAMMMarket } from '@/hooks/useVAMMMarkets';
+import { useRecentEvents } from '@/hooks/useRecentEvents'
 
 export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductCardData | null>(null);
 
+  // Fetch vAMM markets from Supabase
+  const { markets, isLoading: marketsLoading, error: marketsError } = useVAMMMarkets({
+    limit: 6,
+    status: 'deployed' // Only show successfully deployed markets
+  });
+
+  // Fetch recent blockchain events
+  const { events: recentEvents, isLoading: eventsLoading, error: eventsError } = useRecentEvents(2)
+
+
   const heroData = {
-    title: "DexExtra",
+    title: "DexEtra",
     author: "Trading Platform",
     isVerified: true,
     stats: {
@@ -39,7 +53,7 @@ export default function Home() {
       author: 'Dmytri Ivanov',
       price: 69,
       currency: 'USD',
-      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhaam5seGdodmVtdmg5MzF5c3phdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
+      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhaam5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
       href: '/product/ainest-framer-template',
     },
     {
@@ -49,19 +63,32 @@ export default function Home() {
       author: 'Shaig',
       price: 79,
       currency: 'USD',
-      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhham5seGdodmVtdmg5MzF5c3phdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
+      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhaam5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
       href: '/product/zentro-agency-template',
     },
   ];
 
   // Mock templates for the modal
   const mockTemplates = [
-    { id: '1', title: 'Template 1', image: null },
-    { id: '2', title: 'Template 2', image: null },
-    { id: '3', title: 'Template 3', image: null },
-    { id: '4', title: 'Template 4', image: null },
-    { id: '5', title: 'Template 5', image: null },
+    { id: '1', title: 'Template 1', image: '/placeholder-template.png' },
+    { id: '2', title: 'Template 2', image: '/placeholder-template.png' },
+    { id: '3', title: 'Template 3', image: '/placeholder-template.png' },
+    { id: '4', title: 'Template 4', image: '/placeholder-template.png' },
+    { id: '5', title: 'Template 5', image: '/placeholder-template.png' },
   ];
+
+  // Transform vAMM markets to MarketTickerCardData format
+  const transformMarketToCardData = (market: VAMMMarket): MarketTickerCardData => ({
+    id: market.id,
+    title: market.symbol,
+    categories: Array.isArray(market.category) ? market.category : [market.category],
+    price: market.initial_price,
+    currency: '$',
+    imageUrl: market.icon_image_url || market.banner_image_url || '/placeholder-market.svg',
+    imageAlt: `${market.symbol} market icon`,
+  });
+
+  const marketCardData: MarketTickerCardData[] = markets.map(transformMarketToCardData);
 
   const handleViewMarket = (productData: ProductCardData) => {
     setSelectedProduct(productData);
@@ -80,6 +107,24 @@ export default function Home() {
     handleCloseModal();
   };
 
+  const handleMarketCardViewProduct = (cardId: string) => {
+    const market = markets.find(m => m.id === cardId);
+    if (market) {
+      // Navigate to token page with "long" intent
+      window.location.href = `/token/${market.symbol}?action=long`;
+    }
+  };
+
+  const handleMarketCardViewDemo = (cardId: string) => {
+    const market = markets.find(m => m.id === cardId);
+    if (market) {
+      // Navigate to token page with "short" intent
+      window.location.href = `/token/${market.symbol}?action=short`;
+    }
+  };
+
+
+
   return (
     <>
       {/* Crypto Market Ticker with proper container */}
@@ -88,10 +133,46 @@ export default function Home() {
       </div>
       
       <Hero data={heroData} />
-      
+
+
+
       <div className="flex justify-center py-8">
         <Widget />
       </div>
+      
+      {/* vAMM Markets Section */}
+      {marketsError ? (
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+          <div className="max-w-7xl mx-auto text-center">
+            <p className="text-red-500">Error loading markets: {marketsError}</p>
+          </div>
+        </div>
+      ) : marketsLoading ? (
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+          <div className="max-w-7xl mx-auto text-center">
+            <p className="text-white">Loading markets... ({markets.length} found so far)</p>
+          </div>
+        </div>
+      ) : marketCardData.length > 0 ? (
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+          <div className="max-w-7xl mx-auto">
+            <MarketTickerCardContainer
+              title="Active Markets"
+              cards={marketCardData}
+              onCardViewProduct={handleMarketCardViewProduct}
+              onCardViewDemo={handleMarketCardViewDemo}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
+          <div className="max-w-7xl mx-auto text-center">
+            <p className="text-gray-400">No markets found. Try creating one!</p>
+          </div>
+        </div>
+      )}
+      
+   
 
       <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
         <div className="max-w-7xl mx-auto">

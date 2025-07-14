@@ -9,10 +9,34 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_URL: z.string().url().default('http://localhost:3000'),
 
-  // Supabase
-  SUPABASE_URL: z.string().url().default('https://placeholder.supabase.co'),
-  SUPABASE_ANON_KEY: z.string().min(1).default('placeholder-anon-key'),
+  // Supabase (Server-side)
+  SUPABASE_URL: z.string().url().default('https://khhknmobkkkvvogznxdj.supabase.co'),
+  SUPABASE_ANON_KEY: z.string().min(1).default('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtoaGtubW9ia2trdnZvZ3pueGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTEzODYyNjcsImV4cCI6MjA2Njk2MjI2N30.vt_7kDR-6IrDYqdrMTzCo5NyFXYZQU-X_OwEtOP1u24'),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+
+  // Supabase (Client-side - prefixed with NEXT_PUBLIC_)
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url().default('https://khhknmobkkkvvogznxdj.supabase.co'),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).default('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtoaGtubW9ia2trdnZvZ3pueGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTEzODYyNjcsImV4cCI6MjA2Njk2MjI2N30.vt_7kDR-6IrDYqdrMTzCo5NyFXYZQU-X_OwEtOP1u24'),
+
+  // Blockchain Configuration
+  RPC_URL: z.string().url().default('https://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm'),
+  WS_RPC_URL: z.string().url().default('wss://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm'),
+  CHAIN_ID: z.string().transform(Number).default('137'), // Default to Polygon Mainnet
+  
+  // Network Configuration
+  DEFAULT_NETWORK: z.string().default('polygon'), // polygon, ethereum, mumbai, sepolia, hardhat
+
+  // Contract Addresses (will be populated after deployment)
+  VAMM_FACTORY_ADDRESS: z.string().optional(),
+  MOCK_USDC_ADDRESS: z.string().optional(),
+  MOCK_ORACLE_ADDRESS: z.string().optional(),
+
+  // Event Listener Configuration
+  EVENT_LISTENER_ENABLED: z.string().transform((val) => val === 'true').default('true'),
+  EVENT_BATCH_SIZE: z.string().transform(Number).default('400'),
+  EVENT_CONFIRMATIONS: z.string().transform(Number).default('1'),
+  EVENT_RETRY_ATTEMPTS: z.string().transform(Number).default('3'),
+  EVENT_RETRY_DELAY: z.string().transform(Number).default('5000'),
 
   // Database (if using)
   DATABASE_URL: z.string().optional(),
@@ -39,9 +63,30 @@ const envSchema = z.object({
 const processEnv = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   APP_URL: process.env.APP_URL || 'http://localhost:3000',
-  SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
+  SUPABASE_URL: process.env.SUPABASE_URL || 'https://khhknmobkkkvvogznxdj.supabase.co',
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'placeholder-anon-key',
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || 'https://khhknmobkkkvvogznxdj.supabase.co',
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'placeholder-anon-key',
+  
+  // Blockchain
+  RPC_URL: process.env.RPC_URL || 'https://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm',
+  WS_RPC_URL: process.env.WS_RPC_URL || 'wss://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm',
+  CHAIN_ID: process.env.CHAIN_ID || '137',
+  DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'polygon',
+  
+  // Contracts
+  VAMM_FACTORY_ADDRESS: process.env.VAMM_FACTORY_ADDRESS,
+  MOCK_USDC_ADDRESS: process.env.MOCK_USDC_ADDRESS,
+  MOCK_ORACLE_ADDRESS: process.env.MOCK_ORACLE_ADDRESS,
+  
+  // Event Listener
+  EVENT_LISTENER_ENABLED: process.env.EVENT_LISTENER_ENABLED || 'true',
+  EVENT_BATCH_SIZE: process.env.EVENT_BATCH_SIZE || '400',
+  EVENT_CONFIRMATIONS: process.env.EVENT_CONFIRMATIONS || '1',
+  EVENT_RETRY_ATTEMPTS: process.env.EVENT_RETRY_ATTEMPTS || '3',
+  EVENT_RETRY_DELAY: process.env.EVENT_RETRY_DELAY || '5000',
+  
   DATABASE_URL: process.env.DATABASE_URL,
   AUTH_SECRET: process.env.AUTH_SECRET || 'dev-secret-key-change-in-production',
   AUTH_EXPIRES_IN: process.env.AUTH_EXPIRES_IN || '7d',
@@ -76,24 +121,95 @@ const requiredVars = {
     'AUTH_SECRET',
     'SUPABASE_URL',
     'SUPABASE_ANON_KEY',
+    'NEXT_PUBLIC_SUPABASE_URL',
+    'NEXT_PUBLIC_SUPABASE_ANON_KEY',
     'API_KEY',
     'API_URL',
-    // Note: ALCHEMY_API_KEY is optional even in production
+    'RPC_URL',
+    // Note: Contract addresses and other blockchain vars are optional but recommended in production
   ],
 }
 
-const missingVars = requiredVars[parsed.data.NODE_ENV as keyof typeof requiredVars]
-  .filter((key) => !parsed.data[key as keyof typeof parsed.data])
+const currentEnv = parsed.data.NODE_ENV
+const missingRequiredVars = requiredVars[currentEnv].filter(
+  (varName) => !parsed.data[varName as keyof typeof parsed.data]
+)
 
-if (missingVars.length > 0) {
+if (missingRequiredVars.length > 0 && currentEnv === 'production') {
   console.error(
-    `❌ Missing required environment variables for ${parsed.data.NODE_ENV}:`,
-    missingVars.join(', ')
+    `❌ Missing required environment variables for ${currentEnv}:`,
+    missingRequiredVars
   )
-  throw new Error('Missing required environment variables')
+  throw new Error(`Missing required environment variables: ${missingRequiredVars.join(', ')}`)
 }
 
 /**
- * Export validated environment variables
+ * Validated environment variables with proper types
  */
-export const env = parsed.data 
+export const env = parsed.data
+
+/**
+ * Helper function to get contract configuration from environment
+ */
+export function getContractConfig() {
+  const contracts = []
+  
+  if (env.VAMM_FACTORY_ADDRESS) {
+    contracts.push({
+      address: env.VAMM_FACTORY_ADDRESS,
+      abi: [], // Will be populated by the event listener
+      name: 'vAMM Factory',
+      type: 'Factory' as const,
+      startBlock: 0, // Start from deployment block
+    })
+  }
+  
+  if (env.MOCK_USDC_ADDRESS) {
+    contracts.push({
+      address: env.MOCK_USDC_ADDRESS,
+      abi: [],
+      name: 'Mock USDC',
+      type: 'Token' as const,
+      startBlock: 0,
+    })
+  }
+  
+  if (env.MOCK_ORACLE_ADDRESS) {
+    contracts.push({
+      address: env.MOCK_ORACLE_ADDRESS,
+      abi: [],
+      name: 'Mock Oracle',
+      type: 'Oracle' as const,
+      startBlock: 0,
+    })
+  }
+  
+  return contracts
+}
+
+/**
+ * Get event listener configuration from environment
+ */
+export function getEventListenerConfig() {
+  return {
+    rpcUrl: env.RPC_URL,
+    wsRpcUrl: env.WS_RPC_URL,
+    contracts: getContractConfig(),
+    batchSize: env.EVENT_BATCH_SIZE,
+    confirmations: env.EVENT_CONFIRMATIONS,
+    retryAttempts: env.EVENT_RETRY_ATTEMPTS,
+    retryDelay: env.EVENT_RETRY_DELAY,
+  }
+}
+
+console.log('✅ Environment variables validated successfully')
+
+if (env.DEBUG_MODE) {
+  console.log('🐛 Debug mode enabled')
+  console.log('📋 Environment configuration:')
+  console.log('  - NODE_ENV:', env.NODE_ENV)
+  console.log('  - RPC_URL:', env.RPC_URL)
+  console.log('  - CHAIN_ID:', env.CHAIN_ID)
+  console.log('  - Event Listener Enabled:', env.EVENT_LISTENER_ENABLED)
+  console.log('  - Contracts configured:', getContractConfig().length)
+} 

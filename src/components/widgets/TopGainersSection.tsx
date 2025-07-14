@@ -11,7 +11,7 @@ const TopGainersSection: React.FC = () => {
     <div className={styles.card}>
       <SectionHeader 
         icon="🚀" 
-        title="Top Gainers" 
+        title="Top Volume" 
         viewMoreLink="/top-gainers"
       />
       <div className="flex flex-col gap-3">

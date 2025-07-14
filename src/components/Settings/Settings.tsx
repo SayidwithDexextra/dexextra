@@ -1,13 +1,17 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Image from 'next/image'
+import { useWallet } from '@/hooks/useWallet'
+import { ProfileApi } from '@/lib/profileApi'
+import { formDataToUserProfile, userProfileToFormData } from '@/types/userProfile'
 
 export interface SettingsProps {
   className?: string
 }
 
 export default function Settings({ className }: SettingsProps) {
+  const { walletData, refreshProfile } = useWallet()
   const [formData, setFormData] = useState({
     username: '',
     name: '',
@@ -21,25 +25,171 @@ export default function Settings({ className }: SettingsProps) {
   })
 
   const [profileImage, setProfileImage] = useState<string | null>(null)
+  const [bannerImage, setBannerImage] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
+
+  // Load user profile data when wallet connects or component mounts
+  useEffect(() => {
+    if (walletData.userProfile) {
+      // Convert profile data to form data
+      setFormData({
+        username: walletData.userProfile.username || '',
+        name: walletData.userProfile.display_name || '',
+        bio: walletData.userProfile.bio || '',
+        email: '', // Not available in public profile
+        website: walletData.userProfile.website || '',
+        twitter: walletData.userProfile.twitter_url || '',
+        discord: walletData.userProfile.discord_url || '',
+        instagram: walletData.userProfile.instagram_url || '',
+        youtube: walletData.userProfile.youtube_url || '',
+      })
+      setProfileImage(walletData.userProfile.profile_image_url || null)
+      setBannerImage(walletData.userProfile.banner_image_url || null)
+    } else if (walletData.isConnected && walletData.address) {
+      // If wallet is connected but no profile data, try to refresh it
+      refreshProfile()
+    }
+  }, [walletData.userProfile, walletData.isConnected, walletData.address, refreshProfile])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'profile' | 'banner' = 'profile') => {
     const file = e.target.files?.[0]
-    if (file) {
+    if (!file || !walletData.address) {
+      return
+    }
+
+    // Validate file immediately
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (!allowedTypes.includes(file.type)) {
+      alert('Invalid file type. Please select a JPEG, PNG, GIF, or WebP image.')
+      return
+    }
+
+    const maxSize = 10 * 1024 * 1024 // 10MB
+    if (file.size > maxSize) {
+      alert('File too large. Please select an image smaller than 10MB.')
+      return
+    }
+
+    setIsLoading(true)
+    
+    try {
+      // Show preview immediately using FileReader
       const reader = new FileReader()
       reader.onload = (e) => {
-        setProfileImage(e.target?.result as string)
+        const imageUrl = e.target?.result as string
+        if (type === 'profile') {
+          setProfileImage(imageUrl)
+        } else {
+          setBannerImage(imageUrl)
+        }
       }
       reader.readAsDataURL(file)
+
+      // Upload to server
+      const result = await ProfileApi.uploadImage(walletData.address, file, type)
+      
+      // Update with actual uploaded URL
+      if (type === 'profile') {
+        setProfileImage(result.imageUrl)
+      } else {
+        setBannerImage(result.imageUrl)
+      }
+
+      // Refresh profile data
+      await refreshProfile()
+      
+      console.log(`${type} image uploaded successfully:`, result.imageUrl)
+    } catch (error) {
+      console.error('Error uploading image:', error)
+      alert(`Failed to upload ${type} image. Please try again.`)
+      
+      // Reset to previous state on error
+      if (type === 'profile') {
+        setProfileImage(walletData.userProfile?.profile_image_url || null)
+      } else {
+        setBannerImage(walletData.userProfile?.banner_image_url || null)
+      }
+    } finally {
+      setIsLoading(false)
+      // Clear the input so the same file can be selected again
+      e.target.value = ''
     }
   }
 
-  const handleSave = () => {
-    console.log('Settings saved:', formData)
+  const handleRemoveImage = async (type: 'profile' | 'banner' = 'profile') => {
+    if (!walletData.address) {
+      return
+    }
+
+    setIsLoading(true)
+    
+    try {
+      await ProfileApi.removeImage(walletData.address, type)
+      
+      // Update UI
+      if (type === 'profile') {
+        setProfileImage(null)
+      } else {
+        setBannerImage(null)
+      }
+
+      // Refresh profile data
+      await refreshProfile()
+      
+      console.log(`${type} image removed successfully`)
+    } catch (error) {
+      console.error('Error removing image:', error)
+      alert(`Failed to remove ${type} image. Please try again.`)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!walletData.isConnected || !walletData.address) {
+      alert('Please connect your wallet first')
+      return
+    }
+
+    setSaveStatus('saving')
+    setIsLoading(true)
+
+    try {
+      // Convert form data to update request format
+      const updateData = formDataToUserProfile(
+        formData,
+        walletData.address,
+        profileImage || undefined,
+        bannerImage || undefined
+      )
+
+      // Update profile via API
+      await ProfileApi.updateProfile(walletData.address, updateData)
+      
+      // Refresh the profile data in wallet context
+      await refreshProfile()
+      
+      setSaveStatus('success')
+      console.log('Profile updated successfully!')
+      
+      // Clear success status after 3 seconds
+      setTimeout(() => setSaveStatus('idle'), 3000)
+    } catch (error) {
+      console.error('Error saving profile:', error)
+      setSaveStatus('error')
+      alert('Failed to save profile. Please try again.')
+      
+      // Clear error status after 5 seconds
+      setTimeout(() => setSaveStatus('idle'), 5000)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -57,12 +207,44 @@ export default function Settings({ className }: SettingsProps) {
             <h2 className="section-title">Enter your details</h2>
             
             <div className="profile-banner">
-              <div className="banner-background">
-                <div className="banner-edit-icon">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="white"/>
-                  </svg>
-                </div>
+              <div className="banner-background" style={{
+                backgroundImage: bannerImage ? `url(${bannerImage})` : undefined,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center'
+              }}>
+                <input
+                  type="file"
+                  id="banner-image"
+                  accept="image/*"
+                  onChange={(e) => handleImageUpload(e, 'banner')}
+                  className="upload-input"
+                  disabled={isLoading}
+                />
+                <label 
+                  htmlFor="banner-image" 
+                  className={`banner-edit-icon ${isLoading ? 'loading' : ''}`}
+                  title="Upload banner image"
+                >
+                  {isLoading ? (
+                    <div className="loading-spinner" />
+                  ) : (
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="white"/>
+                    </svg>
+                  )}
+                </label>
+                {bannerImage && (
+                  <button 
+                    onClick={() => handleRemoveImage('banner')}
+                    className="banner-remove-icon"
+                    title="Remove banner image"
+                    disabled={isLoading}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d="M12 4L4 12M4 4l8 8" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                  </button>
+                )}
               </div>
               <div className="profile-section">
                                   <div className="avatar-wrapper">
@@ -91,8 +273,14 @@ export default function Settings({ className }: SettingsProps) {
                     )}
                   </div>
                 <div className="profile-info">
-                  <h3 className="profile-name">0x60D...2796B</h3>
-                  <p className="profile-address">0x60D...2796B</p>
+                  <h3 className="profile-name">
+                    {walletData.userProfile?.display_name || 
+                     walletData.userProfile?.username || 
+                     (walletData.address ? `${walletData.address.slice(0, 6)}...${walletData.address.slice(-6)}` : 'Not Connected')}
+                  </h3>
+                  <p className="profile-address">
+                    {walletData.address ? `${walletData.address.slice(0, 6)}...${walletData.address.slice(-6)}` : 'Please connect wallet'}
+                  </p>
                 </div>
               </div>
             </div>
@@ -141,30 +329,54 @@ export default function Settings({ className }: SettingsProps) {
 
             <div className="upload-section">
               <h3 className="upload-title">Upload a profile image</h3>
-              <p className="upload-description">Recommended 600px x 600px. JPG, PNG, or GIF. Max file size: 2MB</p>
+              <p className="upload-description">Recommended 600px x 600px. JPEG, PNG, GIF, or WebP. Max file size: 10MB</p>
               <div className="upload-area">
                 <input
                   type="file"
                   id="profile-image"
                   accept="image/*"
-                  onChange={handleImageUpload}
+                  onChange={(e) => handleImageUpload(e, 'profile')}
                   className="upload-input"
+                  disabled={isLoading}
                 />
-                <label htmlFor="profile-image" className="upload-button">
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                    <path d="M10 4V16M4 10H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                  Choose Media
+                <label 
+                  htmlFor="profile-image" 
+                  className={`upload-button ${isLoading ? 'loading' : ''}`}
+                  title="Upload profile image"
+                >
+                  {isLoading ? (
+                    <>
+                      <div className="loading-spinner" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 4V16M4 10H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                      Choose Media
+                    </>
+                  )}
                 </label>
                 {profileImage && (
                   <div className="upload-preview">
                     <Image
                       src={profileImage}
-                      alt="Preview"
+                      alt="Profile preview"
                       width={60}
                       height={60}
                       className="preview-image"
                     />
+                    <button 
+                      onClick={() => handleRemoveImage('profile')}
+                      className="remove-image-button"
+                      title="Remove profile image"
+                      disabled={isLoading}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M9 3L3 9M3 3l6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                      </svg>
+                    </button>
                   </div>
                 )}
               </div>
@@ -291,8 +503,15 @@ export default function Settings({ className }: SettingsProps) {
             </div>
 
             <div className="save-section">
-              <button onClick={handleSave} className="save-button">
-                Save
+              <button 
+                onClick={handleSave} 
+                disabled={isLoading || !walletData.isConnected}
+                className={`save-button ${saveStatus === 'saving' ? 'saving' : ''} ${saveStatus === 'success' ? 'success' : ''} ${saveStatus === 'error' ? 'error' : ''}`}
+              >
+                {saveStatus === 'saving' && '⏳ Saving...'}
+                {saveStatus === 'success' && '✅ Saved!'}
+                {saveStatus === 'error' && '❌ Error'}
+                {saveStatus === 'idle' && (walletData.isConnected ? 'Save' : 'Connect Wallet')}
               </button>
             </div>
           </div>
@@ -642,8 +861,18 @@ export default function Settings({ className }: SettingsProps) {
           font-weight: 500;
         }
 
-        .upload-button:hover {
+        .upload-button:hover:not(.loading) {
           background-color: #404040;
+        }
+
+        .upload-button.loading {
+          cursor: not-allowed;
+          opacity: 0.7;
+        }
+
+        .upload-button:disabled {
+          cursor: not-allowed;
+          opacity: 0.5;
         }
 
         .upload-preview {
@@ -652,12 +881,88 @@ export default function Settings({ className }: SettingsProps) {
           border-radius: 0.5rem;
           overflow: hidden;
           border: 1px solid #404040;
+          position: relative;
         }
 
         .preview-image {
           width: 100%;
           height: 100%;
           object-fit: cover;
+        }
+
+        .remove-image-button {
+          position: absolute;
+          top: -8px;
+          right: -8px;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          background-color: #ff4757;
+          border: 2px solid #ffffff;
+          color: #ffffff;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s ease-in-out;
+          z-index: 1;
+        }
+
+        .remove-image-button:hover:not(:disabled) {
+          background-color: #ff3742;
+          transform: scale(1.1);
+        }
+
+        .remove-image-button:disabled {
+          cursor: not-allowed;
+          opacity: 0.5;
+        }
+
+        .banner-remove-icon {
+          position: absolute;
+          top: 1rem;
+          left: 1rem;
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          background-color: rgba(255, 71, 87, 0.9);
+          border: 2px solid rgba(255, 255, 255, 0.9);
+          color: #ffffff;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s ease-in-out;
+          backdrop-filter: blur(10px);
+        }
+
+        .banner-remove-icon:hover:not(:disabled) {
+          background-color: rgba(255, 55, 66, 0.9);
+          transform: scale(1.1);
+        }
+
+        .banner-remove-icon:disabled {
+          cursor: not-allowed;
+          opacity: 0.5;
+        }
+
+        .banner-edit-icon.loading {
+          cursor: not-allowed;
+          opacity: 0.7;
+        }
+
+        .loading-spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid #404040;
+          border-top: 2px solid #00d4aa;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
         }
 
         .notifications-section {
@@ -716,6 +1021,28 @@ export default function Settings({ className }: SettingsProps) {
         .save-button:active {
           background-color: #009973;
           transform: translateY(0);
+        }
+
+        .save-button:disabled {
+          background-color: #404040;
+          color: #666666;
+          cursor: not-allowed;
+          transform: none;
+        }
+
+        .save-button.saving {
+          background-color: #ffa500;
+          color: #000000;
+        }
+
+        .save-button.success {
+          background-color: #00d4aa;
+          color: #000000;
+        }
+
+        .save-button.error {
+          background-color: #ff4757;
+          color: #ffffff;
         }
 
         @media (max-width: 768px) {

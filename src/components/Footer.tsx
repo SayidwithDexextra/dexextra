@@ -202,7 +202,13 @@ const Footer: React.FC = () => {
           {isLoading ? (
             <span style={{ color: '#CCCCCC' }}>Loading...</span>
           ) : error ? (
-            <span style={{ color: '#EF4444' }}>Error</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>${ethPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              <span 
+                style={{ color: '#CCCCCC', fontSize: '10px' }}
+                title="Using approximate price (live data unavailable)"
+              >*</span>
+            </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span>${ethPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>

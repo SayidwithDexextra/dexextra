@@ -1,0 +1,273 @@
+{
+  "designSystem": {
+    "name": "TradingPanelDesign",
+    "version": "2.0.0",
+    "description": "Design system updated to match consistent application styling patterns from TokenHeader and TransactionTable",
+    
+    "colorPalette": {
+      "primary": {
+        "background": "#0A0A0A",
+        "surface": "#1A1A1A", 
+        "surfaceElevated": "#2A2A2A",
+        "border": "#333333",
+        "borderLight": "#1F1F1F"
+      },
+      "semantic": {
+        "success": "#22C55E",
+        "successBg": "rgba(34,197,94,0.1)",
+        "successHover": "#00D084",
+        "danger": "#EF4444",
+        "dangerBg": "rgba(239,68,68,0.1)",
+        "dangerHover": "#FF4747",
+        "info": "#3B82F6",
+        "infoHover": "#2563EB"
+      },
+      "neutral": {
+        "50": "#F8FAFC",
+        "100": "#F1F5F9",
+        "200": "#E2E8F0",
+        "300": "#CBD5E1",
+        "400": "#9CA3AF",
+        "500": "#6B7280",
+        "600": "#475569",
+        "700": "#374151",
+        "800": "#1F2937",
+        "900": "#111827"
+      },
+      "text": {
+        "primary": "#FFFFFF",
+        "secondary": "#9CA3AF",
+        "muted": "#6B7280",
+        "disabled": "#808080"
+      },
+      "hover": {
+        "subtle": "rgba(255,255,255,0.02)",
+        "medium": "rgba(255,255,255,0.05)"
+      }
+    },
+
+    "typography": {
+      "fontFamily": {
+        "primary": "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        "mono": "'JetBrains Mono', 'Fira Code', monospace"
+      },
+      "fontSize": {
+        "xs": "12px",
+        "sm": "14px",
+        "base": "16px",
+        "lg": "18px",
+        "xl": "20px",
+        "2xl": "24px",
+        "3xl": "30px",
+        "4xl": "36px"
+      },
+      "fontWeight": {
+        "normal": "400",
+        "medium": "500",
+        "semibold": "600",
+        "bold": "700"
+      },
+      "lineHeight": {
+        "tight": "1.2",
+        "normal": "1.5",
+        "relaxed": "1.75"
+      }
+    },
+
+    "spacing": {
+      "0": "0px",
+      "1": "4px",
+      "2": "8px",
+      "3": "12px",
+      "4": "16px",
+      "5": "20px",
+      "6": "24px",
+      "8": "32px",
+      "10": "40px",
+      "12": "48px",
+      "16": "64px"
+    },
+
+    "borderRadius": {
+      "none": "0px",
+      "sm": "4px",
+      "md": "8px",
+      "lg": "12px",
+      "xl": "16px",
+      "full": "9999px"
+    },
+
+    "shadows": {
+      "sm": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+      "md": "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+      "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+      "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)"
+    },
+
+    "components": {
+      "tradingPanel": {
+        "container": {
+          "backgroundColor": "#0A0A0A",
+          "borderRadius": "8px",
+          "padding": "12px",
+          "border": "1px solid #333333",
+          "minHeight": "400px",
+          "display": "flex",
+          "flexDirection": "column"
+        },
+        "header": {
+          "marginBottom": "16px"
+        }
+      },
+
+      "tabGroup": {
+        "container": {
+          "display": "flex",
+          "gap": "8px",
+          "marginBottom": "16px"
+        },
+        "tab": {
+          "base": {
+            "padding": "6px 16px",
+            "borderRadius": "8px",
+            "fontSize": "14px",
+            "fontWeight": "600",
+            "cursor": "pointer",
+            "transition": "all 0.15s ease",
+            "border": "none",
+            "outline": "none"
+          },
+          "inactive": {
+            "backgroundColor": "#2A2A2A",
+            "color": "#9CA3AF"
+          },
+          "active": {
+            "backgroundColor": "#22C55E",
+            "color": "#000000"
+          }
+        }
+      },
+
+      "optionButtons": {
+        "container": {
+          "display": "flex",
+          "gap": "8px",
+          "marginBottom": "20px"
+        },
+        "button": {
+          "base": {
+            "flex": "1",
+            "padding": "12px",
+            "borderRadius": "8px",
+            "fontSize": "18px",
+            "fontWeight": "600",
+            "textAlign": "center",
+            "cursor": "pointer",
+            "transition": "all 0.15s ease",
+            "border": "none"
+          },
+          "positive": {
+            "backgroundColor": "#22C55E",
+            "color": "#000000"
+          },
+          "negative": {
+            "backgroundColor": "#1A1A1A",
+            "color": "#9CA3AF"
+          }
+        }
+      },
+
+      "amountSection": {
+        "container": {
+          "marginBottom": "16px"
+        },
+        "label": {
+          "fontSize": "14px",
+          "fontWeight": "500",
+          "color": "#9CA3AF",
+          "marginBottom": "8px",
+          "textTransform": "uppercase"
+        },
+        "display": {
+          "fontSize": "32px",
+          "fontWeight": "700",
+          "color": "#6B7280",
+          "textAlign": "right",
+          "marginBottom": "12px"
+        },
+        "quickButtons": {
+          "container": {
+            "display": "flex",
+            "gap": "6px"
+          },
+          "button": {
+            "backgroundColor": "#1A1A1A",
+            "color": "#9CA3AF",
+            "padding": "6px 12px",
+            "borderRadius": "6px",
+            "fontSize": "12px",
+            "fontWeight": "500",
+            "border": "none",
+            "cursor": "pointer",
+            "transition": "all 0.15s ease"
+          },
+          "buttonHover": {
+            "backgroundColor": "rgba(255,255,255,0.02)",
+            "color": "#FFFFFF"
+          }
+        }
+      },
+
+      "primaryButton": {
+        "base": {
+          "width": "100%",
+          "padding": "12px",
+          "borderRadius": "8px",
+          "fontSize": "16px",
+          "fontWeight": "600",
+          "border": "none",
+          "cursor": "pointer",
+          "transition": "all 0.15s ease",
+          "marginTop": "auto"
+        },
+        "primary": {
+          "backgroundColor": "#3B82F6",
+          "color": "#FFFFFF"
+        },
+        "primaryHover": {
+          "backgroundColor": "#2563EB"
+        },
+        "disabled": {
+          "backgroundColor": "#1A1A1A",
+          "color": "#6B7280",
+          "cursor": "not-allowed"
+        }
+      }
+    },
+
+    "layout": {
+      "container": {
+        "maxWidth": "400px",
+        "margin": "0 auto"
+      },
+      "grid": {
+        "columns": 12,
+        "gap": "16px"
+      }
+    },
+
+    "animations": {
+      "duration": {
+        "fast": "150ms",
+        "normal": "200ms",
+        "slow": "300ms"
+      },
+      "easing": {
+        "default": "cubic-bezier(0.4, 0, 0.2, 1)",
+        "in": "cubic-bezier(0.4, 0, 1, 1)",
+        "out": "cubic-bezier(0, 0, 0.2, 1)",
+        "inOut": "cubic-bezier(0.4, 0, 0.2, 1)"
+      }
+    }
+  }
+} 

@@ -6,7 +6,14 @@ export interface WalletData {
   chainId: number | null
   ensName?: string | null
   avatar?: string | null
+  userProfile?: UserProfile | null
 }
+
+// Import the full UserProfile interface from userProfile types
+import type { PublicUserProfile } from './userProfile'
+
+// Use the PublicUserProfile interface for wallet context
+export type UserProfile = PublicUserProfile
 
 export interface WalletProvider {
   name: string
@@ -60,6 +67,7 @@ export interface WalletContextType {
   disconnect: () => Promise<void>
   refreshBalance: () => Promise<void>
   refreshPortfolio: () => Promise<void>
+  refreshProfile: () => Promise<void>
   formatAddress: (address: string) => string
   formatBalance: (balance: string) => string
 }

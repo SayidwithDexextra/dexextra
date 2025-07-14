@@ -9,17 +9,31 @@ interface ETHPriceData {
   error?: string;
 }
 
+// Fallback data in case of API failures
+const FALLBACK_ETH_DATA = {
+  price: 2965, // Approximate ETH price
+  changePercent24h: 0,
+};
+
 // Fetch ETH price using our API route to avoid CORS issues
 async function fetchETHPrice() {
   try {
-    const response = await fetch('/api/eth-price');
+    const response = await fetch('/api/eth-price', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
     if (!response.ok) {
-      throw new Error('Failed to fetch ETH price');
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
+    
     const data = await response.json();
     
     if (data.error) {
-      throw new Error(data.error);
+      throw new Error(`API error: ${data.error}`);
     }
     
     return {
@@ -27,7 +41,14 @@ async function fetchETHPrice() {
       changePercent24h: data.changePercent24h || 0,
     };
   } catch (error) {
-    console.error('Error fetching ETH price:', error);
+    // Only log detailed errors in development
+    if (process.env.NODE_ENV === 'development') {
+      console.error('ETH Price fetch error:', {
+        error: error instanceof Error ? error.message : error,
+        timestamp: new Date().toISOString(),
+        url: '/api/eth-price'
+      });
+    }
     throw error;
   }
 }
@@ -39,7 +60,7 @@ export const useETHPrice = () => {
     isLoading: true,
   });
 
-  const fetchPrice = useCallback(async () => {
+  const fetchPrice = useCallback(async (retryCount = 0) => {
     try {
       const { price, changePercent24h } = await fetchETHPrice();
       setEthData({
@@ -48,11 +69,22 @@ export const useETHPrice = () => {
         isLoading: false,
       });
     } catch (error) {
-      setEthData(prev => ({
-        ...prev,
+      // Retry up to 3 times with exponential backoff
+      if (retryCount < 3) {
+        const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+        setTimeout(() => fetchPrice(retryCount + 1), delay);
+        return;
+      }
+      
+      // After all retries failed, use fallback data
+      setEthData({
+        price: FALLBACK_ETH_DATA.price,
+        changePercent24h: FALLBACK_ETH_DATA.changePercent24h,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch ETH price',
-      }));
+        error: process.env.NODE_ENV === 'development' 
+          ? error instanceof Error ? error.message : 'Failed to fetch ETH price'
+          : undefined, // Don't show error in production, just use fallback
+      });
     }
   }, []);
 
@@ -60,8 +92,8 @@ export const useETHPrice = () => {
     // Fetch price immediately
     fetchPrice();
 
-    // Set up interval to fetch price every 60 seconds
-    const interval = setInterval(fetchPrice, 60000);
+    // Set up interval to fetch price every 2 minutes to reduce API calls
+    const interval = setInterval(() => fetchPrice(), 120000);
 
     return () => clearInterval(interval);
   }, [fetchPrice]);
