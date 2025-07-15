@@ -204,7 +204,7 @@ export function getEventListenerConfig() {
 
 console.log('✅ Environment variables validated successfully')
 
-if (env.DEBUG_MODE) {
+if (env.DEBUG_MODE && env.NODE_ENV !== 'production') {
   console.log('🐛 Debug mode enabled')
   console.log('📋 Environment configuration:')
   console.log('  - NODE_ENV:', env.NODE_ENV)

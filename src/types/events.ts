@@ -161,7 +161,6 @@ export interface DeploymentFeeUpdatedEvent extends BaseEvent {
 export interface PriceUpdatedEvent extends BaseEvent {
   eventType: 'PriceUpdated'
   newPrice: string
-  timestamp: string
 }
 
 export interface OracleStatusChangedEvent extends BaseEvent {
@@ -257,7 +256,7 @@ export type SmartContractEvent =
 // Event listener configuration
 export interface ContractConfig {
   address: string
-  abi: any[]
+  abi: Record<string, unknown>[]
   startBlock?: number
   name: string
   type: 'vAMM' | 'Vault' | 'Factory' | 'Oracle' | 'Token'
