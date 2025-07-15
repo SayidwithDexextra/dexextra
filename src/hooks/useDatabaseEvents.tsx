@@ -42,7 +42,7 @@ export function useDatabaseEvents(
   const [isError, setIsError] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  const fetchIntervalRef = useRef<NodeJS.Timeout>();
+  const fetchIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(true);
 
   const fetchEvents = useCallback(async (showLoading = true) => {

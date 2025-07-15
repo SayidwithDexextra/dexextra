@@ -16,7 +16,7 @@ interface UseVAMMTokenDataReturn {
 const tokenDataCache = new Map<string, {
   data: { tokenData: TokenData; vammMarket: VAMMMarket };
   timestamp: number;
-  promise?: Promise<void>;
+  promise?: Promise<any>;
 }>();
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache

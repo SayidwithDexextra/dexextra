@@ -6,7 +6,8 @@ import "./Vault.sol";
 
 /**
  * @title vAMMFactory
- * @dev Factory contract for deploying vAMM instances
+ * @dev Factory contract for deploying BONDING CURVE vAMM instances with custom pricing
+ * Now supports pump.fund-style markets with configurable starting prices
  */
 contract vAMMFactory {
     address public owner;
@@ -19,6 +20,14 @@ contract vAMMFactory {
         string symbol;
         bool isActive;
         uint256 createdAt;
+        uint256 startingPrice; // Custom starting price for bonding curve
+        MarketType marketType; // Type of market (pump, standard, blue-chip)
+    }
+    
+    enum MarketType {
+        PUMP,      // Ultra-pump style: $0.001 starting price
+        STANDARD,  // Normal style: $1-10 starting price  
+        BLUE_CHIP  // High-value style: $100+ starting price
     }
     
     mapping(bytes32 => MarketInfo) public markets;
@@ -28,66 +37,115 @@ contract vAMMFactory {
     uint256 public marketCount;
     uint256 public deploymentFee = 0.1 ether;
     
+    // Predefined bonding curve templates
+    mapping(MarketType => uint256) public defaultStartingPrices;
+    
     event MarketCreated(
         bytes32 indexed marketId,
         string symbol,
         address indexed vamm,
         address indexed vault,
         address oracle,
-        address collateralToken
+        address collateralToken,
+        uint256 startingPrice,
+        MarketType marketType
     );
     
     event MarketStatusChanged(bytes32 indexed marketId, bool isActive);
     event DeploymentFeeUpdated(uint256 newFee);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event BondingCurveMarketCreated(
+        bytes32 indexed marketId,
+        string symbol,
+        uint256 startingPrice,
+        MarketType marketType,
+        string description
+    );
+
+    event ContractDeployed(
+        bytes32 indexed marketId,
+        address indexed contractAddress,
+        string contractType,
+        bytes constructorArgs
+    );
     
     modifier onlyOwner() {
-        require(msg.sender == owner, "Factory: not owner");
+        require(msg.sender == owner, "!owner");
         _;
     }
     
     modifier validMarketId(bytes32 marketId) {
-        require(markets[marketId].vamm != address(0), "Factory: market not found");
+        require(markets[marketId].vamm != address(0), "!found");
         _;
     }
     
     constructor() {
         owner = msg.sender;
+        
+        // Set default starting prices for different market types
+        defaultStartingPrices[MarketType.PUMP] = 1e15;     // $0.001 (maximum pump potential)
+        defaultStartingPrices[MarketType.STANDARD] = 1e18;  // $1.00 (balanced)
+        defaultStartingPrices[MarketType.BLUE_CHIP] = 100e18; // $100.00 (stable/premium)
     }
     
     /**
-     * @dev Creates a new vAMM market
+     * @dev Creates a new bonding curve vAMM market with custom starting price
      */
     function createMarket(
         string memory symbol,
         address oracle,
         address collateralToken,
-        uint256 initialPrice
+        uint256 startingPrice
     ) external payable returns (bytes32 marketId, address vammAddress, address vaultAddress) {
-        require(msg.value >= deploymentFee, "Factory: insufficient fee");
-        require(oracle != address(0), "Factory: invalid oracle");
-        require(collateralToken != address(0), "Factory: invalid collateral");
-        require(bytes(symbol).length > 0, "Factory: invalid symbol");
-        require(initialPrice > 0, "Factory: invalid price");
+        require(msg.value >= deploymentFee, "!fee");
+        require(oracle != address(0), "!oracle");
+        require(collateralToken != address(0), "!collateral");
+        require(bytes(symbol).length > 0, "!symbol");
+        require(startingPrice > 0, "!price");
+        
+        // Determine market type based on starting price
+        MarketType marketType = _determineMarketType(startingPrice);
+        
+        return _createMarketInternal(symbol, oracle, collateralToken, startingPrice, marketType);
+    }
+    
+
+    
+    /**
+     * @dev Internal function to create markets
+     */
+    function _createMarketInternal(
+        string memory symbol,
+        address oracle,
+        address collateralToken,
+        uint256 startingPrice,
+        MarketType marketType
+    ) internal returns (bytes32 marketId, address vammAddress, address vaultAddress) {
+        require(oracle != address(0), "!oracle");
+        require(collateralToken != address(0), "!collateral");
+        require(bytes(symbol).length > 0, "!symbol");
+        require(startingPrice > 0, "!price");
         
         // Generate unique market ID
         marketId = keccak256(abi.encodePacked(symbol, oracle, collateralToken, block.timestamp, marketCount));
-        require(markets[marketId].vamm == address(0), "Factory: market exists");
+        require(markets[marketId].vamm == address(0), "!exists");
         
-        // Deploy vault first
+        // Deploy contracts first
         Vault vault = new Vault(collateralToken);
         vaultAddress = address(vault);
         
-        // Deploy vAMM
-        vAMM vamm = new vAMM(vaultAddress, oracle, initialPrice);
+        vAMM vamm = new vAMM(vaultAddress, oracle, startingPrice);
         vammAddress = address(vamm);
         
-        // Set vAMM in vault
+        // Configure contracts
         vault.setVamm(vammAddress);
-        
-        // Transfer ownership to deployer
         vault.transferOwnership(msg.sender);
         vamm.transferOwnership(msg.sender);
+        
+        // Update state after all external calls (effects)
+        marketCount++;
+        marketIds.push(marketId);
+        isValidMarket[vammAddress] = true;
         
         // Store market info
         markets[marketId] = MarketInfo({
@@ -97,17 +155,36 @@ contract vAMMFactory {
             collateralToken: collateralToken,
             symbol: symbol,
             isActive: true,
-            createdAt: block.timestamp
+            createdAt: block.timestamp,
+            startingPrice: startingPrice,
+            marketType: marketType
         });
         
-        isValidMarket[vammAddress] = true;
-        marketIds.push(marketId);
-        marketCount++;
+        // Emit events
+        emit MarketCreated(marketId, symbol, vammAddress, vaultAddress, oracle, collateralToken, startingPrice, marketType);
+        emit ContractDeployed(marketId, vaultAddress, "Vault", abi.encode(collateralToken));
+        emit ContractDeployed(marketId, vammAddress, "BondingCurveVAMM", abi.encode(vaultAddress, oracle, startingPrice));
         
-        emit MarketCreated(marketId, symbol, vammAddress, vaultAddress, oracle, collateralToken);
+        // Emit special event for bonding curve markets
+        emit BondingCurveMarketCreated(marketId, symbol, startingPrice, marketType, "");
         
         return (marketId, vammAddress, vaultAddress);
     }
+    
+    /**
+     * @dev Determines market type based on starting price
+     */
+    function _determineMarketType(uint256 startingPrice) internal pure returns (MarketType) {
+        if (startingPrice <= 1e16) { // <= $0.01
+            return MarketType.PUMP;
+        } else if (startingPrice <= 10e18) { // <= $10.00
+            return MarketType.STANDARD;
+        } else {
+            return MarketType.BLUE_CHIP; // > $10.00
+        }
+    }
+    
+
     
     /**
      * @dev Updates market status
@@ -133,44 +210,15 @@ contract vAMMFactory {
         return markets[marketId];
     }
     
-    /**
-     * @dev Gets all market IDs
-     */
-    function getAllMarketIds() external view returns (bytes32[] memory) {
-        return marketIds;
-    }
+
     
-    /**
-     * @dev Gets active markets
-     */
-    function getActiveMarkets() external view returns (bytes32[] memory activeMarkets) {
-        uint256 activeCount = 0;
-        
-        // Count active markets
-        for (uint256 i = 0; i < marketIds.length; i++) {
-            if (markets[marketIds[i]].isActive) {
-                activeCount++;
-            }
-        }
-        
-        // Create array of active market IDs
-        activeMarkets = new bytes32[](activeCount);
-        uint256 index = 0;
-        for (uint256 i = 0; i < marketIds.length; i++) {
-            if (markets[marketIds[i]].isActive) {
-                activeMarkets[index] = marketIds[i];
-                index++;
-            }
-        }
-        
-        return activeMarkets;
-    }
+
     
     /**
      * @dev Transfers ownership
      */
     function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "Factory: invalid owner");
+        require(newOwner != address(0), "!owner");
         address previousOwner = owner;
         owner = newOwner;
         emit OwnershipTransferred(previousOwner, newOwner);
@@ -181,17 +229,11 @@ contract vAMMFactory {
      */
     function withdrawFees() external onlyOwner {
         uint256 balance = address(this).balance;
-        require(balance > 0, "Factory: no fees to withdraw");
+        require(balance > 0, "!balance");
         
         (bool success, ) = payable(owner).call{value: balance}("");
-        require(success, "Factory: withdrawal failed");
+        require(success, "!withdraw");
     }
     
-    /**
-     * @dev Emergency function to recover stuck tokens
-     */
-    function recoverToken(address token, uint256 amount) external onlyOwner {
-        // The IERC20 interface is already imported, so we can use it directly
-        // IERC20(token).transfer(owner, amount); // This line is removed as per the edit hint
-    }
+
 } 

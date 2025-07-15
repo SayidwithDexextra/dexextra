@@ -72,7 +72,7 @@ function formatTokenAmount(amount: string, decimals: number = 18): string {
   }
 }
 
-function formatUSDAmount(amount: string, decimals: number = 6): number {
+function formatUSDAmount(amount: string, decimals: number = 18): number {
   try {
     const num = BigInt(amount);
     const divisor = BigInt(10 ** decimals);
@@ -107,8 +107,8 @@ function transformEventToTransaction(event: SmartContractEvent): Transaction | n
         return {
           ...baseTransaction,
           type: eventData.isLong ? 'buy' : 'sell',
-          fee: formatUSDAmount(eventData.fee || '0'),
-          amount: `${(eventData.size/ 100000).toFixed(2)} USDC`, //formatTokenAmount(eventData.size || '0'),
+          fee: formatUSDAmount(eventData.fee || '0', 6), // Fix: Use 18 decimals for fees
+          amount: `${formatTokenAmount(eventData.size || '0', 6)} USD`, // Fix: Use formatTokenAmount with 18 decimals
           eventType: 'PositionOpened',
         };
       }
@@ -120,8 +120,8 @@ function transformEventToTransaction(event: SmartContractEvent): Transaction | n
         return {
           ...baseTransaction,
           type: pnl >= 0 ? 'buy' : 'sell', // Rough approximation
-          fee: formatUSDAmount(eventData.fee || '0'),
-          amount: formatTokenAmount(eventData.size || '0'),
+          fee: formatUSDAmount(eventData.fee || '0', 6), // Fix: Use 18 decimals for fees
+          amount: `${formatTokenAmount(eventData.size || '0', 6)} USD`, // Fix: Use consistent formatting
           eventType: 'PositionClosed',
         };
       }
@@ -130,8 +130,8 @@ function transformEventToTransaction(event: SmartContractEvent): Transaction | n
         return {
           ...baseTransaction,
           type: 'sell', // Liquidations are typically represented as sells
-          fee: formatUSDAmount(eventData.fee || '0'),
-          amount: formatTokenAmount(eventData.size || '0'),
+          fee: formatUSDAmount(eventData.fee || '0', 6), // Fix: Use 18 decimals for fees
+          amount: `${formatTokenAmount(eventData.size || '0', 6)} USD`, // Fix: Use consistent formatting
           eventType: 'PositionLiquidated',
         };
       }

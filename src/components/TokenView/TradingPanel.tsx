@@ -16,6 +16,7 @@ interface TradingPanelProps {
 
 export default function TradingPanel({ tokenData, vammMarket, initialAction }: TradingPanelProps) {
   const { walletData, connect } = useWallet();
+  console.log("vammMarket:", vammMarket);
   const vammTrading = useVAMMTrading(vammMarket);
   
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('buy');
@@ -72,6 +73,19 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
     const value = typeof num === 'string' ? parseFloat(num) : num;
     if (isNaN(value)) return '0';
     return value.toFixed(decimals).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  };
+
+  // Format number for input display with commas (no forced decimals)
+  const formatInputNumber = (num: number) => {
+    if (!num || num === 0) return '';
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  };
+
+  // Parse comma-formatted string back to number
+  const parseInputNumber = (value: string) => {
+    const cleanValue = value.replace(/,/g, '');
+    const parsed = parseFloat(cleanValue);
+    return isNaN(parsed) ? 0 : parsed;
   };
 
   // Format price from raw 18-decimal precision to human-readable format
@@ -273,10 +287,11 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
 
   // Debug component for margin calculations
   const MarginDebugComponent = () => {
+    const [showDebug, setShowDebug] = useState(false);
+    
     if (!amount || amount <= 0) return null;
     
     const marginStatus = getMarginStatus();
-    const [showDebug, setShowDebug] = useState(false);
     
     return (
       <div className="mb-2 p-2 bg-[#1A1A1A] rounded text-xs">
@@ -354,6 +369,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
     }
     
     if (!vammTrading.isActive) {
+      console.log("vammTrading.isActive:", vammTrading);
       errors.push('Oracle is inactive');
     }
     
@@ -457,6 +473,96 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
     throw new Error('Max retries exceeded');
   };
 
+  // Debug function to identify transaction failure reasons
+  const debugTransactionFailure = async () => {
+    console.log('🔍 DEBUGGING TRANSACTION FAILURE');
+    console.log('=====================================');
+    
+    // 1. Basic validation
+    console.log('1. BASIC VALIDATION:');
+    console.log('   Wallet connected:', walletData.isConnected);
+    console.log('   Selected option:', selectedOption);
+    console.log('   Amount:', amount);
+    console.log('   Leverage:', leverage);
+    console.log('   VAMM address:', vammMarket?.vamm_address);
+    
+    // 2. Oracle status
+    console.log('2. ORACLE STATUS:');
+    console.log('   Oracle active:', vammTrading.isActive);
+    console.log('   Mark price:', vammTrading.markPrice);
+    console.log('   Max price age:', vammTrading.maxPriceAge);
+    console.log('   Owner:', vammTrading.owner);
+    
+    // 3. Financial validation
+    console.log('3. FINANCIAL VALIDATION:');
+    const requiredCollateral = calculateRequiredCollateral();
+    const tradingFee = calculateTradingFee();
+    const totalCost = calculateTotalCost();
+    const walletBalance = parseFloat(vammTrading.collateralBalance || '0');
+    const allowance = parseFloat(vammTrading.collateralAllowance);
+    const availableMargin = parseFloat(vammTrading.marginAccount?.availableMargin || '0');
+    
+    console.log('   Required collateral:', requiredCollateral);
+    console.log('   Trading fee:', tradingFee);
+    console.log('   Total cost:', totalCost);
+    console.log('   Wallet USDC balance:', walletBalance);
+    console.log('   USDC allowance:', allowance);
+    console.log('   Available margin in vault:', availableMargin);
+    console.log('   Needs approval:', needsApproval());
+    
+    // 4. Margin account details
+    console.log('4. MARGIN ACCOUNT:');
+    console.log('   Collateral:', vammTrading.marginAccount?.collateral);
+    console.log('   Reserved margin:', vammTrading.marginAccount?.reservedMargin);
+    console.log('   Unrealized PnL:', vammTrading.marginAccount?.unrealizedPnL);
+    console.log('   Total margin:', vammTrading.marginAccount?.totalMargin);
+    
+    // 5. Price bounds calculation
+    console.log('5. PRICE BOUNDS:');
+    const markPriceWei = parseFloat(vammTrading.markPrice);
+    const slippageAmount = markPriceWei * (slippage / 100);
+    let minPrice, maxPrice;
+    
+    if (selectedOption === 'long') {
+      minPrice = markPriceWei - slippageAmount;
+      maxPrice = 'MAX_UINT256';
+    } else {
+      minPrice = 0;
+      maxPrice = markPriceWei + slippageAmount;
+    }
+    
+    console.log('   Current mark price:', markPriceWei);
+    console.log('   Slippage tolerance:', slippage + '%');
+    console.log('   Min price:', minPrice);
+    console.log('   Max price:', maxPrice);
+    
+    // 6. Contract validation simulation
+    console.log('6. CONTRACT VALIDATION:');
+    console.log('   Collateral > 0:', requiredCollateral > 0);
+    console.log('   Leverage valid (1-100):', leverage >= 1 && leverage <= 100);
+    console.log('   Has enough total funds:', (walletBalance + availableMargin) >= totalCost);
+    console.log('   Sufficient allowance or auto-approve:', allowance >= totalCost || walletBalance >= totalCost);
+    
+    // 7. Identify most likely failure
+    console.log('7. FAILURE ANALYSIS:');
+    if (!vammTrading.isActive) {
+      console.log('   ❌ LIKELY FAILURE: Oracle is inactive');
+    } else if (requiredCollateral <= 0) {
+      console.log('   ❌ LIKELY FAILURE: Invalid collateral amount');
+    } else if (leverage < 1 || leverage > 100) {
+      console.log('   ❌ LIKELY FAILURE: Invalid leverage');
+    } else if ((walletBalance + availableMargin) < totalCost) {
+      console.log('   ❌ LIKELY FAILURE: Insufficient total funds');
+      console.log('   Need:', totalCost, 'Have:', walletBalance + availableMargin);
+    } else if (needsApproval() && walletBalance < totalCost) {
+      console.log('   ❌ LIKELY FAILURE: Insufficient USDC for approval + deposit');
+    } else {
+      console.log('   ⚠️  UNCLEAR: All basic checks pass, may be contract-specific issue');
+    }
+    
+    console.log('=====================================');
+  };
+
   // Trading functions
   const handleTrade = async () => {
     if (!walletData.isConnected) {
@@ -464,8 +570,13 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
       return;
     }
 
+    // Add debugging output to help identify MetaMask warning cause
+    await debugTransactionFailure();
+
     // Comprehensive trade validation
     const validation = validateTrade();
+
+    console.log("validation:", validation);
     if (!validation.isValid) {
       showError(
         validation.errors.join('. '),
@@ -496,10 +607,62 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
       if (needsApproval()) {
         showSuccess('Approving collateral...', 'Processing');
         const approveAmount = Math.max(marginStatus.shortfall, amount * 2); // Approve enough for this trade
+        
+        console.log('🔄 Starting approval process:', {
+          approveAmount,
+          marginShortfall: marginStatus.shortfall,
+          walletConnected: walletData.isConnected,
+          requiredNetwork: 'Polygon Mainnet (Chain ID: 137)'
+        });
+        
         const approveResult = await vammTrading.approveCollateral(approveAmount);
         if (!approveResult.success) {
-          throw new Error('Approval failed: ' + approveResult.error);
+          // Enhanced error handling for approval failures
+          let enhancedError = approveResult.error || 'Approval failed';
+          
+          // Check for common approval failure scenarios
+          if (enhancedError.includes('RPC') || enhancedError.includes('Internal JSON-RPC')) {
+            enhancedError = `
+Network Connection Error: ${enhancedError}
+
+Polygon-specific solutions:
+• Verify your wallet is connected to Polygon Mainnet (Chain ID: 137)
+• Ensure you have MATIC tokens for gas fees (minimum 0.001 MATIC)
+• Try refreshing the page and reconnecting your wallet
+• Switch to a different Polygon RPC endpoint
+• Check if there's network congestion on Polygon
+
+If the error persists, try using a premium RPC endpoint (Alchemy or Infura).
+            `.trim();
+          } else if (enhancedError.includes('insufficient funds')) {
+            enhancedError = `
+Insufficient funds for gas fees.
+
+Please add MATIC tokens to your wallet to pay for transaction fees on Polygon.
+You can get MATIC from:
+• Exchanges (Binance, Coinbase, etc.)
+• Polygon Bridge from Ethereum
+• Direct purchase via on-ramp services
+            `.trim();
+          } else if (enhancedError.includes('gas estimation')) {
+            enhancedError = `
+Gas estimation failed on Polygon.
+
+This usually means:
+• Network congestion on Polygon - try again in a few minutes
+• Insufficient MATIC balance for gas fees
+• Contract interaction issue - verify contracts are deployed on Polygon
+• RPC endpoint issues - try switching RPC providers
+
+You can check Polygon network status at: https://polygonscan.com/
+            `.trim();
+          }
+          
+          throw new Error(enhancedError);
         }
+        
+        console.log('✅ Approval completed successfully');
+        showSuccess('Approval completed! Proceeding with trade...', 'Processing');
       }
 
       // Check if we have enough collateral in the vault
@@ -747,7 +910,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
             <div className="space-y-2">
               <h4 className="text-sm font-semibold text-white mb-2">Current Positions</h4>
               {vammTrading.positions.map((position, index) => (
-                <div key={index} className="mb-3 p-2 bg-[#1A1A1A] rounded-lg border border-[#333333]">
+                <div key={position.positionId} className="mb-3 p-2 bg-[#1A1A1A] rounded-lg border border-[#333333]">
                   <div 
                     className="flex items-center justify-between cursor-pointer"
                     onClick={() => setIsCurrentPositionExpanded(!isCurrentPositionExpanded)}
@@ -758,6 +921,9 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
                       </span>
                       <span className="text-xs text-[#808080]">
                         ${formatNumber(position.positionSizeUsd)}
+                      </span>
+                      <span className="text-xs text-[#606060]">
+                        ID: {position.positionId}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -779,6 +945,10 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
                     <div className="mt-2">
                       <div className="space-y-1 text-xs">
                         <div className="flex justify-between">
+                          <span className="text-[#808080]">Position ID:</span>
+                          <span className="text-white font-mono">{position.positionId}</span>
+                        </div>
+                        <div className="flex justify-between">
                           <span className="text-[#808080]">Size:</span>
                           <span className="text-white">${formatNumber(position.positionSizeUsd)}</span>
                         </div>
@@ -792,10 +962,16 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
                             ${formatNumber(position.unrealizedPnL)}
                           </span>
                         </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#808080]">Status:</span>
+                          <span className={`${position.isActive ? 'text-green-400' : 'text-red-400'}`}>
+                            {position.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </div>
                       </div>
                       <button
                         onClick={() => handleCloseSpecificPosition(index)}
-                        disabled={isTrading}
+                        disabled={isTrading || !position.isActive}
                         className="w-full mt-2 px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors"
                       >
                         {isTrading ? 'Closing...' : `Close ${position.isLong ? 'Long' : 'Short'} Position`}
@@ -950,10 +1126,10 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction }: T
                 $
               </div>
               <input
-                type="number"
-                value={amount || ''}
-                onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
-                placeholder="0.00"
+                type="text"
+                value={formatInputNumber(amount)}
+                onChange={(e) => setAmount(parseInputNumber(e.target.value))}
+                placeholder="1,000"
                 className="w-full rounded-lg px-3 py-3 pl-8 text-right text-2xl font-bold transition-all duration-150 focus:outline-none focus:ring-0 focus:border-none"
                 style={{
                   backgroundColor: '#0F0F0F',

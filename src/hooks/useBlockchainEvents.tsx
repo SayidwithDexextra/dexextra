@@ -60,9 +60,7 @@ export function useBlockchainEvents(
     filterOptions.fromBlock,
     filterOptions.toBlock,
     filterOptions.limit,
-    filterOptions.maxBlockRange,
-    filterOptions.user,
-    filterOptions.trader
+    filterOptions.maxBlockRange
   ]);
 
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
@@ -72,7 +70,7 @@ export function useBlockchainEvents(
   const [retryCount, setRetryCount] = useState(0);
 
   const querier = useRef<BlockchainEventQuerier>(getDefaultBlockchainQuerier());
-  const refetchIntervalRef = useRef<NodeJS.Timeout>();
+  const refetchIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(true);
 
   // Create cache key based on filter options

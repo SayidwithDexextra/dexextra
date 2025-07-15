@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import UserProfileModal from './UserProfileModal'
 import SearchModal from './SearchModal'
+import { useWallet } from '@/hooks/useWallet'
 
 // Search Icon Component
 const SearchIcon = () => (
@@ -30,6 +32,40 @@ const ChevronDownIcon = () => (
 export default function Header() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
+  const { walletData } = useWallet()
+
+  // Helper function to get display name
+  const getDisplayName = () => {
+    if (!walletData.isConnected) return 'Connect Wallet'
+    if (walletData.userProfile?.display_name) return walletData.userProfile.display_name
+    if (walletData.userProfile?.username) return walletData.userProfile.username
+    if (walletData.address) return `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}`
+    return 'User'
+  }
+
+  // Helper function to get avatar
+  const getAvatarContent = () => {
+    if (walletData.userProfile?.profile_image_url) {
+      return (
+        <Image 
+          src={walletData.userProfile.profile_image_url} 
+          alt="Profile" 
+          width={20}
+          height={20}
+          className="w-full h-full object-cover rounded-full"
+        />
+      )
+    }
+    
+    // Fallback to initials or default
+    const displayName = getDisplayName()
+    const initial = displayName.charAt(0).toUpperCase()
+    return (
+      <span style={{ color: '#000000', fontSize: '10px', fontWeight: 600 }}>
+        {initial}
+      </span>
+    )
+  }
 
   return (
     <>
@@ -62,7 +98,7 @@ export default function Header() {
               onClick={() => setIsSearchModalOpen(true)}
               className="w-full pl-10 pr-12 py-2 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer"
               style={{
-                height: '40px',
+                height: '30px',
                 backgroundColor: '#2a2a2a',
                 borderColor: '#444444',
                 color: '#ffffff',
@@ -136,17 +172,15 @@ export default function Header() {
           >
             {/* Avatar */}
             <div 
-              className="flex items-center justify-center rounded-full"
+              className="flex items-center justify-center rounded-full overflow-hidden"
               style={{
-                width: '20px',
-                height: '20px',
+                width: '30px',
+                height: '30px',
                 backgroundColor: '#00d4aa',
                 border: '2px solid #00d4aa'
               }}
             >
-              <span style={{ color: '#000000', fontSize: '10px', fontWeight: 600 }}>
-                U
-              </span>
+              {getAvatarContent()}
             </div>
 
             {/* Username (hidden on mobile) */}
@@ -154,7 +188,7 @@ export default function Header() {
               className="hidden sm:block text-sm font-medium"
               style={{ color: '#ffffff', fontSize: '13px' }}
             >
-              User
+              {getDisplayName()}
             </span>
 
             {/* Dropdown Arrow */}
@@ -169,9 +203,10 @@ export default function Header() {
       <UserProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
-        walletAddress="0x60d1...796b"
-        balance="$31.07"
-        isConnected={true}
+        walletAddress={walletData.address ? `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}` : 'Not connected'}
+        balance={walletData.balance ? `${parseFloat(walletData.balance).toFixed(4)} ETH` : '$0.00'}
+        isConnected={walletData.isConnected}
+        profilePhotoUrl={walletData.userProfile?.profile_image_url}
       />
 
       {/* Search Modal */}

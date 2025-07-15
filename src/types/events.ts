@@ -14,6 +14,7 @@ export interface BaseEvent {
 export interface PositionOpenedEvent extends BaseEvent {
   eventType: 'PositionOpened'
   user: string
+  positionId: string
   isLong: boolean
   size: string
   price: string
@@ -24,9 +25,20 @@ export interface PositionOpenedEvent extends BaseEvent {
 export interface PositionClosedEvent extends BaseEvent {
   eventType: 'PositionClosed'
   user: string
+  positionId: string
   size: string
   price: string
   pnl: string
+  fee: string
+}
+
+export interface PositionIncreasedEvent extends BaseEvent {
+  eventType: 'PositionIncreased'
+  user: string
+  positionId: string
+  sizeAdded: string
+  newSize: string
+  newEntryPrice: string
   fee: string
 }
 
@@ -40,6 +52,7 @@ export interface FundingUpdatedEvent extends BaseEvent {
 export interface FundingPaidEvent extends BaseEvent {
   eventType: 'FundingPaid'
   user: string
+  positionId: string
   amount: string
   fundingIndex: string
 }
@@ -47,6 +60,7 @@ export interface FundingPaidEvent extends BaseEvent {
 export interface PositionLiquidatedEvent extends BaseEvent {
   eventType: 'PositionLiquidated'
   user: string
+  positionId: string
   liquidator: string
   size: string
   price: string
@@ -63,6 +77,13 @@ export interface ParametersUpdatedEvent extends BaseEvent {
   eventType: 'ParametersUpdated'
   parameter: string
   newValue: string
+}
+
+export interface VirtualReservesUpdatedEvent extends BaseEvent {
+  eventType: 'VirtualReservesUpdated'
+  baseReserves: string
+  quoteReserves: string
+  multiplier: string
 }
 
 // Vault Events
@@ -203,11 +224,13 @@ export interface MintEvent extends BaseEvent {
 export type SmartContractEvent =
   | PositionOpenedEvent
   | PositionClosedEvent
+  | PositionIncreasedEvent
   | FundingUpdatedEvent
   | FundingPaidEvent
   | PositionLiquidatedEvent
   | TradingFeeCollectedEvent
   | ParametersUpdatedEvent
+  | VirtualReservesUpdatedEvent
   | CollateralDepositedEvent
   | CollateralWithdrawnEvent
   | MarginReservedEvent

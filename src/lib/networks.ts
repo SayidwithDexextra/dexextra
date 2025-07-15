@@ -172,6 +172,44 @@ export const NETWORKS: Record<string, NetworkConfig> = {
     isMainnet: true,
     icon: '🔴',
     color: '#FF0420'
+  },
+
+  // Base Mainnet
+  base: {
+    chainId: 8453,
+    name: 'base',
+    displayName: 'Base Mainnet',
+    rpcUrl: 'https://base.blockscout.com/api/eth-rpc',
+    wsRpcUrl: 'wss://base.blockscout.com/api/eth-rpc/websocket',
+    blockExplorer: 'https://base.blockscout.com',
+    nativeCurrency: {
+      name: 'Ethereum',
+      symbol: 'ETH',
+      decimals: 18
+    },
+    isTestnet: false,
+    isMainnet: true,
+    icon: '🔵',
+    color: '#0052FF'
+  },
+
+  // Base Sepolia (Testnet)
+  baseSepolia: {
+    chainId: 84532,
+    name: 'base-sepolia',
+    displayName: 'Base Sepolia',
+    rpcUrl: 'https://sepolia.base.org',
+    wsRpcUrl: 'wss://sepolia.base.org',
+    blockExplorer: 'https://base-sepolia.blockscout.com',
+    nativeCurrency: {
+      name: 'Ethereum',
+      symbol: 'ETH',
+      decimals: 18
+    },
+    isTestnet: true,
+    isMainnet: false,
+    icon: '🧪',
+    color: '#0052FF'
   }
 }
 
@@ -229,22 +267,32 @@ export const getWsRpcUrl = (network: NetworkConfig, apiKey?: string): string => 
 // Contract addresses for different networks
 export const CONTRACT_ADDRESSES: Record<string, { [contractName: string]: string }> = {
   polygon: {
-    // Add your deployed contract addresses for Polygon Mainnet here
+    // 🚀 UPDATE: Replace with your bonding curve factory deployment addresses
+    VAMM_FACTORY: "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74",//'0xa4CB95eC655f3a6DA8c6dF04EDf40B9b4d51Dc22',
+    MOCK_USDC: '0xbD3F940783C47649e439A946d84508503D87976D',
+    MOCK_ORACLE: '0xB65258446bd83916Bd455bB3dBEdCb9BA106d551',
+  },
+  mumbai: {
+    // Add your deployed contract addresses for Mumbai testnet here
     // VAMM_FACTORY: '0x...',
     // MOCK_USDC: '0x...',
     // MOCK_ORACLE: '0x...',
   },
-  mumbai: {
-    // Add your deployed contract addresses for Mumbai testnet here
-  },
   ethereum: {
     // Add your deployed contract addresses for Ethereum Mainnet here
+    // VAMM_FACTORY: '0x...',
+    // MOCK_USDC: '0x...',
+    // MOCK_ORACLE: '0x...',
   },
   sepolia: {
     // Add your deployed contract addresses for Sepolia testnet here
+    // VAMM_FACTORY: '0x...',
+    // MOCK_USDC: '0x...',
+    // MOCK_ORACLE: '0x...',
   },
   hardhat: {
     // These will be populated when deploying to local Hardhat network
+    // Run: npx hardhat run scripts/deploy_bonding_curve_system.js --network hardhat
   }
 }
 
@@ -271,6 +319,123 @@ export const RPC_PROVIDERS = {
     ethereum: 'https://api.quicknode.com/ethereum/mainnet/',
     polygon: 'https://api.quicknode.com/polygon/mainnet/',
   }
+}
+
+// Network detection and validation utilities
+export async function detectCurrentNetwork(): Promise<{ chainId: number; name: string; supported: boolean } | null> {
+  if (typeof window === 'undefined' || !window.ethereum) {
+    return null;
+  }
+
+  try {
+    const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' });
+    const chainId = parseInt(chainIdHex, 16);
+    
+    // Find network config
+    const networkConfig = Object.values(NETWORKS).find(network => network.chainId === chainId);
+    
+    return {
+      chainId,
+      name: networkConfig?.displayName || `Unknown Network (${chainId})`,
+      supported: !!networkConfig
+    };
+  } catch (error) {
+    console.error('Failed to detect network:', error);
+    return null;
+  }
+}
+
+export async function ensureCorrectNetwork(expectedChainId: number): Promise<{ success: boolean; error?: string }> {
+  if (typeof window === 'undefined' || !window.ethereum) {
+    return { success: false, error: 'No wallet provider found' };
+  }
+
+  try {
+    const current = await detectCurrentNetwork();
+    
+    if (!current) {
+      return { success: false, error: 'Failed to detect current network' };
+    }
+
+    if (current.chainId === expectedChainId) {
+      return { success: true };
+    }
+
+    // Try to switch to the expected network
+    const expectedNetwork = Object.values(NETWORKS).find(n => n.chainId === expectedChainId);
+    if (!expectedNetwork) {
+      return { success: false, error: `Unsupported network with chain ID ${expectedChainId}` };
+    }
+
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: `0x${expectedChainId.toString(16)}` }],
+      });
+      return { success: true };
+    } catch (switchError: any) {
+      if (switchError.code === 4902) {
+        // Network not added to wallet, try to add it
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: `0x${expectedChainId.toString(16)}`,
+              chainName: expectedNetwork.displayName,
+              nativeCurrency: expectedNetwork.nativeCurrency,
+              rpcUrls: [expectedNetwork.rpcUrl],
+              blockExplorerUrls: [expectedNetwork.blockExplorer],
+            }],
+          });
+          return { success: true };
+        } catch (addError: any) {
+          return { success: false, error: `Failed to add network: ${addError?.message || 'Unknown error'}` };
+        }
+      }
+      return { success: false, error: `Failed to switch network: ${switchError.message}` };
+    }
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+// Get the expected chain ID for the current environment
+export function getExpectedChainId(): number {
+  const defaultNetwork = process.env.DEFAULT_NETWORK || 'polygon';
+  const chainIdFromEnv = process.env.CHAIN_ID;
+  
+  if (chainIdFromEnv) {
+    return parseInt(chainIdFromEnv);
+  }
+  
+  const networkConfig = NETWORKS[defaultNetwork];
+  return networkConfig?.chainId || 137; // Default to Polygon
+}
+
+// Check if current network matches expected
+export async function validateNetworkMatch(): Promise<{ isValid: boolean; currentChainId?: number; expectedChainId: number; message: string }> {
+  const expectedChainId = getExpectedChainId();
+  const current = await detectCurrentNetwork();
+  
+  if (!current) {
+    return {
+      isValid: false,
+      expectedChainId,
+      message: 'Unable to detect current network. Please check your wallet connection.'
+    };
+  }
+  
+  const isValid = current.chainId === expectedChainId;
+  const expectedNetwork = Object.values(NETWORKS).find(n => n.chainId === expectedChainId);
+  
+  return {
+    isValid,
+    currentChainId: current.chainId,
+    expectedChainId,
+    message: isValid 
+      ? `Connected to correct network: ${current.name}`
+      : `Network mismatch: Connected to ${current.name} but expected ${expectedNetwork?.displayName || expectedChainId}. Please switch networks in your wallet.`
+  };
 }
 
  

@@ -1,5 +1,5 @@
 // Product Card Components
-export { ProductCard, ProductCardDemo } from './ProductCard';
+export { ProductCard } from './ProductCard';
 export type { ProductCardProps, ProductCardVariant, ProductCardConfig } from './ProductCard';
 
 // Hero Components

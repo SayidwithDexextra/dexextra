@@ -1,240 +1,260 @@
-# Production-Ready vAMM Smart Contracts
+# Bonding Curve vAMM Smart Contracts 🚀
 
-A comprehensive virtual Automated Market Maker (vAMM) system for perpetual futures trading with funding rate mechanism and modular vault architecture.
+A revolutionary virtual Automated Market Maker (vAMM) system with **bonding curve price discovery** for pump.fund-style trading with custom starting prices and progressive difficulty scaling.
 
-## 🚀 Features
+## 🆕 What's New: Bonding Curve System
 
-### Core Features
-- **Virtual AMM**: Price discovery through virtual reserves without requiring actual liquidity
-- **Funding Rate Mechanism**: Automatic funding payments to keep perpetual contract prices aligned with spot prices
-- **Modular Vault System**: Separate vault contract for margin handling and risk management
-- **Leverage Trading**: Support for up to 100x leverage
-- **Liquidation System**: Automatic liquidation of undercollateralized positions
+**This repository now contains TWO systems:**
+- **NEW**: Bonding Curve vAMM (main contracts) - Custom starting prices with pump.fund behavior
+- **LEGACY**: Traditional vAMM (legacy/ folder) - Deep liquidity AMM style
 
-### Production Features
-- **Access Control**: Role-based permissions for administrative functions
-- **Emergency Pause**: Circuit breaker mechanism for emergency situations
-- **Price Impact Protection**: Slippage protection for large trades
-- **Comprehensive Events**: Full event logging for monitoring and analytics
-- **Fee Management**: Configurable trading and liquidation fees
-- **Oracle Integration**: Flexible price oracle system
+## 🎯 Key Features of Bonding Curve System
+
+### 🚀 Pump.Fund Style Behavior
+- **Custom Starting Prices**: Set any starting price ($0.001, $8, $100, etc.)
+- **Early Easy Pumps**: First buyers can easily pump prices with small amounts
+- **Progressive Difficulty**: Later buyers face exponentially higher costs
+- **Maximum Pump Potential**: Up to 10,000x price increases possible
+
+### 💎 Three Market Types
+1. **PUMP Markets** - Ultra-low starting prices ($0.001) for maximum pump potential
+2. **STANDARD Markets** - Balanced starting prices ($1-10) for moderate pumping
+3. **BLUE CHIP Markets** - High starting prices ($100+) for stability
+
+### 🧮 Bonding Curve Formula
+```
+Price = StartingPrice × (1 + TotalSupply/Steepness)^Exponent
+```
+- **StartingPrice**: Custom starting price (e.g., $0.001)
+- **TotalSupply**: Total long positions (drives price up)
+- **Steepness**: Controls pump difficulty (lower = easier pumps)
+- **Exponent**: Controls price curve shape (1.5 = progressive difficulty)
 
 ## 📁 Contract Architecture
 
 ```
 contracts/
-├── IPriceOracle.sol          # Price oracle interface
-├── IVault.sol               # Vault interface  
-├── IvAMM.sol                # vAMM interface
-├── Vault.sol                # Modular margin vault implementation
-├── vAMM.sol                 # Main vAMM contract with funding rates
-├── vAMMFactory.sol          # Factory for deploying vAMM instances
-├── MockPriceOracle.sol      # Mock oracle for testing
-└── MockUSDC.sol             # Mock USDC token for testing
+├── vAMM.sol                 # NEW: Bonding curve vAMM
+├── vAMMFactory.sol          # NEW: Factory with market types
+├── Vault.sol               # Same: Modular margin vault
+├── IPriceOracle.sol        # Same: Price oracle interface
+├── IVault.sol              # Same: Vault interface  
+├── IvAMM.sol               # Same: vAMM interface
+├── MockPriceOracle.sol     # Same: Mock oracle for testing
+├── MockUSDC.sol            # Same: Mock USDC token
+└── legacy/                 # LEGACY: Original AMM-style contracts
+    ├── vAMM.sol           # Traditional deep liquidity vAMM
+    ├── vAMMFactory.sol    # Traditional factory
+    └── ... (all original contracts)
 ```
 
-## 🔧 Technical Specifications
+## 🚀 Quick Start: Bonding Curve Trading
 
-### vAMM Contract (`vAMM.sol`)
-- **Funding Rate**: Hourly funding payments based on premium/discount to index price
-- **Virtual Reserves**: 1M base and quote token virtual liquidity pools
-- **Leverage**: 1x to 100x leverage support
-- **Fees**: 0.3% trading fee, 5% liquidation fee (configurable)
-- **Margin**: 5% maintenance margin, 10% initial margin (configurable)
-
-### Vault Contract (`Vault.sol`)
-- **Margin Management**: Collateral deposits, reserves, and withdrawals
-- **PnL Tracking**: Real-time unrealized profit and loss calculations
-- **Funding Integration**: Automatic funding payment applications
-- **Liquidation Logic**: Risk-based liquidation triggers
-
-### Factory Contract (`vAMMFactory.sol`)
-- **Market Deployment**: One-click deployment of vAMM + Vault pairs
-- **Market Registry**: Central registry of all deployed markets
-- **Fee Collection**: Deployment fee mechanism
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js 16+
-- Truffle Suite
-- Web3.js
-
-### Installation
-
+### 1. Deploy the Bonding Curve System
 ```bash
 cd DexContracts
-npm install -g truffle
+npx hardhat run scripts/deploy_bonding_curve_system.js --network localhost
 ```
 
-### Deployment
+### 2. Create Different Market Types
 
-1. **Configure Network** (update `truffle-config.js`):
+#### Ultra-Pump Market ($0.001 starting price)
 ```javascript
-module.exports = {
-  networks: {
-    development: {
-      host: "127.0.0.1",
-      port: 8545,
-      network_id: "*"
-    }
-  },
-  compilers: {
-    solc: {
-      version: "0.8.20"
-    }
-  }
-};
+const pumpMarket = await factory.createPumpMarket(
+  "ROCKET",      // symbol
+  oracleAddress, // price oracle
+  usdcAddress   // collateral token
+);
 ```
 
-2. **Deploy Contracts**:
-```bash
-truffle migrate --network development
-```
-
-3. **Verify Deployment**:
-```bash
-truffle console --network development
-```
-
-## 📊 Usage Examples
-
-### Opening a Long Position
-
+#### Balanced Market ($8 starting price) 
 ```javascript
-// Get contracts
-const factory = await vAMMFactory.deployed();
-const markets = await factory.getActiveMarkets();
-const marketInfo = await factory.getMarket(markets[0]);
-const vamm = await vAMM.at(marketInfo.vamm);
-const vault = await Vault.at(marketInfo.vault);
-
-// Deposit collateral
-const collateralAmount = web3.utils.toWei("1000", "mwei"); // 1000 USDC
-await usdc.approve(vault.address, collateralAmount);
-await vault.depositCollateral(user, collateralAmount);
-
-// Open long position with 10x leverage
-const leverage = 10;
-const minPrice = 0; // No slippage protection for this example
-const maxPrice = web3.utils.toWei("100000", "ether"); // Max price
-await vamm.openPosition(collateralAmount, true, leverage, minPrice, maxPrice);
+const standardMarket = await factory.createStandardMarket(
+  "BALANCED",
+  oracleAddress,
+  usdcAddress,
+  ethers.parseEther("8") // $8.00 starting price
+);
 ```
 
-### Closing a Position
+#### Premium Market ($500 starting price)
+```javascript
+const blueChipMarket = await factory.createBlueChipMarket(
+  "PREMIUM",
+  oracleAddress,
+  usdcAddress,
+  ethers.parseEther("500") // $500 starting price
+);
+```
+
+### 3. Experience Pump.Fund Behavior
+
+Early buyers with small amounts can create massive price pumps:
 
 ```javascript
-// Get current position
-const position = await vamm.getPosition(user);
-const sizeToClose = position.size; // Close entire position
-
-// Close position
-await vamm.closePosition(sizeToClose, 0, web3.utils.toWei("100000", "ether"));
+// Small $100 buy might pump price from $0.001 to $0.10 (100x!)
+await vamm.openPosition(
+  ethers.parseUnits("100", 6), // $100 USDC
+  true,  // long position
+  10,    // 10x leverage  
+  0,     // min price
+  ethers.MaxUint256 // max price
+);
 ```
 
-### Checking Funding Rate
-
+Later buyers face exponentially higher costs:
 ```javascript
-// Update funding (can be called by anyone)
-await vamm.updateFunding();
-
-// Get current funding rate
-const fundingRate = await vamm.getFundingRate();
-console.log("Current funding rate:", fundingRate.toString());
+// Same $100 buy might only pump from $10 to $10.50 (5% increase)
 ```
 
-## 🔐 Security Features
+## 🔥 Bonding Curve Examples
 
-### Access Control
-- **Owner-only functions**: Parameter updates, emergency controls
-- **Authorized contracts**: Vault can only be called by authorized contracts
-- **User permissions**: Users can only manage their own positions
+### Market Creation Examples
+```javascript
+// Micro-cap meme coin: Extreme pump potential
+await factory.createMarket("PEPE", oracle, usdc, ethers.parseUnits("1", 15)); // $0.001
 
-### Emergency Mechanisms
-- **Pause functionality**: Disable trading during emergencies
-- **Emergency withdrawal**: Owner can recover funds when paused
-- **Circuit breakers**: Automatic protections against extreme market conditions
+// Moderate project: Balanced growth
+await factory.createMarket("DOGE", oracle, usdc, ethers.parseEther("1")); // $1.00
 
-### Risk Management
-- **Liquidation system**: Automatic liquidation of risky positions
-- **Margin requirements**: Configurable initial and maintenance margins
-- **Price validation**: Oracle price freshness and sanity checks
+// Premium token: Stable with limited pumps  
+await factory.createMarket("BTC", oracle, usdc, ethers.parseEther("1000")); // $1000
+```
 
-## 📈 Funding Rate Mechanism
+### Price Impact Demonstration
+For a PUMP market starting at $0.001:
+- **First $1,000 trade**: Price might go $0.001 → $0.50 (500x)
+- **Second $1,000 trade**: Price might go $0.50 → $2.00 (4x)  
+- **Third $1,000 trade**: Price might go $2.00 → $4.50 (2.25x)
 
-The funding rate mechanism ensures perpetual contract prices stay close to spot prices:
+## 📊 Market Analysis Functions
 
-1. **Premium Calculation**: Compare mark price (vAMM price) to index price (oracle)
-2. **Funding Rate**: Calculate hourly funding rate based on premium
-3. **Payment Direction**: 
-   - When mark > index: Longs pay shorts
-   - When mark < index: Shorts pay longs
-4. **Automatic Application**: Funding applied on position updates
+### Get Bonding Curve Information
+```javascript
+const info = await vamm.getBondingCurveInfo();
+console.log("Current Price:", ethers.formatEther(info.currentPrice));
+console.log("Starting Price:", ethers.formatEther(info.startPrice));
+console.log("Total Supply:", info.totalSupply.toString());
+console.log("Max Price:", ethers.formatEther(info.maxPrice));
+```
 
-## ⚙️ Configuration
+### Calculate Trade Costs
+```javascript
+// Calculate cost to buy $10,000 worth
+const buyCost = await vamm.calculateBuyCost(ethers.parseEther("10000"));
+console.log("Total cost:", ethers.formatEther(buyCost));
 
-### Trading Parameters
-- `tradingFeeRate`: 30 basis points (0.3%)
-- `liquidationFeeRate`: 500 basis points (5%)
-- `maintenanceMarginRatio`: 500 basis points (5%)
-- `initialMarginRatio`: 1000 basis points (10%)
+// Calculate price impact
+const priceImpact = await vamm.getPriceImpact(ethers.parseEther("10000"), true);
+console.log("Price impact:", ethers.formatEther(priceImpact));
+```
 
-### Funding Parameters
-- `FUNDING_INTERVAL`: 1 hour
-- `MAX_FUNDING_RATE`: 1% per hour
-- `FUNDING_PRECISION`: 1e8
+## 🎮 Trading Examples
 
-### Leverage Limits
-- `MIN_LEVERAGE`: 1x
-- `MAX_LEVERAGE`: 100x
+### Opening a Pump Position
+```javascript
+// 1. Deposit collateral
+await usdc.approve(vault.address, ethers.parseUnits("1000", 6));
+await vault.depositCollateral(user, ethers.parseUnits("1000", 6));
+
+// 2. Open long position for pump
+await vamm.openPosition(
+  ethers.parseUnits("100", 6), // $100 collateral
+  true,  // long (pump the price)
+  20,    // 20x leverage = $2000 position
+  0,     // no min price
+  ethers.MaxUint256 // no max price
+);
+
+// 3. Watch the bonding curve pump the price!
+const newPrice = await vamm.getMarkPrice();
+console.log("New price after pump:", ethers.formatEther(newPrice));
+```
+
+## 🔧 Advanced Configuration
+
+### Update Bonding Curve Parameters (Owner Only)
+```javascript
+// Note: Current implementation uses constants
+// To make these updatable, change constants to state variables
+await vamm.updateBondingCurveParams(
+  newSteepness, // Lower = easier pumps
+  newExponent   // Higher = more progressive difficulty
+);
+```
+
+### Emergency Reset (Extreme Circumstances)
+```javascript
+await vamm.pause(); // Must pause first
+await vamm.emergencyResetBondingCurve(
+  ethers.parseEther("0.001") // New starting price
+);
+```
+
+## 🚨 Key Differences from Legacy System
+
+| Feature | Legacy vAMM | Bonding Curve vAMM |
+|---------|-------------|---------------------|
+| Price Discovery | Deep virtual liquidity (AMM) | Bonding curve formula |
+| Starting Price | Fixed by initial reserves | Fully customizable |
+| Early Trading | Stable, minimal impact | Easy pumps, high impact |
+| Late Trading | Stable, minimal impact | Expensive, progressive difficulty |
+| Price Sensitivity | Low (deep liquidity) | High (curve-based) |
+| Pump Potential | Limited by reserves | Up to 10,000x increases |
+| Market Types | One size fits all | PUMP/STANDARD/BLUE_CHIP |
+
+## 📈 Deployment Script Results
+
+The bonding curve deployment script creates four demo markets:
+
+1. **ROCKET** (PUMP) - $0.001 starting price
+2. **BALANCED** (STANDARD) - $8.00 starting price  
+3. **PREMIUM** (BLUE_CHIP) - $500.00 starting price
+4. **MOON** (CUSTOM) - $0.0001 starting price
+
+Each market demonstrates different pump behaviors and difficulty curves.
 
 ## 🧪 Testing
 
-### Run Tests
+Run the bonding curve system:
 ```bash
-truffle test
+npx hardhat run scripts/deploy_bonding_curve_system.js --network localhost
 ```
 
-### Test Coverage
-- Unit tests for all core functions
-- Integration tests for cross-contract interactions
-- Edge case testing for extreme market conditions
-- Gas optimization tests
+This will:
+- Deploy all bonding curve contracts
+- Create 4 demo markets with different characteristics
+- Demonstrate price impact calculations
+- Show bonding curve information for each market
 
-## 📝 Events
+## 🛡️ Security Features
 
-### vAMM Events
-- `PositionOpened`: New position created
-- `PositionClosed`: Position closed
-- `FundingUpdated`: Funding rate updated
-- `FundingPaid`: Funding payment applied
-- `PositionLiquidated`: Position liquidated
+- **Access Control**: Owner-only parameter updates
+- **Emergency Pause**: Circuit breaker mechanism  
+- **Price Caps**: Maximum 10,000x price increases
+- **Slippage Protection**: Min/max price bounds
+- **Liquidation System**: Risk-based position liquidation
+- **Backwards Compatibility**: Legacy systems still supported
 
-### Vault Events
-- `CollateralDeposited`: Collateral added
-- `CollateralWithdrawn`: Collateral removed
-- `MarginReserved`: Margin reserved for position
-- `PnLUpdated`: Profit/loss updated
+## 🎯 Perfect For
 
-## 🔮 Future Enhancements
+- **Meme Coins**: Ultra-low starting prices with massive pump potential
+- **New Projects**: Custom starting prices that reflect true value
+- **Community Tokens**: Easy early pumps for community engagement
+- **Experimental Markets**: Testing different tokenomics models
+- **Gaming Tokens**: Achievement-based pricing curves
 
-1. **Multiple Collateral Support**: Support for various collateral tokens
-2. **Advanced Oracle Integration**: Chainlink or other decentralized oracles
-3. **Cross-Margin Trading**: Portfolio-based margin calculations
-4. **Insurance Fund**: Protocol-level risk management
-5. **Governance Token**: Decentralized parameter management
+## 📜 License
 
-## 📄 License
+MIT License - Build the future of DeFi!
 
-MIT License - see LICENSE file for details.
+---
 
-## 🤝 Contributing
+## 🔗 Links & Resources
 
-1. Fork the repository
-2. Create feature branch
-3. Add comprehensive tests
-4. Submit pull request
+- **Legacy Documentation**: See `legacy/` folder for original AMM documentation
+- **Bonding Curve Theory**: [Ethereum.org Bonding Curves](https://ethereum.org/en/developers/docs/scaling/scaling/)
+- **Pump.Fund Inspiration**: Revolutionary token launch mechanisms
+- **UMA Integration**: Ready for oracle-based settlement (see DexContractsV2/)
 
-## ⚠️ Disclaimer
-
-This is a complex DeFi protocol. Please conduct thorough testing and audits before using in production. Trading perpetual futures involves significant risk of loss. 
+**Ready to create the next viral pump? Deploy your bonding curve vAMM today!** 🚀 

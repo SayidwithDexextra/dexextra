@@ -4,19 +4,33 @@ import { env } from '@/lib/env';
 import { NETWORKS, getNetworkByChainId } from '@/lib/networks';
 import { withRateLimit, delay } from '@/lib/rateLimiter';
 
-// vAMM ABI for events
+// vAMM ABI for events (Updated for Bonding Curve)
 const VAMM_ABI = [
-  "event PositionOpened(address indexed user, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
-  "event PositionClosed(address indexed user, uint256 size, uint256 price, int256 pnl, uint256 fee)",
-  "event PositionLiquidated(address indexed user, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
+  // Position events (updated with positionId)
+  "event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
+  "event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl, uint256 fee)",
+  "event PositionIncreased(address indexed user, uint256 indexed positionId, uint256 sizeAdded, uint256 newSize, uint256 newEntryPrice, uint256 fee)",
+  "event PositionLiquidated(address indexed user, uint256 indexed positionId, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
+  
+  // Funding events
   "event FundingUpdated(int256 fundingRate, uint256 fundingIndex, int256 premiumFraction)",
-  "event FundingPaid(address indexed user, int256 amount, uint256 fundingIndex)",
+  "event FundingPaid(address indexed user, uint256 indexed positionId, int256 amount, uint256 fundingIndex)",
+  
+  // Trading and fee events
   "event TradingFeeCollected(address indexed user, uint256 amount)",
+  
+  // Administrative events
   "event ParametersUpdated(string parameter, uint256 newValue)",
   "event AuthorizedAdded(address indexed account)",
   "event AuthorizedRemoved(address indexed account)",
   "event Paused()",
-  "event Unpaused()"
+  "event Unpaused()",
+  
+  // Bonding curve events
+  "event BondingCurveUpdated(uint256 newPrice, uint256 totalSupply, uint256 priceChange)",
+  
+  // Legacy compatibility events
+  "event VirtualReservesUpdated(uint256 baseReserves, uint256 quoteReserves, uint256 multiplier)"
 ];
 
 // Vault ABI for events
@@ -339,6 +353,7 @@ export class BlockchainEventQuerier {
             eventType: 'FundingPaid',
             user: parsedLog.args.user,
             amount: parsedLog.args.amount.toString(),
+            positionId: parsedLog.args.positionId.toString(),
             fundingIndex: parsedLog.args.fundingIndex.toString()
           };
 

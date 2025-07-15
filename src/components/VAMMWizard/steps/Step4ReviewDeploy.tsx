@@ -130,33 +130,25 @@ export default function Step4ReviewDeploy({
             <span className={styles.reviewValue}>{deploymentResult.symbol}</span>
           </div>
           <div className={styles.reviewItem}>
-            <span className={styles.reviewLabel}>vAMM Address</span>
-            <span className={styles.reviewValue}>{deploymentResult.vammAddress}</span>
+            <span className={styles.reviewLabel}>Transaction</span>
+            <span className={styles.reviewValue}>{deploymentResult.transactionHash?.slice(0, 16)}...</span>
+          </div>
+        </div>
+
+        <div className={styles.reviewSection}>
+          <h3 className={styles.reviewTitle}>Contract Addresses</h3>
+          <div className={styles.reviewItem}>
+            <span className={styles.reviewLabel}>vAMM</span>
+            <span className={styles.reviewValue}>{deploymentResult.vammAddress?.slice(0, 16)}...</span>
           </div>
           <div className={styles.reviewItem}>
-            <span className={styles.reviewLabel}>Vault Address</span>
-            <span className={styles.reviewValue}>{deploymentResult.vaultAddress}</span>
+            <span className={styles.reviewLabel}>Vault</span>
+            <span className={styles.reviewValue}>{deploymentResult.vaultAddress?.slice(0, 16)}...</span>
           </div>
           <div className={styles.reviewItem}>
-            <span className={styles.reviewLabel}>Oracle Address</span>
-            <span className={styles.reviewValue}>{deploymentResult.oracleAddress}</span>
+            <span className={styles.reviewLabel}>Oracle</span>
+            <span className={styles.reviewValue}>{deploymentResult.oracleAddress?.slice(0, 16)}...</span>
           </div>
-          <div className={styles.reviewItem}>
-            <span className={styles.reviewLabel}>Transaction Hash</span>
-            <span className={styles.reviewValue}>{deploymentResult.transactionHash}</span>
-          </div>
-          {deploymentResult.blockNumber && (
-            <div className={styles.reviewItem}>
-              <span className={styles.reviewLabel}>Block Number</span>
-              <span className={styles.reviewValue}>{deploymentResult.blockNumber}</span>
-            </div>
-          )}
-          {deploymentResult.gasUsed && (
-            <div className={styles.reviewItem}>
-              <span className={styles.reviewLabel}>Gas Used</span>
-              <span className={styles.reviewValue}>{deploymentResult.gasUsed}</span>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -297,43 +289,28 @@ export default function Step4ReviewDeploy({
         </div>
       </div>
 
-      {/* Oracle Configuration Review */}
+      {/* Oracle & Pricing */}
       <div className={styles.reviewSection}>
-        <h3 className={styles.reviewTitle}>Oracle Configuration</h3>
+        <h3 className={styles.reviewTitle}>Oracle & Pricing</h3>
         <div className={styles.reviewItem}>
-          <span className={styles.reviewLabel}>Oracle Address</span>
-          <span className={styles.reviewValue}>{formData.oracleAddress}</span>
+          <span className={styles.reviewLabel}>Oracle</span>
+          <span className={styles.reviewValue}>{formData.oracleAddress.slice(0, 16)}...</span>
         </div>
         <div className={styles.reviewItem}>
           <span className={styles.reviewLabel}>Initial Price</span>
           <span className={styles.reviewValue}>${formData.initialPrice}</span>
         </div>
         <div className={styles.reviewItem}>
-          <span className={styles.reviewLabel}>Price Decimals</span>
+          <span className={styles.reviewLabel}>Decimals</span>
           <span className={styles.reviewValue}>{formData.priceDecimals}</span>
         </div>
       </div>
 
-      {/* Contract Addresses */}
-      {defaultAddresses && (
-        <div className={styles.reviewSection}>
-          <h3 className={styles.reviewTitle}>Contract Addresses</h3>
-          <div className={styles.reviewItem}>
-            <span className={styles.reviewLabel}>vAMM Factory</span>
-            <span className={styles.reviewValue}>{defaultAddresses.vAMMFactory}</span>
-          </div>
-          <div className={styles.reviewItem}>
-            <span className={styles.reviewLabel}>Collateral Token (USDC)</span>
-            <span className={styles.reviewValue}>{defaultAddresses.mockUSDC}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Deployment Settings */}
+      {/* Deployment Details */}
       <div className={styles.reviewSection}>
-        <h3 className={styles.reviewTitle}>Deployment Settings</h3>
+        <h3 className={styles.reviewTitle}>Deployment Details</h3>
         <div className={styles.reviewItem}>
-          <span className={styles.reviewLabel}>Deployment Fee</span>
+          <span className={styles.reviewLabel}>Fee</span>
           <span className={styles.reviewValue}>{formData.deploymentFee} ETH</span>
         </div>
         <div className={styles.reviewItem}>
@@ -342,34 +319,13 @@ export default function Step4ReviewDeploy({
         </div>
         {walletData?.isConnected && (
           <div className={styles.reviewItem}>
-            <span className={styles.reviewLabel}>Deployer Address</span>
-            <span className={styles.reviewValue}>{walletData.address}</span>
+            <span className={styles.reviewLabel}>Deployer</span>
+            <span className={styles.reviewValue}>{walletData.address?.slice(0, 16)}...</span>
           </div>
         )}
       </div>
 
-      {/* Images Review */}
-      {(formData.bannerImageUrl || formData.iconImageUrl || formData.supportingPhotoUrls.length > 0) && (
-        <div className={styles.reviewSection}>
-          <h3 className={styles.reviewTitle}>Market Images</h3>
-          {formData.bannerImageUrl && (
-            <div className={styles.imagePreview}>
-              <span className={styles.imageLabel}>Banner Image</span>
-              <div className={styles.imageThumbnail}>
-                <Image src={formData.bannerImageUrl} alt="Banner" width={100} height={60} />
-              </div>
-            </div>
-          )}
-          {formData.iconImageUrl && (
-            <div className={styles.imagePreview}>
-              <span className={styles.imageLabel}>Icon Image</span>
-              <div className={styles.imageThumbnail}>
-                <Image src={formData.iconImageUrl} alt="Icon" width={60} height={60} />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+
     </form>
   );
 } 

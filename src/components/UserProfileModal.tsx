@@ -40,6 +40,7 @@ interface UserProfileModalProps {
   walletAddress?: string
   balance?: string
   isConnected?: boolean
+  profilePhotoUrl?: string
 }
 
 export default function UserProfileModal({ 
@@ -47,10 +48,12 @@ export default function UserProfileModal({
   onClose, 
   walletAddress = "0x60d1...796b", 
   balance = "$31.07",
-  isConnected = true 
+  isConnected = true,
+  profilePhotoUrl
 }: UserProfileModalProps) {
   const [isVisible, setIsVisible] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
+  const [imageError, setImageError] = useState(false)
   
   // Handle modal opening/closing with animation
   useEffect(() => {
@@ -116,7 +119,7 @@ export default function UserProfileModal({
           >
             <div className="flex items-center gap-3">
               <div 
-                className="flex items-center justify-center rounded-lg"
+                className="flex items-center justify-center rounded-lg overflow-hidden"
                 style={{
                   width: '40px',
                   height: '40px',
@@ -124,8 +127,19 @@ export default function UserProfileModal({
                   border: '2px solid #00d4aa'
                 }}
               >
-                {/* Wallet Icon/Avatar */}
-                <div className="w-6 h-6 bg-blue-500 rounded" />
+                {/* Profile Photo or Fallback */}
+                {profilePhotoUrl && !imageError ? (
+                  <img 
+                    src={profilePhotoUrl}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                    onError={() => setImageError(true)}
+                  />
+                ) : (
+                  <div className="w-6 h-6 bg-blue-500 rounded flex items-center justify-center">
+                    <ProfileIcon />
+                  </div>
+                )}
               </div>
               <div>
                 <div 

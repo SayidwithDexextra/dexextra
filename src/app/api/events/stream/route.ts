@@ -84,7 +84,7 @@ function simulateMarketCreation(symbol: string) {
     }
 
     console.log('Emitting mock MarketCreated event:', mockEvent)
-    eventEmitter.emit({
+    sseEventEmitter.emit({
       type: 'event',
       event: mockEvent
     })
@@ -200,13 +200,5 @@ export async function GET(request: NextRequest) {
   })
 }
 
-// Export function to emit events (for use by other parts of the app)
-export function emitEvent(eventData: any) {
-  sseEventEmitter.emit({
-    type: 'event',
-    event: eventData
-  })
-}
-
-// Export the event emitter directly for advanced use cases
-export { sseEventEmitter as eventEmitter } 
+// Note: emitEvent and eventEmitter functions moved to a separate utility file
+// to comply with Next.js App Router export restrictions 

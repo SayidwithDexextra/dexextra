@@ -5,8 +5,21 @@ import { ethers } from 'ethers';
 import { VAMMMarket } from './useVAMMMarkets';
 
 const VAMM_ABI = [
+  // Core price functions
   "function getMarkPrice() external view returns (uint256)",
   "function getFundingRate() external view returns (int256)",
+  
+  // Bonding curve price functions
+  "function getTotalSupply() external view returns (uint256)",
+  "function getBondingCurveInfo() external view returns (uint256 currentPrice, uint256 startPrice, uint256 totalSupply, uint256 steepness, uint256 exponent, uint256 maxPrice)",
+  "function calculateBuyCost(uint256 amount) external view returns (uint256 totalCost)",
+  "function calculateSellPayout(uint256 amount) external view returns (uint256 totalPayout)",
+  "function getPriceImpact(uint256 size, bool isLong) external view returns (uint256)",
+  
+  // State variables for pricing
+  "function startingPrice() external view returns (uint256)",
+  "function totalLongSize() external view returns (int256)",
+  "function totalShortSize() external view returns (int256)",
 ];
 
 export interface VAMMPriceData {

@@ -3,19 +3,40 @@ import { env } from './env'
 
 // Contract addresses from our deployment
 const CONTRACT_ADDRESSES = {
-  vAMMFactory: '0xDA131D3A153AF5fa26d99ef81c5d0Fc983c47533',
+  vAMMFactory: "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74",//"0xa4CB95eC655f3a6DA8c6dF04EDf40B9b4d51Dc22",//'0xDA131D3A153AF5fa26d99ef81c5d0Fc983c47533',
   mockUSDC: '0xbD3F940783C47649e439A946d84508503D87976D',
   mockOracle: '0xB65258446bd83916Bd455bB3dBEdCb9BA106d551'
 }
 
-// vAMMFactory ABI (only the functions we need)
+// vAMMFactory ABI (Updated for Bonding Curve Markets)
 const VAMM_FACTORY_ABI = [
-  "function createMarket(string memory symbol, address oracle, address collateralToken, uint256 initialPrice) external payable returns (bytes32 marketId, address vammAddress, address vaultAddress)",
+  // Core market creation functions
+  "function createMarket(string memory symbol, address oracle, address collateralToken, uint256 startingPrice) external payable returns (bytes32 marketId, address vammAddress, address vaultAddress)",
+  
+  // Market info and management
   "function deploymentFee() external view returns (uint256)",
-  "function getMarket(bytes32 marketId) external view returns (tuple(address vamm, address vault, address oracle, address collateralToken, string symbol, bool isActive, uint256 createdAt))",
+  "function getMarket(bytes32 marketId) external view returns (tuple(address vamm, address vault, address oracle, address collateralToken, string symbol, bool isActive, uint256 createdAt, uint256 startingPrice, uint8 marketType))",
   "function owner() external view returns (address)",
   "function marketCount() external view returns (uint256)",
-  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken)"
+  "function marketIds(uint256 index) external view returns (bytes32)",
+  "function isValidMarket(address vammAddress) external view returns (bool)",
+  
+  // Market type and pricing
+  "function defaultStartingPrices(uint8 marketType) external view returns (uint256)",
+  
+  // Admin functions
+  "function setMarketStatus(bytes32 marketId, bool isActive) external",
+  "function setDeploymentFee(uint256 newFee) external",
+  "function transferOwnership(address newOwner) external",
+  "function withdrawFees() external",
+  
+  // Events
+  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)",
+  "event MarketStatusChanged(bytes32 indexed marketId, bool isActive)",
+  "event DeploymentFeeUpdated(uint256 newFee)",
+  "event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)",
+  "event BondingCurveMarketCreated(bytes32 indexed marketId, string symbol, uint256 startingPrice, uint8 marketType, string description)",
+  "event ContractDeployed(bytes32 indexed marketId, address indexed contractAddress, string contractType, bytes constructorArgs)"
 ]
 
 
@@ -125,7 +146,7 @@ export class ContractDeploymentService {
         initialPriceWei,
         { 
           value: deploymentFee,
-          gasLimit: gasEstimate * BigInt(200) / BigInt(100) // Add 100% buffer for Polygon mainnet
+          gasLimit: gasEstimate * BigInt(250) / BigInt(100) // Add 150% buffer for Polygon mainnet + complex operations
         }
       )
 

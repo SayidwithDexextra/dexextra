@@ -7,7 +7,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding-bottom: 100px; /* Reduced since modal is now smaller */
+  padding-bottom: 120px; /* Account for fixed footer */
   box-sizing: border-box;
 }
 
@@ -41,7 +41,9 @@
 .formSection {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 8px;
+  max-height: calc(100vh - 200px); /* Ensure it doesn't exceed viewport */
 }
 
 /* Hide scrollbar but keep functionality */
@@ -556,23 +558,23 @@
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
 }
 
-/* Review Section Styles for Step4 - Larger Cards for Better UX */
+/* Review Section Styles for Step4 - Compact Cards */
 .reviewSection {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   background-color: rgba(255, 255, 255, 0.05);
   border-radius: 6px;
-  padding: 16px 20px;
+  padding: 10px 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .reviewTitle {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: #ffffff;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  margin-bottom: 10px;
-  padding-bottom: 4px;
+  margin-bottom: 6px;
+  padding-bottom: 3px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
 
@@ -580,9 +582,9 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
-  padding: 3px 0;
-  min-height: 20px;
+  margin-bottom: 3px;
+  padding: 2px 0;
+  min-height: 16px;
 }
 
 .reviewItem:last-child {
@@ -590,23 +592,24 @@
 }
 
 .reviewLabel {
-  font-size: 10px;
+  font-size: 9px;
   color: #9CA3AF;
   font-weight: 400;
   flex-shrink: 0;
-  width: 90px;
+  width: 80px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .reviewValue {
-  font-size: 10px;
+  font-size: 9px;
   color: #ffffff;
   font-weight: 500;
   text-align: right;
   word-break: break-all;
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  max-width: calc(100% - 95px);
+  max-width: calc(100% - 85px);
+  line-height: 1.3;
 }
 
 /* Grid layout for review sections - Larger Cards */
@@ -903,7 +906,11 @@
 @media (max-width: 768px) {
   .container {
     padding: 16px 32px;
-    padding-bottom: 80px; /* Reduced for smaller modal */
+    padding-bottom: 100px; /* Account for fixed footer on mobile */
+  }
+
+  .formSection {
+    max-height: calc(100vh - 160px); /* Adjust for mobile */
   }
 
   /* Mobile title section - larger */
@@ -1024,13 +1031,31 @@
     margin-left: 6px;
   }
 
+  .reviewSection {
+    margin-bottom: 6px;
+    padding: 8px 12px;
+  }
+
+  .reviewTitle {
+    font-size: 9px;
+    margin-bottom: 4px;
+    padding-bottom: 2px;
+  }
+
+  .reviewItem {
+    margin-bottom: 2px;
+    padding: 1px 0;
+    min-height: 14px;
+  }
+
   .reviewLabel {
-    width: 70px;
+    width: 60px;
     font-size: 8px;
   }
 
   .reviewValue {
     font-size: 8px;
+    max-width: calc(100% - 65px);
   }
 } 
 

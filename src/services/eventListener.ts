@@ -9,19 +9,76 @@ import {
 } from '@/types/events'
 import WebSocket from 'ws'
 
-// ABIs for the smart contracts
+// ABIs for the smart contracts (Updated for Bonding Curve vAMM)
 const VAMM_ABI = [
-  "event PositionOpened(address indexed user, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
-  "event PositionClosed(address indexed user, uint256 size, uint256 price, int256 pnl, uint256 fee)",
+  // Core trading functions
+  "function openPosition(uint256 collateralAmount, bool isLong, uint256 leverage, uint256 minPrice, uint256 maxPrice) external returns (uint256 positionId)",
+  "function addToPosition(uint256 positionId, uint256 collateralAmount, uint256 leverage, uint256 minPrice, uint256 maxPrice) external returns (uint256 newSize)",
+  "function closePosition(uint256 positionId, uint256 sizeToClose, uint256 minPrice, uint256 maxPrice) external returns (int256 pnl)",
+  "function liquidate(uint256 positionId) external",
+  
+  // Bonding curve functions
+  "function getMarkPrice() external view returns (uint256)",
+  "function getTotalSupply() external view returns (uint256)",
+  "function getBondingCurveInfo() external view returns (uint256 currentPrice, uint256 startPrice, uint256 totalSupply, uint256 steepness, uint256 exponent, uint256 maxPrice)",
+  "function calculateBuyCost(uint256 amount) external view returns (uint256 totalCost)",
+  "function calculateSellPayout(uint256 amount) external view returns (uint256 totalPayout)",
+  "function getPriceImpact(uint256 size, bool isLong) external view returns (uint256)",
+  
+  // Position management
+  "function getPosition(uint256 positionId) external view returns (tuple(uint256 positionId, int256 size, bool isLong, uint256 entryPrice, uint256 entryFundingIndex, uint256 lastInteractionTime, bool isActive))",
+  "function getUserPositions(address user) external view returns (tuple(uint256 positionId, int256 size, bool isLong, uint256 entryPrice, uint256 entryFundingIndex, uint256 lastInteractionTime, bool isActive)[])",
+  "function getUserPositionIds(address user) external view returns (uint256[])",
+  "function getUnrealizedPnL(uint256 positionId) external view returns (int256)",
+  "function getTotalUnrealizedPnL(address user) external view returns (int256)",
+  "function getUserSummary(address user) external view returns (uint256 totalLongSize, uint256 totalShortSize, int256 totalPnL, uint256 activePositionsCount)",
+  
+  // Funding mechanism
+  "function updateFunding() external",
+  "function getFundingRate() external view returns (int256)",
+  "function getFundingState() external view returns (tuple(int256 fundingRate, uint256 fundingIndex, uint256 lastFundingTime, int256 premiumFraction))",
+  
+  // Admin functions
+  "function updateBondingCurveParams(uint256 _newSteepness, uint256 _newExponent) external",
+  "function emergencyResetBondingCurve(uint256 _newStartingPrice) external",
+  "function updateTradingFeeRate(uint256 _feeRate) external",
+  "function updateMaintenanceMarginRatio(uint256 _ratio) external",
+  "function addAuthorized(address account) external",
+  "function removeAuthorized(address account) external",
+  "function pause() external",
+  "function unpause() external",
+  "function transferOwnership(address newOwner) external",
+  
+  // Legacy compatibility functions
+  "function getReserveInfo() external view returns (uint256 baseReserves, uint256 quoteReserves, uint256 multiplier, uint256 totalVolume)",
+  "function getBaseReserves() external view returns (uint256 baseReserves, uint256 quoteReserves)",
+  
+  // State variables
+  "function startingPrice() external view returns (uint256)",
+  "function totalLongSize() external view returns (int256)",
+  "function totalShortSize() external view returns (int256)",
+  "function tradingFeeRate() external view returns (uint256)",
+  "function maintenanceMarginRatio() external view returns (uint256)",
+  "function paused() external view returns (bool)",
+  "function owner() external view returns (address)",
+  "function vault() external view returns (address)",
+  "function oracle() external view returns (address)",
+  
+  // Events
+  "event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
+  "event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl, uint256 fee)",
+  "event PositionIncreased(address indexed user, uint256 indexed positionId, uint256 sizeAdded, uint256 newSize, uint256 newEntryPrice, uint256 fee)",
   "event FundingUpdated(int256 fundingRate, uint256 fundingIndex, int256 premiumFraction)",
-  "event FundingPaid(address indexed user, int256 amount, uint256 fundingIndex)",
-  "event PositionLiquidated(address indexed user, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
+  "event FundingPaid(address indexed user, uint256 indexed positionId, int256 amount, uint256 fundingIndex)",
+  "event PositionLiquidated(address indexed user, uint256 indexed positionId, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
   "event TradingFeeCollected(address indexed user, uint256 amount)",
   "event ParametersUpdated(string parameter, uint256 newValue)",
   "event AuthorizedAdded(address indexed account)",
   "event AuthorizedRemoved(address indexed account)",
   "event Paused()",
-  "event Unpaused()"
+  "event Unpaused()",
+  "event VirtualReservesUpdated(uint256 baseReserves, uint256 quoteReserves, uint256 multiplier)",
+  "event BondingCurveUpdated(uint256 newPrice, uint256 totalSupply, uint256 priceChange)"
 ]
 
 const VAULT_ABI = [
@@ -39,8 +96,11 @@ const VAULT_ABI = [
   "event Unpaused()"
 ]
 
+// Updated Factory ABI for bonding curve events
 const FACTORY_ABI = [
-  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken)",
+  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)",
+  "event BondingCurveMarketCreated(bytes32 indexed marketId, string symbol, uint256 startingPrice, uint8 marketType, string description)",
+  "event ContractDeployed(bytes32 indexed marketId, address indexed contractAddress, string contractType, bytes constructorArgs)",
   "event MarketStatusChanged(bytes32 indexed marketId, bool isActive)",
   "event DeploymentFeeUpdated(uint256 newFee)",
   "event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)"
@@ -792,6 +852,7 @@ export class SmartContractEventListener {
             ...baseEvent,
             eventType: 'PositionOpened',
             user: parsedLog.args.user,
+            positionId: parsedLog.args.positionId?.toString(),
             isLong: parsedLog.args.isLong,
             size: parsedLog.args.size?.toString(),
             price: parsedLog.args.price?.toString(),
@@ -804,9 +865,22 @@ export class SmartContractEventListener {
             ...baseEvent,
             eventType: 'PositionClosed',
             user: parsedLog.args.user,
+            positionId: parsedLog.args.positionId?.toString(),
             size: parsedLog.args.size?.toString(),
             price: parsedLog.args.price?.toString(),
             pnl: parsedLog.args.pnl?.toString(),
+            fee: parsedLog.args.fee?.toString()
+          }
+
+        case 'PositionIncreased':
+          return {
+            ...baseEvent,
+            eventType: 'PositionIncreased',
+            user: parsedLog.args.user,
+            positionId: parsedLog.args.positionId?.toString(),
+            sizeAdded: parsedLog.args.sizeAdded?.toString(),
+            newSize: parsedLog.args.newSize?.toString(),
+            newEntryPrice: parsedLog.args.newEntryPrice?.toString(),
             fee: parsedLog.args.fee?.toString()
           }
 
@@ -815,10 +889,30 @@ export class SmartContractEventListener {
             ...baseEvent,
             eventType: 'PositionLiquidated',
             user: parsedLog.args.user,
+            positionId: parsedLog.args.positionId?.toString(),
             liquidator: parsedLog.args.liquidator,
             size: parsedLog.args.size?.toString(),
             price: parsedLog.args.price?.toString(),
             fee: parsedLog.args.fee?.toString()
+          }
+
+        case 'FundingPaid':
+          return {
+            ...baseEvent,
+            eventType: 'FundingPaid',
+            user: parsedLog.args.user,
+            positionId: parsedLog.args.positionId?.toString(),
+            amount: parsedLog.args.amount?.toString(),
+            fundingIndex: parsedLog.args.fundingIndex?.toString()
+          }
+
+        case 'VirtualReservesUpdated':
+          return {
+            ...baseEvent,
+            eventType: 'VirtualReservesUpdated',
+            baseReserves: parsedLog.args.baseReserves?.toString(),
+            quoteReserves: parsedLog.args.quoteReserves?.toString(),
+            multiplier: parsedLog.args.multiplier?.toString()
           }
 
         // ========================================
@@ -834,7 +928,6 @@ export class SmartContractEventListener {
         case 'FundingApplied':
         case 'UserLiquidated':
         case 'FundingUpdated':
-        case 'FundingPaid':
         case 'AuthorizedAdded':
         case 'AuthorizedRemoved':
         case 'Paused':
@@ -850,7 +943,7 @@ export class SmartContractEventListener {
         case 'OwnershipTransferred':
         case 'VammUpdated':
         case 'ParametersUpdated':
-          console.log(`⏭️  Filtering out event type: ${parsedLog.name} (not in allowed list: PositionOpened, PositionClosed, PositionLiquidated)`)
+          console.log(`⏭️  Filtering out event type: ${parsedLog.name} (not in allowed list: PositionOpened, PositionClosed, PositionIncreased, PositionLiquidated, FundingPaid, VirtualReservesUpdated)`)
           return null
         
         default:
@@ -919,6 +1012,7 @@ export class SmartContractEventListener {
             ...baseEvent,
             eventType: 'PositionOpened',
             user: eventPayload.args.user,
+            positionId: eventPayload.args.positionId?.toString(),
             isLong: eventPayload.args.isLong,
             size: eventPayload.args.size?.toString(),
             price: eventPayload.args.price?.toString(),
@@ -931,6 +1025,7 @@ export class SmartContractEventListener {
             ...baseEvent,
             eventType: 'PositionClosed',
             user: eventPayload.args.user,
+            positionId: eventPayload.args.positionId?.toString(),
             size: eventPayload.args.size?.toString(),
             price: eventPayload.args.price?.toString(),
             pnl: eventPayload.args.pnl?.toString(),
@@ -942,10 +1037,42 @@ export class SmartContractEventListener {
             ...baseEvent,
             eventType: 'PositionLiquidated',
             user: eventPayload.args.user,
+            positionId: eventPayload.args.positionId?.toString(),
             liquidator: eventPayload.args.liquidator,
             size: eventPayload.args.size?.toString(),
             price: eventPayload.args.price?.toString(),
             fee: eventPayload.args.fee?.toString()
+          }
+
+        case 'PositionIncreased':
+          return {
+            ...baseEvent,
+            eventType: 'PositionIncreased',
+            user: eventPayload.args.user,
+            positionId: eventPayload.args.positionId?.toString(),
+            sizeAdded: eventPayload.args.sizeAdded?.toString(),
+            newSize: eventPayload.args.newSize?.toString(),
+            newEntryPrice: eventPayload.args.newEntryPrice?.toString(),
+            fee: eventPayload.args.fee?.toString()
+          }
+
+        case 'FundingPaid':
+          return {
+            ...baseEvent,
+            eventType: 'FundingPaid',
+            user: eventPayload.args.user,
+            positionId: eventPayload.args.positionId?.toString(),
+            amount: eventPayload.args.amount?.toString(),
+            fundingIndex: eventPayload.args.fundingIndex?.toString()
+          }
+
+        case 'VirtualReservesUpdated':
+          return {
+            ...baseEvent,
+            eventType: 'VirtualReservesUpdated',
+            baseReserves: eventPayload.args.baseReserves?.toString(),
+            quoteReserves: eventPayload.args.quoteReserves?.toString(),
+            multiplier: eventPayload.args.multiplier?.toString()
           }
 
         // ========================================
@@ -977,7 +1104,7 @@ export class SmartContractEventListener {
         case 'OwnershipTransferred':
         case 'VammUpdated':
         case 'ParametersUpdated':
-          console.log(`⏭️  Filtering out event type: ${eventPayload.fragment.name} (not in allowed list: PositionOpened, PositionClosed, PositionLiquidated)`)
+          console.log(`⏭️  Filtering out event type: ${eventPayload.fragment.name} (not in allowed list: PositionOpened, PositionClosed, PositionLiquidated, PositionIncreased, FundingPaid, VirtualReservesUpdated)`)
           return null
         
         default:

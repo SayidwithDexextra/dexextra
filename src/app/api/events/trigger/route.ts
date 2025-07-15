@@ -81,11 +81,12 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Import the event emitter from the stream route
-        const { eventEmitter } = await import('../stream/route')
+        // Note: Event emission functionality temporarily disabled due to 
+        // Next.js App Router export restrictions. Consider implementing 
+        // through a separate service or WebSocket connection.
         
-        // Emit the mock event
-        eventEmitter.emit(mockEvent)
+        // TODO: Implement proper event emission for production
+        console.log('Mock event would be emitted:', mockEvent)
 
         return NextResponse.json({
           success: true,

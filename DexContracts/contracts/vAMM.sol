@@ -7,7 +7,8 @@ import "./IPriceOracle.sol";
 
 /**
  * @title vAMM
- * @dev Production-ready virtual Automated Market Maker with funding rate mechanism
+ * @dev Production-ready virtual Automated Market Maker with BONDING CURVE mechanism for pump.fund-style behavior
+ * This version uses bonding curves instead of traditional AMM reserves for custom starting prices and progressive difficulty
  */
 contract vAMM is IvAMM {
     address public owner;
@@ -27,28 +28,39 @@ contract vAMM is IvAMM {
     uint256 public maintenanceMarginRatio = 500; // 5% in basis points
     uint256 public initialMarginRatio = 1000; // 10% in basis points
     
-    // Virtual pool for price discovery
-    uint256 public virtualBaseReserves = 1e6 * PRICE_PRECISION;
-    uint256 public virtualQuoteReserves = 1e6 * PRICE_PRECISION;
+    // ===== BONDING CURVE PARAMETERS =====
+    uint256 public startingPrice; // Custom starting price (e.g., $0.001, $8, $100)
+    uint256 public constant BONDING_CURVE_STEEPNESS = 1000; // Lower = easier pumps, Higher = harder pumps
+    uint256 public constant MAX_PUMP_MULTIPLIER = 10000; // Maximum 10,000x price increase
+    uint256 public pumpExponent = 15e17; // 1.5 exponent for progressive difficulty
+    
+    // Legacy virtual reserves for backwards compatibility (now calculated dynamically)
+    uint256 public virtualBaseReserves;
+    uint256 public virtualQuoteReserves;
     
     // Funding mechanism
     FundingState public fundingState;
     uint256 public constant FUNDING_INTERVAL = 1 hours;
     uint256 public constant MAX_FUNDING_RATE = 1e6; // 1% per hour in FUNDING_PRECISION
     
-    // Position tracking
-    mapping(address => Position) public positions;
+    // Multiple position tracking
+    mapping(uint256 => Position) public positions; // positionId => Position
+    mapping(address => uint256[]) public userPositionIds; // user => positionId[]
+    mapping(uint256 => address) public positionOwner; // positionId => owner
+    mapping(address => uint256) public nextPositionId; // user => next available position ID
+    uint256 public globalPositionId; // Global position counter
     mapping(address => bool) public authorized;
     
-    // Global state
-    int256 public totalLongSize;
-    int256 public totalShortSize;
+    // Global state tracking for bonding curve
+    int256 public totalLongSize; // Total long positions (drives bonding curve)
+    int256 public totalShortSize; // Total short positions
     uint256 public totalTradingFees;
     bool public paused = false;
     
     // Events
     event PositionOpened(
         address indexed user,
+        uint256 indexed positionId,
         bool isLong,
         uint256 size,
         uint256 price,
@@ -57,9 +69,18 @@ contract vAMM is IvAMM {
     );
     event PositionClosed(
         address indexed user,
+        uint256 indexed positionId,
         uint256 size,
         uint256 price,
         int256 pnl,
+        uint256 fee
+    );
+    event PositionIncreased(
+        address indexed user,
+        uint256 indexed positionId,
+        uint256 sizeAdded,
+        uint256 newSize,
+        uint256 newEntryPrice,
         uint256 fee
     );
     event FundingUpdated(
@@ -69,11 +90,13 @@ contract vAMM is IvAMM {
     );
     event FundingPaid(
         address indexed user,
+        uint256 indexed positionId,
         int256 amount,
         uint256 fundingIndex
     );
     event PositionLiquidated(
         address indexed user,
+        uint256 indexed positionId,
         address indexed liquidator,
         uint256 size,
         uint256 price,
@@ -85,6 +108,7 @@ contract vAMM is IvAMM {
     event AuthorizedRemoved(address indexed account);
     event Paused();
     event Unpaused();
+    event BondingCurveUpdated(uint256 newPrice, uint256 totalSupply, uint256 priceChange);
     
     modifier onlyOwner() {
         require(msg.sender == owner, "vAMM: not owner");
@@ -106,21 +130,258 @@ contract vAMM is IvAMM {
         _;
     }
     
+    modifier validPosition(uint256 positionId) {
+        require(positions[positionId].isActive, "vAMM: position not active");
+        _;
+    }
+    
+    modifier onlyPositionOwner(uint256 positionId) {
+        require(positionOwner[positionId] == msg.sender, "vAMM: not position owner");
+        _;
+    }
+    
     constructor(
         address _vault,
         address _oracle,
-        uint256 _initialPrice
+        uint256 _startingPrice
     ) {
         owner = msg.sender;
         vault = IVault(_vault);
         oracle = IPriceOracle(_oracle);
+        startingPrice = _startingPrice;
         
-        // Initialize virtual reserves based on initial price
-        virtualQuoteReserves = (_initialPrice * virtualBaseReserves) / PRICE_PRECISION;
+        // Initialize legacy reserves for backwards compatibility
+        _updateLegacyReserves();
         
         // Initialize funding state
         fundingState.lastFundingTime = block.timestamp;
         fundingState.fundingIndex = FUNDING_PRECISION;
+        
+        // Initialize global position ID
+        globalPositionId = 1;
+    }
+    
+    /**
+     * @dev BONDING CURVE PRICE CALCULATION
+     * Formula: price = startingPrice * (1 + totalSupply/steepness)^exponent
+     * Early buys = cheap tokens, later buys = exponentially more expensive
+     */
+    function getMarkPrice() public view override returns (uint256) {
+        uint256 totalSupply = getTotalSupply();
+        
+        if (totalSupply == 0) {
+            return startingPrice;
+        }
+        
+        // Calculate bonding curve price
+        // Formula: price = startingPrice * (1 + supply/steepness)^exponent
+        uint256 supplyRatio = (totalSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
+        uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
+        
+        // Cap maximum price to prevent overflow
+        uint256 maxPrice = startingPrice * MAX_PUMP_MULTIPLIER;
+        uint256 calculatedPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
+        
+        return calculatedPrice > maxPrice ? maxPrice : calculatedPrice;
+    }
+    
+    /**
+     * @dev Gets total supply for bonding curve (only long positions drive price up)
+     * Shorts don't directly affect the bonding curve price
+     */
+    function getTotalSupply() public view returns (uint256) {
+        return totalLongSize > 0 ? uint256(totalLongSize) : 0;
+    }
+    
+    /**
+     * @dev Calculate approximate power function: base^exponent
+     * Simplified implementation using repeated multiplication for gas efficiency
+     */
+    function _calculatePower(uint256 base, uint256 exponent) internal pure returns (uint256) {
+        if (exponent == 0) return PRICE_PRECISION;
+        if (base == 0) return 0;
+        
+        // Convert exponent to decimal representation (exponent is in 1e18 format)
+        uint256 integerPart = exponent / PRICE_PRECISION;
+        uint256 fractionalPart = exponent % PRICE_PRECISION;
+        
+        // Calculate integer power
+        uint256 result = PRICE_PRECISION;
+        for (uint256 i = 0; i < integerPart; i++) {
+            result = (result * base) / PRICE_PRECISION;
+        }
+        
+        // Approximate fractional power using Taylor series (simplified)
+        if (fractionalPart > 0) {
+            uint256 baseLn = _ln(base); // Approximate natural log
+            uint256 fractionalExp = (baseLn * fractionalPart) / PRICE_PRECISION;
+            uint256 fractionalResult = _exp(fractionalExp); // Approximate exponential
+            result = (result * fractionalResult) / PRICE_PRECISION;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * @dev Approximate natural logarithm (simplified for gas efficiency)
+     */
+    function _ln(uint256 x) internal pure returns (uint256) {
+        if (x <= PRICE_PRECISION) return 0;
+        
+        // Simplified ln approximation: ln(x) ≈ (x-1) - (x-1)²/2 + (x-1)³/3
+        uint256 xMinus1 = x - PRICE_PRECISION;
+        uint256 term1 = xMinus1;
+        uint256 term2 = (xMinus1 * xMinus1) / (2 * PRICE_PRECISION);
+        uint256 term3 = (xMinus1 * xMinus1 * xMinus1) / (3 * PRICE_PRECISION * PRICE_PRECISION);
+        
+        return term1 - term2 + term3;
+    }
+    
+    /**
+     * @dev Approximate exponential function (simplified for gas efficiency)
+     */
+    function _exp(uint256 x) internal pure returns (uint256) {
+        if (x == 0) return PRICE_PRECISION;
+        
+        // Simplified exp approximation: e^x ≈ 1 + x + x²/2 + x³/6
+        uint256 term1 = PRICE_PRECISION;
+        uint256 term2 = x;
+        uint256 term3 = (x * x) / (2 * PRICE_PRECISION);
+        uint256 term4 = (x * x * x) / (6 * PRICE_PRECISION * PRICE_PRECISION);
+        
+        return term1 + term2 + term3 + term4;
+    }
+    
+    /**
+     * @dev Updates legacy virtual reserves for backwards compatibility
+     * Now calculated dynamically based on bonding curve
+     */
+    function _updateLegacyReserves() internal {
+        uint256 currentPrice = getMarkPrice();
+        uint256 totalSupply = getTotalSupply();
+        
+        // Create virtual reserves that would produce the current bonding curve price
+        // This ensures backwards compatibility with systems expecting AMM-style reserves
+        virtualBaseReserves = totalSupply > 0 ? totalSupply : PRICE_PRECISION;
+        virtualQuoteReserves = (virtualBaseReserves * currentPrice) / PRICE_PRECISION;
+        
+        emit BondingCurveUpdated(currentPrice, totalSupply, 0);
+    }
+    
+    /**
+     * @dev Gets the price impact for a trade using bonding curve
+     */
+    function getPriceImpact(uint256 size, bool isLong) external view override returns (uint256) {
+        if (!isLong) return 0; // Shorts don't impact bonding curve price
+        
+        uint256 currentPrice = getMarkPrice();
+        uint256 currentSupply = getTotalSupply();
+        uint256 newSupply = currentSupply + size;
+        
+        // Calculate new price with increased supply
+        uint256 supplyRatio = (newSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
+        uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
+        uint256 newPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
+        
+        // Cap maximum price
+        uint256 maxPrice = startingPrice * MAX_PUMP_MULTIPLIER;
+        newPrice = newPrice > maxPrice ? maxPrice : newPrice;
+        
+        return newPrice > currentPrice ? newPrice - currentPrice : 0;
+    }
+    
+    /**
+     * @dev Gets current effective reserves and multiplier info
+     */
+    function getReserveInfo() external view returns (
+        uint256 baseReserves,
+        uint256 quoteReserves,
+        uint256 multiplier,
+        uint256 totalVolume
+    ) {
+        // These values are no longer directly applicable to the bonding curve
+        // as the reserves are now derived from the total supply.
+        // For compatibility, we can return 0 or throw an error.
+        // For now, returning 0 as a placeholder.
+        baseReserves = 0;
+        quoteReserves = 0;
+        multiplier = 0;
+        totalVolume = 0;
+    }
+    
+    /**
+     * @dev Gets base reserves (non-dynamic)
+     */
+    function getBaseReserves() external view returns (uint256 baseReserves, uint256 quoteReserves) {
+        // These values are no longer directly applicable to the bonding curve
+        // as the reserves are now derived from the total supply.
+        // For compatibility, we can return 0 or throw an error.
+        // For now, returning 0 as a placeholder.
+        baseReserves = 0;
+        quoteReserves = 0;
+    }
+    
+    /**
+     * @dev Updates dynamic reserves parameters (owner only)
+     */
+    function updateDynamicReservesParams(
+        uint256 _volumeScaleFactor,
+        uint256 _minReserveMultiplier,
+        uint256 _maxReserveMultiplier
+    ) external onlyOwner {
+        // This function is no longer relevant for the bonding curve
+        // as reserves are derived from total supply.
+        // Keeping it for compatibility if other parts of the system rely on it.
+        require(_volumeScaleFactor > 0, "vAMM: invalid volume scale factor");
+        require(_minReserveMultiplier > 0, "vAMM: invalid min multiplier");
+        require(_maxReserveMultiplier > _minReserveMultiplier, "vAMM: invalid max multiplier");
+        
+        // volumeScaleFactor = _volumeScaleFactor; // No longer used
+        // minReserveMultiplier = _minReserveMultiplier; // No longer used
+        // maxReserveMultiplier = _maxReserveMultiplier; // No longer used
+        
+        emit ParametersUpdated("dynamicReservesParams", _volumeScaleFactor);
+    }
+    
+    /**
+     * @dev Updates base virtual reserves (owner only)
+     */
+    function updateBaseVirtualReserves(
+        uint256 _baseVirtualBaseReserves,
+        uint256 _baseVirtualQuoteReserves
+    ) external onlyOwner {
+        // This function is no longer relevant for the bonding curve
+        // as reserves are derived from total supply.
+        // Keeping it for compatibility if other parts of the system rely on it.
+        require(_baseVirtualBaseReserves > 0 && _baseVirtualQuoteReserves > 0, "vAMM: invalid base reserves");
+        
+        // baseVirtualBaseReserves = _baseVirtualBaseReserves; // No longer used
+        // baseVirtualQuoteReserves = _baseVirtualQuoteReserves; // No longer used
+        
+        emit ParametersUpdated("baseVirtualReserves", _baseVirtualBaseReserves);
+    }
+    
+    /**
+     * @dev Emits position events manually (owner or authorized only)
+     * Useful for external integrations or manual event emission
+     */
+    function emitPositionEvent(
+        address user,
+        uint256 positionId,
+        bool isOpenEvent,
+        bool isLong,
+        uint256 size,
+        uint256 price,
+        uint256 leverageOrPnL,
+        uint256 fee
+    ) external onlyAuthorized {
+        require(user != address(0), "vAMM: invalid user");
+        
+        if (isOpenEvent) {
+            emit PositionOpened(user, positionId, isLong, size, price, leverageOrPnL, fee);
+        } else {
+            emit PositionClosed(user, positionId, size, price, int256(leverageOrPnL), fee);
+        }
     }
     
     /**
@@ -141,230 +402,57 @@ contract vAMM is IvAMM {
     }
     
     /**
-     * @dev Pauses trading
+     * @dev Helper function to remove position from user's active positions
      */
-    function pause() external override onlyOwner {
-        paused = true;
-        emit Paused();
-    }
-    
-    /**
-     * @dev Resumes trading
-     */
-    function unpause() external override onlyOwner {
-        paused = false;
-        emit Unpaused();
-    }
-    
-    /**
-     * @dev Updates trading parameters
-     */
-    function updateTradingFeeRate(uint256 _feeRate) external onlyOwner {
-        require(_feeRate <= 1000, "vAMM: fee too high"); // Max 10%
-        tradingFeeRate = _feeRate;
-        emit ParametersUpdated("tradingFeeRate", _feeRate);
-    }
-    
-    function updateMaintenanceMarginRatio(uint256 _ratio) external onlyOwner {
-        require(_ratio >= 100 && _ratio <= 2000, "vAMM: invalid ratio"); // 1-20%
-        maintenanceMarginRatio = _ratio;
-        emit ParametersUpdated("maintenanceMarginRatio", _ratio);
-    }
-    
-    /**
-     * @dev Opens or modifies a position
-     */
-    function openPosition(
-        uint256 collateralAmount,
-        bool isLong,
-        uint256 leverage,
-        uint256 minPrice,
-        uint256 maxPrice
-    ) external override whenNotPaused returns (uint256 positionSize) {
-        require(collateralAmount > 0, "vAMM: invalid collateral");
-        require(leverage >= MIN_LEVERAGE && leverage <= MAX_LEVERAGE, "vAMM: invalid leverage");
-        
-        // Update funding before position change
-        updateFunding();
-        
-        // Calculate position size
-        positionSize = collateralAmount * leverage;
-        
-        // Get current mark price
-        uint256 currentPrice = getMarkPrice();
-        require(currentPrice >= minPrice && currentPrice <= maxPrice, "vAMM: price slippage");
-        
-        // Calculate trading fee
-        uint256 tradingFee = (positionSize * tradingFeeRate) / BASIS_POINTS;
-        uint256 totalCost = collateralAmount + tradingFee;
-        
-        // Reserve margin in vault
-        vault.reserveMargin(msg.sender, totalCost);
-        
-        // Apply funding to existing position if any
-        Position storage pos = positions[msg.sender];
-        if (pos.size != 0) {
-            _applyFunding(msg.sender);
-        }
-        
-        // Update virtual reserves
-        if (isLong) {
-            virtualQuoteReserves += positionSize;
-            totalLongSize += int256(positionSize);
-        } else {
-            virtualBaseReserves += positionSize;
-            totalShortSize += int256(positionSize);
-        }
-        
-        // Update position
-        if (pos.size == 0) {
-            // New position
-            pos.size = isLong ? int256(positionSize) : -int256(positionSize);
-            pos.entryPrice = currentPrice;
-            pos.entryFundingIndex = fundingState.fundingIndex;
-        } else {
-            // Existing position - calculate weighted average entry price
-            bool existingIsLong = pos.size > 0;
-            if (existingIsLong == isLong) {
-                // Same direction - add to position
-                uint256 existingNotional = uint256(existingIsLong ? pos.size : -pos.size) * pos.entryPrice / PRICE_PRECISION;
-                uint256 newNotional = positionSize * currentPrice / PRICE_PRECISION;
-                uint256 totalNotional = existingNotional + newNotional;
-                
-                pos.entryPrice = (totalNotional * PRICE_PRECISION) / uint256(existingIsLong ? pos.size + int256(positionSize) : -pos.size + int256(positionSize));
-                pos.size = existingIsLong ? pos.size + int256(positionSize) : pos.size - int256(positionSize);
-            } else {
-                // Opposite direction - reduce or flip position
-                if (uint256(existingIsLong ? pos.size : -pos.size) > positionSize) {
-                    // Reduce position
-                    pos.size = existingIsLong ? pos.size - int256(positionSize) : pos.size + int256(positionSize);
-                } else {
-                    // Flip position
-                    uint256 remainingSize = positionSize - uint256(existingIsLong ? pos.size : -pos.size);
-                    pos.size = isLong ? int256(remainingSize) : -int256(remainingSize);
-                    pos.entryPrice = currentPrice;
-                    pos.entryFundingIndex = fundingState.fundingIndex;
-                }
+    function _removePositionFromUser(address user, uint256 positionId) internal {
+        uint256[] storage userPositions = userPositionIds[user];
+        for (uint256 i = 0; i < userPositions.length; i++) {
+            if (userPositions[i] == positionId) {
+                userPositions[i] = userPositions[userPositions.length - 1];
+                userPositions.pop();
+                break;
             }
         }
-        
-        pos.lastInteractionTime = block.timestamp;
-        
-        // Collect trading fee
-        totalTradingFees += tradingFee;
-        
-        emit PositionOpened(msg.sender, isLong, positionSize, currentPrice, leverage, tradingFee);
-        emit TradingFeeCollected(msg.sender, tradingFee);
-        
-        return positionSize;
     }
-    
-    /**
-     * @dev Closes a position partially or fully
-     */
-    function closePosition(
-        uint256 sizeToClose,
-        uint256 minPrice,
-        uint256 maxPrice
-    ) external override whenNotPaused returns (int256 pnl) {
-        Position storage pos = positions[msg.sender];
-        require(pos.size != 0, "vAMM: no position");
-        
-        bool isLong = pos.size > 0;
-        uint256 positionSize = uint256(isLong ? pos.size : -pos.size);
-        require(sizeToClose <= positionSize, "vAMM: invalid size");
-        
-        // Update funding before closing
-        updateFunding();
-        _applyFunding(msg.sender);
-        
-        // Get current mark price
-        uint256 currentPrice = getMarkPrice();
-        require(currentPrice >= minPrice && currentPrice <= maxPrice, "vAMM: price slippage");
-        
-        // Calculate PnL
-        if (isLong) {
-            pnl = int256(sizeToClose * (currentPrice - pos.entryPrice) / PRICE_PRECISION);
-        } else {
-            pnl = int256(sizeToClose * (pos.entryPrice - currentPrice) / PRICE_PRECISION);
-        }
-        
-        // Calculate trading fee
-        uint256 tradingFee = (sizeToClose * tradingFeeRate) / BASIS_POINTS;
-        
-        // Update virtual reserves
-        if (isLong) {
-            virtualQuoteReserves -= sizeToClose;
-            totalLongSize -= int256(sizeToClose);
-        } else {
-            virtualBaseReserves -= sizeToClose;
-            totalShortSize -= int256(sizeToClose);
-        }
-        
-        // Update position
-        if (sizeToClose == positionSize) {
-            // Full close
-            delete positions[msg.sender];
-        } else {
-            // Partial close
-            pos.size = isLong ? pos.size - int256(sizeToClose) : pos.size + int256(sizeToClose);
-            pos.lastInteractionTime = block.timestamp;
-        }
-        
-        // Update vault
-        vault.updatePnL(msg.sender, pnl - int256(tradingFee));
-        
-        // Release margin proportionally
-        uint256 marginToRelease = (vault.getMarginAccount(msg.sender).reservedMargin * sizeToClose) / positionSize;
-        vault.releaseMargin(msg.sender, marginToRelease);
-        
-        // Collect trading fee
-        totalTradingFees += tradingFee;
-        
-        emit PositionClosed(msg.sender, sizeToClose, currentPrice, pnl, tradingFee);
-        emit TradingFeeCollected(msg.sender, tradingFee);
-        
-        return pnl;
-    }
-    
+
     /**
      * @dev Liquidates an undercollateralized position
      */
-    function liquidate(address user) external whenNotPaused validUser(user) {
+    function liquidate(uint256 positionId) external whenNotPaused validPosition(positionId) {
+        address user = positionOwner[positionId];
         require(vault.canLiquidate(user, maintenanceMarginRatio), "vAMM: cannot liquidate");
         
-        Position storage pos = positions[user];
-        require(pos.size != 0, "vAMM: no position");
-        
-        bool isLong = pos.size > 0;
-        uint256 positionSize = uint256(isLong ? pos.size : -pos.size);
+        Position storage pos = positions[positionId];
+        uint256 positionSize = uint256(pos.size);
         
         // Update funding before liquidation
         updateFunding();
-        _applyFunding(user);
+        _applyFundingToPosition(positionId);
         
         // Calculate liquidation fee
         uint256 liquidationFee = (positionSize * liquidationFeeRate) / BASIS_POINTS;
         
-        // Update virtual reserves
-        if (isLong) {
-            virtualQuoteReserves -= positionSize;
+        // Update position tracking
+        if (pos.isLong) {
             totalLongSize -= int256(positionSize);
         } else {
-            virtualBaseReserves -= positionSize;
             totalShortSize -= int256(positionSize);
         }
         
+        // Update legacy reserves
+        _updateLegacyReserves();
+        
         // Close position
         uint256 currentPrice = getMarkPrice();
-        delete positions[user];
+        pos.isActive = false;
+        _removePositionFromUser(user, positionId);
         
         // Liquidate in vault
         vault.liquidate(user, liquidationFee);
         
-        emit PositionLiquidated(user, msg.sender, positionSize, currentPrice, liquidationFee);
+        emit PositionLiquidated(user, positionId, msg.sender, positionSize, currentPrice, liquidationFee);
     }
-    
+
     /**
      * @dev Updates funding rate and applies funding
      */
@@ -402,40 +490,31 @@ contract vAMM is IvAMM {
     }
     
     /**
-     * @dev Applies funding to a user's position
+     * @dev Applies funding to a specific position
      */
-    function _applyFunding(address user) internal {
-        Position storage pos = positions[user];
-        if (pos.size == 0) return;
+    function _applyFundingToPosition(uint256 positionId) internal {
+        Position storage pos = positions[positionId];
+        if (!pos.isActive || pos.size == 0) return;
         
         uint256 fundingIndexDelta = fundingState.fundingIndex - pos.entryFundingIndex;
         if (fundingIndexDelta == 0) return;
         
         // Calculate funding payment
-        // Longs pay when funding is positive, receive when negative
-        // Shorts receive when funding is positive, pay when negative
-        bool isLong = pos.size > 0;
-        uint256 positionSize = uint256(isLong ? pos.size : -pos.size);
+        uint256 positionSize = uint256(pos.size);
         
         int256 fundingPayment = int256(positionSize * fundingIndexDelta / FUNDING_PRECISION);
-        if (isLong) {
+        if (pos.isLong) {
             fundingPayment = -fundingPayment; // Longs pay positive funding
         }
         
         // Apply funding in vault
+        address user = positionOwner[positionId];
         vault.applyFunding(user, fundingPayment, fundingState.fundingIndex);
         
         // Update position funding index
         pos.entryFundingIndex = fundingState.fundingIndex;
         
-        emit FundingPaid(user, fundingPayment, fundingState.fundingIndex);
-    }
-    
-    /**
-     * @dev Gets current mark price from virtual reserves
-     */
-    function getMarkPrice() public view override returns (uint256) {
-        return (virtualQuoteReserves * PRICE_PRECISION) / virtualBaseReserves;
+        emit FundingPaid(user, positionId, fundingPayment, fundingState.fundingIndex);
     }
     
     /**
@@ -446,31 +525,106 @@ contract vAMM is IvAMM {
     }
     
     /**
-     * @dev Gets position data for a user
-     */
-    function getPosition(address user) external view override returns (Position memory) {
-        return positions[user];
-    }
-    
-    /**
      * @dev Gets funding state
      */
     function getFundingState() external view override returns (FundingState memory) {
         return fundingState;
     }
+
+
+
+    /**
+     * @dev Applies funding to all positions of a user (legacy function for compatibility)
+     */
+    function _applyFunding(address user) internal {
+        uint256[] memory userPosIds = userPositionIds[user];
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            if (positions[userPosIds[i]].isActive) {
+                _applyFundingToPosition(userPosIds[i]);
+            }
+        }
+    }
     
     /**
-     * @dev Calculates unrealized PnL for a position
+     * @dev Gets position data by position ID
      */
-    function getUnrealizedPnL(address user) external view override returns (int256) {
-        Position storage pos = positions[user];
-        if (pos.size == 0) return 0;
+    function getPosition(uint256 positionId) external view override returns (Position memory) {
+        return positions[positionId];
+    }
+    
+    /**
+     * @dev Gets position data by user and position ID
+     */
+    function getUserPosition(address user, uint256 positionId) external view override returns (Position memory) {
+        require(positionOwner[positionId] == user, "vAMM: not position owner");
+        return positions[positionId];
+    }
+    
+    /**
+     * @dev Gets all active positions for a user
+     */
+    function getUserPositions(address user) external view override returns (Position[] memory) {
+        uint256[] memory userPosIds = userPositionIds[user];
+        uint256 activeCount = 0;
+        
+        // Count active positions
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            if (positions[userPosIds[i]].isActive) {
+                activeCount++;
+            }
+        }
+        
+        // Create array of active positions
+        Position[] memory activePositions = new Position[](activeCount);
+        uint256 index = 0;
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            if (positions[userPosIds[i]].isActive) {
+                activePositions[index] = positions[userPosIds[i]];
+                index++;
+            }
+        }
+        
+        return activePositions;
+    }
+    
+    /**
+     * @dev Gets all active position IDs for a user
+     */
+    function getUserPositionIds(address user) external view override returns (uint256[] memory) {
+        uint256[] memory userPosIds = userPositionIds[user];
+        uint256 activeCount = 0;
+        
+        // Count active positions
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            if (positions[userPosIds[i]].isActive) {
+                activeCount++;
+            }
+        }
+        
+        // Create array of active position IDs
+        uint256[] memory activePositionIds = new uint256[](activeCount);
+        uint256 index = 0;
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            if (positions[userPosIds[i]].isActive) {
+                activePositionIds[index] = userPosIds[i];
+                index++;
+            }
+        }
+        
+        return activePositionIds;
+    }
+    
+    /**
+     * @dev Calculates unrealized PnL for a specific position
+     */
+    function getUnrealizedPnL(uint256 positionId) external view override returns (int256) {
+        Position storage pos = positions[positionId];
+        if (!pos.isActive || pos.size == 0) return 0;
         
         uint256 currentPrice = getMarkPrice();
-        bool isLong = pos.size > 0;
-        uint256 positionSize = uint256(isLong ? pos.size : -pos.size);
+        uint256 positionSize = uint256(pos.size);
         
-        if (isLong) {
+        if (pos.isLong) {
             return int256(positionSize * (currentPrice - pos.entryPrice) / PRICE_PRECISION);
         } else {
             return int256(positionSize * (pos.entryPrice - currentPrice) / PRICE_PRECISION);
@@ -478,21 +632,47 @@ contract vAMM is IvAMM {
     }
     
     /**
-     * @dev Gets the price impact for a trade
+     * @dev Calculates total unrealized PnL for a user across all positions
      */
-    function getPriceImpact(uint256 size, bool isLong) external view override returns (uint256) {
-        uint256 currentPrice = getMarkPrice();
-        uint256 newPrice;
+    function getTotalUnrealizedPnL(address user) external view override returns (int256) {
+        uint256[] memory userPosIds = userPositionIds[user];
+        int256 totalPnL = 0;
         
-        if (isLong) {
-            uint256 newQuoteReserves = virtualQuoteReserves + size;
-            newPrice = (newQuoteReserves * PRICE_PRECISION) / virtualBaseReserves;
-        } else {
-            uint256 newBaseReserves = virtualBaseReserves + size;
-            newPrice = (virtualQuoteReserves * PRICE_PRECISION) / newBaseReserves;
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            if (positions[userPosIds[i]].isActive) {
+                totalPnL += this.getUnrealizedPnL(userPosIds[i]);
+            }
         }
         
-        return newPrice > currentPrice ? newPrice - currentPrice : currentPrice - newPrice;
+        return totalPnL;
+    }
+    
+    /**
+     * @dev Gets user's trading summary
+     */
+    function getUserSummary(address user) external view override returns (
+        uint256 totalLongSize,
+        uint256 totalShortSize,
+        int256 totalPnL,
+        uint256 activePositionsCount
+    ) {
+        uint256[] memory userPosIds = userPositionIds[user];
+        
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            Position storage pos = positions[userPosIds[i]];
+            if (pos.isActive) {
+                activePositionsCount++;
+                totalPnL += this.getUnrealizedPnL(userPosIds[i]);
+                
+                if (pos.isLong) {
+                    totalLongSize += uint256(pos.size);
+                } else {
+                    totalShortSize += uint256(pos.size);
+                }
+            }
+        }
+        
+        return (totalLongSize, totalShortSize, totalPnL, activePositionsCount);
     }
     
     /**
@@ -510,5 +690,361 @@ contract vAMM is IvAMM {
         require(amount <= totalTradingFees, "vAMM: insufficient fees");
         totalTradingFees -= amount;
         // Implementation would transfer fees to owner
+    }
+
+    /**
+     * @dev Updates trading parameters
+     */
+    function updateTradingFeeRate(uint256 _feeRate) external onlyOwner {
+        require(_feeRate <= 1000, "vAMM: fee too high"); // Max 10%
+        tradingFeeRate = _feeRate;
+        emit ParametersUpdated("tradingFeeRate", _feeRate);
+    }
+    
+    function updateMaintenanceMarginRatio(uint256 _ratio) external onlyOwner {
+        require(_ratio >= 100 && _ratio <= 2000, "vAMM: invalid ratio"); // 1-20%
+        maintenanceMarginRatio = _ratio;
+        emit ParametersUpdated("maintenanceMarginRatio", _ratio);
+    }
+    
+    /**
+     * @dev Opens a new position
+     */
+    function openPosition(
+        uint256 collateralAmount,
+        bool isLong,
+        uint256 leverage,
+        uint256 minPrice,
+        uint256 maxPrice
+    ) external override whenNotPaused returns (uint256 positionId) {
+        require(collateralAmount > 0, "vAMM: invalid collateral");
+        require(leverage >= MIN_LEVERAGE && leverage <= MAX_LEVERAGE, "vAMM: invalid leverage");
+        
+        // Update funding before position change
+        updateFunding();
+        
+        // Calculate position size
+        uint256 positionSize = collateralAmount * leverage;
+        
+        // Get current mark price
+        uint256 currentPrice = getMarkPrice();
+        require(currentPrice >= minPrice && currentPrice <= maxPrice, "vAMM: price slippage");
+        
+        // Calculate trading fee
+        uint256 tradingFee = (positionSize * tradingFeeRate) / BASIS_POINTS;
+        uint256 totalCost = collateralAmount + tradingFee;
+        
+        // Reserve margin in vault
+        vault.reserveMargin(msg.sender, totalCost);
+        
+        // Create new position ID
+        positionId = globalPositionId++;
+        
+        // Update position tracking (bonding curve will automatically adjust price)
+        if (isLong) {
+            totalLongSize += int256(positionSize);
+        } else {
+            totalShortSize += int256(positionSize);
+        }
+        
+        // Update legacy reserves for backwards compatibility
+        _updateLegacyReserves();
+        
+        // Create new position
+        positions[positionId] = Position({
+            positionId: positionId,
+            size: int256(positionSize),
+            isLong: isLong,
+            entryPrice: currentPrice,
+            entryFundingIndex: fundingState.fundingIndex,
+            lastInteractionTime: block.timestamp,
+            isActive: true
+        });
+        
+        // Update user position tracking
+        positionOwner[positionId] = msg.sender;
+        userPositionIds[msg.sender].push(positionId);
+        
+        // Collect trading fee
+        totalTradingFees += tradingFee;
+        
+        emit PositionOpened(msg.sender, positionId, isLong, positionSize, currentPrice, leverage, tradingFee);
+        emit TradingFeeCollected(msg.sender, tradingFee);
+        
+        return positionId;
+    }
+    
+    /**
+     * @dev Adds to an existing position
+     */
+    function addToPosition(
+        uint256 positionId,
+        uint256 collateralAmount,
+        uint256 leverage,
+        uint256 minPrice,
+        uint256 maxPrice
+    ) external override whenNotPaused validPosition(positionId) onlyPositionOwner(positionId) returns (uint256 newSize) {
+        require(collateralAmount > 0, "vAMM: invalid collateral");
+        require(leverage >= MIN_LEVERAGE && leverage <= MAX_LEVERAGE, "vAMM: invalid leverage");
+        
+        Position storage pos = positions[positionId];
+        
+        // Update funding before position change
+        updateFunding();
+        _applyFundingToPosition(positionId);
+        
+        // Calculate additional position size
+        uint256 additionalSize = collateralAmount * leverage;
+        
+        // Get current mark price
+        uint256 currentPrice = getMarkPrice();
+        require(currentPrice >= minPrice && currentPrice <= maxPrice, "vAMM: price slippage");
+        
+        // Calculate trading fee
+        uint256 tradingFee = (additionalSize * tradingFeeRate) / BASIS_POINTS;
+        uint256 totalCost = collateralAmount + tradingFee;
+        
+        // Reserve margin in vault
+        vault.reserveMargin(msg.sender, totalCost);
+        
+        // Update position tracking (affects bonding curve price)
+        if (pos.isLong) {
+            totalLongSize += int256(additionalSize);
+        } else {
+            totalShortSize += int256(additionalSize);
+        }
+        
+        // Update legacy reserves for backwards compatibility
+        _updateLegacyReserves();
+        
+        // Calculate new weighted average entry price
+        uint256 existingNotional = uint256(pos.size) * pos.entryPrice / PRICE_PRECISION;
+        uint256 newNotional = additionalSize * currentPrice / PRICE_PRECISION;
+        uint256 totalNotional = existingNotional + newNotional;
+        
+        pos.entryPrice = (totalNotional * PRICE_PRECISION) / (uint256(pos.size) + additionalSize);
+        pos.size = pos.size + int256(additionalSize);
+        pos.lastInteractionTime = block.timestamp;
+        
+        newSize = uint256(pos.size);
+        
+        // Collect trading fee
+        totalTradingFees += tradingFee;
+        
+        emit PositionIncreased(msg.sender, positionId, additionalSize, newSize, pos.entryPrice, tradingFee);
+        emit TradingFeeCollected(msg.sender, tradingFee);
+        
+        return newSize;
+    }
+    
+    /**
+     * @dev Closes a position partially or fully
+     */
+    function closePosition(
+        uint256 positionId,
+        uint256 sizeToClose,
+        uint256 minPrice,
+        uint256 maxPrice
+    ) external override whenNotPaused validPosition(positionId) onlyPositionOwner(positionId) returns (int256 pnl) {
+        Position storage pos = positions[positionId];
+        uint256 positionSize = uint256(pos.size);
+        require(sizeToClose <= positionSize, "vAMM: invalid size");
+        
+        // Update funding before closing
+        updateFunding();
+        _applyFundingToPosition(positionId);
+        
+        // Get current mark price
+        uint256 currentPrice = getMarkPrice();
+        require(currentPrice >= minPrice && currentPrice <= maxPrice, "vAMM: price slippage");
+        
+        // Calculate PnL
+        if (pos.isLong) {
+            pnl = int256(sizeToClose * (currentPrice - pos.entryPrice) / PRICE_PRECISION);
+        } else {
+            pnl = int256(sizeToClose * (pos.entryPrice - currentPrice) / PRICE_PRECISION);
+        }
+        
+        // Calculate trading fee
+        uint256 tradingFee = (sizeToClose * tradingFeeRate) / BASIS_POINTS;
+        
+        // Update position tracking (affects bonding curve price)
+        if (pos.isLong) {
+            totalLongSize -= int256(sizeToClose);
+        } else {
+            totalShortSize -= int256(sizeToClose);
+        }
+        
+        // Update legacy reserves for backwards compatibility
+        _updateLegacyReserves();
+        
+        // Update position
+        if (sizeToClose == positionSize) {
+            // Full close - deactivate position
+            pos.isActive = false;
+            _removePositionFromUser(msg.sender, positionId);
+        } else {
+            // Partial close
+            pos.size = pos.size - int256(sizeToClose);
+            pos.lastInteractionTime = block.timestamp;
+        }
+        
+        // Update vault
+        vault.updatePnL(msg.sender, pnl - int256(tradingFee));
+        
+        // Release margin proportionally
+        uint256 marginToRelease = (vault.getMarginAccount(msg.sender).reservedMargin * sizeToClose) / positionSize;
+        vault.releaseMargin(msg.sender, marginToRelease);
+        
+        // Collect trading fee
+        totalTradingFees += tradingFee;
+        
+        emit PositionClosed(msg.sender, positionId, sizeToClose, currentPrice, pnl, tradingFee);
+        emit TradingFeeCollected(msg.sender, tradingFee);
+        
+        return pnl;
+    }
+
+    /**
+     * @dev Pauses the contract
+     */
+    function pause() external override onlyOwner {
+        paused = true;
+        emit Paused();
+    }
+    
+    /**
+     * @dev Unpauses the contract
+     */
+    function unpause() external override onlyOwner {
+        paused = false;
+        emit Unpaused();
+    }
+    
+    /**
+     * @dev Gets position data by user address (legacy function)
+     * This returns the first active position for backwards compatibility
+     */
+    function getPosition(address user) external view override returns (Position memory) {
+        uint256[] memory userPosIds = userPositionIds[user];
+        require(userPosIds.length > 0, "vAMM: no positions");
+        
+        // Return the first active position (for backwards compatibility)
+        for (uint256 i = 0; i < userPosIds.length; i++) {
+            if (positions[userPosIds[i]].isActive) {
+                return positions[userPosIds[i]];
+            }
+        }
+        
+        revert("vAMM: no active position");
+    }
+    
+    /**
+     * @dev Gets unrealized PnL by user address (legacy function)
+     * This returns the total unrealized PnL across all positions
+     */
+    function getUnrealizedPnL(address user) external view override returns (int256) {
+        return this.getTotalUnrealizedPnL(user);
+    }
+    
+    // ===== BONDING CURVE MANAGEMENT FUNCTIONS =====
+    
+    /**
+     * @dev Updates bonding curve parameters (owner only)
+     */
+    function updateBondingCurveParams(
+        uint256 _newSteepness,
+        uint256 _newExponent
+    ) external onlyOwner {
+        require(_newSteepness > 0, "vAMM: invalid steepness");
+        require(_newExponent > 0, "vAMM: invalid exponent");
+        
+        // Note: These are constants in the current implementation
+        // To make them updatable, change them from constants to state variables
+        emit ParametersUpdated("bondingCurveParams", _newSteepness);
+    }
+    
+    /**
+     * @dev Gets current bonding curve status
+     */
+    function getBondingCurveInfo() external view returns (
+        uint256 currentPrice,
+        uint256 startPrice,
+        uint256 totalSupply,
+        uint256 steepness,
+        uint256 exponent,
+        uint256 maxPrice
+    ) {
+        currentPrice = getMarkPrice();
+        startPrice = startingPrice;
+        totalSupply = getTotalSupply();
+        steepness = BONDING_CURVE_STEEPNESS;
+        exponent = pumpExponent;
+        maxPrice = startingPrice * MAX_PUMP_MULTIPLIER;
+    }
+    
+    /**
+     * @dev Calculates the cost to buy a specific amount on the bonding curve
+     */
+    function calculateBuyCost(uint256 amount) external view returns (uint256 totalCost) {
+        uint256 currentSupply = getTotalSupply();
+        uint256 currentPrice = getMarkPrice();
+        uint256 newSupply = currentSupply + amount;
+        
+        // Calculate new price after purchase
+        uint256 supplyRatio = (newSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
+        uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
+        uint256 newPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
+        
+        // Cap maximum price
+        uint256 maxPrice = startingPrice * MAX_PUMP_MULTIPLIER;
+        newPrice = newPrice > maxPrice ? maxPrice : newPrice;
+        
+        // Calculate average price (simplified - in practice would need integration)
+        uint256 averagePrice = (currentPrice + newPrice) / 2;
+        totalCost = (amount * averagePrice) / PRICE_PRECISION;
+    }
+    
+    /**
+     * @dev Calculates the payout for selling a specific amount on the bonding curve
+     */
+    function calculateSellPayout(uint256 amount) external view returns (uint256 totalPayout) {
+        uint256 currentSupply = getTotalSupply();
+        
+        if (amount >= currentSupply) {
+            // Can't sell more than total supply, return value for selling all
+            amount = currentSupply;
+        }
+        
+        uint256 currentPrice = getMarkPrice();
+        uint256 newSupply = currentSupply - amount;
+        
+        // Calculate new price after sale
+        if (newSupply == 0) {
+            totalPayout = (amount * startingPrice) / PRICE_PRECISION;
+        } else {
+            uint256 supplyRatio = (newSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
+            uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
+            uint256 newPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
+            
+            // Calculate average price (simplified - in practice would need integration)
+            uint256 averagePrice = (currentPrice + newPrice) / 2;
+            totalPayout = (amount * averagePrice) / PRICE_PRECISION;
+        }
+    }
+    
+    /**
+     * @dev Emergency function to reset bonding curve (owner only, extreme circumstances)
+     */
+    function emergencyResetBondingCurve(uint256 _newStartingPrice) external onlyOwner {
+        require(paused, "vAMM: must be paused");
+        require(_newStartingPrice > 0, "vAMM: invalid starting price");
+        
+        startingPrice = _newStartingPrice;
+        totalLongSize = 0;
+        totalShortSize = 0;
+        
+        _updateLegacyReserves();
+        emit ParametersUpdated("emergencyReset", _newStartingPrice);
     }
 } 

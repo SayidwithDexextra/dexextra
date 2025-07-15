@@ -4,18 +4,27 @@ This guide will help you configure DexExtra to work with **Polygon Mainnet** and
 
 ## Quick Fix for RPC Errors
 
-If you're seeing "Internal RPC error - possibly network issue", it's because the app is trying to connect to a local blockchain that isn't running. Follow these steps:
+If you're seeing "Internal JSON-RPC error - possibly network issue", follow these steps to configure for **Polygon Mainnet**:
 
 ### Step 1: Create Environment File
 
-Create a `.env.local` file in your project root with these settings:
+Create a `.env.local` file in your project root with **Polygon Mainnet** settings:
 
 ```env
-# Polygon Mainnet Configuration
+# Polygon Mainnet Configuration (RECOMMENDED)
 DEFAULT_NETWORK=polygon
 RPC_URL=https://polygon-rpc.com/
 WS_RPC_URL=wss://polygon-rpc.com/
 CHAIN_ID=137
+
+# Alternative reliable Polygon RPCs (if primary fails)
+# RPC_URL=https://rpc.ankr.com/polygon
+# RPC_URL=https://polygon.blockpi.network/v1/rpc/public
+
+# Contract addresses (update with your deployed contracts)
+VAMM_FACTORY_ADDRESS=your-vamm-factory-address
+MOCK_USDC_ADDRESS=your-usdc-address
+MOCK_ORACLE_ADDRESS=your-oracle-address
 
 # Supabase (for image uploads - replace with your values)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -27,25 +36,36 @@ APP_URL=http://localhost:3000
 AUTH_SECRET=your-secret-key-here
 ```
 
-### Step 2: Switch Your Wallet to Polygon
+### Step 2: Configure Your Wallet for Polygon
 
-1. **Open your wallet** (MetaMask, etc.)
-2. **Click the network dropdown** (usually shows "Ethereum Mainnet")
-3. **Select "Polygon Mainnet"** or **"Add Network"** if not available
-4. **Use these network details:**
-   - **Network Name:** Polygon Mainnet
+**Add Polygon Mainnet to MetaMask:**
+1. **Open MetaMask** and click the network dropdown
+2. **Click "Add Network"** or "Custom RPC"
+3. **Enter these details:**
+   - **Network Name:** `Polygon Mainnet`
    - **RPC URL:** `https://polygon-rpc.com/`
    - **Chain ID:** `137`
    - **Currency Symbol:** `MATIC`
    - **Block Explorer:** `https://polygonscan.com/`
+4. **Save and switch** to Polygon Mainnet
 
-### Step 3: Get MATIC Tokens
+### Step 3: Get MATIC for Gas Fees
 
-You'll need MATIC tokens for transactions on Polygon:
+You need MATIC tokens for all transactions on Polygon:
 
-- **Buy on Exchange:** Buy MATIC on Binance, Coinbase, etc.
-- **Bridge from Ethereum:** Use [Polygon Bridge](https://wallet.polygon.technology/polygon/bridge)
-- **Faucet (small amounts):** Use [Polygon Faucet](https://faucet.polygon.technology/) for testing
+**Option 1: Buy and Bridge**
+- Buy MATIC on centralized exchanges (Binance, Coinbase, etc.)
+- Withdraw directly to Polygon network
+
+**Option 2: Bridge from Ethereum**
+- Use [Polygon Bridge](https://wallet.polygon.technology/polygon/bridge)
+- Bridge ETH or other tokens to Polygon
+
+**Option 3: Faucets (Testing)**
+- [Polygon Faucet](https://faucet.polygon.technology/) for small amounts
+- [Alchemy Polygon Faucet](https://www.alchemy.com/faucets/polygon-mumbai) for testnet
+
+**Minimum Required:** ~0.001 MATIC (about $0.0008 USD)
 
 ## Alternative RPC Providers
 

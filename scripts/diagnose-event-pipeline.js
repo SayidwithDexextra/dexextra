@@ -27,14 +27,31 @@ dotenv.config({ path: ".env.local" });
 console.log("🔍 EVENT PIPELINE DIAGNOSTIC SCRIPT");
 console.log("=====================================\n");
 
-// VAMM ABI - Define the events we're looking for
+// VAMM ABI - Define the events we're looking for (Updated for Bonding Curve)
 const VAMM_ABI = [
-  "event PositionOpened(address indexed user, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
-  "event PositionClosed(address indexed user, uint256 size, uint256 price, int256 pnl, uint256 fee)",
-  "event PositionLiquidated(address indexed user, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
+  // Position events with positionId
+  "event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
+  "event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl, uint256 fee)",
+  "event PositionIncreased(address indexed user, uint256 indexed positionId, uint256 sizeAdded, uint256 newSize, uint256 newEntryPrice, uint256 fee)",
+  "event PositionLiquidated(address indexed user, uint256 indexed positionId, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
+
+  // Funding events
   "event FundingUpdated(int256 fundingRate, uint256 fundingIndex, int256 premiumFraction)",
+  "event FundingPaid(address indexed user, uint256 indexed positionId, int256 amount, uint256 fundingIndex)",
+
+  // Vault events
   "event CollateralDeposited(address indexed user, uint256 amount)",
-  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken)",
+
+  // Factory events (updated for bonding curve)
+  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)",
+  "event BondingCurveMarketCreated(bytes32 indexed marketId, string symbol, uint256 startingPrice, uint8 marketType, string description)",
+
+  // Bonding curve events
+  "event BondingCurveUpdated(uint256 newPrice, uint256 totalSupply, uint256 priceChange)",
+
+  // Administrative events
+  "event TradingFeeCollected(address indexed user, uint256 amount)",
+  "event ParametersUpdated(string parameter, uint256 newValue)",
 ];
 
 // Configuration from environment
@@ -212,9 +229,7 @@ async function getContractConfigurations(supabase) {
 
     console.log(`   ✅ Found ${contracts.length} active contracts:`);
     contracts.forEach((contract) => {
-      console.log(
-        `      - ${contract.symbol}: ${contract.market_id}`
-      );
+      console.log(`      - ${contract.symbol}: ${contract.market_id}`);
     });
 
     return contracts;

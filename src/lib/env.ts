@@ -10,17 +10,17 @@ const envSchema = z.object({
   APP_URL: z.string().url().default('http://localhost:3000'),
 
   // Supabase (Server-side)
-  SUPABASE_URL: z.string().url().default('https://khhknmobkkkvvogznxdj.supabase.co'),
-  SUPABASE_ANON_KEY: z.string().min(1).default('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtoaGtubW9ia2trdnZvZ3pueGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTEzODYyNjcsImV4cCI6MjA2Njk2MjI2N30.vt_7kDR-6IrDYqdrMTzCo5NyFXYZQU-X_OwEtOP1u24'),
+  SUPABASE_URL: z.string().url(),
+  SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 
   // Supabase (Client-side - prefixed with NEXT_PUBLIC_)
-  NEXT_PUBLIC_SUPABASE_URL: z.string().url().default('https://khhknmobkkkvvogznxdj.supabase.co'),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).default('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtoaGtubW9ia2trdnZvZ3pueGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTEzODYyNjcsImV4cCI6MjA2Njk2MjI2N30.vt_7kDR-6IrDYqdrMTzCo5NyFXYZQU-X_OwEtOP1u24'),
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
 
   // Blockchain Configuration
-  RPC_URL: z.string().url().default('https://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm'),
-  WS_RPC_URL: z.string().url().default('wss://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm'),
+  RPC_URL: z.string().url().default('https://polygon-rpc.com/'),
+  WS_RPC_URL: z.string().url().default('wss://polygon-rpc.com/'),
   CHAIN_ID: z.string().transform(Number).default('137'), // Default to Polygon Mainnet
   
   // Network Configuration
@@ -63,15 +63,15 @@ const envSchema = z.object({
 const processEnv = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   APP_URL: process.env.APP_URL || 'http://localhost:3000',
-  SUPABASE_URL: process.env.SUPABASE_URL || 'https://khhknmobkkkvvogznxdj.supabase.co',
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || 'placeholder-anon-key',
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || 'https://khhknmobkkkvvogznxdj.supabase.co',
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'placeholder-anon-key',
+  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   
   // Blockchain
-  RPC_URL: process.env.RPC_URL || 'https://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm',
-  WS_RPC_URL: process.env.WS_RPC_URL || 'wss://polygon-mainnet.g.alchemy.com/v2/KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm',
+  RPC_URL: process.env.RPC_URL || 'https://polygon-rpc.com/',
+  WS_RPC_URL: process.env.WS_RPC_URL || 'wss://polygon-rpc.com/',
   CHAIN_ID: process.env.CHAIN_ID || '137',
   DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'polygon',
   
@@ -92,7 +92,7 @@ const processEnv = {
   AUTH_EXPIRES_IN: process.env.AUTH_EXPIRES_IN || '7d',
   API_KEY: process.env.API_KEY || 'placeholder-api-key',
   API_URL: process.env.API_URL || 'https://api.example.com',
-  ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY || 'KKxzX7tzui3wBU9NTnBLHuZki7c4kHSm' ,
+  ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
   ENABLE_FEATURE_X: process.env.ENABLE_FEATURE_X || 'false',
   DEBUG_MODE: process.env.DEBUG_MODE || 'false',
 }

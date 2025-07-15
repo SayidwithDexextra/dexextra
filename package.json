@@ -19,7 +19,8 @@
     "event-listener:debug": "tsx src/server/startEventListener.ts --debug",
     "event-listener:test": "curl http://localhost:3000/api/event-listener",
     "event-listener:status": "curl http://localhost:3000/api/event-listener?debug=true",
-    "diagnose-pipeline": "node scripts/diagnose-event-pipeline.js"
+    "diagnose-pipeline": "node scripts/diagnose-event-pipeline.js",
+    "diagnose-approval": "node scripts/diagnose-approval-error.js"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

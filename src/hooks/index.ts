@@ -1,7 +1,7 @@
 export { useWallet } from './useWallet';
 export { useETHPrice } from './useETHPrice';
 export { useTokenData } from './useTokenData';
-export { useMarketData } from './useMarketData';
+export { default as useMarketData } from './useMarketData';
 export { useVAMMMarkets, type VAMMMarket } from './useVAMMMarkets';
 export { useVAMMTokenData } from './useVAMMTokenData';
 export { useVAMMTrading, type UseVAMMTradingReturn, type TradeParams, type Position, type MarginAccount } from './useVAMMTrading';
