@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 
 // Check Icon Component
 const CheckIcon = () => (
@@ -129,11 +130,14 @@ export default function UserProfileModal({
               >
                 {/* Profile Photo or Fallback */}
                 {profilePhotoUrl && !imageError ? (
-                  <img 
+                  <Image
                     src={profilePhotoUrl}
                     alt="Profile"
+                    width={40}
+                    height={40}
                     className="w-full h-full object-cover"
                     onError={() => setImageError(true)}
+                    unoptimized={profilePhotoUrl.startsWith('data:') || profilePhotoUrl.startsWith('blob:')}
                   />
                 ) : (
                   <div className="w-6 h-6 bg-blue-500 rounded flex items-center justify-center">
