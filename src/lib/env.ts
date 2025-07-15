@@ -212,4 +212,7 @@ if (env.DEBUG_MODE && env.NODE_ENV !== 'production') {
   console.log('  - CHAIN_ID:', env.CHAIN_ID)
   console.log('  - Event Listener Enabled:', env.EVENT_LISTENER_ENABLED)
   console.log('  - Contracts configured:', getContractConfig().length)
+  console.log('  - SUPABASE_URL:', env.SUPABASE_URL)
+  console.log('  - SUPABASE_ANON_KEY:', env.SUPABASE_ANON_KEY)
+  console.log('  - SUPABASE_SERVICE_ROLE_KEY:', env.SUPABASE_SERVICE_ROLE_KEY)  
 } 
