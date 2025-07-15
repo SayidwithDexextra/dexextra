@@ -58,13 +58,19 @@ const envSchema = z.object({
 })
 
 /**
+ * Check if we're running on the client side
+ */
+const isClientSide = typeof window !== 'undefined'
+
+/**
  * @type {Record<keyof z.infer<typeof envSchema>, string | undefined>}
  */
 const processEnv = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   APP_URL: process.env.APP_URL || 'http://localhost:3000',
-  SUPABASE_URL: process.env.SUPABASE_URL,
-  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+  // On client side, fall back to NEXT_PUBLIC_ versions for server-only vars
+  SUPABASE_URL: isClientSide ? process.env.NEXT_PUBLIC_SUPABASE_URL : process.env.SUPABASE_URL,
+  SUPABASE_ANON_KEY: isClientSide ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY : process.env.SUPABASE_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -88,10 +94,11 @@ const processEnv = {
   EVENT_RETRY_DELAY: process.env.EVENT_RETRY_DELAY || '5000',
   
   DATABASE_URL: process.env.DATABASE_URL,
-  AUTH_SECRET: process.env.AUTH_SECRET || 'dev-secret-key-change-in-production',
+  // Server-only variables with client-side defaults
+  AUTH_SECRET: isClientSide ? 'client-side-placeholder' : (process.env.AUTH_SECRET || 'dev-secret-key-change-in-production'),
   AUTH_EXPIRES_IN: process.env.AUTH_EXPIRES_IN || '7d',
-  API_KEY: process.env.API_KEY || 'placeholder-api-key',
-  API_URL: process.env.API_URL || 'https://api.example.com',
+  API_KEY: isClientSide ? 'client-side-placeholder' : (process.env.API_KEY || 'placeholder-api-key'),
+  API_URL: isClientSide ? 'https://api.example.com' : (process.env.API_URL || 'https://api.example.com'),
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
   ENABLE_FEATURE_X: process.env.ENABLE_FEATURE_X || 'false',
   DEBUG_MODE: process.env.DEBUG_MODE || 'false',
@@ -202,17 +209,20 @@ export function getEventListenerConfig() {
   }
 }
 
-console.log('✅ Environment variables validated successfully')
+const environmentType = isClientSide ? 'client-side' : 'server-side'
+console.log(`✅ Environment variables validated successfully (${environmentType})`)
 
-if (true) {
+if (env.DEBUG_MODE && env.NODE_ENV !== 'production') {
   console.log('🐛 Debug mode enabled')
-  console.log('📋 Environment configuration:')
+  console.log(`📋 Environment configuration (${environmentType}):`)
   console.log('  - NODE_ENV:', env.NODE_ENV)
   console.log('  - RPC_URL:', env.RPC_URL)
   console.log('  - CHAIN_ID:', env.CHAIN_ID)
   console.log('  - Event Listener Enabled:', env.EVENT_LISTENER_ENABLED)
   console.log('  - Contracts configured:', getContractConfig().length)
-  console.log('  - SUPABASE_URL:', env.SUPABASE_URL)
-  console.log('  - SUPABASE_ANON_KEY:', env.SUPABASE_ANON_KEY)
-  console.log('  - SUPABASE_SERVICE_ROLE_KEY:', env.SUPABASE_SERVICE_ROLE_KEY)  
+  if (!isClientSide) {
+    console.log('  - Server-side variables loaded ✅')
+  } else {
+    console.log('  - Client-side mode (using NEXT_PUBLIC_ variables)')
+  }  
 } 
