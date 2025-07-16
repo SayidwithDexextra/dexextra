@@ -1,18 +1,17 @@
 /**
  * Scalable Event Monitor Service
  * 
- * Monitors blockchain events by EVENT SIGNATURES rather than contract addresses.
+ * Processes blockchain events by EVENT SIGNATURES rather than contract addresses.
  * This approach scales to thousands/millions of dynamically created contracts.
  * 
  * Key Benefits:
  * - Single webhook monitors ALL contracts
  * - No address limits (Alchemy limit ~1000 addresses per webhook)
  * - Automatic monitoring of new deployments
- * - Minimal webhook management overhead
+ * - Event processing and contract registration
  */
 
 import { ethers } from 'ethers'
-import { AlchemyNotifyService, getAlchemyNotifyService } from './alchemyNotifyService'
 import { EventDatabase } from '@/lib/eventDatabase'
 import { env } from '@/lib/env'
 
@@ -52,125 +51,34 @@ export const CONTRACT_PATTERNS = {
 export interface ScalableMonitorConfig {
   factoryAddress: string
   network: string
-  webhookUrl: string
   monitoredEvents: string[]
 }
 
 export class ScalableEventMonitor {
-  private alchemyNotify: AlchemyNotifyService
   private database: EventDatabase
   private config: ScalableMonitorConfig
-  private webhookId: string | null = null
   private isInitialized = false
 
   constructor(config: Partial<ScalableMonitorConfig> = {}) {
     this.config = {
       factoryAddress: config.factoryAddress || "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74",
       network: config.network || 'polygon',
-      webhookUrl: config.webhookUrl || `${env.APP_URL}/api/webhooks/alchemy/scalable`,
       monitoredEvents: config.monitoredEvents || [
         'PositionOpened',
         'PositionClosed', 
-        'PositionLiquidated',
-        'MarketCreated',
-        'CollateralDeposited',
-        'TradingFeeCollected'
+        'PositionIncreased',
+        'PositionLiquidated'
       ]
     }
-  }
-
-  /**
-   * Initialize scalable event monitoring
-   * Creates a single webhook that monitors ALL contracts by event signature
-   */
-  async initialize(): Promise<void> {
-    try {
-      console.log('🚀 Initializing Scalable Event Monitor...')
-      
-      this.alchemyNotify = getAlchemyNotifyService()
-      this.database = new EventDatabase()
-      
-      // Create GraphQL webhook for event signature monitoring
-      await this.createSignatureBasedWebhook()
-      
-      this.isInitialized = true
-      console.log('✅ Scalable Event Monitor initialized')
-      
-    } catch (error) {
-      console.error('❌ Failed to initialize Scalable Event Monitor:', error)
-      throw error
-    }
-  }
-
-  /**
-   * Create a GraphQL webhook that monitors by event signatures
-   * This single webhook captures events from ALL contracts (unlimited scale)
-   */
-  private async createSignatureBasedWebhook(): Promise<void> {
-    try {
-      console.log('🎯 Creating signature-based webhook for unlimited contract monitoring...')
-      
-      // Get event signatures for monitored events
-      const signatures = this.config.monitoredEvents.map(eventName => {
-        const signature = EVENT_SIGNATURES[eventName as keyof typeof EVENT_SIGNATURES]
-        if (!signature) {
-          throw new Error(`Unknown event signature for: ${eventName}`)
-        }
-        return signature
-      })
-      
-      console.log(`📡 Monitoring ${signatures.length} event signatures:`)
-      this.config.monitoredEvents.forEach((eventName, i) => {
-        console.log(`   • ${eventName}: ${signatures[i]}`)
-      })
-      
-      // Create GraphQL webhook with topic-based filtering
-      const graphqlQuery = `
-        {
-          block {
-            logs(filter: {
-              topics: [${signatures.map(sig => `"${sig}"`).join(', ')}]
-            }) {
-              account {
-                address
-              }
-              topics
-              data
-              index
-              transaction {
-                hash
-                index
-                blockNumber
-                blockHash
-                from {
-                  address
-                }
-                to {
-                  address
-                }
-              }
-            }
-          }
-        }
-      `
-      
-      const payload = {
-        network: this.getNetworkString(),
-        webhook_type: 'GRAPHQL',
-        webhook_url: this.config.webhookUrl,
-        graphql_query: graphqlQuery.replace(/\s+/g, ' ').trim()
-      }
-      
-      console.log('📡 Creating webhook with signature-based filtering...')
-      this.webhookId = await this.alchemyNotify.createCustomWebhook([], signatures)
-      
-      console.log('✅ Signature-based webhook created:', this.webhookId)
-      console.log('🎯 This webhook now monitors ALL contracts for specified events')
-      
-    } catch (error) {
-      console.error('❌ Failed to create signature-based webhook:', error)
-      throw error
-    }
+    
+    this.database = new EventDatabase()
+    this.isInitialized = true
+    
+    console.log('🚀 Scalable Event Monitor initialized for event processing')
+    console.log(`📊 Monitoring ${this.config.monitoredEvents.length} event types:`)
+    this.config.monitoredEvents.forEach(eventName => {
+      console.log(`   • ${eventName}`)
+    })
   }
 
   /**
@@ -200,6 +108,12 @@ export class ScalableEventMonitor {
           
           if (!eventType) {
             console.log(`⚠️ Unknown event signature: ${eventSignature}`)
+            continue
+          }
+          
+          // Only process events that are in our monitored list
+          if (!this.config.monitoredEvents.includes(eventType)) {
+            console.log(`⏭️ Skipping non-monitored event type: ${eventType}`)
             continue
           }
           
@@ -328,17 +242,46 @@ export class ScalableEventMonitor {
    * Parse event by signature and return formatted event
    */
   private async parseEventBySignature(log: any, eventType: string): Promise<any> {
-    // Implementation would parse based on known event structures
-    // This is similar to your existing parseLogToSmartContractEvent but signature-based
-    
+    // Safely extract block number with null checking
+    let blockNumber: number;
+    if (typeof log.transaction?.blockNumber === 'string') {
+      blockNumber = parseInt(log.transaction.blockNumber, 16);
+    } else if (typeof log.transaction?.blockNumber === 'number') {
+      blockNumber = log.transaction.blockNumber;
+    } else {
+      console.warn('⚠️ Block number is null/undefined in scalable event, using 0');
+      blockNumber = 0;
+    }
+
+    // Safely extract block hash
+    let blockHash: string;
+    if (typeof log.transaction?.blockHash === 'string' && log.transaction.blockHash) {
+      blockHash = log.transaction.blockHash;
+    } else {
+      console.warn('⚠️ Block hash is null/undefined in scalable event, using placeholder');
+      blockHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+    }
+
+    // Safely extract log index
+    let logIndex: number;
+    if (typeof log.index === 'string') {
+      logIndex = parseInt(log.index, 16);
+    } else if (typeof log.index === 'number') {
+      logIndex = log.index;
+    } else {
+      logIndex = 0;
+    }
+
+    console.log(`📊 Scalable event parsed: ${eventType} at block ${blockNumber}, tx: ${log.transaction?.hash}:${logIndex}`);
+
     const baseEvent = {
-      transactionHash: log.transaction.hash,
-      blockNumber: parseInt(log.transaction.blockNumber, 16),
-      blockHash: log.transaction.blockHash,
-      logIndex: log.index,
-      contractAddress: log.account.address.toLowerCase(),
+      transactionHash: log.transaction?.hash || '',
+      blockNumber: blockNumber,
+      blockHash: blockHash,
+      logIndex: logIndex,
+      contractAddress: log.account?.address?.toLowerCase() || '',
       timestamp: new Date(),
-      chainId: env.CHAIN_ID,
+      chainId: typeof env.CHAIN_ID === 'number' ? env.CHAIN_ID : parseInt(env.CHAIN_ID || '137'),
       eventType: eventType
     }
     
@@ -348,9 +291,12 @@ export class ScalableEventMonitor {
         return this.parsePositionOpenedEvent(log, baseEvent)
       case 'PositionClosed':
         return this.parsePositionClosedEvent(log, baseEvent)
+      case 'PositionIncreased':
+        return this.parsePositionIncreasedEvent(log, baseEvent)
+      case 'PositionLiquidated':
+        return this.parsePositionLiquidatedEvent(log, baseEvent)
       case 'MarketCreated':
         return this.parseMarketCreatedEvent(log, baseEvent)
-      // Add more event parsers as needed
       default:
         return baseEvent
     }
@@ -361,7 +307,6 @@ export class ScalableEventMonitor {
    */
   private parsePositionOpenedEvent(log: any, baseEvent: any): any {
     try {
-      // Decode the event data using ethers
       const iface = new ethers.Interface([
         'event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)'
       ])
@@ -370,6 +315,10 @@ export class ScalableEventMonitor {
         topics: log.topics,
         data: log.data
       })
+      
+      if (!parsed) {
+        throw new Error('Failed to parse log')
+      }
       
       return {
         ...baseEvent,
@@ -391,29 +340,133 @@ export class ScalableEventMonitor {
    * Parse PositionClosed event
    */
   private parsePositionClosedEvent(log: any, baseEvent: any): any {
-    // Similar implementation for PositionClosed
-    return baseEvent
+    try {
+      const iface = new ethers.Interface([
+        'event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl, uint256 fee)'
+      ])
+      
+      const parsed = iface.parseLog({
+        topics: log.topics,
+        data: log.data
+      })
+      
+      if (!parsed) {
+        throw new Error('Failed to parse log')
+      }
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        positionId: parsed.args.positionId?.toString(),
+        size: parsed.args.size?.toString(),
+        price: parsed.args.price?.toString(),
+        pnl: parsed.args.pnl?.toString(),
+        fee: parsed.args.fee?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse PositionClosed event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse PositionIncreased event
+   */
+  private parsePositionIncreasedEvent(log: any, baseEvent: any): any {
+    try {
+      const iface = new ethers.Interface([
+        'event PositionIncreased(address indexed user, uint256 indexed positionId, uint256 sizeAdded, uint256 newSize, uint256 newEntryPrice, uint256 fee)'
+      ])
+      
+      const parsed = iface.parseLog({
+        topics: log.topics,
+        data: log.data
+      })
+      
+      if (!parsed) {
+        throw new Error('Failed to parse log')
+      }
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        positionId: parsed.args.positionId?.toString(),
+        sizeAdded: parsed.args.sizeAdded?.toString(),
+        newSize: parsed.args.newSize?.toString(),
+        newEntryPrice: parsed.args.newEntryPrice?.toString(),
+        fee: parsed.args.fee?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse PositionIncreased event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse PositionLiquidated event
+   */
+  private parsePositionLiquidatedEvent(log: any, baseEvent: any): any {
+    try {
+      const iface = new ethers.Interface([
+        'event PositionLiquidated(address indexed user, uint256 indexed positionId, address indexed liquidator, uint256 size, uint256 price, uint256 fee)'
+      ])
+      
+      const parsed = iface.parseLog({
+        topics: log.topics,
+        data: log.data
+      })
+      
+      if (!parsed) {
+        throw new Error('Failed to parse log')
+      }
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        positionId: parsed.args.positionId?.toString(),
+        liquidator: parsed.args.liquidator,
+        size: parsed.args.size?.toString(),
+        price: parsed.args.price?.toString(),
+        fee: parsed.args.fee?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse PositionLiquidated event:', error)
+      return baseEvent
+    }
   }
 
   /**
    * Parse MarketCreated event
    */
   private parseMarketCreatedEvent(log: any, baseEvent: any): any {
-    // Similar implementation for MarketCreated
-    return baseEvent
-  }
-
-  /**
-   * Get network string for Alchemy API
-   */
-  private getNetworkString(): string {
-    switch (this.config.network) {
-      case 'polygon':
-        return 'MATIC_MAINNET'
-      case 'ethereum':
-        return 'ETH_MAINNET'
-      default:
-        return 'MATIC_MAINNET'
+    try {
+      const iface = new ethers.Interface([
+        'event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)'
+      ])
+      
+      const parsed = iface.parseLog({
+        topics: log.topics,
+        data: log.data
+      })
+      
+      if (!parsed) {
+        throw new Error('Failed to parse log')
+      }
+      
+      return {
+        ...baseEvent,
+        marketId: parsed.args.marketId,
+        symbol: parsed.args.symbol,
+        vamm: parsed.args.vamm,
+        vault: parsed.args.vault,
+        oracle: parsed.args.oracle,
+        collateralToken: parsed.args.collateralToken,
+        startingPrice: parsed.args.startingPrice?.toString(),
+        marketType: parsed.args.marketType?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse MarketCreated event:', error)
+      return baseEvent
     }
   }
 
@@ -423,12 +476,12 @@ export class ScalableEventMonitor {
   getStatus() {
     return {
       isInitialized: this.isInitialized,
-      webhookId: this.webhookId,
       monitoredEvents: this.config.monitoredEvents,
       factoryAddress: this.config.factoryAddress,
       network: this.config.network,
       scalable: true,
-      contractLimit: 'Unlimited'
+      contractLimit: 'Unlimited',
+      webhookManagement: 'External'
     }
   }
 }
@@ -439,7 +492,6 @@ let scalableMonitor: ScalableEventMonitor | null = null
 export async function getScalableEventMonitor(): Promise<ScalableEventMonitor> {
   if (!scalableMonitor) {
     scalableMonitor = new ScalableEventMonitor()
-    await scalableMonitor.initialize()
   }
   return scalableMonitor
 } 

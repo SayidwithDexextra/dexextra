@@ -192,6 +192,66 @@ export class EventDatabase {
     try {
       console.log(`📝 Attempting to store event: ${event.eventType} - ${event.transactionHash}:${event.logIndex}`)
       
+      // Validate required fields to prevent null constraint violations
+      if (!event.transactionHash) {
+        throw new Error('Transaction hash is required but is null/undefined')
+      }
+      
+      // Validate and convert blockNumber
+      let blockNumber: number;
+      if (typeof event.blockNumber === 'number' && !isNaN(event.blockNumber)) {
+        blockNumber = event.blockNumber;
+      } else if (typeof event.blockNumber === 'string') {
+        blockNumber = parseInt(event.blockNumber, 16);
+        if (isNaN(blockNumber)) {
+          throw new Error(`Invalid block number: ${event.blockNumber}`)
+        }
+      } else {
+        throw new Error(`Block number is required but is null/undefined or invalid: ${event.blockNumber}`)
+      }
+      
+      // Validate and ensure blockHash
+      let blockHash: string;
+      if (typeof event.blockHash === 'string' && event.blockHash) {
+        blockHash = event.blockHash;
+      } else {
+        console.warn('⚠️ Block hash is null/undefined, using placeholder');
+        blockHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+      }
+      
+      // Validate and ensure logIndex  
+      let logIndex: number;
+      if (typeof event.logIndex === 'number' && !isNaN(event.logIndex)) {
+        logIndex = event.logIndex;
+      } else if (typeof event.logIndex === 'string') {
+        logIndex = parseInt(event.logIndex, 16);
+        if (isNaN(logIndex)) {
+          logIndex = 0; // Default to 0 if invalid
+        }
+      } else {
+        logIndex = 0; // Default to 0 if null/undefined
+      }
+      
+      // Validate contract address
+      if (!event.contractAddress) {
+        throw new Error('Contract address is required but is null/undefined')
+      }
+      
+      // Validate chain ID
+      let chainId: number;
+      if (typeof event.chainId === 'number' && !isNaN(event.chainId)) {
+        chainId = event.chainId;
+      } else if (typeof event.chainId === 'string') {
+        chainId = parseInt(event.chainId);
+        if (isNaN(chainId)) {
+          chainId = 137; // Default to Polygon
+        }
+      } else {
+        chainId = 137; // Default to Polygon
+      }
+      
+      console.log(`📊 Validated event data: block ${blockNumber}, tx ${event.transactionHash}:${logIndex}`);
+      
       // Events are already filtered at the listener level
       // This database method should store any event that reaches it
       
@@ -200,14 +260,14 @@ export class EventDatabase {
         .from('contract_events')
         .insert({
           transaction_hash: event.transactionHash,
-          block_number: Number(event.blockNumber),
-          block_hash: event.blockHash,
-          log_index: event.logIndex,
+          block_number: blockNumber,
+          block_hash: blockHash,
+          log_index: logIndex,
           contract_address: event.contractAddress.toLowerCase(),
           event_type: event.eventType,
           event_data: event,
           timestamp: (event.timestamp instanceof Date ? event.timestamp.toISOString() : event.timestamp as string),
-          chain_id: event.chainId,
+          chain_id: chainId,
           // Extract user address if available for indexing
           user_address: this.extractUserAddress(event),
           // Extract additional indexed fields
