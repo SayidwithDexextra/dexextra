@@ -261,7 +261,8 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
       // Parse the event using contract ABIs
       const activityBlockNumber = typeof activity.blockNum === 'string' ? 
         parseInt(activity.blockNum, 16) : activity.blockNum;
-      const parsedEvent = await parseLogToSmartContractEvent(activity.log, activityBlockNumber);
+      const activityBlockHash = activity.log?.blockHash; // ADDRESS_ACTIVITY logs might have blockHash
+      const parsedEvent = await parseLogToSmartContractEvent(activity.log, activityBlockNumber, activityBlockHash);
       
       if (parsedEvent) {
         console.log(`✅ Successfully parsed ${parsedEvent.eventType} event:`, {
@@ -324,11 +325,12 @@ async function processMinedTransactionWebhook(webhookData: any): Promise<number>
         continue;
       }
 
-      // Get block number from transaction context
+      // Get block number and hash from transaction context
       const transactionBlockNumber = typeof transaction.blockNumber === 'string' ? 
         parseInt(transaction.blockNumber, 16) : transaction.blockNumber;
+      const transactionBlockHash = transaction.blockHash;
       
-      const event = await parseLogToSmartContractEvent(log, transactionBlockNumber);
+      const event = await parseLogToSmartContractEvent(log, transactionBlockNumber, transactionBlockHash);
       
       if (event) {
         await eventDatabase.storeEvent(event);
@@ -407,7 +409,8 @@ async function processCustomWebhook(webhookData: any): Promise<number> {
       // Parse the event using contract ABIs
       const contextBlockNumber = typeof log.transaction?.blockNumber === 'string' ? 
         parseInt(log.transaction.blockNumber, 16) : log.transaction?.blockNumber;
-      const parsedEvent = await parseLogToSmartContractEvent(standardLog, contextBlockNumber);
+      const contextBlockHash = log.transaction?.blockHash;
+      const parsedEvent = await parseLogToSmartContractEvent(standardLog, contextBlockNumber, contextBlockHash);
       
       if (parsedEvent) {
         await eventDatabase.storeEvent(parsedEvent);
@@ -430,7 +433,7 @@ async function processCustomWebhook(webhookData: any): Promise<number> {
 /**
  * Parse webhook log to SmartContractEvent
  */
-async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: number): Promise<SmartContractEvent | null> {
+async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: number, contextBlockHash?: string): Promise<SmartContractEvent | null> {
   try {
     if (!log.topics || !log.data || !log.transactionHash) {
       console.warn('⚠️ Invalid log structure:', log);
@@ -492,11 +495,26 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
       logIndex = 0;
     }
 
+    // Handle block hash with fallback logic
+    let blockHash: string;
+    if (typeof log.blockHash === 'string' && log.blockHash) {
+      blockHash = log.blockHash;
+    } else {
+      // Fallback: try to get from context or use placeholder
+      if (contextBlockHash) {
+        console.log('✅ Using context block hash:', contextBlockHash);
+        blockHash = contextBlockHash;
+      } else {
+        console.warn('⚠️ blockHash is null/undefined and no context provided, using placeholder');
+        blockHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+      }
+    }
+
     // Create base event structure
     const baseEvent: any = {
       transactionHash: log.transactionHash,
       blockNumber: blockNumber,
-      blockHash: log.blockHash,
+      blockHash: blockHash,
       logIndex: logIndex,
       contractAddress: log.address.toLowerCase(),
       timestamp: new Date(), // Note: Could fetch actual block timestamp for accuracy
@@ -504,8 +522,8 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
       eventType: parsedLog.name,
     };
 
-    // Log successful block number resolution
-    console.log(`📊 Event parsed: ${parsedLog.name} at block ${blockNumber}, tx: ${log.transactionHash}:${logIndex}`);
+    // Log successful block number and hash resolution
+    console.log(`📊 Event parsed: ${parsedLog.name} at block ${blockNumber} (${blockHash.slice(0,10)}...), tx: ${log.transactionHash}:${logIndex}`);
 
     // Add event-specific fields based on the event type
     const event = formatEventSpecificFields(baseEvent as SmartContractEvent, parsedLog);
