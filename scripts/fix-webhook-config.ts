@@ -15,7 +15,7 @@ async function fixWebhookConfig() {
     console.log("🔧 Fixing webhook configuration...\n");
 
     // Dynamic imports for ESM modules
-    const { EventDatabase } = await import("../src/lib/eventDatabase.ts");
+    const { EventDatabase } = await import("../src/lib/eventDatabase");
 
     const database = new EventDatabase();
 

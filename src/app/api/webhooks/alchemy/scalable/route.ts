@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
 
     const webhookData = JSON.parse(rawBody);
     console.log(`📡 Processing scalable webhook: ${webhookData.type}`);
+    console.log(`📡 Processing scalable webhook: ${webhookData}`);
 
     // Get scalable event monitor instance
     const scalableMonitor = await getScalableEventMonitor();

@@ -15,8 +15,8 @@ async function updateWebhooksWithNewContracts() {
     console.log('🔄 Updating webhooks with all current contracts...\n');
     
     // Dynamic imports for ESM modules
-    const { EventDatabase } = await import("../src/lib/eventDatabase.ts");
-    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService.ts");
+    const { EventDatabase } = await import("../src/lib/eventDatabase");
+    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService");
     
     const database = new EventDatabase();
     const alchemyNotify = getAlchemyNotifyService();
@@ -48,11 +48,11 @@ async function updateWebhooksWithNewContracts() {
           await alchemyNotify.deleteWebhook(webhook.id);
           console.log(`✅ Deleted webhook: ${webhook.id}`);
         } catch (deleteError) {
-          console.warn(`⚠️ Could not delete webhook ${webhook.id}:`, deleteError.message);
+          console.warn(`⚠️ Could not delete webhook ${webhook.id}:`, (deleteError as Error).message);
         }
       }
     } catch (listError) {
-      console.warn('⚠️ Could not list/delete existing webhooks:', listError.message);
+      console.warn('⚠️ Could not list/delete existing webhooks:', (listError as Error).message);
       console.log('Continuing with webhook creation...');
     }
     
@@ -72,10 +72,10 @@ async function updateWebhooksWithNewContracts() {
     // Update database with new webhook IDs
     console.log('\n💾 Updating database with new webhook IDs...');
     await database.updateWebhookConfig({
-      address_activity_webhook_id: addressActivityWebhookId,
-      mined_transaction_webhook_id: minedTransactionWebhookId,
+      addressActivityWebhookId: addressActivityWebhookId,
+      minedTransactionWebhookId: minedTransactionWebhookId,
       contracts: allContracts,
-      updated_at: new Date()
+      updatedAt: new Date()
     });
     
     console.log('\n✅ Webhook update completed successfully!');
@@ -88,7 +88,7 @@ async function updateWebhooksWithNewContracts() {
     console.log('💡 Run this script again after deploying new markets to keep webhooks updated.');
     
   } catch (error) {
-    console.error('❌ Failed to update webhooks:', error.message);
+    console.error('❌ Failed to update webhooks:', (error as Error).message);
     process.exit(1);
   }
 }

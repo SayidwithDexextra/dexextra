@@ -59,6 +59,12 @@
     },
     "src/app/api/blockchain-events/route.ts": {
       "maxDuration": 30
+    },
+    "src/app/api/webhooks/alchemy/route.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/webhooks/alchemy/scalable/route.ts": {
+      "maxDuration": 30
     }
   },
   "env": {

@@ -22,9 +22,9 @@ async function migrateToScalableMonitoring() {
     console.log('🚀 Migrating to Scalable Event Monitoring System...\n');
     
     // Dynamic imports for ESM modules
-    const { EventDatabase } = await import("../src/lib/eventDatabase.ts");
-    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService.ts");
-    const { getScalableEventMonitor } = await import("../src/services/scalableEventMonitor.ts");
+    const { EventDatabase } = await import("../src/lib/eventDatabase");
+    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService");
+    const { getScalableEventMonitor } = await import("../src/services/scalableEventMonitor");
     
     const database = new EventDatabase();
     const alchemyNotify = getAlchemyNotifyService();
@@ -113,7 +113,8 @@ async function migrateToScalableMonitoring() {
     console.log('4. Enjoy unlimited scaling! 🎉');
     
   } catch (error) {
-    console.error('❌ Migration failed:', error.message);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('❌ Migration failed:', errorMessage);
     console.log('\n🔧 Troubleshooting:');
     console.log('1. Check that ALCHEMY_WEBHOOK_AUTH_TOKEN is set');
     console.log('2. Verify APP_URL points to your deployed app');

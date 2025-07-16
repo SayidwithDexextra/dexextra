@@ -16,7 +16,7 @@ async function enableDynamicMonitoring() {
     console.log("🚀 Enabling Dynamic Contract Monitoring System...\n");
 
     // Dynamic imports for ESM modules
-    const { getDynamicContractMonitor } = await import("../src/services/dynamicContractMonitor.ts");
+    const { getDynamicContractMonitor } = await import("../src/services/dynamicContractMonitor");
 
     // Initialize and configure dynamic monitoring
     console.log("🔧 Initializing Dynamic Contract Monitor...");

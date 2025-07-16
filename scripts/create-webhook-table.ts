@@ -63,7 +63,7 @@ async function createWebhookTable() {
     console.log("✅ webhook_configs table created successfully");
 
     // Now try to fix the webhook configuration
-    const { EventDatabase } = await import("../src/lib/eventDatabase.ts");
+    const { EventDatabase } = await import("../src/lib/eventDatabase");
     const database = new EventDatabase();
 
     const contracts = await database.getDeployedVAMMContracts();

@@ -40,8 +40,8 @@ export interface NewContractDeployment {
 }
 
 export class DynamicContractMonitor {
-  private alchemyNotify: AlchemyNotifyService
-  private database: EventDatabase
+  private alchemyNotify!: AlchemyNotifyService
+  private database!: EventDatabase
   private factoryAddress: string
   private isMonitoring = false
   private monitoredContracts = new Set<string>()

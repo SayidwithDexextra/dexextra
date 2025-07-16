@@ -27,11 +27,11 @@ async function runMigration() {
 
     // Dynamic imports for ESM modules
     const { getAlchemyNotifyService } = await import(
-      "../src/services/alchemyNotifyService.ts"
+      "../src/services/alchemyNotifyService"
     );
-    const { EventDatabase } = await import("../src/lib/eventDatabase.ts");
+    const { EventDatabase } = await import("../src/lib/eventDatabase");
     const { getWebhookEventListener } = await import(
-      "../src/services/webhookEventListener.ts"
+      "../src/services/webhookEventListener"
     );
 
     // Validate environment

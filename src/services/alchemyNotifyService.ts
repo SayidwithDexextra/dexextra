@@ -115,6 +115,10 @@ export class AlchemyNotifyService {
       'Content-Type': 'application/json',
     };
 
+    console.log('🔑 Making Alchemy API request to:', url);
+    console.log('🔑 Headers:', headers);
+    console.log('🔑 Body:', body);
+
     const options: RequestInit = {
       method,
       headers,

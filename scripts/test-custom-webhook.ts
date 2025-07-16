@@ -17,8 +17,8 @@ async function testCustomWebhook() {
     console.log("🎯 Testing Custom Webhook for VAMM Position Events...\n");
 
     // Dynamic imports for ESM modules
-    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService.ts");
-    const { EventDatabase } = await import("../src/lib/eventDatabase.ts");
+    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService");
+    const { EventDatabase } = await import("../src/lib/eventDatabase");
 
     const alchemyNotify = await getAlchemyNotifyService();
     const database = new EventDatabase();

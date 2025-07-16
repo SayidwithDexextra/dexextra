@@ -106,7 +106,7 @@ export class WebhookEventListener {
     // Verify Alchemy connection
     const healthCheck = await this.alchemyNotify.healthCheck();
     if (healthCheck.status !== 'healthy') {
-      throw new Error(`Alchemy connection failed: ${healthCheck.details.error}`);
+      throw new Error(`Alchemy connection failed: ${healthCheck.message || 'Unknown error'}`);
     }
 
     // Verify database connection
@@ -158,7 +158,7 @@ export class WebhookEventListener {
 
     try {
       const webhooks = await this.alchemyNotify.listWebhooks();
-      const activeWebhooks = webhooks.webhooks.filter(w => w.isActive);
+      const activeWebhooks = webhooks.webhooks.filter((w: any) => w.isActive);
 
       console.log(`📊 Webhook verification results:
         - Total webhooks: ${webhooks.webhooks.length}
@@ -192,7 +192,7 @@ export class WebhookEventListener {
         })),
         createdAt: new Date(),
         network: env.DEFAULT_NETWORK,
-        chainId: env.CHAIN_ID
+        chainId: env.CHAIN_ID.toString()
       };
 
       await this.database.storeWebhookConfig(config);
@@ -282,7 +282,7 @@ export class WebhookEventListener {
   }> {
     try {
       const webhooks = await this.alchemyNotify.listWebhooks();
-      const activeWebhooks = webhooks.webhooks.filter(w => w.isActive);
+      const activeWebhooks = webhooks.webhooks.filter((w: any) => w.isActive);
 
       return {
         isInitialized: this.isInitialized,
@@ -347,7 +347,7 @@ export class WebhookEventListener {
         return {
           status: 'healthy',
           details: {
-            alchemyHealth: alchemyHealth.details,
+            alchemyHealth: alchemyHealth,
             webhookStatus: status,
             timestamp: new Date().toISOString()
           }
@@ -356,7 +356,7 @@ export class WebhookEventListener {
         return {
           status: 'unhealthy',
           details: {
-            alchemyHealth: alchemyHealth.details,
+            alchemyHealth: alchemyHealth,
             webhookStatus: status,
             issues: [
               !status.isInitialized && 'Not initialized',

@@ -15,7 +15,7 @@ async function addMinedTransactionWebhook() {
     console.log('🔗 Adding MINED_TRANSACTION webhook for smart contract events...')
     
     // Dynamic import for ESM module
-    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService.ts");
+    const { getAlchemyNotifyService } = await import("../src/services/alchemyNotifyService");
     const alchemyNotify = getAlchemyNotifyService()
     
     // Your VAMM contracts
