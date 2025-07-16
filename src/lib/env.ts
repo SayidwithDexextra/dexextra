@@ -49,8 +49,14 @@ const envSchema = z.object({
   API_KEY: z.string().min(1).default('placeholder-api-key'),
   API_URL: z.string().url().default('https://api.example.com'),
   
-  // Alchemy API for token balances (optional - app works without it)
+  // Alchemy API for webhook-based event monitoring (required for production)
   ALCHEMY_API_KEY: z.string().optional(),
+  
+  // Alchemy webhook auth token for webhook management API (required for production)
+  ALCHEMY_WEBHOOK_AUTH_TOKEN: z.string().optional(),
+  
+  // Alchemy webhook signing key for production security
+  ALCHEMY_WEBHOOK_SIGNING_KEY: z.string().optional(),
 
   // Feature Flags
   ENABLE_FEATURE_X: z.string().transform((val) => val === 'true').default('false'),
@@ -100,6 +106,8 @@ const processEnv = {
   API_KEY: isClientSide ? 'client-side-placeholder' : (process.env.API_KEY || 'placeholder-api-key'),
   API_URL: isClientSide ? 'https://api.example.com' : (process.env.API_URL || 'https://api.example.com'),
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
+  ALCHEMY_WEBHOOK_AUTH_TOKEN: process.env.ALCHEMY_WEBHOOK_AUTH_TOKEN,
+  ALCHEMY_WEBHOOK_SIGNING_KEY: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY,
   ENABLE_FEATURE_X: process.env.ENABLE_FEATURE_X || 'false',
   DEBUG_MODE: process.env.DEBUG_MODE || 'false',
 }
@@ -133,6 +141,8 @@ const requiredVars = {
     'API_KEY',
     'API_URL',
     'RPC_URL',
+    'ALCHEMY_API_KEY', // Required for webhook-based event monitoring
+    'ALCHEMY_WEBHOOK_AUTH_TOKEN', // Required for webhook management API
     // Note: Contract addresses and other blockchain vars are optional but recommended in production
   ],
 }

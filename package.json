@@ -3,8 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "next-dev": "next dev",
-    "dev": "concurrently \"npm run next-dev\" \"tsx src/server/startEventListener.ts\"",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -20,7 +19,15 @@
     "event-listener:test": "curl http://localhost:3000/api/event-listener",
     "event-listener:status": "curl http://localhost:3000/api/event-listener?debug=true",
     "diagnose-pipeline": "node scripts/diagnose-event-pipeline.js",
-    "diagnose-approval": "node scripts/diagnose-approval-error.js"
+    "diagnose-approval": "node scripts/diagnose-approval-error.js",
+    "migrate-to-webhooks": "tsx scripts/migrate-to-alchemy-webhooks.ts",
+    "webhook-status": "curl \"http://localhost:3000/api/webhooks/alchemy/status\"",
+    "webhook-status-detailed": "curl \"http://localhost:3000/api/webhooks/alchemy/status?detailed=true\"",
+    "fix-webhook-config": "tsx scripts/fix-webhook-config.ts",
+    "create-webhook-table": "tsx scripts/create-webhook-table.ts",
+    "test-custom-webhook": "tsx scripts/test-custom-webhook.ts",
+    "enable-dynamic-monitoring": "tsx scripts/enable-dynamic-monitoring.ts",
+    "add-factory-to-webhook": "tsx scripts/add-factory-to-webhook.ts"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
@@ -29,6 +36,7 @@
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.50.2",
     "@truffle/hdwallet-provider": "^2.1.15",
+    "alchemy-sdk": "^3.6.1",
     "axios": "^1.10.0",
     "critters": "^0.0.25",
     "dotenv": "^17.2.0",

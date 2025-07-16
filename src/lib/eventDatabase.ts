@@ -159,6 +159,33 @@ export class EventDatabase {
   }
 
   /**
+   * Get contract by address
+   */
+  async getContractByAddress(address: string): Promise<any> {
+    try {
+      const { data, error } = await supabase
+        .from('monitored_contracts')
+        .select('*')
+        .eq('address', address.toLowerCase())
+        .single()
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No rows found
+          return null
+        }
+        console.error('Error getting contract by address:', error)
+        throw error
+      }
+
+      return data
+    } catch (error) {
+      console.error('Failed to get contract by address:', error)
+      return null
+    }
+  }
+
+  /**
    * Store a smart contract event in the database
    */
   async storeEvent(event: SmartContractEvent): Promise<void> {
@@ -538,10 +565,193 @@ export class EventDatabase {
   }
 
   /**
+   * Store webhook configuration for the new Alchemy Notify system
+   */
+  async storeWebhookConfig(config: {
+    addressActivityWebhookId: string
+    minedTransactionWebhookId: string
+    contracts: Array<{ address: string; name: string; type: string }>
+    createdAt: Date
+    network: string
+    chainId: string
+  }): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('webhook_configs')
+        .upsert({
+          id: 'default', // Single configuration per environment
+          address_activity_webhook_id: config.addressActivityWebhookId,
+          mined_transaction_webhook_id: config.minedTransactionWebhookId,
+          contracts: config.contracts,
+          network: config.network,
+          chain_id: parseInt(config.chainId),
+          created_at: config.createdAt.toISOString(),
+          updated_at: new Date().toISOString()
+        })
+
+      if (error) {
+        console.error('Error storing webhook config:', error)
+        throw error
+      }
+
+      console.log('✅ Webhook configuration stored successfully')
+    } catch (error) {
+      console.error('Failed to store webhook config:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Get stored webhook configuration
+   */
+  async getWebhookConfig(): Promise<{
+    addressActivityWebhookId: string
+    minedTransactionWebhookId: string
+    contracts: Array<{ address: string; name: string; type: string }>
+    network: string
+    chainId: number
+    createdAt: Date
+  } | null> {
+    try {
+      const { data, error } = await supabase
+        .from('webhook_configs')
+        .select('*')
+        .eq('id', 'default')
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error getting webhook config:', error)
+        throw error
+      }
+
+      if (!data) {
+        return null
+      }
+
+      return {
+        addressActivityWebhookId: data.address_activity_webhook_id,
+        minedTransactionWebhookId: data.mined_transaction_webhook_id,
+        contracts: data.contracts,
+        network: data.network,
+        chainId: data.chain_id,
+        createdAt: new Date(data.created_at)
+      }
+    } catch (error) {
+      console.error('Failed to get webhook config:', error)
+      return null
+    }
+  }
+
+  /**
+   * Health check for database connection
+   */
+  async healthCheck(): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('contract_events')
+        .select('id')
+        .limit(1)
+
+      if (error) {
+        throw new Error(`Database health check failed: ${error.message}`)
+      }
+    } catch (error) {
+      throw new Error(`Database connection failed: ${(error as Error).message}`)
+    }
+  }
+
+  /**
    * Initialize database tables (for development)
    */
   async initializeTables(): Promise<void> {
     console.log('Database tables should be created via Supabase migrations.')
     console.log('Run the SQL migrations in your Supabase dashboard.')
+  }
+
+  /**
+   * Store a new VAMM market deployment
+   */
+  async storeVAMMMarket(deployment: {
+    symbol: string
+    vammAddress: string
+    vaultAddress: string
+    oracleAddress: string
+    collateralAddress: string
+    startingPrice: string
+    marketType: number
+    deploymentStatus: string
+    transactionHash: string
+    blockNumber: number
+  }): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('vamm_markets')
+        .insert({
+          symbol: deployment.symbol,
+          vamm_address: deployment.vammAddress,
+          vault_address: deployment.vaultAddress,
+          oracle_address: deployment.oracleAddress,
+          collateral_address: deployment.collateralAddress,
+          starting_price: deployment.startingPrice,
+          market_type: deployment.marketType,
+          deployment_status: deployment.deploymentStatus,
+          transaction_hash: deployment.transactionHash,
+          block_number: deployment.blockNumber,
+          created_at: new Date().toISOString()
+        })
+
+      if (error) {
+        console.error('Database error storing VAMM market:', error)
+        throw error
+      }
+
+      console.log('✅ VAMM market stored successfully:', deployment.symbol)
+    } catch (error) {
+      console.error('Failed to store VAMM market:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Update webhook configuration
+   */
+  async updateWebhookConfig(updates: {
+    contracts?: any[]
+    updatedAt?: Date
+    addressActivityWebhookId?: string
+    minedTransactionWebhookId?: string
+  }): Promise<void> {
+    try {
+      const updateData: any = {}
+      
+      if (updates.contracts) {
+        updateData.contracts = updates.contracts
+      }
+      
+      if (updates.addressActivityWebhookId) {
+        updateData.address_activity_webhook_id = updates.addressActivityWebhookId
+      }
+      
+      if (updates.minedTransactionWebhookId) {
+        updateData.mined_transaction_webhook_id = updates.minedTransactionWebhookId
+      }
+      
+      updateData.updated_at = (updates.updatedAt || new Date()).toISOString()
+
+      const { error } = await supabase
+        .from('webhook_configs')
+        .update(updateData)
+        .eq('id', 'default')
+
+      if (error) {
+        console.error('Database error updating webhook config:', error)
+        throw error
+      }
+
+      console.log('✅ Webhook configuration updated successfully')
+    } catch (error) {
+      console.error('Failed to update webhook config:', error)
+      throw error
+    }
   }
 } 

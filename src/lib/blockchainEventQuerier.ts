@@ -1,3 +1,20 @@
+/*
+ * ⚠️ LEGACY CONTRACT MONITORING SYSTEM ⚠️
+ * 
+ * This file contains the old polling-based blockchain event querier that is NOT compatible 
+ * with Vercel deployment due to heavy RPC usage and rate limiting issues.
+ * 
+ * ✅ NEW SYSTEM: Events are now delivered via Alchemy Notify API webhooks
+ * 
+ * This legacy system has been replaced by the webhook-based event system:
+ * - Events are delivered in real-time via webhooks to /api/webhooks/alchemy
+ * - No more manual querying or batch processing needed
+ * - Automatic retry handling by Alchemy infrastructure
+ * - Full Vercel serverless compatibility
+ * 
+ * This file is kept for reference and migration purposes only.
+ */
+
 import { ethers } from 'ethers';
 import { SmartContractEvent, PositionOpenedEvent, PositionClosedEvent, PositionLiquidatedEvent } from '@/types/events';
 import { env } from '@/lib/env';

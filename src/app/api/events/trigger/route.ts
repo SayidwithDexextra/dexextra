@@ -1,5 +1,17 @@
+/*
+ * ⚠️ LEGACY CONTRACT MONITORING SYSTEM ⚠️
+ * 
+ * This API route used the old polling-based event listener that is NOT compatible 
+ * with Vercel deployment. It has been replaced by the Alchemy webhook system.
+ * 
+ * ✅ NEW SYSTEM: Use /api/webhooks/alchemy/status for webhook monitoring status
+ * 
+ * This file is kept for backwards compatibility only.
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { getEventListener } from '@/services/eventListener'
+import { getWebhookEventListener } from '@/services/webhookEventListener'
 
 let isListenerRunning = false
 

@@ -1,3 +1,21 @@
+/*
+ * ⚠️ LEGACY CONTRACT MONITORING SYSTEM ⚠️
+ * 
+ * This file contains the old polling-based event monitoring system that is NOT compatible 
+ * with Vercel deployment due to long-running processes and WebSocket connections.
+ * 
+ * ✅ NEW SYSTEM: Use webhookEventListener.ts instead
+ * 
+ * This legacy system has been replaced by the Alchemy Notify API webhook system which:
+ * - Is fully compatible with Vercel serverless deployment
+ * - Provides real-time event delivery without polling
+ * - Reduces infrastructure costs and RPC calls
+ * - Handles reliability and retries automatically
+ * 
+ * This file is kept for reference and migration purposes only.
+ * Use src/services/webhookEventListener.ts for new implementations.
+ */
+
 import { ethers } from 'ethers'
 import { env } from '@/lib/env'
 import { EventDatabase } from '@/lib/eventDatabase'
