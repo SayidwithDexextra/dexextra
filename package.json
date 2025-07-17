@@ -54,23 +54,23 @@
     "zod": "^3.25.67",
     "@tailwindcss/postcss": "^4.1.11",
     "autoprefixer": "^10.4.21",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "15.3.4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@nomicfoundation/hardhat-toolbox": "^6.0.0",
     "@types/minimatch": "^6.0.0",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
     "@types/three": "^0.178.0",
     "@types/ws": "^8.5.12",
     "concurrently": "^8.2.2",
-    "eslint": "^9",
-    "eslint-config-next": "15.3.4",
     "eventsource": "^4.0.0",
     "hardhat": "^2.25.0",
-    "tsx": "^4.19.2",
-    "typescript": "^5"
+    "tsx": "^4.19.2"
   }
 }
