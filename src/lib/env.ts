@@ -129,27 +129,33 @@ if (!parsed.success) {
  * Validate that required environment variables are set for the current environment
  */
 const requiredVars = {
-  development: [], // Development uses defaults for most variables
-  test: [], // Test uses defaults for most variables
-  production: [
-    'APP_URL',
-    'AUTH_SECRET',
-    'SUPABASE_URL',
-    'SUPABASE_ANON_KEY',
-    'NEXT_PUBLIC_SUPABASE_URL',
-    'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-    'API_KEY',
-    'API_URL',
-    'RPC_URL',
-    // Comment out temporarily:
-    // 'ALCHEMY_API_KEY',
-    // 'ALCHEMY_WEBHOOK_AUTH_TOKEN',
-    // Note: Contract addresses and other blockchain vars are optional but recommended in production
-  ],
+  development: { client: [], server: [] },
+  test: { client: [], server: [] },
+  production: {
+    client: [
+      'NEXT_PUBLIC_SUPABASE_URL',
+      'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+    ],
+    server: [
+      'APP_URL',
+      'AUTH_SECRET', 
+      'SUPABASE_URL',
+      'SUPABASE_ANON_KEY',
+      'API_KEY',
+      'API_URL',
+      'RPC_URL',
+      'ALCHEMY_API_KEY',
+      'ALCHEMY_WEBHOOK_AUTH_TOKEN',
+    ]
+  },
 }
 
 const currentEnv = parsed.data.NODE_ENV
-const missingRequiredVars = requiredVars[currentEnv].filter(
+const requiredForCurrentContext = isClientSide 
+  ? requiredVars[currentEnv]?.client || []
+  : requiredVars[currentEnv]?.server || []
+
+const missingRequiredVars = requiredForCurrentContext.filter(
   (varName) => !parsed.data[varName as keyof typeof parsed.data]
 )
 
