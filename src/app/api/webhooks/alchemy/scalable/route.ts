@@ -46,6 +46,9 @@ export async function POST(request: NextRequest) {
     
     console.log('📨 Received Scalable Event Webhook...');
 
+    console.log('🔑 ALCHEMY_WEBHOOK_SIGNING_KEY:', process.env.ALCHEMY_WEBHOOK_SIGNING_KEY)
+    console.log('🔑 signature:', signature)
+    console.log("env.NODE_ENV:", env.NODE_ENV)
     // Verify webhook signature in production
     if (env.NODE_ENV === 'production' && process.env.ALCHEMY_WEBHOOK_SIGNING_KEY && signature) {
       const isValidSignature = verifyAlchemySignature(
