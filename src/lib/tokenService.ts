@@ -72,6 +72,8 @@ async function fetchTokenBalancesFromAlchemy(
     }
     
     const url = `${ALCHEMY_API_BASE}/${env.ALCHEMY_API_KEY}`
+
+    console.log("🔄 Making request to:", url)
     
     const requestBody = {
       id: 1,
