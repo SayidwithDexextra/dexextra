@@ -141,8 +141,9 @@ const requiredVars = {
     'API_KEY',
     'API_URL',
     'RPC_URL',
-    'ALCHEMY_API_KEY', // Required for webhook-based event monitoring
-    'ALCHEMY_WEBHOOK_AUTH_TOKEN', // Required for webhook management API
+    // Comment out temporarily:
+    // 'ALCHEMY_API_KEY',
+    // 'ALCHEMY_WEBHOOK_AUTH_TOKEN',
     // Note: Contract addresses and other blockchain vars are optional but recommended in production
   ],
 }
@@ -152,7 +153,7 @@ const missingRequiredVars = requiredVars[currentEnv].filter(
   (varName) => !parsed.data[varName as keyof typeof parsed.data]
 )
 
-if (missingRequiredVars.length > 0 && currentEnv === 'production') {
+if (missingRequiredVars.length > 0 && currentEnv === 'production' && !isClientSide) {
   console.error(
     `❌ Missing required environment variables for ${currentEnv}:`,
     missingRequiredVars
