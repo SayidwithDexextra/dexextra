@@ -222,7 +222,7 @@ export function getEventListenerConfig() {
 const environmentType = isClientSide ? 'client-side' : 'server-side'
 console.log(`✅ Environment variables validated successfully (${environmentType})`)
 
-if (env.DEBUG_MODE && env.NODE_ENV !== 'production') {
+if (true) {
   console.log('🐛 Debug mode enabled')
   console.log(`📋 Environment configuration (${environmentType}):`)
   console.log('  - NODE_ENV:', env.NODE_ENV)
@@ -230,6 +230,9 @@ if (env.DEBUG_MODE && env.NODE_ENV !== 'production') {
   console.log('  - CHAIN_ID:', env.CHAIN_ID)
   console.log('  - Event Listener Enabled:', env.EVENT_LISTENER_ENABLED)
   console.log('  - Contracts configured:', getContractConfig().length)
+  console.log('  - ALCHEMY_API_KEY:', env.ALCHEMY_API_KEY)  
+  console.log('  - ALCHEMY_WEBHOOK_AUTH_TOKEN:', env.ALCHEMY_WEBHOOK_AUTH_TOKEN)
+  console.log('  - ALCHEMY_WEBHOOK_SIGNING_KEY:', env.ALCHEMY_WEBHOOK_SIGNING_KEY)
   if (!isClientSide) {
     console.log('  - Server-side variables loaded ✅')
   } else {
