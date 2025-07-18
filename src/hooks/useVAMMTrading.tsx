@@ -5,67 +5,57 @@ import { ethers } from 'ethers';
 import { useWallet } from './useWallet';
 import { VAMMMarket } from './useVAMMMarkets';
 
-// Contract ABIs (Updated for Bonding Curve Trading)
+// Contract ABIs (Updated for Traditional Futures Trading - SimpleVAMM)
 const VAMM_ABI = [
   // Core trading functions
   "function openPosition(uint256 collateralAmount, bool isLong, uint256 leverage, uint256 minPrice, uint256 maxPrice) external returns (uint256 positionId)",
-  "function addToPosition(uint256 positionId, uint256 collateralAmount, uint256 leverage, uint256 minPrice, uint256 maxPrice) external returns (uint256 newSize)",
   "function closePosition(uint256 positionId, uint256 sizeToClose, uint256 minPrice, uint256 maxPrice) external returns (int256 pnl)",
-  "function liquidate(uint256 positionId) external",
   
   // Position management
   "function getPosition(uint256 positionId) external view returns (tuple(uint256 positionId, int256 size, bool isLong, uint256 entryPrice, uint256 entryFundingIndex, uint256 lastInteractionTime, bool isActive))",
-  "function getUserPositions(address user) external view returns (tuple(uint256 positionId, int256 size, bool isLong, uint256 entryPrice, uint256 entryFundingIndex, uint256 lastInteractionTime, bool isActive)[])",
-  "function getUserPositionIds(address user) external view returns (uint256[])",
-  "function getUnrealizedPnL(uint256 positionId) external view returns (int256)",
-  "function getTotalUnrealizedPnL(address user) external view returns (int256)",
-  "function getUserSummary(address user) external view returns (uint256 totalLongSize, uint256 totalShortSize, int256 totalPnL, uint256 activePositionsCount)",
+  "function positions(uint256 positionId) external view returns (tuple(uint256 positionId, int256 size, bool isLong, uint256 entryPrice, uint256 entryFundingIndex, uint256 lastInteractionTime, bool isActive))",
+  "function userPositionIds(address user, uint256 index) external view returns (uint256)",
+  "function positionOwner(uint256 positionId) external view returns (address)",
   
-  // Bonding curve functions
+  // Traditional futures price discovery
   "function getMarkPrice() external view returns (uint256)",
-  "function getTotalSupply() external view returns (uint256)",
-  "function getBondingCurveInfo() external view returns (uint256 currentPrice, uint256 startPrice, uint256 totalSupply, uint256 steepness, uint256 exponent, uint256 maxPrice)",
-  "function calculateBuyCost(uint256 amount) external view returns (uint256 totalCost)",
-  "function calculateSellPayout(uint256 amount) external view returns (uint256 totalPayout)",
   "function getPriceImpact(uint256 size, bool isLong) external view returns (uint256)",
+  "function getEffectiveReserves() external view returns (uint256 baseReserves, uint256 quoteReserves)",
+  "function getMarketSummary() external view returns (uint256 markPrice, int256 netPositionSize, uint256 totalLongSizeUint, uint256 totalShortSizeUint, uint256 baseReserves, uint256 quoteReserves)",
   
-  // Funding mechanism
-  "function updateFunding() external",
-  "function getFundingRate() external view returns (int256)",
-  "function getFundingState() external view returns (tuple(int256 fundingRate, uint256 fundingIndex, uint256 lastFundingTime, int256 premiumFraction))",
-  
-  // Contract info
+  // Contract info - traditional futures
   "function vault() external view returns (address)",
   "function oracle() external view returns (address)",
   "function owner() external view returns (address)",
-  "function startingPrice() external view returns (uint256)",
   "function totalLongSize() external view returns (int256)",
   "function totalShortSize() external view returns (int256)",
+  "function netPosition() external view returns (int256)",
+  "function globalPositionId() external view returns (uint256)",
   "function tradingFeeRate() external view returns (uint256)",
   "function maintenanceMarginRatio() external view returns (uint256)",
-  "function paused() external view returns (bool)",
   
-  // Additional contract management functions
-  "function transferOwnership(address newOwner) external",
-  "function renounceOwnership() external"
+  // Contract management
+  "function transferOwnership(address newOwner) external"
 ];
 
 const ORACLE_ABI = [
-  "function isActive() external view returns (bool)",
-  "function maxPriceAge() external view returns (uint256)",
-  "function owner() external view returns (address)",
-  "function getPrice() external view returns (uint256)"
+  "function getPrice() external view returns (uint256)",
+  "function updatePrice(uint256 newPrice) external",
+  "function owner() external view returns (address)"
 ];
 
 const VAULT_ABI = [
   "function depositCollateral(address user, uint256 amount) external",
   "function withdrawCollateral(address user, uint256 amount) external",
-  "function getMarginAccount(address user) external view returns (tuple(uint256 collateral, uint256 reservedMargin, int256 unrealizedPnL, uint256 lastFundingIndex))",
-  "function getAvailableMargin(address user) external view returns (uint256)",
-  "function getTotalMargin(address user) external view returns (int256)",
+  "function reserveMargin(address user, uint256 amount) external",
+  "function releaseMargin(address user, uint256 amount) external",
+  "function getBalance(address user) external view returns (uint256)",
+  "function getReservedMargin(address user) external view returns (uint256)",
+  "function getAvailableBalance(address user) external view returns (uint256)",
   "function collateralToken() external view returns (address)",
-  "function owner() external view returns (address)",
-  "function paused() external view returns (bool)"
+  "function vamm() external view returns (address)",
+  "function setVamm(address _vamm) external",
+  "function owner() external view returns (address)"
 ];
 
 const ERC20_ABI = [
@@ -89,12 +79,9 @@ export interface Position {
 }
 
 export interface MarginAccount {
-  collateral: string;
+  balance: string;
   reservedMargin: string;
-  unrealizedPnL: string;
-  lastFundingIndex: string;
-  availableMargin: string;
-  totalMargin: string;
+  availableBalance: string;
 }
 
 export interface VAMMTradingState {
@@ -502,12 +489,11 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
 
     try {
       const markPrice = await vammContract.current.getMarkPrice();
-      const fundingRate = await vammContract.current.getFundingRate();
       
       setState(prev => ({
         ...prev,
         markPrice: ethers.formatEther(markPrice),
-        fundingRate: fundingRate.toString(),
+        fundingRate: '0', // SimpleVAMM doesn't have funding rate
       }));
       
       console.log('⚡ Mark price updated:', ethers.formatEther(markPrice));
@@ -530,137 +516,69 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
       await new Promise(resolve => setTimeout(resolve, 100));
 
       const [
-        userPositionsData,
-        marginAccountData,
+        vaultBalance,
+        vaultReservedMargin,
+        vaultAvailableBalance,
         markPrice,
-        fundingRate,
         collateralBalance,
         collateralAllowance,
-        totalUnrealizedPnL,
-        isActive,
-        maxPriceAge,
+        marketSummary,
         owner
       ] = await Promise.allSettled([
-        vammContract.current.getUserPositions(walletData.address),
-        vaultContract.current.getMarginAccount(walletData.address),
+        vaultContract.current.getBalance(walletData.address),
+        vaultContract.current.getReservedMargin(walletData.address),
+        vaultContract.current.getAvailableBalance(walletData.address),
         vammContract.current.getMarkPrice(),
-        vammContract.current.getFundingRate(),
         collateralContract.current.balanceOf(walletData.address),
         collateralContract.current.allowance(walletData.address, await vaultContract.current.getAddress()),
-        vammContract.current.getTotalUnrealizedPnL(walletData.address),
-        true,//oracleContract.current.isActive(),
-        oracleContract.current.maxPriceAge(),
+        vammContract.current.getMarketSummary(),
         vammContract.current.owner()
       ]);
 
-      console.log('userPositionsData: ', userPositionsData);
-      console.log('marginAccountData: ', marginAccountData);
+      console.log('vaultBalance: ', vaultBalance);
+      console.log('vaultReservedMargin: ', vaultReservedMargin);
+      console.log('vaultAvailableBalance: ', vaultAvailableBalance);
       console.log('markPrice: ', markPrice);
-      console.log('fundingRate: ', fundingRate);
       console.log('collateralBalance: ', collateralBalance);
       console.log('collateralAllowance: ', collateralAllowance);
-      console.log('totalUnrealizedPnL: ', totalUnrealizedPnL);
-      console.log('isActive: ', isActive);
-      console.log('maxPriceAge: ', maxPriceAge);
+      console.log('marketSummary: ', marketSummary);
       console.log('owner: ', owner);  
 
       // Extract values with fallbacks for failed calls
-      const userPositionsResult = userPositionsData.status === 'fulfilled' ? userPositionsData.value : [];
-      const marginAccountResult = marginAccountData.status === 'fulfilled' ? marginAccountData.value : { collateral: BigInt(0), reservedMargin: BigInt(0), unrealizedPnL: BigInt(0), lastFundingIndex: BigInt(0) };
+      const vaultBalanceValue = vaultBalance.status === 'fulfilled' ? vaultBalance.value : BigInt(0);
+      const vaultReservedMarginValue = vaultReservedMargin.status === 'fulfilled' ? vaultReservedMargin.value : BigInt(0);
+      const vaultAvailableBalanceValue = vaultAvailableBalance.status === 'fulfilled' ? vaultAvailableBalance.value : BigInt(0);
       const markPriceValue = markPrice.status === 'fulfilled' ? markPrice.value : BigInt(0);
-      const fundingRateValue = fundingRate.status === 'fulfilled' ? fundingRate.value : BigInt(0);
       const collateralBalanceValue = collateralBalance.status === 'fulfilled' ? collateralBalance.value : BigInt(0);
       const collateralAllowanceValue = collateralAllowance.status === 'fulfilled' ? collateralAllowance.value : BigInt(0);
-      const totalUnrealizedPnLValue = totalUnrealizedPnL.status === 'fulfilled' ? totalUnrealizedPnL.value : BigInt(0);
-      const isActiveValue = isActive.status === 'fulfilled' ? isActive.value : false;
-      const maxPriceAgeValue = maxPriceAge.status === 'fulfilled' ? maxPriceAge.value : BigInt(0);
+      const marketSummaryValue = marketSummary.status === 'fulfilled' ? marketSummary.value : { markPrice: BigInt(0), netPositionSize: BigInt(0), totalLongSizeUint: BigInt(0), totalShortSizeUint: BigInt(0), baseReserves: BigInt(0), quoteReserves: BigInt(0) };
       const ownerValue = owner.status === 'fulfilled' ? owner.value : '0x0000000000000000000000000000000000000000';
 
       // Log any failed calls
-      if (userPositionsData.status === 'rejected') console.warn('❌ Failed to get user positions:', userPositionsData.reason);
-      if (marginAccountData.status === 'rejected') console.warn('❌ Failed to get margin account:', marginAccountData.reason);
+      if (vaultBalance.status === 'rejected') console.warn('❌ Failed to get vault balance:', vaultBalance.reason);
+      if (vaultReservedMargin.status === 'rejected') console.warn('❌ Failed to get vault reserved margin:', vaultReservedMargin.reason);
+      if (vaultAvailableBalance.status === 'rejected') console.warn('❌ Failed to get vault available balance:', vaultAvailableBalance.reason);
       if (markPrice.status === 'rejected') console.warn('❌ Failed to get mark price:', markPrice.reason);
-      if (fundingRate.status === 'rejected') console.warn('❌ Failed to get funding rate:', fundingRate.reason);
       if (collateralBalance.status === 'rejected') console.warn('❌ Failed to get collateral balance:', collateralBalance.reason);
       if (collateralAllowance.status === 'rejected') console.warn('❌ Failed to get collateral allowance:', collateralAllowance.reason);
-      if (totalUnrealizedPnL.status === 'rejected') console.warn('❌ Failed to get total unrealized PnL:', totalUnrealizedPnL.reason);
-      if (isActive.status === 'rejected') console.warn('❌ Failed to get isActive:', isActive.reason);
-      if (maxPriceAge.status === 'rejected') console.warn('❌ Failed to get maxPriceAge:', maxPriceAge.reason);
+      if (marketSummary.status === 'rejected') console.warn('❌ Failed to get market summary:', marketSummary.reason);
       if (owner.status === 'rejected') console.warn('❌ Failed to get owner:', owner.reason);
 
       // Debug mark price formatting
       console.log('Raw markPrice:', markPriceValue.toString(), '→', ethers.formatEther(markPriceValue));
 
-      // Process positions data
-      console.log('📊 Raw positions data from contract:', userPositionsResult);
+      // TODO: Implement position fetching for SimpleVAMM 
+      // (SimpleVAMM doesn't have getUserPositions - need to track position IDs)
+      console.log('📊 Position fetching not yet implemented for SimpleVAMM');
 
       let position: Position | null = null;
       let positions: Position[] = [];
-      
-      // Process all user positions
-      if (userPositionsResult && userPositionsResult.length > 0) {
-        console.log(`Processing ${userPositionsResult.length} positions`);
-        
-        // Fetch individual unrealized PnL for each position
-        const positionPnLPromises = userPositionsResult.map(async (pos: any) => {
-          try {
-            const pnl = await vammContract.current!.getUnrealizedPnL(pos.positionId);
-            return ethers.formatUnits(pnl, 6); // USDC has 6 decimals
-          } catch (error) {
-            console.warn(`❌ Failed to get PnL for position ${pos.positionId}:`, error);
-            return '0';
-          }
-        });
-        
-        const positionPnLs = await Promise.all(positionPnLPromises);
-        
-        positions = userPositionsResult.map((pos: any, index: number) => {
-          const positionSizeAbs = pos.size > BigInt(0) ? pos.size : -pos.size;
-          const positionSizeUsdWei = positionSizeAbs * pos.entryPrice;
-          
-          const processedPosition: Position = {
-            positionId: pos.positionId.toString(),
-            size: pos.size.toString(),
-            entryPrice: pos.entryPrice.toString(),
-            entryFundingIndex: pos.entryFundingIndex.toString(),
-            lastInteractionTime: pos.lastInteractionTime.toString(),
-            unrealizedPnL: positionPnLs[index],
-            isLong: pos.isLong,
-            positionSizeUsd: ethers.formatUnits(positionSizeUsdWei, 24), // Format as USDC: 18 (price precision) + 6 (USDC decimals)
-            isActive: pos.isActive,
-          };
-          
-          return processedPosition;
-        });
 
-        // For backward compatibility, set the first position as the primary position
-        if (positions.length > 0) {
-          position = positions[0];
-        }
-
-        console.log('✅ Active positions detected:', positions);
-      } else {
-        console.log('❌ No active positions found');
-      }
-
-      // Process margin account data - use fallback for failed calls
-      let availableMargin = BigInt(0);
-      let totalMargin = BigInt(0);
-      
-      try {
-        availableMargin = await vaultContract.current.getAvailableMargin(walletData.address);
-        totalMargin = await vaultContract.current.getTotalMargin(walletData.address);
-      } catch (error) {
-        console.warn('❌ Failed to get additional margin data:', error);
-      }
-
+      // Create margin account from SimpleVault data
       const marginAccount: MarginAccount = {
-        collateral: ethers.formatUnits(marginAccountResult.collateral, 6), // USDC has 6 decimals
-        reservedMargin: ethers.formatUnits(marginAccountResult.reservedMargin, 6), // USDC has 6 decimals
-        unrealizedPnL: ethers.formatUnits(marginAccountResult.unrealizedPnL, 6), // USDC has 6 decimals
-        lastFundingIndex: marginAccountResult.lastFundingIndex.toString(),
-        availableMargin: ethers.formatUnits(availableMargin, 6), // USDC has 6 decimals
-        totalMargin: ethers.formatUnits(totalMargin, 6), // USDC has 6 decimals
+        balance: ethers.formatUnits(vaultBalanceValue, 6), // USDC has 6 decimals
+        reservedMargin: ethers.formatUnits(vaultReservedMarginValue, 6), // USDC has 6 decimals
+        availableBalance: ethers.formatUnits(vaultAvailableBalanceValue, 6), // USDC has 6 decimals
       };
 
       setState(prev => ({
@@ -669,13 +587,13 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
         positions,
         marginAccount,
         markPrice: ethers.formatEther(markPriceValue),
-        fundingRate: fundingRateValue.toString(),
+        fundingRate: '0', // SimpleVAMM doesn't have funding rate
         collateralBalance: ethers.formatUnits(collateralBalanceValue, 6), // USDC has 6 decimals
         collateralAllowance: ethers.formatUnits(collateralAllowanceValue, 6), // USDC has 6 decimals
         isLoading: false,
         error: null,
-        isActive: isActiveValue,
-        maxPriceAge: maxPriceAgeValue.toString(),
+        isActive: true, // SimpleVAMM is always active
+        maxPriceAge: '0', // SimpleOracle doesn't have maxPriceAge
         owner: ownerValue,
       }));
 
