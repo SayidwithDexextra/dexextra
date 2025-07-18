@@ -77,44 +77,52 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const { tokenData: baseTokenData, vammMarket, isLoading: isLoadingMarket, error: marketError } = useVAMMTokenData(symbol);
   
   console.log('vammMarket baseTokenData: ', baseTokenData);
-  // Get lightweight price data (polls every 60 seconds)
+  // Get real-time price and trading data (polls mark price every 2 seconds)
+  const {
+    markPrice,
+    fundingRate,
+    position,
+    isLoading: isLoadingTrading,
+    error: tradingError,
+    refreshData: refreshTrading,
+    refreshMarkPrice
+  } = useVAMMTrading(vammMarket || undefined, {
+    enablePolling: true, // Always enable polling for real-time price updates
+    pollingInterval: 5000, // Full data refresh every 5 seconds
+    onlyPollWithPosition: false // Always poll for mark price regardless of position
+  });
+  
+  console.log('Real-time markPrice from useVAMMTrading: ', markPrice);
+
+  // Lightweight fallback for price data (kept for compatibility)
   const { 
-    markPrice, 
-    fundingRate, 
+    markPrice: fallbackMarkPrice, 
+    fundingRate: fallbackFundingRate, 
     isLoading: isLoadingPrice, 
     error: priceError,
     refreshData: refreshPriceData
   } = useVAMMPriceData(vammMarket || undefined, {
-    enablePolling: !!vammMarket?.vamm_address, // Only poll if contract exists
-    pollingInterval: 60000 // Reduced to poll every 60 seconds instead of 30
-  });
-  
-  console.log('markPrice: ', markPrice);
-
-  // Get trading data only if wallet is connected (for position info)
-  const {
-    position,
-    isLoading: isLoadingTrading,
-    error: tradingError,
-    refreshData: refreshTrading
-  } = useVAMMTrading(vammMarket || undefined, {
-    enablePolling: walletData.isConnected, // Only poll if wallet connected
-    pollingInterval: 30000, // Keep trading data at 30 seconds for active positions
-    onlyPollWithPosition: true // Only poll when user has a position
+    enablePolling: false, // Disable since we're using real-time data from useVAMMTrading
+    pollingInterval: 60000
   });
 
   // Manual refresh function
   const handleManualRefresh = async () => {
-    console.log('🔄 Manual refresh triggered');
+    console.log('🔄 Manual refresh triggered for real-time data');
     
-    // Refresh price data if available
-    if (refreshPriceData) {
-      await refreshPriceData();
+    // Refresh real-time mark price immediately
+    if (refreshMarkPrice) {
+      await refreshMarkPrice();
     }
     
-    // Refresh trading data if available
+    // Refresh all trading data
     if (refreshTrading) {
       await refreshTrading();
+    }
+    
+    // Fallback price refresh (if needed)
+    if (refreshPriceData) {
+      await refreshPriceData();
     }
   };
 
@@ -130,19 +138,30 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
     // Check if contracts are deployed and available
     const hasContracts = !!vammMarket.vamm_address;
-    const hasPrice = hasContracts && !isLoadingPrice && !priceError;
+    const hasRealTimePrice = hasContracts && !isLoadingTrading && !tradingError && markPrice && markPrice !== '0';
     
-    // Use real mark price from contract, fallback to initial price
-    console.log('currentMarkPrice +> markPrice: ', markPrice);
-    const currentMarkPrice = hasPrice ? (parseFloat(markPrice) || vammMarket.initial_price) : vammMarket.initial_price;
+    // Prioritize real-time mark price from useVAMMTrading, fallback to other sources
+    console.log('🎯 Real-time price sources:', {
+      realTimeMarkPrice: markPrice,
+      fallbackMarkPrice,
+      initialPrice: vammMarket.initial_price,
+      hasRealTimePrice,
+      isLoadingTrading
+    });
+    
+    const currentMarkPrice = hasRealTimePrice 
+      ? parseFloat(markPrice) 
+      : (fallbackMarkPrice ? parseFloat(fallbackMarkPrice) : vammMarket.initial_price);
+      
     const initialPrice = vammMarket.initial_price;
     
-    console.log('💰 Price calculation:', {
-      hasPrice,
-      contractMarkPrice: markPrice,
-      parsedMarkPrice: parseFloat(markPrice),
+    console.log('💰 Real-time price calculation:', {
+      hasRealTimePrice,
+      realTimeMarkPrice: markPrice,
+      parsedRealTimePrice: parseFloat(markPrice),
       initialPrice,
-      finalPrice: currentMarkPrice
+      finalPrice: currentMarkPrice,
+      isUpdating: isLoadingTrading
     });
     
     // Calculate 24h change based on current vs initial price
@@ -154,7 +173,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     const volume24h = marketCap * 0.15; // Estimate based on market cap
     
     // Derive time-based changes from funding rate and price movement
-    const contractFundingRate = hasPrice ? fundingRate : '0';
+    const contractFundingRate = hasRealTimePrice 
+      ? fundingRate 
+      : (fallbackFundingRate || '0');
     const timeBasedChanges = deriveTimeBasedChanges(contractFundingRate, priceChange24h);
     
     return {
@@ -163,9 +184,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       priceChange24h,
       marketCap,
       volume24h,
-      // Add contract-specific data (or defaults if not available)
+      // Add real-time contract-specific data (or defaults if not available)
       markPrice: currentMarkPrice,
-      fundingRate: hasPrice ? (parseFloat(fundingRate) || 0) : 0,
+      fundingRate: hasRealTimePrice ? (parseFloat(fundingRate) || 0) : 0,
       timeBasedChanges,
       // Add position info if available (only when wallet connected)
       hasPosition: walletData.isConnected && !!position,
@@ -174,7 +195,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       // Add deployment status
       isDeployed: hasContracts,
     };
-  }, [baseTokenData, vammMarket, markPrice, fundingRate, position, isLoadingPrice, priceError, walletData.isConnected, symbol]);
+  }, [baseTokenData, vammMarket, markPrice, fundingRate, fallbackMarkPrice, fallbackFundingRate, position, isLoadingTrading, tradingError, walletData.isConnected, symbol]);
 
   console.log('enhancedTokenData: ', enhancedTokenData);
   // Loading state - only show loading if market data is loading
@@ -262,6 +283,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         <div className="flex items-baseline gap-3 mb-1">
           <span className="text-2xl font-bold text-white">
             ${formatNumberWithCommas(enhancedTokenData.markPrice)}
+            {markPrice && markPrice !== '0' && enhancedTokenData.isDeployed && (
+              <span className="ml-2 text-xs bg-green-900 text-green-300 px-1.5 py-0.5 rounded-full">
+                LIVE
+              </span>
+            )}
           </span>
           <span className={`text-base font-medium ${isPositive ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
             {isPositive ? '↑' : '↓'} {Math.abs(enhancedTokenData.priceChange24h).toFixed(2)}%
@@ -273,7 +299,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           <div className="flex items-center gap-4 text-xs text-[#808080]">
             <span>
               Mark: ${formatNumberWithCommas(enhancedTokenData.markPrice)}
-              {isLoadingPrice && <span className="ml-1 text-blue-400">⟳</span>}
+              {isLoadingTrading && <span className="ml-1 text-blue-400 animate-spin">⟳</span>}
+              {!isLoadingTrading && enhancedTokenData.isDeployed && <span className="ml-1 text-green-400">●</span>}
             </span>
             {enhancedTokenData.isDeployed && enhancedTokenData.fundingRate !== 0 && (
               <span>
@@ -287,9 +314,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 Deployment Pending
               </span>
             )}
-            {priceError && (
+            {tradingError && (
               <span className="text-red-400 text-xs">
-                ⚠️ Price Error
+                ⚠️ Real-time Data Error
+              </span>
+            )}
+            {priceError && !tradingError && (
+              <span className="text-yellow-400 text-xs">
+                ⚠️ Fallback Mode
               </span>
             )}
           </div>

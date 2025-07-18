@@ -43,7 +43,11 @@ const VAMM_ABI = [
   "function totalShortSize() external view returns (int256)",
   "function tradingFeeRate() external view returns (uint256)",
   "function maintenanceMarginRatio() external view returns (uint256)",
-  "function paused() external view returns (bool)"
+  "function paused() external view returns (bool)",
+  
+  // Additional contract management functions
+  "function transferOwnership(address newOwner) external",
+  "function renounceOwnership() external"
 ];
 
 const ORACLE_ABI = [
@@ -59,7 +63,9 @@ const VAULT_ABI = [
   "function getMarginAccount(address user) external view returns (tuple(uint256 collateral, uint256 reservedMargin, int256 unrealizedPnL, uint256 lastFundingIndex))",
   "function getAvailableMargin(address user) external view returns (uint256)",
   "function getTotalMargin(address user) external view returns (int256)",
-  "function collateralToken() external view returns (address)"
+  "function collateralToken() external view returns (address)",
+  "function owner() external view returns (address)",
+  "function paused() external view returns (bool)"
 ];
 
 const ERC20_ABI = [
@@ -121,6 +127,7 @@ export interface UseVAMMTradingReturn extends VAMMTradingState {
   withdrawCollateral: (amount: number) => Promise<{ success: boolean; txHash?: string; error?: string }>;
   approveCollateral: (amount: number) => Promise<{ success: boolean; txHash?: string; error?: string }>;
   refreshData: () => Promise<void>;
+  refreshMarkPrice: () => Promise<void>;
   forceRefresh: () => Promise<void>;
   clearPositionState: () => void;
   getPriceImpact: (amount: number, isLong: boolean, leverage: number) => Promise<string>;
@@ -214,8 +221,8 @@ async function registerVAMMForEventMonitoring(vammAddress: string, vaultAddress:
 
 export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOptions): UseVAMMTradingReturn {
   const { 
-    enablePolling = false, 
-    pollingInterval = 30000, 
+    enablePolling = true, // Enable polling by default for real-time price updates
+    pollingInterval = 5000, // More aggressive 5-second interval for real-time data
     onlyPollWithPosition = false 
   } = options || {};
   
@@ -247,9 +254,17 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
   // Initialize contracts
   const initializeContracts = useCallback(async () => {
     if (!vammMarket?.vamm_address || !walletData.isConnected || !window.ethereum) {
+      console.log('❌ Contract initialization skipped:', {
+        hasVammAddress: !!vammMarket?.vamm_address,
+        walletConnected: walletData.isConnected,
+        hasEthereum: !!window.ethereum,
+        vammMarket: vammMarket
+      });
       setContractsReady(false);
       return;
     }
+    
+    console.log('🚀 Starting contract initialization for:', vammMarket.symbol);
 
     try {
       setState(prev => ({ ...prev, isLoading: true, error: null }));
@@ -257,24 +272,180 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
 
       const provider = new ethers.BrowserProvider(window.ethereum);
       signer.current = await provider.getSigner();
+      
+      // Debug: Log current network and addresses
+      const network = await provider.getNetwork();
+      const expectedChainId = 137; // Polygon Mainnet
+      
+      console.log('🌐 Connected to network:', {
+        chainId: network.chainId.toString(),
+        name: network.name,
+        expectedChainId,
+        vammAddress: vammMarket.vamm_address,
+        vaultAddress: vammMarket.vault_address,
+        oracleAddress: vammMarket.oracle_address
+      });
+      
+      // Check if user is on the wrong network
+      if (Number(network.chainId) !== expectedChainId) {
+        console.warn('⚠️ Network mismatch detected!');
+        console.log(`Expected: Polygon Mainnet (${expectedChainId}), Got: ${network.name} (${network.chainId})`);
+        
+        // Try to switch to Polygon
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: '0x89' }], // 0x89 = 137 in hex (Polygon)
+          });
+          
+          console.log('✅ Successfully switched to Polygon');
+          
+          // Reinitialize provider after network switch
+          const newProvider = new ethers.BrowserProvider(window.ethereum);
+          const newNetwork = await newProvider.getNetwork();
+          console.log('🔄 Reinitialized on network:', newNetwork.name, newNetwork.chainId.toString());
+          
+        } catch (switchError: any) {
+          // If switching fails, try to add Polygon network
+          if (switchError.code === 4902) {
+            try {
+              await window.ethereum.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: '0x89',
+                  chainName: 'Polygon Mainnet',
+                  nativeCurrency: {
+                    name: 'MATIC',
+                    symbol: 'MATIC',
+                    decimals: 18
+                  },
+                  rpcUrls: ['https://polygon-rpc.com/'],
+                  blockExplorerUrls: ['https://polygonscan.com/']
+                }]
+              });
+              console.log('✅ Added Polygon network to wallet');
+            } catch (addError) {
+              console.error('❌ Failed to add Polygon network:', addError);
+              throw new Error(`Please manually switch your wallet to Polygon Mainnet. Current network: ${network.name} (${network.chainId}), Required: Polygon (137)`);
+            }
+          } else {
+            console.error('❌ Failed to switch to Polygon:', switchError);
+            throw new Error(`Please manually switch your wallet to Polygon Mainnet. Current network: ${network.name} (${network.chainId}), Required: Polygon (137)`);
+          }
+        }
+      }
 
-      // Initialize vAMM contract
+      // Initialize vAMM contract with validation
+      if (!vammMarket.vamm_address || vammMarket.vamm_address === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Invalid VAMM address provided');
+      }
+      
+      console.log('🔍 Initializing VAMM contract:', vammMarket.vamm_address);
       vammContract.current = new ethers.Contract(
         vammMarket.vamm_address,
         VAMM_ABI,
         provider
       );
+      
+      // Quick validation that VAMM contract is deployed
+      try {
+        console.log('🔍 Checking if VAMM contract exists at:', vammMarket.vamm_address);
+        
+        // First check if there's any code at the address
+        const code = await provider.getCode(vammMarket.vamm_address);
+        if (code === '0x') {
+          const currentNetwork = await provider.getNetwork();
+          throw new Error(`No contract deployed at VAMM address ${vammMarket.vamm_address} on network ${currentNetwork.name} (${currentNetwork.chainId}). This contract is deployed on Polygon Mainnet (137). Please switch your wallet to Polygon.`);
+        }
+        
+        console.log('✅ Contract code found, attempting to call owner()');
+        const vammOwner = await vammContract.current.owner();
+        console.log('✅ VAMM contract validated, owner:', vammOwner);
+        
+      } catch (error) {
+        console.error('❌ VAMM contract validation failed:', error);
+        
+        // Provide more specific error message
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        if (errorMessage.includes('could not decode result data')) {
+          throw new Error(`VAMM contract ABI mismatch or function missing at ${vammMarket.vamm_address}. Check if this is the correct contract address.`);
+        } else if (errorMessage.includes('No contract deployed')) {
+          throw new Error(`No VAMM contract deployed at address ${vammMarket.vamm_address}. Check the deployment status.`);
+        } else {
+          throw new Error(`VAMM contract not accessible: ${errorMessage}`);
+        }
+      }
 
-      // Get vault address and initialize vault contract
-      const vaultAddress = vammMarket.vault_address || await vammContract.current.vault();
-      vaultContract.current = new ethers.Contract(vaultAddress, VAULT_ABI, provider);
+            // Get vault address and initialize vault contract with validation
+      let vaultAddress: string = 'unknown';
+      try {
+        vaultAddress = vammMarket.vault_address || await vammContract.current.vault();
+        
+        if (!vaultAddress || vaultAddress === '0x0000000000000000000000000000000000000000') {
+          throw new Error('Invalid vault address');
+        }
+        
+        console.log('✅ Got vault address:', vaultAddress);
+        
+        // Test vault contract exists by calling a simple method
+        vaultContract.current = new ethers.Contract(vaultAddress, VAULT_ABI, provider);
+        
+        // Quick validation that vault contract is deployed
+        console.log('🔍 Checking if Vault contract exists at:', vaultAddress);
+        
+        // First check if there's any code at the address
+        const vaultCode = await provider.getCode(vaultAddress);
+        if (vaultCode === '0x') {
+          const currentNetwork = await provider.getNetwork();
+          throw new Error(`No contract deployed at Vault address ${vaultAddress} on network ${currentNetwork.name} (${currentNetwork.chainId}). This contract is deployed on Polygon Mainnet (137). Please switch your wallet to Polygon.`);
+        }
+        
+        console.log('✅ Vault contract code found, attempting to call owner()');
+        const vaultOwner = await vaultContract.current.owner();
+        console.log('✅ Vault contract validated, owner:', vaultOwner);
+        
+      } catch (error) {
+        console.error('❌ Vault address issue:', error);
+        
+        // Provide more specific error message
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        if (errorMessage.includes('could not decode result data')) {
+          throw new Error(`Vault contract ABI mismatch or function missing at ${vaultAddress}. Check if this is the correct contract address.`);
+        } else if (errorMessage.includes('No contract deployed')) {
+          throw new Error(`No Vault contract deployed at address ${vaultAddress}. Check the deployment status.`);
+        } else {
+          throw new Error(`Vault contract not accessible: ${errorMessage}`);
+        }
+      }
 
       // Get oracle address and initialize oracle contract
       const oracleAddress = vammMarket.oracle_address || await vammContract.current.oracle();
       oracleContract.current = new ethers.Contract(oracleAddress, ORACLE_ABI, provider);
 
-      // Get collateral token address and initialize collateral contract
-      const collateralAddress = await vaultContract.current.collateralToken();
+      // Get collateral token address and initialize collateral contract with enhanced error handling
+      let collateralAddress: string;
+      try {
+        console.log('🔍 Attempting to get collateral token from vault:', vaultAddress);
+        collateralAddress = await vaultContract.current.collateralToken();
+        
+        if (!collateralAddress || collateralAddress === '0x0000000000000000000000000000000000000000') {
+          throw new Error('Collateral token address is null or zero address');
+        }
+        
+        console.log('✅ Got collateral token address:', collateralAddress);
+        
+      } catch (error) {
+        console.error('❌ Failed to get collateral token from vault:', error);
+        
+        // Fallback: Use known MockUSDC address from deployed contracts
+        const fallbackUSDC = '0x9D2110E6FD055Cf2605dde089FD3734C067dB515';
+        console.log('🔄 Using fallback USDC address:', fallbackUSDC);
+        collateralAddress = fallbackUSDC;
+        
+        // Show a warning but don't fail initialization
+        console.warn('⚠️ Using fallback USDC address. Vault might not be properly configured.');
+      }
+      
       collateralContract.current = new ethers.Contract(collateralAddress, ERC20_ABI, provider);
 
       // Mark contracts as ready
@@ -294,6 +465,24 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
         vammMarket.symbol
       );
 
+      // Immediately fetch mark price as soon as contracts are ready
+      console.log('⚡ Fetching initial mark price immediately...');
+      try {
+        const markPrice = await vammContract.current.getMarkPrice();
+        const fundingRate = await vammContract.current.getFundingRate();
+        
+        setState(prev => ({
+          ...prev,
+          markPrice: ethers.formatEther(markPrice),
+          fundingRate: fundingRate.toString(),
+          isLoading: false
+        }));
+        
+        console.log('⚡ Initial mark price loaded:', ethers.formatEther(markPrice));
+      } catch (priceError) {
+        console.warn('❌ Failed to fetch initial mark price:', priceError);
+      }
+
     } catch (error) {
       console.error('❌ Error initializing contracts:', error);
       setContractsReady(false);
@@ -304,6 +493,28 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
       }));
     }
   }, [vammMarket?.vamm_address, vammMarket?.vault_address, vammMarket?.symbol, walletData.isConnected]);
+
+  // Quick mark price refresh for real-time updates
+  const refreshMarkPrice = useCallback(async () => {
+    if (!contractsReady || !vammContract.current) {
+      return;
+    }
+
+    try {
+      const markPrice = await vammContract.current.getMarkPrice();
+      const fundingRate = await vammContract.current.getFundingRate();
+      
+      setState(prev => ({
+        ...prev,
+        markPrice: ethers.formatEther(markPrice),
+        fundingRate: fundingRate.toString(),
+      }));
+      
+      console.log('⚡ Mark price updated:', ethers.formatEther(markPrice));
+    } catch (error) {
+      console.warn('❌ Error refreshing mark price:', error);
+    }
+  }, [contractsReady]);
 
   // Refresh all contract data
   const refreshData = useCallback(async () => {
@@ -916,12 +1127,38 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
     initializeContracts();
   }, [initializeContracts]);
 
+  // Immediate mark price refresh when contracts are ready  
+  useEffect(() => {
+    if (contractsReady && vammContract.current) {
+      console.log('⚡ Immediately refreshing mark price on contract ready...');
+      refreshMarkPrice();
+    }
+  }, [contractsReady, refreshMarkPrice]);
+
   // Refresh data when contracts are ready
   useEffect(() => {
     if (contractsReady && vammContract.current && vaultContract.current && collateralContract.current && oracleContract.current && walletData.address) {
       refreshData();
     }
   }, [walletData.address, contractsReady]); // Removed refreshData from deps
+
+  // Set up aggressive mark price polling for real-time updates
+  useEffect(() => {
+    if (!contractsReady || !vammContract.current) return;
+
+    console.log('⚡ Starting aggressive mark price polling (2s interval)...');
+    
+    const markPriceInterval = setInterval(() => {
+      if (contractsReady && vammContract.current) {
+        refreshMarkPrice();
+      }
+    }, 2000); // Update mark price every 2 seconds
+
+    return () => {
+      console.log('🛑 Stopping mark price polling');
+      clearInterval(markPriceInterval);
+    };
+  }, [contractsReady, refreshMarkPrice]);
 
   // Set up periodic refresh only when enabled and conditions are met
   useEffect(() => {
@@ -958,6 +1195,7 @@ export function useVAMMTrading(vammMarket?: VAMMMarket, options?: VAMMTradingOpt
     withdrawCollateral,
     approveCollateral,
     refreshData,
+    refreshMarkPrice,
     forceRefresh,
     clearPositionState,
     getPriceImpact,

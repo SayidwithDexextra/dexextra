@@ -87,6 +87,7 @@ export default function CryptoMarketTicker({
     return () => {
       if (cleanupRef.current) {
         cleanupRef.current()
+        cleanupRef.current = null
       }
     }
   }, [])

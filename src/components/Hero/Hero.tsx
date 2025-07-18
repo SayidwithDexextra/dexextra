@@ -99,19 +99,19 @@ const Hero: React.FC<HeroProps> = ({
       className={`${styles.hero} ${className}`}
       style={heroStyle}
     >
-      {/* 3D Background - fills entire hero container */}
-      <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
-  <Dither
-    waveColor={[0.7, 0.5, 0.5]}
-    disableAnimation={false}
-    enableMouseInteraction={true}
-    mouseRadius={0.3}
-    colorNum={4}
-    waveAmplitude={0.3}
-    waveFrequency={3}
-    waveSpeed={0.02}
-  />
-</div>
+      {/* Dynamic dithered background */}
+      <div className={styles.background}>
+        <Dither
+          waveColor={[0.7, 0.5, 0.5]}
+          disableAnimation={false}
+          enableMouseInteraction={true}
+          mouseRadius={0.3}
+          colorNum={4}
+          waveAmplitude={0.3}
+          waveFrequency={3}
+          waveSpeed={0.02}
+        />
+      </div>
 
       
       <div className={styles.container}>

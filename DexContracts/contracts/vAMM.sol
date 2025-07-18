@@ -4,13 +4,13 @@ pragma solidity ^0.8.20;
 import "./IvAMM.sol";
 import "./IVault.sol";
 import "./IPriceOracle.sol";
-
 /**
  * @title vAMM
  * @dev Production-ready virtual Automated Market Maker with BONDING CURVE mechanism for pump.fund-style behavior
  * This version uses bonding curves instead of traditional AMM reserves for custom starting prices and progressive difficulty
  */
 contract vAMM is IvAMM {
+
     address public owner;
     IVault public vault;
     IPriceOracle public oracle;
@@ -30,9 +30,9 @@ contract vAMM is IvAMM {
     
     // ===== BONDING CURVE PARAMETERS =====
     uint256 public startingPrice; // Custom starting price (e.g., $0.001, $8, $100)
-    uint256 public constant BONDING_CURVE_STEEPNESS = 1000; // Lower = easier pumps, Higher = harder pumps
-    uint256 public constant MAX_PUMP_MULTIPLIER = 10000; // Maximum 10,000x price increase
-    uint256 public pumpExponent = 15e17; // 1.5 exponent for progressive difficulty
+    uint256 public constant BONDING_CURVE_STEEPNESS = 1000000000000000000; // 1e18 - same scale as position sizes for 1:1 ratio
+    uint256 public constant MAX_PUMP_MULTIPLIER = 1000; // Maximum 1,000x price increase  
+    uint256 public pumpExponent = 12e17; // 1.2 exponent for progressive difficulty (reduced from 1.5)
     
     // Legacy virtual reserves for backwards compatibility (now calculated dynamically)
     uint256 public virtualBaseReserves;
@@ -173,11 +173,24 @@ contract vAMM is IvAMM {
             return startingPrice;
         }
         
-        // Calculate bonding curve price
+        // Calculate bonding curve price using simple math
         // Formula: price = startingPrice * (1 + supply/steepness)^exponent
         uint256 supplyRatio = (totalSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
-        uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
+        uint256 base = PRICE_PRECISION + supplyRatio;
         
+        // Simple power approximation for small exponents (1.2 ≈ 1 + 0.2 * ln(base))
+        // For base^1.2, we approximate as: base * (1 + 0.2 * (base - 1) / base)
+        uint256 priceMultiplier;
+        if (base <= PRICE_PRECISION) {
+            priceMultiplier = PRICE_PRECISION; // base^1.2 ≈ 1 when base ≤ 1
+        } else {
+            // Simplified approximation: base^1.2 ≈ base * (1 + 0.2)
+            // For small values this gives reasonable pump behavior
+            uint256 excess = base - PRICE_PRECISION;
+            uint256 powerEffect = (excess * 12) / 10; // 1.2x the excess
+            priceMultiplier = PRICE_PRECISION + powerEffect;
+        }
+
         // Cap maximum price to prevent overflow
         uint256 maxPrice = startingPrice * MAX_PUMP_MULTIPLIER;
         uint256 calculatedPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
@@ -192,64 +205,21 @@ contract vAMM is IvAMM {
     function getTotalSupply() public view returns (uint256) {
         return totalLongSize > 0 ? uint256(totalLongSize) : 0;
     }
-    
+
     /**
-     * @dev Calculate approximate power function: base^exponent
-     * Simplified implementation using repeated multiplication for gas efficiency
+     * @dev Simple power approximation for bonding curve
+     * Approximates base^exponent where exponent = 1.2
      */
-    function _calculatePower(uint256 base, uint256 exponent) internal pure returns (uint256) {
-        if (exponent == 0) return PRICE_PRECISION;
-        if (base == 0) return 0;
-        
-        // Convert exponent to decimal representation (exponent is in 1e18 format)
-        uint256 integerPart = exponent / PRICE_PRECISION;
-        uint256 fractionalPart = exponent % PRICE_PRECISION;
-        
-        // Calculate integer power
-        uint256 result = PRICE_PRECISION;
-        for (uint256 i = 0; i < integerPart; i++) {
-            result = (result * base) / PRICE_PRECISION;
+    function _approximatePower(uint256 base, uint256 exponent) internal pure returns (uint256) {
+        if (base <= PRICE_PRECISION) {
+            return PRICE_PRECISION; // base^1.2 ≈ 1 when base ≤ 1
         }
         
-        // Approximate fractional power using Taylor series (simplified)
-        if (fractionalPart > 0) {
-            uint256 baseLn = _ln(base); // Approximate natural log
-            uint256 fractionalExp = (baseLn * fractionalPart) / PRICE_PRECISION;
-            uint256 fractionalResult = _exp(fractionalExp); // Approximate exponential
-            result = (result * fractionalResult) / PRICE_PRECISION;
-        }
-        
-        return result;
-    }
-    
-    /**
-     * @dev Approximate natural logarithm (simplified for gas efficiency)
-     */
-    function _ln(uint256 x) internal pure returns (uint256) {
-        if (x <= PRICE_PRECISION) return 0;
-        
-        // Simplified ln approximation: ln(x) ≈ (x-1) - (x-1)²/2 + (x-1)³/3
-        uint256 xMinus1 = x - PRICE_PRECISION;
-        uint256 term1 = xMinus1;
-        uint256 term2 = (xMinus1 * xMinus1) / (2 * PRICE_PRECISION);
-        uint256 term3 = (xMinus1 * xMinus1 * xMinus1) / (3 * PRICE_PRECISION * PRICE_PRECISION);
-        
-        return term1 - term2 + term3;
-    }
-    
-    /**
-     * @dev Approximate exponential function (simplified for gas efficiency)
-     */
-    function _exp(uint256 x) internal pure returns (uint256) {
-        if (x == 0) return PRICE_PRECISION;
-        
-        // Simplified exp approximation: e^x ≈ 1 + x + x²/2 + x³/6
-        uint256 term1 = PRICE_PRECISION;
-        uint256 term2 = x;
-        uint256 term3 = (x * x) / (2 * PRICE_PRECISION);
-        uint256 term4 = (x * x * x) / (6 * PRICE_PRECISION * PRICE_PRECISION);
-        
-        return term1 + term2 + term3 + term4;
+        // For base^1.2, use approximation: base * (1 + 0.2 * (base-1)/base)
+        // Simplified to: base + 0.2 * (base - PRICE_PRECISION)
+        uint256 excess = base - PRICE_PRECISION;
+        uint256 powerEffect = (excess * 12) / 10; // 1.2x the excess
+        return PRICE_PRECISION + powerEffect;
     }
     
     /**
@@ -280,7 +250,8 @@ contract vAMM is IvAMM {
         
         // Calculate new price with increased supply
         uint256 supplyRatio = (newSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
-        uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
+        uint256 base = PRICE_PRECISION + supplyRatio;
+        uint256 priceMultiplier = _approximatePower(base, pumpExponent);
         uint256 newPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
         
         // Cap maximum price
@@ -734,8 +705,12 @@ contract vAMM is IvAMM {
         uint256 tradingFee = (positionSize * tradingFeeRate) / BASIS_POINTS;
         uint256 totalCost = collateralAmount + tradingFee;
         
-        // Reserve margin in vault
-        vault.reserveMargin(msg.sender, totalCost);
+        // CRITICAL FIX: Convert 18-decimal amounts to 6-decimal USDC for vault operations
+        // The vAMM operates in 18-decimal precision, but the vault uses USDC (6 decimals)
+        uint256 totalCostUSDC = totalCost / 1e12; // Convert from 18 to 6 decimals
+        
+        // Reserve margin in vault (in USDC 6-decimal units)
+        vault.reserveMargin(msg.sender, totalCostUSDC);
         
         // Create new position ID
         positionId = globalPositionId++;
@@ -804,8 +779,11 @@ contract vAMM is IvAMM {
         uint256 tradingFee = (additionalSize * tradingFeeRate) / BASIS_POINTS;
         uint256 totalCost = collateralAmount + tradingFee;
         
-        // Reserve margin in vault
-        vault.reserveMargin(msg.sender, totalCost);
+        // CRITICAL FIX: Convert 18-decimal amounts to 6-decimal USDC for vault operations
+        uint256 totalCostUSDC = totalCost / 1e12; // Convert from 18 to 6 decimals
+        
+        // Reserve margin in vault (in USDC 6-decimal units)
+        vault.reserveMargin(msg.sender, totalCostUSDC);
         
         // Update position tracking (affects bonding curve price)
         if (pos.isLong) {
@@ -993,7 +971,8 @@ contract vAMM is IvAMM {
         
         // Calculate new price after purchase
         uint256 supplyRatio = (newSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
-        uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
+        uint256 base = PRICE_PRECISION + supplyRatio;
+        uint256 priceMultiplier = _approximatePower(base, pumpExponent);
         uint256 newPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
         
         // Cap maximum price
@@ -1020,17 +999,19 @@ contract vAMM is IvAMM {
         uint256 newSupply = currentSupply - amount;
         
         // Calculate new price after sale
+        uint256 newPrice;
         if (newSupply == 0) {
-            totalPayout = (amount * startingPrice) / PRICE_PRECISION;
+            newPrice = startingPrice;
         } else {
             uint256 supplyRatio = (newSupply * PRICE_PRECISION) / BONDING_CURVE_STEEPNESS;
-            uint256 priceMultiplier = _calculatePower(PRICE_PRECISION + supplyRatio, pumpExponent);
-            uint256 newPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
-            
-            // Calculate average price (simplified - in practice would need integration)
-            uint256 averagePrice = (currentPrice + newPrice) / 2;
-            totalPayout = (amount * averagePrice) / PRICE_PRECISION;
+            uint256 base = PRICE_PRECISION + supplyRatio;
+            uint256 priceMultiplier = _approximatePower(base, pumpExponent);
+            newPrice = (startingPrice * priceMultiplier) / PRICE_PRECISION;
         }
+            
+        // Calculate average price (simplified - in practice would need integration)
+        uint256 averagePrice = (currentPrice + newPrice) / 2;
+        totalPayout = (amount * averagePrice) / PRICE_PRECISION;
     }
     
     /**

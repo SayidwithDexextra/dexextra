@@ -116,16 +116,10 @@ contract Vault is IVault {
         require(amount > 0, "Vault: invalid amount");
         require(user != address(0), "Vault: invalid user");
         
-        // If called by user directly, transfer from user
-        if (msg.sender == user) {
-            require(
-                collateralToken.transferFrom(user, address(this), amount),
-                "Vault: transfer failed"
-            );
-        } else {
-            // If called by authorized contract, assume tokens are already in vault
-            require(authorized[msg.sender], "Vault: not authorized");
-        }
+        require(
+            collateralToken.transferFrom(msg.sender, address(this), amount),
+            "Vault: transfer failed"
+        );
         
         accounts[user].collateral += amount;
         emit CollateralDeposited(user, amount);
@@ -251,17 +245,16 @@ contract Vault is IVault {
      * @dev Liquidates a user's position
      */
     function liquidate(address user, uint256 liquidationPenalty) external override onlyAuthorized {
-        require(user != address(0), "Vault: invalid user");
-        
         MarginAccount storage account = accounts[user];
         
-        // Apply liquidation penalty
-        if (liquidationPenalty > 0) {
-            int256 penalty = int256(liquidationPenalty);
-            account.unrealizedPnL -= penalty;
+        // Apply penalty to collateral
+        if (account.collateral >= liquidationPenalty) {
+            account.collateral -= liquidationPenalty;
+        } else {
+            account.collateral = 0;
         }
         
-        // Reset position-related data
+        // Reset reserved margin and PnL
         account.reservedMargin = 0;
         account.unrealizedPnL = 0;
         

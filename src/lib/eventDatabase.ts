@@ -28,7 +28,6 @@ export class EventDatabase {
       const contracts: ContractConfig[] = []
 
       // First, get contracts from the vamm_markets table
-      console.log('EventDatabase', "Hello")
       try {
         const { data: markets, error } = await supabase
           .from('vamm_markets')

@@ -1,0 +1,657 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/IPriceOracle.sol": {
+      "lastModificationDate": 1752444554755,
+      "contentHash": "fdb3b3804441a5dbdf2f365eb41e094d",
+      "sourceName": "contracts/IPriceOracle.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IPriceOracle"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/vAMM.sol": {
+      "lastModificationDate": 1752790778953,
+      "contentHash": "8d24948ca73ac74b3abe6a5dd13c29c9",
+      "sourceName": "contracts/vAMM.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./IvAMM.sol",
+        "./IVault.sol",
+        "./IPriceOracle.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "vAMM"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/IvAMM.sol": {
+      "lastModificationDate": 1752537281214,
+      "contentHash": "8a5fc7fc474c9573fee3daaa1f725406",
+      "sourceName": "contracts/IvAMM.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IvAMM"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/IVault.sol": {
+      "lastModificationDate": 1752444554755,
+      "contentHash": "4f9aedba7acd36696a92f814858bd995",
+      "sourceName": "contracts/IVault.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IVault"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/PRBMathUD60x18.sol": {
+      "lastModificationDate": 1752775603234,
+      "contentHash": "fd85908cea03f21692d3ece490ac47e2",
+      "sourceName": "contracts/PRBMathUD60x18.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./PRBMath.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "PRBMathUD60x18"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/PRBMath.sol": {
+      "lastModificationDate": 1752775490955,
+      "contentHash": "45cc5f0b3c7de58eb2e84bd38fa3f2aa",
+      "sourceName": "contracts/PRBMath.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "PRBMath"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/vAMMFactory.sol": {
+      "lastModificationDate": 1752607102820,
+      "contentHash": "fcdd9084512e9dc400c6aa8103704869",
+      "sourceName": "contracts/vAMMFactory.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./vAMM.sol",
+        "./Vault.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "vAMMFactory"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/Vault.sol": {
+      "lastModificationDate": 1752787020753,
+      "contentHash": "c9da1e6dff6e06d7a69e56f48fe9d847",
+      "sourceName": "contracts/Vault.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./IVault.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IERC20",
+        "Vault"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/MockPriceOracle.sol": {
+      "lastModificationDate": 1752545077326,
+      "contentHash": "e065df4d43802395af9acedcec4e3677",
+      "sourceName": "contracts/MockPriceOracle.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./IPriceOracle.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "MockPriceOracle"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/MockUSDC.sol": {
+      "lastModificationDate": 1752545077326,
+      "contentHash": "7ae907860bc2a99245f19043675eca47",
+      "sourceName": "contracts/MockUSDC.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "MockUSDC"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/ISimplePriceOracle.sol": {
+      "lastModificationDate": 1752803465581,
+      "contentHash": "4a786b5dbcc2d32caca1a17dfbd77ac9",
+      "sourceName": "contracts/ISimplePriceOracle.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "ISimplePriceOracle"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/SimpleVAMM.sol": {
+      "lastModificationDate": 1752803465585,
+      "contentHash": "0068b8c7e04bc50785b634c95b16fdfd",
+      "sourceName": "contracts/SimpleVAMM.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./ISimpleVAMM.sol",
+        "./ISimpleVault.sol",
+        "./ISimplePriceOracle.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "SimpleVAMM"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/ISimpleVault.sol": {
+      "lastModificationDate": 1752803465582,
+      "contentHash": "edef50a43e92066710e0d2e8a46b5332",
+      "sourceName": "contracts/ISimpleVault.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "ISimpleVault"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/ISimpleVAMM.sol": {
+      "lastModificationDate": 1752803465582,
+      "contentHash": "205ccd5e190c0be48cb20ffafb60c40e",
+      "sourceName": "contracts/ISimpleVAMM.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "ISimpleVAMM"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/SimpleVault.sol": {
+      "lastModificationDate": 1752803465585,
+      "contentHash": "f8873253de6eacfd6fef5eb42b314e62",
+      "sourceName": "contracts/SimpleVault.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./ISimpleVault.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "IERC20",
+        "SimpleVault"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/SimplePriceOracle.sol": {
+      "lastModificationDate": 1752803465583,
+      "contentHash": "63b6e17e1c5fb4f8ef691e05b4b30829",
+      "sourceName": "contracts/SimplePriceOracle.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./ISimplePriceOracle.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "SimplePriceOracle"
+      ]
+    },
+    "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContracts/contracts/SimpleUSDC.sol": {
+      "lastModificationDate": 1752803465583,
+      "contentHash": "5eea8b6b12aa18e4b1e91d7720120c9e",
+      "sourceName": "contracts/SimpleUSDC.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "SimpleUSDC"
+      ]
+    }
+  }
+}
