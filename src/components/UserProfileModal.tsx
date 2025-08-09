@@ -94,7 +94,7 @@ export default function UserProfileModal({
     <div 
       className="fixed inset-0 z-50 flex items-center justify-center transition-all duration-500 ease-out"
       style={{ 
-        backgroundColor: isAnimating ? 'rgba(0, 0, 0, 0.6)' : 'rgba(0, 0, 0, 0)',
+        backgroundColor: 'transparent',
         opacity: isAnimating ? 1 : 0
       }}
       onClick={onClose}

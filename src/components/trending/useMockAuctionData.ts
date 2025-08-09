@@ -76,7 +76,7 @@ export const useMockMarketData = (options: UseMockMarketDataOptions = {}) => {
       const processedData = slicedData.map(market => ({
         ...market,
         onClick: includeClickHandlers 
-          ? () => console.log(`Clicked market: ${market.marketName} (${market.marketSymbol}) - Long: ${market.longPrice}, Short: ${market.shortPrice}`)
+          ? () =>  console.log(`Clicked market: ${market.marketName} (${market.marketSymbol}) - Long: ${market.longPrice}, Short: ${market.shortPrice}`)
           : undefined
       }));
 
@@ -134,7 +134,7 @@ export const useMockAuctionData = (options: UseMockMarketDataOptions = {}) => {
       const processedData = slicedData.map(auction => ({
         ...auction,
         onClick: includeClickHandlers 
-          ? () => console.log(`Clicked market: ${auction.username} - ${auction.price}`)
+          ? () =>  console.log(`Clicked market: ${auction.username} - ${auction.price}`)
           : undefined
       }));
 

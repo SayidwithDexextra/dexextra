@@ -34,7 +34,7 @@ function App() {
   return (
     <Hero 
       data={heroData}
-      onMintClick={() => console.log('Mint clicked')}
+      onMintClick={() =>  console.log('Mint clicked')}
     />
   );
 }

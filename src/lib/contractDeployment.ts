@@ -1,70 +1,57 @@
-import { ethers } from 'ethers'
+import { 
+  createPublicClient, 
+  createWalletClient, 
+  http, 
+  parseEther, 
+  formatEther, 
+  parseUnits, 
+  formatUnits, 
+  isAddress,
+  getContract,
+  decodeEventLog,
+  parseAbi,
+  Hex,
+  Chain,
+  PublicClient,
+  WalletClient,
+  Hash,
+  Log
+} from 'viem'
+import { polygon } from 'viem/chains'
 import { env } from './env'
 
-// Contract addresses from our deployment
-const CONTRACT_ADDRESSES = {
-  vAMMFactory: "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74",//"0xa4CB95eC655f3a6DA8c6dF04EDf40B9b4d51Dc22",//'0xDA131D3A153AF5fa26d99ef81c5d0Fc983c47533',
-  mockUSDC: '0xbD3F940783C47649e439A946d84508503D87976D',
-  mockOracle: '0xB65258446bd83916Bd455bB3dBEdCb9BA106d551'
-}
-
-// vAMMFactory ABI (Updated for Bonding Curve Markets)
-const VAMM_FACTORY_ABI = [
-  // Core market creation functions
-  "function createMarket(string memory symbol, address oracle, address collateralToken, uint256 startingPrice) external payable returns (bytes32 marketId, address vammAddress, address vaultAddress)",
-  
-  // Market info and management
-  "function deploymentFee() external view returns (uint256)",
-  "function getMarket(bytes32 marketId) external view returns (tuple(address vamm, address vault, address oracle, address collateralToken, string symbol, bool isActive, uint256 createdAt, uint256 startingPrice, uint8 marketType))",
-  "function owner() external view returns (address)",
-  "function marketCount() external view returns (uint256)",
-  "function marketIds(uint256 index) external view returns (bytes32)",
-  "function isValidMarket(address vammAddress) external view returns (bool)",
-  
-  // Market type and pricing
-  "function defaultStartingPrices(uint8 marketType) external view returns (uint256)",
-  
-  // Admin functions
-  "function setMarketStatus(bytes32 marketId, bool isActive) external",
-  "function setDeploymentFee(uint256 newFee) external",
-  "function transferOwnership(address newOwner) external",
-  "function withdrawFees() external",
-  
-  // Events
-  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)",
-  "event MarketStatusChanged(bytes32 indexed marketId, bool isActive)",
-  "event DeploymentFeeUpdated(uint256 newFee)",
-  "event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)",
-  "event BondingCurveMarketCreated(bytes32 indexed marketId, string symbol, uint256 startingPrice, uint8 marketType, string description)",
-  "event ContractDeployed(bytes32 indexed marketId, address indexed contractAddress, string contractType, bytes constructorArgs)"
-]
-
-
-
-// MockUSDC ABI (for collateral token)
-const MOCK_USDC_ABI = [
-  "function balanceOf(address account) external view returns (uint256)",
-  "function approve(address spender, uint256 amount) external returns (bool)",
-  "function allowance(address owner, address spender) external view returns (uint256)",
-  "function faucet(uint256 amount) external",
-  "function decimals() external view returns (uint8)"
-]
-
-// MockPriceOracle ABI (for price oracle)
-const MOCK_ORACLE_ABI = [
-  "function getPrice() external view returns (uint256)",
-  "function getPriceWithTimestamp() external view returns (uint256, uint256)",
-  "function updatePrice(uint256 newPrice) external",
-  "function isActive() external view returns (bool)"
-]
+// Import centralized contract configuration
+import {
+  getContractAddresses,
+  getContractAddress,
+  METRIC_VAMM_FACTORY_ABI,
+  METRIC_REGISTRY_ABI,
+  MOCK_USDC_ABI,
+  PRICE_ORACLE_ABI as MOCK_ORACLE_ABI
+} from '@/lib/contracts';
 
 export interface MarketDeploymentParams {
   symbol: string
   description: string
+  category: string // Unique category for VAMM deployment
   oracleAddress: string
   collateralTokenAddress: string
   initialPrice: string
   userAddress: string
+  templateName?: string // Optional template name, defaults to 'standard'
+  metricName?: string // Optional metric name for registration
+  metricDataSource?: string // Optional metric data source
+  settlementPeriod?: number // Optional settlement period in days
+  // Custom template parameters (if provided, a custom template will be created)
+  customTemplate?: {
+    maxLeverage?: string
+    tradingFeeRate?: string
+    liquidationFeeRate?: string
+    maintenanceMarginRatio?: string
+    initialReserves?: string
+    volumeScaleFactor?: string
+    startPrice?: string
+  }
 }
 
 export interface DeploymentResult {
@@ -79,81 +66,703 @@ export interface DeploymentResult {
 }
 
 export class ContractDeploymentService {
-  private provider: ethers.JsonRpcProvider
-  private factoryContract: ethers.Contract
+  private publicClient: PublicClient
+  private factoryAddress: `0x${string}`
 
   constructor(rpcUrl?: string) {
-    this.provider = new ethers.JsonRpcProvider(rpcUrl || env.RPC_URL)
-    this.factoryContract = new ethers.Contract(
-      CONTRACT_ADDRESSES.vAMMFactory,
-      VAMM_FACTORY_ABI,
-      this.provider
-    )
+    this.publicClient = createPublicClient({
+      chain: polygon,
+      transport: http(rpcUrl || env.RPC_URL)
+    })
+    
+    try {
+      // Get factory address for polygon network
+      this.factoryAddress = getContractAddress('polygon', 'DEXV2_FACTORY') as `0x${string}`;
+      
+      if (!this.factoryAddress || this.factoryAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Factory address is not configured');
+      }
+      
+      console.log(`🏭 Using factory address: ${this.factoryAddress}`);
+    } catch (error) {
+      console.error('❌ Factory address configuration error:', error);
+      throw new Error(`Failed to initialize ContractDeploymentService: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   /**
-   * Deploy a new vAMM market using the factory contract
+   * Validate that a contract is deployed at the given address
+   */
+  private async validateContractDeployed(address: string, contractName: string): Promise<boolean> {
+    try {
+      const code = await this.publicClient.getCode({ address: address as `0x${string}` });
+      const isDeployed = code !== undefined && code !== '0x';
+      
+      if (!isDeployed) {
+        console.warn(`⚠️ ${contractName} contract not found at address ${address}`);
+      }
+      
+      return isDeployed;
+    } catch (error) {
+      console.error(`❌ Error validating ${contractName} contract:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Check system health by validating all core contracts
+   */
+  async validateSystemHealth(): Promise<{ isHealthy: boolean; issues: string[] }> {
+    const issues: string[] = [];
+    
+    try {
+      // Validate factory contract
+      const factoryDeployed = await this.validateContractDeployed(this.factoryAddress, 'Factory');
+      if (!factoryDeployed) {
+        issues.push(`Factory contract not deployed at ${this.factoryAddress}`);
+      }
+      
+      // Validate vault contract
+      const vaultAddress = getContractAddress('polygon', 'DEXV2_VAULT');
+      const vaultDeployed = await this.validateContractDeployed(vaultAddress, 'CentralizedVault');
+      if (!vaultDeployed) {
+        issues.push(`CentralizedVault contract not deployed at ${vaultAddress}`);
+      }
+      
+      // Validate USDC contract
+      const usdcAddress = getContractAddress('polygon', 'DEXV2_USDC');
+      const usdcDeployed = await this.validateContractDeployed(usdcAddress, 'USDC');
+      if (!usdcDeployed) {
+        issues.push(`USDC contract not deployed at ${usdcAddress}`);
+      }
+      
+      return {
+        isHealthy: issues.length === 0,
+        issues
+      };
+    } catch (error) {
+      issues.push(`System health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return { isHealthy: false, issues };
+    }
+  }
+
+  /**
+   * Register a metric in the MetricRegistry
+   */
+  async registerMetric(
+    params: {
+      name: string
+      description: string
+      dataSource: string
+      settlementPeriod: number
+      userAddress: string
+    },
+    walletClient: WalletClient
+  ): Promise<{ success: boolean; metricId?: string; error?: string }> {
+    try {
+      console.log('📝 Registering metric:', params.name);
+
+      // Get account from wallet client
+      const [account] = await walletClient.getAddresses();
+      if (!account) {
+        throw new Error('No account found in wallet client');
+      }
+
+      // Get factory and metric registry addresses
+      const factoryContract = getContract({
+        address: this.factoryAddress,
+        abi: METRIC_VAMM_FACTORY_ABI,
+        client: { public: this.publicClient, wallet: walletClient }
+      });
+
+      // Validate factory contract
+      if (!factoryContract) {
+        throw new Error('Failed to initialize factory contract');
+      }
+
+      // Get metric registry address from centralized configuration
+      const metricRegistryAddress = getContractAddress('polygon', 'DEXV2_METRIC_REGISTRY');
+      
+      // Validate metric registry address
+      if (!metricRegistryAddress || metricRegistryAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Invalid metric registry address in configuration');
+      }
+
+      console.log('📋 Using metric registry at:', metricRegistryAddress);
+      
+      // Create a contract wrapper using direct client methods (more robust for viem v2)
+      const metricRegistryContract = {
+        address: metricRegistryAddress as `0x${string}`,
+        abi: METRIC_REGISTRY_ABI,
+        read: {
+          getMetricByName: async (args: [string]) => {
+            return await this.publicClient.readContract({
+              address: metricRegistryAddress as `0x${string}`,
+              abi: METRIC_REGISTRY_ABI,
+              functionName: 'getMetricByName',
+              args
+            });
+          },
+          isMetricActive: async (args: [`0x${string}`]) => {
+            return await this.publicClient.readContract({
+              address: metricRegistryAddress as `0x${string}`,
+              abi: METRIC_REGISTRY_ABI,
+              functionName: 'isMetricActive',
+              args
+            });
+          },
+          registrationFee: async () => {
+            return await this.publicClient.readContract({
+              address: metricRegistryAddress as `0x${string}`,
+              abi: METRIC_REGISTRY_ABI,
+              functionName: 'registrationFee'
+            });
+          }
+        },
+        write: {
+          registerMetric: async (args: [string, string, string, string, bigint, bigint], options: { value: bigint; account: `0x${string}` }) => {
+            return await walletClient.writeContract({
+              address: metricRegistryAddress as `0x${string}`,
+              abi: METRIC_REGISTRY_ABI,
+              functionName: 'registerMetric',
+              args,
+              ...options
+            });
+          }
+        }
+      };
+
+      // Validate contract wrapper (this should always pass now)
+      if (!metricRegistryContract || !metricRegistryContract.read) {
+        throw new Error('Failed to initialize metric registry contract or read interface');
+      }
+
+      // Check if metric with this name already exists (enhanced approach)
+      let existingMetric = null;
+      let isAlreadyActive = false;
+      
+      console.log('🔍 Checking for existing metric with name:', params.name);
+      try {
+        // First try to get metric by name to check for conflicts
+        existingMetric = await metricRegistryContract.read.getMetricByName([params.name]);
+        if (existingMetric && existingMetric.metricId && existingMetric.metricId !== '0x0000000000000000000000000000000000000000000000000000000000000000') {
+          isAlreadyActive = await metricRegistryContract.read.isMetricActive([existingMetric.metricId]);
+          if (isAlreadyActive) {
+            console.log('✅ Metric already registered and active');
+            return { success: true, metricId: existingMetric.metricId };
+          } else {
+            // Metric exists but is inactive - this name is still taken
+            throw new Error(`Metric name "${params.name}" already exists but is inactive. Please choose a different name.`);
+          }
+        }
+      } catch (error) {
+        // Enhanced error handling for duplicate name check
+        if (error instanceof Error && error.message.includes('already exists')) {
+          throw error; // Re-throw our custom duplicate name error
+        }
+        // If getMetricByName fails with other error, the metric likely doesn't exist yet
+        console.log('📝 Metric name appears to be available, proceeding with registration');
+      }
+
+      // Generate metric ID for new metric (CLIENT-SIDE PREVIEW - CONTRACT WILL GENERATE DIFFERENT ID)
+      const metricId = `0x${Buffer.from(params.name).toString('hex').padEnd(64, '0')}` as `0x${string}`;
+      console.log('🔍 METRIC ID DEBUG - Client preview ID (WILL BE REPLACED):', metricId);
+      console.log('🔍 Note: Contract will generate real ID as keccak256(name + sender + timestamp)');
+
+      // Double-check with generated ID (fallback)
+      if (!isAlreadyActive) {
+        try {
+          isAlreadyActive = await metricRegistryContract.read.isMetricActive([metricId]);
+          if (isAlreadyActive) {
+            console.log('✅ Metric already registered and active (by ID)');
+            return { success: true, metricId };
+          }
+        } catch (error) {
+          console.warn('Warning: Could not check metric status by ID, proceeding with registration:', error);
+        }
+      }
+
+      // Get registration fee
+      let registrationFee;
+      try {
+        registrationFee = await metricRegistryContract.read.registrationFee();
+      } catch (error) {
+        console.error('Error reading registration fee:', error);
+        throw new Error('Failed to get metric registration fee');
+      }
+      console.log('💰 Registration fee:', formatEther(registrationFee), 'MATIC');
+
+      // Get the correct minimum stake multiplier from contract
+      let minimumStakeMultiplier;
+      try {
+        minimumStakeMultiplier = await this.publicClient.readContract({
+          address: metricRegistryAddress as `0x${string}`,
+          abi: METRIC_REGISTRY_ABI,
+          functionName: 'minimumStakeMultiplier'
+        });
+      } catch (error) {
+        console.warn('Could not read minimum stake multiplier, using default of 10');
+        minimumStakeMultiplier = BigInt(10);
+      }
+
+      // Calculate minimum stake using contract's multiplier
+      const minimumStake = registrationFee * minimumStakeMultiplier;
+      console.log('📊 Calculated minimum stake:', formatEther(minimumStake), 'MATIC');
+
+      // Validate user has sufficient balance
+      try {
+        const userBalance = await this.publicClient.getBalance({ address: account });
+        const totalRequired = registrationFee + parseEther('0.02'); // Fee + estimated gas
+        
+        if (userBalance < totalRequired) {
+          throw new Error(`Insufficient MATIC balance. Required: ${formatEther(totalRequired)} MATIC, Available: ${formatEther(userBalance)} MATIC`);
+        }
+        console.log('💰 User balance check passed:', formatEther(userBalance), 'MATIC');
+      } catch (error) {
+        console.warn('Could not check user balance:', error);
+      }
+
+      // Register the metric with improved error handling
+      console.log('📝 Registering new metric...');
+      let registerTx;
+      try {
+        if (!metricRegistryContract.write) {
+          throw new Error('Metric registry contract write interface not available');
+        }
+
+        // Estimate gas first
+        let gasEstimate;
+        try {
+          gasEstimate = await this.publicClient.estimateContractGas({
+            address: metricRegistryAddress as `0x${string}`,
+            abi: METRIC_REGISTRY_ABI,
+            functionName: 'registerMetric',
+            args: [
+              params.name,
+              params.description,
+              params.dataSource,
+              'Real-time data feed',
+              BigInt(params.settlementPeriod),
+              minimumStake
+            ],
+            account,
+            value: registrationFee
+          });
+          console.log('⛽ Gas estimate:', gasEstimate.toString());
+        } catch (gasError) {
+          console.warn('Gas estimation failed:', gasError);
+          gasEstimate = BigInt(500000); // Default gas limit
+        }
+        
+        registerTx = await metricRegistryContract.write.registerMetric([
+          params.name,
+          params.description,
+          params.dataSource,
+          'Real-time data feed', // calculationMethod
+          BigInt(params.settlementPeriod),
+          minimumStake
+        ], {
+          value: registrationFee,
+          account,
+          gas: gasEstimate * BigInt(120) / BigInt(100) // Add 20% buffer
+        });
+      } catch (error) {
+        console.error('Error submitting metric registration transaction:', error);
+        
+        // Enhanced error reporting
+        let errorMessage = 'Failed to submit metric registration';
+        if (error instanceof Error) {
+          if (error.message.includes('insufficient funds')) {
+            errorMessage = `Insufficient MATIC balance. Need ${formatEther(registrationFee)} MATIC for registration fee plus gas costs.`;
+          } else if (error.message.includes('execution reverted')) {
+            errorMessage = 'Transaction would revert. Check that metric name is unique and all parameters are valid.';
+          } else if (error.message.includes('gas')) {
+            errorMessage = 'Transaction failed due to gas issues. The operation may be too complex or gas limit too low.';
+          } else {
+            errorMessage = `Transaction submission failed: ${error.message}`;
+          }
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      console.log('⏳ Metric registration submitted:', registerTx);
+      
+      // Wait for confirmation
+      let receipt;
+      try {
+        receipt = await this.publicClient.waitForTransactionReceipt({
+          hash: registerTx,
+          timeout: 60000 // 60 second timeout
+        });
+      } catch (error) {
+        console.error('Error waiting for metric registration confirmation:', error);
+        throw new Error('Metric registration transaction timeout or failed');
+      }
+
+      if (receipt.status === 'success') {
+        console.log('✅ Metric registered successfully');
+        console.log('📊 Gas used:', receipt.gasUsed.toString());
+        
+        // CRITICAL FIX: Extract the REAL metric ID from the MetricRegistered event
+        let realMetricId = metricId; // Fallback to client-generated ID
+        
+        try {
+          // Find the MetricRegistered event in the transaction logs
+          const metricRegisteredEvent = receipt.logs.find((log: any) => {
+            try {
+              const decoded = decodeEventLog({
+                abi: METRIC_REGISTRY_ABI,
+                data: log.data,
+                topics: log.topics
+              });
+              return decoded.eventName === 'MetricRegistered';
+            } catch {
+              return false;
+            }
+          });
+          
+          if (metricRegisteredEvent) {
+            const decoded = decodeEventLog({
+              abi: METRIC_REGISTRY_ABI,
+              data: metricRegisteredEvent.data,
+              topics: metricRegisteredEvent.topics
+            });
+            
+            realMetricId = (decoded.args as any).metricId;
+            console.log('🔍 METRIC ID EXTRACTED - Real metric ID from contract:', realMetricId);
+            console.log('🔍 Client-generated ID (was wrong):', metricId);
+          } else {
+            console.warn('⚠️ Could not find MetricRegistered event, using client-generated ID (might be wrong)');
+          }
+        } catch (eventParseError) {
+          console.warn('⚠️ Error parsing MetricRegistered event:', eventParseError);
+        }
+        
+        return { success: true, metricId: realMetricId, transactionHash: registerTx };
+      } else {
+        // Enhanced error reporting for failed transactions
+        console.error('❌ Transaction failed with status:', receipt.status);
+        console.error('📊 Gas used:', receipt.gasUsed.toString());
+        
+        let failureReason = 'Unknown transaction failure';
+        
+        // Try to get revert reason from logs
+        if (receipt.logs && receipt.logs.length > 0) {
+          console.log('📋 Transaction logs available - transaction may have partial success');
+        }
+        
+        // Common failure reasons
+        if (receipt.gasUsed && receipt.gasUsed === receipt.gasLimit) {
+          failureReason = 'Transaction ran out of gas. Try increasing the gas limit.';
+        } else {
+          failureReason = 'Transaction reverted. This could be due to: duplicate metric name, invalid parameters, insufficient balance, or contract requirements not met.';
+        }
+        
+        throw new Error(`Metric registration transaction failed: ${failureReason}`);
+      }
+
+    } catch (error) {
+      console.error('❌ Metric registration failed:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown metric registration error' 
+      };
+    }
+  }
+
+  /**
+   * Create a custom template with specified parameters
+   */
+  async createCustomTemplate(
+    params: {
+      templateName: string
+      maxLeverage: number
+      tradingFeeRate: number
+      liquidationFeeRate: number
+      maintenanceMarginRatio: number
+      initialReserves: string
+      volumeScaleFactor: number
+      startPrice: string
+      description: string
+    },
+    walletClient: WalletClient
+  ): Promise<{ success: boolean; templateName?: string; error?: string }> {
+    try {
+      console.log('🛠️ Creating custom template:', params.templateName);
+
+      // Get account from wallet client
+      const [account] = await walletClient.getAddresses();
+      if (!account) {
+        throw new Error('No account found in wallet client');
+      }
+
+      // Get factory contract instance
+      const factoryContract = getContract({
+        address: this.factoryAddress,
+        abi: METRIC_VAMM_FACTORY_ABI,
+        client: { public: this.publicClient, wallet: walletClient }
+      });
+
+      // Validate factory contract
+      if (!factoryContract) {
+        throw new Error('Failed to initialize factory contract');
+      }
+
+      // Parse parameters
+      const initialReservesWei = parseEther(params.initialReserves);
+      const startPriceWei = parseEther(params.startPrice);
+
+      console.log('📋 Template Configuration:');
+      console.log('   Name:', params.templateName);
+      console.log('   Max Leverage:', params.maxLeverage + 'x');
+      console.log('   Trading Fee:', (params.tradingFeeRate / 100).toFixed(2) + '%');
+      console.log('   Initial Reserves:', params.initialReserves, 'ETH');
+      console.log('   Start Price: $' + params.startPrice);
+
+      // Create the template
+      console.log('🚀 Submitting template creation transaction...');
+      let templateTx;
+      try {
+        templateTx = await factoryContract.write.createTemplate([
+          params.templateName,
+          BigInt(params.maxLeverage),
+          BigInt(params.tradingFeeRate),
+          BigInt(params.liquidationFeeRate),
+          BigInt(params.maintenanceMarginRatio),
+          initialReservesWei,
+          BigInt(params.volumeScaleFactor),
+          startPriceWei,
+          params.description
+        ], {
+          account
+        });
+      } catch (error) {
+        console.error('Error submitting template creation transaction:', error);
+        throw new Error(`Failed to submit template creation: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+
+      console.log('⏳ Template creation submitted:', templateTx);
+
+      // Wait for confirmation
+      let receipt;
+      try {
+        receipt = await this.publicClient.waitForTransactionReceipt({
+          hash: templateTx,
+          timeout: 60000 // 60 second timeout
+        });
+      } catch (error) {
+        console.error('Error waiting for template creation confirmation:', error);
+        throw new Error('Template creation transaction timeout or failed');
+      }
+
+      if (receipt.status === 'success') {
+        // Verify template creation
+        const template = await factoryContract.read.getTemplate([params.templateName]);
+        if (template && template.isActive) {
+          console.log('✅ Custom template created successfully');
+          console.log('   Template Active:', template.isActive);
+          console.log('   Start Price: $' + formatEther(template.startPrice));
+          console.log('   Initial Reserves:', formatEther(template.initialReserves), 'ETH');
+          return { success: true, templateName: params.templateName };
+        } else {
+          throw new Error('Template creation verification failed');
+        }
+      } else {
+        throw new Error('Template creation transaction failed');
+      }
+
+    } catch (error) {
+      console.error('❌ Template creation failed:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown template creation error' 
+      };
+    }
+  }
+
+  /**
+   * Deploy a new specialized vAMM using the V2 factory contract
    */
   async deployMarket(
     params: MarketDeploymentParams,
-    signer: ethers.Signer
+    walletClient: WalletClient
   ): Promise<DeploymentResult> {
     try {
-      console.log('🚀 Starting vAMM market deployment...', params)
+      console.log('🚀 Starting V2 specialized vAMM deployment...', params)
 
-      // Connect factory contract with signer
-      const factoryWithSigner = this.factoryContract.connect(signer)
+      // Get account from wallet client
+      const [account] = await walletClient.getAddresses();
+      if (!account) {
+        throw new Error('No account found in wallet client');
+      }
+
+      // Get factory contract instance
+      const factoryContract = getContract({
+        address: this.factoryAddress,
+        abi: METRIC_VAMM_FACTORY_ABI,
+        client: { public: this.publicClient, wallet: walletClient }
+      });
 
       // Get deployment fee
-      const deploymentFeeFn = (factoryWithSigner as any).deploymentFee ?? (factoryWithSigner as any).getDeploymentFee;
-      if (!deploymentFeeFn) {
-        throw new Error('Factory contract does not have a deploymentFee or getDeploymentFee function');
-      }
-      const deploymentFee = await deploymentFeeFn();
-      console.log('💰 Deployment fee:', ethers.formatEther(deploymentFee), 'ETH');
+      const deploymentFee = await factoryContract.read.deploymentFee();
+      console.log('💰 Deployment fee:', formatEther(deploymentFee), 'MATIC');
 
-      // Validate oracle address
-      if (!ethers.isAddress(params.oracleAddress)) {
-        throw new Error('Invalid oracle address')
+      // Step 1: Register metric if it doesn't exist
+      console.log('📝 Handling metric registration...');
+      const metricName = params.metricName || params.symbol;
+      const metricDescription = params.description || `${params.symbol} metric for trading`;
+      const metricDataSource = params.metricDataSource || 'https://example.com/api';
+      const settlementPeriod = params.settlementPeriod || 7; // Default 7 days
+
+      const metricRegistrationResult = await this.registerMetric({
+        name: metricName,
+        description: metricDescription,
+        dataSource: metricDataSource,
+        settlementPeriod,
+        userAddress: params.userAddress
+      }, walletClient);
+
+      if (!metricRegistrationResult.success) {
+        throw new Error(`Metric registration failed: ${metricRegistrationResult.error}`);
       }
 
-      // Validate collateral token address
-      if (!ethers.isAddress(params.collateralTokenAddress)) {
-        throw new Error('Invalid collateral token address')
-      }
+      const metricId = metricRegistrationResult.metricId as `0x${string}`;
+      console.log('✅ Using metric ID for deployment:', metricId);
+      console.log('🔍 METRIC ID VERIFICATION - This should be the contract-generated keccak256 hash, not hex(name)');
+      
+      // Step 2: Create custom template if custom parameters provided
+      let templateName = params.templateName || "standard";
+      
+      if (params.customTemplate) {
+        console.log('🛠️ Custom template parameters provided, creating custom template...');
+        
+        // Generate unique template name
+        const timestamp = Date.now();
+        const customTemplateName = `custom-${params.symbol.toLowerCase()}-${timestamp}`;
+        
+        // Set default values for missing custom template parameters
+        const customTemplateParams = {
+          templateName: customTemplateName,
+          maxLeverage: parseInt(params.customTemplate.maxLeverage || '50'),
+          tradingFeeRate: parseInt(params.customTemplate.tradingFeeRate || '30'), // 0.3%
+          liquidationFeeRate: parseInt(params.customTemplate.liquidationFeeRate || '500'), // 5%
+          maintenanceMarginRatio: parseInt(params.customTemplate.maintenanceMarginRatio || '500'), // 5%
+          initialReserves: params.customTemplate.initialReserves || '10000',
+          volumeScaleFactor: parseInt(params.customTemplate.volumeScaleFactor || '1000'),
+          startPrice: params.customTemplate.startPrice || params.initialPrice || '1',
+          description: `Custom template for ${params.symbol} with $${params.customTemplate.startPrice || params.initialPrice} start price`
+        };
 
-      // Parse initial price to wei (18 decimals)
-      const initialPriceWei = ethers.parseEther(params.initialPrice)
+        console.log('📋 Creating custom template with parameters:', customTemplateParams);
+
+        const templateResult = await this.createCustomTemplate(customTemplateParams, walletClient);
+        
+        if (!templateResult.success) {
+          throw new Error(`Custom template creation failed: ${templateResult.error}`);
+        }
+        
+        templateName = customTemplateName;
+        console.log('✅ Using custom template:', templateName);
+      } else {
+        console.log('✅ Using existing template:', templateName);
+      }
+      
+      // V2 uses categories instead of individual parameters - use the unique category from params
+      const category = params.category || `Unique-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      
+      // Prepare allowed metrics array
+      const allowedMetrics = [metricId];
 
       // Estimate gas
       console.log('⛽ Estimating gas...')
-      const gasEstimate = await (factoryWithSigner as any).createMarket.estimateGas(
-        params.symbol,
-        params.oracleAddress,
-        params.collateralTokenAddress,
-        initialPriceWei,
-        { value: deploymentFee }
-      )
+      console.log('🔍 ACCOUNT DEBUG - Gas estimation using account:', account);
+      const gasEstimate = await this.publicClient.estimateContractGas({
+        address: this.factoryAddress,
+        abi: METRIC_VAMM_FACTORY_ABI,
+        functionName: 'deploySpecializedVAMM',
+        args: [
+          category,
+          allowedMetrics,
+          templateName
+        ],
+        account: account,
+        value: deploymentFee
+      });
 
       console.log('📊 Gas estimate:', gasEstimate.toString())
 
+      // Check if user is authorized to deploy
+      console.log('🔐 Checking deployment authorization...')
+      try {
+        const isAuthorized = await factoryContract.read.authorizedDeployers([account]);
+        const owner = await factoryContract.read.owner();
+        
+        if (!isAuthorized && account.toLowerCase() !== owner.toLowerCase()) {
+          throw new Error(`AUTHORIZATION_REQUIRED: Your wallet address (${account}) is not authorized to deploy VAMMs. Please contact the system administrator to get authorized, or use an authorized wallet address. Factory owner: ${owner}`);
+        }
+        console.log('✅ User is authorized to deploy');
+      } catch (authError: any) {
+        if (authError.message?.includes('AUTHORIZATION_REQUIRED')) {
+          throw authError;
+        }
+        console.warn('⚠️ Could not verify authorization (contract might not support this method), proceeding...');
+      }
+
+      // Verify template exists before deployment
+      console.log('🔍 TEMPLATE DEBUG - Checking if template exists:', templateName);
+      try {
+        const templateInfo = await factoryContract.read.templates([templateName]);
+        console.log('📋 Template info:', templateInfo);
+        if (!templateInfo || !templateInfo.isActive) {
+          console.warn('⚠️ Template might not be active:', templateInfo);
+        }
+      } catch (templateError) {
+        console.warn('⚠️ Could not verify template existence:', templateError);
+      }
+
+      // Check if category already exists (might cause authorization error)
+      console.log('🔍 CATEGORY DEBUG - Checking if category already exists:', category);
+      try {
+        const categoryVAMM = await factoryContract.read.vammsByCategory([category]);
+        if (categoryVAMM && categoryVAMM !== '0x0000000000000000000000000000000000000000') {
+          console.warn('⚠️ Category already exists with VAMM:', categoryVAMM);
+          console.warn('   This might be causing the authorization error!');
+        } else {
+          console.log('✅ Category is available');
+        }
+      } catch (categoryError) {
+        console.warn('⚠️ Could not check category existence:', categoryError);
+      }
+
       // Execute the transaction
-      console.log('📝 Creating market transaction...')
-      const tx = await (factoryWithSigner as any).createMarket(
-        params.symbol,
-        params.oracleAddress,
-        params.collateralTokenAddress,
-        initialPriceWei,
+      console.log('📝 Creating specialized VAMM transaction...')
+      console.log('🔍 FINAL TRANSACTION DEBUG:');
+      console.log('   - Account:', account);
+      console.log('   - Category:', category);
+      console.log('   - Allowed Metrics:', allowedMetrics);
+      console.log('   - Template Name:', templateName);
+      console.log('   - Deployment Fee:', formatEther(deploymentFee), 'MATIC');
+      
+      const txHash = await factoryContract.write.deploySpecializedVAMM(
+        [
+          category,
+          allowedMetrics,
+          templateName
+        ],
         { 
           value: deploymentFee,
-          gasLimit: gasEstimate * BigInt(250) / BigInt(100) // Add 150% buffer for Polygon mainnet + complex operations
+          gas: gasEstimate * BigInt(250) / BigInt(100), // Add 150% buffer
+          account
         }
       )
 
-      console.log('⏳ Transaction submitted:', tx.hash)
+      console.log('⏳ Transaction submitted:', txHash)
 
       // Wait for confirmation
-      const receipt = await tx.wait()
+      const receipt = await this.publicClient.waitForTransactionReceipt({
+        hash: txHash
+      })
       
       if (!receipt) {
         throw new Error('Transaction receipt not found')
@@ -161,42 +770,58 @@ export class ContractDeploymentService {
 
       console.log('✅ Transaction confirmed in block:', receipt.blockNumber)
 
-      // Parse the MarketCreated event
-      const factoryInterface = new ethers.Interface(VAMM_FACTORY_ABI)
-      const marketCreatedEvent = receipt.logs.find((log: { topics: ReadonlyArray<string>; data: string }) => {
+      // Parse the VAMMDeployed event
+      const vammDeployedEvent = receipt.logs.find((log: Log) => {
         try {
-          const parsed = factoryInterface.parseLog(log)
-          return parsed && parsed.name === 'MarketCreated'
+          const decoded = decodeEventLog({
+            abi: METRIC_VAMM_FACTORY_ABI,
+            data: log.data,
+            topics: log.topics
+          });
+          return decoded.eventName === 'VAMMDeployed'
         } catch {
           return false
         }
-      })
+      });
 
-      if (!marketCreatedEvent) {
-        throw new Error('MarketCreated event not found in transaction receipt')
+      if (!vammDeployedEvent) {
+        throw new Error('VAMMDeployed event not found in transaction receipt')
       }
 
-      const parsed = factoryInterface.parseLog(marketCreatedEvent)
+      const decoded = decodeEventLog({
+        abi: METRIC_VAMM_FACTORY_ABI,
+        data: vammDeployedEvent.data,
+        topics: vammDeployedEvent.topics
+      });
       
       const result: DeploymentResult = {
         success: true,
-        marketId: parsed!.args.marketId,
-        vammAddress: parsed!.args.vamm,
-        vaultAddress: parsed!.args.vault,
-        transactionHash: tx.hash,
-        blockNumber: receipt.blockNumber,
+        marketId: metricId,
+        vammAddress: (decoded.args as any).vammAddress,
+        vaultAddress: getContractAddress('polygon', 'DEXV2_VAULT'), // V2 uses centralized vault
+        transactionHash: txHash,
+        blockNumber: Number(receipt.blockNumber),
         gasUsed: receipt.gasUsed.toString()
       }
 
-      console.log('🎉 Market deployed successfully:', result)
+      console.log('🎉 Specialized VAMM deployed successfully:', result)
       return result
 
     } catch (error) {
-      console.error('❌ Market deployment failed:', error)
+      console.error('❌ VAMM deployment failed:', error)
       
       let errorMessage = 'Unknown deployment error'
       if (error instanceof Error) {
         errorMessage = error.message
+        
+        // Handle specific authorization errors
+        if (errorMessage.includes('AUTHORIZATION_REQUIRED')) {
+          errorMessage = errorMessage.replace('AUTHORIZATION_REQUIRED: ', '');
+        } else if (errorMessage.includes('not authorized') || errorMessage.includes('MetricVAMMFactory: not authorized')) {
+          errorMessage = `❌ Authorization Error: Your wallet is not authorized to deploy VAMMs. Please contact the system administrator to authorize your wallet address, or use an authorized wallet.`;
+        } else if (errorMessage.includes('only owner')) {
+          errorMessage = `❌ Permission Error: This operation requires owner privileges. Please use the contract owner's wallet address.`;
+        }
       } else if (typeof error === 'string') {
         errorMessage = error
       }
@@ -209,125 +834,147 @@ export class ContractDeploymentService {
   }
 
   /**
+   * Check if a wallet address is authorized to deploy VAMMs
+   */
+  async checkDeploymentAuthorization(walletAddress: string): Promise<{
+    isAuthorized: boolean;
+    isOwner: boolean;
+    ownerAddress?: string;
+    errorMessage?: string;
+  }> {
+    try {
+      const factoryContract = getContract({
+        address: this.factoryAddress,
+        abi: METRIC_VAMM_FACTORY_ABI,
+        client: { public: this.publicClient }
+      });
+
+      const [isAuthorized, owner] = await Promise.all([
+        factoryContract.read.authorizedDeployers([walletAddress as `0x${string}`]),
+        factoryContract.read.owner()
+      ]);
+
+      const isOwner = walletAddress.toLowerCase() === owner.toLowerCase();
+      
+      return {
+        isAuthorized: isAuthorized || isOwner,
+        isOwner,
+        ownerAddress: owner,
+        errorMessage: !isAuthorized && !isOwner 
+          ? `Wallet ${walletAddress} is not authorized. Contact the owner (${owner}) for authorization.`
+          : undefined
+      };
+    } catch (error) {
+      console.error('Error checking authorization:', error);
+      return {
+        isAuthorized: false,
+        isOwner: false,
+        errorMessage: `Failed to check authorization: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }
+
+  /**
    * Get deployment fee from factory contract
    */
   async getDeploymentFee(): Promise<string> {
     try {
-      const fee = await this.factoryContract.deploymentFee()
-      return ethers.formatEther(fee)
+      // First validate that the factory contract is deployed
+      const factoryDeployed = await this.validateContractDeployed(this.factoryAddress, 'Factory');
+      if (!factoryDeployed) {
+        console.warn('⚠️ Factory contract not deployed, returning default fee');
+        return '0.1'; // Default fallback
+      }
+
+      // Use readContract directly - this is the recommended Viem approach
+      const fee = await this.publicClient.readContract({
+        address: this.factoryAddress,
+        abi: METRIC_VAMM_FACTORY_ABI,
+        functionName: 'deploymentFee',
+      });
+
+      console.log(`💰 Factory deployment fee: ${formatEther(fee)} MATIC`);
+      return formatEther(fee)
     } catch (error) {
-      console.error('Error getting deployment fee:', error)
+      console.error('❌ Error getting deployment fee:', error)
+      console.log('🔄 Using default deployment fee as fallback');
       return '0.1' // Default fallback
     }
   }
 
   /**
-   * Get market info by market ID
+   * Get VAMM info by metric ID (V2 compatible)
    */
-  async getMarketInfo(marketId: string) {
+  async getMarketInfo(metricId: string) {
     try {
-      const marketInfo = await this.factoryContract.getMarket(marketId)
+      const factoryContract = getContract({
+        address: this.factoryAddress,
+        abi: METRIC_VAMM_FACTORY_ABI,
+        client: this.publicClient
+      });
+
+      // V2 uses getVAMMByMetric to find VAMM address by metric ID
+      const vammAddress = await factoryContract.read.getVAMMByMetric([metricId as `0x${string}`])
+      
+      if (vammAddress === '0x0000000000000000000000000000000000000000') {
+        return null; // No VAMM found for this metric
+      }
+
+      // Get detailed VAMM info
+      const vammInfo = await factoryContract.read.getVAMMInfo([vammAddress])
+      
       return {
-        vamm: marketInfo.vamm,
-        vault: marketInfo.vault,
-        oracle: marketInfo.oracle,
-        collateralToken: marketInfo.collateralToken,
-        symbol: marketInfo.symbol,
-        isActive: marketInfo.isActive,
-        createdAt: Number(marketInfo.createdAt)
+        vamm: vammAddress,
+        vault: getContractAddress('polygon', 'DEXV2_VAULT'), // V2 uses centralized vault
+        category: (vammInfo as any).category,
+        allowedMetrics: (vammInfo as any).allowedMetrics,
+        templateUsed: (vammInfo as any).templateUsed,
+        creator: (vammInfo as any).creator,
+        isActive: (vammInfo as any).isActive,
+        createdAt: Number((vammInfo as any).deployedAt)
       }
     } catch (error) {
-      console.error('Error getting market info:', error)
+      console.error('Error getting VAMM info:', error)
       return null
-    }
-  }
-
-  /**
-   * Check if oracle is active and healthy
-   */
-  async validateOracle(oracleAddress: string): Promise<{ isValid: boolean; price?: string; error?: string }> {
-    try {
-      console.log('🔍 Validating oracle:', oracleAddress)
-      console.log('🔍 Default oracle in CONTRACT_ADDRESSES:', CONTRACT_ADDRESSES.mockOracle)
-      console.log('🔍 Provider URL:', this.provider._getConnection().url)
-      
-      // Check network info
-      const network = await this.provider.getNetwork()
-      console.log('🔍 Connected to network:', network.name, 'Chain ID:', network.chainId.toString())
-      
-      // Check if contract exists at this address
-      const code = await this.provider.getCode(oracleAddress)
-      console.log('🔍 Contract code exists:', code !== '0x')
-      
-      const oracleContract = new ethers.Contract(oracleAddress, MOCK_ORACLE_ABI, this.provider)
-      
-      let [isActive, priceData] = await Promise.all([
-        oracleContract.isActive(),
-        oracleContract.getPriceWithTimestamp()
-      ])
-
-      console.log('🔍 Oracle is active:', isActive)
-      console.log('🔍 Price data:', priceData)
-      isActive = true
-      // getPriceWithTimestamp returns [price, timestamp]
-      const price = priceData[0]
-
-      if (!isActive) {
-        return { isValid: false, error: 'Oracle is not active' }
-      }
-
-      return { 
-        isValid: true, 
-        price: ethers.formatEther(price)
-      }
-    } catch (error) {
-      return { 
-        isValid: false, 
-        error: error instanceof Error ? error.message : 'Oracle validation failed'
-      }
-    }
-  }
-
-  /**
-   * Get USDC faucet tokens for testing
-   */
-  async requestUSDCFaucet(userAddress: string, signer: ethers.Signer, amount: string = '10000'): Promise<boolean> {
-    try {
-      const usdcContract = new ethers.Contract(CONTRACT_ADDRESSES.mockUSDC, MOCK_USDC_ABI, signer)
-      const amountWei = ethers.parseUnits(amount, 6) // USDC has 6 decimals
-      
-      const tx = await usdcContract.faucet(amountWei)
-      await tx.wait()
-      
-      console.log(`✅ Faucet successful: ${amount} USDC sent to ${userAddress}`)
-      return true
-    } catch (error) {
-      console.error('Faucet failed:', error)
-      return false
-    }
-  }
-
-  /**
-   * Check user's USDC balance
-   */
-  async checkUSDCBalance(userAddress: string): Promise<string> {
-    try {
-      const usdcContract = new ethers.Contract(CONTRACT_ADDRESSES.mockUSDC, MOCK_USDC_ABI, this.provider)
-      const balance = await usdcContract.balanceOf(userAddress)
-      return ethers.formatUnits(balance, 6) // USDC has 6 decimals
-    } catch (error) {
-      console.error('Error checking USDC balance:', error)
-      return '0'
     }
   }
 }
 
-// Singleton instance
-export const contractDeploymentService = new ContractDeploymentService()
+// Singleton instance - wrapped with error handling
+let contractDeploymentServiceInstance: ContractDeploymentService | null = null;
 
-// Default contract addresses for easy access
+export const contractDeploymentService = (() => {
+  try {
+    if (!contractDeploymentServiceInstance) {
+      contractDeploymentServiceInstance = new ContractDeploymentService();
+    }
+    return contractDeploymentServiceInstance;
+  } catch (error) {
+    console.error('❌ Failed to initialize ContractDeploymentService:', error);
+    throw error;
+  }
+})();
+
+// Default contract addresses for easy access (V2 compatible)
 export const DEFAULT_ADDRESSES = {
-  mockUSDC: CONTRACT_ADDRESSES.mockUSDC,
-  mockOracle: CONTRACT_ADDRESSES.mockOracle,
-  vAMMFactory: CONTRACT_ADDRESSES.vAMMFactory
-} 
+  get mockUSDC() {
+    // Use V2 USDC address
+    return getContractAddress('polygon', 'DEXV2_USDC');
+  },
+  get mockOracle() {
+    // Use V2 price oracle address
+    return getContractAddress('polygon', 'DEXV2_PRICE_ORACLE');
+  },
+  get vAMMFactory() {
+    // Use V2 factory address
+    return getContractAddress('polygon', 'DEXV2_FACTORY');
+  },
+  get centralVault() {
+    // V2 centralized vault
+    return getContractAddress('polygon', 'DEXV2_VAULT');
+  },
+  get metricRegistry() {
+    // V2 metric registry
+    return getContractAddress('polygon', 'DEXV2_METRIC_REGISTRY');
+  }
+}

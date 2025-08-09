@@ -186,12 +186,12 @@ Returns:
 const ws = new WebSocket('ws://localhost:3000/api/events/websocket')
 
 ws.onopen = () => {
-  console.log('Connected to event stream')
+   console.log('Connected to event stream')
 }
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data)
-  console.log('New event:', data.event)
+   console.log('New event:', data.event)
 }
 
 // Subscribe to specific events

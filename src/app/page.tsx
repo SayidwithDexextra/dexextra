@@ -9,7 +9,7 @@ import { MarketPreviewModal } from '@/components/MarketPreviewModal';
 import MarketTickerCardContainer from '@/components/MarketTickerCard/MarketTickerCardContainer';
 import { MarketTickerCardData } from '@/components/MarketTickerCard/types';
 import { useVAMMMarkets, VAMMMarket } from '@/hooks/useVAMMMarkets';
-import { useRecentEvents } from '@/hooks/useRecentEvents'
+import { useRecentEvents } from '@/hooks/useRecentEvents';
 
 export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);

@@ -319,12 +319,25 @@ export default function Dither({
     return 1;
   };
 
+  // Add key prop to force remounting when props change significantly
+  const canvasKey = `${waveSpeed}-${waveFrequency}-${waveAmplitude}-${colorNum}`;
+
   return (
     <Canvas
+      key={canvasKey}
       className="dither-container"
       camera={{ position: [0, 0, 6] }}
       dpr={getDevicePixelRatio()}
-      gl={{ antialias: true, preserveDrawingBuffer: true }}
+      gl={{ 
+        antialias: true, 
+        preserveDrawingBuffer: true,
+        powerPreference: "high-performance",
+        alpha: true
+      }}
+      onCreated={({ gl }) => {
+        // Ensure proper cleanup on unmount
+        gl.domElement.style.display = 'block';
+      }}
     >
       <DitheredWaves
         waveSpeed={waveSpeed}

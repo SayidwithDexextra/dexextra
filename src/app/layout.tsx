@@ -1,19 +1,30 @@
-import type { Metadata } from "next";
-import { Inter, Space_Grotesk } from "next/font/google";
-import "./globals.css";
-import ClientLayout from "@/components/ClientLayout";
+import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+import ClientLayout from '@/components/ClientLayout'
+import { CentralizedVaultProvider } from '@/contexts/CentralizedVaultContext'
 
-const inter = Inter({ subsets: ["latin"] });
-const spaceGrotesk = Space_Grotesk({ 
-  subsets: ["latin"],
-  variable: "--font-space-grotesk",
-  weight: ["300", "400", "500", "600", "700"]
-});
+const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: "Dexetra - Futures Crypto Trading",
-  description: "A modern crypto wallet dashboard built with Next.js",
-};
+  title: 'Dexetra - DeFi Unlocked',
+  description: 'Advanced DeFi Trading Platform',
+  icons: {
+    icon: [
+      {
+        url: '/Dexicon/LOGO-Dexetera-03.svg',
+        type: 'image/svg+xml',
+      },
+      {
+        url: '/Dexicon/LOGO-Dexetera-03.png',
+        type: 'image/png',
+        sizes: '32x32',
+      },
+    ],
+    shortcut: '/Dexicon/LOGO-Dexetera-03.png',
+    apple: '/Dexicon/LOGO-Dexetera-03@2x.png',
+  },
+}
 
 export default function RootLayout({
   children,
@@ -22,9 +33,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} ${spaceGrotesk.variable} min-h-screen`} style={{ backgroundColor: '#1a1a1a' }}>
-        <ClientLayout>{children}</ClientLayout>
+      <body className={inter.className}>
+        <CentralizedVaultProvider>
+          <ClientLayout>
+            {children}
+          </ClientLayout>
+        </CentralizedVaultProvider>
       </body>
     </html>
-  );
+  )
 }

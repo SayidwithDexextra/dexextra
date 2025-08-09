@@ -1,59 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
-import { ethers } from 'ethers'
+import { decodeEventLog } from 'viem'
 import { AlchemyNotifyService, getAlchemyNotifyService } from '@/services/alchemyNotifyService'
 import { EventDatabase } from '@/lib/eventDatabase'
 import { getDynamicContractMonitor } from '@/services/dynamicContractMonitor'
 import { SmartContractEvent } from '@/types/events'
 import { env } from '@/lib/env'
+import { getClickHouseDataPipeline, VammTick } from '@/lib/clickhouse-client'
+import { 
+  getContractAddress,
+  FACTORY_ABI,
+  VAMM_ABI,
+  VAULT_ABI
+} from '@/lib/contracts'
 
 // Factory contract address for detecting new market deployments
-const FACTORY_ADDRESS = "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74"
+const FACTORY_ADDRESS = getContractAddress('polygon', 'VAMM_FACTORY')
 
-// Factory ABI for parsing MarketCreated events
-const FACTORY_ABI = [
-  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)"
-]
-
-// Enhanced VAMM ABI for comprehensive event parsing
-const VAMM_ABI = [
-  // Position events (updated with positionId)
-  "event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
-  "event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl, uint256 fee)",
-  "event PositionIncreased(address indexed user, uint256 indexed positionId, uint256 sizeAdded, uint256 newSize, uint256 newEntryPrice, uint256 fee)",
-  "event PositionLiquidated(address indexed user, uint256 indexed positionId, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
-  
-  // Funding events
-  "event FundingUpdated(int256 fundingRate, uint256 fundingIndex, int256 premiumFraction)",
-  "event FundingPaid(address indexed user, uint256 indexed positionId, int256 amount, uint256 fundingIndex)",
-  
-  // Trading and fee events
-  "event TradingFeeCollected(address indexed user, uint256 amount)",
-  
-  // Administrative events
-  "event ParametersUpdated(string parameter, uint256 newValue)",
-  "event AuthorizedAdded(address indexed account)",
-  "event AuthorizedRemoved(address indexed account)",
-  "event Paused()",
-  "event Unpaused()",
-  
-  // Bonding curve events
-  "event BondingCurveUpdated(uint256 newPrice, uint256 totalSupply, uint256 priceChange)",
-  "event VirtualReservesUpdated(uint256 baseReserves, uint256 quoteReserves, uint256 multiplier)"
-];
-
-const VAULT_ABI = [
-  "event CollateralDeposited(address indexed user, uint256 amount)",
-  "event CollateralWithdrawn(address indexed user, uint256 amount)",
-  "event MarginReserved(address indexed user, uint256 amount)",
-  "event MarginReleased(address indexed user, uint256 amount)",
-  "event PnLUpdated(address indexed user, int256 pnlDelta)",
-  "event FundingApplied(address indexed user, int256 fundingPayment, uint256 fundingIndex)",
-  "event UserLiquidated(address indexed user, uint256 penalty)"
-];
+// ABIs are now imported from centralized contracts configuration
 
 // Database instance
 const eventDatabase = new EventDatabase();
+
+// ClickHouse pipeline for tick generation
+const clickhousePipeline = getClickHouseDataPipeline();
 
 // In-memory set to track processed events (to prevent duplicates during the session)
 const processedEvents = new Set<string>();
@@ -79,6 +49,86 @@ function verifyAlchemySignature(
 }
 
 /**
+ * Generate tick data from VAMM events for ClickHouse
+ */
+async function generateTickFromVAMMEvent(event: SmartContractEvent): Promise<void> {
+  try {
+    // Only process specific event types that have price information
+    if (!['PositionOpened', 'PositionClosed', 'PriceUpdated'].includes(event.eventType)) {
+      return;
+    }
+
+    // Extract symbol from event parameters (adjust based on your contract structure)
+    let symbol = 'UNKNOWN';
+    let price = 0;
+    let size = 0;
+    let isLong = true;
+
+    // Parse event parameters to extract trading data
+    if (event.eventType === 'PositionOpened' || event.eventType === 'PositionClosed') {
+      // Extract position data
+      const params = event.parameters as any;
+      
+      // Assuming your VAMM events have these fields - adjust as needed
+      symbol = params.symbol || params.marketSymbol || extractSymbolFromContract(event.contractAddress);
+      price = parseFloat(params.markPrice || params.price || params.executionPrice || '0');
+      size = parseFloat(params.size || params.amount || params.notional || '0');
+      isLong = params.isLong === true || params.direction === 'long';
+      
+    } else if (event.eventType === 'PriceUpdated') {
+      // Extract price update data
+      const params = event.parameters as any;
+      symbol = params.symbol || extractSymbolFromContract(event.contractAddress);
+      price = parseFloat(params.newPrice || params.price || '0');
+      size = 0; // Price updates don't have size
+      isLong = true;
+    }
+
+    // Skip if we don't have valid price data
+    if (price <= 0 || symbol === 'UNKNOWN') {
+      console.warn(`⚠️ Skipping tick generation - invalid data: price=${price}, symbol=${symbol}`);
+      return;
+    }
+
+    // Generate tick for ClickHouse
+    const tick: VammTick = {
+      symbol: symbol.toUpperCase(),
+      ts: new Date(event.timestamp),
+      price,
+      size,
+      event_type: event.eventType,
+      is_long: isLong,
+      market_id: 0, // TODO: implement proper market ID mapping
+      contract_address: event.contractAddress,
+    };
+
+    // Insert tick into ClickHouse
+    await clickhousePipeline.insertTick(tick);
+    console.log(`📊 Generated tick: ${symbol} @ $${price} (${event.eventType})`);
+
+  } catch (error) {
+    console.error('❌ Failed to generate tick from VAMM event:', error);
+  }
+}
+
+/**
+ * Extract symbol from contract address (fallback method)
+ */
+function extractSymbolFromContract(contractAddress: string): string {
+  // Map known contract addresses to symbols
+  const contractSymbolMap: Record<string, string> = {
+    '0xdab242cd90b95a4ed68644347b80e0b3cead48c0': 'GOLD',
+    '0x4eae52fe16bfd10bda0f6d7d354ec4a23188fce8': 'GOLD',
+    '0x49325a53dfbf0ce08e6e2d12653533c6fc3f9673': 'GOLD',
+    '0xc6220f6bdce01e85088b7e7b64e9425b86e3ab04': 'GOLD',
+    '0x3f0cf8a2b6a30dacd0cdcbb3cf0080753139b50e': 'GOLD',
+    // Add more contract mappings as needed
+  };
+
+  return contractSymbolMap[contractAddress.toLowerCase()] || 'UNKNOWN';
+}
+
+/**
  * Main webhook handler
  */
 export async function POST(request: NextRequest) {
@@ -89,7 +139,7 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-alchemy-signature');
     
-    console.log('📨 Received Alchemy webhook, processing...');
+     console.log('📨 Received Alchemy webhook, processing...');
 
     // Verify webhook signature in production
     if (env.NODE_ENV === 'production' && process.env.ALCHEMY_WEBHOOK_SIGNING_KEY && signature) {
@@ -103,11 +153,11 @@ export async function POST(request: NextRequest) {
         console.error('❌ Invalid webhook signature');
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
-      console.log('✅ Webhook signature verified');
+       console.log('✅ Webhook signature verified');
     }
 
     const webhookData = JSON.parse(rawBody);
-    console.log(`📡 Processing webhook type: ${webhookData.type}`);
+     console.log(`📡 Processing webhook type: ${webhookData.type}`);
 
     let processedEventsCount = 0;
 
@@ -130,7 +180,7 @@ export async function POST(request: NextRequest) {
         break;
         
       default:
-        console.log(`⚠️ Unhandled webhook type: ${webhookData.type}`);
+         console.log(`⚠️ Unhandled webhook type: ${webhookData.type}`);
         return NextResponse.json({ 
           success: true, 
           message: `Webhook type ${webhookData.type} not processed`,
@@ -139,24 +189,19 @@ export async function POST(request: NextRequest) {
     }
 
     const processingTime = Date.now() - startTime;
-    console.log(`✅ Webhook processed successfully in ${processingTime}ms, events: ${processedEventsCount}`);
+     console.log(`✅ Webhook processed successfully in ${processingTime}ms`);
+     console.log(`📊 Total events processed: ${processedEventsCount}`);
 
     return NextResponse.json({ 
       success: true, 
-      processedEvents: processedEventsCount,
-      processingTime: `${processingTime}ms`
+      processed: processedEventsCount,
+      processingTime: `${processingTime}ms` 
     });
 
   } catch (error) {
-    const processingTime = Date.now() - startTime;
-    console.error('❌ Webhook processing error:', error);
-    
+    console.error('❌ Webhook processing failed:', error);
     return NextResponse.json(
-      { 
-        error: 'Webhook processing failed',
-        details: error instanceof Error ? error.message : 'Unknown error',
-        processingTime: `${processingTime}ms`
-      },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
@@ -166,12 +211,12 @@ export async function POST(request: NextRequest) {
  * Process ADDRESS_ACTIVITY webhook
  */
 async function processAddressActivityWebhook(webhookData: any): Promise<number> {
-  console.log('📍 Processing address activity webhook');
+   console.log('📍 Processing address activity webhook');
   
   let processedCount = 0;
   const activities = webhookData.event?.activity || [];
 
-  console.log(`📊 Total activities received: ${activities.length}`);
+   console.log(`📊 Total activities received: ${activities.length}`);
 
   // Count different types for summary
   let skippedEthTransfers = 0;
@@ -200,7 +245,7 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
         // No event logs - skip but count
         skippedNoLogs++;
         if (isVAMMContract) {
-          console.log('⚠️ VAMM activity without logs:', {
+           console.log('⚠️ VAMM activity without logs:', {
             category: activity.category,
             toAddress: activity.toAddress,
             blockNum: activity.blockNum,
@@ -212,7 +257,7 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
 
       // This has logs - potential smart contract event
       if (isVAMMContract) {
-        console.log('🎯 Processing VAMM activity:', {
+         console.log('🎯 Processing VAMM activity:', {
           category: activity.category,
           toAddress: activity.toAddress,
           topicsLength: activity.log.topics.length,
@@ -225,23 +270,24 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
       const eventId = `${activity.hash}:${activity.log.logIndex}`;
       
       if (processedEvents.has(eventId)) {
-        console.log(`⏭️ Skipping already processed event: ${eventId}`);
+         console.log(`⏭️ Skipping already processed event: ${eventId}`);
         continue;
       }
 
       // Check if this is a factory contract event (MarketCreated)
       if (activity.log.address.toLowerCase() === FACTORY_ADDRESS.toLowerCase()) {
-        console.log('🏭 Factory contract activity detected, checking for MarketCreated event...');
+         console.log('🏭 Factory contract activity detected, checking for MarketCreated event...');
         
         try {
-          const factoryInterface = new ethers.Interface(FACTORY_ABI);
-          const factoryEvent = factoryInterface.parseLog({
+          // Use decodeEventLog directly with ABI instead of Interface
+          const factoryEvent = decodeEventLog({
+            abi: FACTORY_ABI,
             topics: activity.log.topics,
             data: activity.log.data
           });
           
           if (factoryEvent && factoryEvent.name === 'MarketCreated') {
-            console.log('🎯 MarketCreated event detected! Processing new deployment...');
+             console.log('🎯 MarketCreated event detected! Processing new deployment...');
             
             // Process with dynamic contract monitor
             const dynamicMonitor = await getDynamicContractMonitor();
@@ -254,7 +300,7 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
           }
         } catch (factoryError) {
           const errorMessage = factoryError instanceof Error ? factoryError.message : 'Unknown error';
-          console.log('ℹ️ Factory event parsing failed (not MarketCreated):', errorMessage);
+           console.log('ℹ️ Factory event parsing failed (not MarketCreated):', errorMessage);
         }
       }
 
@@ -265,7 +311,7 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
       const parsedEvent = await parseLogToSmartContractEvent(activity.log, activityBlockNumber, activityBlockHash);
       
       if (parsedEvent) {
-        console.log(`✅ Successfully parsed ${parsedEvent.eventType} event:`, {
+         console.log(`✅ Successfully parsed ${parsedEvent.eventType} event:`, {
           contract: parsedEvent.contractAddress,
           event: parsedEvent.eventType,
           hash: activity.hash,
@@ -274,11 +320,15 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
 
         // Store in database
         await eventDatabase.storeEvent(parsedEvent);
+        
+        // Generate tick for ClickHouse if it's a VAMM trading event
+        await generateTickFromVAMMEvent(parsedEvent);
+        
         processedEvents.add(eventId);
         processedCount++;
         processedEventsCount++;
       } else {
-        console.log(`❓ Unknown event from ${activity.log.address}:`, {
+         console.log(`❓ Unknown event from ${activity.log.address}:`, {
           topics: activity.log.topics,
           blockNum: activity.blockNum
         });
@@ -289,7 +339,7 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
   }
 
   // Summary logging
-  console.log(`📈 Activity Summary:`, {
+   console.log(`📈 Activity Summary:`, {
     total: activities.length,
     processed: processedEventsCount,
     skippedEthTransfers,
@@ -304,13 +354,13 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
  * Process MINED_TRANSACTION webhook
  */
 async function processMinedTransactionWebhook(webhookData: any): Promise<number> {
-  console.log('⛏️ Processing mined transaction webhook');
+   console.log('⛏️ Processing mined transaction webhook');
   
   let processedCount = 0;
   const transaction = webhookData.event?.transaction;
   
   if (!transaction || !transaction.logs) {
-    console.log('⚠️ No transaction logs found in mined transaction webhook');
+     console.log('⚠️ No transaction logs found in mined transaction webhook');
     return 0;
   }
 
@@ -321,7 +371,7 @@ async function processMinedTransactionWebhook(webhookData: any): Promise<number>
       const eventId = `${log.transactionHash}:${log.logIndex}`;
       
       if (processedEvents.has(eventId)) {
-        console.log(`⏭️ Skipping already processed event: ${eventId}`);
+         console.log(`⏭️ Skipping already processed event: ${eventId}`);
         continue;
       }
 
@@ -334,10 +384,14 @@ async function processMinedTransactionWebhook(webhookData: any): Promise<number>
       
       if (event) {
         await eventDatabase.storeEvent(event);
+        
+        // Generate tick for ClickHouse if it's a VAMM trading event
+        await generateTickFromVAMMEvent(event);
+        
         processedEvents.add(eventId);
         processedCount++;
         
-        console.log(`📡 Processed ${event.eventType} event from mined transaction webhook: ${event.transactionHash}`);
+         console.log(`📡 Processed ${event.eventType} event from mined transaction webhook: ${event.transactionHash}`);
       }
     } catch (error) {
       console.error('❌ Error processing transaction log:', error);
@@ -351,12 +405,12 @@ async function processMinedTransactionWebhook(webhookData: any): Promise<number>
  * Process DROPPED_TRANSACTION webhook
  */
 async function processDroppedTransactionWebhook(webhookData: any): Promise<number> {
-  console.log('🗑️ Processing dropped transaction webhook');
+   console.log('🗑️ Processing dropped transaction webhook');
   
   const transaction = webhookData.event?.transaction;
   
   if (transaction) {
-    console.log(`📋 Dropped transaction detected: ${transaction.hash}`);
+     console.log(`📋 Dropped transaction detected: ${transaction.hash}`);
     // You could implement logic here to handle dropped transactions
     // For example, mark pending states as failed, notify users, etc.
   }
@@ -368,17 +422,17 @@ async function processDroppedTransactionWebhook(webhookData: any): Promise<numbe
  * Process Custom Webhook (GRAPHQL)
  */
 async function processCustomWebhook(webhookData: any): Promise<number> {
-  console.log('🎯 Processing custom webhook (GRAPHQL)');
+   console.log('🎯 Processing custom webhook (GRAPHQL)');
   
   let processedCount = 0;
   const logs = webhookData.event?.data?.block?.logs || [];
-  console.log('🔍 Logs:', logs);
+   console.log('🔍 Logs:', logs);
 
-  console.log(`📊 Total logs received from custom webhook: ${logs.length}`);
+   console.log(`📊 Total logs received from custom webhook: ${logs.length}`);
 
   for (const log of logs) {
     try {
-      console.log('🔍 Processing custom webhook log:', {
+       console.log('🔍 Processing custom webhook log:', {
         contractAddress: log.account?.address,
         topicsLength: log.topics?.length || 0,
         transactionHash: log.transaction?.hash,
@@ -402,7 +456,7 @@ async function processCustomWebhook(webhookData: any): Promise<number> {
       const eventId = `${standardLog.transactionHash}:${standardLog.logIndex}`;
       
       if (processedEvents.has(eventId)) {
-        console.log(`⏭️ Skipping already processed event: ${eventId}`);
+         console.log(`⏭️ Skipping already processed event: ${eventId}`);
         continue;
       }
 
@@ -414,19 +468,23 @@ async function processCustomWebhook(webhookData: any): Promise<number> {
       
       if (parsedEvent) {
         await eventDatabase.storeEvent(parsedEvent);
+        
+        // Generate tick for ClickHouse if it's a VAMM trading event
+        await generateTickFromVAMMEvent(parsedEvent);
+        
         processedEvents.add(eventId);
         processedCount++;
         
-        console.log(`📡 Processed ${parsedEvent.eventType} event from custom webhook: ${parsedEvent.transactionHash}`);
+         console.log(`🎯 Processed ${parsedEvent.eventType} event from custom webhook: ${parsedEvent.transactionHash}`);
       } else {
-        console.log('⚠️ Failed to parse custom webhook event, log:', log);
+         console.log('⚠️ Failed to parse custom webhook event, log:', log);
       }
     } catch (error) {
       console.error('❌ Error processing custom webhook log:', error);
     }
   }
 
-  console.log(`📈 Custom webhook processing complete: ${processedCount}/${logs.length} events processed`);
+   console.log(`📈 Custom webhook processing complete: ${processedCount}/${logs.length} events processed`);
   return processedCount;
 }
 
@@ -443,7 +501,7 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
     // Determine which ABI to use based on the contract or event signature
     const abis = [VAMM_ABI, VAULT_ABI, FACTORY_ABI];
     let parsedLog: ethers.LogDescription | null = null;
-    let matchedAbi: string[] | null = null;
+    let matchedAbi: readonly string[] | null = null;
 
     // Try to parse with each ABI until one works
     for (const abi of abis) {
@@ -465,7 +523,7 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
     }
 
     if (!parsedLog) {
-      console.log(`⚠️ Could not parse log with any known ABI: ${log.transactionHash}:${log.logIndex}`);
+       console.log(`⚠️ Could not parse log with any known ABI: ${log.transactionHash}:${log.logIndex}`);
       return null;
     }
 
@@ -478,7 +536,7 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
     } else {
       // Fallback: try to get from context or transaction
       if (contextBlockNumber) {
-        console.log('✅ Using context block number:', contextBlockNumber);
+         console.log('✅ Using context block number:', contextBlockNumber);
         blockNumber = contextBlockNumber;
       } else {
         console.warn('⚠️ blockNumber is null/undefined and no context provided, using 0');
@@ -502,7 +560,7 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
     } else {
       // Fallback: try to get from context or use placeholder
       if (contextBlockHash) {
-        console.log('✅ Using context block hash:', contextBlockHash);
+         console.log('✅ Using context block hash:', contextBlockHash);
         blockHash = contextBlockHash;
       } else {
         console.warn('⚠️ blockHash is null/undefined and no context provided, using placeholder');
@@ -523,13 +581,13 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
     };
 
     // Log successful block number and hash resolution
-    console.log(`📊 Event parsed: ${parsedLog.name} at block ${blockNumber} (${blockHash.slice(0,10)}...), tx: ${log.transactionHash}:${logIndex}`);
+     console.log(`📊 Event parsed: ${parsedLog.name} at block ${blockNumber} (${blockHash.slice(0,10)}...), tx: ${log.transactionHash}:${logIndex}`);
 
     // Add event-specific fields based on the event type
     const event = formatEventSpecificFields(baseEvent as SmartContractEvent, parsedLog);
     
     if (event) {
-      console.log(`✅ Parsed ${event.eventType} event: ${event.transactionHash}:${event.logIndex}`);
+       console.log(`✅ Parsed ${event.eventType} event: ${event.transactionHash}:${event.logIndex}`);
     }
 
     return event;
@@ -649,7 +707,7 @@ function formatEventSpecificFields(
 
       default:
         // For events we don't specifically handle, store the base event
-        console.log(`📝 Storing base event for unhandled type: ${parsedLog.name}`);
+         console.log(`📝 Storing base event for unhandled type: ${parsedLog.name}`);
         return baseEvent;
     }
   } catch (error) {

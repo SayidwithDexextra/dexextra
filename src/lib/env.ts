@@ -49,6 +49,9 @@ const envSchema = z.object({
   API_KEY: z.string().min(1).default('placeholder-api-key'),
   API_URL: z.string().url().default('https://api.example.com'),
   
+  // CoinMarketCap API Key
+  CMC_API_KEY: z.string().optional(),
+  
   // Alchemy API for webhook-based event monitoring (required for production)
   ALCHEMY_API_KEY: z.string().optional(),
   
@@ -66,7 +69,7 @@ const envSchema = z.object({
 /**
  * Check if we're running on the client side
  */
-const isClientSide = typeof window !== 'undefined'
+const isClientSide = typeof globalThis !== 'undefined' && typeof (globalThis as any).window !== 'undefined'
 
 /**
  * @type {Record<keyof z.infer<typeof envSchema>, string | undefined>}
@@ -105,6 +108,7 @@ const processEnv = {
   AUTH_EXPIRES_IN: process.env.AUTH_EXPIRES_IN || '7d',
   API_KEY: isClientSide ? 'client-side-placeholder' : (process.env.API_KEY || 'placeholder-api-key'),
   API_URL: isClientSide ? 'https://api.example.com' : (process.env.API_URL || 'https://api.example.com'),
+  CMC_API_KEY: process.env.CMC_API_KEY,
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
   ALCHEMY_WEBHOOK_AUTH_TOKEN: process.env.ALCHEMY_WEBHOOK_AUTH_TOKEN,
   ALCHEMY_WEBHOOK_SIGNING_KEY: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY,
@@ -227,22 +231,23 @@ export function getEventListenerConfig() {
 }
 
 const environmentType = isClientSide ? 'client-side' : 'server-side'
-console.log(`✅ Environment variables validated successfully (${environmentType})`)
+ console.log(`✅ Environment variables validated successfully (${environmentType})`)
 
-if (true) {
-  console.log('🐛 Debug mode enabled')
-  console.log(`📋 Environment configuration (${environmentType}):`)
-  console.log('  - NODE_ENV:', env.NODE_ENV)
-  console.log('  - RPC_URL:', env.RPC_URL)
-  console.log('  - CHAIN_ID:', env.CHAIN_ID)
-  console.log('  - Event Listener Enabled:', env.EVENT_LISTENER_ENABLED)
-  console.log('  - Contracts configured:', getContractConfig().length)
-  console.log('  - ALCHEMY_API_KEY:', env.ALCHEMY_API_KEY)  
-  console.log('  - ALCHEMY_WEBHOOK_AUTH_TOKEN:', env.ALCHEMY_WEBHOOK_AUTH_TOKEN)
-  console.log('  - ALCHEMY_WEBHOOK_SIGNING_KEY:', env.ALCHEMY_WEBHOOK_SIGNING_KEY)
+if (false) {
+   console.log('🐛 Debug mode enabled')
+   console.log(`📋 Environment configuration (${environmentType}):`)
+   console.log('  - NODE_ENV:', env.NODE_ENV)
+   console.log('  - RPC_URL:', env.RPC_URL)
+   console.log('  - CHAIN_ID:', env.CHAIN_ID)
+   console.log('  - Event Listener Enabled:', env.EVENT_LISTENER_ENABLED)
+   console.log('  - Contracts configured:', getContractConfig().length)
+   console.log('  - ALCHEMY_API_KEY:', env.ALCHEMY_API_KEY)  
+   console.log('  - ALCHEMY_WEBHOOK_AUTH_TOKEN:', env.ALCHEMY_WEBHOOK_AUTH_TOKEN)
+   console.log('  - ALCHEMY_WEBHOOK_SIGNING_KEY:', env.ALCHEMY_WEBHOOK_SIGNING_KEY)
+   console.log('  - CMC_API_KEY:', env.CMC_API_KEY)
   if (!isClientSide) {
-    console.log('  - Server-side variables loaded ✅')
+     console.log('  - Server-side variables loaded ✅')
   } else {
-    console.log('  - Client-side mode (using NEXT_PUBLIC_ variables)')
+     console.log('  - Client-side mode (using NEXT_PUBLIC_ variables)')
   }  
 } 

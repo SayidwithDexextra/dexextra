@@ -7,6 +7,8 @@
   --ticker-text-muted: #CCCCCC;
   --ticker-positive: #00C851;
   --ticker-negative: #FF4444;
+  --ticker-warning: #FFB347;
+  --ticker-info: #64B5F6;
   --ticker-speed: 60px;
   --ticker-gap: 32px;
   --ticker-height: 40px;
@@ -26,6 +28,57 @@
   color: var(--ticker-text);
   line-height: 1.2;
   box-sizing: border-box;
+}
+
+/* Data source indicator */
+.sourceIndicator {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 2px;
+  z-index: 10;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+.sourceIndicator.cached {
+  background-color: var(--ticker-info);
+  color: #000;
+}
+
+.sourceIndicator.fallback {
+  background-color: var(--ticker-warning);
+  color: #000;
+}
+
+/* Retry indicator */
+.retryIndicator {
+  position: absolute;
+  top: 2px;
+  left: 8px;
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background-color: var(--ticker-info);
+  color: #000;
+  z-index: 10;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Pulse animation for retry indicator */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* Scrolling ticker wrapper */
@@ -162,6 +215,12 @@
   .ticker {
     animation-duration: calc(var(--ticker-duration, 60s) * 1.5);
   }
+  
+  .sourceIndicator,
+  .retryIndicator {
+    font-size: 8px;
+    padding: 1px 3px;
+  }
 }
 
 /* Responsive design - Tablet */
@@ -183,6 +242,11 @@
   .ticker {
     animation-duration: calc(var(--ticker-duration, 60s) * 1.2);
   }
+  
+  .sourceIndicator,
+  .retryIndicator {
+    font-size: 8px;
+  }
 }
 
 /* Responsive design - Desktop */
@@ -202,6 +266,11 @@
   
   .separator {
     font-size: 13px;
+  }
+  
+  .sourceIndicator,
+  .retryIndicator {
+    font-size: 9px;
   }
 }
 

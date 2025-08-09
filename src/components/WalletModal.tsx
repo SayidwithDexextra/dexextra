@@ -53,7 +53,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
       {/* Backdrop */}
       <div 
         className="absolute inset-0 transition-opacity duration-200"
-        style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)' }}
+                  style={{ backgroundColor: 'transparent' }}
         onClick={onClose}
       />
       
@@ -89,7 +89,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
               <button
                 onClick={() => {
                   debugWalletDetection()
-                  console.log('🔍 Current providers detected:', providers.map(p => ({ name: p.name, installed: p.isInstalled })))
+                   console.log('🔍 Current providers detected:', providers.map(p => ({ name: p.name, installed: p.isInstalled })))
                 }}
                 className="text-xs px-2 py-1 rounded transition-colors duration-200"
                 style={{

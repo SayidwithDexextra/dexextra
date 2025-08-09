@@ -18,9 +18,11 @@ export interface VAMMMarket {
   vamm_address?: string;
   vault_address?: string;
   market_id?: string;
+  metric_id?: string; // The actual metric ID stored in database
   deployment_status: string;
   created_at: string;
   user_address?: string;
+  settlement_period_days?: number;
 }
 
 interface UseVAMMMarketsReturn {
@@ -43,7 +45,7 @@ export const useVAMMMarkets = (options: UseVAMMMarketsOptions = {}): UseVAMMMark
 
   const fetchMarkets = useCallback(async () => {
     try {
-      console.log('🚀 Starting fetchMarkets with options:', options);
+       console.log('🚀 Starting fetchMarkets with options:', options);
       setIsLoading(true);
       setError(null);
 
@@ -62,7 +64,7 @@ export const useVAMMMarkets = (options: UseVAMMMarketsOptions = {}): UseVAMMMark
       }
 
       const url = `/api/markets?${params.toString()}`;
-      console.log('📡 Fetching URL:', url);
+       console.log('📡 Fetching URL:', url);
 
       const response = await fetch(url, {
         headers: {
@@ -70,27 +72,27 @@ export const useVAMMMarkets = (options: UseVAMMMarketsOptions = {}): UseVAMMMark
         },
       });
 
-      console.log('📬 Response status:', response.status);
+       console.log('📬 Response status:', response.status);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch markets: ${response.status}`);
       }
 
       const data = await response.json();
-      console.log('📦 Response data:', data);
+       console.log('📦 Response data:', data);
 
       if (!data.success) {
         throw new Error(data.error || 'Failed to fetch markets');
       }
 
-      console.log('✅ Setting markets:', data.markets?.length || 0, 'markets');
+       console.log('✅ Setting markets:', data.markets?.length || 0, 'markets');
       setMarkets(data.markets || []);
     } catch (err) {
       console.error('❌ Error fetching vAMM markets:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch markets');
     } finally {
       setIsLoading(false);
-      console.log('🏁 fetchMarkets completed');
+       console.log('🏁 fetchMarkets completed');
     }
   }, [options.limit, options.category, options.status]);
 

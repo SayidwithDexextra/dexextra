@@ -132,21 +132,21 @@ For a PUMP market starting at $0.001:
 ### Get Bonding Curve Information
 ```javascript
 const info = await vamm.getBondingCurveInfo();
-console.log("Current Price:", ethers.formatEther(info.currentPrice));
-console.log("Starting Price:", ethers.formatEther(info.startPrice));
-console.log("Total Supply:", info.totalSupply.toString());
-console.log("Max Price:", ethers.formatEther(info.maxPrice));
+ console.log("Current Price:", ethers.formatEther(info.currentPrice));
+ console.log("Starting Price:", ethers.formatEther(info.startPrice));
+ console.log("Total Supply:", info.totalSupply.toString());
+ console.log("Max Price:", ethers.formatEther(info.maxPrice));
 ```
 
 ### Calculate Trade Costs
 ```javascript
 // Calculate cost to buy $10,000 worth
 const buyCost = await vamm.calculateBuyCost(ethers.parseEther("10000"));
-console.log("Total cost:", ethers.formatEther(buyCost));
+ console.log("Total cost:", ethers.formatEther(buyCost));
 
 // Calculate price impact
 const priceImpact = await vamm.getPriceImpact(ethers.parseEther("10000"), true);
-console.log("Price impact:", ethers.formatEther(priceImpact));
+ console.log("Price impact:", ethers.formatEther(priceImpact));
 ```
 
 ## 🎮 Trading Examples
@@ -168,7 +168,7 @@ await vamm.openPosition(
 
 // 3. Watch the bonding curve pump the price!
 const newPrice = await vamm.getMarkPrice();
-console.log("New price after pump:", ethers.formatEther(newPrice));
+ console.log("New price after pump:", ethers.formatEther(newPrice));
 ```
 
 ## 🔧 Advanced Configuration

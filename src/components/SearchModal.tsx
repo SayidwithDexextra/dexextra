@@ -230,7 +230,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       saveRecentSearch(searchValue)
     }
     // You could navigate to user profile page here
-    console.log('Selected user:', user)
+     console.log('Selected user:', user)
     onClose()
   }, [onClose, searchValue, saveRecentSearch])
 
@@ -246,7 +246,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       {/* Backdrop for click-to-close */}
       <div 
         className={`absolute inset-0 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
-        style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
+                  style={{ backgroundColor: 'transparent' }}
         onClick={onClose}
       />
       

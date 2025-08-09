@@ -145,7 +145,7 @@ export function useBlockchainEvents(
       setIsFetching(true);
       setError(null);
 
-      console.log('🔍 Fetching blockchain events for:', contractAddress, attempt > 0 ? `(attempt ${attempt + 1})` : '');
+       console.log('🔍 Fetching blockchain events for:', contractAddress, attempt > 0 ? `(attempt ${attempt + 1})` : '');
       
       const result = await querier.current.queryVAMMEvents({
         contractAddress,
@@ -167,7 +167,7 @@ export function useBlockchainEvents(
         onSuccess(result);
       }
 
-      console.log('✅ Successfully fetched', result.events.length, 'events');
+       console.log('✅ Successfully fetched', result.events.length, 'events');
       
       // Success - ALWAYS clear loading states (force clear)
       setIsLoading(false);
@@ -181,7 +181,7 @@ export function useBlockchainEvents(
         
         // Retry logic
         if (attempt < retry) {
-          console.log(`🔄 Retrying in ${retryDelay}ms (attempt ${attempt + 1}/${retry})`);
+           console.log(`🔄 Retrying in ${retryDelay}ms (attempt ${attempt + 1}/${retry})`);
           setTimeout(() => {
             if (mountedRef.current) {
               setRetryCount(attempt + 1);

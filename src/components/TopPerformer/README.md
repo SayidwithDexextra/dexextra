@@ -111,7 +111,7 @@ import { TopPerformerCarousel } from '@/components/TopPerformer';
 function AdvancedExample() {
   const handlePerformerClick = (performer: TopPerformerData) => {
     // Custom click handling
-    console.log('Performer clicked:', performer);
+     console.log('Performer clicked:', performer);
   };
 
   return (

@@ -70,7 +70,7 @@ export default function ThreadPanel() {
   const handleSendMessage = () => {
     if (message.trim()) {
       // In a real app, this would send the message to the backend
-      console.log('Sending message:', message);
+       console.log('Sending message:', message);
       setMessage('');
     }
   };
@@ -82,7 +82,7 @@ export default function ThreadPanel() {
           <h3 className="text-lg font-semibold text-white">Community Chat</h3>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <span className="text-sm text-zinc-400">247 online</span>
+            <span className="text-sm text-zinc-400">0 online</span>
           </div>
         </div>
         

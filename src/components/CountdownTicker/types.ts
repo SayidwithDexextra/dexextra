@@ -11,6 +11,12 @@ export interface CountdownTickerProps {
   className?: string;
   /** Whether to show the banner layout or just the ticker */
   showBanner?: boolean;
+  /** Settlement phase for contextual styling and messaging */
+  settlementPhase?: 'trading' | 'near_settlement' | 'settling' | 'settled';
+  /** Market symbol for contextual messaging */
+  marketSymbol?: string;
+  /** Settlement-specific completion callback with market data */
+  onSettlementComplete?: (marketSymbol?: string, settlementPhase?: string) => void;
 }
 
 export interface TimeRemaining {

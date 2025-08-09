@@ -45,7 +45,8 @@ export { MarketPreviewModal, ErrorBoundary } from './MarketPreviewModal';
 export { ErrorModal, SuccessModal } from './StatusModals';
 
 // Form Components
-export { default as CreateMarketForm } from './CreateMarketForm';
+export { default as CreateMarketForm } from './CreateMarketForm'
+export { default as DepositModal } from './DepositModal';
 // export { default as TradingPanel } from './TradingPanel';
 
 // // Token Components

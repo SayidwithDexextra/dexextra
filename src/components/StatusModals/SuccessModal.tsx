@@ -66,7 +66,7 @@ export default function SuccessModal({
         className="absolute inset-0"
         onClick={onClose}
         style={{
-          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          backgroundColor: 'transparent',
           animation: isExiting 
             ? 'backdropExit 300ms ease-out forwards' 
             : 'backdropEnter 200ms ease-out forwards'

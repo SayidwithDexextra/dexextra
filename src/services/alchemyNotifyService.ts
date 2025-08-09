@@ -43,7 +43,7 @@ export class AlchemyNotifyService {
     this.alchemy = new Alchemy(settings);
     this.webhookUrl = `${env.APP_URL}/api/webhooks/alchemy`;
 
-    console.log(`🔗 AlchemyNotifyService initialized for ${this.network} with webhook URL: ${this.webhookUrl}`);
+     console.log(`🔗 AlchemyNotifyService initialized for ${this.network} with webhook URL: ${this.webhookUrl}`);
   }
 
   /**
@@ -115,9 +115,9 @@ export class AlchemyNotifyService {
       'Content-Type': 'application/json',
     };
 
-    console.log('🔑 Making Alchemy API request to:', url);
-    console.log('🔑 Headers:', headers);
-    console.log('🔑 Body:', body);
+     console.log('🔑 Making Alchemy API request to:', url);
+     console.log('🔑 Headers:', headers);
+     console.log('🔑 Body:', body);
 
     const options: RequestInit = {
       method,
@@ -143,7 +143,7 @@ export class AlchemyNotifyService {
    */
   async createAddressActivityWebhook(contractAddresses: string[]): Promise<string> {
     try {
-      console.log('📡 Creating Alchemy address activity webhook for:', contractAddresses);
+       console.log('📡 Creating Alchemy address activity webhook for:', contractAddresses);
 
       const payload = {
         network: this.getNetworkApiString(),
@@ -154,7 +154,7 @@ export class AlchemyNotifyService {
 
       const response = await this.makeAlchemyApiRequest('/create-webhook', 'POST', payload);
 
-      console.log('✅ Address activity webhook created:', response.data.id);
+       console.log('✅ Address activity webhook created:', response.data.id);
       return response.data.id;
     } catch (error) {
       console.error('❌ Failed to create address activity webhook:', error);
@@ -169,7 +169,7 @@ export class AlchemyNotifyService {
     contractAddresses: string[]
   ): Promise<string> {
     try {
-      console.log('⛏️ Creating Alchemy mined transaction webhook for:', contractAddresses);
+       console.log('⛏️ Creating Alchemy mined transaction webhook for:', contractAddresses);
 
       const payload = {
         network: this.getNetworkApiString(),
@@ -181,7 +181,7 @@ export class AlchemyNotifyService {
 
       const response = await this.makeAlchemyApiRequest('/create-webhook', 'POST', payload);
 
-      console.log('✅ Mined transaction webhook created:', response.data.id);
+       console.log('✅ Mined transaction webhook created:', response.data.id);
       return response.data.id;
     } catch (error) {
       console.error('❌ Failed to create mined transaction webhook:', error);
@@ -196,7 +196,7 @@ export class AlchemyNotifyService {
     contractAddresses: string[]
   ): Promise<string> {
     try {
-      console.log('🗑️ Creating Alchemy dropped transaction webhook for:', contractAddresses);
+       console.log('🗑️ Creating Alchemy dropped transaction webhook for:', contractAddresses);
 
       const payload = {
         network: this.getNetworkApiString(),
@@ -208,7 +208,7 @@ export class AlchemyNotifyService {
 
       const response = await this.makeAlchemyApiRequest('/create-webhook', 'POST', payload);
 
-      console.log('✅ Dropped transaction webhook created:', response.data.id);
+       console.log('✅ Dropped transaction webhook created:', response.data.id);
       return response.data.id;
     } catch (error) {
       console.error('❌ Failed to create dropped transaction webhook:', error);
@@ -225,7 +225,7 @@ export class AlchemyNotifyService {
     eventSignatures: string[] = []
   ): Promise<string> {
     try {
-      console.log('🎯 Creating Alchemy custom webhook for contract events:', {
+       console.log('🎯 Creating Alchemy custom webhook for contract events:', {
         contracts: contractAddresses,
         events: eventSignatures
       });
@@ -271,11 +271,11 @@ export class AlchemyNotifyService {
         graphql_query: graphqlQuery.replace(/\s+/g, ' ').trim()
       };
 
-      console.log('📡 Custom webhook payload:', JSON.stringify(payload, null, 2));
+       console.log('📡 Custom webhook payload:', JSON.stringify(payload, null, 2));
 
       const response = await this.makeAlchemyApiRequest('/create-webhook', 'POST', payload);
 
-      console.log('✅ Custom webhook created:', response.data.id);
+       console.log('✅ Custom webhook created:', response.data.id);
       return response.data.id;
     } catch (error) {
       console.error('❌ Failed to create custom webhook:', error);
@@ -289,7 +289,7 @@ export class AlchemyNotifyService {
   async listWebhooks() {
     try {
       const response = await this.makeAlchemyApiRequest('/team-webhooks', 'GET');
-      console.log(`📋 Found ${response.data ? response.data.length : 0} existing webhooks`);
+       console.log(`📋 Found ${response.data ? response.data.length : 0} existing webhooks`);
       return { webhooks: response.data || [] };
     } catch (error) {
       console.error('❌ Failed to list webhooks:', error);
@@ -302,7 +302,7 @@ export class AlchemyNotifyService {
    */
   async updateWebhookAddresses(webhookId: string, addresses: string[]) {
     try {
-      console.log(`🔄 Updating webhook ${webhookId} with ${addresses.length} addresses`);
+       console.log(`🔄 Updating webhook ${webhookId} with ${addresses.length} addresses`);
 
       const payload = {
         webhook_id: webhookId,
@@ -312,7 +312,7 @@ export class AlchemyNotifyService {
 
       await this.makeAlchemyApiRequest('/update-webhook-addresses', 'PATCH', payload);
 
-      console.log(`✅ Updated webhook ${webhookId} with addresses:`, addresses);
+       console.log(`✅ Updated webhook ${webhookId} with addresses:`, addresses);
     } catch (error) {
       console.error(`❌ Failed to update webhook ${webhookId}:`, error);
       throw new Error(`Failed to update webhook ${webhookId}: ${(error as Error).message}`);
@@ -324,7 +324,7 @@ export class AlchemyNotifyService {
    */
   async removeWebhookAddresses(webhookId: string, addresses: string[]) {
     try {
-      console.log(`🗑️ Removing addresses from webhook ${webhookId}:`, addresses);
+       console.log(`🗑️ Removing addresses from webhook ${webhookId}:`, addresses);
 
       const payload = {
         webhook_id: webhookId,
@@ -334,7 +334,7 @@ export class AlchemyNotifyService {
 
       await this.makeAlchemyApiRequest('/update-webhook-addresses', 'PATCH', payload);
 
-      console.log(`✅ Removed addresses from webhook ${webhookId}`);
+       console.log(`✅ Removed addresses from webhook ${webhookId}`);
     } catch (error) {
       console.error(`❌ Failed to remove addresses from webhook ${webhookId}:`, error);
       throw new Error(`Failed to remove addresses from webhook: ${(error as Error).message}`);
@@ -346,11 +346,11 @@ export class AlchemyNotifyService {
    */
   async deleteWebhook(webhookId: string) {
     try {
-      console.log(`🗑️ Deleting webhook ${webhookId}`);
+       console.log(`🗑️ Deleting webhook ${webhookId}`);
 
       await this.makeAlchemyApiRequest(`/delete-webhook`, 'DELETE', { webhook_id: webhookId });
 
-      console.log(`✅ Webhook ${webhookId} deleted successfully`);
+       console.log(`✅ Webhook ${webhookId} deleted successfully`);
     } catch (error) {
       console.error(`❌ Failed to delete webhook ${webhookId}:`, error);
       throw new Error(`Failed to delete webhook: ${(error as Error).message}`);
@@ -444,16 +444,16 @@ export class AlchemyNotifyService {
     contracts: Array<{ address: string; name: string }>
   ): Promise<WebhookRegistrationResult> {
     try {
-      console.log(`🚀 Registering ${contracts.length} contracts for webhook monitoring`);
+       console.log(`🚀 Registering ${contracts.length} contracts for webhook monitoring`);
       
       const addresses = contracts.map(c => c.address.toLowerCase());
       
-      console.log('📋 Contract addresses to register:', addresses);
+       console.log('📋 Contract addresses to register:', addresses);
 
       // Create address activity webhook (monitors all contract interactions)
       const addressActivityWebhookId = await this.createAddressActivityWebhook(addresses);
       
-      console.log('✅ Webhook registered successfully');
+       console.log('✅ Webhook registered successfully');
 
       return {
         addressActivityWebhookId,
@@ -473,7 +473,7 @@ export class AlchemyNotifyService {
     contractAddresses: string[]
   ): Promise<void> {
     try {
-      console.log('🔄 Updating Address Activity webhook:', {
+       console.log('🔄 Updating Address Activity webhook:', {
         webhookId,
         contractCount: contractAddresses.length
       });
@@ -486,7 +486,7 @@ export class AlchemyNotifyService {
 
       await this.makeAlchemyApiRequest('PUT', '/v2/webhook/update-webhook', requestBody);
       
-      console.log('✅ Address Activity webhook updated successfully');
+       console.log('✅ Address Activity webhook updated successfully');
     } catch (error) {
       console.error('❌ Failed to update Address Activity webhook:', error);
       throw new Error(`Failed to update Address Activity webhook: ${error}`);

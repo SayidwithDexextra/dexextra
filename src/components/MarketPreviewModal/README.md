@@ -62,7 +62,7 @@ const MyComponent = () => {
         description="Get unlimited access to all templates..."
         category="Digital Product"
         templates={templates}
-        onGoToProduct={() => console.log('Navigate to product')}
+        onGoToProduct={() =>  console.log('Navigate to product')}
       />
     </>
   );

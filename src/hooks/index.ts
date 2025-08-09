@@ -8,4 +8,9 @@ export { useVAMMTrading, type UseVAMMTradingReturn, type TradeParams, type Posit
 export { useVAMMPriceData } from './useVAMMPriceData';
 export { useBlockchainEvents } from './useBlockchainEvents';
 export { useContractEvents } from './useContractEvents';
-export { useDatabaseEvents, useTransactionTableDatabaseEvents } from './useDatabaseEvents'; 
+export { useDatabaseEvents, useTransactionTableDatabaseEvents } from './useDatabaseEvents';
+export { useWalletAddress } from './useWalletAddress';
+export { useWalletPortfolio } from './useWalletPortfolio';
+export { useDexV2, type UseDexV2Options } from './useDexV2';
+export { usePageTitle, useDynamicPageTitle } from './usePageTitle';
+export { useVAMMSettlement, type SettlementData, type UseVAMMSettlementOptions } from './useVAMMSettlement'; 

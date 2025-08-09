@@ -93,7 +93,7 @@ html, body { overflow: hidden; height: 100vh; }
 import { VAMMWizard } from '@/components/VAMMWizard';
 
 <VAMMWizard 
-  onComplete={(result) => console.log('Deployed:', result)}
+  onComplete={(result) =>  console.log('Deployed:', result)}
   onCancel={() => router.push('/markets')}
 />
 ```

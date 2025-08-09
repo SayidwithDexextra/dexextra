@@ -2,8 +2,30 @@ import React from 'react';
 import { useETHPrice } from '../hooks/useETHPrice';
 
 const Footer: React.FC = () => {
-  const { price: ethPrice, changePercent24h, isLoading, error } = useETHPrice();
+  const { 
+    price: ethPrice, 
+    changePercent24h, 
+    isLoading, 
+    error, 
+    source, 
+    isStale,
+    refreshPrice 
+  } = useETHPrice();
   
+  // Create tooltip text for ETH price
+  const getETHPriceTooltip = () => {
+    if (error && isStale) {
+      return `Using ${source || 'cached'} data due to API issues. Last updated: ${new Date().toLocaleTimeString()}`;
+    }
+    if (isStale) {
+      return `Data may be stale. Source: ${source || 'Unknown'}`;
+    }
+    if (source) {
+      return `Live data from ${source}`;
+    }
+    return 'Live ETH price';
+  };
+
   return (
     <footer 
       className="fixed bottom-0 right-0 z-40 flex items-center justify-between transition-all duration-300 ease-in-out"
@@ -196,19 +218,23 @@ const Footer: React.FC = () => {
             fontSize: '14px',
             fontWeight: '500',
             color: '#FFFFFF',
+            position: 'relative',
           }}
+          title={getETHPriceTooltip()}
         >
-          <span style={{ color: '#FFB800' }}>Ξ</span>
+          <span >
+            
+          <img
+            src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//ethereum-eth-logo-diamond.svg"
+            alt="ETH"
+            width={13}
+            height={13}
+            style={{ display: 'inline-block', verticalAlign: 'middle' }}
+          />
+            
+            </span>
           {isLoading ? (
             <span style={{ color: '#CCCCCC' }}>Loading...</span>
-          ) : error ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>${ethPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              <span 
-                style={{ color: '#CCCCCC', fontSize: '10px' }}
-                title="Using approximate price (live data unavailable)"
-              >*</span>
-            </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span>${ethPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -221,6 +247,56 @@ const Footer: React.FC = () => {
               >
                 {changePercent24h >= 0 ? '↗' : '↘'} {Math.abs(changePercent24h).toFixed(2)}%
               </span>
+              
+              {/* Status indicators */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                {isStale && (
+                  <span 
+                    style={{ 
+                      color: '#FFB800', 
+                      fontSize: '10px',
+                      cursor: 'help'
+                    }}
+                    title="Data may be stale"
+                  >
+                    ⚠
+                  </span>
+                )}
+                {error && (
+                  <button
+                    onClick={refreshPrice}
+                    style={{ 
+                      color: '#EF4444', 
+                      fontSize: '10px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '0'
+                    }}
+                    title="Click to retry fetching price"
+                  >
+                    ↻
+                  </button>
+                )}
+                {source && (
+                  <span 
+                    style={{ 
+                      color: '#CCCCCC', 
+                      fontSize: '8px',
+                      opacity: 0.7
+                    }}
+                    title={`Data from ${source}`}
+                  >
+                    {source === 'Static Fallback' ? 'FB' : 
+                     source === 'CoinGecko' ? 'CG' :
+                     source === 'Binance' ? 'BN' :
+                     source === 'Kraken' ? 'KR' :
+                     source === 'CoinMarketCap' ? 'CMC' :
+                     source === 'CryptoCompare' ? 'CC' : 
+                     source.substring(0, 2).toUpperCase()}
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>

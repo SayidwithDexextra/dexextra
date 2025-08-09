@@ -14,6 +14,7 @@ interface FixedStepFooterProps {
   isLoading?: boolean
   walletConnected?: boolean
   walletAddress?: string | null
+  formData?: any  // Add formData to access AI assistant state
 }
 
 const FixedStepFooter: React.FC<FixedStepFooterProps> = ({
@@ -27,9 +28,24 @@ const FixedStepFooter: React.FC<FixedStepFooterProps> = ({
   isSubmitting = false,
   isLoading = false,
   walletConnected = false,
-  walletAddress = null
+  walletAddress = null,
+  formData
 }) => {
   const isLastStep = currentStep === totalSteps
+  
+  // Check if we're on step 2 and can auto-analyze
+  const isStep2WithAutoAnalysis = currentStep === 2 && 
+    formData?.aiAssistantData?.urls?.length > 0 && 
+    !formData?.aiAssistantData?.hasAnalyzed &&
+    formData?.aiAssistantData?.canAnalyze &&
+    !formData?.metricResolution
+
+  const getNextButtonText = () => {
+    if (isStep2WithAutoAnalysis) {
+      return 'Analyze & Continue'
+    }
+    return 'Next Step'
+  }
 
   return (
     <div className="fixed bottom-[60px] left-1/2 transform -translate-x-1/2 z-30">
@@ -140,7 +156,7 @@ const FixedStepFooter: React.FC<FixedStepFooterProps> = ({
                   }
                 `}
               >
-                Next Step
+                {getNextButtonText()}
               </button>
             )}
           </div>

@@ -259,7 +259,7 @@ export default function Step4ReviewDeploy({
           <NetworkSelector 
             compact={true}
             onNetworkChange={(network) => {
-              console.log('Network changed to:', network.displayName);
+               console.log('Network changed to:', network.displayName);
               // Optionally refresh wallet connection here
             }}
           />

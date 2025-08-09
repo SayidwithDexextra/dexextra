@@ -63,6 +63,24 @@
   z-index: 10;
 }
 
+/* Logo Container */
+.logoContainer {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.logo {
+  height: 70px;
+  width: auto;
+  opacity: 0.8;
+  transition: opacity 250ms ease-out;
+}
+
+.logo:hover {
+  opacity: 1;
+}
+
 /* Hero Card */
 .card {
   max-width: 400px;
@@ -103,6 +121,7 @@
   margin: 0;
   font-family: 'Times New Roman', Times, serif;
   text-transform: uppercase;
+  text-align: center;
 }
 
 .subHeading {
@@ -207,6 +226,10 @@
     font-size: 2rem;
   }
   
+  .logo {
+    height: 48px;
+  }
+  
   .statsGrid {
     gap: 12px;
   }
@@ -223,6 +246,10 @@
 @media (max-width: 480px) {
   .title {
     font-size: 1.75rem;
+  }
+  
+  .logo {
+    height: 40px;
   }
   
   .statsGrid {

@@ -1,0 +1,54 @@
+# DexContractsV2 Contract Addresses - Polygon Mainnet
+# Deployed on: July 27, 2025
+# Deployer: 0x14A2b07Eec1F8D1Ef0f9deEef9a352c432269cdb
+# Network: Polygon (Chain ID: 137)
+
+## Core System Contracts
+USDC_TOKEN=0xbD9E0b8e723434dCd41700e82cC4C8C539F66377
+METRIC_REGISTRY=0x8f5200203c53c5821061D1f29249f10A5b57CA6A
+CENTRALIZED_VAULT=0x0990B9591ed1cC070652c5F5F11dAC4B0375Cd93
+METRIC_VAMM_FACTORY=0x75fDD9eE5b547fd8b3CE5cD69e83dAD38B37bd08
+AUTOMATION_FUNDING_MANAGER=0xDD26FFC30982a59EC08E02695F59Cb1befdAc11F
+METRIC_VAMM_ROUTER=0x1672D52F7F885dF51B002439c5624F8D9fAf40fB
+LIMIT_ORDER_MANAGER=0x6c91c1A5D49707f4716344d0881c43215FC55D41
+LIMIT_ORDER_KEEPER=0x1E290A8bE5d033004B20B0461aeB18B6Dc72C5C7
+
+## Specialized VAMM Contracts
+POPULATION_VAMM=0xF4a4CE6743aC7189736fCdE3D1056c17164E20b3
+WEATHER_VAMM=0x72954d3E7FcDbe12c863bAd28B3b6Df25F93D27b
+ECONOMIC_VAMM=0xb987cE613fd156e83adBE3D2D2E63975736bF894
+
+## Registered Metrics
+WORLD_POPULATION_METRIC=0x1158cb172f50c512c53a372cda1235efd733a42b897fc8ac9e9842d642dc72ac
+GLOBAL_TEMPERATURE_METRIC=0xded08a6235000e1da2ef9b8982a30c15e5919064abdd60028a74192fbfc391d3
+US_GDP_GROWTH_METRIC=0x7b15b957f9064b03a0ee8cefccf2f61b19445298b4fedbd8f08873b3d09f404b
+
+## Deployment Details
+NETWORK=polygon
+CHAIN_ID=137
+DEPLOYMENT_TIMESTAMP=2025-07-27T02:23:21.890Z
+GAS_USED=Approximately 15 MATIC total
+VERIFICATION_STATUS=Pending manual verification on Polygonscan
+
+## Contract Relationships
+- MetricRegistry: Manages all tradeable metrics and their validation
+- CentralizedVault: Single collateral pool for all VAMMs (USDC only)
+- MetricVAMMFactory: Deploys and manages specialized VAMM contracts
+- MetricVAMMRouter: Unified interface for trading across all VAMMs
+- AutomationFundingManager: Handles keeper automation funding
+- LimitOrderManager: Advanced order types and automated execution
+- LimitOrderKeeper: Chainlink keeper for order execution
+
+## Next Steps
+1. ✅ Contracts deployed to Polygon
+2. ⏳ Update frontend contracts.ts file
+3. ⏳ Verify contracts on Polygonscan
+4. ⏳ Set up monitoring and analytics
+5. ⏳ Configure UMA oracle integration
+6. ⏳ Test system functionality
+
+## Support
+For questions or issues:
+- Check the deployment logs above
+- Review contract source code in DexContractsV2/contracts/
+- Use the MetricVAMMRouter as the main entry point for trading 

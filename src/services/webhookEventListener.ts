@@ -33,7 +33,7 @@ export class WebhookEventListener {
     this.database = new EventDatabase();
     this.alchemyNotify = new AlchemyNotifyService();
     
-    console.log('🔗 WebhookEventListener initialized for Vercel deployment');
+     console.log('🔗 WebhookEventListener initialized for Vercel deployment');
   }
 
   /**
@@ -44,15 +44,15 @@ export class WebhookEventListener {
     const startTime = Date.now();
     
     try {
-      console.log('🚀 Initializing Webhook Event Monitoring...');
-      console.log(`📋 Configuration:
+       console.log('🚀 Initializing Webhook Event Monitoring...');
+       console.log(`📋 Configuration:
         - Webhook URL: ${env.APP_URL}/api/webhooks/alchemy
         - Contracts to monitor: ${this.config.contracts.length}
         - Network: ${env.DEFAULT_NETWORK}
         - Chain ID: ${env.CHAIN_ID}`);
 
       if (this.isInitialized) {
-        console.log('⚠️ Webhook event listener is already initialized');
+         console.log('⚠️ Webhook event listener is already initialized');
         return;
       }
 
@@ -63,7 +63,7 @@ export class WebhookEventListener {
       if (this.config.contracts.length > 0) {
         await this.registerWebhooks();
       } else {
-        console.log('⚠️ No contracts configured for monitoring');
+         console.log('⚠️ No contracts configured for monitoring');
       }
 
       // Step 3: Verify webhook registration
@@ -72,7 +72,7 @@ export class WebhookEventListener {
       this.isInitialized = true;
       
       const duration = Date.now() - startTime;
-      console.log(`✅ Webhook Event Listener initialized successfully in ${duration}ms`);
+       console.log(`✅ Webhook Event Listener initialized successfully in ${duration}ms`);
 
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -92,7 +92,7 @@ export class WebhookEventListener {
    * Validate environment for webhook setup
    */
   private async validateEnvironment(): Promise<void> {
-    console.log('🔍 Validating environment...');
+     console.log('🔍 Validating environment...');
 
     // Check required environment variables
     if (!env.ALCHEMY_API_KEY) {
@@ -116,14 +116,14 @@ export class WebhookEventListener {
       throw new Error(`Database connection failed: ${(error as Error).message}`);
     }
 
-    console.log('✅ Environment validation completed');
+     console.log('✅ Environment validation completed');
   }
 
   /**
    * Register contracts with Alchemy webhooks
    */
   private async registerWebhooks(): Promise<void> {
-    console.log('🔗 Registering contracts with Alchemy webhooks...');
+     console.log('🔗 Registering contracts with Alchemy webhooks...');
 
     try {
       const contracts = this.config.contracts.map(c => ({
@@ -140,8 +140,8 @@ export class WebhookEventListener {
       // Store webhook configuration in database for persistence
       await this.storeWebhookConfiguration(webhookResult);
 
-      console.log('✅ Contracts registered with Alchemy webhooks successfully');
-      console.log(`📋 Webhook IDs:
+       console.log('✅ Contracts registered with Alchemy webhooks successfully');
+       console.log(`📋 Webhook IDs:
         - Address Activity: ${webhookResult.addressActivityWebhookId}
         - Mined Transaction: ${webhookResult.minedTransactionWebhookId}`);
 
@@ -154,13 +154,13 @@ export class WebhookEventListener {
    * Verify webhook setup
    */
   private async verifyWebhookSetup(): Promise<void> {
-    console.log('🔍 Verifying webhook setup...');
+     console.log('🔍 Verifying webhook setup...');
 
     try {
       const webhooks = await this.alchemyNotify.listWebhooks();
       const activeWebhooks = webhooks.webhooks.filter((w: any) => w.isActive);
 
-      console.log(`📊 Webhook verification results:
+       console.log(`📊 Webhook verification results:
         - Total webhooks: ${webhooks.webhooks.length}
         - Active webhooks: ${activeWebhooks.length}
         - Registered webhook IDs: ${Array.from(this.webhookIds.values()).join(', ')}`);
@@ -169,7 +169,7 @@ export class WebhookEventListener {
         throw new Error('No active webhooks found after registration');
       }
 
-      console.log('✅ Webhook setup verified successfully');
+       console.log('✅ Webhook setup verified successfully');
     } catch (error) {
       throw new Error(`Webhook verification failed: ${(error as Error).message}`);
     }
@@ -196,7 +196,7 @@ export class WebhookEventListener {
       };
 
       await this.database.storeWebhookConfig(config);
-      console.log('✅ Webhook configuration stored in database');
+       console.log('✅ Webhook configuration stored in database');
     } catch (error) {
       console.warn('⚠️ Failed to store webhook configuration:', error);
       // Don't fail initialization for this
@@ -207,7 +207,7 @@ export class WebhookEventListener {
    * Add new contract to webhook monitoring
    */
   async addContract(contractConfig: ContractConfig): Promise<void> {
-    console.log(`🔗 Adding contract to webhook monitoring: ${contractConfig.name}`);
+     console.log(`🔗 Adding contract to webhook monitoring: ${contractConfig.name}`);
 
     try {
       if (!this.isInitialized) {
@@ -229,7 +229,7 @@ export class WebhookEventListener {
       // Add to configuration
       this.config.contracts.push(contractConfig);
 
-      console.log(`✅ Contract ${contractConfig.name} added to webhook monitoring`);
+       console.log(`✅ Contract ${contractConfig.name} added to webhook monitoring`);
     } catch (error) {
       console.error(`❌ Failed to add contract to webhook monitoring:`, error);
       throw error;
@@ -240,7 +240,7 @@ export class WebhookEventListener {
    * Remove contract from webhook monitoring
    */
   async removeContract(contractAddress: string): Promise<void> {
-    console.log(`🗑️ Removing contract from webhook monitoring: ${contractAddress}`);
+     console.log(`🗑️ Removing contract from webhook monitoring: ${contractAddress}`);
 
     try {
       if (!this.isInitialized) {
@@ -262,7 +262,7 @@ export class WebhookEventListener {
       // Remove from configuration
       this.config.contracts = this.config.contracts.filter(c => c.address !== contractAddress);
 
-      console.log(`✅ Contract ${contractAddress} removed from webhook monitoring`);
+       console.log(`✅ Contract ${contractAddress} removed from webhook monitoring`);
     } catch (error) {
       console.error(`❌ Failed to remove contract from webhook monitoring:`, error);
       throw error;
@@ -311,18 +311,18 @@ export class WebhookEventListener {
    * Cleanup webhooks (for development/testing)
    */
   async cleanup(): Promise<void> {
-    console.log('🧹 Cleaning up webhooks...');
+     console.log('🧹 Cleaning up webhooks...');
 
     try {
       for (const [type, webhookId] of this.webhookIds) {
         await this.alchemyNotify.deleteWebhook(webhookId);
-        console.log(`✅ Cleaned up ${type} webhook: ${webhookId}`);
+         console.log(`✅ Cleaned up ${type} webhook: ${webhookId}`);
       }
 
       this.webhookIds.clear();
       this.isInitialized = false;
 
-      console.log('✅ Webhook cleanup completed');
+       console.log('✅ Webhook cleanup completed');
     } catch (error) {
       console.error('❌ Failed to cleanup webhooks:', error);
       throw error;
@@ -405,11 +405,11 @@ export async function getWebhookEventListener(): Promise<WebhookEventListener> {
         contracts: contracts
       };
       
-      console.log('🔧 Initializing webhook event listener with contracts:', contracts.map(c => c.name));
+       console.log('🔧 Initializing webhook event listener with contracts:', contracts.map(c => c.name));
       
       if (contracts.length === 0) {
-        console.log('⚠️ No contracts found in database for webhook monitoring.');
-        console.log('💡 Deploy contracts via the create-market wizard to enable monitoring.');
+         console.log('⚠️ No contracts found in database for webhook monitoring.');
+         console.log('💡 Deploy contracts via the create-market wizard to enable monitoring.');
       }
       
       webhookEventListener = new WebhookEventListener(config);
@@ -418,26 +418,26 @@ export async function getWebhookEventListener(): Promise<WebhookEventListener> {
       try {
         const existingConfig = await database.getWebhookConfig();
         if (existingConfig) {
-          console.log('📋 Loading existing webhook configuration from database');
+           console.log('📋 Loading existing webhook configuration from database');
           
           // Set the webhook IDs if they exist
           if (existingConfig.addressActivityWebhookId) {
             webhookEventListener.webhookIds.set('address_activity', existingConfig.addressActivityWebhookId);
-            console.log(`✅ Loaded Address Activity webhook: ${existingConfig.addressActivityWebhookId}`);
+             console.log(`✅ Loaded Address Activity webhook: ${existingConfig.addressActivityWebhookId}`);
           }
           
           if (existingConfig.minedTransactionWebhookId) {
             webhookEventListener.webhookIds.set('mined_transaction', existingConfig.minedTransactionWebhookId);
-            console.log(`✅ Loaded Mined Transaction webhook: ${existingConfig.minedTransactionWebhookId}`);
+             console.log(`✅ Loaded Mined Transaction webhook: ${existingConfig.minedTransactionWebhookId}`);
           }
           
           // Mark as initialized if we have webhook config
           if (existingConfig.addressActivityWebhookId || existingConfig.minedTransactionWebhookId) {
             webhookEventListener.isInitialized = true;
-            console.log('✅ Webhook listener marked as initialized with existing configuration');
+             console.log('✅ Webhook listener marked as initialized with existing configuration');
           }
         } else {
-          console.log('💡 No existing webhook configuration found. Run migration script to create webhooks.');
+           console.log('💡 No existing webhook configuration found. Run migration script to create webhooks.');
         }
       } catch (error) {
         console.warn('⚠️ Failed to load webhook configuration from database:', error);
@@ -446,7 +446,7 @@ export async function getWebhookEventListener(): Promise<WebhookEventListener> {
     } catch (error) {
       console.error('❌ Failed to initialize webhook event listener:', error);
       // Fallback to default configuration
-      console.log('🔄 Falling back to default configuration');
+       console.log('🔄 Falling back to default configuration');
       webhookEventListener = new WebhookEventListener(DEFAULT_WEBHOOK_CONFIG);
     }
   }
@@ -459,12 +459,12 @@ export async function getWebhookEventListener(): Promise<WebhookEventListener> {
  */
 export async function initializeWebhookMonitoring(): Promise<void> {
   try {
-    console.log('🚀 Initializing webhook monitoring for application...');
+     console.log('🚀 Initializing webhook monitoring for application...');
     
     const listener = await getWebhookEventListener();
     await listener.initialize();
     
-    console.log('✅ Webhook monitoring initialized successfully');
+     console.log('✅ Webhook monitoring initialized successfully');
   } catch (error) {
     console.error('❌ Failed to initialize webhook monitoring:', error);
     throw error;

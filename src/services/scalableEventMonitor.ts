@@ -11,35 +11,10 @@
  * - Event processing and contract registration
  */
 
-import { ethers } from 'ethers'
+import { decodeEventLog } from 'viem'
 import { EventDatabase } from '@/lib/eventDatabase'
 import { env } from '@/lib/env'
-
-// Event signatures for monitoring (keccak256 hash of event signatures)
-export const EVENT_SIGNATURES = {
-  PositionOpened: '0x345a1e15bff227bfd5051975d95c864c45cf9fe79def6f9ce1c1525b0e831226',
-  PositionClosed: '0x035509dd26c2d331b2eeaf713e533967ac9e8a0c5e37372abc7dedd026e81675',
-  PositionIncreased: '0x2337e687da16f7f70de054ec6c6f96c9faaeac16ca3fe6b873cf017380f578a8',
-  PositionLiquidated: '0xeb125fc2316e55999aaacc483aa145655b8032d8bce094f8a17174ed9994d9d7',
-  FundingUpdated: '0xd0794ac40e87e336e6e652e1eef2cdb3793d91f30dcc09a45d18db669a686b94',
-  FundingPaid: '0xc86c3274d0eb50daaa9786e84b032f4ee9f7c878dfc21d805b52cadc5ff4a1b0',
-  CollateralDeposited: '0xd7243f6f8212d5188fd054141cf6ea89cfc0d91facb8c3afe2f88a1358480142',
-  CollateralWithdrawn: '0xc30fcfbcaac9e0deffa719714eaa82396ff506a0d0d0eebe170830177288715d',
-  MarginReserved: '0x7a9b1b90f35f094ffc6d04d86069c79e82c6a16eb600f79672428a409635deca',
-  MarginReleased: '0x5e63d54af10545f0b2bd229512f244caefe863ad94dbbb7ad827432c84d762f5',
-  PnLUpdated: '0x22d38deb33ee15dd233167fc440609397a226eb4e1b61e1773bdd09ef99424aa',
-  FundingApplied: '0x4519c0de74b8f9f16fda0005326875e3fd4dd0d38446a1135a1ffa1739e4591e',
-  UserLiquidated: '0xe538b9438650b40b382a773f4b71a35129a6b330599b42ed9b50492847972fa6',
-  MarketCreated: '0x47ab7633006b3b6d4ecfa77b1c64dac99d985e2ec70de8fe50aeeded29c95742',
-  TradingFeeCollected: '0x4b85f139405492fb78333512610ba07ed1e0c3fb2417f208a9aae27dc3843e6a',
-  BondingCurveUpdated: '0x1551b5180ce27b1b0d183046bbf7f4ed792368fa907dcaa0e08d22c5e8b14512',
-  VirtualReservesUpdated: '0x02c3a836ec725fabcd5f42c400284d12e718aa5c5ea6404daf37abce91cfb097',
-  ParametersUpdated: '0x952177133a28eea5034c93c6c70c1a8d223da94faaa45da8412c3c791111137f',
-  AuthorizedAdded: '0xdd10d14f6ac19e913d4edbb11fd30661531e2ccd0d23f571e9b224f001f0dd06',
-  AuthorizedRemoved: '0x0fafd0343e6c6f6985727574866da48938c918559eb9521cf9cc0d317ea0f7b4',
-  Paused: '0x9e87fac88ff661f02d44f95383c817fece4bce600a3dab7a54406878b965e752',
-  Unpaused: '0xa45f47fdea8a1efdd9029a5691c7f759c32b7c698632b563573e155625d16933'
-}
+import { EVENT_SIGNATURES, getContractAddress, getPreferredSystem, isDexV2Enabled } from '@/lib/contracts';
 
 // Contract type detection patterns (first 4 bytes of contract code)
 export const CONTRACT_PATTERNS = {
@@ -60,24 +35,45 @@ export class ScalableEventMonitor {
   private isInitialized = false
 
   constructor(config: Partial<ScalableMonitorConfig> = {}) {
+    const network = config.network || 'polygon'
+    const preferredSystem = getPreferredSystem(network)
+    const isDexV2 = preferredSystem === 'v2'
+    
+    // Get appropriate factory address based on system version
+    const factoryAddress = isDexV2 
+      ? getContractAddress(network, 'DEXV2_FACTORY')
+      : getContractAddress(network, 'SIMPLE_VAMM')
+    
+    // Configure monitored events based on system version
+    const defaultEvents = isDexV2 ? [
+      'MetricPositionOpened',
+      'MetricPositionClosed', 
+      'LimitOrderCreated',
+      'LimitOrderExecuted',
+      'CollateralDeposited',
+      'CollateralWithdrawn',
+      'MetricVAMMDeployed'
+    ] : [
+      'PositionOpened',
+      'PositionClosed',
+      'PriceUpdated',
+      'CollateralDeposited',
+      'CollateralWithdrawn'
+    ]
+
     this.config = {
-      factoryAddress: config.factoryAddress || "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74",
-      network: config.network || 'polygon',
-      monitoredEvents: config.monitoredEvents || [
-        'PositionOpened',
-        'PositionClosed', 
-        'PositionIncreased',
-        'PositionLiquidated'
-      ]
+      factoryAddress: config.factoryAddress || factoryAddress,
+      network,
+      monitoredEvents: config.monitoredEvents || defaultEvents
     }
     
     this.database = new EventDatabase()
     this.isInitialized = true
     
-    console.log('🚀 Scalable Event Monitor initialized for event processing')
-    console.log(`📊 Monitoring ${this.config.monitoredEvents.length} event types:`)
+     console.log('🚀 Scalable Event Monitor initialized for event processing')
+     console.log(`📊 Monitoring ${this.config.monitoredEvents.length} event types:`)
     this.config.monitoredEvents.forEach(eventName => {
-      console.log(`   • ${eventName}`)
+       console.log(`   • ${eventName}`)
     })
   }
 
@@ -91,10 +87,10 @@ export class ScalableEventMonitor {
     events: any[]
   }> {
     try {
-      console.log('📨 Processing scalable webhook event...')
+       console.log('📨 Processing scalable webhook event...')
       
       const logs = webhookData.event?.data?.block?.logs || []
-      console.log(`📊 Received ${logs.length} event logs`)
+       console.log(`📊 Received ${logs.length} event logs`)
       
       let processedEvents = 0
       let newContractsDetected = 0
@@ -107,17 +103,17 @@ export class ScalableEventMonitor {
           const eventType = this.getEventTypeFromSignature(eventSignature)
           
           if (!eventType) {
-            console.log(`⚠️ Unknown event signature: ${eventSignature}`)
+             console.log(`⚠️ Unknown event signature: ${eventSignature}`)
             continue
           }
           
           // Only process events that are in our monitored list
           if (!this.config.monitoredEvents.includes(eventType)) {
-            console.log(`⏭️ Skipping non-monitored event type: ${eventType}`)
+             console.log(`⏭️ Skipping non-monitored event type: ${eventType}`)
             continue
           }
           
-          console.log(`🎯 Processing ${eventType} event from ${log.account.address}`)
+           console.log(`🎯 Processing ${eventType} event from ${log.account.address}`)
           
           // Check if this is a new contract we haven't seen before
           const isNewContract = await this.checkAndRegisterNewContract(log.account.address)
@@ -138,7 +134,7 @@ export class ScalableEventMonitor {
         }
       }
       
-      console.log(`✅ Processed ${processedEvents} events, detected ${newContractsDetected} new contracts`)
+       console.log(`✅ Processed ${processedEvents} events, detected ${newContractsDetected} new contracts`)
       
       return {
         processed: processedEvents,
@@ -175,7 +171,7 @@ export class ScalableEventMonitor {
         description: `Automatically detected via event signature monitoring`
       })
       
-      console.log(`🆕 Registered new ${contractType} contract: ${contractAddress}`)
+       console.log(`🆕 Registered new ${contractType} contract: ${contractAddress}`)
       return true
       
     } catch (error) {
@@ -201,11 +197,11 @@ export class ScalableEventMonitor {
         })
       })
       
-      const data = await response.json()
-      const bytecode = data.result
-      
+      const data: any = await response.json();
+      const bytecode = typeof data === 'object' && data !== null && 'result' in data ? data.result : '';
+
       // Simple pattern matching (could be enhanced with more sophisticated detection)
-      if (bytecode.startsWith(CONTRACT_PATTERNS.VAMM_BYTECODE_PREFIX)) {
+      if (typeof bytecode === 'string' && bytecode.startsWith(CONTRACT_PATTERNS.VAMM_BYTECODE_PREFIX)) {
         return 'vAMM'
       } else if (bytecode.startsWith(CONTRACT_PATTERNS.VAULT_BYTECODE_PREFIX)) {
         return 'Vault'
@@ -272,7 +268,7 @@ export class ScalableEventMonitor {
       logIndex = 0;
     }
 
-    console.log(`📊 Scalable event parsed: ${eventType} at block ${blockNumber}, tx: ${log.transaction?.hash}:${logIndex}`);
+     console.log(`📊 Scalable event parsed: ${eventType} at block ${blockNumber}, tx: ${log.transaction?.hash}:${logIndex}`);
 
     const baseEvent = {
       transactionHash: log.transaction?.hash || '',
@@ -291,6 +287,18 @@ export class ScalableEventMonitor {
         return this.parsePositionOpenedEvent(log, baseEvent)
       case 'PositionClosed':
         return this.parsePositionClosedEvent(log, baseEvent)
+      case 'PriceUpdated':
+        return this.parsePriceUpdatedEvent(log, baseEvent)
+      case 'CollateralDeposited':
+        return this.parseCollateralDepositedEvent(log, baseEvent)
+      case 'CollateralWithdrawn':
+        return this.parseCollateralWithdrawnEvent(log, baseEvent)
+      case 'MarginReserved':
+        return this.parseMarginReservedEvent(log, baseEvent)
+      case 'MarginReleased':
+        return this.parseMarginReleasedEvent(log, baseEvent)
+      case 'PnLUpdated':
+        return this.parsePnLUpdatedEvent(log, baseEvent)
       case 'PositionIncreased':
         return this.parsePositionIncreasedEvent(log, baseEvent)
       case 'PositionLiquidated':
@@ -303,22 +311,30 @@ export class ScalableEventMonitor {
   }
 
   /**
-   * Parse PositionOpened event
+   * Parse PositionOpened event (SimpleVAMM signature)
    */
   private parsePositionOpenedEvent(log: any, baseEvent: any): any {
     try {
-      const iface = new ethers.Interface([
-        'event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)'
-      ])
+      const eventAbi = [
+        {
+          name: 'PositionOpened',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'positionId', type: 'uint256', indexed: true },
+            { name: 'isLong', type: 'bool', indexed: false },
+            { name: 'size', type: 'uint256', indexed: false },
+            { name: 'price', type: 'uint256', indexed: false },
+            { name: 'leverage', type: 'uint256', indexed: false }
+          ]
+        }
+      ] as const
       
-      const parsed = iface.parseLog({
+      const parsed = decodeEventLog({
+        abi: eventAbi,
         topics: log.topics,
         data: log.data
       })
-      
-      if (!parsed) {
-        throw new Error('Failed to parse log')
-      }
       
       return {
         ...baseEvent,
@@ -327,8 +343,7 @@ export class ScalableEventMonitor {
         isLong: parsed.args.isLong,
         size: parsed.args.size?.toString(),
         price: parsed.args.price?.toString(),
-        leverage: parsed.args.leverage?.toString(),
-        fee: parsed.args.fee?.toString()
+        leverage: parsed.args.leverage?.toString()
       }
     } catch (error) {
       console.error('Failed to parse PositionOpened event:', error)
@@ -337,22 +352,29 @@ export class ScalableEventMonitor {
   }
 
   /**
-   * Parse PositionClosed event
+   * Parse PositionClosed event (SimpleVAMM signature)
    */
   private parsePositionClosedEvent(log: any, baseEvent: any): any {
     try {
-      const iface = new ethers.Interface([
-        'event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl, uint256 fee)'
-      ])
+      const eventAbi = [
+        {
+          name: 'PositionClosed',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'positionId', type: 'uint256', indexed: true },
+            { name: 'size', type: 'uint256', indexed: false },
+            { name: 'price', type: 'uint256', indexed: false },
+            { name: 'pnl', type: 'int256', indexed: false }
+          ]
+        }
+      ] as const
       
-      const parsed = iface.parseLog({
+      const parsed = decodeEventLog({
+        abi: eventAbi,
         topics: log.topics,
         data: log.data
       })
-      
-      if (!parsed) {
-        throw new Error('Failed to parse log')
-      }
       
       return {
         ...baseEvent,
@@ -360,8 +382,7 @@ export class ScalableEventMonitor {
         positionId: parsed.args.positionId?.toString(),
         size: parsed.args.size?.toString(),
         price: parsed.args.price?.toString(),
-        pnl: parsed.args.pnl?.toString(),
-        fee: parsed.args.fee?.toString()
+        pnl: parsed.args.pnl?.toString()
       }
     } catch (error) {
       console.error('Failed to parse PositionClosed event:', error)
@@ -374,18 +395,26 @@ export class ScalableEventMonitor {
    */
   private parsePositionIncreasedEvent(log: any, baseEvent: any): any {
     try {
-      const iface = new ethers.Interface([
-        'event PositionIncreased(address indexed user, uint256 indexed positionId, uint256 sizeAdded, uint256 newSize, uint256 newEntryPrice, uint256 fee)'
-      ])
+      const eventAbi = [
+        {
+          name: 'PositionIncreased',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'positionId', type: 'uint256', indexed: true },
+            { name: 'sizeAdded', type: 'uint256', indexed: false },
+            { name: 'newSize', type: 'uint256', indexed: false },
+            { name: 'newEntryPrice', type: 'uint256', indexed: false },
+            { name: 'fee', type: 'uint256', indexed: false }
+          ]
+        }
+      ] as const
       
-      const parsed = iface.parseLog({
+      const parsed = decodeEventLog({
+        abi: eventAbi,
         topics: log.topics,
         data: log.data
       })
-      
-      if (!parsed) {
-        throw new Error('Failed to parse log')
-      }
       
       return {
         ...baseEvent,
@@ -407,18 +436,26 @@ export class ScalableEventMonitor {
    */
   private parsePositionLiquidatedEvent(log: any, baseEvent: any): any {
     try {
-      const iface = new ethers.Interface([
-        'event PositionLiquidated(address indexed user, uint256 indexed positionId, address indexed liquidator, uint256 size, uint256 price, uint256 fee)'
-      ])
+      const eventAbi = [
+        {
+          name: 'PositionLiquidated',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'positionId', type: 'uint256', indexed: true },
+            { name: 'liquidator', type: 'address', indexed: true },
+            { name: 'size', type: 'uint256', indexed: false },
+            { name: 'price', type: 'uint256', indexed: false },
+            { name: 'fee', type: 'uint256', indexed: false }
+          ]
+        }
+      ] as const
       
-      const parsed = iface.parseLog({
+      const parsed = decodeEventLog({
+        abi: eventAbi,
         topics: log.topics,
         data: log.data
       })
-      
-      if (!parsed) {
-        throw new Error('Failed to parse log')
-      }
       
       return {
         ...baseEvent,
@@ -436,22 +473,230 @@ export class ScalableEventMonitor {
   }
 
   /**
-   * Parse MarketCreated event
+   * Parse PriceUpdated event (SimpleVAMM signature)
    */
-  private parseMarketCreatedEvent(log: any, baseEvent: any): any {
+  private parsePriceUpdatedEvent(log: any, baseEvent: any): any {
     try {
-      const iface = new ethers.Interface([
-        'event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)'
-      ])
+      const eventAbi = [
+        {
+          name: 'PriceUpdated',
+          type: 'event',
+          inputs: [
+            { name: 'newPrice', type: 'uint256', indexed: false },
+            { name: 'netPosition', type: 'int256', indexed: false }
+          ]
+        }
+      ] as const
       
-      const parsed = iface.parseLog({
+      const parsed = decodeEventLog({
+        abi: eventAbi,
         topics: log.topics,
         data: log.data
       })
       
-      if (!parsed) {
-        throw new Error('Failed to parse log')
+      return {
+        ...baseEvent,
+        newPrice: parsed.args.newPrice?.toString(),
+        netPosition: parsed.args.netPosition?.toString()
       }
+    } catch (error) {
+      console.error('Failed to parse PriceUpdated event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse CollateralDeposited event (SimpleVault signature)
+   */
+  private parseCollateralDepositedEvent(log: any, baseEvent: any): any {
+    try {
+      const eventAbi = [
+        {
+          name: 'CollateralDeposited',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'amount', type: 'uint256', indexed: false }
+          ]
+        }
+      ] as const
+      
+      const parsed = decodeEventLog({
+        abi: eventAbi,
+        topics: log.topics,
+        data: log.data
+      })
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        amount: parsed.args.amount?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse CollateralDeposited event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse CollateralWithdrawn event (SimpleVault signature)
+   */
+  private parseCollateralWithdrawnEvent(log: any, baseEvent: any): any {
+    try {
+      const eventAbi = [
+        {
+          name: 'CollateralWithdrawn',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'amount', type: 'uint256', indexed: false }
+          ]
+        }
+      ] as const
+      
+      const parsed = decodeEventLog({
+        abi: eventAbi,
+        topics: log.topics,
+        data: log.data
+      })
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        amount: parsed.args.amount?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse CollateralWithdrawn event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse MarginReserved event (SimpleVault signature)
+   */
+  private parseMarginReservedEvent(log: any, baseEvent: any): any {
+    try {
+      const eventAbi = [
+        {
+          name: 'MarginReserved',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'amount', type: 'uint256', indexed: false }
+          ]
+        }
+      ] as const
+      
+      const parsed = decodeEventLog({
+        abi: eventAbi,
+        topics: log.topics,
+        data: log.data
+      })
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        amount: parsed.args.amount?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse MarginReserved event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse MarginReleased event (SimpleVault signature)
+   */
+  private parseMarginReleasedEvent(log: any, baseEvent: any): any {
+    try {
+      const eventAbi = [
+        {
+          name: 'MarginReleased',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'amount', type: 'uint256', indexed: false }
+          ]
+        }
+      ] as const
+      
+      const parsed = decodeEventLog({
+        abi: eventAbi,
+        topics: log.topics,
+        data: log.data
+      })
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        amount: parsed.args.amount?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse MarginReleased event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse PnLUpdated event (SimpleVault signature)
+   */
+  private parsePnLUpdatedEvent(log: any, baseEvent: any): any {
+    try {
+      const eventAbi = [
+        {
+          name: 'PnLUpdated',
+          type: 'event',
+          inputs: [
+            { name: 'user', type: 'address', indexed: true },
+            { name: 'pnlDelta', type: 'int256', indexed: false }
+          ]
+        }
+      ] as const
+      
+      const parsed = decodeEventLog({
+        abi: eventAbi,
+        topics: log.topics,
+        data: log.data
+      })
+      
+      return {
+        ...baseEvent,
+        user: parsed.args.user,
+        pnlDelta: parsed.args.pnlDelta?.toString()
+      }
+    } catch (error) {
+      console.error('Failed to parse PnLUpdated event:', error)
+      return baseEvent
+    }
+  }
+
+  /**
+   * Parse MarketCreated event (Factory signature)
+   */
+  private parseMarketCreatedEvent(log: any, baseEvent: any): any {
+    try {
+      const eventAbi = [
+        {
+          name: 'MarketCreated',
+          type: 'event',
+          inputs: [
+            { name: 'marketId', type: 'bytes32', indexed: true },
+            { name: 'symbol', type: 'string', indexed: false },
+            { name: 'vamm', type: 'address', indexed: true },
+            { name: 'vault', type: 'address', indexed: true },
+            { name: 'oracle', type: 'address', indexed: false },
+            { name: 'collateralToken', type: 'address', indexed: false },
+            { name: 'startingPrice', type: 'uint256', indexed: false },
+            { name: 'marketType', type: 'uint8', indexed: false }
+          ]
+        }
+      ] as const
+      
+      const parsed = decodeEventLog({
+        abi: eventAbi,
+        topics: log.topics,
+        data: log.data
+      })
       
       return {
         ...baseEvent,
@@ -462,7 +707,7 @@ export class ScalableEventMonitor {
         oracle: parsed.args.oracle,
         collateralToken: parsed.args.collateralToken,
         startingPrice: parsed.args.startingPrice?.toString(),
-        marketType: parsed.args.marketType?.toString()
+        marketType: parsed.args.marketType
       }
     } catch (error) {
       console.error('Failed to parse MarketCreated event:', error)

@@ -41,7 +41,7 @@ const NetworkSelector: React.FC<NetworkSelectorProps> = ({
     setError(null);
     
     try {
-      console.log('Switching to network:', network.displayName);
+       console.log('Switching to network:', network.displayName);
       await switchNetwork(network);
       
       // Wait a bit for the switch to complete

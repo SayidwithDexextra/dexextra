@@ -186,7 +186,7 @@ await vammTrading.approveCollateral(1000);
 ```typescript
 // Get price impact for $1000 long position with 10x leverage
 const impact = await vammTrading.getPriceImpact(1000, true, 10);
-console.log(`Price impact: ${impact} USD`);
+ console.log(`Price impact: ${impact} USD`);
 ```
 
 ### Real-time Updates

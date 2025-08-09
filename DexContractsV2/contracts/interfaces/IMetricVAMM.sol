@@ -73,6 +73,14 @@ interface IMetricVAMM {
         PositionType positionType
     );
 
+    event MetricPositionClosed(
+        address indexed user,
+        uint256 indexed positionId,
+        bytes32 indexed metricId,
+        uint256 sizeToClose,
+        int256 pnl
+    );
+
     event MetricMarketSettled(
         bytes32 indexed metricId,
         uint256 settlementValue,

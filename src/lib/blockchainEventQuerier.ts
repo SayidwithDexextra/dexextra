@@ -15,51 +15,27 @@
  * This file is kept for reference and migration purposes only.
  */
 
-import { ethers } from 'ethers';
+// Try to import ethers with better error handling
+let ethers: any;
+try {
+  ethers = require('ethers');
+} catch (error) {
+  console.warn('⚠️ Ethers.js not available - BlockchainEventQuerier will be disabled');
+  ethers = null;
+}
 import { SmartContractEvent, PositionOpenedEvent, PositionClosedEvent, PositionLiquidatedEvent } from '@/types/events';
 import { env } from '@/lib/env';
 import { NETWORKS, getNetworkByChainId } from '@/lib/networks';
 import { withRateLimit, delay } from '@/lib/rateLimiter';
+import { METRIC_VAMM_ROUTER_ABI, CENTRALIZED_VAULT_ABI } from '@/lib/contracts';
 
-// vAMM ABI for events (Updated for Bonding Curve)
-const VAMM_ABI = [
-  // Position events (updated with positionId)
-  "event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage, uint256 fee)",
-  "event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl, uint256 fee)",
-  "event PositionIncreased(address indexed user, uint256 indexed positionId, uint256 sizeAdded, uint256 newSize, uint256 newEntryPrice, uint256 fee)",
-  "event PositionLiquidated(address indexed user, uint256 indexed positionId, address indexed liquidator, uint256 size, uint256 price, uint256 fee)",
-  
-  // Funding events
-  "event FundingUpdated(int256 fundingRate, uint256 fundingIndex, int256 premiumFraction)",
-  "event FundingPaid(address indexed user, uint256 indexed positionId, int256 amount, uint256 fundingIndex)",
-  
-  // Trading and fee events
-  "event TradingFeeCollected(address indexed user, uint256 amount)",
-  
-  // Administrative events
-  "event ParametersUpdated(string parameter, uint256 newValue)",
-  "event AuthorizedAdded(address indexed account)",
-  "event AuthorizedRemoved(address indexed account)",
-  "event Paused()",
-  "event Unpaused()",
-  
-  // Bonding curve events
-  "event BondingCurveUpdated(uint256 newPrice, uint256 totalSupply, uint256 priceChange)",
-  
-  // Legacy compatibility events
-  "event VirtualReservesUpdated(uint256 baseReserves, uint256 quoteReserves, uint256 multiplier)"
-];
+// V2 ABI mappings for legacy compatibility
+const VAMM_ABI = METRIC_VAMM_ROUTER_ABI; // V2 router handles VAMM operations
+const VAULT_ABI = CENTRALIZED_VAULT_ABI; // V2 centralized vault
 
-// Vault ABI for events
-const VAULT_ABI = [
-  "event CollateralDeposited(address indexed user, uint256 amount)",
-  "event CollateralWithdrawn(address indexed user, uint256 amount)",
-  "event MarginReserved(address indexed user, uint256 amount)",
-  "event MarginReleased(address indexed user, uint256 amount)",
-  "event PnLUpdated(address indexed user, int256 pnlDelta)",
-  "event FundingApplied(address indexed user, int256 fundingPayment, uint256 fundingIndex)",
-  "event UserLiquidated(address indexed user, uint256 penalty)"
-];
+// ABIs are now imported from centralized contracts configuration
+
+// Legacy ABI definitions removed - using centralized configuration instead
 
 export interface BlockchainEventFilter {
   contractAddress: string;
@@ -81,15 +57,33 @@ export interface QueryResult {
 }
 
 export class BlockchainEventQuerier {
-  private provider: ethers.JsonRpcProvider;
+  private provider: any;
   private chainId: number;
   private maxRetries: number = 3;
   private retryDelay: number = 2000;
-  private maxBlockRange: number = 400;
+  private maxBlockRange: number = 50; // Aggressive reduction for Alchemy limits
+  private minBlockRange: number = 10; // Very small minimum batch size
+  private isAvailable: boolean;
 
   constructor(rpcUrl?: string, chainId?: number) {
-    this.provider = new ethers.JsonRpcProvider(rpcUrl || env.RPC_URL);
-    this.chainId = chainId || env.CHAIN_ID;
+    if (!ethers) {
+      console.warn('⚠️ BlockchainEventQuerier: Ethers.js not available');
+      this.isAvailable = false;
+      this.provider = null;
+      this.chainId = chainId || env.CHAIN_ID;
+      return;
+    }
+
+    try {
+      this.provider = new ethers.JsonRpcProvider(rpcUrl || env.RPC_URL);
+      this.chainId = chainId || env.CHAIN_ID;
+      this.isAvailable = true;
+    } catch (error) {
+      console.error('❌ Failed to initialize BlockchainEventQuerier:', error);
+      this.isAvailable = false;
+      this.provider = null;
+      this.chainId = chainId || env.CHAIN_ID;
+    }
   }
 
   /**
@@ -98,8 +92,20 @@ export class BlockchainEventQuerier {
   async queryVAMMEvents(filter: BlockchainEventFilter): Promise<QueryResult> {
     const startTime = Date.now();
     
+    // Check if ethers is available
+    if (!this.isAvailable || !this.provider) {
+      return {
+        events: [],
+        fromBlock: filter.fromBlock || 0,
+        toBlock: filter.toBlock || 0,
+        totalLogs: 0,
+        queryTime: Date.now() - startTime,
+        error: 'BlockchainEventQuerier not available - ethers.js missing or failed to initialize'
+      };
+    }
+    
     try {
-      console.log('🔍 Querying vAMM events:', filter);
+       console.log('🔍 Querying vAMM events:', filter);
 
       // Validate contract address
       if (!ethers.isAddress(filter.contractAddress)) {
@@ -122,9 +128,9 @@ export class BlockchainEventQuerier {
       const events = await this.queryEventsInBatches(filter, fromBlock, toBlock);
       
       const queryTime = Date.now() - startTime;
-      console.log(`✅ Query completed in ${queryTime}ms, found ${events.length} events`);
+       console.log(`✅ Query completed in ${queryTime}ms, found ${events.length} events`);
 
-      console.log(events)
+       console.log(events)
 
       return {
         events,
@@ -157,7 +163,7 @@ export class BlockchainEventQuerier {
     fromBlock: number,
     toBlock: number
   ): Promise<SmartContractEvent[]> {
-    const batchSize = filter.maxBlockRange || this.maxBlockRange;
+    let batchSize = filter.maxBlockRange || this.maxBlockRange;
     const allEvents: SmartContractEvent[] = [];
 
     for (let start = fromBlock; start <= toBlock; start += batchSize) {
@@ -167,7 +173,7 @@ export class BlockchainEventQuerier {
         const batchEvents = await this.queryEventsBatch(filter, start, end);
         allEvents.push(...batchEvents);
         
-        console.log(`📦 Processed blocks ${start}-${end}: ${batchEvents.length} events`);
+         console.log(`📦 Processed blocks ${start}-${end}: ${batchEvents.length} events`);
         
         // Increased delay to avoid rate limiting
         if (end < toBlock) {
@@ -175,6 +181,18 @@ export class BlockchainEventQuerier {
         }
       } catch (error) {
         console.error(`❌ Failed to query batch ${start}-${end}:`, error);
+        
+        // If it's a block range limit error, try with smaller batch size
+        if (this.isBlockRangeLimitError(error) && batchSize > this.minBlockRange) {
+          const newBatchSize = Math.max(this.minBlockRange, Math.floor(batchSize / 2));
+          console.warn(`🔄 Block range limit hit for range ${start}-${end}. Reducing batch size from ${batchSize} to ${newBatchSize}`);
+          batchSize = newBatchSize;
+          
+          // Retry this batch with smaller size
+          start -= batchSize; // Reset to retry this range
+          continue;
+        }
+        
         // Continue with next batch instead of failing entirely
       }
     }
@@ -266,8 +284,16 @@ export class BlockchainEventQuerier {
         
         // Check if this is a block range limit error
         if (this.isBlockRangeLimitError(error)) {
-          console.warn('🚨 Block range limit exceeded. Consider reducing batch size.');
-          throw new Error(`Block range limit exceeded. Current range: ${filter.fromBlock} to ${filter.toBlock}. Try reducing the batch size to 400 or less.`);
+          console.warn('🚨 Block range limit exceeded:', {
+            fromBlock: filter.fromBlock,
+            toBlock: filter.toBlock,
+            range: filter.toBlock - filter.fromBlock,
+            errorCode: error?.code,
+            nestedErrorCode: error?.error?.code,
+            message: error?.message || error?.error?.message
+          });
+          // Don't throw immediately - let the caller handle it with smaller batches
+          throw error;
         }
         
         if (attempt < this.maxRetries) {
@@ -283,14 +309,45 @@ export class BlockchainEventQuerier {
     const errorMessage = error?.message || error?.reason || '';
     const errorCode = error?.code;
     
+    // Check for nested error in coalesced errors (Alchemy format)
+    const nestedError = error?.error;
+    const nestedErrorCode = nestedError?.code;
+    const nestedErrorMessage = nestedError?.message || '';
+    
     // Check for common block range limit error patterns
     return (
+      // Standard error codes
       errorCode === -32600 ||
+      errorCode === -32602 ||
+      errorCode === -32005 ||
+      errorCode === -32062 || // Alchemy specific
       errorCode === 'UNKNOWN_ERROR' ||
+      
+      // Nested error codes (for coalesced errors)
+      nestedErrorCode === -32062 ||
+      nestedErrorCode === -32600 ||
+      nestedErrorCode === -32602 ||
+      nestedErrorCode === -32005 ||
+      
+      // Error message patterns
       errorMessage.includes('block range') ||
+      errorMessage.includes('Block range is too large') ||
       errorMessage.includes('500 block') ||
+      errorMessage.includes('400 block') ||
+      errorMessage.includes('range limit') ||
+      errorMessage.includes('too many blocks') ||
+      errorMessage.includes('exceeds maximum') ||
       errorMessage.includes('eth_getLogs') ||
-      errorMessage.includes('range should work')
+      errorMessage.includes('range should work') ||
+      errorMessage.includes('query returned more than') ||
+      errorMessage.includes('limit exceeded') ||
+      errorMessage.includes('could not coalesce error') ||
+      
+      // Nested error message patterns
+      nestedErrorMessage.includes('block range') ||
+      nestedErrorMessage.includes('Block range is too large') ||
+      nestedErrorMessage.includes('range limit') ||
+      nestedErrorMessage.includes('too many blocks')
     );
   }
 

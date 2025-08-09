@@ -267,16 +267,16 @@ export const getWsRpcUrl = (network: NetworkConfig, apiKey?: string): string => 
 // Contract addresses for different networks
 export const CONTRACT_ADDRESSES: Record<string, { [contractName: string]: string }> = {
   polygon: {
-    // 🚀 NEW: Traditional Futures SimpleVAMM System - DEPLOYED!
-    SIMPLE_VAMM: "0xfEAA2a60449E11935C636b9E42866Fd0cBbdF2ed",
-    SIMPLE_VAULT: "0x3e2928b4123AF4e42F9373b57fb1DD68Fd056bc9",
-    SIMPLE_ORACLE: "0x7c63Ac8d8489a21cB12c7088b377732CC1208beC",
-    SIMPLE_USDC: "0x59d8f917b25f26633d173262A59136Eb326a76c1",
+    // 🚀 UPDATED: NEW Deployment with $1 starting price - LATEST DEPLOYMENT 
+    SIMPLE_VAMM: "0x487f1baE58CE513B39889152E96Eb18a346c75b1",
+    SIMPLE_VAULT: "0x2C8d16222d4A1065285f28FA7fB7C6cF5cf7094e",
+    SIMPLE_ORACLE: "0x9f7Aa3d247a338cb612B2F8B5042068d3aeAe711",
+    SIMPLE_USDC: "0xbD9E0b8e723434dCd41700e82cC4C8C539F66377",
     
     // Legacy bonding curve addresses (kept for reference)
     VAMM_FACTORY: "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74",
-    MOCK_USDC: '0xbD3F940783C47649e439A946d84508503D87976D',
-    MOCK_ORACLE: '0xB65258446bd83916Bd455bB3dBEdCb9BA106d551',
+    MOCK_USDC: "0xbD9E0b8e723434dCd41700e82cC4C8C539F66377", // Updated to match SIMPLE_USDC
+    MOCK_ORACLE: "0x9f7Aa3d247a338cb612B2F8B5042068d3aeAe711", // Updated to match SIMPLE_ORACLE
   },
   mumbai: {
     // Add your deployed contract addresses for Mumbai testnet here
@@ -297,7 +297,7 @@ export const CONTRACT_ADDRESSES: Record<string, { [contractName: string]: string
     // MOCK_ORACLE: '0x...',
   },
   hardhat: {
-    // Traditional Futures SimpleVAMM System (localhost addresses from recent deployment)
+    // Traditional Futures SimpleVAMM System (localhost addresses - update when deploying locally)
     SIMPLE_VAMM: "0x851356ae760d987E095750cCeb3bC6014560891C",
     SIMPLE_VAULT: "0x1613beB3B2C4f22Ee086B2b38C1476A3cE7f78E8", 
     SIMPLE_ORACLE: "0xa82fF9aFd8f496c3d6ac40E2a0F282E47488CFc9",

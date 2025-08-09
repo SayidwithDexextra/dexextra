@@ -71,16 +71,15 @@ export function WalletProvider({ children }: WalletProviderProps) {
     }
 
     try {
-      console.log('Refreshing balance for:', address)
+       console.log('Refreshing balance for:', address)
       const balance = await getBalance(address)
       setWalletData(prev => ({ ...prev, balance }))
-      console.log('Balance refreshed successfully:', balance)
+       console.log('Balance refreshed successfully:', balance)
     } catch (error) {
       console.error('Error refreshing balance:', error)
       
-      // Run diagnostics if balance fetch fails repeatedly
-      console.log('Running diagnostics due to balance fetch failure...')
-      await diagnoseWalletIssues()
+      // REMOVED: Heavy diagnostics that cause delays
+      // await diagnoseWalletIssues()
       
       // Set balance to '0' on error to prevent UI issues
       setWalletData(prev => ({ ...prev, balance: '0' }))
@@ -90,7 +89,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
   // Create or get user profile for connected wallet
   const createOrGetUserProfile = useCallback(async (walletAddress: string): Promise<void> => {
     try {
-      console.log('Creating/getting user profile for:', walletAddress)
+       console.log('Creating/getting user profile for:', walletAddress)
       const userProfile = await ProfileApi.createOrGetProfile(walletAddress)
       
       setWalletData(prev => ({ 
@@ -98,7 +97,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
         userProfile 
       }))
       
-      console.log('User profile created/retrieved:', userProfile)
+       console.log('User profile created/retrieved:', userProfile)
     } catch (error) {
       console.error('Error creating/getting user profile:', error)
       // Don't throw error - profile creation failure shouldn't prevent wallet connection
@@ -178,12 +177,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
     const handleAccountsChanged = async (accounts: string[]) => {
       if (accounts.length === 0) {
         // Wallet disconnected
-        console.log('Wallet disconnected - accounts changed to empty')
+         console.log('Wallet disconnected - accounts changed to empty')
         setWalletData(initialWalletData)
       } else {
         // Account changed
         const address = accounts[0]
-        console.log('Account changed to:', address)
+         console.log('Account changed to:', address)
         
         let balance = '0'
         try {
@@ -233,7 +232,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
     setWalletData(prev => ({ ...prev, isConnecting: true }))
 
     try {
-      console.log('Attempting to connect wallet:', providerName || 'auto-detect')
+       console.log('Attempting to connect wallet:', providerName || 'auto-detect')
       
       let targetProvider: WalletProvider | undefined
       
@@ -241,21 +240,21 @@ export function WalletProvider({ children }: WalletProviderProps) {
         targetProvider = providers.find(p => p.name === providerName)
         if (!targetProvider) {
           console.error('Requested provider not found:', providerName)
-          console.log('Available providers:', providers.map(p => p.name))
+           console.log('Available providers:', providers.map(p => p.name))
         }
       } else {
         // Use first available provider
         targetProvider = providers.find(p => p.isInstalled)
-        console.log('Auto-selected provider:', targetProvider?.name)
+         console.log('Auto-selected provider:', targetProvider?.name)
       }
 
       if (!targetProvider) {
         console.error('No wallet provider available')
-        console.log('Available providers:', providers.length)
-        console.log('Installed providers:', providers.filter(p => p.isInstalled).map(p => p.name))
+         console.log('Available providers:', providers.length)
+         console.log('Installed providers:', providers.filter(p => p.isInstalled).map(p => p.name))
         
-        // Run diagnostics to help user understand the issue
-        await diagnoseWalletIssues()
+        // REMOVED: Heavy diagnostics that cause connection delays
+        // await diagnoseWalletIssues()
         throw new Error('No wallet provider available')
       }
 
@@ -264,11 +263,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
         throw new Error(`${targetProvider.name} is not installed`)
       }
 
-      console.log('Connecting to:', targetProvider.name)
+       console.log('Connecting to:', targetProvider.name)
       await targetProvider.connect()
       
       // Re-check connection to get updated data
-      console.log('Verifying connection...')
+       console.log('Verifying connection...')
       const connection = await checkConnection()
       if (connection) {
         setWalletData(connection)
@@ -276,12 +275,14 @@ export function WalletProvider({ children }: WalletProviderProps) {
         // Store connection preference
         localStorage.setItem('walletProvider', targetProvider.name)
         
-        // Create or get user profile for the connected wallet
+        // OPTIMIZED: Create user profile in background - don't block connection
         if (connection.address) {
-          await createOrGetUserProfile(connection.address)
+          createOrGetUserProfile(connection.address).catch(error => 
+            console.warn('User profile creation failed (non-blocking):', error)
+          )
         }
         
-        console.log('Wallet connected successfully:', connection.address)
+         console.log('Wallet connected successfully:', connection.address)
       } else {
         console.error('Connection verification failed')
         throw new Error('Connection verification failed')
@@ -289,9 +290,8 @@ export function WalletProvider({ children }: WalletProviderProps) {
     } catch (error: unknown) {
       console.error('Connection error:', error)
       
-      // Run diagnostics on connection failure
-      console.log('Running diagnostics due to connection failure...')
-      await diagnoseWalletIssues()
+      // REMOVED: Heavy diagnostics that cause connection delays  
+      // await diagnoseWalletIssues()
       
       setWalletData(prev => ({ ...prev, isConnecting: false }))
       throw error

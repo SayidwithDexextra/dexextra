@@ -1,0 +1,21 @@
+{
+  "network": "polygon",
+  "timestamp": "2025-07-31T15:23:51.935Z",
+  "deploymentType": "startPrice_upgrade",
+  "contracts": {
+    "usdc": "0xbD9E0b8e723434dCd41700e82cC4C8C539F66377",
+    "metricRegistry": "0x8f5200203c53c5821061D1f29249f10A5b57CA6A",
+    "centralVault": "0x0990B9591ed1cC070652c5F5F11dAC4B0375Cd93",
+    "factory": "0x069331Cc5c881db1B1382416b189c198C5a2b356",
+    "router": "0xC63C52df3f9aD880ed5aD52de538fc74f02031B5"
+  },
+  "newContracts": {
+    "factory": "0x069331Cc5c881db1B1382416b189c198C5a2b356",
+    "router": "0xC63C52df3f9aD880ed5aD52de538fc74f02031B5"
+  },
+  "existingContracts": {
+    "usdc": "0xbD9E0b8e723434dCd41700e82cC4C8C539F66377",
+    "metricRegistry": "0x8f5200203c53c5821061D1f29249f10A5b57CA6A",
+    "centralVault": "0x0990B9591ed1cC070652c5F5F11dAC4B0375Cd93"
+  }
+}

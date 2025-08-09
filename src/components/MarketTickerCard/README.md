@@ -67,8 +67,8 @@ const ExampleCard = () => {
       price={19}
       currency="$"
       imageUrl="/path/to/image.jpg"
-      onViewProduct={() => console.log('Product clicked')}
-      onViewDemo={() => console.log('Demo clicked')}
+      onViewProduct={() =>  console.log('Product clicked')}
+      onViewDemo={() =>  console.log('Demo clicked')}
     />
   );
 };
@@ -97,8 +97,8 @@ const ExampleContainer = () => {
     <MarketTickerCardContainer
       title="Latest Drops"
       cards={cardData}
-      onCardViewProduct={(id) => console.log('Product:', id)}
-      onCardViewDemo={(id) => console.log('Demo:', id)}
+      onCardViewProduct={(id) =>  console.log('Product:', id)}
+      onCardViewDemo={(id) =>  console.log('Demo:', id)}
     />
   );
 };

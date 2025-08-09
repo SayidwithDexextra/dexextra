@@ -49,7 +49,7 @@ const MarketPreviewModalDemo: React.FC = () => {
 
   const handleGoToProduct = () => {
     try {
-      console.log('Navigating to product page...');
+       console.log('Navigating to product page...');
       // In a real app, this would navigate to the product page
       alert('Navigating to product page!');
     } catch (error) {

@@ -45,13 +45,13 @@ export function useContractEvents(initialSubscription?: EventSubscription): UseC
       }
 
       const sseUrl = `/api/events/stream?${params.toString()}`
-      console.log('Connecting to SSE:', sseUrl)
+       console.log('Connecting to SSE:', sseUrl)
       
       eventSourceRef.current = new EventSource(sseUrl)
 
       eventSourceRef.current.onopen = () => {
         if (!isMountedRef.current) return
-        console.log('Connected to event stream')
+         console.log('Connected to event stream')
         setIsConnected(true)
       }
 
@@ -63,13 +63,13 @@ export function useContractEvents(initialSubscription?: EventSubscription): UseC
           
           if (data.type === 'event' && data.event) {
             const newEvent = data.event as SmartContractEvent
-            console.log('Received event:', newEvent)
+             console.log('Received event:', newEvent)
             setEvents(prev => [newEvent, ...prev.slice(0, 99)]) // Keep last 100 events
             setLastEvent(newEvent)
           } else if (data.type === 'welcome') {
-            console.log('SSE Welcome:', data.message)
+             console.log('SSE Welcome:', data.message)
           } else if (data.type === 'heartbeat') {
-            console.log('SSE Heartbeat:', data.timestamp)
+             console.log('SSE Heartbeat:', data.timestamp)
           }
         } catch (error) {
           console.error('Error parsing SSE message:', error)
@@ -104,7 +104,7 @@ export function useContractEvents(initialSubscription?: EventSubscription): UseC
 
   const subscribe = useCallback((subscription: EventSubscription) => {
     if (!isMountedRef.current) return
-    console.log('Subscribing to events:', subscription)
+     console.log('Subscribing to events:', subscription)
     currentSubscriptionRef.current = subscription
     
     // Close existing connection and reconnect with new subscription
@@ -119,7 +119,7 @@ export function useContractEvents(initialSubscription?: EventSubscription): UseC
 
   const unsubscribe = useCallback(() => {
     if (!isMountedRef.current) return
-    console.log('Unsubscribing from events')
+     console.log('Unsubscribing from events')
     currentSubscriptionRef.current = undefined
     
     if (eventSourceRef.current) {
@@ -177,7 +177,7 @@ export function useMarketCreationEvent(marketSymbol?: string) {
   const startWaiting = useCallback((symbol: string, timeoutMs: number = 120000) => { // 2 minute timeout
     if (!isMountedRef.current) return
     
-    console.log('Starting to wait for MarketCreated event for symbol:', symbol)
+     console.log('Starting to wait for MarketCreated event for symbol:', symbol)
     setIsWaiting(true)
     setError(null)
     setMarketCreatedEvent(null)
@@ -203,7 +203,7 @@ export function useMarketCreationEvent(marketSymbol?: string) {
 
   const stopWaiting = useCallback(() => {
     if (!isMountedRef.current) return
-    console.log('Stopping wait for MarketCreated event')
+     console.log('Stopping wait for MarketCreated event')
     setIsWaiting(false)
     unsubscribe()
     if (timeoutRef.current) {
@@ -219,11 +219,11 @@ export function useMarketCreationEvent(marketSymbol?: string) {
     if (isWaiting && lastEvent && lastEvent.eventType === 'MarketCreated') {
       const event = lastEvent as any // MarketCreatedEvent
       
-      console.log('Received MarketCreated event:', event)
+       console.log('Received MarketCreated event:', event)
       
       // Check if this is the market we're waiting for
       if (!marketSymbol || event.symbol === marketSymbol) {
-        console.log('Market symbol matches, completing deployment')
+         console.log('Market symbol matches, completing deployment')
         setMarketCreatedEvent(lastEvent)
         setIsWaiting(false)
         unsubscribe()
@@ -233,7 +233,7 @@ export function useMarketCreationEvent(marketSymbol?: string) {
           timeoutRef.current = null
         }
       } else {
-        console.log('Market symbol does not match, continuing to wait')
+         console.log('Market symbol does not match, continuing to wait')
       }
     }
   }, [lastEvent, isWaiting, marketSymbol, unsubscribe])

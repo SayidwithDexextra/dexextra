@@ -11,7 +11,7 @@ import { EventDatabase } from '@/lib/eventDatabase';
  */
 export async function GET(request: NextRequest) {
   try {
-    console.log('📊 Fetching webhook monitoring status...');
+     console.log('📊 Fetching webhook monitoring status...');
 
     // Get query parameters
     const url = new URL(request.url);
@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    console.log('🚀 Initializing webhook monitoring...');
+     console.log('🚀 Initializing webhook monitoring...');
 
     const webhookListener = await getWebhookEventListener();
     await webhookListener.initialize();

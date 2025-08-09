@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     // Validate query parameters
     const validatedQuery = QuerySchema.parse(query);
     
-    console.log('🔍 Blockchain Events API: Querying events with params:', validatedQuery);
+     console.log('🔍 Blockchain Events API: Querying events with params:', validatedQuery);
     
     // Get blockchain querier
     const querier = getDefaultBlockchainQuerier();
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    console.log('✅ Blockchain Events API: Successfully fetched', result.events.length, 'events');
+     console.log('✅ Blockchain Events API: Successfully fetched', result.events.length, 'events');
     
     return NextResponse.json({
       success: true,
@@ -108,14 +108,19 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// Request body interface
+interface BlockchainEventRequest {
+  action: string;
+}
+
 // Connection test endpoint
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await request.json() as BlockchainEventRequest;
     const { action } = body;
     
     if (action === 'test-connection') {
-      console.log('🔧 Testing blockchain connection...');
+       console.log('🔧 Testing blockchain connection...');
       
       const querier = getDefaultBlockchainQuerier();
       const connectionStatus = await querier.testConnection();
@@ -137,7 +142,7 @@ export async function POST(request: NextRequest) {
         );
       }
       
-      console.log('🔍 Querying sample events for:', contractAddress);
+       console.log('🔍 Querying sample events for:', contractAddress);
       
       const querier = getDefaultBlockchainQuerier();
       const result = await querier.queryVAMMEvents({

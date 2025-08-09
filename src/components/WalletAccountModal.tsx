@@ -20,16 +20,15 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
   const [activeTab, setActiveTab] = useState<'crypto' | 'items'>('crypto')
 
   // Use real portfolio data from Alchemy API
-  console.log('🔍 portfolio:', portfolio)
 
   const tokens = useMemo(() => portfolio.tokens || [], [portfolio.tokens])
-  console.log('🔍 Tokens:', tokens)
+   console.log('🔍 Tokens:', tokens)
   const totalValue = parseFloat(portfolio.totalValue) || tokens.reduce((sum: number, token: TokenBalance) => sum + (token.value || 0), 0)
   const ethBalance = portfolio.ethBalanceFormatted || '0.013'
 
   // Debug logging
   useEffect(() => {
-    console.log('🔍 Portfolio Debug:', {
+     console.log('🔍 Portfolio Debug:', {
       portfolioTokens: portfolio.tokens,
       tokensLength: portfolio.tokens?.length,
       isLoading: portfolio.isLoading,
@@ -41,7 +40,7 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
   // Refresh portfolio data when modal opens
   useEffect(() => {
     if (isOpen && walletData.isConnected) {
-      console.log('📊 Refreshing portfolio data...')
+       console.log('📊 Refreshing portfolio data...')
       refreshPortfolio()
     }
   }, [isOpen, walletData.isConnected, refreshPortfolio])
@@ -49,7 +48,7 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
   if (!isOpen) return null
 
   const handleActionClick = (action: string) => {
-    console.log(`${action} clicked`)
+     console.log(`${action} clicked`)
     // Handle action routing here
     onClose() // Close modal when navigating
     
@@ -79,7 +78,7 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
       {/* Backdrop */}
       <div 
         className="absolute inset-0 transition-opacity duration-300"
-        style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}
+        style={{ backgroundColor: 'transparent' }}
         onClick={onClose}
       />
       

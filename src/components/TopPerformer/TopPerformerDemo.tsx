@@ -9,7 +9,7 @@ const TopPerformerDemo: React.FC = () => {
   const samplePerformers = useMockTopPerformerData();
 
   const _handlePerformerClick = (performer: TopPerformerData) => {
-    console.log('Performer clicked:', performer);
+     console.log('Performer clicked:', performer);
     // Handle click logic here
   };
 

@@ -105,8 +105,8 @@ export default function CreateMarketForm() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    console.log('Form Data:', formData)
-    console.log('Uploaded Files:', uploadedFiles)
+     console.log('Form Data:', formData)
+     console.log('Uploaded Files:', uploadedFiles)
     // Handle form submission here
   }
 

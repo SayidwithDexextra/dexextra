@@ -75,7 +75,7 @@ export class EventDatabase {
           }
         }
       } catch (error) {
-        console.log('vamm_markets table might not exist, checking monitored_contracts')
+         console.log('vamm_markets table might not exist, checking monitored_contracts')
       }
 
       // Also get contracts from the monitored_contracts table
@@ -103,11 +103,11 @@ export class EventDatabase {
           }
         }
       } catch (error) {
-        console.log('monitored_contracts table might not exist')
+         console.log('monitored_contracts table might not exist')
       }
 
-      console.log('📋 Found deployed contracts for monitoring:', contracts.length)
-      contracts.forEach(c => console.log(`  - ${c.name} (${c.type}): ${c.address}`))
+       console.log('📋 Found deployed contracts for monitoring:', contracts.length)
+      contracts.forEach(c =>  console.log(`  - ${c.name} (${c.type}): ${c.address}`))
       return contracts
     } catch (error) {
       console.error('Failed to fetch VAMM contracts:', error)
@@ -143,14 +143,14 @@ export class EventDatabase {
       if (error) {
         // If it's a duplicate key error, that's okay
         if (error.code === '23505') { // PostgreSQL unique violation
-          console.log(`Contract ${contract.address} already registered for monitoring`)
+           console.log(`Contract ${contract.address} already registered for monitoring`)
           return
         }
         console.error('Error adding contract:', error)
         throw error
       }
 
-      console.log(`✅ Added contract ${contract.name} (${contract.address}) for monitoring`)
+       console.log(`✅ Added contract ${contract.name} (${contract.address}) for monitoring`)
     } catch (error) {
       console.error('Failed to add contract:', error)
       throw error
@@ -189,7 +189,7 @@ export class EventDatabase {
    */
   async storeEvent(event: SmartContractEvent): Promise<void> {
     try {
-      console.log(`📝 Attempting to store event: ${event.eventType} - ${event.transactionHash}:${event.logIndex}`)
+       console.log(`📝 Attempting to store event: ${event.eventType} - ${event.transactionHash}:${event.logIndex}`)
       
       // Validate required fields to prevent null constraint violations
       if (!event.transactionHash) {
@@ -249,7 +249,7 @@ export class EventDatabase {
         chainId = 137; // Default to Polygon
       }
       
-      console.log(`📊 Validated event data: block ${blockNumber}, tx ${event.transactionHash}:${logIndex}`);
+       console.log(`📊 Validated event data: block ${blockNumber}, tx ${event.transactionHash}:${logIndex}`);
       
       // Events are already filtered at the listener level
       // This database method should store any event that reaches it
@@ -276,7 +276,7 @@ export class EventDatabase {
       if (error) {
         // Handle duplicate key error gracefully
         if (error.code === '23505') { // PostgreSQL unique violation
-          console.log(`⚠️  Event already exists (duplicate): ${event.eventType} - ${event.transactionHash}:${event.logIndex}`)
+           console.log(`⚠️  Event already exists (duplicate): ${event.eventType} - ${event.transactionHash}:${event.logIndex}`)
           
           // Check what's actually in the database for this transaction
           const { data: existingEvent } = await supabase
@@ -286,10 +286,10 @@ export class EventDatabase {
             .eq('log_index', event.logIndex)
             .single()
 
-          console.log("existingEvent:", existingEvent)
+           console.log("existingEvent:", existingEvent)
           
           if (existingEvent) {
-            console.log(`📋 Existing event in DB: ${existingEvent.event_type} - ${existingEvent.contract_address}`)
+             console.log(`📋 Existing event in DB: ${existingEvent.event_type} - ${existingEvent.contract_address}`)
           }
           
           return
@@ -299,7 +299,7 @@ export class EventDatabase {
         throw error
       }
 
-      console.log(`✅ Successfully stored event: ${event.eventType} - ${event.transactionHash}:${event.logIndex}`)
+       console.log(`✅ Successfully stored event: ${event.eventType} - ${event.transactionHash}:${event.logIndex}`)
     } catch (error) {
       console.error('❌ Failed to store event:', error)
       throw error
@@ -653,7 +653,7 @@ export class EventDatabase {
         throw error
       }
 
-      console.log('✅ Webhook configuration stored successfully')
+       console.log('✅ Webhook configuration stored successfully')
     } catch (error) {
       console.error('Failed to store webhook config:', error)
       throw error
@@ -723,8 +723,8 @@ export class EventDatabase {
    * Initialize database tables (for development)
    */
   async initializeTables(): Promise<void> {
-    console.log('Database tables should be created via Supabase migrations.')
-    console.log('Run the SQL migrations in your Supabase dashboard.')
+     console.log('Database tables should be created via Supabase migrations.')
+     console.log('Run the SQL migrations in your Supabase dashboard.')
   }
 
   /**
@@ -764,7 +764,7 @@ export class EventDatabase {
         throw error
       }
 
-      console.log('✅ VAMM market stored successfully:', deployment.symbol)
+       console.log('✅ VAMM market stored successfully:', deployment.symbol)
     } catch (error) {
       console.error('Failed to store VAMM market:', error)
       throw error
@@ -807,7 +807,7 @@ export class EventDatabase {
         throw error
       }
 
-      console.log('✅ Webhook configuration updated successfully')
+       console.log('✅ Webhook configuration updated successfully')
     } catch (error) {
       console.error('Failed to update webhook config:', error)
       throw error

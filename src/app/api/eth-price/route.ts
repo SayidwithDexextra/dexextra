@@ -1,56 +1,38 @@
 import { NextResponse } from 'next/server'
-
-interface CoinGeckoETHData {
-  ethereum: {
-    usd: number;
-    usd_24h_change: number;
-  };
-}
+import { ethPriceService } from '@/lib/ethPriceService'
 
 export async function GET() {
   try {
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_24hr_change=true',
-      {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (compatible; DexExtra/1.0)',
-        },
-        // Add timeout
-        signal: AbortSignal.timeout(10000), // 10 second timeout
-        // Add cache control
-        next: { revalidate: 60 } // Cache for 1 minute
-      }
-    )
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      throw new Error(`CoinGecko API error: ${response.status} ${response.statusText} - ${errorText}`)
-    }
-
-    const data: CoinGeckoETHData = await response.json()
+    // Try to get price from our bulletproof service
+    const result = await ethPriceService.getETHPrice();
     
-    // Validate the response data
-    if (!data.ethereum || typeof data.ethereum.usd !== 'number') {
-      throw new Error('Invalid response from CoinGecko API')
-    }
-    
-    // Return formatted data
     return NextResponse.json({
-      price: data.ethereum.usd,
-      changePercent24h: data.ethereum.usd_24h_change || 0,
-    })
+      price: result.price,
+      changePercent24h: result.changePercent24h,
+      source: result.source,
+      timestamp: result.timestamp,
+      success: true
+    });
+    
   } catch (error) {
-    console.error('Error fetching ETH price:', {
+    console.error('All ETH price sources failed:', {
       error: error instanceof Error ? error.message : error,
       timestamp: new Date().toISOString(),
-    })
+      endpointStatus: ethPriceService.getEndpointStatus()
+    });
     
-    // Return a more specific error message
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    return NextResponse.json(
-      { error: `Failed to fetch ETH price: ${errorMessage}` },
-      { status: 500 }
-    )
+    // Return fallback data instead of error
+    const fallbackData = ethPriceService.getFallbackData();
+    
+    return NextResponse.json({
+      price: fallbackData.price,
+      changePercent24h: fallbackData.changePercent24h,
+      source: fallbackData.source,
+      timestamp: fallbackData.timestamp,
+      success: false,
+      warning: 'Using fallback data due to API failures'
+    }, { 
+      status: 200 // Return 200 so the frontend doesn't treat it as an error
+    });
   }
 } 

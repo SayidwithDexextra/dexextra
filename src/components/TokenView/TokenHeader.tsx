@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import Image from 'next/image';
 import { TokenData } from '@/types/token';
 import { useVAMMTokenData } from '@/hooks/useVAMMTokenData';
-import { useVAMMPriceData } from '@/hooks/useVAMMPriceData';
+import { useUnifiedMarkPrice } from '@/hooks/useUnifiedMarkPrice';
 import { useVAMMTrading } from '@/hooks/useVAMMTrading';
 import { useWallet } from '@/hooks/useWallet';
 
@@ -70,102 +70,115 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   
   // OPTIMIZED DATA FETCHING STRATEGY:
   // 1. Market data: Cached for 5 minutes (static info like name, description)
-  // 2. Price data: Lightweight polling every 60 seconds (mark price, funding rate)
+  // 2. Price data: Unified price hook with real-time contract calls
   // 3. Trading data: Only when wallet connected, polls every 30 seconds for positions
   
   // Get VAMM market data (cached for 5 minutes)
   const { tokenData: baseTokenData, vammMarket, isLoading: isLoadingMarket, error: marketError } = useVAMMTokenData(symbol);
   
-  console.log('vammMarket baseTokenData: ', baseTokenData);
-  // Get real-time price and trading data (polls mark price every 2 seconds)
+  console.log('🏪 VAMM Market Data Status:', {
+    symbol,
+    vammMarket: !!vammMarket,
+    vammAddress: vammMarket?.vamm_address,
+    isLoadingMarket,
+    marketError,
+    hasCompleteMarketData: !!(vammMarket?.vamm_address && vammMarket?.symbol)
+  });
+  
+  // Get unified mark price data (replaces useVAMMMarkPrice)
   const {
     markPrice,
     fundingRate,
-    position,
+    currentPrice,
+    priceChange24h,
+    priceChangePercent24h,
+    isLoading: isLoadingMarkPrice,
+    error: markPriceError,
+    refreshPrice: refreshMarkPrice,
+    dataSource
+  } = useUnifiedMarkPrice(
+    vammMarket?.vamm_address && vammMarket?.symbol ? vammMarket : undefined, 
+    {
+      enablePolling: true,
+      pollingInterval: 30000, // Poll every 30 seconds for real-time updates
+      enableContractFetch: true
+    }
+  );
+  
+  console.log('💰 Real-time markPrice from useUnifiedMarkPrice:', {
+    markPrice,
+    fundingRate,
+    currentPrice,
+    priceChange24h,
+    priceChangePercent24h,
+    isLoadingMarkPrice,
+    markPriceError,
+    dataSource,
+    vammMarket: vammMarket?.symbol,
+    vammAddress: vammMarket?.vamm_address
+  });
+
+  // Get trading data and positions (separate from price data)
+  const {
+    positions,
     isLoading: isLoadingTrading,
     error: tradingError,
-    refreshData: refreshTrading,
-    refreshMarkPrice
-  } = useVAMMTrading(vammMarket || undefined, {
-    enablePolling: true, // Always enable polling for real-time price updates
-    pollingInterval: 5000, // Full data refresh every 5 seconds
-    onlyPollWithPosition: false // Always poll for mark price regardless of position
-  });
-  
-  console.log('Real-time markPrice from useVAMMTrading: ', markPrice);
-
-  // Lightweight fallback for price data (kept for compatibility)
-  const { 
-    markPrice: fallbackMarkPrice, 
-    fundingRate: fallbackFundingRate, 
-    isLoading: isLoadingPrice, 
-    error: priceError,
-    refreshData: refreshPriceData
-  } = useVAMMPriceData(vammMarket || undefined, {
-    enablePolling: false, // Disable since we're using real-time data from useVAMMTrading
-    pollingInterval: 60000
-  });
+    refreshPositions: refreshTrading
+  } = useVAMMTrading();
 
   // Manual refresh function
   const handleManualRefresh = async () => {
     console.log('🔄 Manual refresh triggered for real-time data');
     
-    // Refresh real-time mark price immediately
+    // Refresh unified mark price
     if (refreshMarkPrice) {
       await refreshMarkPrice();
     }
     
-    // Refresh all trading data
+    // Refresh trading data and positions
     if (refreshTrading) {
       await refreshTrading();
     }
-    
-    // Fallback price refresh (if needed)
-    if (refreshPriceData) {
-      await refreshPriceData();
-    }
   };
 
-  // Calculate enhanced token data (optimized with fewer dependencies)
+  // Calculate enhanced token data (optimized with unified price data)
   const enhancedTokenData = useMemo((): EnhancedTokenData | null => {
     if (!baseTokenData || !vammMarket) return null;
 
     console.log('🔄 Recalculating enhanced token data for:', symbol, {
+      currentPrice,
       markPrice,
       fundingRate,
+      dataSource,
       timestamp: new Date().toISOString()
     });
 
     // Check if contracts are deployed and available
     const hasContracts = !!vammMarket.vamm_address;
-    const hasRealTimePrice = hasContracts && !isLoadingTrading && !tradingError && markPrice && markPrice !== '0';
     
-    // Prioritize real-time mark price from useVAMMTrading, fallback to other sources
-    console.log('🎯 Real-time price sources:', {
-      realTimeMarkPrice: markPrice,
-      fallbackMarkPrice,
-      initialPrice: vammMarket.initial_price,
-      hasRealTimePrice,
-      isLoadingTrading
+    // Use unified price data - more reliable than individual validation
+    const hasValidRealTimePrice = hasContracts && 
+      !markPriceError && 
+      !isLoadingMarkPrice &&
+      currentPrice > 0 &&
+      dataSource === 'contract'; // Only use price if it comes from contract
+    
+    console.log('🎯 Unified mark price sources:', {
+      currentPrice,
+      markPrice,
+      dataSource,
+      priceChange24h,
+      priceChangePercent24h,
+      hasValidRealTimePrice,
+      hasContracts,
+      markPriceError: markPriceError || 'none',
+      isLoadingMarkPrice
     });
     
-    const currentMarkPrice = hasRealTimePrice 
-      ? parseFloat(markPrice) 
-      : (fallbackMarkPrice ? parseFloat(fallbackMarkPrice) : vammMarket.initial_price);
-      
-    const initialPrice = vammMarket.initial_price;
-    
-    console.log('💰 Real-time price calculation:', {
-      hasRealTimePrice,
-      realTimeMarkPrice: markPrice,
-      parsedRealTimePrice: parseFloat(markPrice),
-      initialPrice,
-      finalPrice: currentMarkPrice,
-      isUpdating: isLoadingTrading
-    });
-    
-    // Calculate 24h change based on current vs initial price
-    const priceChange24h = calculatePriceChange(currentMarkPrice, initialPrice);
+    // Use unified price data
+    const currentMarkPrice = hasValidRealTimePrice ? currentPrice : vammMarket.initial_price;
+    const priceChangeValue = hasValidRealTimePrice ? priceChange24h : 0;
+    const priceChangePercentValue = hasValidRealTimePrice ? priceChangePercent24h : 0;
     
     // Calculate market metrics based on real contract data
     const estimatedSupply = 1000000; // Could be fetched from contract if available
@@ -173,31 +186,43 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     const volume24h = marketCap * 0.15; // Estimate based on market cap
     
     // Derive time-based changes from funding rate and price movement
-    const contractFundingRate = hasRealTimePrice 
+    const contractFundingRate = hasValidRealTimePrice 
       ? fundingRate 
-      : (fallbackFundingRate || '0');
-    const timeBasedChanges = deriveTimeBasedChanges(contractFundingRate, priceChange24h);
+      : '0';
+    const timeBasedChanges = deriveTimeBasedChanges(contractFundingRate, priceChangeValue);
+    
+    // Find position for this market (if any)
+    const currentPosition = positions?.find(pos => 
+      // Match by current VAMM address if available
+      true // For now, just use first position or null
+    );
     
     return {
       ...baseTokenData,
       price: currentMarkPrice,
-      priceChange24h,
+      priceChange24h: priceChangeValue,
       marketCap,
       volume24h,
       // Add real-time contract-specific data (or defaults if not available)
       markPrice: currentMarkPrice,
-      fundingRate: hasRealTimePrice ? (parseFloat(fundingRate) || 0) : 0,
+      fundingRate: hasValidRealTimePrice ? (parseFloat(fundingRate) || 0) : 0,
       timeBasedChanges,
       // Add position info if available (only when wallet connected)
-      hasPosition: walletData.isConnected && !!position,
-      positionSize: walletData.isConnected ? (position?.positionSizeUsd || '0') : '0',
-      unrealizedPnL: walletData.isConnected ? (position?.unrealizedPnL || '0') : '0',
+      hasPosition: walletData.isConnected && !!currentPosition,
+      positionSize: walletData.isConnected ? (currentPosition?.size?.toString() || '0') : '0',
+      unrealizedPnL: walletData.isConnected ? (currentPosition?.unrealizedPnL?.toString() || '0') : '0',
       // Add deployment status
       isDeployed: hasContracts,
     };
-  }, [baseTokenData, vammMarket, markPrice, fundingRate, fallbackMarkPrice, fallbackFundingRate, position, isLoadingTrading, tradingError, walletData.isConnected, symbol]);
+  }, [baseTokenData, vammMarket, currentPrice, markPrice, fundingRate, positions, isLoadingMarkPrice, markPriceError, dataSource, walletData.isConnected, symbol]);
 
-  console.log('enhancedTokenData: ', enhancedTokenData);
+  console.log('🖥️ Final enhancedTokenData for UI:', {
+    symbol,
+    markPrice: enhancedTokenData?.markPrice,
+    price: enhancedTokenData?.price,
+    hasEnhancedData: !!enhancedTokenData,
+    dataSource: enhancedTokenData ? 'enhanced' : 'none'
+  });
   // Loading state - only show loading if market data is loading
   if (isLoadingMarket) {
     return (
@@ -234,6 +259,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
   const isPositive = enhancedTokenData.priceChange24h >= 0;
   const { change5m, change1h, change6h } = enhancedTokenData.timeBasedChanges;
+  
+  // Check for valid real-time price for UI indicators
+  const realTimePriceValue = markPrice ? parseFloat(markPrice) : null;
+  const showLiveIndicator = enhancedTokenData.isDeployed && 
+    !markPriceError && 
+    realTimePriceValue !== null && 
+    !isNaN(realTimePriceValue) && 
+    realTimePriceValue >= 0;
 
   return (
     <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 max-h-[360px] overflow-y-auto flex flex-col token-header-scroll">
@@ -283,7 +316,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         <div className="flex items-baseline gap-3 mb-1">
           <span className="text-2xl font-bold text-white">
             ${formatNumberWithCommas(enhancedTokenData.markPrice)}
-            {markPrice && markPrice !== '0' && enhancedTokenData.isDeployed && (
+            {showLiveIndicator && (
               <span className="ml-2 text-xs bg-green-900 text-green-300 px-1.5 py-0.5 rounded-full">
                 LIVE
               </span>
@@ -299,8 +332,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           <div className="flex items-center gap-4 text-xs text-[#808080]">
             <span>
               Mark: ${formatNumberWithCommas(enhancedTokenData.markPrice)}
-              {isLoadingTrading && <span className="ml-1 text-blue-400 animate-spin">⟳</span>}
-              {!isLoadingTrading && enhancedTokenData.isDeployed && <span className="ml-1 text-green-400">●</span>}
+              {isLoadingMarkPrice && <span className="ml-1 text-blue-400 animate-spin">⟳</span>}
+              {!isLoadingMarkPrice && enhancedTokenData.isDeployed && !markPriceError && (
+                <span className="ml-1 text-green-400" title="Real-time mark price from VAMM contract">●</span>
+              )}
+              {markPriceError && (
+                <span className="ml-1 text-amber-400" title="Using fallback price - contract call failed">◐</span>
+              )}
             </span>
             {enhancedTokenData.isDeployed && enhancedTokenData.fundingRate !== 0 && (
               <span>
@@ -314,14 +352,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 Deployment Pending
               </span>
             )}
-            {tradingError && (
-              <span className="text-red-400 text-xs">
-                ⚠️ Real-time Data Error
+            {markPriceError && (
+              <span className="text-amber-400 text-xs" title="Mark price contract call failed - using fallback">
+                ⚠️ Fallback Price
               </span>
             )}
-            {priceError && !tradingError && (
+            {tradingError && (
               <span className="text-yellow-400 text-xs">
-                ⚠️ Fallback Mode
+                ⚠️ Trading Data Error
               </span>
             )}
           </div>
@@ -330,11 +368,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           {enhancedTokenData.isDeployed && (
             <button
               onClick={handleManualRefresh}
-              disabled={isLoadingPrice || isLoadingTrading}
+              disabled={isLoadingMarkPrice || isLoadingTrading}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-[#2A2A2A] hover:bg-[#3A3A3A] disabled:opacity-50 disabled:cursor-not-allowed text-[#808080] hover:text-white transition-colors"
-              title="Refresh price data"
+              title="Refresh mark price and trading data"
             >
-              <span className={`${isLoadingPrice || isLoadingTrading ? 'animate-spin' : ''}`}>
+              <span className={`${isLoadingMarkPrice || isLoadingTrading ? 'animate-spin' : ''}`}>
                 ⟳
               </span>
               <span className="hidden sm:inline">Refresh</span>

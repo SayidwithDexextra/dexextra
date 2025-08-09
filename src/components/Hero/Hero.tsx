@@ -6,7 +6,33 @@ import { HeroProps, CountdownTime } from './types';
 import Hero3DBackground from './Hero3DBackground';
 import Dither from './Dither';
 
+// Error Boundary Component for Canvas
+class CanvasErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback?: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode; fallback?: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
+  static getDerivedStateFromError(error: Error) {
+    console.warn('Canvas error caught by boundary:', error);
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.warn('Canvas error details:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || <div className={styles.background} style={{ background: 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)' }} />;
+    }
+
+    return this.props.children;
+  }
+}
 
 const VerificationBadge: React.FC<{ isVerified: boolean }> = ({ isVerified }) => {
   if (!isVerified) return null;
@@ -99,22 +125,31 @@ const Hero: React.FC<HeroProps> = ({
       className={`${styles.hero} ${className}`}
       style={heroStyle}
     >
-      {/* Dynamic dithered background */}
-      <div className={styles.background}>
-        <Dither
-          waveColor={[0.7, 0.5, 0.5]}
-          disableAnimation={false}
-          enableMouseInteraction={true}
-          mouseRadius={0.3}
-          colorNum={4}
-          waveAmplitude={0.3}
-          waveFrequency={3}
-          waveSpeed={0.02}
-        />
-      </div>
+      {/* Dynamic dithered background with error boundary */}
+      <CanvasErrorBoundary>
+        <div className={styles.background}>
+          <Dither
+            waveColor={[0.7, 0.5, 0.5]}
+            disableAnimation={false}
+            enableMouseInteraction={true}
+            mouseRadius={0.3}
+            colorNum={4}
+            waveAmplitude={0.3}
+            waveFrequency={3}
+            waveSpeed={0.02}
+          />
+        </div>
+      </CanvasErrorBoundary>
 
       
       <div className={styles.container}>
+        <div className={styles.logoContainer}>
+          <img 
+            src="/Dexicon/LOGO-Dexetera-01.svg" 
+            alt="Dextra Logo" 
+            className={styles.logo}
+          />
+        </div>
         <h1 className={styles.title}>{data.title}</h1>
         <p className={styles.subHeading}>Create, and Trade, Community Made Futures Tokens</p>
    

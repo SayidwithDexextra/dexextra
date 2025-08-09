@@ -87,7 +87,7 @@ const handleSave = async () => {
     const updateData = formDataToUserProfile(formData, walletAddress, profileImage);
     
     await UserProfileService.updateProfile(walletAddress, updateData);
-    console.log('Profile updated successfully!');
+     console.log('Profile updated successfully!');
   } catch (error) {
     console.error('Failed to update profile:', error);
   }
@@ -115,7 +115,7 @@ useEffect(() => {
 const handleWalletConnect = async (walletAddress: string) => {
   try {
     const profile = await UserProfileService.getOrCreateProfile(walletAddress);
-    console.log('User profile:', profile);
+     console.log('User profile:', profile);
   } catch (error) {
     console.error('Error handling wallet connection:', error);
   }

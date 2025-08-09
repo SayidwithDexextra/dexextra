@@ -37,12 +37,12 @@ const sampleMarketData: MarketTickerCardData[] = [
 
 const MarketTickerCardDemo: React.FC = () => {
   const handleViewProduct = (cardId: string) => {
-    console.log('View Product clicked for card:', cardId);
+     console.log('View Product clicked for card:', cardId);
     // Implement your product view logic here
   };
 
   const handleViewDemo = (cardId: string) => {
-    console.log('View Demo clicked for card:', cardId);
+     console.log('View Demo clicked for card:', cardId);
     // Implement your demo view logic here
   };
 

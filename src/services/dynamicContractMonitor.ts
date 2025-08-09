@@ -5,25 +5,12 @@
  * adds newly created contracts to webhook monitoring in real-time.
  */
 
-import { ethers } from 'ethers'
 import { AlchemyNotifyService, getAlchemyNotifyService } from './alchemyNotifyService'
 import { EventDatabase } from '../lib/eventDatabase'
 import { env } from '../lib/env'
+import { getContractAddress, FACTORY_ABI } from '@/lib/contracts'
 
-// Factory contract ABI for monitoring market creation events
-const FACTORY_ABI = [
-  "event MarketCreated(bytes32 indexed marketId, string symbol, address indexed vamm, address indexed vault, address oracle, address collateralToken, uint256 startingPrice, uint8 marketType)",
-  "event ContractDeployed(bytes32 indexed marketId, address indexed contractAddress, string contractType, bytes constructorArgs)",
-  "function getMarket(bytes32 marketId) external view returns (tuple(address vamm, address vault, address oracle, address collateralToken, string symbol, bool isActive, uint256 createdAt, uint256 startingPrice, uint8 marketType))"
-]
-
-// Factory contract addresses per network
-const FACTORY_ADDRESSES: Record<string, string> = {
-  polygon: "0x70Cbc2F399A9E8d1fD4905dBA82b9C7653dfFc74",
-  mumbai: "", // Add your testnet factory address
-  ethereum: "", // Add your mainnet factory address
-  sepolia: "" // Add your testnet factory address
-}
+// Factory contract addresses are now managed centrally
 
 export interface NewContractDeployment {
   marketId: string
@@ -47,10 +34,7 @@ export class DynamicContractMonitor {
   private monitoredContracts = new Set<string>()
 
   constructor(network: string = 'polygon') {
-    this.factoryAddress = FACTORY_ADDRESSES[network]
-    if (!this.factoryAddress) {
-      throw new Error(`Factory address not configured for network: ${network}`)
-    }
+    this.factoryAddress = getContractAddress(network, 'VAMM_FACTORY')
   }
 
   /**
@@ -58,7 +42,7 @@ export class DynamicContractMonitor {
    */
   async initialize(): Promise<void> {
     try {
-      console.log('🔧 Initializing Dynamic Contract Monitor...')
+       console.log('🔧 Initializing Dynamic Contract Monitor...')
       
       this.alchemyNotify = await getAlchemyNotifyService()
       this.database = new EventDatabase()
@@ -69,7 +53,7 @@ export class DynamicContractMonitor {
       // Load existing contracts to avoid re-adding them
       await this.loadExistingContracts()
       
-      console.log('✅ Dynamic Contract Monitor initialized')
+       console.log('✅ Dynamic Contract Monitor initialized')
     } catch (error) {
       console.error('❌ Failed to initialize Dynamic Contract Monitor:', error)
       throw error
@@ -81,7 +65,7 @@ export class DynamicContractMonitor {
    */
   async ensureFactoryMonitoring(): Promise<void> {
     try {
-      console.log('🏭 Ensuring factory contract is monitored...')
+       console.log('🏭 Ensuring factory contract is monitored...')
       
       // Get current webhook configuration
       const webhookConfig = await this.database.getWebhookConfig()
@@ -93,7 +77,7 @@ export class DynamicContractMonitor {
       )
       
       if (!factoryExists) {
-        console.log('➕ Adding factory contract to webhook monitoring...')
+         console.log('➕ Adding factory contract to webhook monitoring...')
         
         // Add factory to contracts list
         const updatedContracts = [
@@ -108,9 +92,9 @@ export class DynamicContractMonitor {
         // Update database configuration with factory included
         await this.updateDatabaseConfiguration(updatedContracts)
         
-        console.log('✅ Factory contract added to webhook monitoring')
+         console.log('✅ Factory contract added to webhook monitoring')
       } else {
-        console.log('✅ Factory contract already being monitored')
+         console.log('✅ Factory contract already being monitored')
       }
     } catch (error) {
       console.error('❌ Failed to ensure factory monitoring:', error)
@@ -127,7 +111,7 @@ export class DynamicContractMonitor {
       for (const contract of contracts) {
         this.monitoredContracts.add(contract.address.toLowerCase())
       }
-      console.log(`📋 Loaded ${this.monitoredContracts.size} existing monitored contracts`)
+       console.log(`📋 Loaded ${this.monitoredContracts.size} existing monitored contracts`)
     } catch (error) {
       console.error('❌ Failed to load existing contracts:', error)
     }
@@ -138,7 +122,7 @@ export class DynamicContractMonitor {
    */
   async processMarketCreatedEvent(event: any): Promise<void> {
     try {
-      console.log('🎯 Processing MarketCreated event:', event)
+       console.log('🎯 Processing MarketCreated event:', event)
       
       const deployment = await this.parseMarketCreatedEvent(event)
       
@@ -173,7 +157,7 @@ export class DynamicContractMonitor {
       }
       
       if (newContracts.length > 0) {
-        console.log(`➕ Adding ${newContracts.length} new contracts to webhook monitoring...`)
+         console.log(`➕ Adding ${newContracts.length} new contracts to webhook monitoring...`)
         
         // Get current webhook config and add new contracts
         const webhookConfig = await this.database.getWebhookConfig()
@@ -188,9 +172,9 @@ export class DynamicContractMonitor {
           this.storeNewDeployment(deployment)
         ])
         
-        console.log('✅ New contracts added to monitoring:', newContracts.map(c => c.name))
+         console.log('✅ New contracts added to monitoring:', newContracts.map(c => c.name))
       } else {
-        console.log('ℹ️ All contracts from this deployment are already being monitored')
+         console.log('ℹ️ All contracts from this deployment are already being monitored')
       }
       
     } catch (error) {
@@ -210,8 +194,8 @@ export class DynamicContractMonitor {
         updatedAt: new Date()
       })
       
-      console.log('✅ Database configuration updated with new contracts')
-      console.log('ℹ️ Note: Alchemy webhook itself unchanged (API limitation)')
+       console.log('✅ Database configuration updated with new contracts')
+       console.log('ℹ️ Note: Alchemy webhook itself unchanged (API limitation)')
     } catch (error) {
       console.error('❌ Failed to update database configuration:', error)
       throw error
@@ -258,7 +242,7 @@ export class DynamicContractMonitor {
         blockNumber: deployment.blockNumber
       })
       
-      console.log('💾 New deployment stored in database:', deployment.symbol)
+       console.log('💾 New deployment stored in database:', deployment.symbol)
     } catch (error) {
       console.error('❌ Failed to store deployment:', error)
     }

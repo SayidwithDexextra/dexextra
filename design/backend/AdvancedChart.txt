@@ -1,0 +1,1186 @@
+# Advanced Chart Backend Infrastructure Implementation Plan
+
+## Overview
+This document outlines the complete backend infrastructure for supporting both TradingView Advanced Charts and LightweightCharts on our vAMM markets platform. The system is designed to handle millions of markets with real-time data streaming and high-performance analytics.
+
+## Cloud-Native Architecture (No Docker Required)
+
+### Infrastructure Overview
+This implementation uses managed cloud services for maximum scalability and reliability:
+
+- **ClickHouse Cloud**: Managed time-series database for ultra-fast queries
+- **Upstash Redis**: Serverless caching for sub-second data access  
+- **Pusher**: Real-time WebSocket service for live chart updates
+- **Vercel**: Serverless hosting for API endpoints and frontend
+
+### 1. ClickHouse Cloud Setup
+
+#### A. Account Creation & Service Setup
+```bash
+# Step 1: Create ClickHouse Cloud Account
+# Visit: https://clickhouse.cloud/
+# Sign up with your email and create organization
+
+# Step 2: Create New Service
+# - Choose region closest to your users
+# - Select "Development" tier for testing (can upgrade later)
+# - Note down connection details
+
+# Your connection will look like:
+CLICKHOUSE_HOST=https://abc123.us-east-1.aws.clickhouse.cloud:8443
+CLICKHOUSE_USER=default
+CLICKHOUSE_PASSWORD=auto_generated_secure_password
+CLICKHOUSE_DATABASE=vamm_analytics
+```
+
+#### B. Initial Connection Test
+```bash
+# Test your connection
+curl -H "Authorization: Basic $(echo -n 'default:your_password' | base64)" \
+     "https://your-host.clickhouse.cloud:8443/?query=SELECT%201"
+
+# Expected response: 1
+```
+
+### 2. Upstash Redis Setup (Serverless Cache)
+
+#### A. Account & Database Creation  
+```bash
+# Step 1: Sign up at https://upstash.com/
+# Step 2: Create new Redis database
+# - Choose region matching your ClickHouse region
+# - Select "Free" tier for development
+
+# Your credentials:
+UPSTASH_REDIS_REST_URL=https://abc123.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your_secure_token
+```
+
+#### B. Connection Test
+```bash
+# Test Redis connection
+curl -H "Authorization: Bearer your_token" \
+     -X POST "https://abc123.upstash.io/set/test/hello"
+
+curl -H "Authorization: Bearer your_token" \
+     "https://abc123.upstash.io/get/test"
+# Expected: "hello"
+```
+
+### 3. Pusher Setup (Real-time WebSocket Service)
+
+#### A. App Creation
+```bash
+# Step 1: Sign up at https://pusher.com/
+# Step 2: Create new Channels app
+# - Choose cluster closest to your users
+# - Enable client events for bidirectional communication
+
+# Your app credentials:
+PUSHER_APP_ID=123456
+PUSHER_KEY=your_public_key
+PUSHER_SECRET=your_secret_key
+PUSHER_CLUSTER=us2
+```
+
+#### B. Test Real-time Connection
+```javascript
+// Quick test in browser console
+const pusher = new Pusher('your_key', { cluster: 'us2' });
+const channel = pusher.subscribe('test-channel');
+channel.bind('test-event', (data) =>  console.log(data));
+```
+
+### 4. Environment Configuration
+
+#### A. Complete Environment Variables
+```bash
+# =============================================
+# CLOUD-NATIVE CONFIGURATION
+# =============================================
+
+# ClickHouse Cloud
+CLICKHOUSE_HOST=https://your-instance.clickhouse.cloud:8443
+CLICKHOUSE_USER=default
+CLICKHOUSE_PASSWORD=your_generated_password
+CLICKHOUSE_DATABASE=vamm_analytics
+CLICKHOUSE_SECURE=true
+CLICKHOUSE_REQUEST_TIMEOUT=30000
+
+# Upstash Redis (Serverless)
+UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your_redis_token
+
+# Pusher (Real-time)
+PUSHER_APP_ID=your_app_id
+PUSHER_KEY=your_public_key
+PUSHER_SECRET=your_secret_key
+PUSHER_CLUSTER=us2
+NEXT_PUBLIC_PUSHER_KEY=your_public_key
+NEXT_PUBLIC_PUSHER_CLUSTER=us2
+
+# Performance Settings
+CHART_DATA_CACHE_TTL=30
+OHLCV_1M_CACHE_TTL=300
+WEBSOCKET_HEARTBEAT_INTERVAL=30000
+MAX_CONCURRENT_QUERIES=10
+
+# API Configuration
+CORS_ORIGINS=https://your-domain.com,http://localhost:3000
+RATE_LIMIT_REQUESTS=1000
+RATE_LIMIT_WINDOW_MS=60000
+
+# Monitoring (Optional)
+SENTRY_DSN=your_sentry_dsn
+VERCEL_ANALYTICS_ID=your_analytics_id
+```
+
+### 5. Quick Start (5 Minutes)
+
+#### A. Local Development Setup
+```bash
+# 1. Clone and install dependencies
+git clone your-repo
+cd your-project
+npm install
+
+# 2. Configure environment
+cp design/backend/environment-variables.txt .env
+# Edit .env with your cloud service credentials
+
+# 3. Initialize database schema
+npm run setup:clickhouse-cloud
+
+# 4. Start development server  
+npm run dev
+
+# 5. Test endpoints
+curl http://localhost:3000/api/charts/health
+curl http://localhost:3000/api/tradingview/config
+```
+
+#### B. Database Schema Initialization
+```bash
+# Run this script to set up your ClickHouse Cloud database
+# (This will be automated in setup-infrastructure.sh)
+
+# Connect to ClickHouse Cloud and run all table creation scripts
+clickhouse-client \
+  --host your-host.clickhouse.cloud \
+  --port 9440 \
+  --secure \
+  --user default \
+  --password your_password \
+  --database vamm_analytics \
+  --multiquery < design/backend/schemas/init-clickhouse.sql
+```
+
+## Architecture Components
+
+### 1. ClickHouse Database Schema
+```sql
+-- =============================================
+-- CORE PRICING DATA TABLES
+-- =============================================
+
+-- Main transactions table for raw market data
+CREATE TABLE vamm_market_transactions (
+    -- Market identification
+    market_id UInt64,
+    market_symbol LowCardinality(String),
+    contract_address String,
+    
+    -- Time series data
+    timestamp DateTime64(3),
+    block_number UInt64,
+    transaction_hash String,
+    log_index UInt32,
+    
+    -- Price and trading data
+    price Decimal64(18),
+    price_type LowCardinality(String), -- 'mark', 'entry', 'exit', 'liquidation'
+    volume Decimal64(18),
+    size Decimal64(18),
+    fee Decimal64(18),
+    
+    -- Position data
+    user_address String,
+    position_id UInt64,
+    is_long UInt8,
+    leverage Decimal32(6),
+    pnl Nullable(Decimal64(18)),
+    
+    -- Market state
+    total_long_size Decimal64(18),
+    total_short_size Decimal64(18),
+    open_interest Decimal64(18),
+    funding_rate Nullable(Decimal64(18)),
+    
+    -- Event metadata
+    event_type LowCardinality(String),
+    chain_id UInt16,
+    
+    -- Computed columns for partitioning
+    day Date MATERIALIZED toDate(timestamp),
+    hour DateTime MATERIALIZED toStartOfHour(timestamp),
+    minute DateTime MATERIALIZED toStartOfMinute(timestamp)
+)
+ENGINE = MergeTree()
+PARTITION BY (day, market_symbol)
+ORDER BY (market_id, timestamp, price_type, transaction_hash)
+SETTINGS index_granularity = 8192;
+
+-- =============================================
+-- OHLCV AGGREGATION TABLES
+-- =============================================
+
+-- 1-second OHLCV for ultra-high frequency data
+CREATE TABLE vamm_ohlcv_1s (
+    market_id UInt64,
+    market_symbol LowCardinality(String),
+    timestamp DateTime,
+    
+    -- OHLCV data
+    open Decimal64(18),
+    high Decimal64(18),
+    low Decimal64(18),
+    close Decimal64(18),
+    volume Decimal64(18),
+    
+    -- Extended metrics
+    trades_count UInt32,
+    vwap Decimal64(18),
+    total_fees Decimal64(18),
+    unique_traders UInt16,
+    
+    -- Market microstructure
+    buy_volume Decimal64(18),
+    sell_volume Decimal64(18),
+    long_trades UInt16,
+    short_trades UInt16,
+    
+    -- Liquidation data
+    liquidation_volume Decimal64(18),
+    liquidation_count UInt16,
+    
+    -- Funding and interest
+    funding_rate Nullable(Decimal64(18)),
+    open_interest Decimal64(18),
+    
+    -- TradingView compatibility
+    unix_timestamp UInt32 MATERIALIZED toUnixTimestamp(timestamp),
+    day Date MATERIALIZED toDate(timestamp)
+)
+ENGINE = SummingMergeTree()
+PARTITION BY day
+ORDER BY (market_id, timestamp)
+SETTINGS index_granularity = 4096;
+
+-- Auto-populate 1s OHLCV from transactions
+CREATE MATERIALIZED VIEW vamm_ohlcv_1s_mv TO vamm_ohlcv_1s AS
+SELECT
+    market_id,
+    market_symbol,
+    toStartOfSecond(timestamp) as timestamp,
+    
+    -- OHLCV calculation
+    argMinIf(price, timestamp, price_type = 'mark' AND price > 0) as open,
+    maxIf(price, price_type = 'mark' AND price > 0) as high,
+    minIf(price, price_type = 'mark' AND price > 0) as low,
+    argMaxIf(price, timestamp, price_type = 'mark' AND price > 0) as close,
+    sumIf(volume, event_type IN ('PositionOpened', 'PositionClosed')) as volume,
+    
+    -- Extended metrics
+    countIf(event_type IN ('PositionOpened', 'PositionClosed')) as trades_count,
+    sumIf(volume * price, event_type IN ('PositionOpened', 'PositionClosed')) / 
+        nullIf(sumIf(volume, event_type IN ('PositionOpened', 'PositionClosed')), 0) as vwap,
+    sumIf(fee, event_type IN ('PositionOpened', 'PositionClosed')) as total_fees,
+    uniq(user_address) as unique_traders,
+    
+    -- Market microstructure
+    sumIf(volume, is_long = 1 AND event_type IN ('PositionOpened', 'PositionClosed')) as buy_volume,
+    sumIf(volume, is_long = 0 AND event_type IN ('PositionOpened', 'PositionClosed')) as sell_volume,
+    countIf(is_long = 1 AND event_type IN ('PositionOpened', 'PositionClosed')) as long_trades,
+    countIf(is_long = 0 AND event_type IN ('PositionOpened', 'PositionClosed')) as short_trades,
+    
+    -- Liquidation data
+    sumIf(volume, event_type = 'PositionLiquidated') as liquidation_volume,
+    countIf(event_type = 'PositionLiquidated') as liquidation_count,
+    
+    -- Latest market state
+    argMaxIf(funding_rate, timestamp, funding_rate IS NOT NULL) as funding_rate,
+    argMaxIf(open_interest, timestamp, open_interest > 0) as open_interest
+
+FROM vamm_market_transactions
+WHERE price > 0
+GROUP BY market_id, market_symbol, timestamp;
+
+-- Create higher timeframe tables
+CREATE TABLE vamm_ohlcv_1m AS vamm_ohlcv_1s ENGINE = SummingMergeTree() PARTITION BY day ORDER BY (market_id, timestamp);
+CREATE TABLE vamm_ohlcv_5m AS vamm_ohlcv_1s ENGINE = SummingMergeTree() PARTITION BY day ORDER BY (market_id, timestamp);
+CREATE TABLE vamm_ohlcv_15m AS vamm_ohlcv_1s ENGINE = SummingMergeTree() PARTITION BY day ORDER BY (market_id, timestamp);
+CREATE TABLE vamm_ohlcv_1h AS vamm_ohlcv_1s ENGINE = SummingMergeTree() PARTITION BY day ORDER BY (market_id, timestamp);
+CREATE TABLE vamm_ohlcv_1d AS vamm_ohlcv_1s ENGINE = SummingMergeTree() PARTITION BY toStartOfMonth(day) ORDER BY (market_id, timestamp);
+
+-- Auto-aggregate higher timeframes
+CREATE MATERIALIZED VIEW vamm_ohlcv_1m_mv TO vamm_ohlcv_1m AS
+SELECT
+    market_id, market_symbol,
+    toStartOfMinute(timestamp) as timestamp,
+    argMin(open, timestamp) as open,
+    max(high) as high,
+    min(low) as low,
+    argMax(close, timestamp) as close,
+    sum(volume) as volume,
+    sum(trades_count) as trades_count,
+    sum(volume * vwap) / nullIf(sum(volume), 0) as vwap,
+    sum(total_fees) as total_fees,
+    max(unique_traders) as unique_traders,
+    sum(buy_volume) as buy_volume,
+    sum(sell_volume) as sell_volume,
+    sum(long_trades) as long_trades,
+    sum(short_trades) as short_trades,
+    sum(liquidation_volume) as liquidation_volume,
+    sum(liquidation_count) as liquidation_count,
+    argMax(funding_rate, timestamp) as funding_rate,
+    argMax(open_interest, timestamp) as open_interest
+FROM vamm_ohlcv_1s
+GROUP BY market_id, market_symbol, timestamp;
+
+-- Similar views for 5m, 15m, 1h, 1d...
+
+-- =============================================
+-- MARKET METADATA TABLE
+-- =============================================
+
+CREATE TABLE vamm_markets (
+    market_id UInt64,
+    market_symbol String,
+    contract_address String,
+    vault_address String,
+    oracle_address String,
+    
+    -- Market metadata
+    name String,
+    description String,
+    category LowCardinality(String),
+    base_asset String,
+    quote_asset String,
+    
+    -- Trading info
+    min_trade_size Decimal64(18),
+    max_leverage Decimal32(6),
+    trading_fee_rate Decimal32(8),
+    funding_interval UInt32,
+    
+    -- Market status
+    is_active UInt8,
+    created_timestamp DateTime,
+    deployment_block UInt64,
+    creator_address String,
+    
+    -- Current state (updated via materialized views)
+    current_price Decimal64(18),
+    price_24h_ago Decimal64(18),
+    volume_24h Decimal64(18),
+    trades_24h UInt64,
+    open_interest Decimal64(18),
+    market_cap Decimal64(18),
+    
+    -- Performance tier
+    tier LowCardinality(String), -- 'tier1', 'tier2', 'tier3', 'tier4'
+    
+    -- UI data
+    icon_url String,
+    banner_url String,
+    website_url String,
+    
+    -- Updated timestamp
+    last_updated DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(last_updated)
+ORDER BY market_id
+SETTINGS index_granularity = 1024;
+
+-- =============================================
+-- REAL-TIME PRICE FEED TABLE
+-- =============================================
+
+CREATE TABLE vamm_live_prices (
+    market_id UInt64,
+    market_symbol LowCardinality(String),
+    timestamp DateTime64(3),
+    
+    -- Current prices
+    mark_price Decimal64(18),
+    index_price Nullable(Decimal64(18)),
+    funding_rate Nullable(Decimal64(18)),
+    
+    -- Volume data
+    volume_1m Decimal64(18),
+    volume_5m Decimal64(18),
+    volume_1h Decimal64(18),
+    
+    -- Market state
+    open_interest Decimal64(18),
+    long_short_ratio Decimal32(6),
+    
+    -- Volatility
+    price_change_1h Decimal32(6),
+    price_change_24h Decimal32(6),
+    volatility_24h Decimal32(6),
+    
+    -- Liquidity metrics
+    bid_ask_spread Decimal32(8),
+    market_depth Decimal64(18),
+    
+    -- Active traders
+    active_traders_1h UInt32,
+    active_traders_24h UInt32
+)
+ENGINE = ReplacingMergeTree(timestamp)
+PARTITION BY toDate(timestamp)
+ORDER BY (market_id, timestamp)
+SETTINGS index_granularity = 1024;
+```
+
+### 2. API Endpoints Structure
+
+#### A. TradingView Datafeed API
+```typescript
+// /api/tradingview/config
+GET /api/tradingview/config
+Response: {
+  supported_resolutions: ['1S', '1', '5', '15', '30', '60', '240', '1D', '1W', '1M'],
+  supports_group_request: false,
+  supports_marks: true,
+  supports_search: true,
+  supports_time: true,
+  exchanges: [{ value: 'VAMM', name: 'vAMM Markets', desc: 'Virtual AMM' }],
+  symbols_types: [{ name: 'crypto', value: 'crypto' }]
+}
+
+// /api/tradingview/symbols
+GET /api/tradingview/symbols?symbol=GOLD
+Response: {
+  name: 'GOLD',
+  ticker: 'GOLD',
+  description: 'Gold Futures',
+  type: 'crypto',
+  session: '24x7',
+  timezone: 'Etc/UTC',
+  exchange: 'VAMM',
+  minmov: 1,
+  pricescale: 1000000,
+  has_intraday: true,
+  supported_resolutions: ['1S', '1', '5', '15', '30', '60', '240', '1D'],
+  volume_precision: 8,
+  data_status: 'streaming'
+}
+
+// /api/tradingview/search
+GET /api/tradingview/search?query=GOLD&limit=10
+Response: [
+  {
+    symbol: 'GOLD',
+    full_name: 'VAMM:GOLD',
+    description: 'Gold Futures Market',
+    exchange: 'VAMM',
+    ticker: 'GOLD',
+    type: 'crypto'
+  }
+]
+
+// /api/tradingview/history
+GET /api/tradingview/history?symbol=GOLD&resolution=1&from=1640995200&to=1641081600
+Response: {
+  s: 'ok',
+  t: [1640995200, 1640995260, 1640995320],
+  o: [2000.50, 2001.25, 2000.75],
+  h: [2001.00, 2002.00, 2001.50],
+  l: [2000.25, 2000.50, 2000.25],
+  c: [2001.25, 2000.75, 2001.00],
+  v: [150000, 175000, 125000]
+}
+
+// /api/tradingview/stream
+WebSocket /api/tradingview/stream
+Message: {
+  symbol: 'GOLD',
+  price: 2001.50,
+  volume: 1000,
+  time: 1641081600
+}
+```
+
+#### B. LightweightCharts API
+```typescript
+// /api/lightweight/ohlcv
+GET /api/lightweight/ohlcv?symbol=GOLD&timeframe=1m&from=2024-01-01&to=2024-01-02
+Response: {
+  success: true,
+  data: [
+    {
+      time: '2024-01-01T00:00:00.000Z',
+      open: 2000.50,
+      high: 2001.00,
+      low: 2000.25,
+      close: 2001.25,
+      volume: 150000
+    }
+  ],
+  meta: {
+    symbol: 'GOLD',
+    timeframe: '1m',
+    count: 1440,
+    from: '2024-01-01T00:00:00.000Z',
+    to: '2024-01-02T00:00:00.000Z'
+  }
+}
+
+// /api/lightweight/realtime
+WebSocket /api/lightweight/realtime
+Message: {
+  type: 'price_update',
+  symbol: 'GOLD',
+  data: {
+    time: 1641081600,
+    price: 2001.50,
+    volume: 1000
+  }
+}
+
+// /api/lightweight/markets
+GET /api/lightweight/markets?tier=tier1&limit=50
+Response: {
+  success: true,
+  data: [
+    {
+      market_id: 1,
+      symbol: 'GOLD',
+      name: 'Gold Futures',
+      current_price: 2001.50,
+      price_change_24h: 1.25,
+      volume_24h: 5000000,
+      market_cap: 100000000,
+      tier: 'tier1'
+    }
+  ]
+}
+```
+
+### 3. Real-time Streaming with Pusher (Cloud-Native WebSocket Alternative)
+
+#### A. Pusher Real-time Price Streaming
+```typescript
+// Pusher-based real-time streaming (serverless-compatible)
+import Pusher from 'pusher';
+import { Redis } from '@upstash/redis';
+
+class ChartDataPusherStreamer {
+  private pusher: Pusher;
+  private clickhouse: ClickHouseClient;
+  private redis: Redis;
+  private priceUpdateInterval: NodeJS.Timeout;
+
+  constructor() {
+    this.pusher = new Pusher({
+      appId: process.env.PUSHER_APP_ID!,
+      key: process.env.PUSHER_KEY!,
+      secret: process.env.PUSHER_SECRET!,
+      cluster: process.env.PUSHER_CLUSTER!,
+      useTLS: true
+    });
+    
+    this.clickhouse = createClickHouseClient();
+    this.redis = Redis.fromEnv();
+    this.startPriceStreaming();
+  }
+
+  // Broadcast price updates to all subscribers
+  async broadcastPriceUpdate(marketSymbol: string, priceData: any) {
+    const channel = `market-${marketSymbol}`;
+    const event = 'price-update';
+    
+    await this.pusher.trigger(channel, event, {
+      symbol: marketSymbol,
+      timestamp: Math.floor(Date.now() / 1000),
+      ...priceData
+    });
+  }
+
+  // Stream live price updates every second (serverless-friendly)
+  private startPriceStreaming() {
+    this.priceUpdateInterval = setInterval(async () => {
+      try {
+        const activePrices = await this.getActivePrices();
+        
+        // Batch broadcast for efficiency
+        const broadcasts = [];
+        for (const [symbol, price] of activePrices) {
+          broadcasts.push(this.broadcastPriceUpdate(symbol, {
+            open: price.open,
+            high: price.high,
+            low: price.low,
+            close: price.close,
+            volume: price.volume,
+            trades: price.trades_count
+          }));
+        }
+        
+        await Promise.all(broadcasts);
+        
+        // Cache active prices for API fallback
+        await this.redis.setex(
+          'active_prices', 
+          60, 
+          JSON.stringify(Object.fromEntries(activePrices))
+        );
+        
+      } catch (error) {
+        console.error('Price streaming error:', error);
+      }
+    }, 1000);
+  }
+
+  private async getActivePrices(): Promise<Map<string, any>> {
+    const query = `
+      SELECT 
+        market_symbol,
+        open,
+        high, 
+        low,
+        close,
+        volume,
+        trades_count,
+        timestamp
+      FROM vamm_ohlcv_1s
+      WHERE timestamp >= now() - INTERVAL 5 SECOND
+      GROUP BY market_symbol
+      HAVING timestamp = max(timestamp)
+      ORDER BY volume DESC
+      LIMIT 1000
+    `;
+
+    const result = await this.clickhouse.query({ query });
+    const data = await result.json();
+    
+    const priceMap = new Map();
+    for (const row of data.data) {
+      priceMap.set(row.market_symbol, row);
+    }
+    return priceMap;
+  }
+
+  // Batch trigger for multiple markets (more efficient)
+  async broadcastBatchUpdate(updates: Array<{symbol: string, data: any}>) {
+    const triggerPromises = updates.map(update => 
+      this.pusher.trigger(`market-${update.symbol}`, 'price-update', update.data)
+    );
+    
+    await Promise.all(triggerPromises);
+  }
+}
+
+// Client-side Pusher integration for charts
+class PusherChartClient {
+  private pusher: PusherJS;
+  private subscriptions: Map<string, any> = new Map();
+
+  constructor() {
+    this.pusher = new PusherJS(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
+      enabledTransports: ['ws', 'wss'],
+      activityTimeout: 30000,
+      pongTimeout: 6000
+    });
+  }
+
+  // Subscribe to real-time price updates for a market
+  subscribeToMarket(symbol: string, callback: (data: any) => void) {
+    const channelName = `market-${symbol}`;
+    
+    if (this.subscriptions.has(channelName)) {
+      return this.subscriptions.get(channelName);
+    }
+
+    const channel = this.pusher.subscribe(channelName);
+    
+    channel.bind('price-update', (data: any) => {
+      // Transform data for chart compatibility
+      const chartData = {
+        time: data.timestamp,
+        open: parseFloat(data.open),
+        high: parseFloat(data.high),
+        low: parseFloat(data.low),
+        close: parseFloat(data.close),
+        volume: parseFloat(data.volume)
+      };
+      
+      callback(chartData);
+    });
+
+    this.subscriptions.set(channelName, channel);
+    return channel;
+  }
+
+  // Unsubscribe from market updates
+  unsubscribeFromMarket(symbol: string) {
+    const channelName = `market-${symbol}`;
+    const channel = this.subscriptions.get(channelName);
+    
+    if (channel) {
+      this.pusher.unsubscribe(channelName);
+      this.subscriptions.delete(channelName);
+    }
+  }
+
+  // Cleanup all subscriptions
+  disconnect() {
+    this.subscriptions.forEach((channel, channelName) => {
+      this.pusher.unsubscribe(channelName);
+    });
+    this.subscriptions.clear();
+    this.pusher.disconnect();
+  }
+}
+```
+
+### 4. Data Processing Pipeline
+
+#### A. Event Ingestion Service
+```typescript
+class VAMMEventProcessor {
+  private clickhouse: ClickHouseClient;
+  private batchBuffer: any[] = [];
+  private batchSize = 10000;
+  private flushInterval = 2000;
+
+  async processBlockchainEvent(event: SmartContractEvent) {
+    // Transform event to market transaction format
+    const transaction = this.transformEvent(event);
+    
+    // Add to batch buffer
+    this.batchBuffer.push(transaction);
+    
+    // Auto-flush if buffer full
+    if (this.batchBuffer.length >= this.batchSize) {
+      await this.flushBatch();
+    }
+  }
+
+  private transformEvent(event: SmartContractEvent): any {
+    return {
+      market_id: this.getMarketId(event.contractAddress),
+      market_symbol: this.getMarketSymbol(event.contractAddress),
+      contract_address: event.contractAddress,
+      timestamp: new Date(event.timestamp),
+      block_number: event.blockNumber,
+      transaction_hash: event.transactionHash,
+      log_index: event.logIndex,
+      price: parseFloat((event as any).price || '0'),
+      price_type: this.determinePriceType(event),
+      volume: parseFloat((event as any).size || '0'),
+      size: parseFloat((event as any).size || '0'),
+      fee: parseFloat((event as any).fee || '0'),
+      user_address: (event as any).user || '',
+      position_id: parseInt((event as any).positionId || '0'),
+      is_long: (event as any).isLong ? 1 : 0,
+      leverage: parseFloat((event as any).leverage || '0'),
+      pnl: (event as any).pnl ? parseFloat((event as any).pnl) : null,
+      event_type: event.eventType,
+      chain_id: event.chainId
+    };
+  }
+
+  private async flushBatch() {
+    if (this.batchBuffer.length === 0) return;
+
+    await this.clickhouse.insert({
+      table: 'vamm_market_transactions',
+      values: this.batchBuffer,
+      format: 'JSONEachRow'
+    });
+
+     console.log(`✅ Flushed ${this.batchBuffer.length} transactions to ClickHouse`);
+    this.batchBuffer = [];
+  }
+}
+```
+
+### 5. Performance Optimizations
+
+#### A. Caching Strategy
+```typescript
+class ChartDataCache {
+  private redis: Redis;
+  private clickhouse: ClickHouseClient;
+
+  // Cache OHLCV data with TTL
+  async cacheOHLCV(symbol: string, timeframe: string, data: any[]) {
+    const key = `ohlcv:${symbol}:${timeframe}`;
+    const ttl = this.getTTL(timeframe);
+    
+    await this.redis.setex(key, ttl, JSON.stringify(data));
+  }
+
+  // Get cached data with fallback to ClickHouse
+  async getOHLCV(symbol: string, timeframe: string, from: number, to: number) {
+    const key = `ohlcv:${symbol}:${timeframe}`;
+    const cached = await this.redis.get(key);
+    
+    if (cached) {
+      return JSON.parse(cached);
+    }
+    
+    // Fallback to ClickHouse
+    const data = await this.queryOHLCVFromClickHouse(symbol, timeframe, from, to);
+    await this.cacheOHLCV(symbol, timeframe, data);
+    
+    return data;
+  }
+
+  private getTTL(timeframe: string): number {
+    const ttls = {
+      '1s': 30,     // 30 seconds
+      '1m': 300,    // 5 minutes
+      '5m': 900,    // 15 minutes
+      '1h': 3600,   // 1 hour
+      '1d': 86400   // 24 hours
+    };
+    return ttls[timeframe] || 300;
+  }
+}
+```
+
+### 6. Dummy Data Population
+
+#### Sample Market Data
+```sql
+-- Insert sample markets
+INSERT INTO vamm_markets VALUES
+(1, 'GOLD', '0x1234...', '0x5678...', '0x9abc...', 'Gold Futures', 'Trade gold price movements', 'Commodities', 'GOLD', 'USD', 100, 50, 0.003, 3600, 1, '2024-01-01 00:00:00', 12345678, '0xabcd...', 2000.50, 1999.25, 5000000, 15000, 50000000, 100000000, 'tier1', 'https://example.com/gold.png', 'https://example.com/gold-banner.png', 'https://goldmarket.com', now()),
+(2, 'BTC', '0x2345...', '0x6789...', '0xbcde...', 'Bitcoin Futures', 'Trade Bitcoin price movements', 'Crypto', 'BTC', 'USD', 0.001, 100, 0.002, 3600, 1, '2024-01-01 01:00:00', 12345679, '0xbcde...', 45000.00, 44500.00, 10000000, 25000, 100000000, 900000000, 'tier1', 'https://example.com/btc.png', 'https://example.com/btc-banner.png', 'https://bitcoin.org', now()),
+(3, 'ETH', '0x3456...', '0x789a...', '0xcdef...', 'Ethereum Futures', 'Trade Ethereum price movements', 'Crypto', 'ETH', 'USD', 0.01, 75, 0.0025, 3600, 1, '2024-01-01 02:00:00', 12345680, '0xcdef...', 2500.00, 2480.00, 8000000, 20000, 75000000, 300000000, 'tier1', 'https://example.com/eth.png', 'https://example.com/eth-banner.png', 'https://ethereum.org', now());
+
+-- Insert sample transactions (last 24 hours)
+INSERT INTO vamm_market_transactions 
+SELECT 
+    number % 3 + 1 as market_id,
+    ['GOLD', 'BTC', 'ETH'][number % 3 + 1] as market_symbol,
+    ['0x1234...', '0x2345...', '0x3456...'][number % 3 + 1] as contract_address,
+    now() - INTERVAL (number * 10) SECOND as timestamp,
+    12345678 + number as block_number,
+    concat('0x', hex(number)) as transaction_hash,
+    number % 10 as log_index,
+    
+    -- Realistic price movements
+    CASE 
+        WHEN number % 3 = 0 THEN 2000 + (sin(number * 0.1) * 50) + (random() * 20 - 10)  -- GOLD
+        WHEN number % 3 = 1 THEN 45000 + (sin(number * 0.1) * 2000) + (random() * 500 - 250)  -- BTC
+        ELSE 2500 + (sin(number * 0.1) * 100) + (random() * 50 - 25)  -- ETH
+    END as price,
+    
+    'mark' as price_type,
+    100 + (random() * 900) as volume,
+    100 + (random() * 900) as size,
+    (100 + (random() * 900)) * 0.003 as fee,
+    
+    concat('0x', hex(number * 123456)) as user_address,
+    number as position_id,
+    number % 2 as is_long,
+    2 + (random() * 8) as leverage,
+    (random() - 0.5) * 1000 as pnl,
+    
+    ['PositionOpened', 'PositionClosed', 'PriceUpdated'][number % 3 + 1] as event_type,
+    137 as chain_id
+    
+FROM numbers(86400)  -- 24 hours of data, one transaction per second
+WHERE number < 86400;
+
+-- Insert live prices
+INSERT INTO vamm_live_prices 
+SELECT 
+    market_id,
+    market_symbol,
+    now() as timestamp,
+    
+    -- Current prices from latest transactions
+    (SELECT price FROM vamm_market_transactions t WHERE t.market_id = m.market_id ORDER BY timestamp DESC LIMIT 1) as mark_price,
+    NULL as index_price,
+    0.0001 + (random() * 0.0008) as funding_rate,
+    
+    -- Volume metrics
+    1000 + (random() * 9000) as volume_1m,
+    5000 + (random() * 45000) as volume_5m,
+    60000 + (random() * 540000) as volume_1h,
+    
+    -- Market state
+    1000000 + (random() * 9000000) as open_interest,
+    0.4 + (random() * 0.2) as long_short_ratio,
+    
+    -- Price changes
+    (random() - 0.5) * 0.1 as price_change_1h,
+    (random() - 0.5) * 0.2 as price_change_24h,
+    0.1 + (random() * 0.4) as volatility_24h,
+    
+    -- Liquidity
+    0.001 + (random() * 0.009) as bid_ask_spread,
+    100000 + (random() * 900000) as market_depth,
+    
+    -- Active traders
+    50 + floor(random() * 450) as active_traders_1h,
+    500 + floor(random() * 4500) as active_traders_24h
+    
+FROM vamm_markets m
+WHERE is_active = 1;
+```
+
+### 7. Monitoring and Health Checks
+
+#### A. Performance Monitoring
+```sql
+-- Query performance monitoring
+SELECT 
+    toStartOfMinute(event_time) as minute,
+    query_kind,
+    count() as query_count,
+    avg(query_duration_ms) as avg_duration,
+    quantile(0.95)(query_duration_ms) as p95_duration,
+    quantile(0.99)(query_duration_ms) as p99_duration
+FROM system.query_log
+WHERE event_time >= now() - INTERVAL 1 HOUR
+  AND query LIKE '%vamm_%'
+GROUP BY minute, query_kind
+ORDER BY minute DESC;
+
+-- Data ingestion monitoring
+SELECT 
+    toStartOfMinute(event_time) as minute,
+    count() as inserts,
+    sum(read_rows) as rows_inserted,
+    formatReadableSize(sum(read_bytes)) as data_size
+FROM system.query_log
+WHERE event_time >= now() - INTERVAL 1 HOUR
+  AND query_kind = 'Insert'
+  AND query LIKE '%vamm_market_transactions%'
+GROUP BY minute
+ORDER BY minute DESC;
+
+-- Storage utilization
+SELECT 
+    table,
+    formatReadableSize(sum(bytes_on_disk)) as size_on_disk,
+    formatReadableSize(sum(data_compressed_bytes)) as compressed_size,
+    round(sum(data_uncompressed_bytes) / sum(data_compressed_bytes), 2) as compression_ratio,
+    count() as parts,
+    sum(rows) as total_rows
+FROM system.parts
+WHERE database = 'default'
+  AND table LIKE 'vamm_%'
+GROUP BY table
+ORDER BY sum(bytes_on_disk) DESC;
+```
+
+### 8. API Rate Limiting and Security
+
+#### A. Rate Limiting Configuration
+```typescript
+const rateLimits = {
+  '/api/tradingview/history': {
+    windowMs: 60000,    // 1 minute
+    max: 100           // 100 requests per minute
+  },
+  '/api/lightweight/ohlcv': {
+    windowMs: 60000,
+    max: 200
+  },
+  '/api/tradingview/search': {
+    windowMs: 60000,
+    max: 50
+  }
+};
+
+// WebSocket connection limits
+const wsLimits = {
+  maxConnections: 1000,
+  maxSubscriptions: 50,
+  messageRateLimit: 100  // messages per second
+};
+```
+
+### 9. Cloud-Native Deployment Configuration
+
+#### A. ClickHouse Cloud Optimization Settings
+```typescript
+// ClickHouse Cloud client configuration for optimal performance
+import { ClickHouse } from '@clickhouse/client'
+
+const clickhouse = new ClickHouse({
+  host: process.env.CLICKHOUSE_HOST,
+  username: process.env.CLICKHOUSE_USER,
+  password: process.env.CLICKHOUSE_PASSWORD,
+  database: process.env.CLICKHOUSE_DATABASE,
+  
+  // Optimized settings for chart data queries
+  clickhouse_settings: {
+    // Performance tuning for time-series queries
+    max_memory_usage: '10000000000',  // 10GB max memory per query
+    max_threads: '8',                 // Parallel processing
+    
+    // Cache optimization
+    use_uncompressed_cache: '1',
+    uncompressed_cache_size: '8589934592', // 8GB cache
+    
+    // Query timeout and limits
+    max_execution_time: '30',         // 30 seconds max query time
+    max_rows_to_read: '100000000',    // 100M rows max
+    
+    // Async insert settings for high throughput
+    async_insert: '1',
+    async_insert_max_data_size: '100000000',
+    async_insert_threads: '4',
+    
+    // Aggregation optimization
+    group_by_two_level_threshold: '100000',
+    max_bytes_before_external_group_by: '5000000000'
+  },
+  
+  // Connection pool settings
+  request_timeout: 30000,
+  max_open_connections: 10,
+  compression: {
+    response: true,
+    request: false
+  }
+})
+
+// Connection health check
+export async function checkClickHouseHealth() {
+  try {
+    const result = await clickhouse.query({ 
+      query: 'SELECT 1 as health, version() as version' 
+    })
+    const data = await result.json()
+     console.log('ClickHouse Cloud Status:', data)
+    return true
+  } catch (error) {
+    console.error('ClickHouse Cloud connection failed:', error)
+    return false
+  }
+}
+```
+
+#### B. Vercel Serverless Configuration
+```json
+// vercel.json - Production deployment configuration
+{
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/charts/**/*.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/tradingview/**/*.ts": {
+      "maxDuration": 25
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/charts/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "s-maxage=30, stale-while-revalidate=600"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods", 
+          "value": "GET, POST, OPTIONS"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/ws",
+      "destination": "https://ws-pusher.pusherapp.com"
+    }
+  ],
+  "env": {
+    "CLICKHOUSE_HOST": "@clickhouse_host",
+    "CLICKHOUSE_USER": "@clickhouse_user",
+    "CLICKHOUSE_PASSWORD": "@clickhouse_password",
+    "UPSTASH_REDIS_REST_URL": "@upstash_redis_url",
+    "PUSHER_APP_ID": "@pusher_app_id"
+  }
+}
+```
+
+#### C. Environment-based Configuration
+```typescript
+// src/lib/config.ts - Environment-aware configuration
+export const config = {
+  clickhouse: {
+    host: process.env.CLICKHOUSE_HOST!,
+    user: process.env.CLICKHOUSE_USER || 'default',
+    password: process.env.CLICKHOUSE_PASSWORD!,
+    database: process.env.CLICKHOUSE_DATABASE || 'vamm_analytics',
+    secure: process.env.CLICKHOUSE_SECURE === 'true',
+    timeout: parseInt(process.env.CLICKHOUSE_REQUEST_TIMEOUT || '30000')
+  },
+  
+  redis: {
+    url: process.env.UPSTASH_REDIS_REST_URL!,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN!
+  },
+  
+  pusher: {
+    appId: process.env.PUSHER_APP_ID!,
+    key: process.env.PUSHER_KEY!,
+    secret: process.env.PUSHER_SECRET!,
+    cluster: process.env.PUSHER_CLUSTER || 'us2'
+  },
+  
+  cache: {
+    ohlcv1m: parseInt(process.env.OHLCV_1M_CACHE_TTL || '300'),
+    ohlcv5m: parseInt(process.env.OHLCV_5M_CACHE_TTL || '600'),
+    marketData: parseInt(process.env.MARKET_DATA_CACHE_TTL || '60')
+  },
+  
+  api: {
+    maxConcurrentQueries: parseInt(process.env.MAX_CONCURRENT_QUERIES || '10'),
+    rateLimitRequests: parseInt(process.env.RATE_LIMIT_REQUESTS || '1000'),
+    rateLimitWindow: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000')
+  }
+}
+
+// Validate required environment variables
+export function validateEnvironment() {
+  const required = [
+    'CLICKHOUSE_HOST',
+    'CLICKHOUSE_PASSWORD', 
+    'UPSTASH_REDIS_REST_URL',
+    'PUSHER_APP_ID'
+  ]
+  
+  const missing = required.filter(key => !process.env[key])
+  
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`)
+  }
+}
+```
+
+This infrastructure provides:
+- Sub-second chart data updates
+- Support for millions of markets
+- Automatic data aggregation across timeframes
+- High-performance WebSocket streaming
+- Comprehensive caching strategies
+- Production-ready monitoring
+- Scalable deployment architecture
+
+The system is designed to handle the scale requirements while maintaining low latency for both TradingView Advanced Charts and LightweightCharts implementations. 

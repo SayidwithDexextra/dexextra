@@ -46,6 +46,11 @@ interface AlchemyTokenBalanceResponse {
   tokenBalances: AlchemyTokenBalance[]
 }
 
+interface AlchemyApiResponse {
+  tokenBalances: AlchemyTokenBalance[]
+  tokenMetadata?: AlchemyTokenMetadataResponse
+}
+
 interface AlchemyTokenMetadataResponse {
   [contractAddress: string]: AlchemyTokenMetadata
 }
@@ -60,101 +65,53 @@ interface EthereumProvider {
   request: (args: { method: string; params?: any[] }) => Promise<any>
 }
 
-// Fetch token balances using Alchemy Token API
+// Fetch token balances and metadata using our API route (which calls Alchemy server-side)
 async function fetchTokenBalancesFromAlchemy(
   walletAddress: string,
   tokenAddresses?: string[]
-): Promise<AlchemyTokenBalanceResponse> {
+): Promise<AlchemyApiResponse> {
   try {
-    console.log("ALCHEMY_API_KEY", env.ALCHEMY_API_KEY)
-    if (!env.ALCHEMY_API_KEY) {
-      throw new Error('Alchemy API key not configured')
-    }
+    console.log("🔄 Fetching token balances for:", walletAddress)
     
-    const url = `${ALCHEMY_API_BASE}/${env.ALCHEMY_API_KEY}`
-
-    console.log("🔄 Making request to:", url)
+    // Call our server-side API route instead of Alchemy directly
+    const url = `/api/wallet/portfolio?address=${encodeURIComponent(walletAddress)}`
     
-    const requestBody = {
-      id: 1,
-      jsonrpc: '2.0',
-      method: 'alchemy_getTokenBalances',
-      params: [
-        walletAddress,
-        tokenAddresses || 'DEFAULT_TOKENS'
-      ]
-    }
-
     const response = await axiosWithTimeout(url, {
-      method: 'POST',
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
-      data: requestBody,
     }, 15000)
 
     if (response.status !== 200) {
-      throw new Error(`Alchemy API error: ${response.status}`)
+      throw new Error(`Portfolio API error: ${response.status}`)
     }
 
-    if (response.data.error) {
-      throw new Error(`Alchemy API error: ${response.data.error.message}`)
+    // Type the response data properly
+    const apiResponse = response.data as { 
+      success: boolean; 
+      data?: AlchemyApiResponse; 
+      error?: string 
     }
 
-    return response.data.result
+    if (!apiResponse.success) {
+      throw new Error(`Portfolio API error: ${apiResponse.error || 'Unknown error'}`)
+    }
+
+    if (!apiResponse.data) {
+      throw new Error('No data returned from portfolio API')
+    }
+
+    // Return both token balances and metadata
+    return apiResponse.data
   } catch (error) {
     console.error('Error fetching token balances from Alchemy:', error)
     throw error
   }
 }
 
-// Fetch token metadata using Alchemy API
-async function fetchTokenMetadataFromAlchemy(
-  contractAddresses: string[]
-): Promise<AlchemyTokenMetadataResponse> {
-  try {
-    if (!env.ALCHEMY_API_KEY) {
-      throw new Error('Alchemy API key not configured')
-    }
-    
-    const url = `${ALCHEMY_API_BASE}/${env.ALCHEMY_API_KEY}`
-    
-    const metadata: AlchemyTokenMetadataResponse = {}
-    
-    // Fetch metadata for each token (Alchemy API allows batch requests)
-    const promises = contractAddresses.map(async (address) => {
-      try {
-        const response = await axiosWithTimeout(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          data: {
-            id: 1,
-            jsonrpc: '2.0',
-            method: 'alchemy_getTokenMetadata',
-            params: [address]
-          },
-        }, 10000)
-
-        if (response.status === 200) {
-          const data = response.data
-          if (data.result && !data.error) {
-            metadata[address] = data.result
-          }
-        }
-      } catch (error) {
-        console.error(`Error fetching metadata for token ${address}:`, error)
-      }
-    })
-
-    await Promise.all(promises)
-    return metadata
-  } catch (error) {
-    console.error('Error fetching token metadata from Alchemy:', error)
-    return {}
-  }
-}
+// Note: fetchTokenMetadataFromAlchemy is now handled server-side in /api/wallet/portfolio
+// This prevents client-side access to ALCHEMY_API_KEY
 
 // Get token balance using ERC-20 contract (fallback method - currently unused)
 async function _getTokenBalance(
@@ -216,19 +173,44 @@ async function getEthBalance(provider: EthereumProvider, address: string): Promi
 let lastPriceAPICall = 0
 const PRICE_API_COOLDOWN = 10000 // 10 seconds between calls
 
+// Enhanced retry mechanism with exponential backoff
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> {
+  let lastError: Error
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error as Error
+      console.warn(`Attempt ${attempt + 1} failed:`, error)
+      
+      if (attempt < maxRetries - 1) {
+        const delay = Math.min(baseDelay * Math.pow(2, attempt), 10000)
+         console.log(`Retrying in ${delay}ms...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+  
+  throw lastError!
+}
+
 // Fetch token prices from our API route to avoid CORS issues
 export async function fetchTokenPrices(tokenSymbols: string[]): Promise<Record<string, TokenPriceData>> {
   try {
     // Rate limiting protection
     const now = Date.now()
     if (now - lastPriceAPICall < PRICE_API_COOLDOWN) {
-      console.log('Rate limiting: using cached price data')
+       console.log('Rate limiting: using cached price data')
       return {}
     }
-    lastPriceAPICall = now
-
+    
     if (tokenSymbols.length === 0) {
-      console.log('No token symbols provided for price fetching')
+       console.log('No token symbols provided for price fetching')
       return {}
     }
     
@@ -236,32 +218,46 @@ export async function fetchTokenPrices(tokenSymbols: string[]): Promise<Record<s
     const limitedTokens = tokenSymbols.slice(0, 50)
     const tokensParam = limitedTokens.join(',')
     
-    console.log('Fetching prices for tokens:', limitedTokens)
+     console.log('Fetching prices for tokens:', limitedTokens)
     
-    const response = await fetch(`/api/token-prices?tokens=${encodeURIComponent(tokensParam)}`, {
-      headers: {
-        'Accept': 'application/json',
-      },
-    })
-    
-    if (!response.ok) {
-      if (response.status === 429) {
-        console.warn('API rate limit hit, returning empty prices')
-        return {}
+    // Use retry mechanism for the API call
+    const priceData = await retryWithBackoff(async (): Promise<Record<string, any>> => {
+      const response = await fetch(`/api/token-prices?tokens=${encodeURIComponent(tokensParam)}`, {
+        headers: {
+          'Accept': 'application/json',
+        },
+        // Add timeout
+        signal: AbortSignal.timeout(15000)
+      })
+      
+      if (!response.ok) {
+        if (response.status === 429) {
+          console.warn('API rate limit hit')
+          return {}
+        }
+        throw new Error(`API error: ${response.status} ${response.statusText}`)
       }
-      throw new Error(`API error: ${response.status}`)
-    }
+      
+      const data = await response.json() as { error?: string; [key: string]: any }
+      
+      if (data.error) {
+        throw new Error(data.error)
+      }
+      
+      return data
+    }, 3, 1000)
     
-    const priceData = await response.json()
-    
-    if (priceData.error) {
-      throw new Error(priceData.error)
-    }
-    
-    console.log('Successfully fetched prices for:', Object.keys(priceData))
+    lastPriceAPICall = now
+     console.log('Successfully fetched prices for:', Object.keys(priceData))
     return priceData
+    
   } catch (error) {
-    console.error('Error fetching token prices:', error)
+    console.error('Error fetching token prices after all retries:', error)
+    
+    // Reset rate limiting on error to allow immediate retry next time
+    lastPriceAPICall = 0
+    
+    // Return empty object - let the component handle fallback
     return {}
   }
 }
@@ -337,21 +333,20 @@ export async function fetchWalletPortfolio(
     let totalValue = 0
     
     try {
-      // Try to fetch all token balances using Alchemy API
+      // Try to fetch all token balances and metadata using Alchemy API
       const alchemyResponse = await fetchTokenBalancesFromAlchemy(walletAddress)
 
-      console.log("🔄 Alchemy response:", alchemyResponse)
+       console.log("🔄 Alchemy response:", alchemyResponse)
       
       // Filter out tokens with zero balances
       const nonZeroTokens = alchemyResponse.tokenBalances
         .filter(token => token.tokenBalance && token.tokenBalance !== '0x0' && !token.error)
       
       if (nonZeroTokens.length > 0) {
-        console.log("🔄 Non-zero tokens:", nonZeroTokens)
-        // Get token metadata
-        const tokenAddresses = nonZeroTokens.map(token => token.contractAddress)
-        const tokenMetadata = await fetchTokenMetadataFromAlchemy(tokenAddresses)
-        console.log("🔄 Token metadata:", tokenMetadata)  
+         console.log("🔄 Non-zero tokens:", nonZeroTokens)
+        // Token metadata is already included in the response
+        const tokenMetadata = alchemyResponse.tokenMetadata || {}
+         console.log("🔄 Token metadata:", tokenMetadata)  
         
         // Get symbols for price fetching
         const tokenSymbols = Object.values(tokenMetadata).map(meta => meta.symbol)
@@ -504,8 +499,8 @@ export async function fetchWalletNFTs(_walletAddress: string): Promise<NFTItem[]
 
 // Create an axios request with timeout
 async function axiosWithTimeout(url: string, options: AxiosRequestConfig = {}, timeoutMs: number = 10000) {
-  console.log("🔄 Making request to:", url)
-  console.log("📝 Request options:", JSON.stringify(options, null, 2))
+   console.log("🔄 Making request to:", url)
+   console.log("📝 Request options:", JSON.stringify(options, null, 2))
   
   const config: AxiosRequestConfig = {
     ...options,
@@ -514,10 +509,10 @@ async function axiosWithTimeout(url: string, options: AxiosRequestConfig = {}, t
   }
 
   try {
-    console.log("🔄 Making request to:", url)
-    console.log("📝 Request options:", JSON.stringify(config, null, 2))
+     console.log("🔄 Making request to:", url)
+     console.log("📝 Request options:", JSON.stringify(config, null, 2))
     const response = await axios(config)
-    console.log("✅ Request successful:", response.status, response.statusText)
+     console.log("✅ Request successful:", response.status, response.statusText)
     return response
   } catch (error) {
     console.error("❌ Request failed:", error)
@@ -539,18 +534,62 @@ async function axiosWithTimeout(url: string, options: AxiosRequestConfig = {}, t
   }
 }
 
-// Refresh token prices periodically
+// Refresh token prices periodically with enhanced error handling
 export function createTokenPriceUpdater(
-  onPriceUpdate: (prices: Record<string, TokenPriceData>) => void
+  onPriceUpdate: (prices: Record<string, TokenPriceData>) => void,
+  tokens: string[] = ['BTC', 'ETH', 'XRP', 'BNB', 'SOL', 'USDC', 'ADA', 'AVAX', 'DOGE', 'TRX', 'LINK', 'DOT', 'MATIC', 'UNI', 'LTC']
 ): () => void {
-  const interval = setInterval(async () => {
-    try {
-      const prices = await fetchTokenPrices(['ETH', 'USDC', 'USDT', 'DAI', 'WETH', 'LINK', 'UNI'])
-      onPriceUpdate(prices)
-    } catch (error) {
-      console.error('Error updating token prices:', error)
-    }
-  }, 60000) // Update every minute
+  let retryCount = 0
+  const maxRetries = 3
   
-  return () => clearInterval(interval)
+  const updatePrices = async () => {
+    try {
+       console.log('Periodic price update started')
+      const prices = await fetchTokenPrices(tokens)
+      
+      if (Object.keys(prices).length > 0) {
+         console.log('Periodic price update successful')
+        onPriceUpdate(prices)
+        retryCount = 0 // Reset retry count on success
+      } else {
+        // No price data received - handle gracefully without throwing
+        console.warn('No price data received from API, will retry')
+        
+        // Increment retry count and try again if under limit
+        if (retryCount < maxRetries) {
+          retryCount++
+          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 30000)
+           console.log(`Retrying price update in ${delay}ms...`)
+          setTimeout(updatePrices, delay)
+        } else {
+          console.warn('Max retries reached for price update, will try again on next cycle')
+          retryCount = 0 // Reset for next cycle
+        }
+      }
+    } catch (error) {
+      console.error(`Error updating token prices (attempt ${retryCount + 1}):`, error)
+      
+      // Retry with exponential backoff if we haven't exceeded max retries
+      if (retryCount < maxRetries) {
+        retryCount++
+        const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 30000)
+         console.log(`Retrying price update in ${delay}ms...`)
+        setTimeout(updatePrices, delay)
+      } else {
+        console.warn('Max retries reached for price update, will try again on next cycle')
+        retryCount = 0 // Reset for next cycle
+      }
+    }
+  }
+  
+  // Initial update after a short delay
+  const initialTimeout = setTimeout(updatePrices, 2000)
+  
+  // Set up periodic updates
+  const interval = setInterval(updatePrices, 60000) // Update every minute
+  
+  return () => {
+    clearTimeout(initialTimeout)
+    clearInterval(interval)
+  }
 } 

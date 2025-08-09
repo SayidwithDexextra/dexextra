@@ -77,7 +77,7 @@ const useMarketData = () => {
     const interval = setInterval(fetchMarketData, 5 * 60 * 1000);
     
     return () => clearInterval(interval);
-  }, [fetchMarketData]);
+  }, []);
 
   return { ...marketData, refetch: fetchMarketData };
 };

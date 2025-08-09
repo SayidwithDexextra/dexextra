@@ -56,7 +56,7 @@ export function useDatabaseEvents(
       setError(null);
       setIsError(false);
 
-      console.log('📦 Fetching events from database for:', contractAddress);
+       console.log('📦 Fetching events from database for:', contractAddress);
 
       // Build query parameters
       const params = new URLSearchParams({
@@ -87,7 +87,7 @@ export function useDatabaseEvents(
 
       if (!mountedRef.current) return;
 
-      console.log('✅ Successfully fetched', data.events.length, 'events from database');
+       console.log('✅ Successfully fetched', data.events.length, 'events from database');
       
       setEvents(data.events);
       setIsSuccess(true);

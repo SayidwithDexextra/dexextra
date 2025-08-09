@@ -233,9 +233,9 @@ GET /api/webhooks/alchemy/scalable
 // Get processing metrics
 const result = await monitor.processWebhookEvent(data);
 
-console.log(`Processed: ${result.processed} events`);
-console.log(`New contracts: ${result.newContracts}`);
-console.log(`Total events: ${result.events.length}`);
+ console.log(`Processed: ${result.processed} events`);
+ console.log(`New contracts: ${result.newContracts}`);
+ console.log(`Total events: ${result.events.length}`);
 ```
 
 ### **Logging**

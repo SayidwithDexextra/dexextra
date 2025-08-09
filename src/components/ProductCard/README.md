@@ -202,7 +202,7 @@ const handleProductAction = (id: string) => {
   currency="USD"
   imageUrl="/template.jpg"
   onActionClick={handleProductAction}
-  onCardClick={(id) => console.log('Card clicked:', id)}
+  onCardClick={(id) =>  console.log('Card clicked:', id)}
 />
 ```
 

@@ -1,0 +1,401 @@
+/* Faucet Container - Optimized Design */
+.faucetContainer {
+  background: transparent;
+  max-width: 550px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  height: fit-content;
+}
+
+/* Header Section */
+.faucetHeader {
+  text-align: center;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.faucetTitle {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.faucetSubtitle {
+  font-size: 14px;
+  font-weight: 400;
+  color: #9CA3AF;
+  line-height: 1.3;
+  max-width: 350px;
+  margin: 0 auto;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Form Section Layout */
+.formSection {
+  margin-bottom: 20px;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  align-items: start;
+  margin-bottom: 20px;
+  min-height: auto;
+}
+
+.fieldLabel {
+  font-size: 20px;
+  font-weight: 400;
+  color: #ffffff;
+  line-height: 1.2;
+  margin-bottom: 8px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.fieldDescription {
+  font-size: 12px;
+  font-weight: 400;
+  color: #9CA3AF;
+  line-height: 1.4;
+  max-width: 280px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.fieldInput {
+  display: flex;
+  flex-direction: column;
+}
+
+.inputLabel {
+  font-size: 9px;
+  font-weight: 500;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Input Styles - Balanced */
+.input {
+  background-color: transparent;
+  border: none;
+  border-bottom: 1px solid #E5E5E5;
+  border-radius: 0;
+  padding: 8px 0;
+  font-size: 16px;
+  color: #ffffff;
+  width: 100%;
+  transition: border-color 0.2s ease;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.input:focus {
+  border-bottom-color: #ffffff;
+  outline: none;
+}
+
+.input::placeholder {
+  color: #9CA3AF;
+}
+
+.inputError {
+  border-bottom-color: #EF4444;
+}
+
+.inputError:focus {
+  border-bottom-color: #EF4444;
+}
+
+.helpText {
+  font-size: 10px;
+  color: #9CA3AF;
+  margin-top: 6px;
+  line-height: 1.4;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.errorText {
+  font-size: 10px;
+  color: #EF4444;
+  margin-top: 6px;
+  line-height: 1.4;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Status Display */
+.statusDisplay {
+  background: transparent;
+  border-bottom: 1px solid #E5E5E5;
+  padding: 10px 0;
+  font-size: 16px;
+  color: #ffffff;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.balanceAmount {
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usdcIcon {
+  width: 18px;
+  height: 18px;
+  background: #2775ca;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+/* Connection Section */
+.connectionSection {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.connectButton {
+  background-color: #000000;
+  color: #ffffff;
+  padding: 12px 24px;
+  border-radius: 6px;
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connectButton:hover:not(:disabled) {
+  background-color: #333333;
+  transform: translateY(-1px);
+}
+
+.connectButton:active:not(:disabled) {
+  background-color: #000000;
+  transform: translateY(0);
+}
+
+.connectButton:disabled {
+  background-color: #9CA3AF;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Claim Button */
+.claimButton {
+  background-color: #000000;
+  color: #ffffff;
+  padding: 12px 24px;
+  border-radius: 6px;
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.claimButton:hover:not(:disabled) {
+  background-color: #333333;
+  transform: translateY(-1px);
+}
+
+.claimButton:active:not(:disabled) {
+  background-color: #000000;
+  transform: translateY(0);
+}
+
+.claimButton:disabled {
+  background-color: #9CA3AF;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Messages */
+.networkWarning,
+.errorMessage,
+.successMessage {
+  background: transparent;
+  border-bottom: 1px solid;
+  padding: 10px 0;
+  margin-bottom: 16px;
+  text-align: center;
+  font-size: 11px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.networkWarning {
+  border-color: #EF4444;
+  color: #EF4444;
+}
+
+.errorMessage {
+  border-color: #EF4444;
+  color: #EF4444;
+}
+
+.successMessage {
+  border-color: #10B981;
+  color: #10B981;
+}
+
+/* Network Switch Button */
+.networkSwitchButton {
+  background: none;
+  border: none;
+  color: #ffffff;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 11px;
+  margin-left: 8px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  transition: opacity 0.2s ease;
+}
+
+.networkSwitchButton:hover {
+  opacity: 0.8;
+}
+
+/* Loading Spinner */
+.loadingSpinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top: 2px solid #ffffff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Info Section */
+.infoSection {
+  background: transparent;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 16px;
+  margin-top: 20px;
+}
+
+.infoTitle {
+  font-size: 14px;
+  font-weight: 400;
+  color: #ffffff;
+  line-height: 1.2;
+  margin-bottom: 10px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.infoList {
+  color: #9CA3AF;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding-left: 14px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.infoList li {
+  margin-bottom: 5px;
+}
+
+/* Remove old icons and styles */
+.faucetIcon {
+  display: none;
+}
+
+/* Mobile Responsive - Better Readability */
+@media (max-width: 768px) {
+  .faucetTitle {
+    font-size: 24px;
+    margin-bottom: 6px;
+  }
+
+  .faucetSubtitle {
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .fieldRow {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .fieldLabel {
+    font-size: 18px;
+    margin-bottom: 6px;
+  }
+
+  .fieldDescription {
+    font-size: 11px;
+    max-width: 100%;
+    line-height: 1.3;
+  }
+
+  .statusDisplay {
+    font-size: 14px;
+    padding: 8px 0;
+  }
+
+  .input {
+    padding: 6px 0;
+    font-size: 15px;
+  }
+
+  .helpText {
+    font-size: 9px;
+    margin-top: 4px;
+  }
+
+  .errorText {
+    font-size: 9px;
+    margin-top: 4px;
+  }
+
+  .claimButton,
+  .connectButton {
+    padding: 10px 20px;
+    font-size: 11px;
+  }
+
+  .infoTitle {
+    font-size: 13px;
+  }
+
+  .infoList {
+    font-size: 10px;
+  }
+} 

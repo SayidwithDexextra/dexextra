@@ -26,7 +26,10 @@ const CountdownTicker: React.FC<CountdownTickerProps> = ({
   subtitle,
   onComplete,
   className,
-  showBanner = true
+  showBanner = true,
+  settlementPhase = 'trading',
+  marketSymbol,
+  onSettlementComplete
 }) => {
   const [timeRemaining, setTimeRemaining] = useState<TimeRemaining>({
     days: 0,
@@ -66,6 +69,7 @@ const CountdownTicker: React.FC<CountdownTickerProps> = ({
         if (!isCompleted) {
           setIsCompleted(true);
           onComplete?.();
+          onSettlementComplete?.(marketSymbol, settlementPhase);
         }
       }
     };
@@ -80,9 +84,23 @@ const CountdownTicker: React.FC<CountdownTickerProps> = ({
     return () => clearInterval(interval);
   }, [calculateTimeRemaining, isCompleted, onComplete]);
 
+  // Get settlement phase styling
+  const getSettlementPhaseClass = () => {
+    switch (settlementPhase) {
+      case 'near_settlement':
+        return styles.nearSettlement;
+      case 'settling':
+        return styles.settling;
+      case 'settled':
+        return styles.settled;
+      default:
+        return '';
+    }
+  };
+
   const containerClass = showBanner 
-    ? `${styles.banner} ${isCompleted ? styles.completed : ''} ${className || ''}`
-    : `${styles.standalone} ${className || ''}`;
+    ? `${styles.banner} ${isCompleted ? styles.completed : ''} ${getSettlementPhaseClass()} ${className || ''}`
+    : `${styles.standalone} ${getSettlementPhaseClass()} ${className || ''}`;
 
   if (isCompleted) {
     return (
@@ -98,8 +116,18 @@ const CountdownTicker: React.FC<CountdownTickerProps> = ({
         </div>
         <div className={styles.contentLayer}>
           <div className={styles.completedMessage}>
-            {title ? `${title} has ended!` : 'Countdown Complete!'}
+            {marketSymbol 
+              ? `${marketSymbol} Settlement Complete!` 
+              : title 
+                ? `${title} has ended!` 
+                : 'Countdown Complete!'
+            }
           </div>
+          {marketSymbol && (
+            <div className={styles.settlementDetails}>
+              Market positions are now being settled based on final metric values.
+            </div>
+          )}
         </div>
       </div>
     );
@@ -121,6 +149,12 @@ const CountdownTicker: React.FC<CountdownTickerProps> = ({
           <div className={styles.content}>
             {title && <h1 className={styles.title}>{title}</h1>}
             {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+            {marketSymbol && settlementPhase !== 'trading' && (
+              <div className={styles.settlementWarning}>
+                {settlementPhase === 'near_settlement' && '⚠️ Settlement approaching - reduced trading activity expected'}
+                {settlementPhase === 'settling' && '🔄 Settlement in progress - no new positions allowed'}
+              </div>
+            )}
           </div>
         )}
         

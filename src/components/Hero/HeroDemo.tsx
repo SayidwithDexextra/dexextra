@@ -19,7 +19,7 @@ const HeroDemo: React.FC = () => {
   };
 
   const handleMintClick = () => {
-    console.log('Mint button clicked');
+     console.log('Mint button clicked');
     // Add mint functionality here
   };
 

@@ -10,10 +10,10 @@ const WalletDiagnostics: React.FC = () => {
   const runDiagnostics = async () => {
     setIsRunning(true);
     try {
-      console.log('🔧 Starting wallet diagnostics...');
+       console.log('🔧 Starting wallet diagnostics...');
       await diagnoseWalletIssues();
       setLastRun(new Date());
-      console.log('✅ Wallet diagnostics completed. Check the console for details.');
+       console.log('✅ Wallet diagnostics completed. Check the console for details.');
     } catch (error) {
       console.error('❌ Error running wallet diagnostics:', error);
     } finally {

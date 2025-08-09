@@ -1,0 +1,138 @@
+.depositModal {
+  width: 380px !important;
+  height: 480px !important;
+  /* Default visible state */
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Initial state only for the entrance animation */
+.depositModal.initialFadeIn {
+  opacity: 0;
+  transform: translateY(30px);
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 480px) {
+  .depositModal {
+    width: 95vw !important;
+    max-width: 360px !important;
+    height: 480px !important;
+    overflow: hidden !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .depositModal {
+    width: 92vw !important;
+    max-width: 340px !important;
+    height: 480px !important;
+    padding: 18px !important;
+  }
+}
+
+@media (min-width: 481px) and (max-width: 768px) {
+  .depositModal {
+    width: 380px !important;
+    height: 480px !important;
+  }
+}
+
+/* Hide scrollbars for webkit browsers */
+.hideScrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.paymentCardHover:hover {
+  opacity: 0.8;
+}
+
+.tokenCardHover:hover {
+  opacity: 0.8;
+}
+
+.closeButtonHover:hover {
+  color: #ffffff;
+}
+
+.continueButtonHover:hover {
+  background-color: #2563eb;
+}
+
+.iconContainer {
+  position: relative;
+}
+
+/* Hide scrollbar for token list */
+.tokenListScrollable {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.tokenListScrollable::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
+}
+
+/* Animation keyframes for sliding modals */
+@keyframes slideOutLeft {
+  from {
+    transform: translateX(0%);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0%);
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes slideInFromLeft {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0%);
+  }
+}
+
+.modalSlideOutLeft {
+  animation: slideOutLeft 150ms ease-out forwards;
+}
+
+.modalSlideInFromRight {
+  animation: slideInFromRight 150ms ease-out forwards;
+}
+
+.modalSlideOutRight {
+  animation: slideOutRight 150ms ease-out forwards;
+}
+
+.modalSlideInFromLeft {
+  animation: slideInFromLeft 150ms ease-out forwards;
+} 

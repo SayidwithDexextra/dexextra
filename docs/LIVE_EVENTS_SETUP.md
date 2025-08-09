@@ -111,7 +111,7 @@ eventSource.onmessage = function(event) {
   const data = JSON.parse(event.data);
   
   if (data.type === 'event') {
-    console.log('New event:', data.event);
+     console.log('New event:', data.event);
   }
 };
 ```

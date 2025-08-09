@@ -5,36 +5,32 @@ import { StepProps } from '../types';
 import styles from '../VAMMWizard.module.css';
 
 const CATEGORIES = [
-  { value: 'crypto', label: 'Cryptocurrency' },
-  { value: 'forex', label: 'Foreign Exchange' },
-  { value: 'commodities', label: 'Commodities' },
-  { value: 'stocks', label: 'Stock Markets' },
-  { value: 'defi', label: 'DeFi Protocols' },
-  { value: 'nft', label: 'NFT Collections' },
-  { value: 'gaming', label: 'Gaming Assets' },
-  { value: 'music', label: 'Music' },
-  { value: 'other', label: 'Other' }
+  { value: 'Weather', label: 'Weather Metrics' },
+  { value: 'Economic', label: 'Economic Indicators' },
+  { value: 'Population', label: 'Population Data' },
+  { value: 'Financial', label: 'Financial Markets' },
+  { value: 'Sports', label: 'Sports Events' },
+  { value: 'Technology', label: 'Technology Metrics' },
+  { value: 'Environmental', label: 'Environmental Data' },
+  { value: 'Social', label: 'Social Metrics' },
+  { value: 'Custom', label: 'Custom Metrics' }
 ];
 
-export default function Step1MarketInfo({ formData, updateFormData, onNext, errors }: StepProps) {
+export default function Step1MarketInfo({ formData, updateFormData, onNext, errors, onSkipToFinal }: StepProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onNext();
   };
 
-  const handleCategorySelect = (categoryValue: string) => {
-    const currentCategories = formData.category || [];
-    const isSelected = currentCategories.includes(categoryValue);
-    
-    if (isSelected) {
-      // Remove the category
-      const newCategories = currentCategories.filter(cat => cat !== categoryValue);
-      updateFormData({ category: newCategories });
-    } else {
-      // Add the category
-      const newCategories = [...currentCategories, categoryValue];
-      updateFormData({ category: newCategories });
+  const handleSkipClick = () => {
+    if (onSkipToFinal) {
+      onSkipToFinal();
     }
+  };
+
+  const handleCategorySelect = (categoryValue: string) => {
+    // Single category selection for DexV2
+    updateFormData({ category: categoryValue });
   };
 
   const symbolCharacterCount = 20 - formData.symbol.length;
@@ -45,6 +41,15 @@ export default function Step1MarketInfo({ formData, updateFormData, onNext, erro
       <div className={styles.stepHeader}>
         <div className={styles.stepNumber}>01.</div>
         <h1 className={styles.pageTitle}>Market</h1>
+        {/* Skip Button */}
+        <button
+          type="button"
+          onClick={handleSkipClick}
+          className={styles.skipButton}
+          title="Skip to final step with sample data"
+        >
+          🚀 Skip to Final Step
+        </button>
       </div>
 
       {/* Market Symbol */}
@@ -96,16 +101,16 @@ export default function Step1MarketInfo({ formData, updateFormData, onNext, erro
         </div>
       </div>
 
-      {/* Category - Tag Interface */}
+      {/* Category - Single Selection */}
       <div className={styles.fieldRow}>
         <div>
           <div className={styles.fieldLabel}>Category</div>
           <div className={styles.fieldDescription}>
-            Choose the categories that best describe your market. This helps users discover and filter markets by type.
+            Choose the category that best describes your specialized VAMM. This determines which metrics can be traded and the risk parameters applied.
           </div>
         </div>
         <div className={styles.fieldInput}>
-          <div className={styles.inputLabel}>CATEGORIES (*)</div>
+          <div className={styles.inputLabel}>MARKET CATEGORY (*)</div>
           <div className={styles.categoryTags}>
             {CATEGORIES.map((category) => (
               <button
@@ -113,7 +118,7 @@ export default function Step1MarketInfo({ formData, updateFormData, onNext, erro
                 type="button"
                 onClick={() => handleCategorySelect(category.value)}
                 className={`${styles.categoryTag} ${
-                  formData.category.includes(category.value) ? styles.categoryTagSelected : ''
+                  formData.category === category.value ? styles.categoryTagSelected : ''
                 }`}
               >
                 {category.label}
@@ -122,7 +127,7 @@ export default function Step1MarketInfo({ formData, updateFormData, onNext, erro
           </div>
           {errors.category && <div className={styles.errorText}>{errors.category}</div>}
           <div className={styles.helpText}>
-            Select one or more categories that best fit your market
+            Select the category that best fits your specialized VAMM deployment
           </div>
         </div>
       </div>

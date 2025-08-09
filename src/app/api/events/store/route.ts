@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const validatedData = StoreEventsSchema.parse(body);
     
-    console.log('💾 Storing events from blockchain fallback:', {
+     console.log('💾 Storing events from blockchain fallback:', {
       eventCount: validatedData.events.length,
       source: validatedData.source,
       contractAddress: validatedData.contractAddress
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
       errors: errorEvents.length,
     };
 
-    console.log('📊 Event storage summary:', summary);
+     console.log('📊 Event storage summary:', summary);
 
     return NextResponse.json({
       success: true,

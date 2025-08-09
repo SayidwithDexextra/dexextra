@@ -63,6 +63,45 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Settlement Phase Styles */
+.settlementWarning {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #fbbf24;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background-color: rgba(251, 191, 36, 0.1);
+  border-radius: 6px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.settlementDetails {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: #a0a0a0;
+  margin-top: 8px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Settlement Phase Banner Styling */
+.nearSettlement {
+  border: 2px solid #fbbf24;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2a1f0a 100%);
+}
+
+.settling {
+  border: 2px solid #f97316;
+  background: linear-gradient(135deg, #1a1a1a 0%, #2a1706 100%);
+}
+
+.settled {
+  border: 2px solid #10b981;
+  background: linear-gradient(135deg, #1a1a1a 0%, #0a2a1a 100%);
+}
+
 /* Countdown Container */
 .countdown {
   display: flex;

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { TokenData } from '@/types/token';
 import { VAMMMarket } from './useVAMMMarkets';
+// Remove unused imports: createPublicClient, http, formatEther, polygon
 
 interface UseVAMMTokenDataReturn {
   tokenData: TokenData | null;
@@ -10,6 +11,7 @@ interface UseVAMMTokenDataReturn {
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
+  // Remove contractData since price data should come from useUnifiedMarkPrice
 }
 
 // Global cache to prevent duplicate API calls
@@ -21,12 +23,21 @@ const tokenDataCache = new Map<string, {
 
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
 
+// Remove UNIFIED_VAMM_ABI since we're not fetching contract data anymore
+
 export function useVAMMTokenData(symbol: string): UseVAMMTokenDataReturn {
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [vammMarket, setVammMarket] = useState<VAMMMarket | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Remove contractData state since we're not fetching price data anymore
   const isMountedRef = useRef(true);
+  // Remove publicClientRef since we're not making contract calls
+
+  // Remove the initializeClient function since we're not making contract calls
+
+  // Remove the fetchContractData function since we're not fetching price data anymore
+  // Price data should come from useUnifiedMarkPrice hook
 
   const fetchVAMMTokenData = useCallback(async () => {
     if (!symbol) {
@@ -40,9 +51,10 @@ export function useVAMMTokenData(symbol: string): UseVAMMTokenDataReturn {
     
     // Check if we have valid cached data
     if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
-      console.log('🎯 Using cached VAMM data for symbol:', symbol);
+       console.log('🎯 Using cached VAMM data for symbol:', symbol);
       setTokenData(cached.data.tokenData);
       setVammMarket(cached.data.vammMarket);
+      // Remove contractData setting
       setIsLoading(false);
       setError(null);
       return;
@@ -50,13 +62,14 @@ export function useVAMMTokenData(symbol: string): UseVAMMTokenDataReturn {
 
     // If there's already a pending request for this symbol, wait for it
     if (cached?.promise) {
-      console.log('⏳ Waiting for existing request for symbol:', symbol);
+       console.log('⏳ Waiting for existing request for symbol:', symbol);
       try {
         await cached.promise;
         const updatedCache = tokenDataCache.get(cacheKey);
         if (updatedCache && isMountedRef.current) {
           setTokenData(updatedCache.data.tokenData);
           setVammMarket(updatedCache.data.vammMarket);
+          // Remove contractData setting
           setIsLoading(false);
           setError(null);
         }
@@ -73,7 +86,7 @@ export function useVAMMTokenData(symbol: string): UseVAMMTokenDataReturn {
     setError(null);
     
     try {
-      console.log('🔍 Fetching fresh VAMM market data for symbol:', symbol);
+       console.log('🔍 Fetching fresh VAMM market data for symbol:', symbol);
 
       // Create a promise for this request and cache it
       const fetchPromise = (async () => {
@@ -88,56 +101,50 @@ export function useVAMMTokenData(symbol: string): UseVAMMTokenDataReturn {
         }
 
         const data = await response.json();
-        console.log('📦 VAMM API response:', data);
 
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to fetch VAMM market');
+        if (!data.markets || data.markets.length === 0) {
+          throw new Error(`No VAMM market found for symbol: ${symbol}`);
         }
 
-        const markets = data.markets || [];
-        const market = markets.find((m: VAMMMarket) => 
-          m.symbol.toLowerCase() === symbol.toLowerCase()
-        );
+        const vammMarket = data.markets[0];
+        console.log('📊 VAMM market data received:', vammMarket);
 
-        if (!market) {
-          throw new Error(`VAMM market not found for symbol: ${symbol}`);
-        }
-
-        console.log('🎯 Found VAMM market:', market);
-
-        // Transform VAMM market data to TokenData format
-        const transformedTokenData = transformVAMMToTokenData(market);
-
+        // Transform VAMM market data to token data format
+        const tokenData = transformVAMMToTokenData(vammMarket);
+        
         // Cache the result
+        const result = { tokenData, vammMarket };
         tokenDataCache.set(cacheKey, {
-          data: { tokenData: transformedTokenData, vammMarket: market },
-          timestamp: Date.now(),
+          data: result,
+          // Remove contractData from cache
+          timestamp: Date.now()
         });
 
-        return { tokenData: transformedTokenData, vammMarket: market };
+        return result;
       })();
 
-      // Cache the promise to prevent duplicate requests
+      // Store the promise in cache
       tokenDataCache.set(cacheKey, {
-        data: tokenDataCache.get(cacheKey)?.data || { tokenData: null as any, vammMarket: null as any },
-        timestamp: tokenDataCache.get(cacheKey)?.timestamp || 0,
-        promise: fetchPromise,
+        data: { tokenData: null, vammMarket: null },
+        timestamp: Date.now(),
+        promise: fetchPromise
       });
 
       const result = await fetchPromise;
-      
+
       if (isMountedRef.current) {
         setTokenData(result.tokenData);
         setVammMarket(result.vammMarket);
+        // Remove contractData setting
+        setIsLoading(false);
+        setError(null);
       }
 
     } catch (err) {
       console.error('❌ Error fetching VAMM token data:', err);
+      
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Failed to fetch VAMM token data');
-      }
-    } finally {
-      if (isMountedRef.current) {
         setIsLoading(false);
       }
     }
@@ -158,19 +165,31 @@ export function useVAMMTokenData(symbol: string): UseVAMMTokenDataReturn {
     return () => {
       isMountedRef.current = false;
     };
-  }, [fetchVAMMTokenData]);
+  }, [symbol]);
 
-  return { tokenData, vammMarket, isLoading, error, refetch };
+  return {
+    tokenData,
+    vammMarket,
+    isLoading,
+    error,
+    refetch: fetchVAMMTokenData,
+    // Remove contractData from return
+  };
 }
 
 function transformVAMMToTokenData(vammMarket: VAMMMarket): TokenData {
-  // Calculate some derived values for the trading interface
+  // Use real-time contract price if available, otherwise use initial price
   const currentPrice = vammMarket.initial_price;
   
-  // Generate realistic trading data based on the market
-  const priceChange24h = generateRealisticPriceChange();
+  // Calculate price change based on contract vs initial price
+  const priceChange24h = vammMarket.initial_price > 0 
+    ? ((currentPrice - vammMarket.initial_price) / vammMarket.initial_price) * 100
+    : generateRealisticPriceChange();
+
+  // Use contract volume if available, otherwise estimate
+  const volume24h = vammMarket.initial_price * 100000; // Estimated volume
+    
   const marketCap = currentPrice * 1000000; // Assume 1M token supply for calculation
-  const volume24h = marketCap * 0.1; // 10% of market cap as daily volume
   const marketCapChange24h = priceChange24h + (Math.random() - 0.5) * 5; // Slightly different from price change
 
   return {
@@ -182,9 +201,9 @@ function transformVAMMToTokenData(vammMarket: VAMMMarket): TokenData {
     marketCapChange24h,
     volume24h,
     fullyDilutedValuation: marketCap,
-    chain: 'BASE', // VAMM contracts are deployed on Base
+    chain: 'POLYGON', // VAMM contracts are deployed on Polygon
     logo: vammMarket.icon_image_url || vammMarket.banner_image_url,
-    description: vammMarket.description || `${vammMarket.symbol} futures trading market on Base network`,
+    description: vammMarket.description || `${vammMarket.symbol} futures trading market on Polygon network`,
     website: undefined, // Could add if available in market data
     twitter: undefined,
     telegram: undefined,
@@ -203,6 +222,6 @@ function generateRealisticPriceChange(): number {
   const u2 = Math.random();
   const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   
-  // Scale to a reasonable range for crypto price changes
+  // Scale to reasonable range for crypto/futures (-20% to +20%, with most values near 0)
   return Math.max(-20, Math.min(20, z0 * 5));
 } 

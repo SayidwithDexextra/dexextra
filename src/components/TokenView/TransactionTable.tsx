@@ -168,10 +168,10 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
     setError(null);
 
     try {
-      console.log('📦 Fetching transactions for:', vammAddress);
+       console.log('📦 Fetching transactions for:', vammAddress);
       
       // APPROACH 1: Try database first (primary approach)
-      console.log('📊 Attempting database query...');
+       console.log('📊 Attempting database query...');
       const response = await fetch(`/api/events?contractAddress=${vammAddress.toLowerCase()}&limit=100`);
       
       if (!response.ok) {
@@ -184,7 +184,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
         throw new Error(data.error || 'Failed to fetch events');
       }
 
-      console.log('✅ Fetched', data.events.length, 'events from database');
+       console.log('✅ Fetched', data.events.length, 'events from database');
 
       // Transform database events to transactions
       const dbTransactions = data.events
@@ -211,12 +211,12 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
       if (dbTransactions.length > 0) {
         setTransactions(dbTransactions);
         setDataSource('database');
-        console.log('✅ Using database transactions:', dbTransactions.length);
+         console.log('✅ Using database transactions:', dbTransactions.length);
         return;
       }
 
       // APPROACH 2: Fallback to blockchain query if no database results
-      console.log('📡 Database returned no transactions, falling back to blockchain query...');
+       console.log('📡 Database returned no transactions, falling back to blockchain query...');
       
       const blockchainResult = await queryVAMMEvents(vammAddress, {
         eventTypes: ['PositionOpened', 'PositionClosed', 'PositionLiquidated'],
@@ -228,7 +228,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
         throw new Error(`Blockchain query failed: ${blockchainResult.error}`);
       }
 
-      console.log('✅ Fetched', blockchainResult.events.length, 'events from blockchain');
+       console.log('✅ Fetched', blockchainResult.events.length, 'events from blockchain');
 
       // Transform blockchain events to transactions
       const blockchainTransactions = blockchainResult.events
@@ -250,7 +250,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
 
       // ENHANCEMENT: Store blockchain events to database for future use
       if (blockchainResult.events.length > 0) {
-        console.log('💾 Storing blockchain events to database for future use...');
+         console.log('💾 Storing blockchain events to database for future use...');
         setIsStoringToDatabase(true);
         
         try {
@@ -269,7 +269,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
           const storeResult = await storeResponse.json();
           
           if (storeResult.success) {
-            console.log('✅ Stored blockchain events to database:', storeResult.summary);
+             console.log('✅ Stored blockchain events to database:', storeResult.summary);
           } else {
             console.warn('⚠️ Failed to store blockchain events:', storeResult.error);
             // Don't fail the main operation if storage fails
@@ -284,7 +284,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
 
       setTransactions(blockchainTransactions);
       setDataSource('blockchain');
-      console.log('✅ Using blockchain transactions:', blockchainTransactions.length);
+       console.log('✅ Using blockchain transactions:', blockchainTransactions.length);
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -323,7 +323,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
         clearInterval(intervalRef.current);
       }
     };
-  }, [vammAddress, fetchTransactions]);
+  }, [vammAddress]);
 
   // Also add a manual refresh function
   const handleManualRefresh = useCallback(() => {
@@ -337,7 +337,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
     
     // On initial load, animate all transactions
     if (isInitialLoad.current && transactions.length > 0) {
-      console.log('🎬 Initial load - animating all', transactions.length, 'transactions');
+       console.log('🎬 Initial load - animating all', transactions.length, 'transactions');
       setNewTransactionIds(currentTransactionIds);
       isInitialLoad.current = false;
       
@@ -362,7 +362,7 @@ export default function TransactionTable({ vammAddress }: TransactionTableProps)
 
       // Only animate if there are genuinely new transactions
       if (newIds.size > 0) {
-        console.log('🎬 Animating', newIds.size, 'new transactions:', Array.from(newIds));
+         console.log('🎬 Animating', newIds.size, 'new transactions:', Array.from(newIds));
         setNewTransactionIds(newIds);
         
         // Clear animation classes after animation completes

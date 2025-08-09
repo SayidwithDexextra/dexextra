@@ -16,17 +16,17 @@ const CountdownTickerDemo: React.FC = () => {
   eventDate.setMinutes(eventDate.getMinutes() + 30); // 30 minutes from now
 
   const handleLaunchComplete = () => {
-    console.log('Launch countdown completed!');
+     console.log('Launch countdown completed!');
     alert('Launch Sale has started! 🚀');
   };
 
   const _handleSaleComplete = () => {
-    console.log('Sale countdown completed!');
+     console.log('Sale countdown completed!');
     alert('Sale has ended! Thank you for participating! 🎉');
   };
 
   const _handleEventComplete = () => {
-    console.log('Event countdown completed!');
+     console.log('Event countdown completed!');
     alert('Event is starting now! 🎊');
   };
 

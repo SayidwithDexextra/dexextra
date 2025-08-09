@@ -104,7 +104,7 @@ export default function Settings({ className }: SettingsProps) {
       // Refresh profile data
       await refreshProfile()
       
-      console.log(`${type} image uploaded successfully:`, result.imageUrl)
+       console.log(`${type} image uploaded successfully:`, result.imageUrl)
     } catch (error) {
       console.error('Error uploading image:', error)
       alert(`Failed to upload ${type} image. Please try again.`)
@@ -142,7 +142,7 @@ export default function Settings({ className }: SettingsProps) {
       // Refresh profile data
       await refreshProfile()
       
-      console.log(`${type} image removed successfully`)
+       console.log(`${type} image removed successfully`)
     } catch (error) {
       console.error('Error removing image:', error)
       alert(`Failed to remove ${type} image. Please try again.`)
@@ -176,7 +176,7 @@ export default function Settings({ className }: SettingsProps) {
       await refreshProfile()
       
       setSaveStatus('success')
-      console.log('Profile updated successfully!')
+       console.log('Profile updated successfully!')
       
       // Clear success status after 3 seconds
       setTimeout(() => setSaveStatus('idle'), 3000)

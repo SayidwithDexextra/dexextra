@@ -44,11 +44,11 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-alchemy-signature');
     
-    console.log('📨 Received Scalable Event Webhook...');
+     console.log('📨 Received Scalable Event Webhook...');
 
-    console.log('🔑 ALCHEMY_WEBHOOK_SIGNING_KEY:', process.env.ALCHEMY_WEBHOOK_SIGNING_KEY)
-    console.log('🔑 signature:', signature)
-    console.log("env.NODE_ENV:", env.NODE_ENV)
+     console.log('🔑 ALCHEMY_WEBHOOK_SIGNING_KEY:', process.env.ALCHEMY_WEBHOOK_SIGNING_KEY)
+     console.log('🔑 signature:', signature)
+     console.log("env.NODE_ENV:", env.NODE_ENV)
     // Verify webhook signature in production
     if (env.NODE_ENV === 'production' && process.env.ALCHEMY_WEBHOOK_SIGNING_KEY && signature) {
       const isValidSignature = verifyAlchemySignature(
@@ -61,12 +61,12 @@ export async function POST(request: NextRequest) {
         console.error('❌ Invalid webhook signature');
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
-      console.log('✅ Webhook signature verified');
+       console.log('✅ Webhook signature verified');
     }
 
     const webhookData = JSON.parse(rawBody);
-    console.log(`📡 Processing scalable webhook: ${webhookData.type}`);
-    console.log(`📡 Processing scalable webhook: ${webhookData}`);
+     console.log(`📡 Processing scalable webhook: ${webhookData.type}`);
+     console.log(`📡 Processing scalable webhook: ${webhookData}`);
 
     // Get scalable event monitor instance
     const scalableMonitor = await getScalableEventMonitor();
@@ -76,8 +76,8 @@ export async function POST(request: NextRequest) {
     
     const processingTime = Date.now() - startTime;
     
-    console.log(`✅ Scalable webhook processed successfully in ${processingTime}ms`);
-    console.log(`📊 Results: ${result.processed} events, ${result.newContracts} new contracts`);
+     console.log(`✅ Scalable webhook processed successfully in ${processingTime}ms`);
+     console.log(`📊 Results: ${result.processed} events, ${result.newContracts} new contracts`);
 
     return NextResponse.json({ 
       success: true, 

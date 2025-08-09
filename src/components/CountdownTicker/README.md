@@ -47,7 +47,7 @@ function MyComponent() {
 <CountdownTicker
   targetDate={new Date(Date.now() + 24 * 60 * 60 * 1000)} // 24 hours from now
   showBanner={false}
-  onComplete={() => console.log('Time up!')}
+  onComplete={() =>  console.log('Time up!')}
 />
 ```
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getPreferredSystem, isDexV2Enabled } from '@/lib/contracts';
 
 // Helper function to validate Ethereum addresses
 function isValidEthereumAddress(address: string): boolean {
@@ -32,9 +33,50 @@ if (!supabaseUrl || !supabaseServiceKey) {
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+interface MarketAPIBody {
+  symbol: string;
+  description?: string;
+  category: string[];
+  oracle_address: string;
+  initial_price: string | number;
+  price_decimals?: number;
+  banner_image_url?: string;
+  icon_image_url?: string;
+  supporting_photo_urls?: string[];
+  deployment_fee?: string | number;
+  is_active?: boolean;
+  user_address: string;
+  vamm_address?: string;
+  vault_address?: string;
+  market_id?: string;
+  transaction_hash?: string;
+  deployment_status?: string;
+  // Enhanced metadata fields
+  block_number?: number;
+  gas_used?: string;
+  template_type?: string;
+  template_name?: string;
+  metric_name?: string;
+  metric_data_source?: string;
+  settlement_period_days?: number;
+  max_leverage?: number;
+  trading_fee_rate?: number;
+  volume_scale_factor?: number;
+  collateral_token?: string;
+  network?: string;
+  // System Integration Fields
+  metric_registry_address?: string;
+  centralized_vault_address?: string;
+  chain_id?: number;
+  factory_address?: string;
+  router_address?: string;
+  collateral_token_address?: string;
+  metric_id?: string;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body: MarketAPIBody = await request.json();
     
     // Validate required fields
     const requiredFields = [
@@ -101,8 +143,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create the market record
-    const marketData = {
+    // Create the market record - use basic fields first, then try enhanced fields
+    const basicMarketData = {
+      // Basic market information (guaranteed to exist)
       symbol: body.symbol,
       description: body.description,
       category: body.category,
@@ -115,7 +158,7 @@ export async function POST(request: NextRequest) {
       deployment_fee: parseFloat(body.deployment_fee || '0.1'),
       is_active: body.is_active !== undefined ? body.is_active : true,
       user_address: body.user_address,
-      created_at: new Date().toISOString(),
+      
       // Contract deployment details - use provided values or null if not available
       vamm_address: body.vamm_address || null,
       vault_address: body.vault_address || null,
@@ -124,19 +167,69 @@ export async function POST(request: NextRequest) {
       deployment_status: body.deployment_status || 'pending'
     };
 
-    console.log('💾 Creating market with data:', {
-      symbol: marketData.symbol,
-      vamm_address: marketData.vamm_address,
-      vault_address: marketData.vault_address,
-      market_id: marketData.market_id,
-      deployment_status: marketData.deployment_status
-    });
+    // Enhanced metadata fields - only include if they exist in schema
+    const enhancedFields = {
+      block_number: body.block_number || null,
+      gas_used: body.gas_used || null,
+      template_type: body.template_type || 'preset',
+      template_name: body.template_name || 'standard',
+      metric_name: body.metric_name || body.symbol,
+      metric_data_source: body.metric_data_source || null,
+      settlement_period_days: body.settlement_period_days || 7,
+      max_leverage: body.max_leverage || 50,
+      trading_fee_rate: body.trading_fee_rate || 30,
+      volume_scale_factor: body.volume_scale_factor || 1000,
+      collateral_token: body.collateral_token || null,
+      network: body.network || 'polygon',
+      
+      // System Integration Fields (NEW! - Complete ecosystem tracking)
+      metric_registry_address: body.metric_registry_address || null,
+      centralized_vault_address: body.centralized_vault_address || null,
+      chain_id: body.chain_id || 137,
+      factory_address: body.factory_address || null,
+      router_address: body.router_address || null,
+      collateral_token_address: body.collateral_token_address || null,
+      metric_id: body.metric_id || null
+    };
 
-    const { data, error } = await supabase
-      .from('vamm_markets')
-      .insert([marketData])
-      .select()
-      .single();
+    // Try to insert with enhanced fields first, fallback to basic fields
+    let data, error;
+    
+    try {
+      console.log('💾 Attempting to create market with enhanced metadata...');
+      const fullMarketData = { ...basicMarketData, ...enhancedFields };
+      
+      console.log('📊 Full market data:', {
+        symbol: fullMarketData.symbol,
+        vamm_address: fullMarketData.vamm_address,
+        vault_address: fullMarketData.vault_address,
+        market_id: fullMarketData.market_id,
+        deployment_status: fullMarketData.deployment_status,
+        has_enhanced_fields: !!fullMarketData.template_type
+      });
+
+      const result = await supabase
+        .from('vamm_markets')
+        .insert([fullMarketData])
+        .select()
+        .single();
+        
+      data = result.data;
+      error = result.error;
+      
+    } catch (enhancedError: any) {
+      console.warn('⚠️ Enhanced fields failed, trying basic fields only:', enhancedError.message);
+      
+      // Fallback to basic fields only
+      const result = await supabase
+        .from('vamm_markets')
+        .insert([basicMarketData])
+        .select()
+        .single();
+        
+      data = result.data;
+      error = result.error;
+    }
 
     if (error) {
       console.error('Supabase error:', error);
@@ -146,13 +239,65 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('✅ Market created successfully:', {
+     console.log('✅ Market created successfully:', {
       id: data.id,
       symbol: data.symbol,
       vamm_address: data.vamm_address,
       vault_address: data.vault_address,
       deployment_status: data.deployment_status
     });
+
+    // Also add VAMM to monitored_contracts table for automatic event tracking
+    if (data?.vamm_address && data?.deployment_status === 'deployed') {
+      try {
+        const monitoredContractData = {
+          name: `${data.symbol}_VAMM`,
+          address: data.vamm_address,
+          type: 'VAMM',
+          network: 'polygon',
+          is_active: true,
+          description: `Specialized VAMM for ${data.symbol} - ${data.description}`,
+          created_at: new Date().toISOString()
+        };
+
+        const { error: monitorError } = await supabase
+          .from('monitored_contracts')
+          .insert([monitoredContractData]);
+
+        if (monitorError) {
+          console.warn('⚠️ Failed to add VAMM to monitored_contracts:', monitorError);
+          // Don't fail the entire request for this
+        } else {
+          console.log('✅ VAMM added to monitored_contracts for automatic event tracking');
+        }
+
+        // Also add vault to monitoring if provided
+        if (data.vault_address) {
+          const vaultMonitorData = {
+            name: `${data.symbol}_VAULT`,
+            address: data.vault_address,
+            type: 'VAULT',
+            network: 'polygon',
+            is_active: true,
+            description: `Vault for ${data.symbol} VAMM`,
+            created_at: new Date().toISOString()
+          };
+
+          const { error: vaultMonitorError } = await supabase
+            .from('monitored_contracts')
+            .insert([vaultMonitorData]);
+
+          if (vaultMonitorError) {
+            console.warn('⚠️ Failed to add Vault to monitored_contracts:', vaultMonitorError);
+          } else {
+            console.log('✅ Vault added to monitored_contracts for automatic event tracking');
+          }
+        }
+      } catch (monitoringError) {
+        console.warn('⚠️ Error setting up contract monitoring:', monitoringError);
+        // Don't fail the main operation
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -193,7 +338,11 @@ export async function GET(request: NextRequest) {
     }
 
     if (symbol) {
-      query = query.ilike('symbol', symbol);
+      // Decode the symbol in case it's URL-encoded
+      const decodedSymbol = decodeURIComponent(symbol);
+      
+      // Try exact match first, then pattern matching as fallback
+      query = query.or(`symbol.eq.${decodedSymbol},symbol.ilike.%${decodedSymbol}%`);
     }
 
     const { data, error } = await query;

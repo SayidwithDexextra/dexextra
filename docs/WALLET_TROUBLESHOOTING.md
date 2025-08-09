@@ -97,7 +97,7 @@ Created `WalletDiagnostics` component that provides:
 ### Step 1: Check Browser Environment
 ```javascript
 // Run in browser console
-console.log({
+ console.log({
   hasEthereum: !!window.ethereum,
   isSecure: window.isSecureContext,
   protocol: window.location.protocol
@@ -115,12 +115,12 @@ console.log({
 if (window.ethereum) {
   // Test accounts
   window.ethereum.request({ method: 'eth_accounts' })
-    .then(accounts => console.log('Accounts:', accounts))
+    .then(accounts =>  console.log('Accounts:', accounts))
     .catch(err => console.error('Accounts error:', err))
   
   // Test chain ID
   window.ethereum.request({ method: 'eth_chainId' })
-    .then(chainId => console.log('Chain ID:', chainId))
+    .then(chainId =>  console.log('Chain ID:', chainId))
     .catch(err => console.error('Chain ID error:', err))
 }
 ```

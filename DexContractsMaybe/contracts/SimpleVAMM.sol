@@ -45,10 +45,25 @@ contract SimpleVAMM is ISimpleVAMM {
     int256 public totalShortSize;
     int256 public netPosition; // totalLongSize - totalShortSize
     
+    // Authorization system for test events
+    mapping(address => bool) public authorized;
+    
     // Events
     event PositionOpened(address indexed user, uint256 indexed positionId, bool isLong, uint256 size, uint256 price, uint256 leverage);
     event PositionClosed(address indexed user, uint256 indexed positionId, uint256 size, uint256 price, int256 pnl);
     event PriceUpdated(uint256 newPrice, int256 netPosition);
+    event AuthorizedAdded(address indexed account);
+    event AuthorizedRemoved(address indexed account);
+    
+    modifier onlyOwner() {
+        require(msg.sender == owner, "SimpleVAMM: not owner");
+        _;
+    }
+    
+    modifier onlyAuthorized() {
+        require(authorized[msg.sender] || msg.sender == owner, "SimpleVAMM: not authorized");
+        _;
+    }
     
     constructor(address _vault, address _oracle, uint256 _initialPrice) {
         owner = msg.sender;
@@ -327,6 +342,93 @@ contract SimpleVAMM is ISimpleVAMM {
         require(msg.sender == owner, "Not owner");
         require(_volumeScaleFactor > 0 && _volumeScaleFactor <= 1000, "Invalid scale");
         volumeScaleFactor = _volumeScaleFactor;
+    }
+    
+    /**
+     * @dev Emits position events manually (owner or authorized only)
+     * Useful for testing event monitoring and external integrations
+     */
+    function emitPositionEvent(
+        address user,
+        uint256 positionId,
+        bool isOpenEvent,
+        bool isLong,
+        uint256 size,
+        uint256 price,
+        uint256 leverageOrPnL
+    ) external onlyAuthorized {
+        require(user != address(0), "SimpleVAMM: invalid user");
+        
+        if (isOpenEvent) {
+            emit PositionOpened(user, positionId, isLong, size, price, leverageOrPnL);
+        } else {
+            emit PositionClosed(user, positionId, size, price, int256(leverageOrPnL));
+        }
+    }
+    
+    /**
+     * @dev Emits a batch of test position events for monitoring testing
+     */
+    function emitTestPositionEvents() external onlyAuthorized {
+        // Emit a series of test events to verify event monitoring
+        
+        // Test long position opened
+        emit PositionOpened(
+            msg.sender, 
+            999001, 
+            true,  // isLong
+            10000 * PRICE_PRECISION, // 10,000 USD position
+            100 * PRICE_PRECISION,   // $100 entry price
+            10  // 10x leverage
+        );
+        
+        // Test short position opened
+        emit PositionOpened(
+            msg.sender, 
+            999002, 
+            false, // isShort
+            15000 * PRICE_PRECISION, // 15,000 USD position
+            100 * PRICE_PRECISION,   // $100 entry price
+            5   // 5x leverage
+        );
+        
+        // Test position closed with profit
+        emit PositionClosed(
+            msg.sender, 
+            999001, 
+            10000 * PRICE_PRECISION, // Full position size
+            120 * PRICE_PRECISION,   // $120 exit price
+            int256(2000 * PRICE_PRECISION) // +$2,000 profit
+        );
+        
+        // Test position closed with loss
+        emit PositionClosed(
+            msg.sender, 
+            999002, 
+            15000 * PRICE_PRECISION, // Full position size
+            90 * PRICE_PRECISION,    // $90 exit price
+            -int256(1500 * PRICE_PRECISION) // -$1,500 loss
+        );
+        
+        // Emit price update to show current state
+        emit PriceUpdated(getMarkPrice(), netPosition);
+    }
+    
+    /**
+     * @dev Adds an authorized address (owner only)
+     */
+    function addAuthorized(address account) external onlyOwner {
+        require(account != address(0), "SimpleVAMM: invalid address");
+        authorized[account] = true;
+        emit AuthorizedAdded(account);
+    }
+    
+    /**
+     * @dev Removes an authorized address (owner only)
+     */
+    function removeAuthorized(address account) external onlyOwner {
+        authorized[account] = false;
+        emit AuthorizedRemoved(account);
     }
     
     /**

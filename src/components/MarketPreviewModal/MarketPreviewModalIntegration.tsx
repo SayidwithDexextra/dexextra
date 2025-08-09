@@ -42,7 +42,7 @@ const MarketPreviewModalIntegration: React.FC = () => {
 
   const handleGoToProduct = () => {
     // Navigate to product page or perform action
-    console.log('Going to product:', selectedProduct?.id);
+     console.log('Going to product:', selectedProduct?.id);
     handleCloseModal();
   };
 

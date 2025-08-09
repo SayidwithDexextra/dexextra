@@ -39,8 +39,8 @@
       ]
     },
     "/Users/gplay_sayid/Desktop/CODE/dexextra/DexContractsMaybe/contracts/SimpleVAMM.sol": {
-      "lastModificationDate": 1752804595290,
-      "contentHash": "17f223cb5af2da2df6b9436ff56d7925",
+      "lastModificationDate": 1752847228644,
+      "contentHash": "2655ea9b0c68e2792d81be826c79832d",
       "sourceName": "contracts/SimpleVAMM.sol",
       "solcConfig": {
         "version": "0.8.20",

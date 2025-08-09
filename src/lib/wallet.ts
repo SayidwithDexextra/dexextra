@@ -115,39 +115,39 @@ const isWalletInstalled = (walletName: string): boolean => {
 // Debug function to help with wallet detection issues
 export const debugWalletDetection = (): void => {
   if (typeof window === 'undefined') {
-    console.log('🔍 Wallet Detection Debug: Running in SSR environment')
+     console.log('🔍 Wallet Detection Debug: Running in SSR environment')
     return
   }
   
   const win = window as any
-  console.log('🔍 Wallet Detection Debug:')
-  console.log('ethereum object:', !!win.ethereum)
+   console.log('🔍 Wallet Detection Debug:')
+   console.log('ethereum object:', !!win.ethereum)
   
   if (win.ethereum) {
-    console.log('ethereum.isMetaMask:', win.ethereum.isMetaMask)
-    console.log('ethereum.isCoinbaseWallet:', win.ethereum.isCoinbaseWallet)
-    console.log('ethereum.isBraveWallet:', win.ethereum.isBraveWallet)
-    console.log('ethereum.isRainbow:', win.ethereum.isRainbow)
-    console.log('ethereum.isFrame:', win.ethereum.isFrame)
-    console.log('ethereum.isTrust:', win.ethereum.isTrust)
-    console.log('ethereum.isTrustWallet:', win.ethereum.isTrustWallet)
-    console.log('ethereum.isZerion:', win.ethereum.isZerion)
-    console.log('ethereum.isRabby:', win.ethereum.isRabby)
-    console.log('ethereum.isOKExWallet:', win.ethereum.isOKExWallet)
-    console.log('ethereum.providers:', win.ethereum.providers)
+     console.log('ethereum.isMetaMask:', win.ethereum.isMetaMask)
+     console.log('ethereum.isCoinbaseWallet:', win.ethereum.isCoinbaseWallet)
+     console.log('ethereum.isBraveWallet:', win.ethereum.isBraveWallet)
+     console.log('ethereum.isRainbow:', win.ethereum.isRainbow)
+     console.log('ethereum.isFrame:', win.ethereum.isFrame)
+     console.log('ethereum.isTrust:', win.ethereum.isTrust)
+     console.log('ethereum.isTrustWallet:', win.ethereum.isTrustWallet)
+     console.log('ethereum.isZerion:', win.ethereum.isZerion)
+     console.log('ethereum.isRabby:', win.ethereum.isRabby)
+     console.log('ethereum.isOKExWallet:', win.ethereum.isOKExWallet)
+     console.log('ethereum.providers:', win.ethereum.providers)
   }
   
-  console.log('trustWallet:', !!win.trustWallet)
-  console.log('zerion:', !!win.zerion)
-  console.log('rabby:', !!win.rabby)
-  console.log('phantom:', !!win.phantom)
-  console.log('phantom.ethereum:', !!win.phantom?.ethereum)
-  console.log('phantom.solana:', !!win.phantom?.solana)
-  console.log('talisman:', !!win.talisman)
-  console.log('SubWallet:', !!win.SubWallet)
-  console.log('okxwallet:', !!win.okxwallet)
-  console.log('BinanceChain:', !!win.BinanceChain)
-  console.log('solana:', !!win.solana)
+   console.log('trustWallet:', !!win.trustWallet)
+   console.log('zerion:', !!win.zerion)
+   console.log('rabby:', !!win.rabby)
+   console.log('phantom:', !!win.phantom)
+   console.log('phantom.ethereum:', !!win.phantom?.ethereum)
+   console.log('phantom.solana:', !!win.phantom?.solana)
+   console.log('talisman:', !!win.talisman)
+   console.log('SubWallet:', !!win.SubWallet)
+   console.log('okxwallet:', !!win.okxwallet)
+   console.log('BinanceChain:', !!win.BinanceChain)
+   console.log('solana:', !!win.solana)
   
   // Log all window properties that might be wallet-related
   const walletProps = Object.keys(win).filter(key => 
@@ -162,7 +162,7 @@ export const debugWalletDetection = (): void => {
   )
   
   if (walletProps.length > 0) {
-    console.log('🔍 Wallet-related window properties:', walletProps)
+     console.log('🔍 Wallet-related window properties:', walletProps)
   }
 }
 
@@ -701,7 +701,7 @@ export const getBalance = async (address: string): Promise<string> => {
   }
   
   try {
-    console.log('Fetching balance for address:', address)
+     console.log('Fetching balance for address:', address)
     
     // Check if the provider supports eth_getBalance
     if (typeof window.ethereum.request !== 'function') {
@@ -715,7 +715,7 @@ export const getBalance = async (address: string): Promise<string> => {
       params: [address, 'latest'],
     })
     
-    console.log('Raw balance response:', balance)
+     console.log('Raw balance response:', balance)
     
     if (!balance) {
       console.warn('No balance returned from provider')
@@ -730,7 +730,7 @@ export const getBalance = async (address: string): Promise<string> => {
       return '0'
     }
     
-    console.log('ETH balance:', ethBalance)
+     console.log('ETH balance:', ethBalance)
     
     // For now, return ETH balance directly instead of USD conversion
     // This avoids issues with external price APIs
@@ -771,7 +771,7 @@ export const getChainId = async (): Promise<number> => {
   }
   
   try {
-    console.log('Fetching chain ID...')
+     console.log('Fetching chain ID...')
     
     if (typeof window.ethereum.request !== 'function') {
       console.error('Provider does not support request method for chain ID')
@@ -782,7 +782,7 @@ export const getChainId = async (): Promise<number> => {
       method: 'eth_chainId',
     })
     
-    console.log('Raw chain ID response:', chainId)
+     console.log('Raw chain ID response:', chainId)
     
     if (!chainId) {
       console.warn('No chain ID returned from provider')
@@ -796,7 +796,7 @@ export const getChainId = async (): Promise<number> => {
       return 1
     }
     
-    console.log('Chain ID:', parsedChainId)
+     console.log('Chain ID:', parsedChainId)
     return parsedChainId
     
   } catch (error: any) {
@@ -824,12 +824,12 @@ export const getChainId = async (): Promise<number> => {
 // Check if wallet is already connected
 export const checkConnection = async (): Promise<WalletData | null> => {
   if (!window.ethereum) {
-    console.log('No ethereum provider available for connection check')
+     console.log('No ethereum provider available for connection check')
     return null
   }
   
   try {
-    console.log('Checking wallet connection...')
+     console.log('Checking wallet connection...')
     
     if (typeof window.ethereum.request !== 'function') {
       console.error('Provider does not support request method for connection check')
@@ -840,15 +840,15 @@ export const checkConnection = async (): Promise<WalletData | null> => {
       method: 'eth_accounts',
     })
     
-    console.log('Accounts found:', accounts?.length || 0)
+     console.log('Accounts found:', accounts?.length || 0)
     
     if (!accounts || accounts.length === 0) {
-      console.log('No connected accounts found')
+       console.log('No connected accounts found')
       return null
     }
     
     const address = accounts[0]
-    console.log('Connected account:', address)
+     console.log('Connected account:', address)
     
     // Get balance and chain ID with error handling
     let balance = '0'
@@ -875,7 +875,7 @@ export const checkConnection = async (): Promise<WalletData | null> => {
       avatar: generateAvatar(address),
     }
     
-    console.log('Connection check successful:', walletData)
+     console.log('Connection check successful:', walletData)
     return walletData
     
   } catch (error: any) {
@@ -916,17 +916,17 @@ export const removeListeners = () => {
 
 // Diagnostic function to help debug wallet issues
 export const diagnoseWalletIssues = async (): Promise<void> => {
-  console.log('🔍 Running wallet diagnostics...')
+   console.log('🔍 Running wallet diagnostics...')
   
   // Check browser environment
-  console.log('Browser environment:', {
+   console.log('Browser environment:', {
     userAgent: navigator.userAgent,
     isSecureContext: window.isSecureContext,
     protocol: window.location.protocol,
   })
   
   // Check ethereum provider
-  console.log('Ethereum provider check:', {
+   console.log('Ethereum provider check:', {
     windowEthereumExists: !!window.ethereum,
     isMetaMask: window.ethereum?.isMetaMask,
     isCoinbaseWallet: window.ethereum?.isCoinbaseWallet,
@@ -941,12 +941,12 @@ export const diagnoseWalletIssues = async (): Promise<void> => {
   
   try {
     // Test basic provider functionality
-    console.log('Testing provider methods...')
+     console.log('Testing provider methods...')
     
     // Test accounts method
     try {
       const accounts = await window.ethereum.request({ method: 'eth_accounts' })
-      console.log('✅ eth_accounts works:', accounts?.length || 0, 'accounts')
+       console.log('✅ eth_accounts works:', accounts?.length || 0, 'accounts')
     } catch (accountsError) {
       console.error('❌ eth_accounts failed:', accountsError)
     }
@@ -954,7 +954,7 @@ export const diagnoseWalletIssues = async (): Promise<void> => {
     // Test chain ID method
     try {
       const chainId = await window.ethereum.request({ method: 'eth_chainId' })
-      console.log('✅ eth_chainId works:', chainId)
+       console.log('✅ eth_chainId works:', chainId)
     } catch (chainError) {
       console.error('❌ eth_chainId failed:', chainError)
     }
@@ -967,9 +967,9 @@ export const diagnoseWalletIssues = async (): Promise<void> => {
           method: 'eth_getBalance',
           params: [accounts[0], 'latest']
         })
-        console.log('✅ eth_getBalance works:', balance)
+         console.log('✅ eth_getBalance works:', balance)
       } else {
-        console.log('⏭️ Skipping eth_getBalance (no connected accounts)')
+         console.log('⏭️ Skipping eth_getBalance (no connected accounts)')
       }
     } catch (balanceError) {
       console.error('❌ eth_getBalance failed:', balanceError)
@@ -978,7 +978,7 @@ export const diagnoseWalletIssues = async (): Promise<void> => {
     // Test network connectivity
     try {
       const networkVersion = await window.ethereum.request({ method: 'net_version' })
-      console.log('✅ Network version:', networkVersion)
+       console.log('✅ Network version:', networkVersion)
     } catch (networkError) {
       console.error('❌ Network connectivity issue:', networkError)
     }
@@ -987,7 +987,7 @@ export const diagnoseWalletIssues = async (): Promise<void> => {
     console.error('❌ Provider diagnostics failed:', error)
   }
   
-  console.log('🔍 Wallet diagnostics complete')
+   console.log('🔍 Wallet diagnostics complete')
 }
 
 // Network switching functionality
@@ -999,7 +999,7 @@ export const switchNetwork = async (network: NetworkConfig): Promise<boolean> =>
   const chainIdHex = formatChainIdForMetaMask(network.chainId)
   
   try {
-    console.log(`🔀 Switching to ${network.displayName} (Chain ID: ${network.chainId})`)
+     console.log(`🔀 Switching to ${network.displayName} (Chain ID: ${network.chainId})`)
     
     // Try to switch to the network
     await window.ethereum.request({
@@ -1007,15 +1007,15 @@ export const switchNetwork = async (network: NetworkConfig): Promise<boolean> =>
       params: [{ chainId: chainIdHex }],
     })
     
-    console.log(`✅ Successfully switched to ${network.displayName}`)
+     console.log(`✅ Successfully switched to ${network.displayName}`)
     return true
     
   } catch (switchError: any) {
-    console.log('Switch error:', switchError)
+     console.log('Switch error:', switchError)
     
     // If the network doesn't exist, add it
     if (switchError.code === 4902) {
-      console.log(`📝 Network not found, adding ${network.displayName} to wallet...`)
+       console.log(`📝 Network not found, adding ${network.displayName} to wallet...`)
       
       try {
         await window.ethereum.request({
@@ -1031,7 +1031,7 @@ export const switchNetwork = async (network: NetworkConfig): Promise<boolean> =>
           ],
         })
         
-        console.log(`✅ Successfully added and switched to ${network.displayName}`)
+         console.log(`✅ Successfully added and switched to ${network.displayName}`)
         return true
         
       } catch (addError: any) {
