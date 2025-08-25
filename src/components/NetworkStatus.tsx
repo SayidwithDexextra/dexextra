@@ -1,6 +1,6 @@
 'use client'
 
-import { useCentralizedVault } from '@/contexts/CentralizedVaultContext'
+// Removed useCentralizedVault import - smart contract functionality deleted
 
 interface NetworkStatusProps {
   userAddress?: string | null
@@ -8,14 +8,13 @@ interface NetworkStatusProps {
 }
 
 export function NetworkStatus({ userAddress, showDetails = false }: NetworkStatusProps) {
-  const {
-    userNetwork,
-    isOnCorrectNetwork,
-    defaultNetworkName,
-    networkWarning,
-    switchToCorrectNetwork,
-    canPerformTransactions
-  } = useCentralizedVault(userAddress)
+  // Stub values - smart contract functionality removed
+  const userNetwork = 'polygon'
+  const isOnCorrectNetwork = true
+  const defaultNetworkName = 'Polygon'
+  const networkWarning = null
+  const switchToCorrectNetwork = () => console.log('Network switching disabled')
+  const canPerformTransactions = false
 
   if (!userAddress) {
     return (
@@ -61,12 +60,11 @@ export function NetworkStatus({ userAddress, showDetails = false }: NetworkStatu
 }
 
 export function NetworkWarningBanner({ userAddress }: { userAddress?: string | null }) {
-  const {
-    networkWarning,
-    switchToCorrectNetwork,
-    defaultNetworkName,
-    isOnCorrectNetwork
-  } = useCentralizedVault(userAddress)
+  // Stub values - smart contract functionality removed
+  const networkWarning = null
+  const switchToCorrectNetwork = () => console.log('Network switching disabled')
+  const defaultNetworkName = 'Polygon'
+  const isOnCorrectNetwork = true
 
   if (!userAddress || isOnCorrectNetwork || !networkWarning) {
     return null

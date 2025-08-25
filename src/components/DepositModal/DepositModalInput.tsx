@@ -321,53 +321,82 @@ export default function DepositModalInput({
   }
 
   return createPortal(
-    <div style={inputStyles.overlay} onClick={handleBackdropClick}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleBackdropClick}>
+      {/* Sophisticated Backdrop */}
+      <div className="absolute inset-0 backdrop-blur-sm" style={{ backgroundColor: 'rgba(0, 0, 0, 0.3)' }} />
+      
+      {/* Input Modal with Sophisticated Design */}
       <div 
-        style={{
-          ...inputStyles.modal,
-          backgroundColor: '#1a1a1a',
-          border: '1px solid #333333'
-        }} 
-        className={getInputModalClasses()}
+        className={`group relative z-10 w-full max-w-md bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-xl border border-[#222222] hover:border-[#333333] transition-all duration-200 ${getInputModalClasses()}`}
+        style={{ 
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+          backdropFilter: 'blur(20px)',
+          maxHeight: '90vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
       >
-        {/* Back Button */}
-        <button
-          onClick={onBack}
-          style={inputStyles.backButton}
-          className={cssStyles.closeButtonHover}
-        >
-          <BackIcon />
-        </button>
+        {/* Sophisticated Header Section */}
+        <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
+          {/* Back Button */}
+          <button
+            onClick={onBack}
+            className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-2 hover:bg-blue-500/10 rounded-lg text-[#808080] hover:text-blue-300"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+              <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
 
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          style={inputStyles.closeButton}
-          className={cssStyles.closeButtonHover}
-        >
-          <CloseIcon />
-        </button>
-
-        {/* Header Section */}
-        <div style={inputStyles.header}>
-          <div style={inputStyles.headerIcon}>
-            <img 
-              src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png" 
-              alt="Dexetra" 
-              style={{ width: '24px', height: '24px' }}
-            />
+          <div className="flex items-center gap-3 min-w-0 flex-1 justify-center">
+            {/* Amount Status Indicator */}
+            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+            
+            {/* Dexetra Icon */}
+            <div className="relative group">
+              <div 
+                className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 group-hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(74, 222, 128, 0.9) 0%, rgba(6, 182, 212, 0.9) 50%, rgba(139, 92, 246, 0.9) 100%)',
+                  boxShadow: '0 8px 32px rgba(74, 222, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+                }}
+              >
+                <img 
+                  src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png" 
+                  alt="Dexetra" 
+                  className="w-5 h-5"
+                />
+              </div>
+            </div>
+            
+            {/* Amount Info */}
+            <div className="text-center">
+              <div className="flex items-center gap-2 justify-center">
+                <span className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  {isDirectDeposit ? 'Vault Deposit' : 'Amount'}
+                </span>
+                {isDirectDeposit && (
+                  <div className="text-[9px] text-green-400 bg-green-500/10 px-1 py-0.5 rounded">
+                    Direct
+                  </div>
+                )}
+              </div>
+              <div className="text-[10px] text-[#606060] mt-0.5">
+                ${maxBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {selectedToken.symbol} Available
+              </div>
+            </div>
           </div>
-          <h2 style={inputStyles.inputTitle}>
-            {isDirectDeposit ? 'Deposit to Vault' : 'Deposit'}
-          </h2>
-          <p style={inputStyles.inputSubtitle}>
-            Available Balance: ${maxBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {selectedToken.symbol}
-            {isDirectDeposit && (
-              <span style={{ display: 'block', fontSize: '11px', color: '#00d4aa', marginTop: '2px' }}>
-                Direct deposit - no swap required
-              </span>
-            )}
-          </p>
+
+          {/* Close Button */}
+          <button
+            onClick={onClose}
+            className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-2 hover:bg-red-500/10 rounded-lg text-[#808080] hover:text-red-300"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+              <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </button>
         </div>
 
         {/* Amount Input Section */}
@@ -513,9 +542,6 @@ export default function DepositModalInput({
                 lineHeight: 1.3
               }}>
                 Your {selectedToken.symbol} will be deposited directly to the Dexetra vault as trading collateral.
-                {!isVaultConnected && (
-                  <span style={{ color: '#ff6b6b' }}> Warning: Vault connection unavailable.</span>
-                )}
               </div>
             </div>
           </div>
@@ -566,45 +592,40 @@ export default function DepositModalInput({
           </div>
         )}
 
-        {/* Continue Button */}
-        <button
-          onClick={handleContinue}
-          style={{
-            ...inputStyles.continueButton,
-            backgroundColor: '#00d4aa',
-            color: '#000000',
-            ...(
+        {/* Sophisticated Continue Button */}
+        <div className="px-6 py-4 border-t border-[#1A1A1A] bg-[#0F0F0F]">
+          <button
+            onClick={handleContinue}
+            className={`group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border transition-all duration-200 ${
+              parseFloat(amount) > 0 && parseFloat(amount) <= maxBalance && maxBalance > 0
+                ? 'bg-green-500 hover:bg-green-600 border-green-500 hover:border-green-600 hover:scale-105 active:scale-95'
+                : 'bg-[#1A1A1A] border-[#333333] cursor-not-allowed opacity-50'
+            }`}
+            disabled={
               parseFloat(amount) <= 0 || 
               (maxBalance > 0 && parseFloat(amount) > maxBalance) ||
-              maxBalance <= 0 ||
-              (isDirectDeposit && !isVaultConnected)
-            ) ? { 
-              opacity: 0.5, 
-              cursor: 'not-allowed' 
-            } : {}
-          }}
-          className={
-            parseFloat(amount) > 0 && 
-            parseFloat(amount) <= maxBalance && 
-            maxBalance > 0 &&
-            (!isDirectDeposit || isVaultConnected)
-              ? cssStyles.continueButtonHover 
-              : ''
-          }
-          disabled={
-            parseFloat(amount) <= 0 || 
-            (maxBalance > 0 && parseFloat(amount) > maxBalance) ||
-            maxBalance <= 0 ||
-            (isDirectDeposit && !isVaultConnected)
-          }
-          title={
-            isDirectDeposit && !isVaultConnected 
-              ? 'Vault connection required for direct deposits'
-              : undefined
-          }
-        >
-          Continue to Review
-        </button>
+              maxBalance <= 0
+            }
+          >
+            {/* Status Indicator */}
+            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+              parseFloat(amount) > 0 && parseFloat(amount) <= maxBalance && maxBalance > 0
+                ? 'bg-green-400' : 'bg-gray-600'
+            }`} />
+            
+            {/* Button Text */}
+            <span className="text-[11px] font-medium text-white">
+              Continue to Review
+            </span>
+            
+            {/* Arrow Icon */}
+            {parseFloat(amount) > 0 && parseFloat(amount) <= maxBalance && maxBalance > 0 && (
+              <svg className="w-3 h-3 text-white group-hover:translate-x-0.5 transition-transform duration-200" viewBox="0 0 24 24" fill="none">
+                <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
     </div>,
     document.body

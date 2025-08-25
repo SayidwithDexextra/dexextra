@@ -13,6 +13,7 @@ export interface AlchemyWebhookConfig {
 export interface WebhookRegistrationResult {
   addressActivityWebhookId: string;
   minedTransactionWebhookId: string;
+  orderBookWebhookId?: string;
 }
 
 export class AlchemyNotifyService {
@@ -213,6 +214,77 @@ export class AlchemyNotifyService {
     } catch (error) {
       console.error('❌ Failed to create dropped transaction webhook:', error);
       throw new Error(`Failed to create dropped transaction webhook: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Create OrderBook webhook for order contract events
+   */
+  async createOrderBookWebhook(): Promise<string> {
+    try {
+      console.log('🎯 Creating OrderBook webhook for contract events');
+
+      // OrderBook contract addresses and event signatures
+      const orderBookContracts = [
+        '0x516a1790a04250FC6A5966A528D02eF20E1c1891', // OrderRouter
+        '0x07d317C87E6d8AF322463aCF024f1e28D38F6117'  // OrderBook (SILVER_V1)
+      ];
+
+      const orderEventSignatures = [
+        '0x5b954fa335c624976b5c2dba7c7a172770d02d8b36e6da6cfcc1b79baa62bfc8', // OrderPlaced
+        '0xc4058ebc534b64ecb27b2d4eaa1904f98997ec18ebe6ada4117593dde89478cc', // OrderCancelled
+        '0x1cd65e6e4f6a6bfcff65064f4e22d514f481a38dcbe4c2ad13ccde1b22e06941', // OrderExecuted
+        '0x184a980efa61c0acfeff92c0613bf2d3aceedadec9002d919c6bde9218b56c68', // OrderAdded
+        '0xe5426fa5d075d3a0a2ce3373a3df298c78eec0ded097810b0e69a92c21b4b0b3'  // OrderMatched
+      ];
+
+      // GraphQL query for OrderBook events
+      const graphqlQuery = `
+        {
+          block {
+            logs(filter: {
+              addresses: [${orderBookContracts.map(addr => `"${addr}"`).join(', ')}]
+              topics: [${orderEventSignatures.map(sig => `"${sig}"`).join(', ')}]
+            }) {
+              account {
+                address
+              }
+              topics
+              data
+              index
+              transaction {
+                hash
+                index
+                blockNumber
+                blockHash
+                from {
+                  address
+                }
+                to {
+                  address
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const payload = {
+        network: this.getNetworkApiString(),
+        webhook_type: 'GRAPHQL',
+        webhook_url: `${this.webhookUrl.replace('/alchemy', '/orderbook')}`, // Use dedicated orderbook endpoint
+        graphql_query: graphqlQuery.replace(/\s+/g, ' ').trim()
+      };
+
+      console.log('📡 OrderBook webhook payload:', JSON.stringify(payload, null, 2));
+
+      const response = await this.makeAlchemyApiRequest('/create-webhook', 'POST', payload);
+
+      console.log('✅ OrderBook webhook created:', response.data.id);
+      return response.data.id;
+    } catch (error) {
+      console.error('❌ Failed to create OrderBook webhook:', error);
+      throw new Error(`Failed to create OrderBook webhook: ${(error as Error).message}`);
     }
   }
 

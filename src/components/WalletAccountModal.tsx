@@ -1,12 +1,10 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import useWallet from '@/hooks/useWallet'
 import { TokenBalance } from '@/types/wallet'
 import TokenList from './TokenList'
-
-// Import the design system
-import designSystem from '../../design/AccountBar.json'
 
 interface WalletAccountModalProps {
   isOpen: boolean
@@ -16,19 +14,18 @@ interface WalletAccountModalProps {
 
 
 export default function WalletAccountModal({ isOpen, onClose }: WalletAccountModalProps) {
+  const router = useRouter()
   const { walletData, portfolio, refreshPortfolio, formatAddress } = useWallet()
   const [activeTab, setActiveTab] = useState<'crypto' | 'items'>('crypto')
-
-  // Use real portfolio data from Alchemy API
+  const [isClosing, setIsClosing] = useState(false)
 
   const tokens = useMemo(() => portfolio.tokens || [], [portfolio.tokens])
-   console.log('🔍 Tokens:', tokens)
   const totalValue = parseFloat(portfolio.totalValue) || tokens.reduce((sum: number, token: TokenBalance) => sum + (token.value || 0), 0)
   const ethBalance = portfolio.ethBalanceFormatted || '0.013'
 
   // Debug logging
   useEffect(() => {
-     console.log('🔍 Portfolio Debug:', {
+    console.log('🔍 Portfolio Debug:', {
       portfolioTokens: portfolio.tokens,
       tokensLength: portfolio.tokens?.length,
       isLoading: portfolio.isLoading,
@@ -40,261 +37,348 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
   // Refresh portfolio data when modal opens
   useEffect(() => {
     if (isOpen && walletData.isConnected) {
-       console.log('📊 Refreshing portfolio data...')
+      console.log('📊 Refreshing portfolio data...')
       refreshPortfolio()
     }
   }, [isOpen, walletData.isConnected, refreshPortfolio])
 
   if (!isOpen) return null
 
+  const handleClose = () => {
+    setIsClosing(true)
+    setTimeout(() => {
+      onClose()
+      setIsClosing(false)
+    }, 200)
+  }
+
   const handleActionClick = (action: string) => {
-     console.log(`${action} clicked`)
-    // Handle action routing here
-    onClose() // Close modal when navigating
+    console.log(`${action} clicked`)
+    handleClose()
     
-    // Navigation logic
-    switch (action) {
-      case 'send':
-        window.location.href = '/send'
-        break
-      case 'swap':
-        window.location.href = '/swap'
-        break
-      case 'deposit':
-        // Could open a deposit modal or navigate to deposit page
-        break
-      case 'buy':
-        // Could open a buy modal or navigate to buy page
-        break
-      default:
-        break
-    }
+    // Navigation logic with Next.js router
+    setTimeout(() => {
+      switch (action) {
+        case 'send':
+          router.push('/send')
+          break
+        case 'swap':
+          router.push('/swap')
+          break
+        case 'deposit':
+          // Could open a deposit modal or navigate to deposit page
+          break
+        case 'buy':
+          // Could open a buy modal or navigate to buy page
+          break
+        default:
+          break
+      }
+    }, 300)
   }
 
 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
+      {/* Sophisticated Backdrop with Subtle Blur */}
       <div 
-        className="absolute inset-0 transition-opacity duration-300"
-        style={{ backgroundColor: 'transparent' }}
-        onClick={onClose}
+        className={`absolute inset-0 transition-all duration-300 backdrop-blur-sm ${
+          isClosing ? 'opacity-0' : 'opacity-100'
+        }`}
+        style={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
+        onClick={handleClose}
       />
       
-      {/* Modal */}
+      {/* Main Modal Container - Sophisticated Minimal Design */}
       <div 
-        className="relative z-10 w-full transition-all duration-300 transform"
+        className={`group relative z-10 w-full max-w-sm transition-all duration-300 transform ${
+          isClosing ? 'scale-95 opacity-0' : 'scale-100 opacity-100'
+        } bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-xl border border-[#222222] hover:border-[#333333]`}
         style={{ 
-          maxWidth: designSystem.layout.maxWidth,
-          minWidth: designSystem.layout.minWidth,
-          backgroundColor: designSystem.colorPalette.primary.background,
-          borderRadius: designSystem.borderRadius.lg,
-          boxShadow: designSystem.shadows.lg,
-          fontFamily: designSystem.typography.fontFamily.primary
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+          backdropFilter: 'blur(20px)'
         }}
       >
-        {/* Header */}
-        <div 
-          className="flex items-center justify-between"
-          style={{ 
-            padding: designSystem.layout.header.padding,
-            backgroundColor: designSystem.colorPalette.primary.background
-          }}
-        >
-          <div className="flex items-center gap-3">
-            <div 
-              className="w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-bold"
-              style={{
-                background: 'linear-gradient(135deg, #4ade80 0%, #06b6d4 50%, #8b5cf6 100%)',
-                borderRadius: designSystem.borderRadius.sm
-              }}
-            >
-              {walletData.avatar || '👤'}
-            </div>
-            <div>
+        {/* Sophisticated Header Section */}
+        <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            {/* Connection Status Indicator */}
+            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+            
+            {/* Wallet Avatar with Sophisticated Gradient */}
+            <div className="relative group">
               <div 
-                className="flex items-center gap-1"
-                style={{ 
-                  fontSize: designSystem.typography.hierarchy.walletAddress.fontSize,
-                  fontWeight: designSystem.typography.hierarchy.walletAddress.fontWeight,
-                  fontFamily: designSystem.typography.hierarchy.walletAddress.fontFamily,
-                  color: designSystem.typography.hierarchy.walletAddress.color
+                className="w-12 h-12 rounded-xl flex items-center justify-center text-white text-sm font-bold transition-all duration-200 group-hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(74, 222, 128, 0.9) 0%, rgba(6, 182, 212, 0.9) 50%, rgba(139, 92, 246, 0.9) 100%)',
+                  boxShadow: '0 8px 32px rgba(74, 222, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
                 }}
               >
-                {formatAddress(walletData.address || '')}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M19 14L17 12L19 10M5 10L7 12L5 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
+                {walletData.avatar || '👤'}
+              </div>
+              {/* Subtle Ring Effect */}
+              <div className="absolute inset-0 rounded-xl border border-white/10 group-hover:border-white/20 transition-colors duration-200" />
+            </div>
+            
+            {/* Wallet Info */}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Wallet
+                </span>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  Connected
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[11px] font-medium text-white font-mono">
+                  {formatAddress(walletData.address || '')}
+                </span>
+                <button className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-blue-500/10 rounded text-blue-400 hover:text-blue-300">
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none">
+                    <path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" stroke="currentColor" strokeWidth="2"/>
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
+          
+          {/* Close Button with Sophisticated Styling */}
           <button
-            onClick={onClose}
-            className="flex items-center justify-center transition-all duration-200 hover:scale-110"
-            style={{
-              width: '32px',
-              height: '32px',
-              backgroundColor: designSystem.colorPalette.interactive.buttonBackground,
-              borderRadius: designSystem.borderRadius.sm,
-              color: designSystem.colorPalette.primary.text
-            }}
+            onClick={handleClose}
+            className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-2 hover:bg-red-500/10 rounded-lg text-[#808080] hover:text-red-300"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
           </button>
         </div>
 
-        {/* Tab Navigation */}
-        <div 
-          className="flex"
-          style={{ 
-            borderBottom: `1px solid ${designSystem.colorPalette.primary.backgroundSecondary}`,
-            padding: designSystem.layout.tabBar.padding
-          }}
-        >
-          <button
-            onClick={() => setActiveTab('crypto')}
-            className="transition-all duration-200"
-            style={{
-              padding: designSystem.components.tab.padding,
-              marginRight: designSystem.components.tab.marginRight,
-              borderBottom: activeTab === 'crypto' ? 
-                `2px solid ${designSystem.components.tab.active.borderBottomColor}` : 
-                `2px solid transparent`,
-              fontSize: designSystem.components.tab.fontSize,
-              fontWeight: designSystem.components.tab.fontWeight,
-              color: activeTab === 'crypto' ? 
-                designSystem.components.tab.active.color : 
-                designSystem.components.tab.inactive.color
-            }}
-          >
-            Crypto
-          </button>
-          <button
-            onClick={() => setActiveTab('items')}
-            className="transition-all duration-200"
-            style={{
-              padding: designSystem.components.tab.padding,
-              fontSize: designSystem.components.tab.fontSize,
-              fontWeight: designSystem.components.tab.fontWeight,
-              color: activeTab === 'items' ? 
-                designSystem.components.tab.active.color : 
-                designSystem.components.tab.inactive.color,
-              borderBottom: activeTab === 'items' ? 
-                `2px solid ${designSystem.components.tab.active.borderBottomColor}` : 
-                `2px solid transparent`
-            }}
-          >
-            Items
-          </button>
-        </div>
-
-        {/* Balance Display */}
-        <div 
-          className="text-center"
-          style={{ 
-            padding: designSystem.components.balanceDisplay.padding,
-            backgroundColor: designSystem.components.balanceDisplay.backgroundColor
-          }}
-        >
-          <div 
-            className="flex items-center justify-center gap-2 mb-2"
-            style={{
-              fontSize: designSystem.typography.hierarchy.balanceAmount.fontSize,
-              fontWeight: designSystem.typography.hierarchy.balanceAmount.fontWeight,
-              color: designSystem.typography.hierarchy.balanceAmount.color,
-              lineHeight: designSystem.typography.hierarchy.balanceAmount.lineHeight
-            }}
-          >
-            {ethBalance}
-            <span 
-              style={{
-                fontSize: designSystem.typography.hierarchy.balanceLabel.fontSize,
-                fontWeight: designSystem.typography.hierarchy.balanceLabel.fontWeight,
-                color: designSystem.typography.hierarchy.balanceLabel.color
-              }}
-            >
-              ETH
-            </span>
-          </div>
-          <div 
-            style={{
-              fontSize: designSystem.typography.hierarchy.fiatValue.fontSize,
-              fontWeight: designSystem.typography.hierarchy.fiatValue.fontWeight,
-              color: designSystem.typography.hierarchy.fiatValue.color
-            }}
-          >
-            ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div 
-          className="grid grid-cols-4 gap-3"
-          style={{ 
-            padding: designSystem.layout.actionButtons.padding,
-            gap: designSystem.layout.actionButtons.gap
-          }}
-        >
-          {[
-            { icon: '▶', label: 'Send', action: 'send' },
-            { icon: '🔄', label: 'Swap', action: 'swap' },
-            { icon: '⬇', label: 'Deposit', action: 'deposit' },
-            { icon: '+', label: 'Buy', action: 'buy' }
-          ].map((button) => (
-            <button
-              key={button.action}
-              onClick={() => handleActionClick(button.action)}
-              className="transition-all duration-200 hover:scale-105 active:scale-95"
-              style={{
-                width: designSystem.components.actionButton.width,
-                height: designSystem.components.actionButton.height,
-                borderRadius: designSystem.components.actionButton.borderRadius,
-                backgroundColor: designSystem.components.actionButton.backgroundColor,
-                border: designSystem.components.actionButton.border,
-                display: designSystem.components.actionButton.display,
-                                 flexDirection: designSystem.components.actionButton.flexDirection as 'column',
-                alignItems: designSystem.components.actionButton.alignItems,
-                justifyContent: designSystem.components.actionButton.justifyContent,
-                gap: designSystem.components.actionButton.gap,
-                color: designSystem.colorPalette.primary.text
-              }}
-            >
-              <div style={{ fontSize: '20px' }}>{button.icon}</div>
-              <div style={{ fontSize: '12px', fontWeight: '500' }}>{button.label}</div>
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        <div 
-          style={{ 
-            padding: designSystem.layout.tokenList.padding
-          }}
-        >
-          {activeTab === 'crypto' ? (
-            <TokenList
-              tokens={tokens}
-              isLoading={portfolio.isLoading}
-              walletConnected={walletData.isConnected}
-              onRefresh={refreshPortfolio}
-            />
-              ) : (
-            <div className="flex flex-col items-center justify-center py-12">
-              <div className="w-12 h-12 bg-gray-800 rounded-full flex items-center justify-center mb-4">
-                <span className="text-2xl">🖼️</span>
-                      </div>
-              <p 
-                className="text-center"
-                style={{
-                  fontSize: designSystem.typography.fontSize.sm,
-                  color: designSystem.colorPalette.primary.textSecondary
-                }}
+        {/* Sophisticated Tab Navigation */}
+        <div className="relative px-6 py-3 border-b border-[#1A1A1A]">
+          <div className="flex items-center gap-1 bg-[#1A1A1A] rounded-lg p-1">
+            {['crypto', 'items'].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab as 'crypto' | 'items')}
+                className={`relative flex-1 px-4 py-2 rounded-md text-xs font-medium transition-all duration-200 ${
+                  activeTab === tab
+                    ? 'bg-[#0F0F0F] text-white shadow-sm'
+                    : 'text-[#808080] hover:text-[#9CA3AF] hover:bg-[#2A2A2A]'
+                }`}
               >
-                NFTs coming soon...
-              </p>
+                <div className="flex items-center justify-center gap-2">
+                  {tab === 'crypto' && (
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                  )}
+                  {tab === 'items' && (
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                  )}
+                  <span className="capitalize">{tab}</span>
+                  {tab === 'crypto' && (
+                    <div className="text-[10px] text-[#606060] bg-[#2A2A2A] px-1.5 py-0.5 rounded ml-1">
+                      {tokens.length}
+                    </div>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Sophisticated Balance Display */}
+        <div className="relative px-6 py-8 text-center group">
+          {/* Background Pattern */}
+          <div className="absolute inset-0 opacity-5 group-hover:opacity-10 transition-opacity duration-300">
+            <div className="absolute inset-0" style={{
+              backgroundImage: 'radial-gradient(circle at 50% 50%, rgba(74, 222, 128, 0.1) 0%, transparent 50%)'
+            }} />
+          </div>
+          
+          {/* Main Balance Display */}
+          <div className="relative z-10">
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <div className="flex items-baseline gap-1">
+                <span className="text-3xl font-bold text-white font-mono tracking-tight">
+                  {ethBalance}
+                </span>
+                <span className="text-sm font-medium text-[#9CA3AF] uppercase tracking-wider">
+                  ETH
+                </span>
+              </div>
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+            </div>
+            
+            {/* Fiat Value with Sophisticated Styling */}
+            <div className="flex items-center justify-center gap-2 text-[#808080]">
+              <span className="text-lg font-medium">
+                ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-2 py-1 rounded">
+                USD
+              </div>
+            </div>
+            
+            {/* Portfolio Status Indicator */}
+            <div className="flex items-center justify-center gap-2 mt-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-green-400 transition-all duration-300"
+                  style={{ width: `${Math.min((totalValue / 10000) * 100, 100)}%` }}
+                />
+              </div>
+              <span className="text-[9px] text-[#606060]">
+                Portfolio Health
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Sophisticated Action Buttons */}
+        <div className="px-6 py-4 border-b border-[#1A1A1A]">
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { 
+                icon: (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <path d="M7 17L17 7M17 7H7M17 7V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                ), 
+                label: 'Send', 
+                action: 'send',
+                color: 'red'
+              },
+              { 
+                icon: (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <path d="M7 4V2A1 1 0 018 1H16A1 1 0 0117 2V4M7 4H5A2 2 0 003 6V20A2 2 0 005 22H19A2 2 0 0021 20V6A2 2 0 0019 4H17M7 4H17M9 9L12 12L15 9M12 12V16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                ), 
+                label: 'Swap', 
+                action: 'swap',
+                color: 'blue'
+              },
+              { 
+                icon: (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 2L12 22M19 9L12 2L5 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                ), 
+                label: 'Deposit', 
+                action: 'deposit',
+                color: 'green'
+              },
+              { 
+                icon: (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 5V19M5 12L19 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                ), 
+                label: 'Buy', 
+                action: 'buy',
+                color: 'yellow'
+              }
+            ].map((button) => (
+              <button
+                key={button.action}
+                onClick={() => handleActionClick(button.action)}
+                className={`group relative flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all duration-200 hover:scale-105 active:scale-95 ${
+                  button.color === 'red' ? 'border-[#222222] hover:border-red-500/30 hover:bg-red-500/5' :
+                  button.color === 'blue' ? 'border-[#222222] hover:border-blue-500/30 hover:bg-blue-500/5' :
+                  button.color === 'green' ? 'border-[#222222] hover:border-green-500/30 hover:bg-green-500/5' :
+                  'border-[#222222] hover:border-yellow-500/30 hover:bg-yellow-500/5'
+                } bg-[#1A1A1A] hover:bg-[#2A2A2A]`}
+              >
+                {/* Status Indicator */}
+                <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${
+                  button.color === 'red' ? 'bg-red-400' :
+                  button.color === 'blue' ? 'bg-blue-400' :
+                  button.color === 'green' ? 'bg-green-400' :
+                  'bg-yellow-400'
+                }`} />
+                
+                {/* Icon */}
+                <div className={`transition-colors duration-200 ${
+                  button.color === 'red' ? 'text-[#808080] group-hover:text-red-400' :
+                  button.color === 'blue' ? 'text-[#808080] group-hover:text-blue-400' :
+                  button.color === 'green' ? 'text-[#808080] group-hover:text-green-400' :
+                  'text-[#808080] group-hover:text-yellow-400'
+                }`}>
+                  {button.icon}
+                </div>
+                
+                {/* Label */}
+                <span className="text-[10px] font-medium text-[#808080] group-hover:text-white transition-colors duration-200">
+                  {button.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Sophisticated Content Section */}
+        <div className="px-6 pb-6">
+          {activeTab === 'crypto' ? (
+            <div className="space-y-3">
+              {/* Content Header */}
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Token Holdings
+                </h4>
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                    {tokens.length} tokens
+                  </div>
+                  <button 
+                    onClick={refreshPortfolio}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-blue-500/10 rounded text-blue-400 hover:text-blue-300"
+                  >
+                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none">
+                      <path d="M4 4V9H9M20 20V15H15M20.49 9A9 9 0 0111 2.1L13.77 4.87M3.51 15A9 9 0 0013 21.9L10.23 19.13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              
+              {/* Token List with Sophisticated Container */}
+              <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+                <TokenList
+                  tokens={tokens}
+                  isLoading={portfolio.isLoading}
+                  walletConnected={walletData.isConnected}
+                  onRefresh={refreshPortfolio}
+                />
+              </div>
+            </div>
+          ) : (
+            /* NFT/Items Empty State with Sophisticated Design */
+            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-[11px] font-medium text-[#808080]">
+                      No NFTs found
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                  <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 24 24" fill="none">
+                    <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5" stroke="currentColor" strokeWidth="2"/>
+                    <path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2"/>
+                  </svg>
+                </div>
+              </div>
+              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                  <div className="text-[9px] pt-1.5">
+                    <span className="text-[#606060]">NFT collections and digital assets will appear here</span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

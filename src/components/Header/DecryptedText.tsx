@@ -9,6 +9,7 @@ interface DecryptedTextProps {
     style?: React.CSSProperties
     animateOnHover?: boolean
     animateOnMount?: boolean
+    animateOnChange?: boolean
 }
 
 export default function DecryptedText({
@@ -20,6 +21,7 @@ export default function DecryptedText({
     style,
     animateOnHover = true,
     animateOnMount = false,
+    animateOnChange = true,
 }: DecryptedTextProps) {
     const [displayText, setDisplayText] = useState<string>(text)
     const [isHovering, setIsHovering] = useState<boolean>(false)
@@ -28,6 +30,7 @@ export default function DecryptedText({
     const [isMounted, setIsMounted] = useState<boolean>(false)
     const [hasAnimatedOnMount, setHasAnimatedOnMount] = useState<boolean>(false)
     const intervalRef = useRef<NodeJS.Timeout | undefined>(undefined)
+    const previousTextRef = useRef<string>(text)
 
     // Prevent hydration mismatches by only enabling animations after mount
     useEffect(() => {
@@ -41,6 +44,21 @@ export default function DecryptedText({
             setHasAnimatedOnMount(true)
         }
     }, [isMounted, animateOnMount, hasAnimatedOnMount, isAnimating])
+
+    // Trigger animation when text changes
+    useEffect(() => {
+        if (isMounted && animateOnChange && !isAnimating) {
+            const previousText = previousTextRef.current
+            if (previousText !== text) {
+                console.log('🎬 DecryptedText: Text changed, triggering animation', { 
+                    from: previousText, 
+                    to: text 
+                })
+                setShouldAnimate(true)
+                previousTextRef.current = text
+            }
+        }
+    }, [text, isMounted, animateOnChange, isAnimating])
 
     // Update display text when text prop changes
     useEffect(() => {

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { useTransactionTableEvents } from '@/hooks/useBlockchainEvents';
+// Removed useTransactionTableEvents hook - smart contract functionality disabled
 
 interface DebugTransactionTableProps {
   vammAddress?: string;

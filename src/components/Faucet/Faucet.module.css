@@ -1,109 +1,336 @@
-/* Faucet Container - Optimized Design */
+/* Faucet Container - Sophisticated Minimal Design System */
 .faucetContainer {
   background: transparent;
-  max-width: 550px;
   width: 100%;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   padding: 0;
   height: fit-content;
 }
 
-/* Header Section */
-.faucetHeader {
-  text-align: center;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.faucetTitle {
-  font-size: 28px;
-  font-weight: 700;
-  color: #ffffff;
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  margin-bottom: 8px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.faucetSubtitle {
-  font-size: 14px;
-  font-weight: 400;
-  color: #9CA3AF;
-  line-height: 1.3;
-  max-width: 350px;
-  margin: 0 auto;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-/* Form Section Layout */
+/* Form Section */
 .formSection {
-  margin-bottom: 20px;
-}
-
-.fieldRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 40px;
-  align-items: start;
-  margin-bottom: 20px;
-  min-height: auto;
-}
-
-.fieldLabel {
-  font-size: 20px;
-  font-weight: 400;
-  color: #ffffff;
-  line-height: 1.2;
-  margin-bottom: 8px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.fieldDescription {
-  font-size: 12px;
-  font-weight: 400;
-  color: #9CA3AF;
-  line-height: 1.4;
-  max-width: 280px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.fieldInput {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+
+/* ===== SOPHISTICATED MINIMAL DESIGN SYSTEM COMPONENTS ===== */
+
+/* Warning Container Pattern */
+.warningContainer {
+  background: #0F0F0F;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.warningContainer:hover {
+  background: #1A1A1A;
+  border-color: #333333;
+}
+
+.warningContent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.warningIcon {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #EF4444;
+  flex-shrink: 0;
+}
+
+.warningText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.warningTitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: #EF4444;
+  line-height: 1.2;
+}
+
+.warningDescription {
+  font-size: 10px;
+  color: #808080;
+  line-height: 1.3;
+}
+
+.warningAction {
+  background: transparent;
+  border: 1px solid #EF4444;
+  color: #EF4444;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.warningAction:hover {
+  background: #EF4444;
+  color: #ffffff;
+}
+
+/* Connection Container Pattern */
+.connectionContainer {
+  background: #0F0F0F;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.connectionContainer:hover {
+  background: #1A1A1A;
+  border-color: #333333;
+}
+
+.connectionContent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.connectionIcon {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #9CA3AF;
+  flex-shrink: 0;
+}
+
+.connectionText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.connectionTitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9CA3AF;
+  line-height: 1.2;
+}
+
+.connectionDescription {
+  font-size: 10px;
+  color: #808080;
+  line-height: 1.3;
+}
+
+.connectionAction {
+  background: #0F0F0F;
+  border: 1px solid #333333;
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  width: 100%;
+}
+
+.connectionAction:hover:not(:disabled) {
+  background: #1A1A1A;
+  border-color: #444444;
+}
+
+.connectionAction:disabled {
+  background: #2A2A2A;
+  border-color: #333333;
+  color: #606060;
+  cursor: not-allowed;
+}
+
+/* Balance Container Pattern */
+.balanceContainer {
+  background: #0F0F0F;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  padding: 10px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.balanceContainer:hover {
+  background: #1A1A1A;
+  border-color: #333333;
+}
+
+.balanceContent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.balanceStatusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #10B981;
+  flex-shrink: 0;
+}
+
+.balanceText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.balanceLabel {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9CA3AF;
+  line-height: 1.2;
+}
+
+.balanceDescription {
+  font-size: 10px;
+  color: #808080;
+  line-height: 1.3;
+}
+
+.balanceValue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.balanceAmount {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.balanceNumber {
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  font-family: 'Courier New', monospace;
+}
+
+.usdcIcon {
+  width: 16px;
+  height: 16px;
+  background: #2775ca;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 8px;
+  flex-shrink: 0;
+}
+
+/* Input Container Pattern */
+.inputContainer {
+  background: #0F0F0F;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.inputContainer:hover {
+  background: #1A1A1A;
+  border-color: #333333;
+}
+
+.inputContent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.inputStatusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #9CA3AF;
+  flex-shrink: 0;
+}
+
+.inputText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 
 .inputLabel {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
-  color: #ffffff;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  margin-bottom: 8px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #9CA3AF;
+  line-height: 1.2;
 }
 
-/* Input Styles - Balanced */
+.inputDescription {
+  font-size: 10px;
+  color: #808080;
+  line-height: 1.3;
+}
+
+.inputField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .input {
-  background-color: transparent;
+  background: transparent;
   border: none;
-  border-bottom: 1px solid #E5E5E5;
-  border-radius: 0;
-  padding: 8px 0;
-  font-size: 16px;
+  border-bottom: 1px solid #333333;
   color: #ffffff;
-  width: 100%;
+  font-size: 12px;
+  padding: 6px 0;
+  outline: none;
   transition: border-color 0.2s ease;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Courier New', monospace;
 }
 
 .input:focus {
   border-bottom-color: #ffffff;
-  outline: none;
 }
 
 .input::placeholder {
-  color: #9CA3AF;
+  color: #606060;
+  font-size: 11px;
 }
 
 .inputError {
@@ -114,186 +341,224 @@
   border-bottom-color: #EF4444;
 }
 
-.helpText {
-  font-size: 10px;
-  color: #9CA3AF;
-  margin-top: 6px;
-  line-height: 1.4;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+.errorFeedback,
+.successFeedback {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
 }
 
 .errorText {
-  font-size: 10px;
+  font-size: 9px;
   color: #EF4444;
-  margin-top: 6px;
-  line-height: 1.4;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.3;
 }
 
-/* Status Display */
-.statusDisplay {
-  background: transparent;
-  border-bottom: 1px solid #E5E5E5;
-  padding: 10px 0;
-  font-size: 16px;
-  color: #ffffff;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.successText {
+  font-size: 9px;
+  color: #10B981;
+  line-height: 1.3;
 }
 
-.balanceAmount {
-  font-weight: 500;
+/* Message Container Pattern */
+.messageContainer {
+  background: #0F0F0F;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.messageContent {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.usdcIcon {
-  width: 18px;
-  height: 18px;
-  background: #2775ca;
+.errorIcon {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: 600;
-  font-size: 9px;
+  background-color: #EF4444;
   flex-shrink: 0;
 }
 
-/* Connection Section */
-.connectionSection {
-  text-align: center;
-  margin-bottom: 24px;
-}
-
-.connectButton {
-  background-color: #000000;
-  color: #ffffff;
-  padding: 12px 24px;
-  border-radius: 6px;
-  border: none;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.connectButton:hover:not(:disabled) {
-  background-color: #333333;
-  transform: translateY(-1px);
-}
-
-.connectButton:active:not(:disabled) {
-  background-color: #000000;
-  transform: translateY(0);
-}
-
-.connectButton:disabled {
-  background-color: #9CA3AF;
-  cursor: not-allowed;
-  transform: none;
-}
-
-/* Claim Button */
-.claimButton {
-  background-color: #000000;
-  color: #ffffff;
-  padding: 12px 24px;
-  border-radius: 6px;
-  border: none;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  width: 100%;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.claimButton:hover:not(:disabled) {
-  background-color: #333333;
-  transform: translateY(-1px);
-}
-
-.claimButton:active:not(:disabled) {
-  background-color: #000000;
-  transform: translateY(0);
-}
-
-.claimButton:disabled {
-  background-color: #9CA3AF;
-  cursor: not-allowed;
-  transform: none;
-}
-
-/* Messages */
-.networkWarning,
-.errorMessage,
-.successMessage {
-  background: transparent;
-  border-bottom: 1px solid;
-  padding: 10px 0;
-  margin-bottom: 16px;
-  text-align: center;
-  font-size: 11px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.networkWarning {
-  border-color: #EF4444;
-  color: #EF4444;
+.successIcon {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #10B981;
+  flex-shrink: 0;
 }
 
 .errorMessage {
-  border-color: #EF4444;
+  font-size: 10px;
   color: #EF4444;
+  line-height: 1.3;
 }
 
 .successMessage {
-  border-color: #10B981;
+  font-size: 10px;
   color: #10B981;
+  line-height: 1.3;
 }
 
-/* Network Switch Button */
-.networkSwitchButton {
-  background: none;
-  border: none;
-  color: #ffffff;
-  text-decoration: underline;
-  cursor: pointer;
+/* Claim Container Pattern */
+.claimContainer {
+  background: #0F0F0F;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.claimContainer:hover {
+  background: #1A1A1A;
+  border-color: #333333;
+}
+
+.claimContent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.claimStatusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #10B981;
+  flex-shrink: 0;
+}
+
+.claimText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.claimLabel {
   font-size: 11px;
-  margin-left: 8px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  transition: opacity 0.2s ease;
+  font-weight: 500;
+  color: #9CA3AF;
+  line-height: 1.2;
 }
 
-.networkSwitchButton:hover {
-  opacity: 0.8;
+.claimDescription {
+  font-size: 10px;
+  color: #808080;
+  line-height: 1.3;
+}
+
+.claimActions {
+  display: flex;
+  gap: 8px;
+}
+
+.claimButton {
+  background: #0F0F0F;
+  border: 1px solid #333333;
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  flex: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.claimButton:hover:not(:disabled) {
+  background: #1A1A1A;
+  border-color: #444444;
+}
+
+.claimButton:disabled {
+  background: #2A2A2A;
+  border-color: #333333;
+  color: #606060;
+  cursor: not-allowed;
+}
+
+/* Info Section Pattern */
+.infoSection {
+  background: #0F0F0F;
+  border: 1px solid #222222;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 12px;
+}
+
+.infoHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #1A1A1A;
+}
+
+.infoIcon {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #9CA3AF;
+  flex-shrink: 0;
+}
+
+.infoTitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9CA3AF;
+  line-height: 1.2;
+}
+
+.infoContent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.infoItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.infoStepDot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: #606060;
+  flex-shrink: 0;
+}
+
+.infoText {
+  font-size: 10px;
+  color: #808080;
+  line-height: 1.3;
 }
 
 /* Loading Spinner */
 .loadingSpinner {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top: 2px solid #ffffff;
   border-radius: 50%;
   animation: spin 1s linear infinite;
+  flex-shrink: 0;
 }
 
 @keyframes spin {
@@ -301,101 +566,81 @@
   100% { transform: rotate(360deg); }
 }
 
-/* Info Section */
-.infoSection {
-  background: transparent;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  padding-top: 16px;
-  margin-top: 20px;
-}
-
-.infoTitle {
-  font-size: 14px;
-  font-weight: 400;
-  color: #ffffff;
-  line-height: 1.2;
-  margin-bottom: 10px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.infoList {
-  color: #9CA3AF;
-  font-size: 11px;
-  line-height: 1.5;
-  margin: 0;
-  padding-left: 14px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-.infoList li {
-  margin-bottom: 5px;
-}
-
-/* Remove old icons and styles */
-.faucetIcon {
-  display: none;
-}
-
-/* Mobile Responsive - Better Readability */
+/* Mobile Responsive - Design System Guidelines */
 @media (max-width: 768px) {
-  .faucetTitle {
-    font-size: 24px;
-    margin-bottom: 6px;
-  }
-
-  .faucetSubtitle {
-    font-size: 12px;
-    line-height: 1.3;
-  }
-
-  .fieldRow {
-    grid-template-columns: 1fr;
-    gap: 16px;
-    margin-bottom: 16px;
-  }
-
-  .fieldLabel {
-    font-size: 18px;
-    margin-bottom: 6px;
-  }
-
-  .fieldDescription {
-    font-size: 11px;
+  .faucetContainer {
     max-width: 100%;
-    line-height: 1.3;
   }
 
-  .statusDisplay {
-    font-size: 14px;
-    padding: 8px 0;
+  .formSection {
+    gap: 10px;
+  }
+
+  /* Container padding adjustments */
+  .warningContainer,
+  .connectionContainer,
+  .balanceContainer,
+  .inputContainer,
+  .messageContainer,
+  .claimContainer,
+  .infoSection {
+    padding: 8px;
+  }
+
+  /* Typography adjustments */
+  .warningTitle,
+  .connectionTitle,
+  .balanceLabel,
+  .inputLabel,
+  .claimLabel,
+  .infoTitle {
+    font-size: 10px;
+  }
+
+  .warningDescription,
+  .connectionDescription,
+  .balanceDescription,
+  .inputDescription,
+  .claimDescription,
+  .errorText,
+  .successText,
+  .errorMessage,
+  .successMessage,
+  .infoText {
+    font-size: 9px;
+  }
+
+  .balanceNumber {
+    font-size: 10px;
   }
 
   .input {
-    padding: 6px 0;
-    font-size: 15px;
-  }
-
-  .helpText {
-    font-size: 9px;
-    margin-top: 4px;
-  }
-
-  .errorText {
-    font-size: 9px;
-    margin-top: 4px;
-  }
-
-  .claimButton,
-  .connectButton {
-    padding: 10px 20px;
     font-size: 11px;
+    padding: 4px 0;
   }
 
-  .infoTitle {
-    font-size: 13px;
-  }
-
-  .infoList {
+  .input::placeholder {
     font-size: 10px;
   }
-} 
+
+  /* Button adjustments */
+  .warningAction,
+  .connectionAction,
+  .claimButton {
+    padding: 6px 12px;
+    font-size: 10px;
+  }
+
+  /* Icon adjustments */
+  .usdcIcon {
+    width: 14px;
+    height: 14px;
+    font-size: 7px;
+  }
+
+  .loadingSpinner {
+    width: 10px;
+    height: 10px;
+    border-width: 1.5px;
+  }
+}

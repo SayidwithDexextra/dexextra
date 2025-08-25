@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { AdvancedChart } from '../index';
-import { useVAMMMarkets } from '@/hooks/useVAMMMarkets';
+// Removed useVAMMMarkets hook - smart contract functionality disabled
 
 /**
  * Example component showing how to use AdvancedChart with custom vAMM markets
@@ -10,7 +10,10 @@ import { useVAMMMarkets } from '@/hooks/useVAMMMarkets';
 export default function AdvancedChartExample() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('');
   const [interval, setInterval] = useState<string>('15');
-  const { markets, isLoading, error } = useVAMMMarkets({ limit: 20 });
+  // Stub values - smart contract functionality removed
+  const markets: any[] = []
+  const isLoading = false
+  const error = null
 
   // Auto-select first available market
   useEffect(() => {

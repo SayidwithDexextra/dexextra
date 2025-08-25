@@ -16,16 +16,18 @@
  * - Integration with existing wallet connection system
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+import { ethers } from 'ethers'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import { DepositModal } from '../DepositModal'
 import { useWallet } from '@/hooks/useWallet'
-import { useCentralizedVault } from '@/contexts/CentralizedVaultContext'
+// Removed useCentralizedVault import - smart contract functionality deleted
 import DecryptedText from './DecryptedText';
 import { NetworkStatus } from '@/components/NetworkStatus'
+import { CONTRACT_ADDRESSES, CHAIN_CONFIG } from '@/lib/contractConfig'
 
 // Search Icon Component
 const SearchIcon = () => (
@@ -54,24 +56,109 @@ export default function Header() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
-  const { walletData } = useWallet()
+  const { walletData, portfolio, refreshPortfolio } = useWallet()
   const router = useRouter()
   
-  // Initialize centralized vault hook
-  const { 
-    vaultData, 
-    portfolioValue, 
-    availableCash, 
-    unrealizedPnL,
-    isConnected: isVaultConnected 
-  } = useCentralizedVault(walletData.address)
+  // Centralized vault on-chain data
+  const [isVaultConnected, setIsVaultConnected] = useState(false)
+  const [vaultAvailableUSD, setVaultAvailableUSD] = useState(0)
+  const [vaultTotalCollateralUSD, setVaultTotalCollateralUSD] = useState(0)
+  const unrealizedPnL = 0 // TODO: aggregate unrealized PnL from markets if needed
 
-  console.log('walletData', walletData)
-  console.log('vaultData', vaultData) 
-  console.log('portfolioValue', portfolioValue)
-  console.log('availableCash', availableCash)
-  console.log('unrealizedPnL', unrealizedPnL)
-  console.log('isVaultConnected', isVaultConnected) 
+  // Minimal ABIs for CentralVault and ERC20
+  const CENTRAL_VAULT_ABI = [
+    {
+      inputs: [],
+      name: 'getPrimaryCollateralToken',
+      outputs: [
+        { name: 'token', type: 'address' },
+        { name: 'isERC20', type: 'bool' },
+        { name: 'name', type: 'string' },
+        { name: 'symbol', type: 'string' },
+      ],
+      stateMutability: 'view',
+      type: 'function',
+    },
+    {
+      inputs: [
+        { name: 'user', type: 'address' },
+        { name: 'asset', type: 'address' },
+      ],
+      name: 'getUserBalance',
+      outputs: [
+        {
+          components: [
+            { name: 'available', type: 'uint256' },
+            { name: 'allocated', type: 'uint256' },
+            { name: 'locked', type: 'uint256' },
+          ],
+          name: 'balance',
+          type: 'tuple',
+        },
+      ],
+      stateMutability: 'view',
+      type: 'function',
+    },
+  ] as const
+
+  const ERC20_MIN_ABI = [
+    { inputs: [], name: 'decimals', outputs: [{ name: '', type: 'uint8' }], stateMutability: 'view', type: 'function' },
+  ] as const
+
+  const fetchVaultData = async () => {
+    try {
+      if (!walletData.address) return
+      const provider = (typeof window !== 'undefined' && (window as any).ethereum)
+        ? new ethers.BrowserProvider((window as any).ethereum)
+        : new ethers.JsonRpcProvider(CHAIN_CONFIG.rpcUrl)
+
+      // Check network connection
+      try {
+        const network = await provider.getNetwork()
+        setIsVaultConnected(Number(network.chainId) === CHAIN_CONFIG.chainId)
+      } catch {
+        setIsVaultConnected(false)
+      }
+
+      const vault = new ethers.Contract(CONTRACT_ADDRESSES.centralVault, CENTRAL_VAULT_ABI, provider)
+      const primary = await vault.getPrimaryCollateralToken()
+      const collateralToken: string = primary.token || primary[0]
+      const isErc20: boolean = primary.isERC20 ?? primary[1]
+      if (!isErc20 || !collateralToken) return
+
+      const erc20 = new ethers.Contract(collateralToken, ERC20_MIN_ABI, provider)
+      const decimals: number = Number(await erc20.decimals())
+
+      const userBal = await vault.getUserBalance(walletData.address, collateralToken)
+      const available = userBal.available ?? userBal[0]
+      const allocated = userBal.allocated ?? userBal[1]
+      const locked = userBal.locked ?? userBal[2]
+
+      const availableNum = parseFloat(ethers.formatUnits(available, decimals))
+      const allocatedNum = parseFloat(ethers.formatUnits(allocated, decimals))
+      const lockedNum = parseFloat(ethers.formatUnits(locked, decimals))
+
+      setVaultAvailableUSD(availableNum)
+      setVaultTotalCollateralUSD(availableNum + allocatedNum + lockedNum)
+    } catch (e) {
+      // Soft-fail to avoid UI break
+      setIsVaultConnected(false)
+      setVaultAvailableUSD(0)
+      setVaultTotalCollateralUSD(0)
+    }
+  }
+
+  // Auto-refresh vault data every 10s when connected
+  useEffect(() => {
+    if (!walletData.isConnected) return
+    fetchVaultData()
+    const interval = setInterval(() => {
+      fetchVaultData()
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [walletData.isConnected, walletData.address])
+
+  // Debug logs removed to prevent any rendering interference 
 
   // Format portfolio and cash values from centralized vault
   const formatCurrency = (value: string, showSign = false) => {
@@ -85,29 +172,21 @@ export default function Header() {
     return showSign && num > 0 ? `+${formatted}` : formatted
   }
 
-  // Calculate total portfolio value (collateral + unrealized PnL)
+  // Calculate portfolio value from vault collateral + unrealized PnL
   const totalPortfolioValue = useMemo(() => {
-    const collateral = parseFloat(portfolioValue || '0')
-    const pnl = parseFloat(unrealizedPnL || '0')
-    return formatCurrency((collateral + pnl).toString())
-  }, [portfolioValue, unrealizedPnL])
+    const base = vaultTotalCollateralUSD || 0
+    const pnl = parseFloat(String(unrealizedPnL || 0))
+    return formatCurrency((base + pnl).toString())
+  }, [vaultTotalCollateralUSD, unrealizedPnL])
 
-  // Handle different states for display values - keep animation running with placeholder during loading
+  // Handle different states for display values - stub implementation
   const displayPortfolioValue = !walletData.isConnected 
     ? '$0.00'
-    : vaultData.isLoading 
-      ? '$0.00'  // Keep animation running with placeholder until real data loads
-      : vaultData.error 
-        ? 'Error' 
-        : totalPortfolioValue
+    : totalPortfolioValue
         
   const displayCashValue = !walletData.isConnected 
     ? '$0.00'
-    : vaultData.isLoading 
-      ? '$0.00'  // Keep animation running with placeholder until real data loads
-      : vaultData.error 
-        ? 'Error' 
-        : formatCurrency(availableCash)
+    : formatCurrency(String(vaultAvailableUSD))
 
   // Helper function to get display name
   const getDisplayName = () => {
@@ -228,10 +307,11 @@ export default function Header() {
                   color: '#FFFFFFFF',
                   fontWeight: 600
                 }}
-                characters="0123456789"
+                characters="0123456789$.,+-"
                 speed={100}
                 maxIterations={12}
                 animateOnMount={true}
+                animateOnChange={true}
               />
             </div>
             
@@ -253,10 +333,10 @@ export default function Header() {
                 <div 
                   className="w-2 h-2 rounded-full"
                   style={{
-                    backgroundColor: isVaultConnected && !vaultData.error ? '#00d4aa' : '#ff6b6b',
+                    backgroundColor: isVaultConnected ? '#00d4aa' : '#ff6b6b',
                     opacity: walletData.isConnected ? 1 : 0.3
                   }}
-                  title={isVaultConnected && !vaultData.error ? 'Connected to DexV2 Vault' : 'Vault disconnected or error'}
+                  title={isVaultConnected ? 'Connected to DexV2 Vault' : 'Vault disconnected'}
                 />
               </div>
               <DecryptedText
@@ -266,15 +346,20 @@ export default function Header() {
                   color: '#FFFFFFFF',
                   fontWeight: 600
                 }}
-                characters="0123456789"
+                characters="0123456789$.,+-"
                 speed={100}
                 maxIterations={12}
                 animateOnMount={true}
+                animateOnChange={true}
               />
             </div>
 
-            {/* Unrealized PnL Display (only show if there's PnL and user is connected) */}
-            {walletData.isConnected && unrealizedPnL && parseFloat(unrealizedPnL) !== 0 && (
+            {/* Unrealized PnL Display (only show if there's actual PnL and user is connected) */}
+            {walletData.isConnected && 
+             unrealizedPnL !== 0 && 
+             unrealizedPnL !== null && 
+             unrealizedPnL !== undefined && 
+             parseFloat(String(unrealizedPnL)) !== 0 && (
               <div 
                 className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
                 onClick={() => router.push('/portfolio')}
@@ -403,9 +488,9 @@ export default function Header() {
         onClose={() => setIsDepositModalOpen(false)}
       />
 
-      {walletData.address && (
+      {/* {walletData.address && (
         <NetworkStatus userAddress={walletData.address} showDetails={true} />
-      )}
+      )} */}
     </>
   )
 } 

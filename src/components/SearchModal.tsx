@@ -245,36 +245,29 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
       {/* Backdrop for click-to-close */}
       <div 
-        className={`absolute inset-0 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
-                  style={{ backgroundColor: 'transparent' }}
+        className={`absolute inset-0 bg-black/50 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
         onClick={onClose}
       />
       
       {/* Modal */}
       <div 
         ref={modalRef}
-        className={`relative z-10 w-full transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
+        className={`group relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
         style={{
           maxWidth: '720px',
           maxHeight: '800px',
-          backgroundColor: '#1a1a1a',
-          borderRadius: '12px',
-          padding: '28px',
-          border: '1px solid #333333',
+          padding: '20px',
           boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
         }}
       >
         {/* Search Input Section */}
-        <div style={{ marginBottom: '16px' }}>
+        <div className="mb-3">
           <div className="relative">
-            <div 
-              className="absolute left-3 top-1/2 transform -translate-y-1/2"
-              style={{ color: design.colors.text.secondary }}
-            >
+            <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#606060]">
               {searchResults.isLoading ? (
-                <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
               ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
                   <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                 </svg>
@@ -286,42 +279,14 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
               placeholder="Search markets, categories, and users..."
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
-              className="w-full transition-all duration-200 focus:outline-none"
-              style={{
-                height: '40px',
-                padding: '8px 12px',
-                paddingLeft: '40px',
-                paddingRight: searchValue ? '40px' : '12px',
-                borderRadius: '8px',
-                fontSize: '14px',
-                fontFamily: design.typography.fontFamily.primary,
-                backgroundColor: '#2a2a2a',
-                border: '1px solid #444444',
-                color: design.colors.text.primary,
-                boxShadow: 'none'
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = '#555555'
-                e.target.style.boxShadow = '0 0 0 2px rgba(255, 255, 255, 0.05)'
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = '#444444'
-                e.target.style.boxShadow = 'none'
-              }}
+              className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 focus:outline-none focus:border-[#333333] text-white text-sm pl-10 pr-10 py-2.5"
             />
             {searchValue && (
               <button
                 onClick={() => setSearchValue('')}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-full transition-all duration-200"
-                style={{ color: design.colors.text.secondary }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent'
-                }}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-full hover:bg-[#2A2A2A] text-[#606060] hover:text-[#808080] transition-all duration-200"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </button>
@@ -330,58 +295,27 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         </div>
 
         {/* Content Sections */}
-        <div 
-          className="overflow-y-auto"
-          style={{ 
-            maxHeight: '680px'
-          }}
-        >
+        <div className="overflow-y-auto" style={{ maxHeight: '680px' }}>
           {/* Error Message */}
           {searchResults.error && (
-            <div 
-              className="mb-4 p-3 rounded-lg border"
-              style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                borderColor: 'rgba(239, 68, 68, 0.3)',
-                color: '#f87171'
-              }}
-            >
-              <div className="text-sm">{searchResults.error}</div>
+            <div className="bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5 mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                <span className="text-[11px] font-medium text-red-400">{searchResults.error}</span>
+              </div>
             </div>
           )}
 
           {/* Recent Searches */}
           {!searchValue && recentSearches.length > 0 && (
-            <div style={{ marginBottom: '16px' }}>
+            <div className="mb-3">
               <div className="flex items-center justify-between mb-2">
-                <h3 
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: '600',
-                    color: '#888888',
-                    fontFamily: design.typography.fontFamily.primary,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px'
-                  }}
-                >
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                   Recent Searches
-                </h3>
+                </h4>
                 <button 
                   onClick={clearRecentSearches}
-                  className="text-sm transition-all duration-200"
-                  style={{ 
-                    color: '#00d4aa',
-                    fontSize: '11px',
-                    fontFamily: design.typography.fontFamily.primary,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.textDecoration = 'underline'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.textDecoration = 'none'
-                  }}
+                  className="text-[10px] text-green-400 hover:text-green-300 uppercase tracking-wide transition-all duration-200"
                 >
                   Clear
                 </button>
@@ -392,35 +326,18 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   <div
                     key={index}
                     onClick={() => handleRecentSearchSelect(searchTerm)}
-                    className="flex items-center cursor-pointer transition-all duration-150"
-                    style={{
-                      height: '36px',
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      backgroundColor: '#2a2a2a',
-                      border: '1px solid #333333'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = '#2a2a2a'
-                    }}
+                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
                   >
-                    <div className="flex items-center gap-2">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke="#888888" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                      <span 
-                        style={{
-                          color: design.colors.text.primary,
-                          fontSize: '13px',
-                          fontWeight: '400',
-                          fontFamily: design.typography.fontFamily.primary
-                        }}
-                      >
-                        {searchTerm}
-                      </span>
+                    <div className="flex items-center justify-between p-2.5">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                        <svg className="w-3 h-3 text-[#606060]" viewBox="0 0 24 24" fill="none">
+                          <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                        <span className="text-[11px] font-medium text-[#808080]">
+                          {searchTerm}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -430,63 +347,30 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           {/* Trending Categories */}
           {!searchValue && (
-            <div style={{ marginBottom: '16px' }}>
-              <h3 
-                className="mb-2"
-                style={{
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#888888',
-                  fontFamily: design.typography.fontFamily.primary,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px'
-                }}
-              >
+            <div className="mb-3">
+              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide mb-2">
                 Trending Categories
-              </h3>
+              </h4>
               
               <div className="grid grid-cols-2 gap-2">
                 {['DeFi', 'Gaming', 'NFT', 'AI', 'Crypto', 'Prediction'].map((category) => (
                   <div
                     key={category}
                     onClick={() => setSearchValue(category)}
-                    className="flex items-center cursor-pointer transition-all duration-150"
-                    style={{
-                      height: '36px',
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      backgroundColor: '#2a2a2a',
-                      border: '1px solid #333333'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = '#2a2a2a'
-                    }}
+                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
                   >
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="flex items-center justify-center rounded text-xs font-semibold"
-                        style={{
-                          width: '20px',
-                          height: '20px',
-                          backgroundColor: '#00d4aa',
-                          color: '#000000'
-                        }}
-                      >
-                        #
+                    <div className="flex items-center justify-between p-2.5">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                        <div className="flex items-center gap-1.5">
+                          <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                            #
+                          </div>
+                          <span className="text-[11px] font-medium text-[#808080]">
+                            {category}
+                          </span>
+                        </div>
                       </div>
-                      <span 
-                        style={{
-                          color: design.colors.text.primary,
-                          fontSize: '13px',
-                          fontWeight: '400',
-                          fontFamily: design.typography.fontFamily.primary
-                        }}
-                      >
-                        {category}
-                      </span>
                     </div>
                   </div>
                 ))}
@@ -496,139 +380,78 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           {/* Search Results - Markets */}
           {searchValue && searchResults.markets.length > 0 && (
-            <div style={{ marginBottom: '16px' }}>
-              <h3 
-                className="mb-2"
-                style={{
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#888888',
-                  fontFamily: design.typography.fontFamily.primary,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px'
-                }}
-              >
-                Markets ({searchResults.markets.length})
-              </h3>
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Markets
+                </h4>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  {searchResults.markets.length}
+                </div>
+              </div>
               
               <div className="space-y-1">
                 {searchResults.markets.map((market) => (
                   <div
                     key={market.id}
                     onClick={() => handleMarketSelect(market)}
-                    className="flex items-center justify-between cursor-pointer transition-all duration-150"
-                    style={{
-                      height: '44px',
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      backgroundColor: '#2a2a2a',
-                      border: '1px solid #333333'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = '#2a2a2a'
-                    }}
+                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
                   >
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="flex items-center justify-center rounded-full text-xs font-semibold"
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          backgroundColor: market.deployment_status === 'deployed' ? '#00d4aa' : '#fbbf24',
-                          color: '#000000'
-                        }}
-                      >
-                        {market.symbol.charAt(0).toUpperCase()}
+                    <div className="flex items-center justify-between p-2.5">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                          market.deployment_status === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'
+                        }`} />
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <div className={`flex items-center justify-center rounded text-[9px] font-medium w-6 h-6 ${
+                            market.deployment_status === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
+                          }`}>
+                            {market.symbol.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[11px] font-medium text-white">
+                              {market.symbol}
+                            </div>
+                            <div className="text-[10px] text-[#606060] truncate max-w-[200px]">
+                              {market.description}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div 
-                          style={{
-                            color: design.colors.text.primary,
-                            fontSize: '13px',
-                            fontWeight: '500',
-                            fontFamily: design.typography.fontFamily.primary
-                          }}
-                        >
-                          {market.symbol}
+                      <div className="flex items-center gap-2">
+                        <div className="text-right">
+                          <div className="text-[10px] text-white font-mono">
+                            ${market.initial_price.toFixed(4)}
+                          </div>
+                          <div className={`text-[9px] ${
+                            market.deployment_status === 'deployed' ? 'text-green-400' : 'text-yellow-400'
+                          }`}>
+                            {market.deployment_status}
+                          </div>
                         </div>
-                        <div 
-                          style={{
-                            color: design.colors.text.secondary,
-                            fontSize: '11px',
-                            fontFamily: design.typography.fontFamily.primary,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            maxWidth: '200px',
-                            marginBottom: '2px'
-                          }}
-                        >
-                          {market.description}
-                        </div>
-                        {/* Category badges */}
-                        <div className="flex flex-wrap gap-1">
-                          {market.category.slice(0, 2).map((cat, index) => (
-                            <span
-                              key={index}
-                              style={{
-                                fontSize: '9px',
-                                fontWeight: '500',
-                                color: '#00d4aa',
-                                backgroundColor: 'rgba(0, 212, 170, 0.1)',
-                                padding: '1px 4px',
-                                borderRadius: '3px',
-                                border: '1px solid rgba(0, 212, 170, 0.3)',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.3px'
-                              }}
-                            >
-                              {cat}
-                            </span>
-                          ))}
-                          {market.category.length > 2 && (
-                            <span
-                              style={{
-                                fontSize: '9px',
-                                fontWeight: '500',
-                                color: design.colors.text.secondary,
-                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                                padding: '1px 4px',
-                                borderRadius: '3px',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.3px'
-                              }}
-                            >
-                              +{market.category.length - 2}
-                            </span>
-                          )}
-                        </div>
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div 
-                        style={{
-                          color: design.colors.text.primary,
-                          fontSize: '13px',
-                          fontWeight: '500',
-                          fontFamily: design.typography.fontFamily.primary
-                        }}
-                      >
-                        ${market.initial_price.toFixed(4)}
-                      </div>
-                      <div 
-                        style={{
-                          color: market.deployment_status === 'deployed' 
-                            ? design.colors.status.positive 
-                            : design.colors.text.secondary,
-                          fontSize: '11px',
-                          fontWeight: '500',
-                          textTransform: 'capitalize'
-                        }}
-                      >
-                        {market.deployment_status}
+                    {/* Expandable Details */}
+                    <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                      <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                        <div className="text-[9px] pt-1.5">
+                          <div className="flex flex-wrap gap-1">
+                            {market.category.slice(0, 3).map((cat, index) => (
+                              <span
+                                key={index}
+                                className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20"
+                              >
+                                {cat}
+                              </span>
+                            ))}
+                            {market.category.length > 3 && (
+                              <span className="text-[9px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
+                                +{market.category.length - 3}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -639,75 +462,54 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           {/* Search Results - Users */}
           {searchValue && searchResults.users.length > 0 && (
-            <div style={{ marginBottom: '16px' }}>
-              <h3 
-                className="mb-2"
-                style={{
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: '#888888',
-                  fontFamily: design.typography.fontFamily.primary,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px'
-                }}
-              >
-                Users ({searchResults.users.length})
-              </h3>
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Users
+                </h4>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  {searchResults.users.length}
+                </div>
+              </div>
               
               <div className="space-y-1">
                 {searchResults.users.map((user) => (
                   <div
                     key={user.id}
                     onClick={() => handleUserSelect(user)}
-                    className="flex items-center cursor-pointer transition-all duration-150"
-                    style={{
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      backgroundColor: '#2a2a2a',
-                      border: '1px solid #333333',
-                      minHeight: '44px'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = '#2a2a2a'
-                    }}
+                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
                   >
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="flex items-center justify-center text-sm rounded-full"
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          backgroundColor: user.profile_image_url ? 'transparent' : '#444444',
-                          backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
-                          backgroundSize: 'cover',
-                          backgroundPosition: 'center'
-                        }}
-                      >
-                        {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
+                    <div className="flex items-center justify-between p-2.5">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <div 
+                            className="flex items-center justify-center text-[9px] font-medium rounded-full w-6 h-6"
+                            style={{
+                              backgroundColor: user.profile_image_url ? 'transparent' : '#404040',
+                              backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
+                              backgroundSize: 'cover',
+                              backgroundPosition: 'center',
+                              color: '#ffffff'
+                            }}
+                          >
+                            {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[11px] font-medium text-white">
+                              {user.display_name || user.username || 'Anonymous User'}
+                            </div>
+                            <div className="text-[10px] text-[#606060] font-mono">
+                              {user.wallet_address.slice(0, 6)}...{user.wallet_address.slice(-4)}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div 
-                          style={{
-                            color: design.colors.text.primary,
-                            fontSize: '13px',
-                            fontWeight: '500',
-                            fontFamily: design.typography.fontFamily.primary
-                          }}
-                        >
-                          {user.display_name || user.username || 'Anonymous User'}
-                        </div>
-                        <div 
-                          style={{
-                            color: design.colors.text.secondary,
-                            fontSize: '11px',
-                            fontFamily: design.typography.fontFamily.mono
-                          }}
-                        >
-                          {user.wallet_address.slice(0, 6)}...{user.wallet_address.slice(-4)}
-                        </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+                        <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 24 24" fill="none">
+                          <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
                       </div>
                     </div>
                   </div>
@@ -718,34 +520,61 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           {/* No Results Message */}
           {searchValue && !searchResults.isLoading && searchResults.markets.length === 0 && searchResults.users.length === 0 && !searchResults.error && (
-            <div 
-              className="text-center py-8"
-              style={{ color: design.colors.text.secondary }}
-            >
-              <div className="mb-2">
-                <svg className="mx-auto w-12 h-12 opacity-50" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM13 17h-2v-6h2v6zm0-8h-2V7h2v2z"/>
-                </svg>
+            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-[11px] font-medium text-[#808080]">
+                      No results found for "{searchValue}"
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+                  <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 24 24" fill="none">
+                    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                    <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                </div>
               </div>
-              <div className="text-sm">No markets or users found for "{searchValue}"</div>
-              <div className="text-xs mt-1 opacity-75">Try searching for market symbols, categories, or usernames</div>
+              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                  <div className="text-[9px] pt-1.5">
+                    <span className="text-[#606060]">Try searching for market symbols, categories, or usernames</span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
           {/* Empty State */}
           {!searchValue && recentSearches.length === 0 && (
-            <div 
-              className="text-center py-8"
-              style={{ color: design.colors.text.secondary }}
-            >
-              <div className="mb-4">
-                <svg className="mx-auto w-12 h-12 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <circle cx="11" cy="11" r="8"/>
-                  <path d="m21 21-4.35-4.35"/>
-                </svg>
+            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-[11px] font-medium text-[#808080]">
+                      Search Dexextra
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+                  <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 24 24" fill="none">
+                    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                    <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                </div>
               </div>
-              <div className="text-sm mb-1">Search Dexextra</div>
-              <div className="text-xs opacity-75">Find smart contract markets by symbol or category, and user accounts</div>
+              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                  <div className="text-[9px] pt-1.5">
+                    <span className="text-[#606060]">Find smart contract markets by symbol or category, and user accounts</span>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

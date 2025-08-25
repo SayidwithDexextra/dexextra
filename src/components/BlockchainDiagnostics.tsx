@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useBlockchainConnection } from '@/hooks/useBlockchainEvents';
-import { queryVAMMEvents } from '@/lib/blockchainEventQuerier';
+// Removed useBlockchainConnection hook - smart contract functionality disabled
+// Removed queryVAMMEvents import - smart contract functionality disabled
 
 interface DiagnosticResult {
   test: string;
@@ -16,7 +16,10 @@ export default function BlockchainDiagnostics() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [contractAddress, setContractAddress] = useState('');
-  const { connectionStatus, isChecking, checkConnection } = useBlockchainConnection();
+  // Stub values - smart contract functionality removed
+  const connectionStatus = { connected: false, chainId: 0, blockNumber: 0, networkName: 'Unknown' }
+  const isChecking = false
+  const checkConnection = async () => console.log('Blockchain connection check disabled')
 
   const addDiagnostic = (test: string, status: DiagnosticResult['status'], message: string, duration?: number, data?: any) => {
     setDiagnostics(prev => [...prev, { test, status, message, duration, data }]);

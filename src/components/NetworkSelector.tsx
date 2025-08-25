@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { NETWORKS, getNetworkByChainId, type NetworkConfig } from '@/lib/networks';
+// Removed networks import - smart contract functionality deleted
 import { getCurrentNetwork, switchNetwork, getChainId } from '@/lib/wallet';
 
 interface NetworkSelectorProps {

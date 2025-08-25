@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { startRealTimePriceService, getRealTimePriceService } from '@/services/realTimePriceService';
+// Removed RealTimePriceService imports - smart contract functionality disabled
 
 export async function POST(request: NextRequest) {
   try {

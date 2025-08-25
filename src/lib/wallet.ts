@@ -1,5 +1,5 @@
 import { WalletData, WalletProvider } from '@/types/wallet'
-import { NETWORKS, getNetworkByChainId, formatChainIdForMetaMask, type NetworkConfig } from './networks'
+// Removed networks import - smart contract functionality deleted
 
 // Ethereum provider interface
 interface EthereumProvider {
@@ -59,7 +59,7 @@ export const generateAvatar = (address: string): string => {
   return emojis[index]
 }
 
-// Enhanced wallet detection utilities
+// Enhanced wallet detection utilities with robust MetaMask detection
 const isWalletInstalled = (walletName: string): boolean => {
   if (typeof window === 'undefined') return false
   
@@ -67,31 +67,84 @@ const isWalletInstalled = (walletName: string): boolean => {
   
   switch (walletName) {
     case 'MetaMask':
-      return !!(win.ethereum?.isMetaMask)
+      // Enhanced MetaMask detection - check multiple scenarios
+      if (win.ethereum?.isMetaMask) return true
+      
+      // Check if ethereum exists and providers array contains MetaMask
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isMetaMask)
+      }
+      
+      // Check if MetaMask object exists directly
+      if (win.MetaMask || win.metamask) return true
+      
+      // Check for ethereum with MetaMask properties but no isMetaMask flag
+      if (win.ethereum && !win.ethereum.isMetaMask) {
+        // Sometimes MetaMask is available but the flag isn't set immediately
+        // Check for MetaMask-specific methods
+        const hasMetaMaskMethods = win.ethereum.request && 
+          typeof win.ethereum.request === 'function' &&
+          win.ethereum._metamask
+        if (hasMetaMaskMethods) return true
+      }
+      
+      return false
     
     case 'Coinbase Wallet':
-      return !!(win.ethereum?.isCoinbaseWallet || win.ethereum?.selectedProvider?.isCoinbaseWallet)
+      if (win.ethereum?.isCoinbaseWallet) return true
+      if (win.ethereum?.selectedProvider?.isCoinbaseWallet) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isCoinbaseWallet)
+      }
+      return false
     
     case 'Trust Wallet':
-      return !!(win.trustWallet || win.ethereum?.isTrust || win.ethereum?.isTrustWallet)
+      if (win.trustWallet) return true
+      if (win.ethereum?.isTrust || win.ethereum?.isTrustWallet) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isTrust || provider.isTrustWallet)
+      }
+      return false
     
     case 'Zerion':
-      return !!(win.zerion || win.ethereum?.isZerion)
+      if (win.zerion) return true
+      if (win.ethereum?.isZerion) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isZerion)
+      }
+      return false
     
     case 'Rabby':
-      return !!(win.rabby || win.ethereum?.isRabby)
+      if (win.rabby) return true
+      if (win.ethereum?.isRabby) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isRabby)
+      }
+      return false
     
     case 'Rainbow':
-      return !!(win.ethereum?.isRainbow)
+      if (win.ethereum?.isRainbow) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isRainbow)
+      }
+      return false
     
     case 'Phantom':
       return !!(win.phantom?.ethereum || win.solana?.isPhantom)
     
     case 'Brave Wallet':
-      return !!(win.ethereum?.isBraveWallet)
+      if (win.ethereum?.isBraveWallet) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isBraveWallet)
+      }
+      return false
     
     case 'Frame':
-      return !!(win.ethereum?.isFrame)
+      if (win.ethereum?.isFrame) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isFrame)
+      }
+      return false
     
     case 'Talisman':
       return !!(win.talisman)
@@ -100,7 +153,12 @@ const isWalletInstalled = (walletName: string): boolean => {
       return !!(win.SubWallet)
     
     case 'OKX Wallet':
-      return !!(win.okxwallet || win.ethereum?.isOKExWallet)
+      if (win.okxwallet) return true
+      if (win.ethereum?.isOKExWallet) return true
+      if (win.ethereum?.providers) {
+        return win.ethereum.providers.some((provider: any) => provider.isOKExWallet)
+      }
+      return false
     
     case 'Binance Wallet':
       return !!(win.BinanceChain)
@@ -112,57 +170,92 @@ const isWalletInstalled = (walletName: string): boolean => {
 
 
 
-// Debug function to help with wallet detection issues
+// Enhanced debug function to help with wallet detection issues
 export const debugWalletDetection = (): void => {
   if (typeof window === 'undefined') {
-     console.log('🔍 Wallet Detection Debug: Running in SSR environment')
+    console.log('🔍 Wallet Detection Debug: Running in SSR environment')
     return
   }
   
   const win = window as any
-   console.log('🔍 Wallet Detection Debug:')
-   console.log('ethereum object:', !!win.ethereum)
+  console.log('🔍 Comprehensive Wallet Detection Debug:')
+  console.log('=====================================')
+  
+  // Basic ethereum object check
+  console.log('📟 Basic Detection:')
+  console.log('  ethereum exists:', !!win.ethereum)
+  console.log('  ethereum type:', typeof win.ethereum)
   
   if (win.ethereum) {
-     console.log('ethereum.isMetaMask:', win.ethereum.isMetaMask)
-     console.log('ethereum.isCoinbaseWallet:', win.ethereum.isCoinbaseWallet)
-     console.log('ethereum.isBraveWallet:', win.ethereum.isBraveWallet)
-     console.log('ethereum.isRainbow:', win.ethereum.isRainbow)
-     console.log('ethereum.isFrame:', win.ethereum.isFrame)
-     console.log('ethereum.isTrust:', win.ethereum.isTrust)
-     console.log('ethereum.isTrustWallet:', win.ethereum.isTrustWallet)
-     console.log('ethereum.isZerion:', win.ethereum.isZerion)
-     console.log('ethereum.isRabby:', win.ethereum.isRabby)
-     console.log('ethereum.isOKExWallet:', win.ethereum.isOKExWallet)
-     console.log('ethereum.providers:', win.ethereum.providers)
+    console.log('\n🦊 MetaMask Detection:')
+    console.log('  ethereum.isMetaMask:', win.ethereum.isMetaMask)
+    console.log('  ethereum._metamask:', !!win.ethereum._metamask)
+    console.log('  window.MetaMask:', !!win.MetaMask)
+    console.log('  window.metamask:', !!win.metamask)
+    console.log('  has request method:', typeof win.ethereum.request === 'function')
+    
+    console.log('\n🔵 Other Wallet Flags:')
+    console.log('  ethereum.isCoinbaseWallet:', win.ethereum.isCoinbaseWallet)
+    console.log('  ethereum.isBraveWallet:', win.ethereum.isBraveWallet)
+    console.log('  ethereum.isRainbow:', win.ethereum.isRainbow)
+    console.log('  ethereum.isFrame:', win.ethereum.isFrame)
+    console.log('  ethereum.isTrust:', win.ethereum.isTrust)
+    console.log('  ethereum.isTrustWallet:', win.ethereum.isTrustWallet)
+    console.log('  ethereum.isZerion:', win.ethereum.isZerion)
+    console.log('  ethereum.isRabby:', win.ethereum.isRabby)
+    console.log('  ethereum.isOKExWallet:', win.ethereum.isOKExWallet)
+    
+    console.log('\n📦 Providers Array:')
+    if (win.ethereum.providers) {
+      console.log('  providers length:', win.ethereum.providers.length)
+      win.ethereum.providers.forEach((provider: any, index: number) => {
+        console.log(`  Provider ${index}:`, {
+          isMetaMask: provider.isMetaMask,
+          isCoinbaseWallet: provider.isCoinbaseWallet,
+          isRabby: provider.isRabby,
+          isBraveWallet: provider.isBraveWallet,
+        })
+      })
+    } else {
+      console.log('  No providers array found')
+    }
+    
+    console.log('\n🔍 MetaMask Specific Detection Results:')
+    console.log('  MetaMask detected by enhanced logic:', isWalletInstalled('MetaMask'))
   }
   
-   console.log('trustWallet:', !!win.trustWallet)
-   console.log('zerion:', !!win.zerion)
-   console.log('rabby:', !!win.rabby)
-   console.log('phantom:', !!win.phantom)
-   console.log('phantom.ethereum:', !!win.phantom?.ethereum)
-   console.log('phantom.solana:', !!win.phantom?.solana)
-   console.log('talisman:', !!win.talisman)
-   console.log('SubWallet:', !!win.SubWallet)
-   console.log('okxwallet:', !!win.okxwallet)
-   console.log('BinanceChain:', !!win.BinanceChain)
-   console.log('solana:', !!win.solana)
+  console.log('\n🌐 Other Wallet Objects:')
+  console.log('  window.trustWallet:', !!win.trustWallet)
+  console.log('  window.zerion:', !!win.zerion)
+  console.log('  window.rabby:', !!win.rabby)
+  console.log('  window.phantom:', !!win.phantom)
+  console.log('  window.talisman:', !!win.talisman)
+  console.log('  window.SubWallet:', !!win.SubWallet)
+  console.log('  window.okxwallet:', !!win.okxwallet)
+  console.log('  window.BinanceChain:', !!win.BinanceChain)
   
-  // Log all window properties that might be wallet-related
+  console.log('\n📊 All Wallet Detection Results:')
+  const walletNames = ['MetaMask', 'Coinbase Wallet', 'Trust Wallet', 'Zerion', 'Rabby', 'Rainbow', 'Phantom', 'Brave Wallet', 'Frame', 'Talisman', 'SubWallet', 'OKX Wallet', 'Binance Wallet']
+  walletNames.forEach(name => {
+    console.log(`  ${name}:`, isWalletInstalled(name))
+  })
+  
+  console.log('=====================================')
+  
+  // Get all window properties that might be wallet-related
   const walletProps = Object.keys(win).filter(key => 
-    key.toLowerCase().includes('wallet') || 
+    key.toLowerCase().includes('wallet') ||
+    key.toLowerCase().includes('metamask') ||
     key.toLowerCase().includes('ethereum') ||
     key.toLowerCase().includes('web3') ||
-    key.toLowerCase().includes('metamask') ||
     key.toLowerCase().includes('coinbase') ||
     key.toLowerCase().includes('trust') ||
-    key.toLowerCase().includes('phantom') ||
-    key.toLowerCase().includes('brave')
+    key.toLowerCase().includes('rabby') ||
+    key.toLowerCase().includes('phantom')
   )
   
   if (walletProps.length > 0) {
-     console.log('🔍 Wallet-related window properties:', walletProps)
+    console.log('🔍 Wallet-related window properties:', walletProps)
   }
 }
 
@@ -255,22 +348,46 @@ const getDefaultWalletList = (): WalletProvider[] => {
   }))
 }
 
-// Connect to MetaMask
+// Enhanced MetaMask connection with improved provider handling
 export const connectMetaMask = async (): Promise<WalletData> => {
-  if (!window.ethereum?.isMetaMask) {
-    throw new Error('MetaMask not installed')
+  if (typeof window === 'undefined') {
+    throw new Error('Window object not available')
+  }
+  
+  const win = window as any
+  let provider = null
+  
+  // Find MetaMask provider using enhanced detection
+  if (win.ethereum?.isMetaMask) {
+    provider = win.ethereum
+  } else if (win.ethereum?.providers) {
+    // Find MetaMask in providers array
+    provider = win.ethereum.providers.find((p: any) => p.isMetaMask)
+  } else if (win.MetaMask || win.metamask) {
+    provider = win.MetaMask || win.metamask
+  }
+  
+  if (!provider) {
+    throw new Error('MetaMask not installed or not detected')
   }
   
   try {
-    const accounts = await window.ethereum.request({
+    // Use the specific MetaMask provider
+    const accounts = await provider.request({
       method: 'eth_requestAccounts',
     })
     
-    if (accounts.length === 0) {
-      throw new Error('No accounts found')
+    if (!accounts || accounts.length === 0) {
+      throw new Error('No accounts found or user rejected the request')
     }
     
     const address = accounts[0]
+    
+    // Validate the address format
+    if (!address || typeof address !== 'string' || !address.startsWith('0x')) {
+      throw new Error('Invalid address format received from MetaMask')
+    }
+    
     const balance = await getBalance(address)
     const chainId = await getChainId()
     
@@ -283,7 +400,16 @@ export const connectMetaMask = async (): Promise<WalletData> => {
       avatar: generateAvatar(address),
     }
   } catch (error: any) {
-    throw new Error(`Failed to connect to MetaMask: ${error.message}`)
+    // Provide more specific error messages
+    if (error.code === 4001) {
+      throw new Error('User rejected the connection request')
+    } else if (error.code === -32002) {
+      throw new Error('MetaMask is already processing a request. Please check MetaMask.')
+    } else if (error.message?.includes('User rejected')) {
+      throw new Error('User rejected the connection request')
+    } else {
+      throw new Error(`Failed to connect to MetaMask: ${error.message || 'Unknown error'}`)
+    }
   }
 }
 

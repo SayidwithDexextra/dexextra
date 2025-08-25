@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { env } from '@/lib/env'
-import { DEFAULT_ADDRESSES } from '@/lib/contractDeployment'
+// Removed contractDeployment import - smart contract functionality deleted
 
 const ALCHEMY_API_BASE = 'https://polygon-mainnet.g.alchemy.com/v2'
 
@@ -14,7 +14,7 @@ const getCustomTokenAddresses = () => {
   
   // Only include mock USDC in development mode
   if (process.env.NODE_ENV === 'development') {
-    baseTokens.push(DEFAULT_ADDRESSES.mockUSDC) // Our deployed Mock USDC contract
+    baseTokens.push('0xff541e2AEc7716725f8EDD02945A1Fe15664588b') // Mock USDC contract address (from orderbook deployment)
     console.log('🧪 Development mode: Including Mock USDC in token balance checks')
   } else {
     console.log('🚀 Production mode: Excluding Mock USDC from token balance checks')
@@ -180,17 +180,17 @@ export async function GET(request: NextRequest) {
     }
     
     // Debug logging for mock USDC
-    const mockUSDCAddress = DEFAULT_ADDRESSES.mockUSDC.toLowerCase()
+    const mockUSDCAddress = '0xff541e2AEc7716725f8EDD02945A1Fe15664588b'.toLowerCase()
     const mockUSDCBalance = tokenBalances.tokenBalances.find(token => 
       token.contractAddress.toLowerCase() === mockUSDCAddress
     )
     
-    console.log('🔍 Mock USDC Debug:', {
-      mockUSDCAddress,
-      mockUSDCBalance: mockUSDCBalance?.tokenBalance,
-      mockUSDCError: mockUSDCBalance?.error,
-      totalTokensFound: tokenBalances.tokenBalances.length
-    })
+    // console.log('🔍 Mock USDC Debug:', {
+    //   mockUSDCAddress,
+    //   mockUSDCBalance: mockUSDCBalance?.tokenBalance,
+    //   mockUSDCError: mockUSDCBalance?.error,
+    //   totalTokensFound: tokenBalances.tokenBalances.length
+    // })
     
     // Filter tokens with non-zero balances to get metadata for
     const nonZeroTokens = tokenBalances.tokenBalances
@@ -205,7 +205,7 @@ export async function GET(request: NextRequest) {
     
     // Add fallback metadata for mock USDC if it's missing (development only)
     if (process.env.NODE_ENV === 'development') {
-      const mockUSDCOriginalAddress = DEFAULT_ADDRESSES.mockUSDC
+      const mockUSDCOriginalAddress = '0xff541e2AEc7716725f8EDD02945A1Fe15664588b'
       if (!tokenMetadata[mockUSDCOriginalAddress] && tokenBalances.tokenBalances.some(token => 
         token.contractAddress.toLowerCase() === mockUSDCAddress
       )) {

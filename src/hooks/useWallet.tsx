@@ -149,11 +149,32 @@ export function WalletProvider({ children }: WalletProviderProps) {
       // Initial detection
       initializeWallet()
       
-      // Re-detect wallets after a short delay (some wallets inject themselves after page load)
-      const delayedDetection = setTimeout(() => {
-        const updatedProviders = detectWalletProviders()
-        setProviders(updatedProviders)
-      }, 1000)
+      // Enhanced wallet detection with multiple retry attempts
+      const detectionTimeouts = [
+        // Quick retry for immediate wallet injection
+        setTimeout(() => {
+          const updatedProviders = detectWalletProviders()
+          setProviders(updatedProviders)
+        }, 500),
+        
+        // Standard retry for normal wallet injection
+        setTimeout(() => {
+          const updatedProviders = detectWalletProviders()
+          setProviders(updatedProviders)
+        }, 1000),
+        
+        // Extended retry for slow wallet injection
+        setTimeout(() => {
+          const updatedProviders = detectWalletProviders()
+          setProviders(updatedProviders)
+        }, 2000),
+        
+        // Final retry for very slow wallet injection
+        setTimeout(() => {
+          const updatedProviders = detectWalletProviders()
+          setProviders(updatedProviders)
+        }, 5000)
+      ]
       
       // Re-detect on window focus (user might have installed a wallet)
       const handleFocus = () => {
@@ -161,11 +182,37 @@ export function WalletProvider({ children }: WalletProviderProps) {
         setProviders(updatedProviders)
       }
       
+      // Re-detect on ethereum events (wallet becomes available)
+      const handleEthereumConnect = () => {
+        const updatedProviders = detectWalletProviders()
+        setProviders(updatedProviders)
+      }
+      
       window.addEventListener('focus', handleFocus)
       
+      // Listen for ethereum events
+      if (window.ethereum) {
+        window.ethereum.on?.('connect', handleEthereumConnect)
+        window.ethereum.on?.('chainChanged', handleEthereumConnect)
+      }
+      
+      // Also listen for the ethereum object becoming available
+      const handleEthereumAvailable = () => {
+        const updatedProviders = detectWalletProviders()
+        setProviders(updatedProviders)
+      }
+      
+      window.addEventListener('ethereum#initialized', handleEthereumAvailable)
+      
       return () => {
-        clearTimeout(delayedDetection)
+        detectionTimeouts.forEach(timeout => clearTimeout(timeout))
         window.removeEventListener('focus', handleFocus)
+        window.removeEventListener('ethereum#initialized', handleEthereumAvailable)
+        
+        if (window.ethereum) {
+          window.ethereum.removeListener?.('connect', handleEthereumConnect)
+          window.ethereum.removeListener?.('chainChanged', handleEthereumConnect)
+        }
       }
     }
   }, [])

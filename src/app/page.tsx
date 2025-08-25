@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import CryptoMarketTicker from '@/components/CryptoMarketTicker/CryptoMarketTicker';
 import Hero from '@/components/Hero/Hero';
 import Widget from '@/components/widgets/Widget';
@@ -8,21 +9,36 @@ import { ProductCard, ProductCardData } from '@/components/ProductCard';
 import { MarketPreviewModal } from '@/components/MarketPreviewModal';
 import MarketTickerCardContainer from '@/components/MarketTickerCard/MarketTickerCardContainer';
 import { MarketTickerCardData } from '@/components/MarketTickerCard/types';
-import { useVAMMMarkets, VAMMMarket } from '@/hooks/useVAMMMarkets';
-import { useRecentEvents } from '@/hooks/useRecentEvents';
+import { useOrderbookMarkets } from '@/hooks/useOrderbookMarkets';
+import { transformOrderbookMarketsToCards, sortMarketsByPriority } from '@/lib/marketTransformers';
 
 export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductCardData | null>(null);
+  const router = useRouter();
 
-  // Fetch vAMM markets from Supabase
-  const { markets, isLoading: marketsLoading, error: marketsError } = useVAMMMarkets({
-    limit: 6,
-    status: 'deployed' // Only show successfully deployed markets
+  // Fetch active orderbook markets from the database
+  const { 
+    markets: orderbookMarkets, 
+    isLoading: marketsLoading, 
+    error: marketsError,
+    refetch: refetchMarkets 
+  } = useOrderbookMarkets({
+    status: 'ACTIVE',
+    limit: 20,
+    autoRefresh: true,
+    refreshInterval: 30000 // Refresh every 30 seconds
   });
 
-  // Fetch recent blockchain events
-  const { events: recentEvents, isLoading: eventsLoading, error: eventsError } = useRecentEvents(2)
+  // Sort markets by priority (active first, then by volume/date)
+  const sortedMarkets = sortMarketsByPriority(orderbookMarkets);
+  
+  // Transform orderbook markets to card data format
+  const marketCardData = transformOrderbookMarketsToCards(sortedMarkets);
+  
+  const recentEvents: any[] = []
+  const eventsLoading = false
+  const eventsError = null
 
 
   const heroData = {
@@ -77,19 +93,6 @@ export default function Home() {
     { id: '5', title: 'Template 5', image: '/placeholder-template.png' },
   ];
 
-  // Transform vAMM markets to MarketTickerCardData format
-  const transformMarketToCardData = (market: VAMMMarket): MarketTickerCardData => ({
-    id: market.id,
-    title: market.symbol,
-    categories: Array.isArray(market.category) ? market.category : [market.category],
-    price: market.initial_price,
-    currency: '$',
-    imageUrl: market.icon_image_url || market.banner_image_url || '/placeholder-market.svg',
-    imageAlt: `${market.symbol} market icon`,
-  });
-
-  const marketCardData: MarketTickerCardData[] = markets.map(transformMarketToCardData);
-
   const handleViewMarket = (productData: ProductCardData) => {
     setSelectedProduct(productData);
     setIsModalOpen(true);
@@ -102,24 +105,24 @@ export default function Home() {
 
   const handleGoToProduct = () => {
     if (selectedProduct?.href) {
-      window.location.href = selectedProduct.href;
+      router.push(selectedProduct.href);
     }
     handleCloseModal();
   };
 
-  const handleMarketCardViewProduct = (cardId: string) => {
-    const market = markets.find(m => m.id === cardId);
+  const handleMarketCardLongPosition = (cardId: string) => {
+    const market = orderbookMarkets.find(m => m.id === cardId);
     if (market) {
-      // Navigate to token page with "long" intent
-      window.location.href = `/token/${market.symbol}?action=long`;
+      // Navigate to token page with "long" intent using metric_id
+      router.push(`/token/${market.metric_id}?action=long`);
     }
   };
 
-  const handleMarketCardViewDemo = (cardId: string) => {
-    const market = markets.find(m => m.id === cardId);
+  const handleMarketCardShortPosition = (cardId: string) => {
+    const market = orderbookMarkets.find(m => m.id === cardId);
     if (market) {
-      // Navigate to token page with "short" intent
-      window.location.href = `/token/${market.symbol}?action=short`;
+      // Navigate to token page with "short" intent using metric_id
+      router.push(`/token/${market.metric_id}?action=short`);
     }
   };
 
@@ -150,7 +153,7 @@ export default function Home() {
       ) : marketsLoading ? (
         <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
           <div className="max-w-7xl mx-auto text-center">
-            <p className="text-white">Loading markets... ({markets.length} found so far)</p>
+            <p className="text-white">Loading orderbook markets... ({orderbookMarkets.length} found so far)</p>
           </div>
         </div>
       ) : marketCardData.length > 0 ? (
@@ -159,8 +162,8 @@ export default function Home() {
             <MarketTickerCardContainer
               title="Active Markets"
               cards={marketCardData}
-              onCardViewProduct={handleMarketCardViewProduct}
-              onCardViewDemo={handleMarketCardViewDemo}
+              onCardLongPosition={handleMarketCardLongPosition}
+              onCardShortPosition={handleMarketCardShortPosition}
             />
           </div>
         </div>

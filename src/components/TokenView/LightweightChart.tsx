@@ -50,10 +50,12 @@ const getTimeframeSeconds = (timeframe: string): number => {
 export default function LightweightChart({ 
   symbol, 
   width = '100%', 
-  height = 300, // Further reduced from 350
+  height = 350, // Increased by 25% for optimal visibility
   className = '',
   defaultPrice = 100
 }: LightweightChartProps) {
+  // Temporary flag to disable all backend interactions (API + Pusher)
+  const CHART_BACKEND_ENABLED = false;
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const areaSeriesRef = useRef<any>(null);
@@ -77,7 +79,7 @@ export default function LightweightChart({
     changePercent: number;
     time?: string;
   }>({
-    price: defaultPrice,
+    price: 0, // Show zero initially when no orders
     change: 0,
     changePercent: 0,
   });
@@ -180,7 +182,7 @@ export default function LightweightChart({
         
         // Update legend data when new data comes in
         const firstPoint = areaDataRef.current[0];
-        const firstValue = firstPoint?.value || defaultPrice;
+        const firstValue = firstPoint?.value || 0;
         const changeValue = newDataPoint.value - firstValue;
         const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
         
@@ -261,7 +263,7 @@ export default function LightweightChart({
           textColor: 'rgba(255, 255, 255, 0.5)',
         },
         width: (chartContainerRef.current as any).offsetWidth,
-        height: typeof height === 'number' ? height : 500,
+        height: typeof height === 'number' ? height : 350,
         grid: {
           vertLines: { color: 'rgb(22, 21, 26, 0.0)' },
           horzLines: { color: 'rgb(22, 21, 26, 0.0)' },
@@ -284,8 +286,8 @@ export default function LightweightChart({
         rightPriceScale: {
           borderVisible: false,
           scaleMargins: {
-            top: 0.2,
-            bottom: 0.2,
+            top: 0.1,
+            bottom: 0.1,
           },
         },
         timeScale: {
@@ -327,7 +329,6 @@ export default function LightweightChart({
         priceFormat: {
           type: 'price',
           precision: 2,
-          minMove: 0.01,
         },
         crosshairMarkerVisible: true,
         crosshairMarkerRadius: 4,
@@ -345,7 +346,7 @@ export default function LightweightChart({
           if (areaDataRef.current.length > 0) {
             const latestPoint = areaDataRef.current[areaDataRef.current.length - 1];
             const firstPoint = areaDataRef.current[0];
-            const firstValue = firstPoint?.value || defaultPrice;
+            const firstValue = firstPoint?.value || 0;
             const changeValue = latestPoint.value - firstValue;
             const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
             
@@ -368,7 +369,7 @@ export default function LightweightChart({
           // Get the first data point for change calculation
           const firstPoint = areaDataRef.current[0];
           const currentValue = (data as any).value as number;
-          const firstValue = firstPoint?.value || defaultPrice;
+          const firstValue = firstPoint?.value || 0;
           const changeValue = currentValue - firstValue;
           const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
           
@@ -395,7 +396,7 @@ export default function LightweightChart({
         if (chartContainerRef.current && chart) {
           chart.applyOptions({ 
             width: (chartContainerRef.current as any).offsetWidth,
-            height: typeof height === 'number' ? height : 500
+            height: typeof height === 'number' ? height : 350
           });
         }
       };
@@ -418,6 +419,7 @@ export default function LightweightChart({
 
   // Set up Pusher subscription for real-time chart updates
   useEffect(() => {
+    if (!CHART_BACKEND_ENABLED) return;
     if (!pusher || !symbol) return;
 
      console.log(`🚀 Setting up Pusher chart subscription for ${symbol}-${selectedTimeframe}`);
@@ -465,6 +467,12 @@ export default function LightweightChart({
 
   // Fetch and update chart data with animation
   const fetchChartData = async (timeframe: string, animate: boolean = false) => {
+    if (!CHART_BACKEND_ENABLED) {
+      setIsLoading(false);
+      setError(null);
+      setHasData(false);
+      return;
+    }
     if (!symbol) return;
     
     // Check if we've received recent Pusher updates
@@ -500,9 +508,10 @@ export default function LightweightChart({
       let hasRealData = false;
 
       if (!result.success || !result.data || result.data.length === 0) {
-         console.log(`📊 No data available for ${symbol}, showing default flatline`);
+         console.log(`📊 No data available for ${symbol}, showing zero price (no orders)`);
         
         // Create minimal default data aligned to timeframe boundaries
+        // Show zero when there are no orders in the market
         const now = Math.floor(Date.now() / 1000);
         const timeframeSeconds = getTimeframeSeconds(timeframe);
         const alignedNow = Math.floor(now / timeframeSeconds) * timeframeSeconds;
@@ -510,15 +519,15 @@ export default function LightweightChart({
         areaData = [
           {
             time: alignedNow - timeframeSeconds * 2,
-            value: defaultPrice
+            value: 0
           },
           {
             time: alignedNow - timeframeSeconds,
-            value: defaultPrice
+            value: 0
           },
           {
             time: alignedNow,
-            value: defaultPrice
+            value: 0
           }
         ];
         
@@ -729,6 +738,7 @@ export default function LightweightChart({
 
   // Load data when symbol or timeframe changes
   useEffect(() => {
+    if (!CHART_BACKEND_ENABLED) return;
     // Only load initial data if:
     // 1. Pusher is not available/connected, OR
     // 2. We wait a short time to see if Pusher provides data
@@ -757,6 +767,7 @@ export default function LightweightChart({
 
   // Intelligent auto-refresh with optimized dynamic aggregation
   useEffect(() => {
+    if (!CHART_BACKEND_ENABLED) return;
     const interval = setInterval(() => {
       // Only poll if:
       // 1. Pusher is not connected, OR
@@ -778,103 +789,103 @@ export default function LightweightChart({
 
   return (
     <div 
-      className={`relative rounded-2xl overflow-hidden ${className}`}
-      style={{ 
-        backgroundColor: 'rgba(10, 10, 10, 0.6)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        border: '1px solid rgba(255, 255, 255, 0.05)',
-        boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
-      }}
+      className={`group relative bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 overflow-hidden ${className}`}
     >
-      {/* Modern Gradient Background */}
-      <div 
-        className="absolute inset-0 opacity-30 pointer-events-none"
-        style={{
-          background: 'radial-gradient(circle at 20% 50%, rgba(139, 92, 246, 0.15) 0%, transparent 50%)',
-        }}
-      />
       
-      {/* Three-Line Legend Overlay */}
-      <div 
-        className="absolute top-12 left-4 pointer-events-none select-none z-20"
-        style={{
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        }}
-      >
-        {/* Line 1: Symbol and Timeframe */}
-        <div className="flex items-baseline gap-2 mb-1">
-          <span className="text-white/90 text-lg font-semibold">{(symbol).toUpperCase()}/USDC</span>
-          <span className="text-white/50 text-sm">{selectedTimeframe}</span>
+      {/* Chart Legend - Design System Typography */}
+      <div className="absolute top-3 left-4 pointer-events-none select-none z-20">
+        {/* Section Header Pattern */}
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+            {(symbol).toUpperCase()}/USDC
+          </h4>
+          <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+            {selectedTimeframe}
+          </div>
         </div>
         
-        {/* Line 2: Price */}
-        <div className="flex items-baseline gap-3 mb-1">
-          <span className="text-white text-2xl font-bold">
-            ${legendData.price.toFixed(2)}
-          </span>
-          <span className={`text-lg font-medium ${
-            legendData.change >= 0 ? 'text-green-400' : 'text-red-400'
-          }`}>
-            {legendData.change >= 0 ? '+' : ''}{legendData.change.toFixed(2)}
-          </span>
-          <span className={`text-sm font-medium ${
-            legendData.changePercent >= 0 ? 'text-green-400' : 'text-red-400'
-          }`}>
-            ({legendData.changePercent >= 0 ? '+' : ''}{legendData.changePercent.toFixed(2)}%)
-          </span>
-        </div>
-        
-        {/* Line 3: Additional Info */}
-        <div className="flex items-center gap-3">
-          <span className="text-white/40 text-xs">
-            {legendData.time || 'Latest'}
-          </span>
-          {isPusherConnected && dataSource === 'pusher' && (
-            <div className="flex items-center gap-1">
-              <div className="w-1 h-1 bg-green-400 rounded-full"></div>
-              <span className="text-green-400/60 text-xs">Live</span>
+        {/* Main Content Layout */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {/* Status Indicator */}
+            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+              legendData.change >= 0 ? 'bg-green-400' : 'bg-red-400'
+            }`} />
+            
+            {/* Primary Content */}
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              <span className="text-white text-sm font-medium">
+                ${legendData.price.toFixed(2)}
+              </span>
+              <span className={`text-[11px] font-medium ${
+                legendData.change >= 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {legendData.change >= 0 ? '+' : ''}{legendData.change.toFixed(2)}
+              </span>
             </div>
-          )}
+          </div>
+          
+          {/* Right Side Actions */}
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] ${
+              legendData.changePercent >= 0 ? 'text-green-400' : 'text-red-400'
+            }`}>
+              ({legendData.changePercent >= 0 ? '+' : ''}{legendData.changePercent.toFixed(2)}%)
+            </span>
+            {isPusherConnected && dataSource === 'pusher' && (
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            )}
+          </div>
+        </div>
+        
+        {/* Expandable Details on Hover */}
+        <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+            <div className="text-[9px] pt-1.5">
+              <span className="text-[#606060]">
+                {legendData.time || 'Latest'} • {dataSource === 'pusher' ? 'Live updates' : 'Polling data'}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Chart Header - Minimalistic */}
-      <div className="relative z-10 flex items-center justify-between px-4 py-2">
-        <div className="flex items-center gap-3">
-          {/* Remove the symbol display from here since it's now in the legend */}
-          {/* TEMPORARILY DISABLED LOADING SPINNER
+      {/* Chart Header - Design System Layout */}
+      <div className="flex items-center justify-between px-2.5 py-1.5">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {/* Loading State Indicator */}
           {isLoading && (
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 border-2 border-purple-400/30 border-t-purple-400 rounded-full animate-spin"></div>
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+          )}
+          {!isLoading && hasData && (
+            <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+          )}
+          {!isLoading && !hasData && !error && (
+            <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+          )}
+          
+          {/* Progress Bar for Loading */}
+          {isLoading && (
+            <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+              <div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
             </div>
           )}
-          */}
         </div>
 
-        {/* Timeframe Pills - Modern Design */}
-        <div className="flex items-center gap-2">
+        {/* Timeframe Pills - Sophisticated Design */}
+        <div className="flex items-center gap-1.5">
           {timeframes.map((tf) => (
             <button
               key={tf.value}
               onClick={() => setSelectedTimeframe(tf.value)}
               disabled={isLoading}
-              className={`relative px-4 py-2 text-xs font-semibold rounded-lg transition-all duration-300 ${
+              className={`px-2 py-1 text-[10px] font-medium rounded transition-all duration-200 ${
                 selectedTimeframe === tf.value
-                  ? 'text-white bg-white/10'
-                  : 'text-white/40 hover:text-white/60 hover:bg-white/5'
+                  ? 'text-white bg-[#1A1A1A] border border-[#333333]'
+                  : 'text-[#808080] hover:text-white hover:bg-[#1A1A1A] border border-[#222222] hover:border-[#333333]'
               } ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {selectedTimeframe === tf.value && (
-                <div 
-                  className="absolute inset-0 rounded-lg"
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(168, 85, 247, 0.2) 100%)',
-                    boxShadow: 'inset 0 0 0 1px rgba(139, 92, 246, 0.2)',
-                  }}
-                />
-              )}
-              <span className="relative z-10">{tf.label}</span>
+              {tf.label}
             </button>
           ))}
         </div>
@@ -884,12 +895,11 @@ export default function LightweightChart({
       <div 
         className="relative w-full"
         style={{ 
-          height: typeof height === 'number' ? height : 500,
+          height: typeof height === 'number' ? height : 350,
           opacity: chartReady ? 1 : 0,
           transition: 'opacity 0.5s ease-out',
-          transform: isTransitioning ? 'scale(1.02)' : 'scale(1)',
-          filter: isTransitioning ? 'brightness(1.1)' : 'brightness(1)',
-          marginTop: '-20px', // Adjust for legend overlap
+          transform: isTransitioning ? 'scale(1.01)' : 'scale(1)',
+          filter: isTransitioning ? 'brightness(1.05)' : 'brightness(1)',
         }}
       >
         <div 
@@ -912,41 +922,59 @@ export default function LightweightChart({
         )}
         */}
         
-        {/* No Data Overlay - Modern Glass Design */}
+        {/* Empty State Pattern */}
         {!hasData && !isLoading && !error && chartReady && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div 
-              className="text-center p-6 rounded-xl"
-              style={{
-                backgroundColor: 'rgba(20, 20, 20, 0.6)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.05)',
-              }}
-            >
-              <div className="text-3xl mb-3 opacity-80">📈</div>
-              <div className="text-white/90 text-base font-medium mb-2">No Trading History</div>
-              <div className="text-purple-400 text-xl font-light mb-2">${defaultPrice.toFixed(2)}</div>
-              <div className="text-white/40 text-xs">
-                Live data will appear when trading begins
+            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-4 max-w-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-[11px] font-medium text-[#808080]">
+                      No trading data available
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-white font-mono">$0.00</span>
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+                </div>
+              </div>
+              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                  <div className="text-[9px] pt-1.5">
+                    <span className="text-[#606060]">Chart will populate when trading begins</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         )}
         
-        {/* Error State - Modern */}
+        {/* Error State Pattern */}
         {error && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div 
-              className="text-center p-4 rounded-xl max-w-xs"
-              style={{
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-              }}
-            >
-              <div className="text-red-400 text-xs">{error}</div>
+            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-4 max-w-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-[11px] font-medium text-red-400">
+                      Chart Error
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                </div>
+              </div>
+              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                  <div className="text-[9px] pt-1.5">
+                    <span className="text-[#606060]">{error}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}

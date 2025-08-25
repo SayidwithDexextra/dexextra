@@ -8,16 +8,16 @@ import styles from './MarketTickerCard.module.css';
 interface MarketTickerCardContainerProps {
   title?: string;
   cards: MarketTickerCardData[];
-  onCardViewProduct?: (cardId: string) => void;
-  onCardViewDemo?: (cardId: string) => void;
+  onCardLongPosition?: (cardId: string) => void;
+  onCardShortPosition?: (cardId: string) => void;
   className?: string;
 }
 
 const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
   title = 'Latest Drops',
   cards,
-  onCardViewProduct,
-  onCardViewDemo,
+  onCardLongPosition,
+  onCardShortPosition,
   className,
 }) => {
   return (
@@ -46,8 +46,8 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
             currency={card.currency}
             imageUrl={card.imageUrl}
             imageAlt={card.imageAlt}
-            onViewProduct={() => onCardViewProduct?.(card.id)}
-            onViewDemo={() => onCardViewDemo?.(card.id)}
+            onLongPosition={() => onCardLongPosition?.(card.id)}
+            onShortPosition={() => onCardShortPosition?.(card.id)}
           />
         ))}
       </div>

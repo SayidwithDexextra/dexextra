@@ -47,6 +47,7 @@ export { ErrorModal, SuccessModal } from './StatusModals';
 // Form Components
 export { default as CreateMarketForm } from './CreateMarketForm'
 export { default as DepositModal } from './DepositModal';
+export { MarketWizard } from './MarketWizard';
 // export { default as TradingPanel } from './TradingPanel';
 
 // // Token Components

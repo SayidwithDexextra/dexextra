@@ -13,20 +13,20 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
   currency = '$',
   imageUrl,
   imageAlt,
-  onViewProduct,
-  onViewDemo,
+  onLongPosition,
+  onShortPosition,
   className,
   isDisabled = false,
 }) => {
-  const handleViewProduct = () => {
-    if (!isDisabled && onViewProduct) {
-      onViewProduct();
+  const handleLongPosition = () => {
+    if (!isDisabled && onLongPosition) {
+      onLongPosition();
     }
   };
 
-  const handleViewDemo = () => {
-    if (!isDisabled && onViewDemo) {
-      onViewDemo();
+  const handleShortPosition = () => {
+    if (!isDisabled && onShortPosition) {
+      onShortPosition();
     }
   };
 
@@ -80,7 +80,7 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
         <div className={styles.actions}>
           <button
             className={`${styles.button} ${styles.buttonPrimary}`}
-            onClick={handleViewProduct}
+            onClick={handleLongPosition}
             disabled={isDisabled}
             type="button"
           >
@@ -88,7 +88,7 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
           </button>
           <button
             className={`${styles.button} ${styles.buttonSecondary}`}
-            onClick={handleViewDemo}
+            onClick={handleShortPosition}
             disabled={isDisabled}
             type="button"
           >

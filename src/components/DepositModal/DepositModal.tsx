@@ -10,8 +10,9 @@ import DepositModalReview from './DepositModalReview'
 import DepositModalStatus from './DepositModalStatus'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { useWalletPortfolio } from '@/hooks/useWalletPortfolio'
-import { useCentralizedVault } from '@/contexts/CentralizedVaultContext'
+import { useCentralVault } from '@/hooks/useCentralVault'
 import { NetworkWarningBanner } from '@/components/NetworkStatus'
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 
 // Close Icon Component
 const CloseIcon = () => (
@@ -38,6 +39,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
   const [isAnimating, setIsAnimating] = useState(false)
   const [animationDirection, setAnimationDirection] = useState<'forward' | 'backward'>('forward')
   const [showInitialAnimation, setShowInitialAnimation] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
   
   // Transaction status state
   const [transactionStatus, setTransactionStatus] = useState<'pending' | 'success' | 'error'>('pending')
@@ -49,11 +51,19 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
   const { walletAddress, isConnected, connectWallet, isConnecting } = useWalletAddress()
   const { tokens: portfolioTokens, summary, isLoading: isLoadingPortfolio, error: portfolioError } = useWalletPortfolio(walletAddress)
   
+  // Real vault integration
+  const { 
+    isConnected: isVaultConnected, 
+    isLoading: isVaultLoading,
+    depositCollateral,
+    availableBalance: vaultBalance,
+    error: vaultError,
+    vaultAddress,
+    mockUSDCAddress 
+  } = useCentralVault(walletAddress)
+  
   // Extract totalValue from V2 summary (convert string to number for legacy compatibility)
   const totalValue = parseFloat(summary.totalValue) || 0
-  
-  // Centralized vault integration for direct deposits
-  const { depositCollateral, isConnected: isVaultConnected } = useCentralizedVault(walletAddress || undefined)
 
   useEffect(() => {
     setMounted(true)
@@ -96,7 +106,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     usdt: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', // USDT on Polygon
     usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC on Polygon  
     dai: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',   // DAI on Polygon
-    mockUsdc: '0xbD9E0b8e723434dCd41700e82cC4C8C539F66377'   // MOCK_USDC on Polygon
+    mockUsdc: '0xff541e2AEc7716725f8EDD02945A1Fe15664588b'   // MOCK_USDC on Polygon (from orderbook deployment)
   }
   
   const findTokenByAddress = (address: string) => {
@@ -165,9 +175,17 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     }
   ]
 
+  const handleClose = () => {
+    setIsClosing(true)
+    setTimeout(() => {
+      onClose()
+      setIsClosing(false)
+    }, 200)
+  }
+
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
-      onClose()
+      handleClose()
     }
   }
 
@@ -239,6 +257,15 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
   }
 
   const handleReviewModalConfirm = async () => {
+    // Validate that we can perform a real transaction
+    if (!isDirectDeposit || !depositCollateral || !isVaultConnected) {
+      console.error('❌ Cannot proceed: Vault not connected or invalid deposit type')
+      setTransactionStatus('error')
+      setShowReviewModal(false)
+      setShowStatusModal(true)
+      return
+    }
+
     // Immediately show status modal with pending state
     setTransactionStartTime(Date.now())
     setTransactionStatus('pending')
@@ -247,48 +274,40 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     setShowReviewModal(false)
     setShowStatusModal(true)
 
-    // Process transaction in background while status modal is showing
+    // Process REAL transaction - no mocks or simulations
     try {
-      let txHash: string | undefined = undefined
-
-      if (isDirectDeposit && depositCollateral) {
-        // Direct deposit to vault
-        console.log('🏦 Starting direct deposit:', depositAmount)
-        await depositCollateral(depositAmount)
-        console.log('✅ Direct deposit completed successfully')
-        
-        // Generate a mock transaction hash for direct deposits
-        txHash = '0x' + Math.random().toString(16).substring(2, 66)
-      } else {
-        // Swap transaction (simulate for now)
-        console.log('🔄 Starting swap transaction:', depositAmount)
-        await new Promise(resolve => setTimeout(resolve, 3000)) // Simulate transaction time
-        console.log('✅ Swap transaction completed successfully')
-        
-        // Generate a mock transaction hash for swaps
-        txHash = '0x' + Math.random().toString(16).substring(2, 66)
+      console.log('🏦 Starting REAL vault deposit:', depositAmount)
+      
+      // This will perform actual blockchain transaction
+      const txHash = await depositCollateral(depositAmount)
+      
+      if (!txHash) {
+        throw new Error('Transaction failed - no transaction hash returned')
       }
+      
+      console.log('✅ Real blockchain deposit completed:', txHash)
       
       // Calculate actual transaction time
       const elapsed = Math.floor((Date.now() - transactionStartTime) / 1000)
       const timeText = elapsed < 60 ? `${elapsed} seconds` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
       
-      // Set transaction results
+      // Set transaction results from real blockchain transaction
       setTransactionHash(txHash)
       setActualTransactionTime(timeText)
       
-      // Update to success status (this will trigger re-render of status modal)
+      // Update to success status only after real transaction confirmation
       setTransactionStatus('success')
       
-      console.log('📊 Transaction completed:', {
+      console.log('📊 Real transaction completed:', {
         hash: txHash,
         time: timeText,
         amount: depositAmount,
-        isDirectDeposit
+        network: 'Polygon',
+        contract: 'CentralVault'
       })
       
     } catch (error) {
-      console.error('❌ Transaction failed:', error)
+      console.error('❌ Real transaction failed:', error)
       
       // Calculate time even for failed transactions
       const elapsed = Math.floor((Date.now() - transactionStartTime) / 1000)
@@ -351,15 +370,15 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     return isNaN(balance) ? 0 : balance
   }
 
-  // Check if selected token is the vault collateral token (USDC variants)
+  // Check if selected token is the vault collateral token (MOCK_USDC only for real deposits)
   const isVaultCollateralToken = (): boolean => {
     if (!selectedToken) return false
     const token = tokens.find(t => t.id === selectedToken)
     if (!token) return false
     
-    // Check for USDC variants that can be directly deposited to the vault
-    const collateralSymbols = ['USDC', 'MOCK_USDC', 'USDC.E']
-    return collateralSymbols.includes(token.symbol.toUpperCase())
+    // Only MOCK_USDC can be directly deposited to vault (real transactions)
+    // Other tokens would require swaps which are not implemented
+    return token.symbol === 'MOCK_USDC'
   }
 
   // Determine if this should be a direct deposit or swap
@@ -367,19 +386,21 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
 
   // Get appropriate target token based on deposit type
   const getTargetToken = () => {
-    if (isDirectDeposit) {
-      // For direct deposits, target is the vault (no token conversion)
+    if (isDirectDeposit && selectedToken) {
+      // For MOCK_USDC direct deposits, target is the CentralVault
       return { 
         symbol: 'VAULT', 
         icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png',
-        name: 'Dexetra Vault'
+        name: 'CentralVault (Polygon)',
+        address: CONTRACT_ADDRESSES.centralVault
       }
     } else {
-      // For swaps, target is USDC
+      // Non-MOCK_USDC tokens are not supported for direct deposits
       return { 
         symbol: 'USDC', 
         icon: 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg',
-        name: 'USD Coin'
+        name: 'USD Coin (Not Supported)',
+        address: CONTRACT_ADDRESSES.mockUSDC
       }
     }
   }
@@ -408,194 +429,319 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
   return (
     <>
       {(isOpen && !showInputModal) && createPortal(
-        <div style={styles.overlay} onClick={handleBackdropClick}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-hidden" onClick={handleBackdropClick}>
+                {/* Sophisticated Backdrop with Subtle Blur */}
+      <div 
+        className={`absolute inset-0 transition-all duration-300 backdrop-blur-sm ${
+          isClosing ? 'opacity-0' : 'opacity-100'
+        }`}
+        style={{ backgroundColor: 'rgba(0, 0, 0, 0.3)' }}
+      />
+          
+                    {/* Main Modal Container - Sophisticated Minimal Design */}
           <div 
-            style={{
-              ...styles.modal,
-              backgroundColor: '#1a1a1a',
-              border: '1px solid #333333'
-            }} 
-            className={getModalClasses()}
+            className={`group relative z-10 w-full max-w-md transition-all duration-300 transform ${
+              isClosing ? 'scale-95 opacity-0' : 'scale-100 opacity-100'
+            } bg-[#0F0F0F] rounded-xl border border-[#222222] overflow-hidden ${getModalClasses()}`}
+            style={{ 
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+              backdropFilter: 'blur(20px)',
+              maxHeight: 'calc(100vh - 2rem)',
+              minHeight: 'auto',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
           >
-            {/* Close Button */}
-            <button
-              onClick={onClose}
-              style={styles.closeButton}
-              className={cssStyles.closeButtonHover}
-            >
-              <CloseIcon />
-            </button>
-
-            {/* Modal Header */}
-            <div style={styles.header}>
-              <div style={styles.headerIcon}>
-                {/* Place your Dexetra icon here */}
+            {/* Sophisticated Header Section */}
+            <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                {/* Deposit Status Indicator */}
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                
+                {/* Dexetra Icon with Sophisticated Styling */}
+                <div className="relative group">
+                  <div 
+                    className="w-12 h-12 rounded-xl flex items-center justify-center transition-all duration-200 group-hover:scale-105"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(74, 222, 128, 0.9) 0%, rgba(6, 182, 212, 0.9) 50%, rgba(139, 92, 246, 0.9) 100%)',
+                      boxShadow: '0 8px 32px rgba(74, 222, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+                    }}
+                  >
                 <img 
                   src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png" 
                   alt="Dexetra" 
-                  style={{ width: '24px', height: '24px' }}
+                      className="w-6 h-6"
                 />
               </div>
-              <h2 style={styles.title}>
+                  {/* Subtle Ring Effect */}
+                  <div className="absolute inset-0 rounded-xl border border-white/10 group-hover:border-white/20 transition-colors duration-200" />
+                </div>
+                
+                {/* Deposit Info */}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
                 Deposit
-              </h2>
-              <p style={styles.subtitle}>
-                Dexetra Balance: ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
+                    </span>
+                    <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                      To Vault
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[11px] font-medium text-white">
+                      ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Available
+                    </span>
+                {isVaultConnected && vaultBalance && (
+                      <span className="text-[9px] text-green-400">
+                    • Vault: {parseFloat(vaultBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC
+                  </span>
+                )}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Close Button with Sophisticated Styling */}
+              <button
+                onClick={handleClose}
+                className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-2 hover:bg-red-500/10 rounded-lg text-[#808080] hover:text-red-300"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              </button>
             </div>
 
             {/* Network Warning Banner */}
-            <div style={{ padding: '0 20px' }}>
+            <div className="px-6 py-2">
               <NetworkWarningBanner userAddress={walletAddress} />
             </div>
 
-            {/* Payment Method Selector */}
-            <div style={styles.paymentSection}>
+            {/* Sophisticated Payment Method Selector */}
+            <div className="px-6 py-3">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Payment Source
+                </h4>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  Wallet
+                </div>
+              </div>
+              
               {paymentMethods.map((method) => (
                 <div
                   key={method.id}
-                  style={{
-                    ...(selectedPaymentMethod === method.id ? styles.paymentCardSelected : styles.paymentCard),
-                    backgroundColor: '#2a2a2a',
-                    border: selectedPaymentMethod === method.id ? '1px solid #00d4aa' : '1px solid #333333',
-                    minHeight: '60px',
-                    padding: '8px 12px'
-                  }}
-                  className={cssStyles.paymentCardHover}
+                  className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border transition-all duration-200 cursor-pointer ${
+                    selectedPaymentMethod === method.id 
+                      ? 'border-green-400 bg-green-500/5' 
+                      : 'border-[#222222] hover:border-[#333333]'
+                  }`}
                   onClick={() => setSelectedPaymentMethod(method.id)}
                 >
-                  <div style={styles.paymentCardLeft}>
+                  <div className="flex items-center justify-between p-2.5">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      {/* Connection Status Indicator */}
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        isConnected ? 'bg-green-400' : 'bg-[#404040]'
+                      }`} />
+                      
+                      {/* Wallet Icon */}
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-[#1A1A1A] border border-[#333333]">
                     <img 
                       src={method.icon}
                       alt="MetaMask"
-                      style={{ width: '30px', height: '30px' }}
+                          className="w-5 h-5"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
-                        (e.target as HTMLImageElement).insertAdjacentHTML('afterend', '<span style="font-size: 18px;">🦊</span>');
-                      }}
-                    />
-                    <div>
-                      <div style={{
-                        ...designSystem.typography.hierarchy.sectionLabel,
-                        marginBottom: '2px'
-                      }}>
-                        Deposit from
+                            (e.target as HTMLImageElement).insertAdjacentHTML('afterend', '<span style="font-size: 14px;">🦊</span>');
+                          }}
+                        />
                       </div>
-                      <div style={designSystem.typography.hierarchy.primaryText}>{method.name}</div>
-                      <div style={designSystem.typography.hierarchy.secondaryText}>{method.description}</div>
+                      
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] font-medium text-[#808080] mb-0.5">
+                        Deposit from
+                        </div>
+                        <div className="text-[11px] font-medium text-white">
+                          {method.name}
+                        </div>
+                        <div className="text-[10px] text-[#606060]">
+                          {method.description}
+                        </div>
+                      </div>
                     </div>
+                    
+                    <div className="flex items-center gap-2">
+                      <div className="text-[11px] font-medium text-white">
+                        {method.balance}
                   </div>
-                  <div style={styles.paymentCardRight}>
-                    <div style={designSystem.typography.hierarchy.amountText}>{method.balance}</div>
-                    <div style={styles.paymentIcons}>
-                      <svg width="16" height="10" viewBox="0 0 40 24" fill="none">
-                        <rect width="40" height="24" rx="4" fill="#1A1F71"/>
-                        <text x="20" y="15" textAnchor="middle" fill="white" fontSize="8" fontWeight="bold">VISA</text>
+                      <svg className="w-3 h-3 text-[#404040] group-hover:text-[#606060] transition-colors duration-200" viewBox="0 0 24 24" fill="none">
+                        <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
-                      <svg width="16" height="10" viewBox="0 0 40 24" fill="none">
-                        <rect width="40" height="24" rx="4" fill="#EB001B"/>
-                        <circle cx="15" cy="12" r="8" fill="#EB001B"/>
-                        <circle cx="25" cy="12" r="8" fill="#FF5F00"/>
-                      </svg>
-                      <svg width="16" height="10" viewBox="0 0 40 24" fill="none">
-                        <rect width="40" height="24" rx="4" fill="#0052FF"/>
-                        <text x="20" y="15" textAnchor="middle" fill="white" fontSize="7" fontWeight="bold">CB</text>
-                      </svg>
-                    </div>
-                    <div style={{ color: designSystem.colors.text.secondary }}>
-                      <ArrowRightIcon />
                     </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            {/* Token List */}
-            <div style={styles.tokenSection}>
-              <div style={styles.tokenList} className={cssStyles.tokenListScrollable}>
+            {/* Sophisticated Token List Section - Contained */}
+            <div className="flex-1 overflow-y-auto px-6 py-3" style={{ minHeight: 0 }}>
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Select Token
+                </h4>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  {tokens.length} tokens
+                </div>
+              </div>
+              
+              {/* Compact hint for vault deposits */}
+              {!selectedToken && (
+                <div className="bg-[#0F0F0F] rounded-md border border-green-400/30 mb-2 flex-shrink-0">
+                  <div className="flex items-center gap-2 p-2">
+                    <div className="w-1 h-1 rounded-full flex-shrink-0 bg-green-400" />
+                    <span className="text-[10px] text-green-400">
+                      💡 Select MOCK_USDC for direct deposits
+                    </span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Token List - Properly Contained */}
+              <div className="space-y-1.5 pb-2">
                 {tokens.map((token) => (
                   <div
                     key={token.id}
-                    style={{
-                      ...(selectedToken === token.id ? styles.tokenCardSelected : styles.tokenCard),
-                      backgroundColor: '#2a2a2a',
-                      border: selectedToken === token.id ? '1px solid #00d4aa' : '1px solid #333333'
-                    }}
-                    className={cssStyles.tokenCardHover}
+                    className={`bg-[#0F0F0F] rounded-md border cursor-pointer ${
+                      selectedToken === token.id 
+                        ? 'border-green-400 bg-green-500/5' 
+                        : 'border-[#222222]'
+                    }`}
                     onClick={() => setSelectedToken(token.id)}
                   >
-                    <div style={styles.tokenCardLeft}>
-                      <div className={cssStyles.iconContainer} style={{ position: 'relative' }}>
-                        <div style={styles.tokenIcon}>
-                          <img 
-                            src={token.icon}
-                            alt={token.symbol}
-                            style={{ 
-                              width: '20px', 
-                              height: '20px'
-                            }}
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                              (e.target as HTMLImageElement).insertAdjacentHTML('afterend', `<span style="font-size: 16px;">${token.symbol === 'USDC' ? '💵' : token.symbol === 'USDT' ? '💰' : token.symbol === 'DAI' ? '🟡' : '💎'}</span>`);
-                            }}
-                          />
-                        </div>
-                        {token.networkIcon && (
-                          <div style={styles.networkBadge}>
+                    <div className="flex items-center justify-between p-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        {/* Token Status Indicator */}
+                        <div className={`w-1 h-1 rounded-full flex-shrink-0 ${
+                          token.symbol === 'MOCK_USDC' ? 'bg-green-400' : 
+                          token.isLowBalance ? 'bg-yellow-400' : 'bg-blue-400'
+                        }`} />
+                        
+                                                {/* Token Icon with Network Badge - Fixed Overflow */}
+                        <div className="relative flex-shrink-0 w-8 h-6 mr-2">
+                          <div className="w-6 h-6 rounded-lg flex items-center justify-center bg-[#1A1A1A] border border-[#333333] overflow-hidden">
                             <img 
-                              src={token.networkIcon}
-                              alt={`${token.network} network`}
-                              style={{ 
-                                width: '10px', 
-                                height: '10px',
-                                filter: token.network === 'ethereum' ? 'brightness(0) invert(1)' : 'none'
-                              }}
+                              src={token.icon}
+                              alt={token.symbol}
+                              className="w-4 h-4 rounded-full object-cover"
                               onError={(e) => {
                                 (e.target as HTMLImageElement).style.display = 'none';
-                                (e.target as HTMLImageElement).insertAdjacentHTML('afterend', `<span style="font-size: 6px;">${token.network === 'ethereum' ? '⟠' : '🔮'}</span>`);
+                                (e.target as HTMLImageElement).insertAdjacentHTML('afterend', `<span style="font-size: 8px;">${token.symbol === 'USDC' ? '💵' : token.symbol === 'USDT' ? '💰' : token.symbol === 'DAI' ? '🟡' : '💎'}</span>`);
                               }}
                             />
                           </div>
-                        )}
+                          {token.networkIcon && (
+                            <div className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#0F0F0F] border border-[#333333] flex items-center justify-center overflow-hidden">
+                              <img 
+                                src={token.networkIcon}
+                                alt={`${token.network} network`}
+                                className="w-1 h-1 object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).style.display = 'none';
+                                  (e.target as HTMLImageElement).insertAdjacentHTML('afterend', `<span style="font-size: 4px;">${token.network === 'ethereum' ? '⟠' : '🔮'}</span>`);
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] font-medium text-white">
+                              {token.symbol}
+                            </span>
+                            {token.symbol === 'MOCK_USDC' && (
+                              <div className="text-[8px] text-green-400 bg-green-500/10 px-1 py-0.5 rounded flex-shrink-0">
+                                Direct
+                              </div>
+                            )}
+                            {token.isLowBalance && (
+                              <div className="text-[8px] text-yellow-400 bg-yellow-500/10 px-1 py-0.5 rounded flex-shrink-0">
+                                Low
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-[9px] text-[#606060]">
+                            {token.amount}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div style={designSystem.typography.hierarchy.primaryText}>{token.symbol}</div>
-                        <div style={designSystem.typography.hierarchy.secondaryText}>{token.amount}</div>
+                      
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <div className="text-[10px] font-medium text-white text-right">
+                          {token.value}
+                        </div>
+                        <svg className="w-2.5 h-2.5 text-[#404040]" viewBox="0 0 24 24" fill="none">
+                          <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
                       </div>
-                    </div>
-                    <div style={styles.tokenCardRight}>
-                      {token.isLowBalance && (
-                        <span
-                          style={{
-                            ...designSystem.typography.hierarchy.statusText,
-                            color: designSystem.colors.status.lowBalance
-                          }}
-                        >
-                          Low Balance
-                        </span>
-                      )}
-                      <div style={designSystem.typography.hierarchy.amountText}>{token.value}</div>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Continue Button */}
+            {/* Sophisticated Continue Button */}
+            <div className="px-6 py-4 border-t border-[#1A1A1A] bg-[#0F0F0F] flex-shrink-0">
             <button
               onClick={handleContinue}
-              style={{
-                ...styles.continueButton,
-                backgroundColor: '#00d4aa',
-                color: '#000000'
-              }}
-              className={cssStyles.continueButtonHover}
-              disabled={isConnecting}
+                className={`group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border transition-all duration-200 ${
+                  isConnecting 
+                    ? 'bg-blue-500/20 border-blue-500/50 cursor-wait' 
+                    : !isConnected 
+                      ? 'bg-blue-500 hover:bg-blue-600 border-blue-500 hover:border-blue-600 hover:scale-105 active:scale-95' 
+                      : selectedToken && isVaultCollateralToken()
+                        ? 'bg-green-500 hover:bg-green-600 border-green-500 hover:border-green-600 hover:scale-105 active:scale-95'
+                        : selectedToken && !isVaultCollateralToken()
+                          ? 'bg-red-500/20 border-red-500/50 cursor-not-allowed opacity-50'
+                          : 'bg-[#1A1A1A] border-[#333333] cursor-not-allowed opacity-50'
+                }`}
+                disabled={isConnecting || (selectedToken && !isVaultCollateralToken()) || (!selectedToken && isConnected)}
+              title={selectedToken && !isVaultCollateralToken() ? 'Only MOCK_USDC can be deposited to vault' : undefined}
             >
-              {isConnecting ? 'Connecting...' 
-               : !isConnected ? 'Connect Wallet' 
-               : 'Continue'}
+                {/* Status Indicator */}
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                  isConnecting ? 'bg-blue-400 animate-pulse' :
+                  !isConnected ? 'bg-blue-400' :
+                  selectedToken && isVaultCollateralToken() ? 'bg-green-400' :
+                  selectedToken && !isVaultCollateralToken() ? 'bg-red-400' :
+                  'bg-gray-600'
+                }`} />
+                
+                {/* Button Text */}
+                <span className="text-[11px] font-medium text-white">
+                  {isConnecting ? 'Connecting Wallet...' 
+               : !isConnected ? 'Connect Wallet'
+               : selectedToken && !isVaultCollateralToken() ? 'Token Not Supported'
+                   : selectedToken && isVaultCollateralToken() ? 'Continue to Amount'
+                   : 'Select Token to Continue'}
+                </span>
+                
+                {/* Arrow Icon */}
+                {((!isConnected || (selectedToken && isVaultCollateralToken())) && !isConnecting) && (
+                  <svg className="w-3 h-3 text-white group-hover:translate-x-0.5 transition-transform duration-200" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+                
+                {/* Loading Spinner */}
+                {isConnecting && (
+                  <svg className="w-3 h-3 text-blue-400 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeOpacity="0.3"/>
+                    <path d="M22 12A10 10 0 0112 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                )}
             </button>
+            </div>
           </div>
         </div>,
         document.body

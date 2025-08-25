@@ -6,10 +6,15 @@ export interface MarketTickerCardProps {
   currency?: string;
   imageUrl?: string;
   imageAlt?: string;
-  onViewProduct?: () => void;
-  onViewDemo?: () => void;
+  onLongPosition?: () => void;
+  onShortPosition?: () => void;
   className?: string;
   isDisabled?: boolean;
+  // Additional props for orderbook markets
+  marketStatus?: string;
+  totalVolume?: number;
+  totalTrades?: number;
+  settlementDate?: string;
 }
 
 export interface MarketTickerCardData {
@@ -20,4 +25,11 @@ export interface MarketTickerCardData {
   currency: string;
   imageUrl: string;
   imageAlt: string;
+  // Additional data for orderbook markets
+  marketStatus?: string;
+  totalVolume?: number;
+  totalTrades?: number;
+  settlementDate?: string;
+  metricId?: string;
+  description?: string;
 } 

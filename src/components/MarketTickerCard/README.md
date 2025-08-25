@@ -1,6 +1,6 @@
 # MarketTickerCard Component
 
-A sleek, modern card component for displaying market items, products, or digital assets with a dark theme design system.
+A production-ready card component for displaying orderbook markets and trading opportunities with long/short position actions.
 
 ## Features
 
@@ -28,8 +28,8 @@ interface MarketTickerCardProps {
   currency?: string;             // Currency symbol (default: '$')
   imageUrl?: string;             // Optional image URL
   imageAlt?: string;             // Alt text for image
-  onViewProduct?: () => void;    // Product view callback
-  onViewDemo?: () => void;       // Demo view callback
+  onLongPosition?: () => void;   // Long position callback
+  onShortPosition?: () => void;  // Short position callback
   className?: string;            // Additional CSS classes
   isDisabled?: boolean;          // Disabled state
 }
@@ -45,8 +45,8 @@ Container component for displaying multiple cards in a responsive grid.
 interface MarketTickerCardContainerProps {
   title?: string;                           // Section title (default: 'Latest Drops')
   cards: MarketTickerCardData[];            // Array of card data
-  onCardViewProduct?: (cardId: string) => void; // Product view callback
-  onCardViewDemo?: (cardId: string) => void;    // Demo view callback
+  onCardLongPosition?: (cardId: string) => void;  // Long position callback
+  onCardShortPosition?: (cardId: string) => void; // Short position callback
   className?: string;                       // Additional CSS classes
 }
 ```
@@ -67,8 +67,8 @@ const ExampleCard = () => {
       price={19}
       currency="$"
       imageUrl="/path/to/image.jpg"
-      onViewProduct={() =>  console.log('Product clicked')}
-      onViewDemo={() =>  console.log('Demo clicked')}
+      onLongPosition={() =>  console.log('Long position clicked')}
+      onShortPosition={() =>  console.log('Short position clicked')}
     />
   );
 };
@@ -97,8 +97,8 @@ const ExampleContainer = () => {
     <MarketTickerCardContainer
       title="Latest Drops"
       cards={cardData}
-      onCardViewProduct={(id) =>  console.log('Product:', id)}
-      onCardViewDemo={(id) =>  console.log('Demo:', id)}
+      onCardLongPosition={(id) =>  console.log('Long position:', id)}
+      onCardShortPosition={(id) =>  console.log('Short position:', id)}
     />
   );
 };

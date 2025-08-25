@@ -606,7 +606,7 @@ export default function DepositModalReview({
                       ✓
                     </div>
                     <span style={{ color: '#00d4aa' }}>
-                      {isVaultConnected ? 'Ready for direct deposit' : 'Vault connection required'}
+                      {isVaultConnected ? 'Ready for direct deposit' : 'Preparing deposit...'}
                     </span>
                   </div>
                   <div style={reviewStyles.quoteStatusRight}>
@@ -866,18 +866,13 @@ export default function DepositModalReview({
               className={cssStyles.continueButtonHover}
               disabled={
                 isDirectDeposit 
-                  ? !isVaultConnected 
+                  ? false // Allow deposits even if vault not connected initially
                   : (isLoadingQuote || !!quoteError)
-              }
-              title={
-                isDirectDeposit && !isVaultConnected 
-                  ? 'Vault connection required for direct deposits'
-                  : undefined
               }
             >
               <CheckIcon />
               {isDirectDeposit 
-                ? (!isVaultConnected ? 'Vault Unavailable' : 'Confirm Deposit')
+                ? 'Confirm Deposit'
                 : (isLoadingQuote ? 'Getting Quote...' : quoteError ? 'Quote Error' : 'Confirm Order')
               }
             </button>

@@ -1,12 +1,12 @@
 'use client';
 
 import React from 'react';
-import { VAMMWizard, DeploymentResult } from '@/components/VAMMWizard';
+import { MarketWizard, DeploymentResult } from '@/components/MarketWizard';
 import CryptoMarketTicker from '@/components/CryptoMarketTicker';
 
 export default function CreateMarket() {
   const handleComplete = (result: DeploymentResult) => {
-     console.log('vAMM Market deployed successfully:', result);
+     console.log('Orderbook Market deployed successfully:', result);
     // Could redirect to a success page or market detail page
     // router.push(`/markets/${result.marketId}`);
   };
@@ -23,7 +23,7 @@ export default function CreateMarket() {
         <CryptoMarketTicker />
       </div>
 
-    <VAMMWizard 
+    <MarketWizard 
       onSuccess={handleComplete}
       onError={handleCancel}
     />

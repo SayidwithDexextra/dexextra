@@ -11,15 +11,16 @@ import {
   
 } from '@/components/TokenView';
 import LightweightChart from '@/components/TokenView/LightweightChart';
-import { useVAMMTokenData } from '@/hooks/useVAMMTokenData';
-import { useUnifiedMarkPrice } from '@/hooks/useUnifiedMarkPrice';
-import { useVAMMTrading } from '@/hooks/useVAMMTrading';
+// Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
+import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
+import { useTokenFromMarket, useVAMMFromMarket } from '@/hooks/useTokenFromMarket';
 import NetworkSelector from '@/components/NetworkSelector';
 import CountdownTicker from '@/components/CountdownTicker/CountdownTicker';
 import LoadingScreen from '@/components/LoadingScreen';
-import { DEFAULT_ADDRESSES } from '@/lib/contractDeployment';
-import { useVAMMSettlement } from '@/hooks/useVAMMSettlement';
+import CryptoMarketTicker from '@/components/CryptoMarketTicker/CryptoMarketTicker';
+// Removed contractDeployment import
+// Removed useVAMMSettlement hook
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -29,16 +30,21 @@ export default function TokenPage({ params }: TokenPageProps) {
   const { symbol } = use(params);
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { 
-    tokenData: baseTokenData, 
-    vammMarket, 
-    isLoading, 
-    error
-    // Remove contractData since it's no longer available
-  } = useVAMMTokenData(symbol);
   
-  // Get settlement data from smart contract/market data
-  const settlementData = useVAMMSettlement(vammMarket);
+  // Fetch real orderbook market data
+  const { 
+    marketData, 
+    isLoading: isLoadingMarket, 
+    error: marketError 
+  } = useOrderbookMarket(symbol);
+  
+  // Transform orderbook market to compatible formats
+  const baseTokenData = useTokenFromMarket(marketData?.market || null);
+  const vammMarket = useVAMMFromMarket(marketData?.market || null);
+  
+  const isLoading = isLoadingMarket;
+  const error = marketError;
+  const settlementData = null;
   
   // Debug settlement data (remove contract data debugging)
   useEffect(() => {
@@ -47,10 +53,7 @@ export default function TokenPage({ params }: TokenPageProps) {
         marketSymbol: symbol,
         createdAt: vammMarket.created_at,
         settlementPeriodDays: vammMarket.settlement_period_days,
-        settlementDate: settlementData.settlementDate,
-        daysUntilSettlement: settlementData.daysUntilSettlement,
-        settlementPhase: settlementData.settlementPhase,
-        isNearSettlement: settlementData.isNearSettlement
+        // Settlement data properties would be available when real settlement data is implemented
       });
     }
   }, [settlementData, vammMarket, symbol]);
@@ -80,59 +83,56 @@ export default function TokenPage({ params }: TokenPageProps) {
     }
   };
 
-  // Enhanced real-time price integration using unified price hook
-  const { 
-    currentPrice,
-    markPrice, 
-    fundingRate,
-    priceChange24h,
-    priceChangePercent24h,
-    isLoading: isPriceLoading,
-    error: priceError,
-    dataSource,
-    lastUpdated
-  } = useUnifiedMarkPrice(vammMarket || undefined, {
-    enablePolling: true,
-    pollingInterval: 30000, // Poll every 30 seconds for real-time updates
-    enableContractFetch: true
-  });
+  // Enhanced real-time price integration using OrderBook market data
+  const currentPrice = marketData?.market?.last_trade_price || vammMarket?.initial_price || 0
+  const markPrice = marketData?.market?.last_trade_price || vammMarket?.initial_price || 0
+  const fundingRate = 0.0001 // Mock funding rate (would come from contract)
+  const priceChange24h = baseTokenData?.priceChange24h || 0
+  const priceChangePercent24h = baseTokenData ? (baseTokenData.priceChange24h / baseTokenData.price) * 100 : 0
+  const isPriceLoading = isLoadingMarket
+  const priceError = marketError
+  const dataSource = marketData?.metadata?.deployment_status === 'deployed' ? 'orderbook' : 'fallback'
+  const lastUpdated = new Date().toISOString() // Use current time since updated_at might not be available
 
-  // Get trading data including collateral and position information
-  const {
-    collateralBalance,
-    allowance,
-    isLoading: isTradingLoading,
-    error: tradingError
-  } = useVAMMTrading();
+  // Get trading data including collateral and position information from OrderBook
+  const collateralBalance = '0' // TODO: Get from wallet/contract
+  const allowance = '0' // TODO: Get from USDC allowance
+  const isTradingLoading = isLoadingMarket
+  const tradingError = marketError
+  const positions = marketData?.positions || []
+  const isLoadingPositions = isLoadingMarket
   
-  // Create enhanced token data with unified real-time price
+  // Create enhanced token data with OrderBook market data
   const tokenData = useMemo((): TokenData | null => {
-    if (!baseTokenData || !vammMarket) return null;
+    if (!baseTokenData || !vammMarket || !marketData?.market) return null;
     
-    // Use unified price data only (no more fallback to contractData)
-    let finalPrice = vammMarket.initial_price;
-    let finalPriceChange = 0;
-    let priceDataSource = 'initial';
+    const market = marketData.market;
     
-    // Use contract data from unified hook only
-    if (dataSource === 'contract' && currentPrice > 0) {
+    // Use OrderBook market data for pricing
+    let finalPrice = market.last_trade_price || market.tick_size || 0;
+    let finalPriceChange = 0; // TODO: Calculate from historical data
+    let priceDataSource = 'orderbook';
+    
+    // Use current price if available and different
+    if (currentPrice > 0 && currentPrice !== finalPrice) {
       finalPrice = currentPrice;
       finalPriceChange = priceChangePercent24h;
-      priceDataSource = 'unified-contract';
+      priceDataSource = dataSource;
     }
     
-    console.log(`💰 Unified price data for ${symbol}:`, {
+    console.log(`💰 OrderBook market data for ${symbol}:`, {
       dataSource: priceDataSource,
       finalPrice,
       finalPriceChange,
-      unifiedDataSource: dataSource,
-      currentPrice,
-      markPrice,
+      marketStatus: market.market_status,
+      totalVolume: market.total_volume,
+      totalTrades: market.total_trades,
+      lastTradePrice: market.last_trade_price,
       lastUpdated: new Date(lastUpdated).toISOString()
     });
     
-    // Use estimated volume since we no longer have contract volume data
-    const volume24h = baseTokenData.volume24h;
+    // Use real volume from OrderBook market
+    const volume24h = market.total_volume || 0;
     
     return {
       ...baseTokenData,
@@ -142,8 +142,12 @@ export default function TokenPage({ params }: TokenPageProps) {
       // Update market cap with real price
       marketCap: finalPrice * (baseTokenData.circulating_supply || 1000000),
       marketCapChange24h: finalPriceChange, // Approximate market cap change with price change
+      // Add OrderBook specific data
+      logo: market.icon_image_url,
+      description: market.description,
+      created_at: market.created_at
     };
-  }, [baseTokenData, vammMarket, currentPrice, markPrice, priceChangePercent24h, dataSource, lastUpdated]);
+  }, [baseTokenData, vammMarket, marketData, currentPrice, markPrice, priceChangePercent24h, dataSource, lastUpdated]);
   
   // Get the trading action from URL params (long/short)
   const [tradingAction, setTradingAction] = useState<'long' | 'short' | null>(null);
@@ -164,30 +168,32 @@ export default function TokenPage({ params }: TokenPageProps) {
       
       // Log mock USDC address when action is 'long'
       if (action === 'long') {
-        console.log('🏦 Mock USDC Address:', DEFAULT_ADDRESSES.mockUSDC);
+        console.log('🏦 Mock USDC Address:', '0xff541e2AEc7716725f8EDD02945A1Fe15664588b');
       }
     }
   }, [searchParams]);
 
-  // Mark initial loading as complete once we have ALL essential data (including contract data)
+  // Mark initial loading as complete once we have ALL essential data from OrderBook
   useEffect(() => {
     if (!hasInitiallyLoaded && 
         baseTokenData && 
         vammMarket && 
+        marketData?.market &&
         !isLoading && 
         !isTradingLoading && 
-        (markPrice) && // Either contract data OR pusher price
-        collateralBalance !== undefined) {
-       console.log('🎯 Initial load completed with all contract data:', {
+        markPrice !== undefined) {
+       console.log('🎯 Initial load completed with OrderBook data:', {
         baseTokenData: !!baseTokenData,
         vammMarket: !!vammMarket,
+        marketData: !!marketData,
+        marketStatus: marketData.market.market_status,
         markPrice: markPrice,
-        collateralBalance: collateralBalance,
-        hasRealTimeData: !!(markPrice)
+        positionsCount: positions.length,
+        hasRealTimeData: dataSource === 'orderbook'
       });
       setHasInitiallyLoaded(true);
     }
-  }, [hasInitiallyLoaded, baseTokenData, vammMarket, isLoading, isTradingLoading, markPrice, collateralBalance]);
+  }, [hasInitiallyLoaded, baseTokenData, vammMarket, marketData, isLoading, isTradingLoading, markPrice, positions.length, dataSource]);
 
   // Show loading screen only once during initial page load
   const shouldShowLoading = useMemo(() => {
@@ -252,10 +258,10 @@ export default function TokenPage({ params }: TokenPageProps) {
             /* Regular Market Not Found Error */
             <>
               <div className="text-red-500 text-lg">
-                {tradingError ? 'Trading Data Error' : 'VAMM Market Not Found'}
+                {tradingError ? 'Trading Data Error' : 'Market Not Found'}
               </div>
               <div className="text-gray-400 text-sm">
-                {tradingError || error || `No VAMM market found for symbol: ${symbol}`}
+                {tradingError || error || `No market found for symbol: ${symbol}`}
               </div>
               {priceError && (
                 <div className="text-yellow-500 text-xs">
@@ -283,8 +289,12 @@ export default function TokenPage({ params }: TokenPageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white px-1">
-      {/* Mobile Layout - Single Column (TradingViewWidget + TradingPanel only) */}
+    <div className="min-h-screen bg-black text-white">
+      {/* Crypto Market Ticker at the top */}
+      <CryptoMarketTicker className="border-b border-gray-800" />
+      
+      <div className="px-1 pb-8 pt-2">
+        {/* Mobile Layout - Single Column (TradingViewWidget + TradingPanel only) */}
       <div className="flex md:hidden flex-col gap-1">
         {/* Chart Component */}
         <div className="w-full mt-1">
@@ -314,36 +324,31 @@ export default function TokenPage({ params }: TokenPageProps) {
         </div>
       </div>
 
-      {/* Desktop Layout - Multi-component flex layout */}
-      <div className="hidden md:flex flex-col gap-1">
+        {/* Desktop Layout - Single-row flex: Chart | Transactions (w-80) | Trading */}
+        <div className="hidden md:flex gap-1 mt-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem)' }}>
+        {/* Left: Chart */}
+        <div className="flex-1">
+          <LightweightChart 
+            symbol={symbol}
+            height="100%"
+            defaultPrice={tokenData?.price || 100}
+          />
+        </div>
         
-        {/* Main Row: Chart column + TokenHeader/TradingPanel Group */}
-        <div className="flex gap-1 mt-1">
-          {/* Left Column: Chart + ThreadPanel/TransactionTable */}
-          <div className="flex-1 flex flex-col gap-1">
-            {/* Chart Component */}
-            <div>
-              <LightweightChart 
-                symbol={symbol}
-                height={370}
-                defaultPrice={tokenData?.price || 100}
-              />
-            </div>
-            
-            {/* ThreadPanel + TransactionTable row */}
-            <div className="flex gap-1">
-              <div className="flex-[2]">
-                <TransactionTable vammAddress={vammMarket?.vamm_address} />
-              </div>
-              <div className="flex-1">
-                <ThreadPanel />
-              </div>
-            </div>
-          </div>
-          
-          {/* Right Column: TokenHeader + TradingPanel Group - fixed width, vertically stacked */}
-          <div className="w-80 flex flex-col gap-1">
+        {/* Middle: Transactions with full height */}
+        <div className="w-80 h-full">
+          <TransactionTable 
+            metricId={symbol}
+            height="100%"
+          />
+        </div>
+
+        {/* Right: Token header + trading stacked */}
+        <div className="w-80 flex flex-col gap-1 h-full">
+          <div className="flex-shrink-0 max-h-80 overflow-hidden">
             <TokenHeader symbol={symbol} />
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden">
             <TradingPanel 
               tokenData={tokenData} 
               vammMarket={vammMarket} 
@@ -360,39 +365,8 @@ export default function TokenPage({ params }: TokenPageProps) {
             />
           </div>
         </div>
-        
-        {/* Bottom Row: Token Stats aligned with chart width */}
-        
-        <div className="flex justify-center">
-          <div className="flex-1">
-            <TokenStats tokenData={tokenData} />
-          </div>
-          <div className="w-80"></div> {/* Spacer to align with layout */}
         </div>
       </div>
-
-
-      {settlementData ? (
-        <CountdownTicker
-          targetDate={settlementData.settlementDate}
-          title="Settlement Date"
-          subtitle={`Settlement in ${settlementData.daysUntilSettlement} days - The final date for contract resolution`}
-          onComplete={handleLaunchComplete}
-          onSettlementComplete={handleSettlementComplete}
-          showBanner={true}
-          settlementPhase={settlementData.settlementPhase}
-          marketSymbol={symbol}
-        />
-      ) : (
-        <CountdownTicker
-          targetDate={launchDate}
-          title="Settlement Date"
-          subtitle="The date of the settlement of the contract"
-          onComplete={handleLaunchComplete}
-          showBanner={true}
-        />
-      )}
-
 
     </div>
   );

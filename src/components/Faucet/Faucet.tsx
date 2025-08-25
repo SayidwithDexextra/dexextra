@@ -6,17 +6,30 @@ import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { FaucetProps, FaucetState, ClaimResult } from './types'
 import styles from './Faucet.module.css'
 
-// Mock USDC contract address on Polygon mainnet
-const MOCK_USDC_ADDRESS = '0xbD9E0b8e723434dCd41700e82cC4C8C539F66377'
+// Mock USDC contract address on Polygon mainnet (from orderbook deployment)
+const MOCK_USDC_ADDRESS = '0xff541e2AEc7716725f8EDD02945A1Fe15664588b'
 const POLYGON_CHAIN_ID = 137
 
-// Mock USDC ABI (simplified for faucet functionality)
+// Mock USDC ABI (comprehensive for faucet functionality)
 const MOCK_USDC_ABI = [
+  // Standard ERC20 functions
   'function balanceOf(address owner) view returns (uint256)',
-  'function mint(address to, uint256 amount) external',
   'function decimals() view returns (uint8)',
   'function symbol() view returns (string)',
-  'function name() view returns (string)'
+  'function name() view returns (string)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function approve(address spender, uint256 amount) external returns (bool)',
+  
+  // Mock USDC specific functions
+  'function mint(address to, uint256 amount) external',
+  'function mintToSelf(uint256 amount) external',
+  'function faucet() external',
+  'function mintStandard(address to) external',
+  'function faucetWithEvent() external',
+  
+  // Events
+  'event Transfer(address indexed from, address indexed to, uint256 value)',
+  'event FaucetUsed(address indexed user, uint256 amount)'
 ]
 
 export default function Faucet({ className }: FaucetProps) {
@@ -231,22 +244,22 @@ export default function Faucet({ className }: FaucetProps) {
 
   return (
     <div className={`${styles.faucetContainer} ${className || ''}`}>
-      {/* Header */}
-      <div className={styles.faucetHeader}>
-        <h1 className={styles.faucetTitle}>USDC Faucet</h1>
-        <p className={styles.faucetSubtitle}>
-          Claim test USDC tokens for trading on Polygon
-        </p>
-      </div>
-
       <div className={styles.formSection}>
         {/* Network Warning */}
         {isConnected && !isPolygonNetwork && (
-          <div className={styles.networkWarning}>
-            Switch to Polygon network to continue
+          <div className={styles.warningContainer}>
+            <div className={styles.warningContent}>
+              <div className={styles.warningIcon}></div>
+              <div className={styles.warningText}>
+                <span className={styles.warningTitle}>Network Switch Required</span>
+                <span className={styles.warningDescription}>
+                  Switch to Polygon network to continue
+                </span>
+              </div>
+            </div>
             <button 
               onClick={switchToPolygon}
-              className={styles.networkSwitchButton}
+              className={styles.warningAction}
             >
               Switch Network
             </button>
@@ -255,16 +268,25 @@ export default function Faucet({ className }: FaucetProps) {
 
         {/* Wallet Connection */}
         {!isConnected && (
-          <div className={styles.connectionSection}>
+          <div className={styles.connectionContainer}>
+            <div className={styles.connectionContent}>
+              <div className={styles.connectionIcon}></div>
+              <div className={styles.connectionText}>
+                <span className={styles.connectionTitle}>Connect Wallet</span>
+                <span className={styles.connectionDescription}>
+                  Connect your wallet to claim test USDC tokens
+                </span>
+              </div>
+            </div>
             <button 
               onClick={connectWallet}
               disabled={isConnecting}
-              className={styles.connectButton}
+              className={styles.connectionAction}
             >
               {isConnecting ? (
                 <>
                   <div className={styles.loadingSpinner} />
-                  Connecting
+                  <span>Connecting</span>
                 </>
               ) : (
                 'Connect Wallet'
@@ -275,54 +297,57 @@ export default function Faucet({ className }: FaucetProps) {
 
         {/* Balance Display */}
         {isConnected && isPolygonNetwork && (
-          <div className={styles.fieldRow}>
-            <div>
-              <div className={styles.fieldLabel}>Current Balance</div>
-              <div className={styles.fieldDescription}>
-                Your mock USDC balance for testing and trading
+          <div className={styles.balanceContainer}>
+            <div className={styles.balanceContent}>
+              <div className={styles.balanceStatusDot}></div>
+              <div className={styles.balanceText}>
+                <span className={styles.balanceLabel}>Current Balance</span>
+                <span className={styles.balanceDescription}>
+                  Your mock USDC balance for testing
+                </span>
               </div>
             </div>
-            <div className={styles.fieldInput}>
-              <div className={styles.statusDisplay}>
-                {state.isLoading ? (
-                  <div className={styles.loadingSpinner} />
-                ) : (
-                  <div className={styles.balanceAmount}>
-                    <div className={styles.usdcIcon}>$</div>
-                    {formatBalance(usdcBalance)} USDC
-                  </div>
-                )}
-              </div>
+            <div className={styles.balanceValue}>
+              {state.isLoading ? (
+                <div className={styles.loadingSpinner} />
+              ) : (
+                <div className={styles.balanceAmount}>
+                  <div className={styles.usdcIcon}>$</div>
+                  <span className={styles.balanceNumber}>{formatBalance(usdcBalance)} USDC</span>
+                </div>
+              )}
             </div>
           </div>
         )}
 
         {/* Amount Input */}
         {isConnected && isPolygonNetwork && (
-          <div className={styles.fieldRow}>
-            <div>
-              <div className={styles.fieldLabel}>Amount to Claim</div>
-              <div className={styles.fieldDescription}>
-                Enter the number of USDC tokens you want to claim (up to 1,000,000)
+          <div className={styles.inputContainer}>
+            <div className={styles.inputContent}>
+              <div className={styles.inputStatusDot}></div>
+              <div className={styles.inputText}>
+                <span className={styles.inputLabel}>Amount to Claim</span>
+                <span className={styles.inputDescription}>
+                  Enter USDC tokens to claim (up to 1,000,000)
+                </span>
               </div>
             </div>
-            <div className={styles.fieldInput}>
-              <div className={styles.inputLabel}>USDC AMOUNT</div>
+            <div className={styles.inputField}>
               <input
                 type="text"
                 value={state.customAmount}
                 onChange={(e) => handleAmountChange(e.target.value)}
-                placeholder="Enter amount (e.g. 1000)"
+                placeholder="e.g. 1000"
                 className={`${styles.input} ${!validateAmount(state.customAmount) && state.customAmount ? styles.inputError : ''}`}
               />
               {state.customAmount && !validateAmount(state.customAmount) && (
-                <div className={styles.errorText}>
-                  Please enter a valid amount between 0 and 1,000,000
+                <div className={styles.errorFeedback}>
+                  <span className={styles.errorText}>Invalid amount (0 - 1,000,000)</span>
                 </div>
               )}
               {validateAmount(state.customAmount) && (
-                <div className={styles.helpText}>
-                  You will receive {state.customAmount} USDC tokens
+                <div className={styles.successFeedback}>
+                  <span className={styles.successText}>Ready to claim {state.customAmount} USDC</span>
                 </div>
               )}
             </div>
@@ -331,27 +356,36 @@ export default function Faucet({ className }: FaucetProps) {
 
         {/* Messages */}
         {state.error && (
-          <div className={styles.errorMessage}>
-            {state.error}
+          <div className={styles.messageContainer}>
+            <div className={styles.messageContent}>
+              <div className={styles.errorIcon}></div>
+              <span className={styles.errorMessage}>{state.error}</span>
+            </div>
           </div>
         )}
 
         {state.success && (
-          <div className={styles.successMessage}>
-            {state.success}
+          <div className={styles.messageContainer}>
+            <div className={styles.messageContent}>
+              <div className={styles.successIcon}></div>
+              <span className={styles.successMessage}>{state.success}</span>
+            </div>
           </div>
         )}
 
         {/* Claim Section */}
         {isConnected && isPolygonNetwork && (
-          <div className={styles.fieldRow}>
-            <div>
-              <div className={styles.fieldLabel}>Claim Tokens</div>
-              <div className={styles.fieldDescription}>
-                Get your specified amount of test USDC tokens instantly. No limits or restrictions.
+          <div className={styles.claimContainer}>
+            <div className={styles.claimContent}>
+              <div className={styles.claimStatusDot}></div>
+              <div className={styles.claimText}>
+                <span className={styles.claimLabel}>Claim Tokens</span>
+                <span className={styles.claimDescription}>
+                  Get test USDC tokens instantly • No limits
+                </span>
               </div>
             </div>
-            <div className={styles.fieldInput}>
+            <div className={styles.claimActions}>
               <button 
                 onClick={handleClaim}
                 disabled={!canClaim}
@@ -360,7 +394,7 @@ export default function Faucet({ className }: FaucetProps) {
                 {state.isClaiming ? (
                   <>
                     <div className={styles.loadingSpinner} />
-                    Claiming
+                    <span>Claiming</span>
                   </>
                 ) : (
                   `Claim ${validateAmount(state.customAmount) ? state.customAmount : '...'} USDC`
@@ -373,15 +407,28 @@ export default function Faucet({ className }: FaucetProps) {
 
       {/* Info Section */}
       <div className={styles.infoSection}>
-        <div className={styles.infoTitle}>How it works</div>
-        <ul className={styles.infoList}>
-          <li>Connect your wallet and switch to Polygon network</li>
-          <li>Enter the amount of USDC tokens you want to claim</li>
-          <li>Click claim to receive tokens instantly</li>
-          <li>No waiting periods or daily limits</li>
-          <li>Use these tokens to trade on Dexetra markets</li>
-          <li>Tokens are for testing purposes only and have no real value</li>
-        </ul>
+        <div className={styles.infoHeader}>
+          <div className={styles.infoIcon}></div>
+          <span className={styles.infoTitle}>How it works</span>
+        </div>
+        <div className={styles.infoContent}>
+          <div className={styles.infoItem}>
+            <div className={styles.infoStepDot}></div>
+            <span className={styles.infoText}>Connect wallet and switch to Polygon</span>
+          </div>
+          <div className={styles.infoItem}>
+            <div className={styles.infoStepDot}></div>
+            <span className={styles.infoText}>Enter amount to claim (up to 1M USDC)</span>
+          </div>
+          <div className={styles.infoItem}>
+            <div className={styles.infoStepDot}></div>
+            <span className={styles.infoText}>Receive tokens instantly • No limits</span>
+          </div>
+          <div className={styles.infoItem}>
+            <div className={styles.infoStepDot}></div>
+            <span className={styles.infoText}>Use for testing on Dexetra markets</span>
+          </div>
+        </div>
       </div>
     </div>
   )

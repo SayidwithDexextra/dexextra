@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import ClientLayout from '@/components/ClientLayout'
-import { CentralizedVaultProvider } from '@/contexts/CentralizedVaultContext'
+// Removed CentralizedVaultProvider import - smart contract functionality deleted
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -34,11 +34,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <CentralizedVaultProvider>
-          <ClientLayout>
-            {children}
-          </ClientLayout>
-        </CentralizedVaultProvider>
+        <ClientLayout>
+          {children}
+        </ClientLayout>
       </body>
     </html>
   )
