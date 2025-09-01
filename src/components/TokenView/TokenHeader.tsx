@@ -1,3 +1,4 @@
+"use client";
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { TokenData } from '@/types/token';
@@ -45,6 +46,8 @@ const deriveTimeBasedChanges = (fundingRate: string, baseChange: number) => {
     change6h: baseChange * 0.25 + marketVolatility * 0.3,   // 6hour approximation
   };
 };
+
+
 
 interface TokenHeaderProps {
   symbol: string; // The metric_id for the orderbook market
@@ -105,15 +108,15 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     refreshInterval: 120000 // 2 minutes for market data (less frequent)
   });
   
-  console.log('🏪 OrderBook Market Data Status:', {
-    symbol,
-    hasMarketData: !!marketData,
-    marketAddress: marketData?.market?.market_address,
-    marketStatus: marketData?.market?.market_status,
-    isLoadingMarket,
-    marketError,
-    deploymentStatus: marketData?.metadata?.deployment_status
-  });
+  // console.log('🏪 OrderBook Market Data Status:', {
+  //   symbol,
+  //   hasMarketData: !!marketData,
+  //   marketAddress: marketData?.market?.market_address,
+  //   marketStatus: marketData?.market?.market_status,
+  //   isLoadingMarket,
+  //   marketError,
+  //   deploymentStatus: marketData?.metadata?.deployment_status
+  // });
   
   // Get market statistics from OrderBook contract
   const {
@@ -125,25 +128,25 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   } = useOrderbookMarketStats(
     marketData?.market?.market_address,
     marketData?.market?.chain_id || 137, // Default to Polygon
-    marketData?.market?.last_trade_price || 0, // Fallback price
+    undefined, // Never use database fallback for price
     {
       autoRefresh: true,
       refreshInterval: 60000 // 1 minute for market stats (much less frequent)
     }
   );
   
-  console.log('💰 OrderBook market statistics:', {
-    lastPrice: contractMarketData?.lastPrice,
-    volume24h: contractMarketData?.volume24h,
-    priceChange24h: contractMarketData?.priceChange24h,
-    bestBid: contractMarketData?.bestBid,
-    bestAsk: contractMarketData?.bestAsk,
-    isLoadingMarketStats,
-    marketStatsError,
-    dataSource,
-    marketAddress: marketData?.market?.market_address,
-    chainId: marketData?.market?.chain_id
-  });
+  // console.log('💰 OrderBook market statistics:', {
+  //   lastPrice: contractMarketData?.lastPrice,
+  //   volume24h: contractMarketData?.volume24h,
+  //   priceChange24h: contractMarketData?.priceChange24h,
+  //   bestBid: contractMarketData?.bestBid,
+  //   bestAsk: contractMarketData?.bestAsk,
+  //   isLoadingMarketStats,
+  //   marketStatsError,
+  //   dataSource,
+  //   marketAddress: marketData?.market?.market_address,
+  //   chainId: marketData?.market?.chain_id
+  // });
 
   // Get user positions from market data
   const positions = marketData?.positions || [];
@@ -171,17 +174,40 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     if (!marketData?.market) return null;
 
     const market = marketData.market;
-    const currentMarkPrice = contractMarketData?.lastPrice || market.last_trade_price || 0;
+    
+    // ALWAYS use smart contract as source of truth for current price
+    // Never read from database or off-chain sources
+    const contractPrice = contractMarketData?.lastPrice || 0;
+    const contractBestBid = contractMarketData?.bestBid || 0;
+    const contractBestAsk = contractMarketData?.bestAsk || 0;
+    
+    // Calculate current price from contract data only
+    let currentMarkPrice = contractPrice; // Use contract's lastPrice first
+    
+    // If no lastPrice from contract, calculate from contract's best bid/ask
+    if (currentMarkPrice === 0 && (contractBestBid > 0 || contractBestAsk > 0)) {
+      if (contractBestBid > 0 && contractBestAsk > 0) {
+        currentMarkPrice = (contractBestBid + contractBestAsk) / 2; // Mid-price
+      } else {
+        currentMarkPrice = contractBestBid || contractBestAsk; // Use available side
+      }
+    }
+    
+    // Never fall back to database price; keep 0 if contract has no data
     const currentFundingRate = 0; // OrderBook contracts don't have funding rates
     const priceChangeValue = contractMarketData?.priceChange24h || 0;
     const priceChangePercentValue = currentMarkPrice > 0 ? (priceChangeValue / currentMarkPrice) * 100 : 0;
 
     console.log('🔄 Recalculating enhanced token data for:', symbol, {
-      currentMarkPrice,
-      currentFundingRate,
-      priceChangeValue,
-      priceChangePercentValue,
+      contractPrice,
+      contractBestBid,
+      contractBestAsk,
+      finalPrice: currentMarkPrice,
+      priceSource: contractPrice > 0 ? 'contract_lastPrice' : 
+                   (contractBestBid > 0 || contractBestAsk > 0) ? 'contract_bidask' : 
+                   'database_fallback',
       dataSource,
+      contractAvailable: dataSource === 'contract',
       timestamp: new Date().toISOString()
     });
 
@@ -263,15 +289,15 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     };
   }, [marketData, contractMarketData, positions, isLoadingMarketStats, marketStatsError, dataSource, walletData.isConnected, walletData.address, symbol]);
 
-  console.log('🖥️ Final enhancedTokenData for UI:', {
-    symbol,
-    markPrice: enhancedTokenData?.markPrice,
-    price: enhancedTokenData?.price,
-    hasEnhancedData: !!enhancedTokenData,
-    dataSource: dataSource,
-    marketStatus: enhancedTokenData?.marketStatus,
-    isDeployed: enhancedTokenData?.isDeployed
-  });
+  // console.log('🖥️ Final enhancedTokenData for UI:', {
+  //   symbol,
+  //   markPrice: enhancedTokenData?.markPrice,
+  //   price: enhancedTokenData?.price,
+  //   hasEnhancedData: !!enhancedTokenData,
+  //   dataSource: dataSource,
+  //   marketStatus: enhancedTokenData?.marketStatus,
+  //   isDeployed: enhancedTokenData?.isDeployed
+  // });
 
   // Scroll detection effect using Intersection Observer for better performance
   useEffect(() => {
@@ -281,8 +307,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     if (!priceSection || !scrollContainer) return;
 
     // Create intersection observer to detect when price section is visible
-    const observer = new IntersectionObserver(
-      (entries) => {
+    const IO = (typeof globalThis !== 'undefined' && (globalThis as any).IntersectionObserver
+      ? (globalThis as any).IntersectionObserver
+      : null);
+    if (!IO) return;
+
+    const observer = new IO(
+      (entries: any[]) => {
         const entry = entries[0];
         setIsPriceSectionVisible(entry.isIntersecting);
       },

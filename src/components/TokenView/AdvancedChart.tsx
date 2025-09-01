@@ -145,7 +145,7 @@ class TradingViewDatafeed {
   }
 
   resolveSymbol(symbolName: string, onResolve: (symbolInfo: any) => void, onError: (error: string) => void) {
-    console.log('[Datafeed] resolveSymbol called', symbolName);
+    // console.log('[Datafeed] resolveSymbol called', symbolName);
     
     const [exchange, symbol] = symbolName.includes(':') ? symbolName.split(':') : ['VAMM', symbolName];
     
@@ -175,7 +175,7 @@ class TradingViewDatafeed {
           data_status: 'streaming'
         };
 
-        console.log('[Datafeed] Symbol resolved:', symbolInfo);
+        // console.log('[Datafeed] Symbol resolved:', symbolInfo);
         onResolve(symbolInfo);
       })
       .catch(error => {
@@ -483,7 +483,7 @@ const AdvancedChart: React.FC<AdvancedChartProps> = ({
 
         widgetRef.current.onChartReady(() => {
           clearTimeout(errorTimeout);
-          console.log('TradingView chart is ready');
+          // console.log('TradingView chart is ready');
           setIsLoading(false);
           setError(null);
 

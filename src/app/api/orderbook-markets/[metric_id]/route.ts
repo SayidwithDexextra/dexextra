@@ -63,7 +63,7 @@ export async function GET(
         updated_at,
         deployed_at
       `)
-      .eq('metric_id', metric_id.toUpperCase())
+      .eq('metric_id', metric_id)
       .eq('is_active', true)
       .single();
 
@@ -92,34 +92,86 @@ export async function GET(
 
     console.log(`✅ Retrieved market: ${market.metric_id}`);
 
-    // Also fetch recent orders and positions for this market
-    const [ordersResult, positionsResult] = await Promise.allSettled([
+    // Also fetch recent orders, trade matches, and positions for this market
+    const [ordersResult, tradesResult, positionsResult] = await Promise.allSettled([
+      // Fetch recent off-chain orders
       supabase
-        .from('market_orders')
-        .select('*')
+        .from('off_chain_orders')
+        .select(`
+          id,
+          order_id,
+          trader_wallet_address,
+          order_type,
+          side,
+          quantity,
+          price,
+          filled_quantity,
+          remaining_quantity,
+          order_status,
+          average_fill_price,
+          created_at,
+          updated_at,
+          opened_at,
+          closed_at
+        `)
         .eq('market_id', market.id)
         .order('created_at', { ascending: false })
-        .limit(10),
+        .limit(20),
       
+      // Fetch recent trade matches (transactions)
       supabase
-        .from('market_positions')
-        .select('*')
+        .from('trade_matches')
+        .select(`
+          id,
+          match_id,
+          trade_price,
+          trade_quantity,
+          total_value,
+          buy_trader_wallet_address,
+          sell_trader_wallet_address,
+          settlement_status,
+          matched_at,
+          settled_at
+        `)
         .eq('market_id', market.id)
-        .eq('is_settled', false)
+        .order('matched_at', { ascending: false })
+        .limit(20),
+      
+      // Fetch active user positions
+      supabase
+        .from('user_positions')
+        .select(`
+          id,
+          position_id,
+          trader_wallet_address,
+          side,
+          quantity,
+          entry_price,
+          current_price,
+          unrealized_pnl,
+          position_status,
+          opened_at,
+          last_modified_at
+        `)
+        .eq('market_id', market.id)
+        .in('position_status', ['OPEN', 'PARTIALLY_CLOSED'])
     ]);
 
     const orders = ordersResult.status === 'fulfilled' ? ordersResult.value.data || [] : [];
+    const trades = tradesResult.status === 'fulfilled' ? tradesResult.value.data || [] : [];
     const positions = positionsResult.status === 'fulfilled' ? positionsResult.value.data || [] : [];
 
-    console.log(`📊 Market ${market.metric_id} stats: ${orders.length} recent orders, ${positions.length} open positions`);
+    console.log(`📊 Market ${market.metric_id} stats: ${orders.length} recent orders, ${trades.length} recent trades, ${positions.length} open positions`);
 
     const responseData = {
       success: true,
       market,
       orders,
+      trades,
       positions,
       metadata: {
         total_orders: orders.length,
+        total_trades: trades.length,
         total_positions: positions.length,
         deployment_status: market.market_address ? 'deployed' : 'pending'
       }

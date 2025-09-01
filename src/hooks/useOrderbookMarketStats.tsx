@@ -34,6 +34,8 @@ interface UseOrderbookMarketStatsReturn {
 const ORDERBOOK_ABI = [
   // Returns MarketStats struct from the actual contract
   'function getMarketStats() external view returns (tuple(uint256 lastPrice,uint256 volume24h,uint256 high24h,uint256 low24h,int256 priceChange24h,uint256 totalTrades,uint256 bestBid,uint256 bestAsk,uint256 spread))',
+  'function getBestBid() external view returns (uint256)',
+  'function getBestAsk() external view returns (uint256)',
   'function decimals() external view returns (uint8)'
 ];
 
@@ -93,7 +95,40 @@ export function useOrderbookMarketStats(
       let decimals = decimalsResult.status === 'fulfilled' ? decimalsResult.value : 6;
 
       if (!stats) {
-        throw new Error('Unable to fetch market statistics from contract');
+        // Stats call failed; try deriving price from best bid/ask
+        try {
+          const [bestBidWei, bestAskWei] = await Promise.all([
+            contract.getBestBid(),
+            contract.getBestAsk()
+          ]);
+
+          let derivedLastPrice = 0;
+          if (bestBidWei > 0n && bestAskWei > 0n) {
+            derivedLastPrice = parseFloat(ethers.formatUnits((bestBidWei + bestAskWei) / 2n, 18));
+          } else if (bestBidWei > 0n) {
+            derivedLastPrice = parseFloat(ethers.formatUnits(bestBidWei, 18));
+          } else if (bestAskWei > 0n) {
+            derivedLastPrice = parseFloat(ethers.formatUnits(bestAskWei, 18));
+          }
+
+          setMarketData({
+            lastPrice: derivedLastPrice,
+            volume24h: 0,
+            high24h: derivedLastPrice,
+            low24h: derivedLastPrice,
+            priceChange24h: 0,
+            totalTrades: 0,
+            bestBid: parseFloat(ethers.formatUnits(bestBidWei || 0n, 18)),
+            bestAsk: parseFloat(ethers.formatUnits(bestAskWei || 0n, 18)),
+            spread: 0,
+            lastUpdateTime: Date.now()
+          });
+          setDataSource('contract');
+          setIsLoading(false);
+          return;
+        } catch (fallbackErr) {
+          throw new Error('Unable to fetch market statistics from contract');
+        }
       }
 
       // Extract values from MarketStats tuple
@@ -109,20 +144,28 @@ export function useOrderbookMarketStats(
         spreadBigInt
       ] = stats;
 
-      // Convert BigInt values to numbers using appropriate decimals
-      const lastPrice = parseFloat(ethers.formatUnits(lastPriceBigInt || BigInt(0), decimals));
-      const volume24h = parseFloat(ethers.formatUnits(volume24hBigInt || BigInt(0), decimals));
-      const high24h = parseFloat(ethers.formatUnits(high24hBigInt || BigInt(0), decimals));
-      const low24h = parseFloat(ethers.formatUnits(low24hBigInt || BigInt(0), decimals));
-      const priceChange24h = parseFloat(ethers.formatUnits(priceChange24hBigInt || BigInt(0), decimals));
+      // Convert BigInt values to numbers using 18 decimals consistently
+      // This fixes the decimal precision issue where contracts report 8 decimals but prices are stored in 18 decimals
+      const lastPrice = parseFloat(ethers.formatUnits(lastPriceBigInt || BigInt(0), 18));
+      const volume24h = parseFloat(ethers.formatUnits(volume24hBigInt || BigInt(0), 18));
+      const high24h = parseFloat(ethers.formatUnits(high24hBigInt || BigInt(0), 18));
+      const low24h = parseFloat(ethers.formatUnits(low24hBigInt || BigInt(0), 18));
+      const priceChange24h = parseFloat(ethers.formatUnits(priceChange24hBigInt || BigInt(0), 18));
       const totalTrades = Number(totalTradesBigInt || BigInt(0));
-      const bestBid = parseFloat(ethers.formatUnits(bestBidBigInt || BigInt(0), decimals));
-      const bestAsk = parseFloat(ethers.formatUnits(bestAskBigInt || BigInt(0), decimals));
-      const spread = parseFloat(ethers.formatUnits(spreadBigInt || BigInt(0), decimals));
+      const bestBid = parseFloat(ethers.formatUnits(bestBidBigInt || BigInt(0), 18));
+      const bestAsk = parseFloat(ethers.formatUnits(bestAskBigInt || BigInt(0), 18));
+      const spread = parseFloat(ethers.formatUnits(spreadBigInt || BigInt(0), 18));
 
-      // Use fallback if no last price available from contract
-      if (lastPrice === 0 && fallbackPrice && fallbackPrice > 0) {
-        console.warn('⚠️ No last trade price available; using provided fallback');
+      // If lastPrice is zero, derive from bid/ask to avoid zero display
+      const effectiveLastPrice = lastPrice === 0
+        ? (bestBid > 0 && bestAsk > 0
+            ? (bestBid + bestAsk) / 2
+            : (bestBid > 0 ? bestBid : (bestAsk > 0 ? bestAsk : 0)))
+        : lastPrice;
+
+      // Use fallback if still no price available and a fallback price is given
+      if (effectiveLastPrice === 0 && fallbackPrice && fallbackPrice > 0) {
+        console.warn('⚠️ No on-chain price available; using provided fallback');
         setMarketData({
           lastPrice: fallbackPrice,
           volume24h: 0,
@@ -130,8 +173,8 @@ export function useOrderbookMarketStats(
           low24h: fallbackPrice,
           priceChange24h: 0,
           totalTrades: 0,
-          bestBid: 0,
-          bestAsk: 0,
+          bestBid,
+          bestAsk,
           spread: 0,
           lastUpdateTime: Date.now()
         });
@@ -141,7 +184,7 @@ export function useOrderbookMarketStats(
       }
 
       console.log(`✅ Successfully fetched market stats for ${marketAddress}:`, {
-        lastPrice,
+        lastPrice: effectiveLastPrice,
         volume24h,
         high24h,
         low24h,
@@ -154,7 +197,7 @@ export function useOrderbookMarketStats(
       });
 
       setMarketData({
-        lastPrice,
+        lastPrice: effectiveLastPrice,
         volume24h,
         high24h,
         low24h,

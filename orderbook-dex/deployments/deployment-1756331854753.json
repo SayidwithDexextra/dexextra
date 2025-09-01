@@ -1,0 +1,43 @@
+{
+  "network": {
+    "name": "ganache",
+    "chainId": "1337"
+  },
+  "timestamp": "2025-08-27T21:57:34.743Z",
+  "deployer": "0x67578a5bffc0fF03CF7661DB7eD51360884Fc371",
+  "contracts": {
+    "mockUMAFinder": {
+      "address": "0x6e2B93335cDb01f96faF879f6D8Ca8dC39b0F00a",
+      "explorerUrl": "Contract: 0x6e2B93335cDb01f96faF879f6D8Ca8dC39b0F00a"
+    },
+    "mockUSDC": {
+      "address": "0xEC98a1D24Ee379DD35d98842faEEeF30E6c32006",
+      "explorerUrl": "Contract: 0xEC98a1D24Ee379DD35d98842faEEeF30E6c32006"
+    },
+    "umaOracleManager": {
+      "address": "0x3f4Ef6f8043432822bf6DA1039e56A7d5157AD8D",
+      "explorerUrl": "Contract: 0x3f4Ef6f8043432822bf6DA1039e56A7d5157AD8D"
+    },
+    "centralVault": {
+      "address": "0xe8441D3B5822Bd1817b4161ADc2FB661e358EDd6",
+      "explorerUrl": "Contract: 0xe8441D3B5822Bd1817b4161ADc2FB661e358EDd6"
+    },
+    "orderRouter": {
+      "address": "0x58A1461AEa9745C9bBde2569E8139c8A7b4fdC0f",
+      "explorerUrl": "Contract: 0x58A1461AEa9745C9bBde2569E8139c8A7b4fdC0f"
+    },
+    "orderBookImplementation": {
+      "address": "0xff55be309931e631EBb4c2917F554B1d1C3bF1cD",
+      "explorerUrl": "Contract: 0xff55be309931e631EBb4c2917F554B1d1C3bF1cD"
+    },
+    "factory": {
+      "address": "0x597BF34Eb10773522d495D524150FC84DaC47420",
+      "explorerUrl": "Contract: 0x597BF34Eb10773522d495D524150FC84DaC47420"
+    }
+  },
+  "markets": {
+    "WORLD_POPULATION_2024": "0x5783909b0F49B9eB3E48D4f0D276e237C0bFBFB1",
+    "GLOBAL_TEMP_ANOMALY_Q4_2024": "0x3C36e46Cb9f5F5ae813B0dCCaBb050DaD9DF61ed",
+    "BTC_HASH_RATE_DEC_2024": "0x31f09b0D450793576b645fED8977c3D2C23087aa"
+  }
+}

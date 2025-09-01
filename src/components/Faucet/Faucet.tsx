@@ -3,11 +3,10 @@
 import { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
+import { CONTRACTS } from '@/lib/contracts'
 import { FaucetProps, FaucetState, ClaimResult } from './types'
 import styles from './Faucet.module.css'
 
-// Mock USDC contract address on Polygon mainnet (from orderbook deployment)
-const MOCK_USDC_ADDRESS = '0xff541e2AEc7716725f8EDD02945A1Fe15664588b'
 const POLYGON_CHAIN_ID = 137
 
 // Mock USDC ABI (comprehensive for faucet functionality)
@@ -89,7 +88,7 @@ export default function Faucet({ className }: FaucetProps) {
 
     try {
       const provider = new ethers.BrowserProvider(window.ethereum)
-      const contract = new ethers.Contract(MOCK_USDC_ADDRESS, MOCK_USDC_ABI, provider)
+      const contract = new ethers.Contract(CONTRACTS.MockUSDC.address, MOCK_USDC_ABI, provider)
       
       const balance = await contract.balanceOf(walletAddress)
       const decimals = await contract.decimals()
@@ -179,7 +178,7 @@ export default function Faucet({ className }: FaucetProps) {
 
     const provider = new ethers.BrowserProvider(window.ethereum)
     const signer = await provider.getSigner()
-    const contract = new ethers.Contract(MOCK_USDC_ADDRESS, MOCK_USDC_ABI, signer)
+    const contract = new ethers.Contract(CONTRACTS.MockUSDC.address, MOCK_USDC_ABI, signer)
     
     const decimals = await contract.decimals()
     const amount = ethers.parseUnits(state.customAmount, decimals)

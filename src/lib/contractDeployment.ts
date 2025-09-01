@@ -1,14 +1,14 @@
 import { Address } from 'viem';
 import { CONTRACT_ADDRESSES } from './contractConfig';
 
-// Default addresses for deployment - aligned with orderbook deployment
+// Default addresses for deployment - aligned with orderbook deployment (UPDATED Jan 27, 2025)
 export const DEFAULT_ADDRESSES = {
-  // Core orderbook contracts (from POLYGON_DEPLOYMENT.md)
-  mockUSDC: CONTRACT_ADDRESSES.mockUSDC, // '0xff541e2AEc7716725f8EDD02945A1Fe15664588b'
-  centralVault: CONTRACT_ADDRESSES.centralVault, // '0x9E5996Cb44AC7F60a9A46cACF175E87ab677fC1C'
-  orderRouter: CONTRACT_ADDRESSES.orderRouter, // '0x516a1790a04250FC6A5966A528D02eF20E1c1891'
-  factory: CONTRACT_ADDRESSES.factory, // '0x354f188944eF514eEEf05d8a31E63B33f87f16E0'
-  umaOracleManager: CONTRACT_ADDRESSES.umaOracleManager, // '0xCa1B94AD513097fC17bBBdB146787e026E62132b'
+  // Core orderbook contracts (from latest deployment)
+  mockUSDC: CONTRACT_ADDRESSES.mockUSDC,
+  centralVault: CONTRACT_ADDRESSES.centralVault,
+  orderRouter: CONTRACT_ADDRESSES.orderRouter,
+  factory: CONTRACT_ADDRESSES.factory,
+  umaOracleManager: CONTRACT_ADDRESSES.umaOracleManager,
   
   // Legacy VAMM addresses (placeholders - these may need different addresses)
   vAMMFactory: CONTRACT_ADDRESSES.factory, // Use the same factory for now

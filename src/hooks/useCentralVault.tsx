@@ -2,35 +2,14 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { ethers, BrowserProvider, Contract } from 'ethers'
-import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
+import { CONTRACTS } from '@/lib/contracts'
 
-// CentralVault ABI - focused on deposit/withdraw functions
-const CENTRAL_VAULT_ABI = [
-  // Deposit functions
-  'function deposit(address asset, uint256 amount) external payable',
-  'function depositPrimaryCollateral(uint256 amount) external payable',
-  
-  // View functions
-  'function userBalances(address user, address asset) view returns (tuple(uint256 available, uint256 locked, uint256 pendingWithdrawal))',
-  'function totalAssetReserves(address asset) view returns (uint256)',
-  'function supportedAssets(address asset) view returns (bool)',
-  'function primaryCollateralToken() view returns (address)',
-  'function primaryCollateralIsERC20() view returns (bool)',
-  
-  // Events
-  'event Deposit(address indexed user, address indexed asset, uint256 amount, uint256 timestamp)',
-  'event Withdraw(address indexed user, address indexed asset, uint256 amount, uint256 timestamp)',
-]
-
-// MockUSDC ABI for approvals
-const MOCK_USDC_ABI = [
-  'function balanceOf(address owner) view returns (uint256)',
-  'function allowance(address owner, address spender) view returns (uint256)',
-  'function approve(address spender, uint256 amount) external returns (bool)',
-  'function decimals() view returns (uint8)',
-  'function symbol() view returns (string)',
-  'function name() view returns (string)',
-]
+// Extend Window interface for ethereum provider
+declare global {
+  interface Window {
+    ethereum?: any
+  }
+}
 
 interface UserBalance {
   available: string
@@ -45,6 +24,46 @@ interface VaultState {
   error: string | null
   primaryCollateralToken: string | null
   isERC20Collateral: boolean
+}
+
+// Helper function to switch to Polygon network
+const switchToPolygon = async () => {
+  if (!window.ethereum) return false
+  
+  try {
+    // Try to switch to Polygon
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: '0x89' }], // 137 in hex
+    })
+    return true
+  } catch (switchError: any) {
+    // If network doesn't exist, add it
+    if (switchError.code === 4902) {
+      try {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: '0x89',
+            chainName: 'Polygon',
+            nativeCurrency: {
+              name: 'MATIC',
+              symbol: 'MATIC',
+              decimals: 18,
+            },
+            rpcUrls: ['https://polygon-rpc.com/'],
+            blockExplorerUrls: ['https://polygonscan.com/'],
+          }],
+        })
+        return true
+      } catch (addError) {
+        console.error('Failed to add Polygon network:', addError)
+        return false
+      }
+    }
+    console.error('Failed to switch to Polygon network:', switchError)
+    return false
+  }
 }
 
 export function useCentralVault(walletAddress?: string) {
@@ -75,8 +94,15 @@ export function useCentralVault(walletAddress?: string) {
       const provider = new BrowserProvider(window.ethereum)
       const network = await provider.getNetwork()
       
+      console.log('🔗 Network connection details:', {
+        chainId: network.chainId.toString(),
+        networkName: network.name,
+        expectedChainId: '137'
+      })
+      
       // Check if on Polygon (chainId 137)
-      if (network.chainId !== 137) {
+      if (network.chainId !== 137n) { // Use BigInt comparison
+        console.log(`❌ Wrong network detected. Current: ${network.chainId}, Expected: 137 (Polygon)`)
         setState(prev => ({
           ...prev,
           isConnected: false,
@@ -86,16 +112,26 @@ export function useCentralVault(walletAddress?: string) {
         return false
       }
 
+      console.log('✅ Correct network detected (Polygon)')
+
       // Test contract connection
       const vaultContract = new Contract(
-        CONTRACT_ADDRESSES.centralVault,
-        CENTRAL_VAULT_ABI,
+        CONTRACTS.CentralVault.address,
+        CONTRACTS.CentralVault.abi,
         provider
       )
+
+      console.log('🔗 Testing vault contract connection...')
 
       // Get primary collateral token info
       const primaryToken = await vaultContract.primaryCollateralToken()
       const isERC20 = await vaultContract.primaryCollateralIsERC20()
+
+      console.log('✅ Vault contract connected successfully:', {
+        primaryToken,
+        isERC20,
+        vaultAddress: CONTRACTS.CentralVault.address
+      })
 
       setState(prev => ({
         ...prev,
@@ -110,6 +146,11 @@ export function useCentralVault(walletAddress?: string) {
 
     } catch (error) {
       console.error('❌ Vault connection failed:', error)
+      console.error('❌ Error details:', {
+        message: error.message,
+        code: error.code,
+        reason: error.reason
+      })
       setState(prev => ({
         ...prev,
         isConnected: false,
@@ -129,36 +170,115 @@ export function useCentralVault(walletAddress?: string) {
     try {
       const provider = new BrowserProvider(window.ethereum)
       const vaultContract = new Contract(
-        CONTRACT_ADDRESSES.centralVault,
-        CENTRAL_VAULT_ABI,
+        CONTRACTS.CentralVault.address,
+        CONTRACTS.CentralVault.abi,
         provider
       )
 
       const balance = await vaultContract.userBalances(walletAddress, state.primaryCollateralToken)
       
+      console.log('📊 Raw balance data from contract:', {
+        available: balance.available?.toString(),
+        locked: balance.locked?.toString(),
+        pendingWithdrawal: balance.pendingWithdrawal?.toString(),
+        walletAddress,
+        primaryCollateralToken: state.primaryCollateralToken
+      })
+      
+      // Helper function to safely format units with null checks
+      const safeFormatUnits = (value: any, decimals: number = 6): string => {
+        if (value === null || value === undefined) {
+          console.log('⚠️ Null/undefined value detected, defaulting to 0')
+          return '0'
+        }
+        try {
+          return ethers.formatUnits(value, decimals)
+        } catch (error) {
+          console.error('❌ Error formatting units:', error, 'Value:', value)
+          return '0'
+        }
+      }
+      
       const userBalance: UserBalance = {
-        available: ethers.formatUnits(balance.available, 6), // USDC has 6 decimals
-        locked: ethers.formatUnits(balance.locked, 6),
-        pendingWithdrawal: ethers.formatUnits(balance.pendingWithdrawal, 6)
+        available: safeFormatUnits(balance.available, 6), // USDC has 6 decimals
+        locked: safeFormatUnits(balance.locked, 6),
+        pendingWithdrawal: safeFormatUnits(balance.pendingWithdrawal, 6)
       }
 
+      console.log('✅ Successfully formatted user balance:', userBalance)
+      
       setState(prev => ({ ...prev, userBalance }))
       return userBalance
 
     } catch (error) {
       console.error('❌ Failed to load user balance:', error)
+      console.error('❌ Balance loading error details:', {
+        message: error.message,
+        code: error.code,
+        walletAddress,
+        isConnected: state.isConnected,
+        primaryCollateralToken: state.primaryCollateralToken
+      })
       return null
     }
   }, [walletAddress, state.isConnected, state.primaryCollateralToken])
 
   // Deposit collateral to vault - REAL BLOCKCHAIN TRANSACTION
   const depositCollateral = useCallback(async (amount: string): Promise<string> => {
-    if (!walletAddress || !state.isConnected || !window.ethereum) {
-      throw new Error('Wallet not connected or vault unavailable')
+    // Basic validation - only require wallet and ethereum provider
+    if (!walletAddress || !window.ethereum) {
+      throw new Error('Wallet not connected')
     }
 
+    console.log('🏦 Starting deposit with progressive vault initialization:', {
+      walletAddress,
+      amount,
+      currentVaultState: {
+        isConnected: state.isConnected,
+        primaryCollateralToken: state.primaryCollateralToken,
+        isERC20Collateral: state.isERC20Collateral
+      }
+    })
+
+    // If vault not connected, try to establish connection
+    if (!state.isConnected) {
+      console.log('🔄 Vault not connected, attempting to connect...')
+      
+      try {
+        const connected = await checkVaultConnection()
+        if (!connected) {
+          // Check the specific reason for failure
+          const provider = new BrowserProvider(window.ethereum)
+          const network = await provider.getNetwork()
+          
+          if (network.chainId !== 137n) {
+            console.log('🔄 Wrong network detected, attempting to switch to Polygon...')
+            const switched = await switchToPolygon()
+            if (switched) {
+              // Try connection again after network switch
+              const retryConnected = await checkVaultConnection()
+              if (!retryConnected) {
+                throw new Error('Failed to connect to vault after switching to Polygon network')
+              }
+            } else {
+              throw new Error(`Please manually switch to Polygon network. Current network: ${network.name} (Chain ID: ${network.chainId})`)
+            }
+          } else {
+            throw new Error('Failed to connect to vault contract. Please check your connection and try again.')
+          }
+        }
+        console.log('✅ Vault connection established successfully')
+      } catch (connectionError) {
+        console.error('❌ Vault connection error:', connectionError)
+        throw connectionError
+      }
+    } else {
+      console.log('✅ Vault already connected, proceeding with deposit')
+    }
+
+    // Additional validation after connection attempt
     if (!state.primaryCollateralToken || !state.isERC20Collateral) {
-      throw new Error('Vault not properly initialized')
+      throw new Error('Vault not properly initialized for USDC deposits')
     }
 
     try {
@@ -177,20 +297,20 @@ export function useCentralVault(walletAddress?: string) {
       const signer = await provider.getSigner()
       
       console.log('🔗 Using contracts:', {
-        vault: CONTRACT_ADDRESSES.centralVault,
-        mockUSDC: CONTRACT_ADDRESSES.mockUSDC,
+        vault: CONTRACTS.CentralVault.address,
+        mockUSDC: CONTRACTS.MockUSDC.address,
         amount: amount + ' USDC'
       })
       
       const vaultContract = new Contract(
-        CONTRACT_ADDRESSES.centralVault,
-        CENTRAL_VAULT_ABI,
+        CONTRACTS.CentralVault.address,
+        CONTRACTS.CentralVault.abi,
         signer
       )
 
       const usdcContract = new Contract(
-        CONTRACT_ADDRESSES.mockUSDC,
-        MOCK_USDC_ABI,
+        CONTRACTS.MockUSDC.address,
+        CONTRACTS.MockUSDC.abi,
         signer
       )
 
@@ -201,11 +321,11 @@ export function useCentralVault(walletAddress?: string) {
       }
 
       // Check and handle allowance
-      const allowance = await usdcContract.allowance(walletAddress, CONTRACT_ADDRESSES.centralVault)
+      const allowance = await usdcContract.allowance(walletAddress, CONTRACTS.CentralVault.address)
       
       if (allowance < amountWei) {
         console.log('🔓 Approving USDC spending for vault...')
-        const approveTx = await usdcContract.approve(CONTRACT_ADDRESSES.centralVault, amountWei)
+        const approveTx = await usdcContract.approve(CONTRACTS.CentralVault.address, amountWei)
         const approveReceipt = await approveTx.wait()
         console.log('✅ USDC approval completed:', approveReceipt.transactionHash)
       }
@@ -215,29 +335,82 @@ export function useCentralVault(walletAddress?: string) {
       const depositTx = await vaultContract.depositPrimaryCollateral(amountWei)
       
       console.log('⏳ Waiting for blockchain confirmation...', depositTx.hash)
+      
+      // Add validation for transaction object
+      if (!depositTx || !depositTx.hash) {
+        throw new Error('Invalid transaction object returned from contract')
+      }
+      
       const receipt = await depositTx.wait()
+      
+      console.log('📋 Transaction receipt details:', {
+        status: receipt.status,
+        transactionHash: receipt.transactionHash,
+        hash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed?.toString(),
+        allProperties: Object.keys(receipt)
+      })
       
       if (receipt.status !== 1) {
         throw new Error('Transaction failed on blockchain')
       }
       
-      console.log('✅ REAL deposit completed successfully!', {
-        txHash: receipt.transactionHash,
-        block: receipt.blockNumber,
-        gasUsed: receipt.gasUsed.toString()
+      // Try to get transaction hash from different possible properties
+      // Different ethers versions and networks may use different property names
+      const transactionHash = receipt.transactionHash || 
+                               receipt.hash || 
+                               depositTx.hash || 
+                               receipt.transactionHash ||  // Sometimes it's nested
+                               (receipt as any).txHash ||  // Some implementations use txHash
+                               (receipt as any).tx_hash    // Some use snake_case
+      
+      console.log('🔍 Transaction hash resolution:', {
+        receiptTransactionHash: receipt.transactionHash,
+        receiptHash: receipt.hash,
+        depositTxHash: depositTx.hash,
+        receiptTxHash: (receipt as any).txHash,
+        receiptTx_hash: (receipt as any).tx_hash,
+        resolved: transactionHash,
+        receiptType: typeof receipt,
+        receiptKeys: Object.keys(receipt)
       })
       
-      // Refresh user balance from vault
-      await loadUserBalance()
+      // Validate transaction hash before returning
+      if (!transactionHash) {
+        console.error('❌ No transaction hash found in any location:', {
+          receipt: receipt,
+          depositTx: depositTx
+        })
+        throw new Error('Transaction completed but no hash found in receipt or transaction object')
+      }
+      
+      console.log('✅ REAL deposit completed successfully!', {
+        txHash: transactionHash,
+        block: receipt.blockNumber,
+        gasUsed: receipt.gasUsed?.toString()
+      })
+      
+      // Store transaction hash before any async operations (already resolved above)
+      console.log('🔗 Stored transaction hash for return:', transactionHash)
+      
+      // Refresh user balance from vault (don't let this interfere with return value)
+      try {
+        await loadUserBalance()
+        console.log('✅ User balance refreshed successfully')
+      } catch (balanceError) {
+        console.warn('⚠️ Failed to refresh balance after deposit, but transaction was successful:', balanceError)
+      }
       
       // Return actual transaction hash from blockchain
-      return receipt.transactionHash
+      console.log('🔗 Returning transaction hash:', transactionHash)
+      return transactionHash
 
     } catch (error) {
       console.error('❌ REAL deposit failed:', error)
       throw error
     }
-  }, [walletAddress, state.isConnected, state.primaryCollateralToken, state.isERC20Collateral, loadUserBalance])
+  }, [walletAddress, state.isConnected, state.primaryCollateralToken, state.isERC20Collateral, loadUserBalance, checkVaultConnection])
 
   // Initialize vault connection when wallet connects
   useEffect(() => {
@@ -268,8 +441,8 @@ export function useCentralVault(walletAddress?: string) {
     lockedBalance: state.userBalance?.locked || '0',
     
     // Contract addresses for reference
-    vaultAddress: CONTRACT_ADDRESSES.centralVault,
-    mockUSDCAddress: CONTRACT_ADDRESSES.mockUSDC,
+    vaultAddress: CONTRACTS.CentralVault.address,
+    mockUSDCAddress: CONTRACTS.MockUSDC.address,
   }
 }
 

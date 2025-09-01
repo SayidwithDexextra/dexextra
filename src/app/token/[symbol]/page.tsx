@@ -15,6 +15,7 @@ import LightweightChart from '@/components/TokenView/LightweightChart';
 import { TokenData } from '@/types/token';
 import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
 import { useTokenFromMarket, useVAMMFromMarket } from '@/hooks/useTokenFromMarket';
+import { useOrderbookMarketStats } from '@/hooks/useOrderbookMarketStats';
 import NetworkSelector from '@/components/NetworkSelector';
 import CountdownTicker from '@/components/CountdownTicker/CountdownTicker';
 import LoadingScreen from '@/components/LoadingScreen';
@@ -83,15 +84,22 @@ export default function TokenPage({ params }: TokenPageProps) {
     }
   };
 
-  // Enhanced real-time price integration using OrderBook market data
-  const currentPrice = marketData?.market?.last_trade_price || vammMarket?.initial_price || 0
-  const markPrice = marketData?.market?.last_trade_price || vammMarket?.initial_price || 0
+  // Enhanced real-time price integration using OrderBook market data (on-chain only)
+  const { marketData: stats, dataSource } = useOrderbookMarketStats(
+    marketData?.market?.market_address,
+    marketData?.market?.chain_id || 137,
+    undefined,
+    { autoRefresh: true, refreshInterval: 60000 }
+  );
+
+  const currentPrice = stats?.lastPrice || 0;
+  const markPrice = stats?.lastPrice || 0;
   const fundingRate = 0.0001 // Mock funding rate (would come from contract)
   const priceChange24h = baseTokenData?.priceChange24h || 0
   const priceChangePercent24h = baseTokenData ? (baseTokenData.priceChange24h / baseTokenData.price) * 100 : 0
   const isPriceLoading = isLoadingMarket
   const priceError = marketError
-  const dataSource = marketData?.metadata?.deployment_status === 'deployed' ? 'orderbook' : 'fallback'
+  // dataSource already from hook (contract|fallback|none); never DB
   const lastUpdated = new Date().toISOString() // Use current time since updated_at might not be available
 
   // Get trading data including collateral and position information from OrderBook
@@ -108,16 +116,15 @@ export default function TokenPage({ params }: TokenPageProps) {
     
     const market = marketData.market;
     
-    // Use OrderBook market data for pricing
-    let finalPrice = market.last_trade_price || market.tick_size || 0;
+    // Use OrderBook contract data for pricing only
+    let finalPrice = stats?.lastPrice || 0;
     let finalPriceChange = 0; // TODO: Calculate from historical data
-    let priceDataSource = 'orderbook';
+    let priceDataSource = dataSource;
     
-    // Use current price if available and different
-    if (currentPrice > 0 && currentPrice !== finalPrice) {
+    // Prefer the currentPrice if it’s positive (same as stats.lastPrice)
+    if (currentPrice > 0) {
       finalPrice = currentPrice;
       finalPriceChange = priceChangePercent24h;
-      priceDataSource = dataSource;
     }
     
     console.log(`💰 OrderBook market data for ${symbol}:`, {
@@ -127,7 +134,7 @@ export default function TokenPage({ params }: TokenPageProps) {
       marketStatus: market.market_status,
       totalVolume: market.total_volume,
       totalTrades: market.total_trades,
-      lastTradePrice: market.last_trade_price,
+      lastTradePrice: stats?.lastPrice || 0,
       lastUpdated: new Date(lastUpdated).toISOString()
     });
     
@@ -168,7 +175,7 @@ export default function TokenPage({ params }: TokenPageProps) {
       
       // Log mock USDC address when action is 'long'
       if (action === 'long') {
-        console.log('🏦 Mock USDC Address:', '0xff541e2AEc7716725f8EDD02945A1Fe15664588b');
+        console.log('🏦 Mock USDC Address:', '0x194b4517a61D569aC8DBC47a22ed6F665B77a331');
       }
     }
   }, [searchParams]);

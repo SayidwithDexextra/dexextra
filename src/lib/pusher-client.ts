@@ -428,6 +428,59 @@ export class PusherClientService {
   }
 
   /**
+   * Generic method to subscribe to any channel with multiple events
+   */
+  subscribeToChannel(
+    channelName: string,
+    eventHandlers: Record<string, (data: any) => void>
+  ): () => void {
+    console.log(`📡 [GENERIC] Subscribing to channel: ${channelName}`);
+    
+    if (this.subscriptions.has(channelName)) {
+      console.log(`Already subscribed to ${channelName}`);
+      return this.subscriptions.get(channelName).unsubscribe;
+    }
+
+    const channel = this.pusher.subscribe(channelName);
+    const boundEvents = new Set<string>();
+
+    // Bind all event handlers
+    Object.entries(eventHandlers).forEach(([eventName, handler]) => {
+      channel.bind(eventName, (data: any) => {
+        console.log(`📨 [${channelName}] ${eventName}:`, data);
+        handler(data);
+      });
+      boundEvents.add(eventName);
+    });
+
+    const unsubscribe = () => {
+      console.log(`🔌 [GENERIC] Unsubscribing from ${channelName}`);
+      // Unbind all events
+      boundEvents.forEach(eventName => {
+        channel.unbind(eventName);
+      });
+      this.pusher.unsubscribe(channelName);
+      this.subscriptions.delete(channelName);
+    };
+
+    this.subscriptions.set(channelName, { channel, unsubscribe, events: boundEvents });
+    console.log(`✅ [GENERIC] Subscribed to ${channelName} with ${boundEvents.size} events`);
+
+    return unsubscribe;
+  }
+
+  /**
+   * Unsubscribe from a specific channel
+   */
+  unsubscribe(channelName: string): void {
+    const subscription = this.subscriptions.get(channelName);
+    if (subscription && subscription.unsubscribe) {
+      subscription.unsubscribe();
+      console.log(`🔌 Unsubscribed from ${channelName}`);
+    }
+  }
+
+  /**
    * Get connection status
    */
   getConnectionState() {

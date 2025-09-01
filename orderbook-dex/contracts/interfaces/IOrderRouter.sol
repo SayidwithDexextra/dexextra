@@ -331,4 +331,8 @@ interface IOrderRouter {
      * @return orderBook The order book contract address
      */
     function getMarketOrderBook(string calldata metricId) external view returns (address orderBook);
+
+    // ===== Relayed EIP-712 entrypoint =====
+    function placeOrderWithSig(Order calldata order, bytes calldata signature) external returns (uint256 orderId);
+    function getNonce(address trader) external view returns (uint256);
 }

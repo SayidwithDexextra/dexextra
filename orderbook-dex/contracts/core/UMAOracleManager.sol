@@ -87,6 +87,7 @@ contract UMAOracleManager is
     bytes32 public constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN_ROLE");
     bytes32 public constant METRIC_MANAGER_ROLE = keccak256("METRIC_MANAGER_ROLE");
     bytes32 public constant REQUESTER_ROLE = keccak256("REQUESTER_ROLE");
+    bytes32 public constant FACTORY_ROLE = keccak256("FACTORY_ROLE");
 
     // UMA Protocol contracts
     IOptimisticOracleV3 public optimisticOracle;
@@ -342,8 +343,11 @@ contract UMAOracleManager is
     function configureMetric(MetricConfig calldata config) 
         external 
         override 
-        onlyRole(METRIC_MANAGER_ROLE) 
     {
+        require(
+            hasRole(METRIC_MANAGER_ROLE, msg.sender) || hasRole(FACTORY_ROLE, msg.sender),
+            "UMAOracleManager: Not authorized to configure metrics"
+        );
         require(config.minBond >= MIN_BOND, "UMAOracleManager: Bond too low");
         require(config.livenessPeriod >= 3600, "UMAOracleManager: Liveness too short"); // Min 1 hour
         
@@ -403,8 +407,11 @@ contract UMAOracleManager is
     function addAuthorizedRequester(bytes32 identifier, address requester)
         external
         override
-        onlyRole(METRIC_MANAGER_ROLE)
     {
+        require(
+            hasRole(METRIC_MANAGER_ROLE, msg.sender) || hasRole(FACTORY_ROLE, msg.sender),
+            "UMAOracleManager: Not authorized to add requesters"
+        );
         require(requester != address(0), "UMAOracleManager: Invalid requester");
         metricConfigs[identifier].authorizedRequesters.push(requester);
     }
@@ -519,6 +526,21 @@ contract UMAOracleManager is
      */
     function unpause() external onlyRole(ORACLE_ADMIN_ROLE) {
         _unpause();
+    }
+
+    /**
+     * @dev Grants factory role to allow automatic metric configuration
+     */
+    function grantFactoryRole(address factory) external onlyRole(ORACLE_ADMIN_ROLE) {
+        require(factory != address(0), "UMAOracleManager: Invalid factory address");
+        grantRole(FACTORY_ROLE, factory);
+    }
+
+    /**
+     * @dev Revokes factory role
+     */
+    function revokeFactoryRole(address factory) external onlyRole(ORACLE_ADMIN_ROLE) {
+        revokeRole(FACTORY_ROLE, factory);
     }
 
     // Internal functions

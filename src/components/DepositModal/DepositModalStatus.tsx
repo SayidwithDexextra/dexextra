@@ -3,10 +3,9 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { DepositModalStatusProps } from './types'
-import { designSystem, styles } from './DepositModal.styles'
 import cssStyles from './DepositModal.module.css'
 
-// Icon Components
+// Icon Components following design system
 const CloseIcon = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -14,31 +13,23 @@ const CloseIcon = () => (
 )
 
 const SuccessIcon = () => (
-  <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="10" fill="#00d4aa" stroke="#00d4aa" strokeWidth="2"/>
-    <path d="M9 12L11 14L15 10" stroke="#000000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="10" fill="#22c55e" stroke="#22c55e" strokeWidth="2"/>
+    <path d="M9 12L11 14L15 10" stroke="#000000" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 )
 
 const LoadingIcon = () => (
-  <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="10" stroke="#4a9eff" strokeWidth="2" fill="none" opacity="0.3"/>
-    <path d="M22 12A10 10 0 0 1 12 22" stroke="#4a9eff" strokeWidth="2" strokeLinecap="round">
-      <animateTransform 
-        attributeName="transform" 
-        type="rotate" 
-        values="0 12 12;360 12 12" 
-        dur="1s" 
-        repeatCount="indefinite"
-      />
-    </path>
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-spin">
+    <circle cx="12" cy="12" r="10" stroke="#60a5fa" strokeWidth="2" fill="none" opacity="0.3"/>
+    <path d="M22 12A10 10 0 0 1 12 22" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round"/>
   </svg>
 )
 
 const ErrorIcon = () => (
-  <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="10" fill="#ff6b6b" stroke="#ff6b6b" strokeWidth="2"/>
-    <path d="M15 9L9 15M9 9L15 15" stroke="#000000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="10" fill="#ef4444" stroke="#ef4444" strokeWidth="2"/>
+    <path d="M15 9L9 15M9 9L15 15" stroke="#000000" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 )
 
@@ -50,12 +41,6 @@ const ExternalLinkIcon = () => (
   </svg>
 )
 
-const ChevronRightIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-)
-
 const InfoIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
@@ -63,272 +48,18 @@ const InfoIcon = () => (
   </svg>
 )
 
-const DollarIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="10" fill="#4a9eff" stroke="#4a9eff" strokeWidth="2"/>
-    <path d="M12 6V18M9 9H12.5A2.5 2.5 0 0 1 12.5 14H9" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+const ChevronDownIcon = ({ isOpen }: { isOpen: boolean }) => (
+  <svg 
+    width="14" 
+    height="14" 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    xmlns="http://www.w3.org/2000/svg"
+    className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : 'rotate-0'}`}
+  >
+    <path d="M6 9L12 15L18 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 )
-
-const VaultIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="10" fill="#00d4aa" stroke="#00d4aa" strokeWidth="2"/>
-    <path d="M12 6V12L16 14" stroke="#000000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-)
-
-// Status-specific styles
-const statusStyles = {
-  ...styles,
-  
-  // Override modal for status display
-  modal: {
-    ...styles.modal,
-    height: '580px',
-    maxHeight: '90vh',
-    overflow: 'hidden' as const,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    justifyContent: 'flex-start'
-  },
-
-  // Scrollable content area
-  scrollableContent: {
-    flex: 1,
-    overflowY: 'auto' as const,
-    overflowX: 'hidden' as const,
-    paddingBottom: '0px',
-    // Hide scrollbar but keep functionality
-    scrollbarWidth: 'none' as const, // Firefox
-    msOverflowStyle: 'none' as const, // IE/Edge
-    // Note: webkit scrollbar hiding will be handled by CSS class
-  },
-
-  // Sticky footer for buttons
-  stickyFooter: {
-    flexShrink: 0,
-    backgroundColor: designSystem.colors.background.primary,
-    borderTop: `1px solid ${designSystem.colors.interactive.border}`,
-    padding: '16px',
-    marginTop: 'auto'
-  },
-  
-  // Header section
-  statusHeader: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    marginBottom: '12px',
-    padding: '12px 0 8px 0',
-    flexShrink: 0,
-    borderBottom: `1px solid ${designSystem.colors.interactive.border}`
-  },
-  
-  statusTitle: {
-    ...designSystem.typography.hierarchy.modalTitle,
-    margin: 0,
-    marginBottom: '4px'
-  },
-  
-  statusSubtitle: {
-    ...designSystem.typography.hierarchy.modalSubtitle,
-    margin: 0,
-    opacity: 0.8
-  },
-  
-  // Icon section
-  iconSection: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: '10px',
-    padding: '6px 0'
-  },
-  
-  // Status info section
-  statusInfoSection: {
-    backgroundColor: designSystem.colors.interactive.cardBackground,
-    borderRadius: designSystem.effects.borderRadius.medium,
-    padding: '10px',
-    marginBottom: '10px',
-    border: `1px solid ${designSystem.colors.interactive.border}`
-  },
-  
-  statusRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '6px 0',
-    borderBottom: `1px solid ${designSystem.colors.interactive.border}`
-  },
-  
-  statusRowLast: {
-    borderBottom: 'none'
-  },
-  
-  statusLabel: {
-    ...designSystem.typography.hierarchy.secondaryText,
-    color: designSystem.colors.text.secondary
-  },
-  
-  statusValue: {
-    ...designSystem.typography.hierarchy.primaryText,
-    fontWeight: 600
-  },
-  
-  statusValueSuccess: {
-    color: '#00d4aa'
-  },
-  
-  statusValuePending: {
-    color: '#4a9eff'
-  },
-  
-  statusValueError: {
-    color: '#ff6b6b'
-  },
-  
-  // Transaction details section
-  transactionSection: {
-    backgroundColor: designSystem.colors.interactive.cardBackground,
-    borderRadius: designSystem.effects.borderRadius.medium,
-    padding: '10px',
-    marginBottom: '10px',
-    border: `1px solid ${designSystem.colors.interactive.border}`
-  },
-  
-  transactionRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '6px 0',
-    borderBottom: `1px solid ${designSystem.colors.interactive.border}`
-  },
-  
-  transactionRowLast: {
-    borderBottom: 'none'
-  },
-  
-  transactionLabel: {
-    ...designSystem.typography.hierarchy.secondaryText,
-    color: designSystem.colors.text.secondary
-  },
-  
-  transactionValue: {
-    ...designSystem.typography.hierarchy.primaryText,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  },
-  
-  externalLink: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    color: designSystem.colors.text.primary,
-    textDecoration: 'none',
-    transition: designSystem.effects.transitions.default,
-    '&:hover': {
-      opacity: 0.8
-    }
-  },
-  
-  // Result section
-  resultSection: {
-    backgroundColor: designSystem.colors.interactive.cardBackground,
-    borderRadius: designSystem.effects.borderRadius.medium,
-    padding: '10px',
-    marginBottom: '8px',
-    border: `1px solid ${designSystem.colors.interactive.border}`,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  
-  resultLabel: {
-    ...designSystem.typography.hierarchy.secondaryText,
-    color: designSystem.colors.text.secondary
-  },
-  
-  resultValue: {
-    ...designSystem.typography.hierarchy.primaryText,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '18px',
-    fontWeight: 600
-  },
-  
-  // Expandable details
-  moreDetailsToggle: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '6px 0',
-    cursor: 'pointer',
-    fontSize: '14px',
-    color: designSystem.colors.text.secondary,
-    border: 'none',
-    backgroundColor: 'transparent',
-    width: '100%',
-    marginBottom: '6px'
-  },
-  
-  // Help section
-  helpSection: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 10px',
-    backgroundColor: 'rgba(74, 158, 255, 0.1)',
-    borderRadius: designSystem.effects.borderRadius.medium,
-    border: '1px solid rgba(74, 158, 255, 0.2)',
-    marginBottom: '10px'
-  },
-  
-  helpText: {
-    fontSize: '13px',
-    color: '#4a9eff'
-  },
-  
-  helpLink: {
-    color: '#4a9eff',
-    textDecoration: 'underline',
-    fontWeight: 500
-  },
-  
-  // Button container (moved to stickyFooter)
-  buttonContainer: {
-    display: 'flex',
-    gap: '12px'
-  },
-  
-  closeButton: {
-    flex: 1,
-    backgroundColor: designSystem.colors.interactive.cardBackground,
-    color: designSystem.colors.text.primary,
-    borderRadius: designSystem.effects.borderRadius.medium,
-    padding: '12px 16px',
-    fontSize: '14px',
-    fontWeight: 600,
-    border: `1px solid ${designSystem.colors.interactive.border}`,
-    cursor: 'pointer',
-    transition: designSystem.effects.transitions.default
-  },
-  
-  newDepositButton: {
-    flex: 1,
-    backgroundColor: '#4a9eff',
-    color: '#ffffff',
-    borderRadius: designSystem.effects.borderRadius.medium,
-    padding: '12px 16px',
-    fontSize: '14px',
-    fontWeight: 600,
-    border: 'none',
-    cursor: 'pointer',
-    transition: designSystem.effects.transitions.default
-  }
-}
 
 export default function DepositModalStatus({
   isOpen,
@@ -343,12 +74,11 @@ export default function DepositModalStatus({
   actualTime,
   isDirectDeposit = false,
   walletAddress = '9cdb',
-  isAnimating = false,
-  animationDirection = 'forward'
+  isAnimating = false
 }: DepositModalStatusProps) {
   const [mounted, setMounted] = useState(false)
-  const [showMoreDetails, setShowMoreDetails] = useState(false)
   const [elapsedTime, setElapsedTime] = useState(0)
+  const [isDetailsExpanded, setIsDetailsExpanded] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -369,18 +99,18 @@ export default function DepositModalStatus({
 
   useEffect(() => {
     if (isOpen) {
-      if (typeof globalThis !== 'undefined' && (globalThis as any).document) {
-        (globalThis as any).document.body.style.overflow = 'hidden'
+      if (typeof document !== 'undefined') {
+        document.body.style.overflow = 'hidden'
       }
     } else {
-      if (typeof globalThis !== 'undefined' && (globalThis as any).document) {
-        (globalThis as any).document.body.style.overflow = 'unset'
+      if (typeof document !== 'undefined') {
+        document.body.style.overflow = 'unset'
       }
     }
 
     return () => {
-      if (typeof globalThis !== 'undefined' && (globalThis as any).document) {
-        (globalThis as any).document.body.style.overflow = 'unset'
+      if (typeof document !== 'undefined') {
+        document.body.style.overflow = 'unset'
       }
     }
   }, [isOpen])
@@ -394,7 +124,7 @@ export default function DepositModalStatus({
   }
 
   const formatTime = (seconds: number) => {
-    if (seconds < 60) return `${seconds} seconds`
+    if (seconds < 60) return `${seconds}s`
     const minutes = Math.floor(seconds / 60)
     const remainingSeconds = seconds % 60
     return `${minutes}m ${remainingSeconds}s`
@@ -406,28 +136,37 @@ export default function DepositModalStatus({
         return {
           icon: <LoadingIcon />,
           title: 'Processing Deposit',
-          subtitle: isDirectDeposit ? 'Depositing to vault...' : 'Swapping and depositing...',
+          subtitle: isDirectDeposit ? 'Confirming on blockchain...' : 'Swapping and depositing...',
           statusText: 'Pending',
-          statusColor: statusStyles.statusValuePending,
-          timeText: formatTime(elapsedTime)
+          statusColor: 'text-blue-400',
+          bgColor: 'bg-blue-500/10',
+          borderColor: 'border-blue-500/20',
+          timeText: formatTime(elapsedTime),
+          showClose: false
         }
       case 'success':
         return {
           icon: <SuccessIcon />,
-          title: 'Deposit',
-          subtitle: `Dexetra Balance: $${amount}`,
-          statusText: 'Successful',
-          statusColor: statusStyles.statusValueSuccess,
-          timeText: actualTime || formatTime(elapsedTime)
+          title: 'Deposit Successful',
+          subtitle: `Added $${amount} to your vault balance`,
+          statusText: 'Completed',
+          statusColor: 'text-green-400',
+          bgColor: 'bg-green-500/10',
+          borderColor: 'border-green-500/20',
+          timeText: actualTime || formatTime(elapsedTime),
+          showClose: true
         }
       case 'error':
         return {
           icon: <ErrorIcon />,
           title: 'Deposit Failed',
-          subtitle: 'Transaction was rejected',
+          subtitle: 'Transaction could not be completed',
           statusText: 'Failed',
-          statusColor: statusStyles.statusValueError,
-          timeText: formatTime(elapsedTime)
+          statusColor: 'text-red-400',
+          bgColor: 'bg-red-500/10',
+          borderColor: 'border-red-500/20',
+          timeText: formatTime(elapsedTime),
+          showClose: true
         }
       default:
         return {
@@ -435,202 +174,329 @@ export default function DepositModalStatus({
           title: 'Processing',
           subtitle: 'Please wait...',
           statusText: 'Pending',
-          statusColor: statusStyles.statusValuePending,
-          timeText: '0 seconds'
+          statusColor: 'text-blue-400',
+          bgColor: 'bg-blue-500/10',
+          borderColor: 'border-blue-500/20',
+          timeText: '0s',
+          showClose: false
         }
     }
   }
 
   const handleExplorerLink = () => {
-    if (transactionHash && typeof globalThis !== 'undefined' && (globalThis as any).open) {
-      (globalThis as any).open(`https://polygonscan.com/tx/${transactionHash}`, '_blank')
+    if (transactionHash && typeof window !== 'undefined') {
+      window.open(`https://polygonscan.com/tx/${transactionHash}`, '_blank')
     }
   }
+
+  if (!mounted || !isOpen) return null
 
   const statusInfo = getStatusInfo()
 
-  // Animation classes
-  const getModalClasses = () => {
-    const baseClasses = cssStyles.depositModal
-    
-    if (!isAnimating) {
-      return baseClasses
-    }
-    
-    const animationClass = animationDirection === 'forward' 
-      ? cssStyles.modalSlideInFromRight
-      : cssStyles.modalSlideOutRight
-      
-    return `${baseClasses} ${animationClass}`
-  }
-
-  // Don't render portal if not mounted or document is not available
-  if (!mounted || !isOpen || typeof globalThis === 'undefined' || !(globalThis as any).document) {
-    return null
-  }
-
   return createPortal(
-    <div style={statusStyles.overlay} onClick={handleBackdropClick}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleBackdropClick}>
+      {/* Sophisticated Backdrop */}
+      <div className="absolute inset-0 backdrop-blur-sm bg-black/30" />
+      
+      {/* Status Modal with Sophisticated Design */}
       <div 
-        style={{
-          ...statusStyles.modal,
-          backgroundColor: '#1a1a1a',
-          border: '1px solid #333333'
-        }} 
-        className={getModalClasses()}
+        className={`group relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] transition-all duration-200`}
+        style={{ 
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+          backdropFilter: 'blur(20px)',
+          maxHeight: '90vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
       >
-        {/* Close Button - Only show if not pending */}
-        {status !== 'pending' && (
-          <button
-            onClick={onClose}
-            style={styles.closeButton}
-            className={cssStyles.closeButtonHover}
-          >
-            <CloseIcon />
-          </button>
-        )}
+        {/* Sophisticated Header Section */}
+        <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            {/* Status Indicator */}
+            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+              status === 'pending' ? 'bg-blue-400 animate-pulse' :
+              status === 'success' ? 'bg-green-400' :
+              status === 'error' ? 'bg-red-400' : 'bg-gray-600'
+            }`} />
+            
+            {/* Dexetra Icon */}
+            <div className="relative group">
+              <div 
+                className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 group-hover:scale-105"
+                style={{
+                  background: status === 'success' 
+                    ? 'linear-gradient(135deg, rgba(34, 197, 94, 0.9) 0%, rgba(6, 182, 212, 0.9) 50%, rgba(139, 92, 246, 0.9) 100%)'
+                    : status === 'error'
+                    ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(245, 101, 101, 0.9) 50%, rgba(220, 38, 38, 0.9) 100%)'
+                    : 'linear-gradient(135deg, rgba(96, 165, 250, 0.9) 0%, rgba(6, 182, 212, 0.9) 50%, rgba(139, 92, 246, 0.9) 100%)',
+                  boxShadow: status === 'success'
+                    ? '0 8px 32px rgba(34, 197, 94, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+                    : status === 'error'
+                    ? '0 8px 32px rgba(239, 68, 68, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+                    : '0 8px 32px rgba(96, 165, 250, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+                }}
+              >
+                <img 
+                  src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png" 
+                  alt="Dexetra" 
+                  className="w-5 h-5"
+                />
+              </div>
+            </div>
+            
+            {/* Status Info */}
+            <div className="text-center">
+              <div className="flex items-center gap-2 justify-center">
+                <span className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Deposit Status
+                </span>
+                <div className={`text-[9px] px-1 py-0.5 rounded ${statusInfo.statusColor} ${statusInfo.bgColor}`}>
+                  {statusInfo.statusText}
+                </div>
+              </div>
+              <div className="text-[10px] text-[#606060] mt-0.5">
+                {statusInfo.timeText} elapsed
+              </div>
+            </div>
+          </div>
+
+          {/* Close Button */}
+          {statusInfo.showClose && (
+            <button
+              onClick={onClose}
+              className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-2 hover:bg-red-500/10 rounded-lg text-[#808080] hover:text-red-300"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+            </button>
+          )}
+        </div>
 
         {/* Scrollable Content Area */}
-        <div style={statusStyles.scrollableContent} className={cssStyles.hideScrollbar}>
-          {/* Header Section */}
-          <div style={statusStyles.statusHeader}>
-            <h2 style={statusStyles.statusTitle}>{statusInfo.title}</h2>
-            <p style={statusStyles.statusSubtitle}>{statusInfo.subtitle}</p>
+        <div className={`flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-4 scrollbar-none ${cssStyles.statusScrollable}`}>
+          {/* Hero Status Section */}
+          <div className="text-center py-6">
+            <div className="mb-4 flex justify-center">
+              {statusInfo.icon}
+            </div>
+            <h1 className="text-2xl font-bold text-white mb-2">{statusInfo.title}</h1>
+            <p className="text-[11px] font-medium text-[#808080]">{statusInfo.subtitle}</p>
           </div>
 
-        {/* Icon Section */}
-        <div style={statusStyles.iconSection}>
-          {statusInfo.icon}
-        </div>
-
-        {/* Status Info Section */}
-        <div style={{
-          ...statusStyles.statusInfoSection,
-          backgroundColor: '#2a2a2a',
-          border: '1px solid #333333'
-        }}>
-          <div style={statusStyles.statusRow}>
-            <span style={statusStyles.statusLabel}>Fill status</span>
-            <span style={{
-              ...statusStyles.statusValue,
-              ...statusInfo.statusColor
-            }}>
-              {statusInfo.statusText}
-            </span>
-          </div>
-          <div style={{...statusStyles.statusRow, ...statusStyles.statusRowLast}}>
-            <span style={statusStyles.statusLabel}>Total time</span>
-            <span style={statusStyles.statusValue}>{statusInfo.timeText}</span>
-          </div>
-        </div>
-
-        {/* Transaction Details Section */}
-        <div style={{
-          ...statusStyles.transactionSection,
-          backgroundColor: '#2a2a2a',
-          border: '1px solid #333333'
-        }}>
-          <div style={statusStyles.transactionRow}>
-            <span style={statusStyles.transactionLabel}>Source</span>
-            <div style={statusStyles.transactionValue}>
-              <span>
-
-              <img 
-                      src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//MetaMask_Fox.svg.png"
-                      alt="MetaMask"
-                      style={{ width: '15px', height: '15px' }}
-
-                    />
-
-              </span>
-              <span>Wallet (...{walletAddress})</span>
-              <ExternalLinkIcon />
+          {/* Amount Display */}
+          <div className={`group bg-[#0F0F0F] rounded-md border ${statusInfo.borderColor} transition-all duration-200`}>
+            <div className="flex items-center justify-between p-2.5">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                  status === 'success' ? 'bg-green-400' :
+                  status === 'error' ? 'bg-red-400' : 'bg-blue-400'
+                }`} />
+                <span className="text-[11px] font-medium text-[#808080]">Amount</span>
+              </div>
+              <span className="text-[10px] text-white font-mono">${amount}</span>
             </div>
           </div>
-          <div style={{...statusStyles.transactionRow, ...statusStyles.transactionRowLast}}>
-            <span style={statusStyles.transactionLabel}>Destination</span>
-            <div style={statusStyles.transactionValue}>
-              <span>
-              <img 
-                      src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png"
-                      alt="MetaMask"
-                      style={{ width: '15px', height: '15px' }}
 
-                    />
+          {/* Transaction Details */}
+          <div className="space-y-2">
+            {/* Section Header */}
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                Transaction Details
+              </h4>
+              <div className={`text-[10px] px-1.5 py-0.5 rounded ${statusInfo.statusColor} ${statusInfo.bgColor}`}>
+                {status === 'pending' ? 'Processing' : status === 'success' ? 'Confirmed' : 'Failed'}
+              </div>
+            </div>
 
-              </span>
-              <span>{isDirectDeposit ? (targetToken.name || 'Dexetra Vault') : 'Dexetra Wallet'}</span>
-              <ExternalLinkIcon />
+            {/* From */}
+            <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200">
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                  <span className="text-[11px] font-medium text-[#808080]">From</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-white">Wallet (...{walletAddress})</span>
+                </div>
+              </div>
+            </div>
+
+            {/* To */}
+            <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200">
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                  <span className="text-[11px] font-medium text-[#808080]">To</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-white">{targetToken.name || 'Dexetra Vault'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Transaction Hash */}
+            {transactionHash && (
+              <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200">
+                <div className="flex items-center justify-between p-2.5">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-yellow-400" />
+                    <span className="text-[11px] font-medium text-[#808080]">Transaction</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleExplorerLink}
+                      className="flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors duration-200"
+                    >
+                      <span className="font-mono">{transactionHash.slice(0, 6)}...{transactionHash.slice(-4)}</span>
+                      <ExternalLinkIcon />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Estimated Time */}
+            <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200">
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <span className="text-[11px] font-medium text-[#808080]">Duration</span>
+                </div>
+                <span className="text-[10px] text-white">{statusInfo.timeText}</span>
+              </div>
+            </div>
+
+            {/* Advanced Details Toggle */}
+            <button
+              className="w-full flex items-center justify-between p-2.5 rounded-md border border-[#222222] bg-[#0F0F0F] transition-all duration-200"
+              onClick={() => setIsDetailsExpanded(!isDetailsExpanded)}
+            >
+              <span className="text-xs font-medium text-[#9CA3AF]">Network Details</span>
+              <ChevronDownIcon isOpen={isDetailsExpanded} />
+            </button>
+
+            {/* Advanced Details Content */}
+            <div 
+              className={`overflow-hidden transition-all duration-300 ${
+                isDetailsExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+              }`}
+            >
+              <div className="space-y-2 mt-2">
+                {/* Network */}
+                <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200">
+                  <div className="flex items-center justify-between p-2.5">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                      <span className="text-[11px] font-medium text-[#808080]">Network</span>
+                    </div>
+                    <span className="text-[10px] text-white">Polygon</span>
+                  </div>
+                </div>
+
+                {/* Gas Fee */}
+                <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200">
+                  <div className="flex items-center justify-between p-2.5">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                      <span className="text-[11px] font-medium text-[#808080]">Gas fee</span>
+                    </div>
+                    <span className="text-[10px] text-white">~$2.50</span>
+                  </div>
+                </div>
+
+                {/* Confirmation Count */}
+                <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200">
+                  <div className="flex items-center justify-between p-2.5">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                      <span className="text-[11px] font-medium text-[#808080]">Confirmations</span>
+                    </div>
+                    <span className="text-[10px] text-white">
+                      {status === 'success' ? '12/12' : status === 'pending' ? '8/12' : '0/12'}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Result Section */}
-        <div style={{
-          ...statusStyles.resultSection,
-          backgroundColor: '#2a2a2a',
-          border: '1px solid #333333'
-        }}>
-          <span style={statusStyles.resultLabel}>You receive</span>
-          <div style={statusStyles.resultValue}>
-            {isDirectDeposit ? <VaultIcon /> : <DollarIcon />}
-            <span>
-              {isDirectDeposit 
-                ? `${amount} ${sourceToken.symbol} collateral`
-                : `$${parseFloat(amount).toFixed(5)}`
-              }
-            </span>
-          </div>
-        </div>
-
-        {/* More Details Toggle */}
-        <button
-          style={statusStyles.moreDetailsToggle}
-          onClick={() => setShowMoreDetails(!showMoreDetails)}
-        >
-          <span>More details</span>
-          <ChevronRightIcon />
-        </button>
-
-          {/* Help Section */}
+          {/* Help Section for Errors */}
           {status === 'error' && (
-            <div style={statusStyles.helpSection}>
-              <InfoIcon />
-              <span style={statusStyles.helpText}>
-                Experiencing problems?{' '}
-                <a href="#" style={statusStyles.helpLink}>Get help.</a>
-              </span>
+            <div className="group bg-[#0F0F0F] rounded-md border border-red-500/20 hover:border-red-500/30 transition-all duration-200">
+              <div className="flex items-center gap-2 p-2.5">
+                <InfoIcon />
+                <div className="flex-1">
+                  <span className="text-[11px] font-medium text-red-400">Need Help?</span>
+                  <p className="text-[10px] text-[#606060] mt-1">
+                    If this error persists, try refreshing or{' '}
+                    <button className="text-red-400 hover:text-red-300 underline">
+                      contact support
+                    </button>
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </div>
 
-        {/* Sticky Footer with Buttons */}
-        {status !== 'pending' && (
-          <div style={statusStyles.stickyFooter}>
-            <div style={statusStyles.buttonContainer}>
-              <button
-                onClick={onClose}
-                style={{
-                  ...statusStyles.closeButton,
-                  backgroundColor: '#2a2a2a',
-                  border: '1px solid #333333'
-                }}
-                className={cssStyles.closeButtonHover}
-              >
-                Close
-              </button>
+        {/* Action Buttons */}
+        <div className="px-6 py-4 border-t border-[#1A1A1A] bg-[#0F0F0F] space-y-3">
+          {status === 'success' && (
+            <>
               <button
                 onClick={onNewDeposit}
-                style={statusStyles.newDepositButton}
-                className={cssStyles.continueButtonHover}
+                className="group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-[#333333] bg-[#1A1A1A] hover:bg-[#2A2A2A] hover:border-[#444444] transition-all duration-200"
               >
-                New Deposit
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                <span className="text-[11px] font-medium text-white">Make Another Deposit</span>
+                <svg className="w-3 h-3 text-white group-hover:translate-x-0.5 transition-transform duration-200" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
               </button>
+              <button
+                onClick={onClose}
+                className="group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-green-500 bg-green-500 hover:bg-green-600 hover:border-green-600 transition-all duration-200"
+              >
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                <span className="text-[11px] font-medium text-black">Continue Trading</span>
+              </button>
+            </>
+          )}
+
+          {status === 'error' && (
+            <>
+              <button
+                onClick={onNewDeposit}
+                className="group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-blue-500 bg-blue-500 hover:bg-blue-600 hover:border-blue-600 transition-all duration-200"
+              >
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                <span className="text-[11px] font-medium text-white">Try Again</span>
+                <svg className="w-3 h-3 text-white group-hover:translate-x-0.5 transition-transform duration-200" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+              <button
+                onClick={onClose}
+                className="group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-[#333333] bg-[#1A1A1A] hover:bg-[#2A2A2A] hover:border-[#444444] transition-all duration-200"
+              >
+                <span className="text-[11px] font-medium text-white">Close</span>
+              </button>
+            </>
+          )}
+
+          {status === 'pending' && (
+            <div className="group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-blue-500/50 bg-blue-500/10 cursor-not-allowed">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
+              <span className="text-[11px] font-medium text-blue-400">Processing Transaction...</span>
+              <LoadingIcon />
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>,
-    (globalThis as any).document.body
+    typeof document !== 'undefined' ? document.body : null as any
   )
-} 
+}

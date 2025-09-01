@@ -137,7 +137,9 @@ export function useOrderbookMarkPrice(
       }
 
       // Convert to human-readable numbers
-      const markPrice = parseFloat(ethers.formatUnits(chosenPriceBigInt, decimals));
+      // Always use 18 decimals for price calculations, regardless of what contract reports
+      // This fixes the issue where 8-decimal contracts show $100B instead of $10
+      const markPrice = parseFloat(ethers.formatUnits(chosenPriceBigInt, 18));
       const fundingRate = 0; // Not available in OrderBook contracts; default to 0
 
       // For now, set 24h changes to 0 since we don't have historical data

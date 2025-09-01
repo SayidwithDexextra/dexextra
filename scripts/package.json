@@ -1,0 +1,13 @@
+{
+  "name": "silver-price-action-generator",
+  "version": "1.0.0",
+  "description": "Script to generate price action for SILVER market",
+  "main": "generate-silver-price-action.js",
+  "scripts": {
+    "start": "node generate-silver-price-action.js"
+  },
+  "dependencies": {
+    "viem": "^1.21.4"
+  }
+}
+

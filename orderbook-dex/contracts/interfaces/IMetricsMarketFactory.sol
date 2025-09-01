@@ -82,7 +82,6 @@ interface IMetricsMarketFactory {
      */
     function createMarket(MarketConfig calldata config)
         external
-        payable
         returns (address marketAddress);
 
     /**

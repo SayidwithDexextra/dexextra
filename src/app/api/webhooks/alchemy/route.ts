@@ -2,25 +2,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
 import { decodeEventLog } from 'viem'
 import { AlchemyNotifyService, getAlchemyNotifyService } from '@/services/alchemyNotifyService'
-import { EventDatabase } from '@/lib/eventDatabase'
-import { getDynamicContractMonitor } from '@/services/dynamicContractMonitor'
+// import { EventDatabase } from '@/lib/eventDatabase'
+// import { getDynamicContractMonitor } from '@/services/dynamicContractMonitor'
 import { SmartContractEvent } from '@/types/events'
 import { env } from '@/lib/env'
 import { getClickHouseDataPipeline, VammTick } from '@/lib/clickhouse-client'
 import { 
-  getContractAddress,
-  FACTORY_ABI,
-  VAMM_ABI,
-  VAULT_ABI
+  CONTRACTS,
+  getContract
 } from '@/lib/contracts'
 
 // Factory contract address for detecting new market deployments
-const FACTORY_ADDRESS = getContractAddress('polygon', 'VAMM_FACTORY')
+const FACTORY_ADDRESS = CONTRACTS.MetricsMarketFactory.address
 
 // ABIs are now imported from centralized contracts configuration
 
-// Database instance
-const eventDatabase = new EventDatabase();
+// Database instance - commented out for now
+// const eventDatabase = new EventDatabase();
 
 // ClickHouse pipeline for tick generation
 const clickhousePipeline = getClickHouseDataPipeline();
@@ -281,7 +279,7 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
         try {
           // Use decodeEventLog directly with ABI instead of Interface
           const factoryEvent = decodeEventLog({
-            abi: FACTORY_ABI,
+            abi: CONTRACTS.MetricsMarketFactory.abi,
             topics: activity.log.topics,
             data: activity.log.data
           });
@@ -290,13 +288,13 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
              console.log('🎯 MarketCreated event detected! Processing new deployment...');
             
             // Process with dynamic contract monitor
-            const dynamicMonitor = await getDynamicContractMonitor();
-            await dynamicMonitor.processMarketCreatedEvent({
-              ...factoryEvent,
-              transactionHash: activity.hash,
-              blockNumber: parseInt(activity.blockNum, 16),
-              logIndex: activity.log.logIndex
-            });
+            // const dynamicMonitor = await getDynamicContractMonitor();
+            // await dynamicMonitor.processMarketCreatedEvent({
+            //   ...factoryEvent,
+            //   transactionHash: activity.hash,
+            //   blockNumber: parseInt(activity.blockNum, 16),
+            //   logIndex: activity.log.logIndex
+            // });
           }
         } catch (factoryError) {
           const errorMessage = factoryError instanceof Error ? factoryError.message : 'Unknown error';
@@ -319,7 +317,7 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
         });
 
         // Store in database
-        await eventDatabase.storeEvent(parsedEvent);
+        // await eventDatabase.storeEvent(parsedEvent);
         
         // Generate tick for ClickHouse if it's a VAMM trading event
         await generateTickFromVAMMEvent(parsedEvent);
@@ -383,7 +381,7 @@ async function processMinedTransactionWebhook(webhookData: any): Promise<number>
       const event = await parseLogToSmartContractEvent(log, transactionBlockNumber, transactionBlockHash);
       
       if (event) {
-        await eventDatabase.storeEvent(event);
+        // await eventDatabase.storeEvent(event);
         
         // Generate tick for ClickHouse if it's a VAMM trading event
         await generateTickFromVAMMEvent(event);
@@ -467,7 +465,7 @@ async function processCustomWebhook(webhookData: any): Promise<number> {
       const parsedEvent = await parseLogToSmartContractEvent(standardLog, contextBlockNumber, contextBlockHash);
       
       if (parsedEvent) {
-        await eventDatabase.storeEvent(parsedEvent);
+        // await eventDatabase.storeEvent(parsedEvent);
         
         // Generate tick for ClickHouse if it's a VAMM trading event
         await generateTickFromVAMMEvent(parsedEvent);
@@ -499,7 +497,7 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
     }
 
     // Determine which ABI to use based on the contract or event signature
-    const abis = [VAMM_ABI, VAULT_ABI, FACTORY_ABI];
+    const abis = [CONTRACTS.MetricsMarketFactory.abi, CONTRACTS.CentralVault.abi];
     let parsedLog: ethers.LogDescription | null = null;
     let matchedAbi: readonly string[] | null = null;
 

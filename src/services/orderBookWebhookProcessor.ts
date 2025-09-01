@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { env } from '@/lib/env';
 import { ethers } from 'ethers';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
+import { PusherServerService } from '@/lib/pusher-server';
 
 // Order Book Event Topic Hashes (from our analysis)
 export const ORDER_EVENT_TOPICS = {
@@ -61,6 +62,7 @@ export interface ProcessedOrderEvent {
 
 export class OrderBookWebhookProcessor {
   private supabase;
+  private pusherService: PusherServerService;
 
   constructor() {
     if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -71,6 +73,9 @@ export class OrderBookWebhookProcessor {
       env.NEXT_PUBLIC_SUPABASE_URL,
       env.SUPABASE_SERVICE_ROLE_KEY
     );
+
+    // Initialize Pusher service for real-time broadcasting
+    this.pusherService = new PusherServerService();
   }
 
   /**
@@ -126,6 +131,9 @@ export class OrderBookWebhookProcessor {
             if (saved) {
               result.processed++;
               console.log(`✅ Saved order ${orderEvent.orderId} to Supabase`);
+              
+              // 🚀 Real-time broadcast after successful save
+              await this.broadcastOrderUpdate(orderEvent);
             } else {
               result.errors.push(`Failed to save order ${orderEvent.orderId} to Supabase`);
             }
@@ -663,29 +671,41 @@ export class OrderBookWebhookProcessor {
         finalPrice: price
       });
 
-      // Check if order already exists
-      const { data: existingOrder } = await this.supabase
-        .from('market_orders')
-        .select('order_id')
-        .eq('order_id', orderEvent.orderId)
+      // 🚨 Use upsert on order_hash to avoid duplicate key violations and reuse UUID
+      const computedOrderHash = '0x' + ethers.keccak256(ethers.toUtf8Bytes(`${orderEvent.orderId}_${orderEvent.trader}_${orderEvent.txHash}`)).slice(2);
+      const { data: upsertedRow, error } = await this.supabase
+        .from('off_chain_orders')
+        .upsert([
+          {
+            order_id: parseInt(orderEvent.orderId),
+            market_id: marketId,
+            trader_wallet_address: orderEvent.trader,
+            order_type: orderType,
+            side: orderEvent.side === 0 ? 'BUY' : 'SELL',
+            quantity: quantity,
+            price: price,
+            order_status: orderStatus,
+            time_in_force: 'GTC',
+            post_only: false,
+            reduce_only: false,
+            order_hash: computedOrderHash,
+            signature: '0x' + '0'.repeat(130),
+            nonce: parseInt(orderEvent.orderId) % 1000000,
+            required_collateral: quantity * (price || 1) * 0.1,
+            collateral_token_address: CONTRACT_ADDRESSES.USDC,
+            creation_transaction_hash: orderEvent.txHash,
+            creation_block_number: orderEvent.blockNumber
+          }
+        ], { onConflict: ['order_hash'] })
+        .select('id')
         .single();
 
-      if (existingOrder) {
-        console.log(`📋 Order ${orderEvent.orderId} already exists, skipping`);
-        return true;
-      }
-
-      // Insert new order
-      const { error } = await this.supabase
-        .from('market_orders')
-        .insert(orderData);
-
       if (error) {
-        console.error(`❌ Supabase insert error: ${error.message}`);
+        console.error(`❌ Supabase upsert error: ${error.message}`);
         return false;
       }
 
-      console.log(`✅ Successfully saved order ${orderEvent.orderId} to Supabase`);
+      console.log(`✅ Successfully saved order ${orderEvent.orderId} to Supabase (UUID: ${upsertedRow?.id})`);
       
       // For executed orders (market orders or filled limit orders), update positions
       if (orderStatus === 'FILLED' || orderEvent.eventType === 'added') {
@@ -1171,6 +1191,85 @@ export class OrderBookWebhookProcessor {
       }
     } catch (error) {
       console.error(`❌ [DEBUG] Error in debugMetricIdHash:`, error);
+    }
+  }
+
+  /**
+   * 🚀 Real-time broadcast order update to connected clients
+   */
+  private async broadcastOrderUpdate(orderEvent: ProcessedOrderEvent): Promise<void> {
+    try {
+      console.log(`📡 [BROADCAST] Broadcasting order update for ${orderEvent.orderId}`);
+      
+      // Get market details to resolve metricId for broadcasting
+      let metricId = orderEvent.metricId;
+      
+      // If we don't have metricId, try to resolve it
+      if (!metricId || metricId === 'UNKNOWN' || metricId.startsWith('HASH_')) {
+        const normalizedAddress = this.normalizeContractAddress(orderEvent.contractAddress);
+        const { data: market } = await this.supabase
+          .from('orderbook_markets')
+          .select('metric_id')
+          .eq('market_address', normalizedAddress)
+          .single();
+        
+        if (market) {
+          metricId = market.metric_id;
+        }
+      }
+      
+      // Prepare broadcast data
+      const broadcastData = {
+        orderId: orderEvent.orderId,
+        trader: orderEvent.trader,
+        metricId: metricId,
+        orderType: orderEvent.orderType === 0 ? 'MARKET' : 'LIMIT',
+        side: orderEvent.side === 0 ? 'BUY' : 'SELL',
+        quantity: parseFloat(ethers.formatEther(orderEvent.quantity)),
+        price: parseFloat(ethers.formatEther(orderEvent.price)),
+        eventType: orderEvent.eventType,
+        timestamp: Date.now(),
+        txHash: orderEvent.txHash,
+        blockNumber: orderEvent.blockNumber
+      };
+
+      console.log(`📡 [BROADCAST] Broadcast data:`, broadcastData);
+
+      // Broadcast to multiple channels for comprehensive coverage
+      
+      // 1. Market-specific channel for this token symbol
+      if (metricId && metricId !== 'UNKNOWN') {
+        await this.pusherService.pusher.trigger(`market-${metricId}`, 'order-update', broadcastData);
+        console.log(`📡 [BROADCAST] Sent to market-${metricId} channel`);
+      }
+
+      // 2. Global recent transactions channel
+      await this.pusherService.pusher.trigger('recent-transactions', 'new-order', broadcastData);
+      console.log(`📡 [BROADCAST] Sent to recent-transactions channel`);
+
+      // 3. User-specific channel for authenticated updates
+      await this.pusherService.pusher.trigger(`user-${orderEvent.trader}`, 'order-update', broadcastData);
+      console.log(`📡 [BROADCAST] Sent to user-${orderEvent.trader} channel`);
+
+      // 4. Trading events channel
+      await this.pusherService.broadcastTradingEvent({
+        symbol: metricId || 'UNKNOWN',
+        action: orderEvent.eventType,
+        userAddress: orderEvent.trader,
+        orderType: broadcastData.orderType,
+        side: broadcastData.side,
+        quantity: broadcastData.quantity,
+        price: broadcastData.price,
+        timestamp: broadcastData.timestamp,
+        txHash: orderEvent.txHash,
+        blockNumber: orderEvent.blockNumber
+      });
+
+      console.log(`✅ [BROADCAST] Successfully broadcasted order update for ${orderEvent.orderId}`);
+
+    } catch (error) {
+      console.error(`❌ [BROADCAST] Failed to broadcast order update:`, error);
+      // Don't throw error as this is a non-critical enhancement
     }
   }
 }

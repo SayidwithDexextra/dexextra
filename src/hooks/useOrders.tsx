@@ -47,12 +47,20 @@ export function useOrders(options: UseOrdersOptions = {}): UseOrdersReturn {
       if (trader) {
         // Fetch user-specific orders
         console.log('🔍 Fetching orders for trader:', trader);
+        console.log('🔍 Using orderService.getUserActiveOrders...');
         
         // Get both active orders and recent history
         const [activeOrders, orderHistory] = await Promise.all([
           orderService.getUserActiveOrders(trader),
           orderService.getUserOrderHistory(trader, 50, 0)
         ]);
+
+        console.log('📊 getUserActiveOrders result:', {
+          activeOrdersCount: activeOrders.length,
+          orderHistoryCount: orderHistory.length,
+          activeOrders: activeOrders.slice(0, 2), // Log first 2 for debugging
+          trader
+        });
 
         // Combine and deduplicate
         const allUserOrders = [...activeOrders, ...orderHistory];

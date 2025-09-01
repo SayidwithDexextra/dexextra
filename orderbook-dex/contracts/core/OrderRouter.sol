@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "../interfaces/IOrderRouter.sol";
 import "../interfaces/IOrderBook.sol";
 import "../interfaces/ICentralVault.sol";
@@ -15,12 +17,13 @@ import "../interfaces/IUMAOracleIntegration.sol";
  * @dev Routes orders, manages P&L tracking, and handles advanced order types
  * @notice Central routing system for all trading operations across markets
  */
-contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
+contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable, EIP712 {
     using Counters for Counters.Counter;
 
     // Roles
     bytes32 public constant ROUTER_ADMIN_ROLE = keccak256("ROUTER_ADMIN_ROLE");
     bytes32 public constant MARKET_ROLE = keccak256("MARKET_ROLE");
+    bytes32 public constant FACTORY_ROLE = keccak256("FACTORY_ROLE");
 
     // Constants
     uint256 public constant MAX_ORDERS_PER_USER = 1000; // Maximum active orders per user
@@ -91,7 +94,7 @@ contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
         address _umaOracleManager,
         address _admin,
         uint256 _tradingFeeRate
-    ) {
+    ) EIP712("DexextraOrderRouter", "1") {
         require(_centralVault != address(0), "OrderRouter: Invalid vault");
         require(_umaOracleManager != address(0), "OrderRouter: Invalid oracle manager");
         require(_admin != address(0), "OrderRouter: Invalid admin");
@@ -110,29 +113,72 @@ contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
         orderIdCounter.increment(); // Start from 1
     }
 
-    /**
-     * @dev Places a new order
-     */
-    function placeOrder(Order calldata order)
+    // ========= EIP-712 Relaying =========
+    using ECDSA for bytes32;
+    mapping(address => uint256) public nonces; // trader => nonce
+
+    bytes32 private constant ORDER_TYPEHASH = keccak256(
+        "Order(uint256 orderId,address trader,string metricId,uint8 orderType,uint8 side,uint256 quantity,uint256 price,uint256 filledQuantity,uint256 timestamp,uint256 expiryTime,uint8 status,uint8 timeInForce,uint256 stopPrice,uint256 icebergQty,bool postOnly,bytes32 metadataHash,uint256 nonce)"
+    );
+
+    function getNonce(address trader) external view returns (uint256) {
+        return nonces[trader];
+    }
+
+    function _hashTypedOrder(Order calldata order, uint256 nonce) internal view returns (bytes32) {
+        return _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    ORDER_TYPEHASH,
+                    order.orderId,
+                    order.trader,
+                    keccak256(bytes(order.metricId)),
+                    order.orderType,
+                    order.side,
+                    order.quantity,
+                    order.price,
+                    order.filledQuantity,
+                    order.timestamp,
+                    order.expiryTime,
+                    order.status,
+                    order.timeInForce,
+                    order.stopPrice,
+                    order.icebergQty,
+                    order.postOnly,
+                    order.metadataHash,
+                    nonce
+                )
+            )
+        );
+    }
+
+    function placeOrderWithSig(Order calldata order, bytes calldata signature)
         external
-        override
         nonReentrant
         whenNotPaused
         onlyRegisteredMarket(order.metricId)
         validOrder(order)
         returns (uint256 orderId)
     {
-        require(order.trader == msg.sender, "OrderRouter: Unauthorized trader");
-        
+        uint256 nonce = nonces[order.trader]++;
+        bytes32 digest = _hashTypedOrder(order, nonce);
+        address recovered = ECDSA.recover(digest, signature);
+        require(recovered == order.trader, "OrderRouter: invalid signature");
+
+        // risk checks based on trader
+        _validateRiskLimits(order.trader, order);
+
+        orderId = _placeOrderInternal(order, order.trader);
+        return orderId;
+    }
+
+    function _placeOrderInternal(Order calldata order, address submitter) internal returns (uint256 orderId) {
         // Enforce maximum active orders per user limit
-        uint256 activeOrderCount = _getActiveOrderCount(msg.sender);
+        uint256 activeOrderCount = _getActiveOrderCount(submitter);
         if (activeOrderCount >= MAX_ORDERS_PER_USER) {
-            emit OrderLimitReached(msg.sender, activeOrderCount, MAX_ORDERS_PER_USER);
+            emit OrderLimitReached(submitter, activeOrderCount, MAX_ORDERS_PER_USER);
             revert("OrderRouter: Exceeds maximum active orders per user");
         }
-        
-        // Check user risk limits
-        _validateRiskLimits(msg.sender, order);
 
         // Generate unique order ID
         orderId = orderIdCounter.current();
@@ -149,7 +195,7 @@ contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
 
         // Store order
         orders[orderId] = newOrder;
-        userOrders[msg.sender].push(orderId);
+        userOrders[submitter].push(orderId);
 
         // Route to appropriate order book
         address orderBookAddress = marketOrderBooks[order.metricId];
@@ -158,7 +204,7 @@ contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
 
         emit OrderPlaced(
             orderId,
-            msg.sender,
+            submitter,
             order.metricId,
             order.orderType,
             order.side,
@@ -166,6 +212,24 @@ contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
             order.price
         );
 
+        return orderId;
+    }
+
+    /**
+     * @dev Places a new order
+     */
+    function placeOrder(Order calldata order)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        onlyRegisteredMarket(order.metricId)
+        validOrder(order)
+        returns (uint256 orderId)
+    {
+        require(order.trader == msg.sender, "OrderRouter: Unauthorized trader");
+        _validateRiskLimits(msg.sender, order);
+        orderId = _placeOrderInternal(order, msg.sender);
         return orderId;
     }
 
@@ -427,8 +491,11 @@ contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
      */
     function registerMarket(string calldata metricId, address orderBook)
         external
-        onlyRole(ROUTER_ADMIN_ROLE)
     {
+        require(
+            hasRole(ROUTER_ADMIN_ROLE, msg.sender) || hasRole(FACTORY_ROLE, msg.sender),
+            "OrderRouter: Not authorized to register markets"
+        );
         require(bytes(metricId).length > 0, "OrderRouter: Empty metric ID");
         require(orderBook != address(0), "OrderRouter: Invalid order book");
         require(marketOrderBooks[metricId] == address(0), "OrderRouter: Market already registered");
@@ -558,6 +625,21 @@ contract OrderRouter is IOrderRouter, AccessControl, ReentrancyGuard, Pausable {
      */
     function unpause() external onlyRole(ROUTER_ADMIN_ROLE) {
         _unpause();
+    }
+
+    /**
+     * @dev Grants factory role to allow automatic market registration
+     */
+    function grantFactoryRole(address factory) external onlyRole(ROUTER_ADMIN_ROLE) {
+        require(factory != address(0), "OrderRouter: Invalid factory address");
+        grantRole(FACTORY_ROLE, factory);
+    }
+
+    /**
+     * @dev Revokes factory role
+     */
+    function revokeFactoryRole(address factory) external onlyRole(ROUTER_ADMIN_ROLE) {
+        revokeRole(FACTORY_ROLE, factory);
     }
 
     // Internal functions

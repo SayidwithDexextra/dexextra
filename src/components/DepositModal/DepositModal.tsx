@@ -12,7 +12,7 @@ import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { useWalletPortfolio } from '@/hooks/useWalletPortfolio'
 import { useCentralVault } from '@/hooks/useCentralVault'
 import { NetworkWarningBanner } from '@/components/NetworkStatus'
-import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
+import { CONTRACTS } from '@/lib/contracts'
 
 // Close Icon Component
 const CloseIcon = () => (
@@ -106,7 +106,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     usdt: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', // USDT on Polygon
     usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC on Polygon  
     dai: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',   // DAI on Polygon
-    mockUsdc: '0xff541e2AEc7716725f8EDD02945A1Fe15664588b'   // MOCK_USDC on Polygon (from orderbook deployment)
+    mockUsdc: CONTRACTS.MockUSDC.address   // MOCK_USDC on Polygon (from latest deployment)
   }
   
   const findTokenByAddress = (address: string) => {
@@ -231,6 +231,13 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
       setDepositAmount(amount)
     }
     
+    console.log('🔄 Input modal continue - proceeding to review:', {
+      amount: amount || depositAmount,
+      selectedToken,
+      isDirectDeposit,
+      isVaultConnected
+    })
+    
     // Start sliding animation to review modal
     setIsAnimating(true)
     setAnimationDirection('forward')
@@ -258,8 +265,17 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
 
   const handleReviewModalConfirm = async () => {
     // Validate that we can perform a real transaction
-    if (!isDirectDeposit || !depositCollateral || !isVaultConnected) {
-      console.error('❌ Cannot proceed: Vault not connected or invalid deposit type')
+    // Only require isDirectDeposit - let depositCollateral handle vault connection during execution
+    console.log('🔍 Review modal confirm validation:', {
+      isDirectDeposit,
+      hasDepositCollateral: !!depositCollateral,
+      isVaultConnected,
+      selectedToken,
+      depositAmount
+    })
+    
+    if (!isDirectDeposit || !depositCollateral) {
+      console.error('❌ Cannot proceed: Invalid deposit type or deposit function not available')
       setTransactionStatus('error')
       setShowReviewModal(false)
       setShowStatusModal(true)
@@ -279,10 +295,18 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
       console.log('🏦 Starting REAL vault deposit:', depositAmount)
       
       // This will perform actual blockchain transaction
+      console.log('📞 Calling depositCollateral function...')
       const txHash = await depositCollateral(depositAmount)
       
-      if (!txHash) {
-        throw new Error('Transaction failed - no transaction hash returned')
+      console.log('📋 depositCollateral returned:', {
+        value: txHash,
+        type: typeof txHash,
+        length: txHash?.length,
+        isString: typeof txHash === 'string'
+      })
+      
+      if (!txHash || typeof txHash !== 'string' || txHash.length === 0) {
+        throw new Error(`Transaction failed - invalid transaction hash returned: ${txHash}`)
       }
       
       console.log('✅ Real blockchain deposit completed:', txHash)
@@ -392,7 +416,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
         symbol: 'VAULT', 
         icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png',
         name: 'CentralVault (Polygon)',
-        address: CONTRACT_ADDRESSES.centralVault
+        address: CONTRACTS.CentralVault.address
       }
     } else {
       // Non-MOCK_USDC tokens are not supported for direct deposits
@@ -400,7 +424,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
         symbol: 'USDC', 
         icon: 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg',
         name: 'USD Coin (Not Supported)',
-        address: CONTRACT_ADDRESSES.mockUSDC
+        address: CONTRACTS.MockUSDC.address
       }
     }
   }
@@ -584,7 +608,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
             </div>
 
             {/* Sophisticated Token List Section - Contained */}
-            <div className="flex-1 overflow-y-auto px-6 py-3" style={{ minHeight: 0 }}>
+            <div className={`flex-1 overflow-y-auto px-6 py-3 scrollbar-none ${cssStyles.modalScrollable}`} style={{ minHeight: 0 }}>
               <div className="flex items-center justify-between mb-3 flex-shrink-0">
                 <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                   Select Token

@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "../interfaces/IOrderBook.sol";
 import "../interfaces/IOrderRouter.sol";
 import "../interfaces/ICentralVault.sol";
@@ -860,9 +861,13 @@ contract OrderBook is
         // Get primary collateral token from vault
         (address primaryCollateral,,,) = ICentralVault(centralVault).getPrimaryCollateralToken();
         
-        // Check with vault for primary collateral
+        // Convert from 18-decimal precision to token's native precision
+        uint256 tokenDecimals = IERC20Metadata(primaryCollateral).decimals();
+        uint256 adjustedCollateral = requiredCollateral / (10**(18 - tokenDecimals));
+        
+        // Check with vault for primary collateral (now in correct precision)
         require(
-            ICentralVault(centralVault).hasSufficientBalance(trader, primaryCollateral, requiredCollateral),
+            ICentralVault(centralVault).hasSufficientBalance(trader, primaryCollateral, adjustedCollateral),
             "OrderBook: Insufficient collateral"
         );
     }
@@ -904,8 +909,13 @@ contract OrderBook is
         
         // Validate with central vault
         (address primaryCollateral,,,) = ICentralVault(centralVault).getPrimaryCollateralToken();
+        
+        // Convert from 18-decimal precision to token's native precision
+        uint256 tokenDecimals = IERC20Metadata(primaryCollateral).decimals();
+        uint256 adjustedCollateralRequired = collateralRequired / (10**(18 - tokenDecimals));
+        
         require(
-            ICentralVault(centralVault).hasSufficientBalance(order.trader, primaryCollateral, collateralRequired),
+            ICentralVault(centralVault).hasSufficientBalance(order.trader, primaryCollateral, adjustedCollateralRequired),
             "OrderBook: Insufficient collateral for execution"
         );
         
@@ -915,13 +925,13 @@ contract OrderBook is
             isLong: order.side == IOrderRouter.Side.BUY,
             quantity: fillQuantity,
             entryPrice: fillPrice,
-            collateral: collateralRequired,
+            collateral: adjustedCollateralRequired, // Use adjusted amount for consistent precision
             isSettled: false,
             payout: 0
         });
         
-        // Allocate collateral in vault
-        ICentralVault(centralVault).allocateAssets(order.trader, primaryCollateral, collateralRequired);
+        // Allocate collateral in vault (using adjusted amount)
+        ICentralVault(centralVault).allocateAssets(order.trader, primaryCollateral, adjustedCollateralRequired);
         
         allPositions.push(newPosition);
         userPositions[order.trader].push(newPosition);

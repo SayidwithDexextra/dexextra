@@ -30,7 +30,7 @@ function RewardsPage() {
 
 The faucet is configured with the following constants:
 
-- **MOCK_USDC_ADDRESS**: `0xff541e2AEc7716725f8EDD02945A1Fe15664588b` (Polygon mainnet from orderbook deployment)
+- **MOCK_USDC_ADDRESS**: `0x194b4517a61D569aC8DBC47a22ed6F665B77a331` (Polygon mainnet from latest deployment)
 - **CLAIM_AMOUNT**: 1,000 USDC per claim
 - **COOLDOWN_PERIOD**: 24 hours (86,400,000 ms)
 - **POLYGON_CHAIN_ID**: 137
@@ -128,7 +128,7 @@ Block Explorer: https://polygonscan.com/
 ### Testing Locally
 
 1. Ensure MockUSDC contract is deployed on Polygon
-2. Update `MOCK_USDC_ADDRESS` if needed (current: `0xff541e2AEc7716725f8EDD02945A1Fe15664588b`)
+2. Update `MOCK_USDC_ADDRESS` if needed (current: `0x194b4517a61D569aC8DBC47a22ed6F665B77a331`)
 3. Test with different wallet states
 4. Verify cooldown functionality
 

@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "../interfaces/IMetricsMarketFactory.sol";
 import "../interfaces/IUMAOracleIntegration.sol";
 import "../interfaces/IOrderBook.sol";
+import "../interfaces/IOrderRouter.sol";
 import "../interfaces/ISettlementMarket.sol";
 
 /**
@@ -117,17 +118,11 @@ contract MetricsMarketFactory is
      */
     function createMarket(MarketConfig calldata config)
         external
-        payable
         override
         nonReentrant
         whenNotPaused
         returns (address marketAddress)
     {
-        require(
-            hasRole(MARKET_CREATOR_ROLE, msg.sender) || 
-            msg.value >= (config.creationFee > 0 ? config.creationFee : defaultCreationFee),
-            "MetricsMarketFactory: Insufficient fee or not authorized"
-        );
         require(bytes(config.metricId).length > 0, "MetricsMarketFactory: Empty metric ID");
         require(bytes(config.description).length > 0, "MetricsMarketFactory: Empty description");
         require(config.oracleProvider != address(0), "MetricsMarketFactory: Invalid oracle provider");
@@ -195,16 +190,8 @@ contract MetricsMarketFactory is
         metricToUMAIdentifier[config.metricId] = umaIdentifier;
         umaIdentifierToMetric[umaIdentifier] = config.metricId;
 
-        // Handle creation fee
-        uint256 feeAmount = config.creationFee > 0 ? config.creationFee : defaultCreationFee;
-        if (msg.value > 0 && msg.value >= feeAmount) {
-            payable(feeRecipient).transfer(feeAmount);
-            
-            // Refund excess
-            if (msg.value > feeAmount) {
-                payable(msg.sender).transfer(msg.value - feeAmount);
-            }
-        }
+        // Auto-register market with OrderRouter for immediate trading
+        IOrderRouter(orderRouter).registerMarket(config.metricId, marketAddress);
 
         emit MarketCreated(
             config.metricId,

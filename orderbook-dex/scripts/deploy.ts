@@ -17,7 +17,7 @@ async function main() {
     bondCurrency: process.env.BOND_CURRENCY_ADDRESS || ethers.ZeroAddress, // Will be set to MockUSDC later
     
     // DEX Configuration
-    defaultCreationFee: ethers.parseEther("1"), // 1 ETH
+    defaultCreationFee: ethers.parseEther("0"), // FREE market creation
     tradingFeeRate: 20, // 0.2% (20 basis points)
     deployMockTokens: true, // Always deploy mock tokens for testing
     
@@ -149,12 +149,16 @@ async function main() {
   // Step 6: Configure contracts
   console.log("\n6️⃣ Configuring contracts...");
 
-  // Authorize factory in UMA Oracle Manager
+  // Authorize factory in UMA Oracle Manager (both old and new roles for compatibility)
   console.log("- Authorizing factory in UMA Oracle Manager...");
   await umaOracleManager.grantRole(
     await umaOracleManager.METRIC_MANAGER_ROLE(),
     await factory.getAddress()
   );
+  
+  // Grant new FACTORY_ROLE for permissionless market creation
+  console.log("- Granting FACTORY_ROLE to MetricsMarketFactory in UMA Oracle Manager...");
+  await umaOracleManager.grantFactoryRole(await factory.getAddress());
 
   // Authorize router in Central Vault
   console.log("- Authorizing router in Central Vault...");
@@ -166,6 +170,10 @@ async function main() {
     await orderRouter.MARKET_ROLE(),
     await factory.getAddress()
   );
+  
+  // Grant new FACTORY_ROLE for automatic market registration
+  console.log("- Granting FACTORY_ROLE to MetricsMarketFactory in OrderRouter...");
+  await orderRouter.grantFactoryRole(await factory.getAddress());
 
   // Configure market authorization for factory to create OrderBooks
   console.log("- Authorizing factory to create markets in vault...");

@@ -35,6 +35,9 @@ export class OrderService {
    */
   async getUserActiveOrders(trader: Address): Promise<Order[]> {
     try {
+      console.log('🔍 OrderService: Calling getUserActiveOrders for trader:', trader);
+      console.log('🔍 OrderService: Using contract address:', CONTRACT_ADDRESSES.orderRouter);
+      
       const result = await this.client.readContract({
         address: CONTRACT_ADDRESSES.orderRouter,
         abi: ORDER_ROUTER_ABI,
@@ -42,9 +45,26 @@ export class OrderService {
         args: [trader],
       });
 
-      return (result as ContractOrder[]).map(order => this.transformContractOrder(order));
+      console.log('📊 OrderService: Raw contract result:', {
+        resultLength: (result as ContractOrder[]).length,
+        result: result
+      });
+
+      const transformedOrders = (result as ContractOrder[]).map(order => this.transformContractOrder(order));
+      
+      console.log('📊 OrderService: Transformed orders:', {
+        transformedOrdersCount: transformedOrders.length,
+        orders: transformedOrders.slice(0, 2) // Log first 2 for debugging
+      });
+
+      return transformedOrders;
     } catch (error) {
-      console.error('Error fetching user active orders:', error);
+      console.error('❌ OrderService: Error fetching user active orders:', error);
+      console.error('❌ OrderService: Error details:', {
+        trader,
+        contractAddress: CONTRACT_ADDRESSES.orderRouter,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+      });
       return [];
     }
   }

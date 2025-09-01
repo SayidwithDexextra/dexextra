@@ -422,10 +422,10 @@ export default function LightweightChart({
     if (!CHART_BACKEND_ENABLED) return;
     if (!pusher || !symbol) return;
 
-     console.log(`🚀 Setting up Pusher chart subscription for ${symbol}-${selectedTimeframe}`);
-     console.log('Pusher instance:', pusher);
-     console.log('Symbol:', symbol);
-     console.log('Timeframe:', selectedTimeframe);
+     // console.log(`🚀 Setting up Pusher chart subscription for ${symbol}-${selectedTimeframe}`);
+     // console.log('Pusher instance:', pusher);
+     // console.log('Symbol:', symbol);
+     // console.log('Timeframe:', selectedTimeframe);
 
     // Subscribe to chart data updates
     const unsubscribeChart = pusher.subscribeToChartData(
@@ -434,30 +434,30 @@ export default function LightweightChart({
       handleChartDataUpdate
     );
 
-     console.log('🚀 Pusher chart subscription setup complete');
-     console.log('Unsubscribe function:', unsubscribeChart);
+     // console.log('🚀 Pusher chart subscription setup complete');
+     // console.log('Unsubscribe function:', unsubscribeChart);
 
     // Test that the handler function is working
-     console.log('Testing handler function...');
-     console.log('Handler function:', handleChartDataUpdate);
+     // console.log('Testing handler function...');
+     // console.log('Handler function:', handleChartDataUpdate);
 
     // Subscribe to connection state changes
     const unsubscribeConnection = pusher.onConnectionStateChange(
       handleConnectionStateChange
     );
 
-     console.log('🔌 Connection state handler setup complete');
+     // console.log('🔌 Connection state handler setup complete');
 
     // Store unsubscribe functions
     unsubscribeRef.current = () => {
-       console.log('🧹 Cleaning up Pusher subscriptions');
+       // console.log('🧹 Cleaning up Pusher subscriptions');
       unsubscribeChart();
       unsubscribeConnection();
     };
 
     // Cleanup on unmount or dependency change
     return () => {
-       console.log('🧹 Chart component cleanup triggered');
+       // console.log('🧹 Chart component cleanup triggered');
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
         unsubscribeRef.current = null;

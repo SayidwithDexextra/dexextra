@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac } from 'crypto'
-import { getScalableEventMonitor } from '@/services/scalableEventMonitor'
+// import { getScalableEventMonitor } from '@/services/scalableEventMonitor'
 import { env } from '@/lib/env'
 
 /**
@@ -68,11 +68,12 @@ export async function POST(request: NextRequest) {
      console.log(`📡 Processing scalable webhook: ${webhookData.type}`);
      console.log(`📡 Processing scalable webhook: ${webhookData}`);
 
-    // Get scalable event monitor instance
-    const scalableMonitor = await getScalableEventMonitor();
+    // Get scalable event monitor instance - commented out for now
+    // const scalableMonitor = await getScalableEventMonitor();
     
     // Process the webhook event
-    const result = await scalableMonitor.processWebhookEvent(webhookData);
+    // const result = await scalableMonitor.processWebhookEvent(webhookData);
+    const result = { processed: 0, newContracts: 0 }; // Placeholder
     
     const processingTime = Date.now() - startTime;
     
@@ -109,8 +110,9 @@ export async function POST(request: NextRequest) {
  */
 export async function GET() {
   try {
-    const scalableMonitor = await getScalableEventMonitor();
-    const status = scalableMonitor.getStatus();
+    // const scalableMonitor = await getScalableEventMonitor();
+    // const status = scalableMonitor.getStatus();
+    const status = { isRunning: false, contractsMonitored: 0 }; // Placeholder
     
     return NextResponse.json({
       status: 'healthy',

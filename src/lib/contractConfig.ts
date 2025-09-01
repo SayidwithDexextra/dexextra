@@ -1,12 +1,12 @@
 import { Address } from 'viem';
 
-// Contract addresses from Polygon deployment
+// Contract addresses from Polygon deployment (UPDATED January 27, 2025)
 export const CONTRACT_ADDRESSES = {
-  orderRouter: '0x516a1790a04250FC6A5966A528D02eF20E1c1891' as Address,
-  centralVault: '0x9E5996Cb44AC7F60a9A46cACF175E87ab677fC1C' as Address,
-  factory: '0x354f188944eF514eEEf05d8a31E63B33f87f16E0' as Address,
-  umaOracleManager: '0xCa1B94AD513097fC17bBBdB146787e026E62132b' as Address,
-  mockUSDC: '0xff541e2AEc7716725f8EDD02945A1Fe15664588b' as Address,
+  orderRouter: '0x836AaF8c558F7390d59591248e02435fc9Ea66aD' as Address,
+  centralVault: '0x602B4B1fe6BBC10096970D4693D94376527D04ab' as Address,
+  factory: '0xec83CDAf6DE9A6C97363966E2Be1c7CfE680687d' as Address,
+  umaOracleManager: '0x9Fc90Cd2E4345a51b55EC6ecEeDf31051Db20cD4' as Address,
+  mockUSDC: '0x194b4517a61D569aC8DBC47a22ed6F665B77a331' as Address,
 } as const;
 
 // Chain configuration
@@ -17,6 +17,14 @@ export const CHAIN_CONFIG = {
 
 // OrderRouter ABI - focused on order querying functions
 export const ORDER_ROUTER_ABI = [
+  // Nonce getter for EIP-712
+  {
+    inputs: [{ name: 'trader', type: 'address' }],
+    name: 'getNonce',
+    outputs: [{ name: 'nonce', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
   // View functions for orders
   {
     inputs: [{ name: 'orderId', type: 'uint256' }],

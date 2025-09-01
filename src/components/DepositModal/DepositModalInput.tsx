@@ -327,7 +327,7 @@ export default function DepositModalInput({
       
       {/* Input Modal with Sophisticated Design */}
       <div 
-        className={`group relative z-10 w-full max-w-md bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-xl border border-[#222222] hover:border-[#333333] transition-all duration-200 ${getInputModalClasses()}`}
+        className={`group relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] transition-all duration-200 ${getInputModalClasses()}`}
         style={{ 
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)',
           backdropFilter: 'blur(20px)',

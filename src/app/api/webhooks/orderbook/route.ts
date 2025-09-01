@@ -169,7 +169,7 @@ export async function GET(request: NextRequest) {
         'OrderMatched'
       ],
       contracts: [
-        'OrderRouter: 0x516a1790a04250FC6A5966A528D02eF20E1c1891',
+        'OrderRouter: 0xfB46c35282634b578BfAd7a40A28F089B5f8430A',
         'OrderBook: 0x07d317C87E6d8AF322463aCF024f1e28D38F6117'
       ],
       timestamp: new Date().toISOString()

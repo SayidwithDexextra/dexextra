@@ -26,6 +26,13 @@ const config: HardhatUserConfig = {
       blockGasLimit: 12000000,
       allowUnlimitedContractSize: true,
     },
+    ganache: {
+      url: "http://127.0.0.1:7545",
+      chainId: 1337, // Default Ganache chain ID
+      gas: 6721975,
+      gasPrice: 20000000000, // 20 gwei
+      accounts: "remote", // Use accounts provided by Ganache
+    },
     localhost: {
       url: "http://127.0.0.1:8545",
       chainId: 31337,
@@ -85,6 +92,14 @@ const config: HardhatUserConfig = {
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 43114,
       gasPrice: "auto",
+    },
+    gnash: {
+      url: process.env.GNASH_RPC_URL || "http://127.0.0.1:8545",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: parseInt(process.env.GNASH_CHAIN_ID || "31338"), // Default for testing
+      gas: 12000000,
+      gasPrice: 20000000000, // 20 gwei
+      timeout: 60000,
     },
   },
   gasReporter: {

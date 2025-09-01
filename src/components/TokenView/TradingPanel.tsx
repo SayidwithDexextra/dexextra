@@ -8,6 +8,13 @@ import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { formatEther } from 'viem';
 import { orderService } from '@/lib/orderService';
+import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
+import { ORDER_ROUTER_ABI } from '@/lib/orderRouterAbi';
+import { publicClient } from '@/lib/viemClient';
+import type { Address } from 'viem';
+import { createWalletClient, custom } from 'viem';
+import { polygon } from 'viem/chains';
+import { signOrder as signOrderHelper } from '@/lib/order-signing';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -26,6 +33,9 @@ interface TradingPanelProps {
 
 export default function TradingPanel({ tokenData, vammMarket, initialAction, marketData }: TradingPanelProps) {
   const { walletData, connect } = useWallet();
+  
+  // Order submission state
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   
   // Memoize vammMarket to prevent unnecessary re-renders
   const memoizedVammMarket = useMemo(() => vammMarket, [
@@ -55,6 +65,21 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     orders: userOrders, 
     isLoading: userOrdersLoading 
   } = useUserMarketOrders(walletData.address, metricId, true);
+
+  // Debug logging for user orders
+  useEffect(() => {
+    console.log('🔍 TradingPanel Debug - User Orders State:', {
+      walletAddress: walletData.address,
+      isConnected: walletData.isConnected,
+      metricId,
+      userOrdersCount: userOrders.length,
+      userOrdersLoading,
+      userOrders: userOrders.slice(0, 3), // Log first 3 orders for debugging
+      activeOrdersCount: userOrders.filter(order => 
+        order.status === 'pending' || order.status === 'partially_filled'
+      ).length
+    });
+  }, [userOrders, userOrdersLoading, walletData.address, walletData.isConnected, metricId]);
   
   // Get orderbook market data
   const { 
@@ -335,6 +360,17 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     return validation.isValid;
   };
 
+  // Helper function to abbreviate long market names for button display
+  const abbreviateMarketName = (symbol: string, maxLength: number = 12): string => {
+    if (symbol.length <= maxLength) return symbol;
+    
+    // For very long symbols, show first few characters + "..." + last few characters
+    const startChars = Math.floor((maxLength - 3) / 2);
+    const endChars = maxLength - 3 - startChars;
+    
+    return `${symbol.slice(0, startChars)}...${symbol.slice(-endChars)}`;
+  };
+
   const getTradeButtonText = () => {
     if (!walletData.isConnected) return 'Connect Wallet';
     
@@ -342,7 +378,10 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     if (!isOrderbookEnabled) return 'Orderbook Not Available';
     if (!isSystemReady) return 'Loading...';
     
-    if (isTrading) return orderType === 'limit' ? 'Creating Order...' : 'Placing Order...';
+    if (isTrading || isSubmittingOrder) {
+      return orderType === 'limit' ? 'Signing & Creating Order...' : 'Signing & Placing Order...';
+    }
+    
     if (!selectedOption) return 'Select Buy or Sell';
     
     const validation = validateOrderAmount();
@@ -354,7 +393,8 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       return `Create ${selectedOption === 'long' ? 'Buy' : 'Sell'} Limit Order`;
     }
     
-    return `${selectedOption === 'long' ? 'Buy' : 'Sell'} ${tokenData.symbol}`;
+    const abbreviatedSymbol = abbreviateMarketName(tokenData.symbol);
+    return `${selectedOption === 'long' ? 'Buy' : 'Sell'} ${abbreviatedSymbol}`;
   };
 
   const OrderValidationComponent = () => {
@@ -419,6 +459,70 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     };
   };
 
+  // =====================
+  // 🔐 ORDER SIGNING (EIP-712)
+  // =====================
+
+  const prepareAndSignOrder = async (params: {
+    metricId: string;
+    orderType: 'MARKET' | 'LIMIT';
+    side: 'BUY' | 'SELL';
+    quantity: string;
+    price?: string;
+    postOnly?: boolean;
+  }): Promise<{ signature: `0x${string}`; nonce: bigint }> => {
+    if (!walletData.isConnected || !walletData.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    const ethereum = (window as any)?.ethereum;
+    if (!ethereum) {
+      throw new Error('No ethereum provider found');
+    }
+
+    const walletClient = createWalletClient({
+      chain: polygon,
+      transport: custom(ethereum),
+      account: walletData.address as Address,
+    });
+
+    // Ensure the injected wallet's selected account matches the address we intend to use
+    try {
+      const selectedAccounts: string[] = await ethereum.request({ method: 'eth_accounts' });
+      const selected = (selectedAccounts && selectedAccounts[0]) ? selectedAccounts[0] : null;
+      if (!selected || selected.toLowerCase() !== (walletData.address as string).toLowerCase()) {
+        throw new Error(`Connected wallet account (${selected || 'none'}) does not match selected account ${walletData.address}. Switch accounts in your wallet and try again.`);
+      }
+    } catch (e) {
+      // If the provider call fails, proceed; signOrder will still verify and throw if mismatch
+      console.warn('Could not verify selected account via provider. Proceeding to sign with runtime verification.', e);
+    }
+
+    const currentNonce = await publicClient.readContract({
+      address: CONTRACT_ADDRESSES.orderRouter as Address,
+      abi: ORDER_ROUTER_ABI,
+      functionName: 'getNonce',
+      args: [walletData.address as Address],
+    }) as bigint;
+
+    const { signature, nonce } = await signOrderHelper(
+      {
+        metricId: params.metricId,
+        orderType: params.orderType,
+        side: params.side,
+        quantity: params.quantity,
+        price: params.price,
+        // Ensure postOnly used for signing equals the flag submitted later
+        postOnly: Boolean(params.postOnly || false),
+      },
+      walletClient,
+      CONTRACT_ADDRESSES.orderRouter as Address,
+      currentNonce
+    );
+
+    return { signature, nonce };
+  };
+
   // Legacy functions removed - orderbook system uses simpler order placement
 
   // =====================
@@ -427,6 +531,12 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
   const executeMarketOrder = async () => {
     console.log('🚀 Starting market order execution with orderbook system...');
+
+    // Validate USDC balance
+    // if (!walletData.balance || amount > parseFloat(walletData.balance)) {
+    //   showError('Insufficient USDC balance'+walletData.balance);
+    //   return;
+    // }
     
     // Validate orderbook system availability
     if (!isOrderbookEnabled) {
@@ -439,33 +549,115 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       return;
     }
     
+    if (!walletData.isConnected || !walletData.address) {
+      showError('Please connect your wallet to place orders.', 'Wallet Required');
+      return;
+    }
+    
     clearMessages();
     setIsTrading(true);
+    setIsSubmittingOrder(true);
 
     try {
       // For market orders in orderbook system, we create market orders that execute immediately
+      // Get current market price
+      const currentPrice = marketData?.currentPrice;
+      if (!currentPrice) {
+        throw new Error('Cannot execute trade: Current price not available');
+      }
+      
+      // Calculate quantity of units based on USDC amount and current price
+      // Example: $100 USDC at $20 per unit = 5 units
+      const quantity = amount / currentPrice;
+      
+      console.log('💰 Calculating order quantity:', {
+        usdcAmount: amount,
+        currentPrice,
+        calculatedQuantity: quantity,
+        explanation: `${amount} USDC / $${currentPrice} per unit = ${quantity} units`
+      });
+
       const orderParams = {
         metricId,
-        side: selectedOption === 'long' ? 'buy' : 'sell',
-        quantity: amount, // Direct amount input
-        orderType: 'market',
-        timeInForce: 'ioc', // Immediate or Cancel for market orders
-        leverage: leverage
+        orderType: 'MARKET' as const,
+        side: selectedOption === 'long' ? 'BUY' : 'SELL' as const,
+        quantity: quantity.toString(), // Number of units to buy/sell
+        price: Number(currentPrice).toFixed(2), // Use current price with 2-decimal tick alignment
+        timeInForce: 'IOC' as const, // Immediate or Cancel for market orders
+        walletAddress: walletData.address,
+        timestamp: Date.now()
       };
 
       console.log('📋 Creating market order with params:', orderParams);
-      showSuccess('Placing market order...', 'Processing');
+      showSuccess('Signing and placing market order...', 'Processing');
       
-      // Note: This is a placeholder - actual implementation would use orderbook contract calls
-      // For now, show success and reset form
-      setTimeout(() => {
+      // Sign the order with EIP-712 using the shared helper
+      const { signature, nonce } = await prepareAndSignOrder({
+        metricId,
+        orderType: 'MARKET',
+        side: selectedOption === 'long' ? 'BUY' : 'SELL',
+        quantity: quantity.toString(), // Number of units to buy/sell
+        price: Number(currentPrice).toFixed(2),
+      });
+      
+      // Submit to API
+      const requestPayload = {
+        ...orderParams,
+        signature,
+        nonce: Number(nonce),
+        metadataHash: `0x${'0'.repeat(64)}` // Default metadata hash
+      };
+      
+      console.log('📤 Sending market order request to API:', requestPayload);
+      
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      console.log('📥 Market order API Response status:', response.status);
+      const result = await response.json();
+      console.log('📥 Market order API Response body:', result);
+      
+      if (!response.ok) {
+        // Handle different error types
+        if (result.errorType === 'BLOCKCHAIN_ERROR') {
+          throw new Error(`Blockchain Error: ${result.details || 'Transaction failed'}`);
+        } else {
+          throw new Error(result.error || 'Failed to place market order');
+        }
+      }
+
+      if (result.success) {
+        const matchText = result.matches && result.matches.length > 0 
+          ? ` Matched ${result.matches.length} order(s).`
+          : '';
+        
+        const blockchainText = result.blockchainTxHash 
+          ? ` Blockchain TX: ${result.blockchainTxHash.slice(0, 10)}...`
+          : '';
+          
         showSuccess(
-          `Market order placed successfully! ${orderParams.side.toUpperCase()} ${orderParams.quantity} ${tokenData.symbol}`,
-          'Order Placed'
+          `Market order placed successfully! Order ID: ${result.orderId}.${matchText}${blockchainText}`,
+          'Order Confirmed On-Chain'
         );
+        
+        // Reset form
         setAmount(0);
         refetchOrders(); // Refresh orders list
-      }, 1000);
+        
+        // Log successful submission
+        console.log('✅ Market order submitted successfully:', {
+          orderId: result.orderId,
+          matches: result.matches?.length || 0,
+          processingTime: result.processingTime
+        });
+      } else {
+        throw new Error(result.error || 'Order submission failed');
+      }
       
     } catch (error: any) {
       console.error('💥 Market order execution failed:', error);
@@ -474,70 +666,163 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       let errorTitle = 'Order Failed';
       const errorStr = error?.message || error?.toString() || '';
       
-      if (errorStr.includes('insufficient')) {
+      if (errorStr.includes('Blockchain Error')) {
+        errorMessage = 'Blockchain transaction failed. Your order was not placed and no database changes were made. This protects you from inconsistent state.';
+        errorTitle = 'Blockchain Transaction Failed';
+      } else if (errorStr.includes('Market not deployed') || errorStr.includes('missing contract addresses')) {
+        errorMessage = 'This market has not been deployed to the blockchain yet. Orders cannot be placed until deployment is complete.';
+        errorTitle = 'Market Not Deployed';
+      } else if (errorStr.includes('insufficient') || errorStr.includes('Insufficient')) {
         errorMessage = 'Insufficient funds. Please check your balance and try again.';
         errorTitle = 'Insufficient Funds';
-      } else if (errorStr.includes('user rejected') || errorStr.includes('denied')) {
+      } else if (errorStr.includes('cancelled') || errorStr.includes('denied') || errorStr.includes('User denied')) {
         errorMessage = 'Transaction was cancelled. Please try again if you want to proceed.';
         errorTitle = 'Transaction Cancelled';
-      } else if (errorStr.includes('Wallet client required') || errorStr.includes('Cannot read properties of undefined')) {
+      } else if (errorStr.includes('Wallet') || errorStr.includes('provider')) {
         errorMessage = 'Wallet connection issue. Please disconnect and reconnect your wallet, then try again.';
         errorTitle = 'Wallet Connection Error';
-      } else if (errorStr.includes('Market not registered')) {
+      } else if (errorStr.includes('Market not') || errorStr.includes('not found')) {
         errorMessage = 'Market not available for trading. Please check if the market is deployed.';
         errorTitle = 'Market Not Available';
+      } else if (errorStr.includes('Rate limit')) {
+        errorMessage = 'Too many requests. Please wait a moment and try again.';
+        errorTitle = 'Rate Limited';
       }
       
       showError(errorMessage, errorTitle);
     } finally {
       setIsTrading(false);
+      setIsSubmittingOrder(false);
     }
   };
 
   const executeLimitOrder = async () => {
     if (!selectedOption || orderType !== 'limit') return;
     
+    if (!walletData.isConnected || !walletData.address) {
+      showError('Please connect your wallet to place orders.', 'Wallet Required');
+      return;
+    }
+    
+    if (triggerPrice <= 0) {
+      showError('Please enter a valid limit price.', 'Invalid Price');
+      return;
+    }
+    
     console.log('📋 Creating limit order with orderbook system...');
     setIsTrading(true);
+    setIsSubmittingOrder(true);
     clearMessages();
 
     try {
-      const expiryTimestamp = orderExpiry > 0 ? Math.floor(Date.now() / 1000) + (orderExpiry * 3600) : null;
+      const expiryTimestamp = orderExpiry > 0 ? Math.floor(Date.now() / 1000) + (orderExpiry * 3600) : 0;
       
+      // Convert USDC amount to asset units using the limit price
+      const quantity = amount / triggerPrice;
+      console.log('💰 Calculating limit order quantity:', {
+        usdcAmount: amount,
+        triggerPrice,
+        calculatedQuantity: quantity,
+        explanation: `${amount} USDC / $${triggerPrice} per unit = ${quantity} units`
+      });
+
       const orderParams = {
         metricId,
-        side: selectedOption === 'long' ? 'buy' : 'sell',
-        quantity: amount,
-        price: triggerPrice,
-        orderType: 'limit',
-        timeInForce: expiryTimestamp ? 'gtd' : 'gtc', // Good Till Date or Good Till Cancelled
-        expiryTime: expiryTimestamp,
-        leverage: leverage
+        orderType: 'LIMIT' as const,
+        side: selectedOption === 'long' ? 'BUY' : 'SELL' as const,
+        quantity: quantity.toString(),
+        price: triggerPrice.toString(),
+        timeInForce: expiryTimestamp > 0 ? 'GTD' : 'GTC' as const,
+        expiryTime: expiryTimestamp > 0 ? expiryTimestamp : undefined,
+        postOnly: false,
+        reduceOnly: false,
+        walletAddress: walletData.address,
+        timestamp: Date.now()
       };
 
       console.log('📋 Creating limit order with params:', orderParams);
-      showSuccess('Creating limit order...', 'Processing');
+      showSuccess('Signing and creating limit order...', 'Processing');
       
-      // Note: This is a placeholder - actual implementation would use orderbook contract calls
-      // For now, show success and reset form
-      setTimeout(() => {
+      // Sign the order with EIP-712 using the shared helper
+      const { signature, nonce } = await prepareAndSignOrder({
+        metricId,
+        orderType: 'LIMIT',
+        side: selectedOption === 'long' ? 'BUY' : 'SELL',
+        quantity: quantity.toString(),
+        price: triggerPrice.toString(),
+        postOnly: false,
+      });
+      
+      // Submit to API
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...orderParams,
+          signature,
+          nonce: Number(nonce),
+          metadataHash: `0x${'0'.repeat(64)}` // Default metadata hash
+        }),
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to place limit order');
+      }
+
+      if (result.success) {
+        const matchText = result.matches && result.matches.length > 0 
+          ? ` Immediately matched ${result.matches.length} order(s).`
+          : ' Added to order book.';
+          
         showSuccess(
-          `Limit order created successfully! ${orderParams.side.toUpperCase()} ${orderParams.quantity} ${tokenData.symbol} @ $${formatNumber(triggerPrice)}`,
+          `Limit order created successfully! ${orderParams.side} ${orderParams.quantity} ${tokenData.symbol} @ $${formatNumber(triggerPrice)}.${matchText}`,
           'Limit Order Created'
         );
+        
+        // Reset form
         setAmount(0);
         setTriggerPrice(0);
         refetchOrders(); // Refresh orders list
-      }, 1000);
+        
+        // Log successful submission
+        console.log('✅ Limit order submitted successfully:', {
+          orderId: result.orderId,
+          matches: result.matches?.length || 0,
+          processingTime: result.processingTime
+        });
+      } else {
+        throw new Error(result.error || 'Order submission failed');
+      }
       
     } catch (error: any) {
       console.error('❌ Limit order creation failed:', error);
-      showError(
-        error?.message || 'Failed to create limit order. Please try again.',
-        'Limit Order Failed'
-      );
+      
+      let errorMessage = 'Failed to create limit order. Please try again.';
+      let errorTitle = 'Limit Order Failed';
+      const errorStr = error?.message || error?.toString() || '';
+      
+      if (errorStr.includes('insufficient') || errorStr.includes('Insufficient')) {
+        errorMessage = 'Insufficient funds. Please check your balance and try again.';
+        errorTitle = 'Insufficient Funds';
+      } else if (errorStr.includes('cancelled') || errorStr.includes('denied') || errorStr.includes('User denied')) {
+        errorMessage = 'Order signature was cancelled. Please try again if you want to proceed.';
+        errorTitle = 'Signature Cancelled';
+      } else if (errorStr.includes('Invalid price') || errorStr.includes('tick size')) {
+        errorMessage = 'Invalid price. Please check the price format and tick size requirements.';
+        errorTitle = 'Invalid Price';
+      } else if (errorStr.includes('minimum') || errorStr.includes('below')) {
+        errorMessage = 'Order size below minimum. Please increase the order amount.';
+        errorTitle = 'Order Too Small';
+      }
+      
+      showError(errorMessage, errorTitle);
     } finally {
       setIsTrading(false);
+      setIsSubmittingOrder(false);
     }
   };
 
@@ -775,7 +1060,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                             {order.side === 'buy' ? 'BOUGHT' : 'SOLD'}
                           </span>
                           <span className="text-xs text-[#808080]">
-                            {order.quantity.toFixed(4)} @ ${order.price.toFixed(4)}
+                            {order.quantity.toFixed(4)} @ {order.price ? `$${order.price.toFixed(4)}` : 'MARKET'}
                           </span>
                           <span className="text-xs text-[#606060]">
                             ID: {order.id.slice(0, 8)}...
@@ -783,7 +1068,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-white">
-                            ${(order.quantity * order.price).toFixed(2)}
+                            {order.price ? `$${(order.quantity * order.price).toFixed(2)}` : 'PENDING'}
                           </span>
                           <span className="text-xs text-[#606060]">
                             {new Date(order.timestamp).toLocaleDateString()}
@@ -1577,15 +1862,15 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
           ) : (
             <button 
               onClick={handleTradeClick}
-              disabled={!canExecuteTrade() || isTrading}
+              disabled={!canExecuteTrade() || isTrading || isSubmittingOrder}
               className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md"
               style={{
                 padding: '12px',
                 fontSize: '16px',
                 fontWeight: '600',
-                backgroundColor: (!canExecuteTrade() || isTrading) ? '#1A1A1A' : '#3B82F6',
-                color: (!canExecuteTrade() || isTrading) ? '#6B7280' : '#FFFFFF',
-                cursor: (!canExecuteTrade() || isTrading) ? 'not-allowed' : 'pointer'
+                backgroundColor: (!canExecuteTrade() || isTrading || isSubmittingOrder) ? '#1A1A1A' : '#3B82F6',
+                color: (!canExecuteTrade() || isTrading || isSubmittingOrder) ? '#6B7280' : '#FFFFFF',
+                cursor: (!canExecuteTrade() || isTrading || isSubmittingOrder) ? 'not-allowed' : 'pointer'
               }}
             >
               {getTradeButtonText()}

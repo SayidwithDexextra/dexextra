@@ -49,9 +49,52 @@
   }
 }
 
-/* Hide scrollbars for webkit browsers */
+/* Universal hidden scrollbar classes */
+.hideScrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
 .hideScrollbar::-webkit-scrollbar {
-  display: none;
+  display: none; /* Safari and Chrome */
+}
+
+/* Tailwind utility equivalent for scrollbar-none */
+.scrollbar-none {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
+}
+
+/* Specific classes for different modal sections */
+.modalScrollable {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.modalScrollable::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
+}
+
+.reviewScrollable {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.reviewScrollable::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
+}
+
+.statusScrollable {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.statusScrollable::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
 }
 
 .paymentCardHover:hover {
@@ -74,7 +117,7 @@
   position: relative;
 }
 
-/* Hide scrollbar for token list */
+/* Legacy token list scrollable (kept for compatibility) */
 .tokenListScrollable {
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* Internet Explorer 10+ */

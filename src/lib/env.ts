@@ -23,6 +23,9 @@ const envSchema = z.object({
   WS_RPC_URL: z.string().url().default('wss://polygon-rpc.com/'),
   CHAIN_ID: z.string().transform(Number).default('137'), // Default to Polygon Mainnet
   
+  // Settlement Configuration
+  SETTLEMENT_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
+  
   // Network Configuration
   DEFAULT_NETWORK: z.string().default('polygon'), // polygon, ethereum, mumbai, sepolia, hardhat
 
@@ -30,6 +33,14 @@ const envSchema = z.object({
   VAMM_FACTORY_ADDRESS: z.string().optional(),
   MOCK_USDC_ADDRESS: z.string().optional(),
   MOCK_ORACLE_ADDRESS: z.string().optional(),
+  
+  // Order Book System Contract Addresses
+  ORDER_ROUTER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid order router address').optional(),
+  CENTRAL_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid central vault address').optional(),
+  SETTLEMENT_ENGINE_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid settlement engine address').optional(),
+  METRICS_MARKET_FACTORY_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid factory address').optional(),
+  UMA_ORACLE_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid UMA oracle address').optional(),
+  USDC_TOKEN_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid USDC token address').default('0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'),
 
   // Event Listener Configuration
   EVENT_LISTENER_ENABLED: z.string().transform((val) => val === 'true').default('true'),
@@ -61,6 +72,31 @@ const envSchema = z.object({
   // Alchemy webhook signing key for production security
   ALCHEMY_WEBHOOK_SIGNING_KEY: z.string().optional(),
 
+  // Order Book System Configuration
+  REDIS_URL: z.string().url('Invalid Redis URL').default('redis://localhost:6379'),
+  REDIS_TOKEN: z.string().optional(),
+  PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'Invalid private key format').optional(),
+  
+  // Service Configuration
+  MATCHING_ENGINE_ENABLED: z.string().transform(val => val === 'true').default('true'),
+  SETTLEMENT_QUEUE_ENABLED: z.string().transform(val => val === 'true').default('true'),
+  WEBSOCKET_SERVICE_ENABLED: z.string().transform(val => val === 'true').default('true'),
+  MONITORING_SERVICE_ENABLED: z.string().transform(val => val === 'true').default('true'),
+  
+  // Performance Configuration
+  MAX_ORDERS_PER_LEVEL: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(1000)).default('100'),
+  MAX_BATCH_SIZE: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(1000)).default('50'),
+  SETTLEMENT_INTERVAL_MS: z.string().transform(val => parseInt(val)).pipe(z.number().min(1000).max(60000)).default('5000'),
+  CONFIRMATION_DEPTH: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(100)).default('12'),
+  
+  // Trading Fees (in basis points)
+  MAKER_FEE_RATE: z.string().transform(val => parseInt(val)).pipe(z.number().min(0).max(1000)).default('10'),
+  TAKER_FEE_RATE: z.string().transform(val => parseInt(val)).pipe(z.number().min(0).max(1000)).default('15'),
+  
+  // WebSocket Configuration
+  WEBSOCKET_PORT: z.string().transform(val => parseInt(val)).pipe(z.number().min(1000).max(65535)).default('3001'),
+  MAX_WEBSOCKET_CONNECTIONS: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(10000)).default('1000'),
+
   // Feature Flags
   ENABLE_FEATURE_X: z.string().transform((val) => val === 'true').default('false'),
   DEBUG_MODE: z.string().transform((val) => val === 'true').default('false'),
@@ -90,6 +126,9 @@ const processEnv = {
   CHAIN_ID: process.env.CHAIN_ID || '137',
   DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'polygon',
   
+  // Settlement Configuration
+  SETTLEMENT_PRIVATE_KEY: process.env.SETTLEMENT_PRIVATE_KEY,
+  
   // Contracts
   VAMM_FACTORY_ADDRESS: process.env.VAMM_FACTORY_ADDRESS,
   MOCK_USDC_ADDRESS: process.env.MOCK_USDC_ADDRESS,
@@ -112,6 +151,39 @@ const processEnv = {
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
   ALCHEMY_WEBHOOK_AUTH_TOKEN: process.env.ALCHEMY_WEBHOOK_AUTH_TOKEN,
   ALCHEMY_WEBHOOK_SIGNING_KEY: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY,
+  
+  // Order Book System Configuration
+  ORDER_ROUTER_ADDRESS: process.env.ORDER_ROUTER_ADDRESS,
+  CENTRAL_VAULT_ADDRESS: process.env.CENTRAL_VAULT_ADDRESS,
+  SETTLEMENT_ENGINE_ADDRESS: process.env.SETTLEMENT_ENGINE_ADDRESS,
+  METRICS_MARKET_FACTORY_ADDRESS: process.env.METRICS_MARKET_FACTORY_ADDRESS,
+  UMA_ORACLE_MANAGER_ADDRESS: process.env.UMA_ORACLE_MANAGER_ADDRESS,
+  USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+  
+  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  REDIS_TOKEN: process.env.REDIS_TOKEN,
+  PRIVATE_KEY: process.env.PRIVATE_KEY,
+  
+  // Service Configuration
+  MATCHING_ENGINE_ENABLED: process.env.MATCHING_ENGINE_ENABLED || 'true',
+  SETTLEMENT_QUEUE_ENABLED: process.env.SETTLEMENT_QUEUE_ENABLED || 'true',
+  WEBSOCKET_SERVICE_ENABLED: process.env.WEBSOCKET_SERVICE_ENABLED || 'true',
+  MONITORING_SERVICE_ENABLED: process.env.MONITORING_SERVICE_ENABLED || 'true',
+  
+  // Performance Configuration
+  MAX_ORDERS_PER_LEVEL: process.env.MAX_ORDERS_PER_LEVEL || '100',
+  MAX_BATCH_SIZE: process.env.MAX_BATCH_SIZE || '50',
+  SETTLEMENT_INTERVAL_MS: process.env.SETTLEMENT_INTERVAL_MS || '5000',
+  CONFIRMATION_DEPTH: process.env.CONFIRMATION_DEPTH || '12',
+  
+  // Trading Fees
+  MAKER_FEE_RATE: process.env.MAKER_FEE_RATE || '10',
+  TAKER_FEE_RATE: process.env.TAKER_FEE_RATE || '15',
+  
+  // WebSocket Configuration
+  WEBSOCKET_PORT: process.env.WEBSOCKET_PORT || '3001',
+  MAX_WEBSOCKET_CONNECTIONS: process.env.MAX_WEBSOCKET_CONNECTIONS || '1000',
+  
   ENABLE_FEATURE_X: process.env.ENABLE_FEATURE_X || 'false',
   DEBUG_MODE: process.env.DEBUG_MODE || 'false',
 }
@@ -213,6 +285,66 @@ export function getContractConfig() {
   }
   
   return contracts
+}
+
+/**
+ * Get order book system contract configuration
+ */
+export function getOrderBookContractConfig() {
+  return {
+    orderRouter: env.ORDER_ROUTER_ADDRESS,
+    centralVault: env.CENTRAL_VAULT_ADDRESS,
+    settlementEngine: env.SETTLEMENT_ENGINE_ADDRESS,
+    metricsMarketFactory: env.METRICS_MARKET_FACTORY_ADDRESS,
+    umaOracleManager: env.UMA_ORACLE_MANAGER_ADDRESS,
+    usdcToken: env.USDC_TOKEN_ADDRESS,
+  }
+}
+
+/**
+ * Get service configuration for order book system
+ */
+export function getServiceConfig() {
+  return {
+    matchingEngineEnabled: env.MATCHING_ENGINE_ENABLED,
+    settlementQueueEnabled: env.SETTLEMENT_QUEUE_ENABLED,
+    websocketServiceEnabled: env.WEBSOCKET_SERVICE_ENABLED,
+    monitoringServiceEnabled: env.MONITORING_SERVICE_ENABLED,
+  }
+}
+
+/**
+ * Get performance configuration
+ */
+export function getPerformanceConfig() {
+  return {
+    maxOrdersPerLevel: env.MAX_ORDERS_PER_LEVEL,
+    maxBatchSize: env.MAX_BATCH_SIZE,
+    settlementInterval: env.SETTLEMENT_INTERVAL_MS,
+    confirmationDepth: env.CONFIRMATION_DEPTH,
+    makerFeeRate: env.MAKER_FEE_RATE,
+    takerFeeRate: env.TAKER_FEE_RATE,
+  }
+}
+
+/**
+ * Get Redis configuration
+ */
+export function getRedisConfig() {
+  return {
+    url: env.REDIS_URL,
+    token: env.REDIS_TOKEN,
+  }
+}
+
+/**
+ * Get WebSocket configuration
+ */
+export function getWebSocketConfig() {
+  return {
+    port: env.WEBSOCKET_PORT,
+    maxConnections: env.MAX_WEBSOCKET_CONNECTIONS,
+  }
 }
 
 /**
