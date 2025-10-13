@@ -163,14 +163,21 @@ export async function GET(request: NextRequest) {
       methods: ['POST', 'GET'],
       supportedEvents: [
         'OrderPlaced',
-        'OrderCancelled', 
-        'OrderExecuted',
-        'OrderAdded',
-        'OrderMatched'
+        'OrderFilled',
+        'TradeExecuted',
+        'OrderCancelled',
+        'PositionChanged',
+        'CollateralDeposited',
+        'CollateralWithdrawn',
+        'PositionUpdated',
+        'PnLRealized'
       ],
       contracts: [
-        'OrderRouter: 0xfB46c35282634b578BfAd7a40A28F089B5f8430A',
-        'OrderBook: 0x07d317C87E6d8AF322463aCF024f1e28D38F6117'
+        'VaultRouter: 0xd97d644cFb69ab409de2d4eE413fACB93CCD2ff7',
+        'OrderBookFactoryMinimal: 0x28036ce16450E9A74D5BbB699b2E11bbA8EC6c75',
+        'TradingRouter: 0x740C78Ab819a3ceeBaCC544350ef40EA1B790C2B',
+        'Aluminum V1 OrderBook: 0x8BA5c36aCA7FC9D9b218EbDe87Cfd55C23f321bE',
+        'MockUSDC: 0xA2258Ff3aC4f5c77ca17562238164a0205A5b289'
       ],
       timestamp: new Date().toISOString()
     });

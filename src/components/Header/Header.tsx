@@ -1,19 +1,19 @@
 'use client'
 
 /**
- * HEADER COMPONENT - DEXCONTRACTSV2 INTEGRATION
+ * HEADER COMPONENT - HYPERLIQUID VAULTROUTER INTEGRATION
  * 
- * This header component integrates with the DexContractsV2 centralized vault system to display:
- * - Live portfolio value (total collateral + unrealized PnL)
- * - Available cash (margin available for new positions)
- * - Unrealized PnL across all VAMMs (color-coded: green for profits, red for losses)
- * - Vault connection status indicator
+ * This header component integrates with the HyperLiquid VaultRouter system to display:
+ * - Live portfolio value (total collateral + realized PnL + unrealized PnL)
+ * - Available cash (collateral available for new positions)
+ * - Unrealized PnL across all positions (color-coded: green for profits, red for losses)
+ * - VaultRouter connection status indicator
  * 
  * Key Features:
  * - Real-time data refresh every 10 seconds
- * - Automatic formatting of USDC values
+ * - Automatic formatting of MockUSDC values
  * - Error handling and connection status display
- * - Integration with existing wallet connection system
+ * - Integration with HyperLiquid deployment on Polygon
  */
 
 import { useState, useMemo, useEffect } from 'react'
@@ -24,7 +24,7 @@ import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import { DepositModal } from '../DepositModal'
 import { useWallet } from '@/hooks/useWallet'
-// Removed useCentralizedVault import - smart contract functionality deleted
+import { CONTRACTS } from '@/lib/contracts'
 import DecryptedText from './DecryptedText';
 import { NetworkStatus } from '@/components/NetworkStatus'
 import { CONTRACT_ADDRESSES, CHAIN_CONFIG } from '@/lib/contractConfig'
@@ -59,40 +59,57 @@ export default function Header() {
   const { walletData, portfolio, refreshPortfolio } = useWallet()
   const router = useRouter()
   
-  // Centralized vault on-chain data
+  // HyperLiquid VaultRouter on-chain data
   const [isVaultConnected, setIsVaultConnected] = useState(false)
-  const [vaultAvailableUSD, setVaultAvailableUSD] = useState(0)
-  const [vaultTotalCollateralUSD, setVaultTotalCollateralUSD] = useState(0)
-  const unrealizedPnL = 0 // TODO: aggregate unrealized PnL from markets if needed
+  const [vaultAvailableCollateral, setVaultAvailableCollateral] = useState(0)
+  const [vaultPortfolioValue, setVaultPortfolioValue] = useState(0)
+  const [unrealizedPnL, setUnrealizedPnL] = useState(0)
 
-  // Minimal ABIs for CentralVault and ERC20
-  const CENTRAL_VAULT_ABI = [
+  // Minimal ABIs for VaultRouter and ERC20
+  const VAULT_ROUTER_ABI = [
     {
       inputs: [],
-      name: 'getPrimaryCollateralToken',
-      outputs: [
-        { name: 'token', type: 'address' },
-        { name: 'isERC20', type: 'bool' },
-        { name: 'name', type: 'string' },
-        { name: 'symbol', type: 'string' },
-      ],
+      name: 'collateralToken',
+      outputs: [{ name: '', type: 'address' }],
       stateMutability: 'view',
       type: 'function',
     },
     {
-      inputs: [
-        { name: 'user', type: 'address' },
-        { name: 'asset', type: 'address' },
-      ],
-      name: 'getUserBalance',
+      inputs: [{ name: 'user', type: 'address' }],
+      name: 'getPortfolioValue',
+      outputs: [{ name: '', type: 'int256' }],
+      stateMutability: 'view',
+      type: 'function',
+    },
+    {
+      inputs: [{ name: 'user', type: 'address' }],
+      name: 'getAvailableCollateral',
+      outputs: [{ name: '', type: 'uint256' }],
+      stateMutability: 'view',
+      type: 'function',
+    },
+    {
+      inputs: [{ name: 'user', type: 'address' }],
+      name: 'getUnrealizedPnL',
+      outputs: [{ name: '', type: 'int256' }],
+      stateMutability: 'view',
+      type: 'function',
+    },
+    {
+      inputs: [{ name: 'user', type: 'address' }],
+      name: 'getMarginSummary',
       outputs: [
         {
           components: [
-            { name: 'available', type: 'uint256' },
-            { name: 'allocated', type: 'uint256' },
-            { name: 'locked', type: 'uint256' },
+            { name: 'totalCollateral', type: 'uint256' },
+            { name: 'marginUsed', type: 'uint256' },
+            { name: 'marginReserved', type: 'uint256' },
+            { name: 'availableCollateral', type: 'uint256' },
+            { name: 'realizedPnL', type: 'int256' },
+            { name: 'unrealizedPnL', type: 'int256' },
+            { name: 'portfolioValue', type: 'int256' },
           ],
-          name: 'balance',
+          name: '',
           type: 'tuple',
         },
       ],
@@ -108,43 +125,101 @@ export default function Header() {
   const fetchVaultData = async () => {
     try {
       if (!walletData.address) return
-      const provider = (typeof window !== 'undefined' && (window as any).ethereum)
-        ? new ethers.BrowserProvider((window as any).ethereum)
-        : new ethers.JsonRpcProvider(CHAIN_CONFIG.rpcUrl)
+      
+      // Force use of Polygon RPC for contract calls to avoid network issues
+      console.log('🔗 Using direct Polygon RPC provider for contract calls')
+      const provider = new ethers.JsonRpcProvider(CHAIN_CONFIG.rpcUrl)
 
       // Check network connection
       try {
         const network = await provider.getNetwork()
-        setIsVaultConnected(Number(network.chainId) === CHAIN_CONFIG.chainId)
-      } catch {
+        const chainId = Number(network.chainId)
+        console.log('🌐 Network info:', {
+          chainId,
+          name: network.name,
+          expectedChainId: CHAIN_CONFIG.chainId,
+          isCorrectNetwork: chainId === CHAIN_CONFIG.chainId
+        })
+        setIsVaultConnected(chainId === CHAIN_CONFIG.chainId)
+        
+        if (chainId !== CHAIN_CONFIG.chainId) {
+          console.warn(`⚠️  Wrong network! Expected ${CHAIN_CONFIG.chainId} (Polygon), got ${chainId}`)
+          return
+        }
+      } catch (error) {
+        console.error('❌ Network connection failed:', error)
         setIsVaultConnected(false)
+        return
       }
 
-      const vault = new ethers.Contract(CONTRACT_ADDRESSES.centralVault, CENTRAL_VAULT_ABI, provider)
-      const primary = await vault.getPrimaryCollateralToken()
-      const collateralToken: string = primary.token || primary[0]
-      const isErc20: boolean = primary.isERC20 ?? primary[1]
-      if (!isErc20 || !collateralToken) return
-
-      const erc20 = new ethers.Contract(collateralToken, ERC20_MIN_ABI, provider)
+      // Use VaultRouter contract with ABI from CONTRACTS
+      console.log('🔍 VaultRouter config:', {
+        address: CONTRACTS.VaultRouter.address,
+        hasAbi: !!CONTRACTS.VaultRouter.abi,
+        abiLength: CONTRACTS.VaultRouter.abi?.length || 0
+      })
+      
+      // Verify contract exists at address
+      const code = await provider.getCode(CONTRACTS.VaultRouter.address)
+      console.log('📝 Contract bytecode length:', code.length)
+      
+      if (code === '0x') {
+        console.error('❌ No contract deployed at VaultRouter address!')
+        setIsVaultConnected(false)
+        return
+      }
+      
+      const vaultRouter = new ethers.Contract(CONTRACTS.VaultRouter.address, CONTRACTS.VaultRouter.abi, provider)
+      console.log('📋 Contract instance created successfully')
+      
+      let collateralTokenAddress: string
+      try {
+        collateralTokenAddress = await vaultRouter.collateralToken()
+        console.log('✅ collateralToken result:', collateralTokenAddress)
+      } catch (error) {
+        console.error('❌ Error calling collateralToken():', error)
+        console.error('Error details:', {
+          message: error.message,
+          code: error.code,
+          data: error.data
+        })
+        // Fallback to expected MockUSDC address
+        collateralTokenAddress = CONTRACT_ADDRESSES.mockUSDC
+        console.log('🔄 Using fallback MockUSDC address:', collateralTokenAddress)
+      }
+      
+      const erc20 = new ethers.Contract(collateralTokenAddress, ERC20_MIN_ABI, provider)
       const decimals: number = Number(await erc20.decimals())
 
-      const userBal = await vault.getUserBalance(walletData.address, collateralToken)
-      const available = userBal.available ?? userBal[0]
-      const allocated = userBal.allocated ?? userBal[1]
-      const locked = userBal.locked ?? userBal[2]
+      // Get comprehensive margin summary from VaultRouter
+      const marginSummary = await vaultRouter.getMarginSummary(walletData.address)
+      
+      // Extract values from the margin summary
+      const portfolioValue = marginSummary.portfolioValue
+      const availableCollateral = marginSummary.availableCollateral
+      const unrealizedPnL = marginSummary.unrealizedPnL
 
-      const availableNum = parseFloat(ethers.formatUnits(available, decimals))
-      const allocatedNum = parseFloat(ethers.formatUnits(allocated, decimals))
-      const lockedNum = parseFloat(ethers.formatUnits(locked, decimals))
+      // Convert from wei to human readable numbers (MockUSDC has 6 decimals)
+      const portfolioValueFormatted = parseFloat(ethers.formatUnits(portfolioValue < 0 ? -portfolioValue : portfolioValue, decimals))
+      const portfolioValueSigned = portfolioValue < 0 ? -portfolioValueFormatted : portfolioValueFormatted
+      
+      const availableCollateralFormatted = parseFloat(ethers.formatUnits(availableCollateral, decimals))
+      
+      const unrealizedPnLFormatted = parseFloat(ethers.formatUnits(unrealizedPnL < 0 ? -unrealizedPnL : unrealizedPnL, decimals))
+      const unrealizedPnLSigned = unrealizedPnL < 0 ? -unrealizedPnLFormatted : unrealizedPnLFormatted
 
-      setVaultAvailableUSD(availableNum)
-      setVaultTotalCollateralUSD(availableNum + allocatedNum + lockedNum)
+      // Update state
+      setVaultPortfolioValue(portfolioValueSigned)
+      setVaultAvailableCollateral(availableCollateralFormatted)
+      setUnrealizedPnL(unrealizedPnLSigned)
+      
     } catch (e) {
+      console.error('Failed to fetch VaultRouter data:', e)
       // Soft-fail to avoid UI break
       setIsVaultConnected(false)
-      setVaultAvailableUSD(0)
-      setVaultTotalCollateralUSD(0)
+      setVaultPortfolioValue(0)
+      setVaultAvailableCollateral(0)
+      setUnrealizedPnL(0)
     }
   }
 
@@ -172,21 +247,20 @@ export default function Header() {
     return showSign && num > 0 ? `+${formatted}` : formatted
   }
 
-  // Calculate portfolio value from vault collateral + unrealized PnL
+  // Calculate portfolio value from VaultRouter
   const totalPortfolioValue = useMemo(() => {
-    const base = vaultTotalCollateralUSD || 0
-    const pnl = parseFloat(String(unrealizedPnL || 0))
-    return formatCurrency((base + pnl).toString())
-  }, [vaultTotalCollateralUSD, unrealizedPnL])
+    const portfolioVal = vaultPortfolioValue || 0
+    return formatCurrency(portfolioVal.toString())
+  }, [vaultPortfolioValue])
 
-  // Handle different states for display values - stub implementation
+  // Handle different states for display values
   const displayPortfolioValue = !walletData.isConnected 
     ? '$0.00'
     : totalPortfolioValue
         
   const displayCashValue = !walletData.isConnected 
     ? '$0.00'
-    : formatCurrency(String(vaultAvailableUSD))
+    : formatCurrency(String(vaultAvailableCollateral))
 
   // Helper function to get display name
   const getDisplayName = () => {
@@ -329,14 +403,14 @@ export default function Header() {
                 >
                   Available Cash
                 </span>
-                {/* Vault connection indicator */}
+                {/* VaultRouter connection indicator */}
                 <div 
                   className="w-2 h-2 rounded-full"
                   style={{
                     backgroundColor: isVaultConnected ? '#00d4aa' : '#ff6b6b',
                     opacity: walletData.isConnected ? 1 : 0.3
                   }}
-                  title={isVaultConnected ? 'Connected to DexV2 Vault' : 'Vault disconnected'}
+                  title={isVaultConnected ? 'Connected to HyperLiquid VaultRouter' : 'VaultRouter disconnected'}
                 />
               </div>
               <DecryptedText
@@ -358,8 +432,7 @@ export default function Header() {
             {walletData.isConnected && 
              unrealizedPnL !== 0 && 
              unrealizedPnL !== null && 
-             unrealizedPnL !== undefined && 
-             parseFloat(String(unrealizedPnL)) !== 0 && (
+             unrealizedPnL !== undefined && (
               <div 
                 className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
                 onClick={() => router.push('/portfolio')}
@@ -374,13 +447,13 @@ export default function Header() {
                   Unrealized PnL
                 </span>
                 <DecryptedText
-                  text={formatCurrency(unrealizedPnL, true)}
+                  text={formatCurrency(String(unrealizedPnL), true)}
                   style={{
                     fontSize: '14px',
-                    color: parseFloat(unrealizedPnL) >= 0 ? '#00d4aa' : '#ff6b6b',
+                    color: unrealizedPnL >= 0 ? '#00d4aa' : '#ff6b6b',
                     fontWeight: 600
                   }}
-                  characters="0123456789"
+                  characters="0123456789$.,+-"
                   speed={100}
                   maxIterations={12}
                   animateOnMount={true}

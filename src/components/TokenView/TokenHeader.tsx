@@ -4,7 +4,11 @@ import Image from 'next/image';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
 import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
-import { useOrderbookMarketStats } from '@/hooks/useOrderbookMarketStats';
+import { useOrderBookPrice } from '@/hooks/useOrderBookPrice';
+import { useOrderBookMarketInfo } from '@/hooks/useOrderBookMarketInfo';
+import { useCentralVault } from '@/hooks/useCentralVault';
+import { useVaultRouterPositions } from '@/hooks/useVaultRouterPositions';
+// Removed hardcoded ALUMINUM_V1_MARKET import - now using dynamic market data
 
 // Helper: format numbers with commas for readability
 const formatNumberWithCommas = (value: number): string => {
@@ -118,20 +122,33 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   //   deploymentStatus: marketData?.metadata?.deployment_status
   // });
   
-  // Get market statistics from OrderBook contract
+  // Legacy contract stats removed - using direct OrderBook calls only
+
+  // TradingRouter removed - using direct OrderBook calls only
+
+  // Get DIRECT market info from OrderBook contract (includes lastPrice from smart contract)
   const {
-    marketData: contractMarketData,
-    isLoading: isLoadingMarketStats,
-    error: marketStatsError,
-    refetch: refreshMarketStats,
-    dataSource
-  } = useOrderbookMarketStats(
-    marketData?.market?.market_address,
-    marketData?.market?.chain_id || 137, // Default to Polygon
-    undefined, // Never use database fallback for price
+    marketInfo: contractMarketInfo,
+    orderBookPrices: contractPrices,
+    isLoading: isLoadingDirectPrice,
+    error: directPriceError,
+    refetch: refreshDirectPrice
+  } = useOrderBookMarketInfo(
+    marketData?.market?.market_address, // Use the actual OrderBook address
     {
       autoRefresh: true,
-      refreshInterval: 60000 // 1 minute for market stats (much less frequent)
+      refreshInterval: 15000 // 15 seconds for direct price (most frequent)
+    }
+  );
+
+  // Keep legacy hook for backward compatibility (but prioritize new data)
+  const {
+    priceData: legacyOrderBookPrice,
+  } = useOrderBookPrice(
+    marketData?.market?.market_address,
+    {
+      autoRefresh: false, // Disable auto-refresh since we're using the new hook as primary
+      refreshInterval: 0
     }
   );
   
@@ -148,89 +165,174 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   //   chainId: marketData?.market?.chain_id
   // });
 
-  // Get user positions from market data
-  const positions = marketData?.positions || [];
-  const isLoadingTrading = isLoadingMarket; // Loading state for positions
-  const tradingError = marketError; // Use same error state
-  const refreshTrading = refetchMarket; // Use same refresh function
+  // Get user positions from VaultRouter
+  const {
+    positions: vaultPositions,
+    marginSummary,
+    isLoading: isLoadingPositions,
+    error: positionsError,
+    refetch: refetchPositions
+  } = useVaultRouterPositions(
+    walletData.isConnected && walletData.address ? walletData.address : undefined,
+    {
+      autoRefresh: true,
+      refreshInterval: 30000 // 30 seconds
+    }
+  );
+  
+  // Legacy position data (kept for backward compatibility)
+  const legacyPositions = marketData?.positions || [];
+  const isLoadingTrading = isLoadingPositions; // Use VaultRouter loading state
+  const tradingError = positionsError; // Use VaultRouter error state
+  const refreshTrading = refetchPositions; // Use VaultRouter refresh function
 
   // Manual refresh function
   const handleManualRefresh = async () => {
-    console.log('🔄 Manual refresh triggered for real-time data');
+    console.log('🔄 Manual refresh triggered for OrderBook data and VaultRouter positions');
     
-    // Refresh unified mark price
-    if (refreshMarketStats) {
-      await refreshMarketStats();
+    // Refresh DIRECT OrderBook price data
+    if (refreshDirectPrice) {
+      await refreshDirectPrice();
     }
     
-    // Refresh trading data and positions
-    if (refreshTrading) {
-      await refreshTrading();
+    // Refresh VaultRouter positions data
+    if (refetchPositions) {
+      await refetchPositions();
+    }
+    
+    // Refresh market data
+    if (refetchMarket) {
+      await refetchMarket();
     }
   };
 
-  // Calculate enhanced token data from orderbook market
+  // Calculate enhanced token data from HyperLiquid orderbook market
   const enhancedTokenData = useMemo((): EnhancedTokenData | null => {
     if (!marketData?.market) return null;
 
     const market = marketData.market;
     
-    // ALWAYS use smart contract as source of truth for current price
-    // Never read from database or off-chain sources
-    const contractPrice = contractMarketData?.lastPrice || 0;
-    const contractBestBid = contractMarketData?.bestBid || 0;
-    const contractBestAsk = contractMarketData?.bestAsk || 0;
+    // SMART CONTRACT MARKET INFO PRIORITY: Use lastPrice from getMarketInfo() as primary source
+    // Priority order: contractMarketInfo.lastPrice > contractPrices.midPrice > legacy fallbacks
     
-    // Calculate current price from contract data only
-    let currentMarkPrice = contractPrice; // Use contract's lastPrice first
+    // Get market info directly from smart contract (our target: lastPrice field)
+    const contractLastPrice = contractMarketInfo?.lastPrice || 0;
+    const contractCurrentPrice = contractMarketInfo?.currentPrice || 0;
+    const contractBestBid = contractPrices?.bestBid || 0;
+    const contractBestAsk = contractPrices?.bestAsk || 0;
+    const contractMidPrice = contractPrices?.midPrice || 0;
     
-    // If no lastPrice from contract, calculate from contract's best bid/ask
-    if (currentMarkPrice === 0 && (contractBestBid > 0 || contractBestAsk > 0)) {
-      if (contractBestBid > 0 && contractBestAsk > 0) {
-        currentMarkPrice = (contractBestBid + contractBestAsk) / 2; // Mid-price
-      } else {
-        currentMarkPrice = contractBestBid || contractBestAsk; // Use available side
-      }
+    // Legacy data for fallback
+    const legacyBestBid = legacyOrderBookPrice?.bestBid || 0;
+    const legacyBestAsk = legacyOrderBookPrice?.bestAsk || 0;
+    const legacyMidPrice = legacyOrderBookPrice?.midPrice || 0;
+    const legacyLastTradePrice = legacyOrderBookPrice?.lastTradePrice || 0;
+    
+    // Calculate display price with PRIORITY TO LASTPRICE FROM SMART CONTRACT
+    let currentMarkPrice = 0;
+    let priceSource = 'none';
+    
+    // 🎯 PRIMARY: Use lastPrice from smart contract market variable (this is our target!)
+    if (contractLastPrice > 0) {
+      currentMarkPrice = contractLastPrice;
+      priceSource = 'contract-lastPrice';
+    }
+    // SECONDARY: Use current mid-price from order book
+    else if (contractMidPrice > 0) {
+      currentMarkPrice = contractMidPrice;
+      priceSource = 'contract-midPrice';
+    }
+    // TERTIARY: Use currentPrice from smart contract (mark price)
+    else if (contractCurrentPrice > 0) {
+      currentMarkPrice = contractCurrentPrice;
+      priceSource = 'contract-currentPrice';
+    }
+    // FALLBACK: Use calculated mid from bid/ask
+    else if (contractBestBid > 0 && contractBestAsk > 0) {
+      currentMarkPrice = (contractBestBid + contractBestAsk) / 2;
+      priceSource = 'contract-calculated-mid';
+    }
+    // FALLBACK: Single side
+    else if (contractBestBid > 0 || contractBestAsk > 0) {
+      currentMarkPrice = contractBestBid || contractBestAsk;
+      priceSource = 'contract-single-side';
+    }
+    // LAST RESORT: Legacy hook data
+    else if (legacyLastTradePrice > 0) {
+      currentMarkPrice = legacyLastTradePrice;
+      priceSource = 'legacy-lastTrade';
+    }
+    else if (legacyMidPrice > 0) {
+      currentMarkPrice = legacyMidPrice;
+      priceSource = 'legacy-mid';
     }
     
-    // Never fall back to database price; keep 0 if contract has no data
-    const currentFundingRate = 0; // OrderBook contracts don't have funding rates
-    const priceChangeValue = contractMarketData?.priceChange24h || 0;
-    const priceChangePercentValue = currentMarkPrice > 0 ? (priceChangeValue / currentMarkPrice) * 100 : 0;
+    // Use contract bid/ask prices with legacy fallback
+    const bestBid = contractBestBid || legacyBestBid;
+    const bestAsk = contractBestAsk || legacyBestAsk;
+    
+    // HyperLiquid OrderBook contracts don't have funding rates or historical price changes
+    const currentFundingRate = 0;
+    const priceChangeValue = 0; // No historical data available from direct OrderBook calls
+    const priceChangePercentValue = 0; // No historical data available from direct OrderBook calls
 
-    console.log('🔄 Recalculating enhanced token data for:', symbol, {
-      contractPrice,
+    console.log('🎯 Smart Contract Market Info for:', symbol, {
+      // PRIMARY: Smart Contract Market Data
+      contractLastPrice, // 🎯 This is our target field!
+      contractCurrentPrice,
       contractBestBid,
       contractBestAsk,
+      contractMidPrice,
+      contractSymbol: contractMarketInfo?.symbol,
+      contractIsActive: contractMarketInfo?.isActive,
+      contractOpenInterest: contractMarketInfo?.openInterest,
+      contractVolume24h: contractMarketInfo?.volume24h,
+      
+      // FALLBACK: Legacy Hook Data
+      legacyBestBid,
+      legacyBestAsk,
+      legacyMidPrice,
+      legacyLastTradePrice,
+      
+      // Final Computed Values
       finalPrice: currentMarkPrice,
-      priceSource: contractPrice > 0 ? 'contract_lastPrice' : 
-                   (contractBestBid > 0 || contractBestAsk > 0) ? 'contract_bidask' : 
-                   'database_fallback',
-      dataSource,
-      contractAvailable: dataSource === 'contract',
+      finalBestBid: bestBid,
+      finalBestAsk: bestAsk,
+      priceSource, // Shows which price source was used
+      spread: bestAsk - bestBid,
+      
+      // Status
+      isLoadingDirectPrice,
+      directPriceError: directPriceError || 'none',
       timestamp: new Date().toISOString()
     });
 
-    // Check if contracts are deployed and available
+    // Check if HyperLiquid contracts are deployed and available
     const hasContracts = !!market.market_address && market.market_status === 'ACTIVE';
     
-    // Use real-time price data when available
+    // Use real-time price data from smart contract market info
     const hasValidRealTimePrice = hasContracts && 
-      !marketStatsError && 
-      !isLoadingMarketStats &&
       currentMarkPrice > 0 &&
-      dataSource === 'contract';
+      contractMarketInfo?.isActive &&
+      !directPriceError && 
+      !isLoadingDirectPrice;
     
-    console.log('🎯 OrderBook price sources:', {
+    console.log('✅ Smart Contract Price Validation:', {
       currentMarkPrice,
-      dataSource,
-      priceChangeValue,
-      priceChangePercentValue,
+      priceSource, // Shows which price source was selected
+      contractLastPrice, // 🎯 Our primary target
+      contractCurrentPrice,
+      bestBid,
+      bestAsk,
       hasValidRealTimePrice,
       hasContracts,
-      marketStatsError: marketStatsError || 'none',
-      isLoadingMarketStats,
-      marketStatus: market.market_status
+      contractIsActive: contractMarketInfo?.isActive,
+      isLoadingDirectPrice,
+      directPriceError: directPriceError || 'none',
+      marketStatus: market.market_status,
+      
+      priceChangeValue,
+      priceChangePercentValue
     });
     
     // Calculate market metrics based on orderbook data
@@ -244,20 +346,23 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       priceChangePercentValue
     );
     
-    // Find user position for this market
-    const userPosition = positions?.find(pos => 
+    // Find user position for this market from VaultRouter
+    // Use the actual market ID from the current market data instead of hardcoded V1
+    const currentMarketId = marketData?.market?.metric_id || symbol;
+    const userPosition = vaultPositions?.find(pos => 
       walletData.isConnected && 
-      walletData.address &&
-      pos.trader_wallet_address.toLowerCase() === walletData.address.toLowerCase()
+      pos.marketId.toLowerCase() === currentMarketId.toLowerCase()
     );
     
-    // Calculate unrealized PnL if position exists
+    // Calculate unrealized PnL for this specific market
     let unrealizedPnL = 0;
     if (userPosition && currentMarkPrice > 0) {
-      const priceDiff = currentMarkPrice - userPosition.entry_price;
-      const multiplier = userPosition.is_long ? 1 : -1;
-      unrealizedPnL = priceDiff * userPosition.quantity * multiplier;
+      const priceDiff = currentMarkPrice - userPosition.entryPrice;
+      unrealizedPnL = priceDiff * userPosition.sizeAbs * (userPosition.isLong ? 1 : -1);
     }
+    
+    // Use total unrealized PnL from margin summary if available (more accurate)
+    const totalUnrealizedPnL = marginSummary?.unrealizedPnL || unrealizedPnL;
     
     return {
       symbol: market.metric_id,
@@ -274,10 +379,10 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       marketCap,
       volume24h,
       timeBasedChanges,
-      // Position info (only when wallet connected)
+      // Position info (only when wallet connected) - using VaultRouter data
       hasPosition: walletData.isConnected && !!userPosition,
-      positionSize: walletData.isConnected ? (userPosition?.quantity.toString() || '0') : '0',
-      unrealizedPnL: walletData.isConnected ? unrealizedPnL.toString() : '0',
+      positionSize: walletData.isConnected ? (userPosition?.sizeAbs.toString() || '0') : '0',
+      unrealizedPnL: walletData.isConnected ? totalUnrealizedPnL.toString() : '0',
       // Deployment and market status
       isDeployed: hasContracts,
       created_at: market.created_at,
@@ -287,7 +392,19 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       openInterestLong: market.open_interest_long || 0,
       openInterestShort: market.open_interest_short || 0
     };
-  }, [marketData, contractMarketData, positions, isLoadingMarketStats, marketStatsError, dataSource, walletData.isConnected, walletData.address, symbol]);
+  }, [
+    marketData, 
+    contractMarketInfo, // Primary: Smart contract market info (includes lastPrice!)
+    contractPrices, // Primary: Smart contract order book prices
+    legacyOrderBookPrice, // Fallback: Legacy price data
+    vaultPositions, // VaultRouter positions
+    marginSummary, // VaultRouter margin summary
+    isLoadingDirectPrice,
+    directPriceError,
+    walletData.isConnected, 
+    walletData.address, 
+    symbol
+  ]);
 
   // console.log('🖥️ Final enhancedTokenData for UI:', {
   //   symbol,
@@ -398,27 +515,25 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const isPositive = enhancedTokenData.priceChangePercent24h >= 0;
   const { change5m, change1h, change6h } = enhancedTokenData.timeBasedChanges;
   
-  // Check for valid real-time price for UI indicators
-  const realTimePriceValue = contractMarketData?.lastPrice || null;
-  const showLiveIndicator = enhancedTokenData.isDeployed && 
-    !marketStatsError && 
-    realTimePriceValue !== null && 
-    !isNaN(realTimePriceValue) && 
-    realTimePriceValue >= 0 &&
-    dataSource === 'contract';
+  // Check for valid real-time price for UI indicators (using smart contract market info)
+  const showLiveIndicator = enhancedTokenData?.isDeployed && 
+    enhancedTokenData?.markPrice > 0 && 
+    contractMarketInfo?.isActive && 
+    !directPriceError && 
+    !isLoadingDirectPrice;
 
   return (
     <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 h-full max-h-full flex flex-col">
       {/* Sticky Token Identity Section - Always Visible */}
       <div className="sticky top-0 z-10 flex-shrink-0">
         <div>
-          <div className="p-2.5">
-            <div className="flex items-center justify-between mb-2">
+          <div className="p-2">
+            <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-2">
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${enhancedTokenData.isDeployed ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                <span className="text-[11px] font-medium text-[#808080]">Token Information</span>
+                <div className={`w-1 h-1 rounded-full flex-shrink-0 ${enhancedTokenData.isDeployed ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                <span className="text-[10px] font-medium text-[#808080]">Token Information</span>
               </div>
-              <span className="text-[10px] text-[#606060]">{enhancedTokenData.marketStatus}</span>
+              <span className="text-[9px] text-[#606060]">{enhancedTokenData.marketStatus}</span>
             </div>
             
             <div className="flex items-center gap-2">
@@ -426,32 +541,32 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 <Image 
                   src={enhancedTokenData.logo} 
                   alt={enhancedTokenData.name}
-                  width={40}
-                  height={40}
-                  className="w-10 h-10 rounded border border-[#333333] object-cover flex-shrink-0"
+                  width={28}
+                  height={28}
+                  className="w-7 h-7 rounded border border-[#333333] object-cover flex-shrink-0"
                 />
               )}
               <div className="min-w-0 flex-1">
-                <h1 className="text-sm font-medium text-white mb-1 truncate">
+                <h1 className="text-xs font-medium text-white mb-0.5 truncate">
                   {enhancedTokenData.name}
                 </h1>
                 <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
                     {enhancedTokenData.symbol}
                   </span>
-                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
                     {enhancedTokenData.chain}
                   </span>
-                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
                     OrderBook
                   </span>
                   {!enhancedTokenData.isDeployed && (
-                    <span className="text-[10px] text-yellow-400 bg-[#2A2A1A] px-1.5 py-0.5 rounded">
+                    <span className="text-[10px] text-yellow-400 bg-[#2A2A1A] px-1 py-0.5 rounded">
                       PENDING
                     </span>
                   )}
                   {enhancedTokenData.hasPosition && (
-                    <span className="text-[10px] text-green-400 bg-[#1A2A1A] px-1.5 py-0.5 rounded">
+                    <span className="text-[10px] text-green-400 bg-[#1A2A1A] px-1 py-0.5 rounded">
                       POS
                     </span>
                   )}
@@ -461,10 +576,10 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             
             {/* Conditional Price Display - Shows when price section is scrolled out of view */}
             {!isPriceSectionVisible && (
-              <div className="mt-2 pt-2 border-t border-[#333333] animate-in fade-in duration-200">
+              <div className="mt-1.5 pt-1.5 border-t border-[#333333] animate-in fade-in duration-200">
                 <div className="flex items-center justify-between">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-bold text-white">
+                    <span className="text-[13px] font-bold text-white">
                       ${formatNumberWithCommas(enhancedTokenData.markPrice)}
                     </span>
                     <span className={`text-[10px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
@@ -490,26 +605,26 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
       {/* Price Section - Sophisticated Design */}
       <div ref={priceSectionRef} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-        <div className="p-2.5">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${showLiveIndicator ? 'bg-green-400 animate-pulse' : 'bg-blue-400'}`} />
-              <span className="text-[11px] font-medium text-[#808080]">Current Price</span>
+        <div className="p-2">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1 h-1 rounded-full flex-shrink-0 ${showLiveIndicator ? 'bg-green-400 animate-pulse' : 'bg-blue-400'}`} />
+              <span className="text-[10px] font-medium text-[#808080]">Current Price</span>
             </div>
             <div className="flex items-center gap-1">
               {showLiveIndicator && (
-                <span className="text-[8px] text-green-400 bg-[#1A2A1A] px-1 py-0.5 rounded">LIVE</span>
+                <span className="text-[7px] text-green-400 bg-[#1A2A1A] px-1 py-0.5 rounded">LIVE</span>
               )}
-              <span className="text-[10px] text-[#606060]">USDC</span>
+              <span className="text-[9px] text-[#606060]">USDC</span>
             </div>
           </div>
           
           <div className="flex items-center justify-between">
             <div className="flex items-baseline gap-2">
-              <span className="text-lg font-bold text-white">
+              <span className="text-base font-bold text-white">
                 ${formatNumberWithCommas(enhancedTokenData.markPrice)}
               </span>
-              <span className={`text-xs font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+              <span className={`text-[11px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
                 {isPositive ? '↑' : '↓'} {Math.abs(enhancedTokenData.priceChangePercent24h).toFixed(2)}%
               </span>
             </div>
@@ -518,15 +633,15 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             {enhancedTokenData.isDeployed && (
               <button
                 onClick={handleManualRefresh}
-                disabled={isLoadingMarketStats || isLoadingTrading}
-                className={`w-6 h-6 flex items-center justify-center rounded transition-all duration-200 ${
-                  isLoadingMarketStats || isLoadingTrading 
+                disabled={isLoadingDirectPrice || isLoadingTrading}
+                className={`w-5 h-5 flex items-center justify-center rounded transition-all duration-200 ${
+                  isLoadingDirectPrice || isLoadingTrading 
                     ? 'bg-blue-400/10 text-blue-400' 
                     : 'bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#606060] hover:text-white'
                 }`}
-                title="Refresh mark price and trading data"
+                title="Refresh direct OrderBook price data"
               >
-                <span className={`text-xs ${isLoadingMarketStats || isLoadingTrading ? 'animate-spin' : ''}`}>
+                <span className={`text-[10px] ${isLoadingDirectPrice || isLoadingTrading ? 'animate-spin' : ''}`}>
                   ⟳
                 </span>
               </button>
@@ -534,17 +649,17 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           </div>
           
           {/* Price Details */}
-          <div className="mt-2 space-y-1 text-[9px]">
+          <div className="mt-1.5 space-y-1 text-[9px]">
             <div className="flex justify-between">
               <span className="text-[#606060]">Mark Price:</span>
               <div className="flex items-center gap-1">
                 <span className="text-white font-mono">${formatNumberWithCommas(enhancedTokenData.markPrice)}</span>
-                {isLoadingMarketStats && <span className="text-blue-400 animate-spin">⟳</span>}
-                {!isLoadingMarketStats && enhancedTokenData.isDeployed && !marketStatsError && (
-                  <span className="text-green-400" title="Real-time from contract">●</span>
+                {isLoadingDirectPrice && <span className="text-blue-400 animate-spin">⟳</span>}
+                {!isLoadingDirectPrice && enhancedTokenData.isDeployed && showLiveIndicator && (
+                  <span className="text-green-400" title="Real-time from direct OrderBook contract">●</span>
                 )}
-                {marketStatsError && (
-                  <span className="text-yellow-400" title="Fallback price">◐</span>
+                {directPriceError && (
+                  <span className="text-red-400" title="Error fetching OrderBook price data">⚠</span>
                 )}
               </div>
             </div>
@@ -570,10 +685,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 <span className="text-yellow-400">Deployment Pending</span>
               </div>
             )}
-            {marketStatsError && (
+
+            {directPriceError && (
               <div className="flex justify-between">
-                <span className="text-[#606060]">Price Source:</span>
-                <span className="text-yellow-400">Fallback Mode</span>
+                <span className="text-[#606060]">Error:</span>
+                <span className="text-red-400">OrderBook Connection</span>
               </div>
             )}
             {tradingError && (
@@ -586,173 +702,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         </div>
       </div>
 
-      {/* Position Info - Sophisticated Design */}
-      {walletData.isConnected && enhancedTokenData.isDeployed && (
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-          <div className="p-2.5">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                  enhancedTokenData.hasPosition 
-                    ? parseFloat(enhancedTokenData.unrealizedPnL) >= 0 ? 'bg-green-400' : 'bg-red-400'
-                    : 'bg-[#404040]'
-                }`} />
-                <span className="text-[11px] font-medium text-[#808080]">Position</span>
-              </div>
-              <span className="text-[10px] text-[#606060]">
-                {enhancedTokenData.hasPosition ? 'ACTIVE' : 'NONE'}
-              </span>
-            </div>
-            
-            {enhancedTokenData.hasPosition ? (
-              <div className="space-y-1 text-[9px]">
-                <div className="flex justify-between">
-                  <span className="text-[#606060]">Size:</span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-white font-mono">
-                      ${formatNumberWithCommas(parseFloat(enhancedTokenData.positionSize))}
-                    </span>
-                    {isLoadingTrading && <span className="text-blue-400 animate-spin">⟳</span>}
-                  </div>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[#606060]">Unrealized PnL:</span>
-                  <span className={`font-mono ${parseFloat(enhancedTokenData.unrealizedPnL) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    ${formatNumberWithCommas(parseFloat(enhancedTokenData.unrealizedPnL))}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center py-1">
-                <span className="text-[10px] text-[#606060]">
-                  {isLoadingTrading ? 'Loading position...' : 'No active position'}
-                </span>
-              </div>
-            )}
-            
-            {tradingError && (
-              <div className="mt-2 pt-1 border-t border-[#1A1A1A]">
-                <div className="flex justify-between text-[9px]">
-                  <span className="text-[#606060]">Status:</span>
-                  <span className="text-red-400">Trading Data Error</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Position summary removed to reduce vertical height */}
 
-      {/* Market Statistics - Sophisticated Design */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Statistics</h4>
-          <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-            Live
-          </div>
-        </div>
-        
-        {/* Market Info Grid */}
-        <div className="grid grid-cols-2 gap-1.5">
-          {/* Created */}
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-purple-400" />
-                <span className="text-[9px] text-[#808080] uppercase">Created</span>
-              </div>
-            </div>
-            <span className="text-[10px] font-medium text-white">
-              {enhancedTokenData.created_at ? `${Math.max(0, Math.floor((Date.now() - new Date(enhancedTokenData.created_at).getTime()) / (1000 * 60 * 60 * 24)))}d ago` : 'N/A'}
-            </span>
-          </div>
-
-          {/* Market Cap */}
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-blue-400" />
-                <span className="text-[9px] text-[#808080] uppercase">Market Cap</span>
-              </div>
-            </div>
-            <span className="text-[10px] font-medium text-white" title={formatLargeNumber(enhancedTokenData.marketCap)}>
-              {formatLargeNumber(enhancedTokenData.marketCap)}
-            </span>
-          </div>
-
-          {/* Volume */}
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-cyan-400" />
-                <span className="text-[9px] text-[#808080] uppercase">Volume 24h</span>
-              </div>
-            </div>
-            <span className="text-[10px] font-medium text-white" title={formatLargeNumber(enhancedTokenData.volume24h)}>
-              {formatLargeNumber(enhancedTokenData.volume24h)}
-            </span>
-          </div>
-
-          {/* Mark Price */}
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-1">
-                <div className="w-1 h-1 rounded-full bg-green-400" />
-                <span className="text-[9px] text-[#808080] uppercase">Mark Price</span>
-              </div>
-            </div>
-            <span className="text-[10px] font-medium text-white font-mono" title={`$${formatNumberWithCommas(enhancedTokenData.markPrice)}`}>
-              ${formatNumberWithCommas(enhancedTokenData.markPrice)}
-            </span>
-          </div>
-        </div>
-
-        {/* Price Changes Grid */}
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-          <div className="p-2.5">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-yellow-400" />
-                <span className="text-[11px] font-medium text-[#808080]">Price Changes</span>
-              </div>
-              <span className="text-[10px] text-[#606060]">Timeframes</span>
-            </div>
-            
-            <div className="grid grid-cols-4 gap-2">
-              {/* 5min Change */}
-              <div className="text-center">
-                <div className="text-[8px] text-[#606060] mb-0.5 uppercase">5min</div>
-                <span className={`text-[9px] font-medium ${getChangeColor(change5m)}`}>
-                  {change5m >= 0 ? '+' : ''}{change5m.toFixed(2)}%
-                </span>
-              </div>
-
-              {/* 1h Change */}
-              <div className="text-center">
-                <div className="text-[8px] text-[#606060] mb-0.5 uppercase">1h</div>
-                <span className={`text-[9px] font-medium ${getChangeColor(change1h)}`}>
-                  {change1h >= 0 ? '+' : ''}{change1h.toFixed(2)}%
-                </span>
-              </div>
-
-              {/* 6h Change */}
-              <div className="text-center">
-                <div className="text-[8px] text-[#606060] mb-0.5 uppercase">6h</div>
-                <span className={`text-[9px] font-medium ${getChangeColor(change6h)}`}>
-                  {change6h >= 0 ? '+' : ''}{change6h.toFixed(2)}%
-                </span>
-              </div>
-
-              {/* 24h Change */}
-              <div className="text-center">
-                <div className="text-[8px] text-[#606060] mb-0.5 uppercase">24h</div>
-                <span className={`text-[9px] font-medium ${getChangeColor(enhancedTokenData.priceChangePercent24h)}`}>
-                  {enhancedTokenData.priceChangePercent24h >= 0 ? '+' : ''}{enhancedTokenData.priceChangePercent24h.toFixed(2)}%
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Market Statistics and Price Changes removed to reduce vertical height */}
       
       {/* Custom scrollbar styles */}
       <style jsx>{`

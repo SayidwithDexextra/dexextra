@@ -77,22 +77,21 @@ export function useRealtimeOrders(options: UseRealtimeOrdersOptions = {}): UseRe
       let fetchedOrders: Order[] = [];
 
       if (trader) {
-        // Fetch user-specific orders
+        // Fetch user-specific orders using HyperLiquid OrderBook contract
         console.log('🔍 [REALTIME] Fetching orders for trader:', trader);
+        console.log('🔍 [REALTIME] Using HyperLiquid OrderBook getUserOrders...');
         
-        // Get both active orders and recent history
-        const [activeOrders, orderHistory] = await Promise.all([
-          orderService.getUserActiveOrders(trader),
-          orderService.getUserOrderHistory(trader, 50, 0)
-        ]);
+        // Use HyperLiquid OrderBook contract directly
+        const orderBookOrders = await orderService.getUserOrdersFromOrderBook(trader, metricId);
 
-        // Combine and deduplicate
-        const allUserOrders = [...activeOrders, ...orderHistory];
-        const uniqueOrders = allUserOrders.filter((order, index, self) => 
-          index === self.findIndex(o => o.id === order.id)
-        );
+        console.log('📊 [REALTIME] HyperLiquid OrderBook getUserOrders result:', {
+          orderCount: orderBookOrders.length,
+          orders: orderBookOrders.slice(0, 2), // Log first 2 for debugging
+          trader,
+          metricId
+        });
 
-        fetchedOrders = uniqueOrders;
+        fetchedOrders = orderBookOrders;
         
         // If we have a specific metricId, filter for it
         if (metricId) {
@@ -120,16 +119,16 @@ export function useRealtimeOrders(options: UseRealtimeOrdersOptions = {}): UseRe
               // Transform Supabase orders to frontend Order format
               fetchedOrders = (data as any).orders.map((order: any) => ({
                 id: order.order_id?.toString() || `order-${Date.now()}`,
-                trader: order.trader_wallet_address || '0x0000000000000000000000000000000000000000',
+                trader: order.trader_wallet_address || order.user_address || '0x0000000000000000000000000000000000000000',
                 metricId: metricId,
                 type: (order.order_type || 'limit').toLowerCase() as any,
                 side: (order.side || 'buy').toLowerCase() as any,
-                quantity: order.quantity || 0,
-                price: order.price || 0,
-                filledQuantity: order.filled_quantity || 0,
+                quantity: order.quantity || order.size || 0,
+                price: order.price, // Keep null for market orders
+                filledQuantity: order.filled_quantity || order.filled || 0,
                 timestamp: order.created_at ? new Date(order.created_at).getTime() : Date.now(),
                 expiryTime: order.expiry_time ? new Date(order.expiry_time).getTime() : null,
-                status: (order.order_status || 'pending').toLowerCase() as any,
+                status: (order.order_status || order.status || 'pending').toLowerCase().replace('partial', 'partially_filled') as any,
                 timeInForce: (order.time_in_force || 'gtc').toLowerCase() as any,
                 stopPrice: order.stop_price || null,
                 icebergQty: order.iceberg_quantity || null,
@@ -159,7 +158,7 @@ export function useRealtimeOrders(options: UseRealtimeOrdersOptions = {}): UseRe
         
         // Filter active orders (pending and partially filled orders with remaining quantity)
         const activeOrders = fetchedOrders.filter(order => 
-          (order.status === 'pending' || order.status === 'partially_filled') &&
+          (order.status === 'pending' || order.status === 'partially_filled' || (order.status as any) === 'partial') &&
           (order.quantity - order.filledQuantity) > 0
         );
         

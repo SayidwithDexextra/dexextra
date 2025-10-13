@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ethers, BrowserProvider, Contract } from 'ethers'
 import { CONTRACTS } from '@/lib/contracts'
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 
 // Extend Window interface for ethereum provider
 declare global {
@@ -116,28 +117,39 @@ export function useCentralVault(walletAddress?: string) {
 
       // Test contract connection
       const vaultContract = new Contract(
-        CONTRACTS.CentralVault.address,
-        CONTRACTS.CentralVault.abi,
+        CONTRACTS.VaultRouter.address,
+        CONTRACTS.VaultRouter.abi,
         provider
       )
 
       console.log('🔗 Testing vault contract connection...')
 
-      // Get primary collateral token info
-      const primaryToken = await vaultContract.primaryCollateralToken()
-      const isERC20 = await vaultContract.primaryCollateralIsERC20()
+      // Get collateral token info from VaultRouter with error handling
+      let collateralToken: string
+      try {
+        collateralToken = await vaultContract.collateralToken()
+        console.log('✅ collateralToken() result:', collateralToken)
+      } catch (error) {
+        console.error('❌ Error calling collateralToken():', error)
+        // Fallback to expected MockUSDC address
+        collateralToken = CONTRACT_ADDRESSES.mockUSDC
+        console.log('🔄 Using fallback MockUSDC address:', collateralToken)
+      }
+      
+      // VaultRouter always uses ERC20 tokens (MockUSDC)
+      const isERC20 = true
 
       console.log('✅ Vault contract connected successfully:', {
-        primaryToken,
+        collateralToken,
         isERC20,
-        vaultAddress: CONTRACTS.CentralVault.address
+        vaultAddress: CONTRACTS.VaultRouter.address
       })
 
       setState(prev => ({
         ...prev,
         isConnected: true,
         isLoading: false,
-        primaryCollateralToken: primaryToken,
+        primaryCollateralToken: collateralToken,
         isERC20Collateral: isERC20,
         error: null
       }))
@@ -170,17 +182,19 @@ export function useCentralVault(walletAddress?: string) {
     try {
       const provider = new BrowserProvider(window.ethereum)
       const vaultContract = new Contract(
-        CONTRACTS.CentralVault.address,
-        CONTRACTS.CentralVault.abi,
+        CONTRACTS.VaultRouter.address,
+        CONTRACTS.VaultRouter.abi,
         provider
       )
 
-      const balance = await vaultContract.userBalances(walletAddress, state.primaryCollateralToken)
+      // Get margin summary which includes collateral and margin info
+      const marginSummary = await vaultContract.getMarginSummary(walletAddress)
       
-      console.log('📊 Raw balance data from contract:', {
-        available: balance.available?.toString(),
-        locked: balance.locked?.toString(),
-        pendingWithdrawal: balance.pendingWithdrawal?.toString(),
+      console.log('📊 Raw balance data from VaultRouter:', {
+        totalCollateral: marginSummary.totalCollateral?.toString(),
+        marginUsed: marginSummary.marginUsed?.toString(),
+        marginReserved: marginSummary.marginReserved?.toString(),
+        availableCollateral: marginSummary.availableCollateral?.toString(),
         walletAddress,
         primaryCollateralToken: state.primaryCollateralToken
       })
@@ -200,9 +214,9 @@ export function useCentralVault(walletAddress?: string) {
       }
       
       const userBalance: UserBalance = {
-        available: safeFormatUnits(balance.available, 6), // USDC has 6 decimals
-        locked: safeFormatUnits(balance.locked, 6),
-        pendingWithdrawal: safeFormatUnits(balance.pendingWithdrawal, 6)
+        available: safeFormatUnits(marginSummary.availableCollateral, 6), // USDC has 6 decimals
+        locked: safeFormatUnits(marginSummary.marginUsed + marginSummary.marginReserved, 6), // Total margin used + reserved
+        pendingWithdrawal: '0' // VaultRouter doesn't have pending withdrawals
       }
 
       console.log('✅ Successfully formatted user balance:', userBalance)
@@ -278,7 +292,7 @@ export function useCentralVault(walletAddress?: string) {
 
     // Additional validation after connection attempt
     if (!state.primaryCollateralToken || !state.isERC20Collateral) {
-      throw new Error('Vault not properly initialized for USDC deposits')
+      throw new Error('VaultRouter not properly initialized for MockUSDC deposits')
     }
 
     try {
@@ -297,14 +311,14 @@ export function useCentralVault(walletAddress?: string) {
       const signer = await provider.getSigner()
       
       console.log('🔗 Using contracts:', {
-        vault: CONTRACTS.CentralVault.address,
+        vault: CONTRACTS.VaultRouter.address,
         mockUSDC: CONTRACTS.MockUSDC.address,
         amount: amount + ' USDC'
       })
       
       const vaultContract = new Contract(
-        CONTRACTS.CentralVault.address,
-        CONTRACTS.CentralVault.abi,
+        CONTRACTS.VaultRouter.address,
+        CONTRACTS.VaultRouter.abi,
         signer
       )
 
@@ -321,18 +335,65 @@ export function useCentralVault(walletAddress?: string) {
       }
 
       // Check and handle allowance
-      const allowance = await usdcContract.allowance(walletAddress, CONTRACTS.CentralVault.address)
+      const allowance = await usdcContract.allowance(walletAddress, CONTRACTS.VaultRouter.address)
+      console.log('💰 Current USDC allowance:', ethers.formatUnits(allowance, 6), 'USDC')
+      console.log('💰 Required amount:', ethers.formatUnits(amountWei, 6), 'USDC')
       
       if (allowance < amountWei) {
-        console.log('🔓 Approving USDC spending for vault...')
-        const approveTx = await usdcContract.approve(CONTRACTS.CentralVault.address, amountWei)
+        console.log('🔓 Insufficient allowance, approving USDC spending for vault...')
+        
+        // Approve a large amount (1M USDC) to avoid repeated approvals
+        const approvalAmount = ethers.parseUnits("1000000", 6) // 1M USDC
+        console.log('🔓 Approving', ethers.formatUnits(approvalAmount, 6), 'USDC for future transactions')
+        
+        const approveTx = await usdcContract.approve(CONTRACTS.VaultRouter.address, approvalAmount)
         const approveReceipt = await approveTx.wait()
         console.log('✅ USDC approval completed:', approveReceipt.transactionHash)
+        
+        // Wait additional confirmation and verify allowance was updated
+        console.log('⏳ Waiting for allowance to be confirmed on-chain...')
+        let retries = 0
+        const maxRetries = 10
+        while (retries < maxRetries) {
+          const updatedAllowance = await usdcContract.allowance(walletAddress, CONTRACTS.VaultRouter.address)
+          if (updatedAllowance >= amountWei) {
+            console.log('✅ Allowance confirmed on-chain:', ethers.formatUnits(updatedAllowance, 6), 'USDC')
+            break
+          }
+          console.log('⏳ Allowance not yet confirmed, retrying...', ethers.formatUnits(updatedAllowance, 6), 'USDC')
+          await new Promise(resolve => setTimeout(resolve, 1000)) // Wait 1 second
+          retries++
+        }
+        
+        if (retries >= maxRetries) {
+          const finalAllowance = await usdcContract.allowance(walletAddress, CONTRACTS.VaultRouter.address)
+          throw new Error(`Allowance not updated after ${maxRetries} confirmations. Current: ${ethers.formatUnits(finalAllowance, 6)} USDC, Required: ${ethers.formatUnits(amountWei, 6)} USDC. Please try again.`)
+        }
       }
 
-      // Execute REAL deposit to CentralVault
-      console.log('🏦 Executing REAL deposit to CentralVault:', amount, 'MOCK_USDC')
-      const depositTx = await vaultContract.depositPrimaryCollateral(amountWei)
+      // Execute REAL deposit to VaultRouter
+      console.log('🏦 Executing REAL deposit to VaultRouter:', amount, 'MOCK_USDC')
+      console.log('🔍 Final pre-deposit check:', {
+        userBalance: ethers.formatUnits(await usdcContract.balanceOf(walletAddress), 6) + ' USDC',
+        allowance: ethers.formatUnits(await usdcContract.allowance(walletAddress, CONTRACTS.VaultRouter.address), 6) + ' USDC',
+        depositAmount: ethers.formatUnits(amountWei, 6) + ' USDC'
+      })
+      
+      let depositTx
+      try {
+        depositTx = await vaultContract.depositCollateral(amountWei)
+      } catch (depositError) {
+        console.error('❌ Deposit transaction failed:', depositError)
+        
+        // Check if it's an allowance issue
+        if (depositError.message?.includes('allowance') || depositError.data?.includes('fb8f41b2')) {
+          throw new Error('Insufficient USDC allowance. Please approve more tokens and try again.')
+        } else if (depositError.message?.includes('balance')) {
+          throw new Error('Insufficient USDC balance.')
+        } else {
+          throw new Error(`Deposit failed: ${depositError.message || 'Unknown error'}`)
+        }
+      }
       
       console.log('⏳ Waiting for blockchain confirmation...', depositTx.hash)
       
@@ -406,9 +467,23 @@ export function useCentralVault(walletAddress?: string) {
       console.log('🔗 Returning transaction hash:', transactionHash)
       return transactionHash
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ REAL deposit failed:', error)
-      throw error
+      
+      // Handle specific error types
+      let userFriendlyMessage = error.message || 'Deposit failed'
+      
+      if (error.message?.includes('ERC20InsufficientAllowance') || error.data?.includes('0xfb8f41b2')) {
+        userFriendlyMessage = 'Insufficient USDC allowance. Please ensure you have approved the VaultRouter to spend your USDC tokens.'
+      } else if (error.message?.includes('insufficient')) {
+        userFriendlyMessage = 'Insufficient USDC balance for deposit.'
+      } else if (error.message?.includes('paused')) {
+        userFriendlyMessage = 'VaultRouter is currently paused. Please try again later.'
+      } else if (error.message?.includes('user denied') || error.message?.includes('User denied')) {
+        userFriendlyMessage = 'Transaction cancelled by user.'
+      }
+      
+      throw new Error(userFriendlyMessage)
     }
   }, [walletAddress, state.isConnected, state.primaryCollateralToken, state.isERC20Collateral, loadUserBalance, checkVaultConnection])
 
@@ -441,7 +516,7 @@ export function useCentralVault(walletAddress?: string) {
     lockedBalance: state.userBalance?.locked || '0',
     
     // Contract addresses for reference
-    vaultAddress: CONTRACTS.CentralVault.address,
+    vaultAddress: CONTRACTS.VaultRouter.address,
     mockUSDCAddress: CONTRACTS.MockUSDC.address,
   }
 }

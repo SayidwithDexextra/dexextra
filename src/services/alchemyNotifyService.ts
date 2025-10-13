@@ -218,33 +218,57 @@ export class AlchemyNotifyService {
   }
 
   /**
-   * Create OrderBook webhook for order contract events
+   * Create OrderBook webhook for Hyperliquid contract events
+   * Updated for September 2, 2025 deployment
    */
   async createOrderBookWebhook(): Promise<string> {
     try {
       console.log('🎯 Creating OrderBook webhook for contract events');
 
-      // OrderBook contract addresses and event signatures
-      const orderBookContracts = [
-        '0xfB46c35282634b578BfAd7a40A28F089B5f8430A', // OrderRouter (Updated)
-        '0x07d317C87E6d8AF322463aCF024f1e28D38F6117'  // OrderBook (SILVER_V1)
+      // Hyperliquid contract addresses (September 2, 2025 deployment)
+      const hyperliquidContracts = [
+        '0xd97d644cFb69ab409de2d4eE413fACB93CCD2ff7', // VaultRouter
+        '0x28036ce16450E9A74D5BbB699b2E11bbA8EC6c75', // OrderBookFactoryMinimal
+        '0x740C78Ab819a3ceeBaCC544350ef40EA1B790C2B', // TradingRouter
+        '0x8BA5c36aCA7FC9D9b218EbDe87Cfd55C23f321bE', // Aluminum V1 OrderBook
+        '0xA2258Ff3aC4f5c77ca17562238164a0205A5b289', // MockUSDC
+        
+        // Legacy contracts (for backward compatibility)
+        '0xfB46c35282634b578BfAd7a40A28F089B5f8430A', // Old OrderRouter
+        '0x07d317C87E6d8AF322463aCF024f1e28D38F6117'  // Old OrderBook (SILVER_V1)
       ];
 
-      const orderEventSignatures = [
-        '0x5b954fa335c624976b5c2dba7c7a172770d02d8b36e6da6cfcc1b79baa62bfc8', // OrderPlaced
-        '0xc4058ebc534b64ecb27b2d4eaa1904f98997ec18ebe6ada4117593dde89478cc', // OrderCancelled
-        '0x1cd65e6e4f6a6bfcff65064f4e22d514f481a38dcbe4c2ad13ccde1b22e06941', // OrderExecuted
-        '0x184a980efa61c0acfeff92c0613bf2d3aceedadec9002d919c6bde9218b56c68', // OrderAdded
-        '0xe5426fa5d075d3a0a2ce3373a3df298c78eec0ded097810b0e69a92c21b4b0b3'  // OrderMatched
+      // Event topic hashes for Hyperliquid (highest and high priority)
+      const hyperliquidEventTopics = [
+        // 🟢 HIGHEST PRIORITY - Essential for order book UI
+        '0x348379522536ddee6c265b4008f5063ca68d4ee1e27925ba2a01236bab3c59e6', // OrderPlaced (ACTUAL from deployed contract)
+        '0xb18a04414e157e27a7bd658d83da50aeed90007f362102747b7d7f34b8b75ce1', // OrderPlaced (calculated - may not match)
+        '0xec7abeea99156aa60ed39992d78c95b0082f64d3469447a70c7fd11981912b9f', // OrderFilled
+        '0xb0100c4a25ad7c8bfaa42766f529176b9340f45755da88189bd092353fe50f0b', // TradeExecuted
+        
+        // 🟡 HIGH PRIORITY - Important for transaction tables
+        '0xdc408a4b23cfe0edfa69e1ccca52c3f9e60bc441b3b25c09ec6defb38896a4f3', // OrderCancelled
+        '0x0c8435a0f8411018cf19a0463e3df6a28eaf6be12047606d6a194d4eef7941e5', // PositionChanged
+        '0x56bf5f326bb68ef9ee892959743daa870afd33ec3251e5136317ae3cb1c6ccc6', // CollateralDeposited
+        '0x781581308889fe2553086d915caa15566aa19d071c47a980e90b71a7a45113d2', // CollateralWithdrawn
+        '0x98186e5bd1f3f83b0feafb1ba9482dc65f678d929b705c7d7714cec6bee0ab5c', // PositionUpdated
+        '0x908b4f47c9e48e3e3235843a31b7b41edf3cb7ed92150bd411b134f5c4f61f8a', // PnLRealized
+        
+        // Legacy event hashes (for backward compatibility)
+        '0x5b954fa335c624976b5c2dba7c7a172770d02d8b36e6da6cfcc1b79baa62bfc8', // Old ORDER_PLACED
+        '0xc4058ebc534b64ecb27b2d4eaa1904f98997ec18ebe6ada4117593dde89478cc', // Old ORDER_CANCELLED
+        '0x1cd65e6e4f6a6bfcff65064f4e22d514f481a38dcbe4c2ad13ccde1b22e06941', // Old ORDER_EXECUTED
+        '0x184a980efa61c0acfeff92c0613bf2d3aceedadec9002d919c6bde9218b56c68', // Old ORDER_ADDED
+        '0xe5426fa5d075d3a0a2ce3373a3df298c78eec0ded097810b0e69a92c21b4b0b3'  // Old ORDER_MATCHED
       ];
 
-      // GraphQL query for OrderBook events
+      // GraphQL query for Hyperliquid events
       const graphqlQuery = `
         {
           block {
             logs(filter: {
-              addresses: [${orderBookContracts.map(addr => `"${addr}"`).join(', ')}]
-              topics: [${orderEventSignatures.map(sig => `"${sig}"`).join(', ')}]
+              addresses: [${hyperliquidContracts.map(addr => `"${addr}"`).join(', ')}]
+              topics: [${hyperliquidEventTopics.map(sig => `"${sig}"`).join(', ')}]
             }) {
               account {
                 address

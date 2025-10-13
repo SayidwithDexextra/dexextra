@@ -14,7 +14,7 @@ import { CONTRACTS } from '@/lib/contracts';
  * This processor handles the settlement of OFF-CHAIN MATCHED TRADES, not placing new orders.
  * 
  * Flow:
- * 1. Orders are placed via API → stored in `off_chain_orders` table
+ * 1. Orders are placed via API → stored in `orders` table
  * 2. Orders are matched via ServerlessMatchingEngine → stored in `trade_matches` table (PENDING)
  * 3. SettlementProcessor processes PENDING trades:
  *    - Groups trades into settlement batches
@@ -756,7 +756,7 @@ export class SettlementProcessor {
             }
 
             const { data, error } = await this.supabase
-              .from('off_chain_orders')
+              .from('orders')
               .select('order_id')
               .eq('id', orderUuid)
               .single();

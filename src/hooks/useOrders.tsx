@@ -45,34 +45,31 @@ export function useOrders(options: UseOrdersOptions = {}): UseOrdersReturn {
       let fetchedOrders: Order[] = [];
 
       if (trader) {
-        // Fetch user-specific orders
+        // Fetch user-specific orders using HyperLiquid OrderBook contract
         console.log('🔍 Fetching orders for trader:', trader);
-        console.log('🔍 Using orderService.getUserActiveOrders...');
+        console.log('🔍 Using HyperLiquid OrderBook getUserOrders...');
         
-        // Get both active orders and recent history
-        const [activeOrders, orderHistory] = await Promise.all([
-          orderService.getUserActiveOrders(trader),
-          orderService.getUserOrderHistory(trader, 50, 0)
-        ]);
+        // Use HyperLiquid OrderBook contract directly
+        const orderBookOrders = await orderService.getUserOrdersFromOrderBook(trader, metricId);
 
-        console.log('📊 getUserActiveOrders result:', {
-          activeOrdersCount: activeOrders.length,
-          orderHistoryCount: orderHistory.length,
-          activeOrders: activeOrders.slice(0, 2), // Log first 2 for debugging
-          trader
+        console.log('📊 HyperLiquid OrderBook getUserOrders result:', {
+          orderCount: orderBookOrders.length,
+          orders: orderBookOrders.slice(0, 2), // Log first 2 for debugging
+          trader,
+          metricId
         });
 
-        // Combine and deduplicate
-        const allUserOrders = [...activeOrders, ...orderHistory];
-        const uniqueOrders = allUserOrders.filter((order, index, self) => 
-          index === self.findIndex(o => o.id === order.id)
-        );
-
-        fetchedOrders = uniqueOrders;
+        fetchedOrders = orderBookOrders;
         
         // If we have a specific metricId, filter for it
         if (metricId) {
-          fetchedOrders = fetchedOrders.filter(order => order.metricId === metricId);
+          const beforeFilter = fetchedOrders.length;
+          fetchedOrders = fetchedOrders.filter(order => {
+            const matches = order.metricId === metricId;
+            console.log(`🔍 Order ${order.id}: metricId="${order.metricId}" vs expected="${metricId}" -> matches: ${matches}`);
+            return matches;
+          });
+          console.log(`📊 MetricId filtering: ${beforeFilter} orders -> ${fetchedOrders.length} orders after filtering for metricId="${metricId}"`);
         }
       } else if (metricId) {
         // Fetch all orders for a specific metric using our new query API

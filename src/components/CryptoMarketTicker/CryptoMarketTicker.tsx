@@ -275,7 +275,7 @@ export default function CryptoMarketTicker({
         unsubscribeRef.current = null;
       }
     };
-  }, [pusher]);
+  }, [pusher, handleTickerUpdate, handleConnectionStateChange]);
 
   // Initialize data loading and fallback logic
   useEffect(() => {
@@ -301,7 +301,7 @@ export default function CryptoMarketTicker({
         retryTimeoutRef.current = null;
       }
     };
-  }, [isConnected]);
+  }, [isConnected, loadInitialData, startFallbackPolling, stopFallbackPolling]);
 
   // Handle hover events for pause on hover
   const handleMouseEnter = () => {

@@ -29,7 +29,7 @@ export async function GET(
 
     // Get order from database
     const { data: order, error } = await supabaseAdmin
-      .from('off_chain_orders')
+      .from('orders')
       .select(`
         *,
         orderbook_markets!inner (
@@ -170,7 +170,7 @@ export async function DELETE(
 
     // Get order from database to verify ownership
     const { data: order, error: orderError } = await supabaseAdmin
-      .from('off_chain_orders')
+      .from('orders')
       .select(`
         *,
         orderbook_markets!inner (
@@ -215,7 +215,7 @@ export async function DELETE(
 
     // Serverless order cancellation - update order status directly in database
     const { error: updateError } = await supabaseAdmin
-      .from('off_chain_orders')
+      .from('orders')
       .update({
         order_status: 'CANCELLED',
         closed_at: new Date().toISOString(),

@@ -1,89 +1,217 @@
 import { Address, formatUnits } from 'viem';
 import { publicClient } from './viemClient';
 import { CONTRACT_ADDRESSES, ORDER_ROUTER_ABI, OrderType, OrderSide, OrderStatus, TimeInForce } from './contractConfig';
-import { ContractOrder, Order, OrderBookEntry, MarketDepth, TradeExecution, Transaction } from '@/types/orders';
+import { CONTRACT_ABIS } from './contracts';
+import { ContractOrder, ActualContractOrder, Order, OrderBookEntry, MarketDepth, TradeExecution, Transaction } from '@/types/orders';
 
 /**
  * Service for interacting with OrderRouter smart contract using Viem
  */
 export class OrderService {
   private client = publicClient;
-
-
+  private addressCache = new Map<string, { address: Address; timestamp: number }>();
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
 
   /**
-   * Get a specific order by ID
+   * Dynamically resolve OrderBook contract address for a given metricId with caching
    */
-  async getOrder(orderId: bigint): Promise<Order | null> {
+  private async resolveOrderBookAddress(metricId?: string): Promise<Address> {
+    if (!metricId) {
+      console.log('⚠️ No metricId provided, using aluminum OrderBook as fallback');
+      return CONTRACT_ADDRESSES.aluminumOrderBook;
+    }
+
+    // Check cache first
+    const cached = this.addressCache.get(metricId);
+    if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
+      console.log('✅ OrderService: Using cached OrderBook address:', { metricId, address: cached.address });
+      return cached.address;
+    }
+
     try {
+      console.log('🔍 OrderService: Resolving OrderBook address for metric_id:', metricId);
+      
+      const response = await fetch(`/api/orderbook-markets/${encodeURIComponent(metricId)}`);
+      const data = await response.json() as { 
+        success: boolean; 
+        error?: string; 
+        market?: { market_address?: string } 
+      };
+      
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `Failed to fetch market data for ${metricId}`);
+      }
+      
+      if (!data.market?.market_address) {
+        throw new Error(`No OrderBook address found for market ${metricId}`);
+      }
+      
+      const address = data.market.market_address as Address;
+      console.log('✅ OrderService: Resolved OrderBook address:', { metricId, address });
+      
+      // Cache the resolved address
+      this.addressCache.set(metricId, { address, timestamp: Date.now() });
+      
+      return address;
+    } catch (error) {
+      console.error('❌ OrderService: Failed to resolve OrderBook address:', error);
+      // Fallback to aluminum OrderBook if resolution fails
+      console.log('⚠️ OrderService: Falling back to aluminum OrderBook as default');
+      return CONTRACT_ADDRESSES.aluminumOrderBook;
+    }
+  }
+
+  /**
+   * Get a specific order by ID from the appropriate OrderBook contract
+   */
+  async getOrder(orderId: bigint, metricId?: string): Promise<Order | null> {
+    try {
+      // Dynamically resolve OrderBook address based on metricId
+      const orderBookAddress = await this.resolveOrderBookAddress(metricId);
+      
+      console.log('🔍 OrderService: Getting order from dynamic OrderBook:', {
+        orderId: orderId.toString(),
+        metricId,
+        orderBookAddress,
+        note: 'Using dynamic OrderBook resolution'
+      });
+
       const result = await this.client.readContract({
-        address: CONTRACT_ADDRESSES.orderRouter,
-        abi: ORDER_ROUTER_ABI,
-        functionName: 'getOrder',
+        address: orderBookAddress,
+        abi: CONTRACT_ABIS.OrderBook,
+        functionName: 'orders',
         args: [orderId],
       });
 
-      return this.transformContractOrder(result as ContractOrder);
+      return this.transformContractOrderArray(result as any[], metricId);
     } catch (error) {
-      console.error('Error fetching order:', error);
+      console.error('❌ OrderService: Error fetching order from OrderBook:', error);
       return null;
     }
   }
 
   /**
    * Get all active orders for a user
+   * Uses dynamic OrderBook contract resolution based on metricId
    */
-  async getUserActiveOrders(trader: Address): Promise<Order[]> {
+  async getUserActiveOrders(trader: Address, metricId?: string): Promise<Order[]> {
     try {
-      console.log('🔍 OrderService: Calling getUserActiveOrders for trader:', trader);
-      console.log('🔍 OrderService: Using contract address:', CONTRACT_ADDRESSES.orderRouter);
+      console.log('🔍 OrderService: Getting user active orders using dynamic OrderBook approach for trader:', trader);
       
-      const result = await this.client.readContract({
-        address: CONTRACT_ADDRESSES.orderRouter,
-        abi: ORDER_ROUTER_ABI,
-        functionName: 'getUserActiveOrders',
-        args: [trader],
-      });
-
-      console.log('📊 OrderService: Raw contract result:', {
-        resultLength: (result as ContractOrder[]).length,
-        result: result
-      });
-
-      const transformedOrders = (result as ContractOrder[]).map(order => this.transformContractOrder(order));
+      // Use the dynamic OrderBook-based approach
+      const allOrders = await this.getUserOrdersFromOrderBook(trader, metricId);
       
-      console.log('📊 OrderService: Transformed orders:', {
-        transformedOrdersCount: transformedOrders.length,
-        orders: transformedOrders.slice(0, 2) // Log first 2 for debugging
+      // Filter for only active orders (pending or partially filled)
+      const activeOrders = allOrders.filter(order => 
+        order.status === 'pending' || order.status === 'partially_filled'
+      );
+      
+      console.log('📊 OrderService: Filtered active orders:', {
+        totalOrders: allOrders.length,
+        activeOrders: activeOrders.length,
+        trader
       });
-
-      return transformedOrders;
+      
+      return activeOrders;
     } catch (error) {
       console.error('❌ OrderService: Error fetching user active orders:', error);
-      console.error('❌ OrderService: Error details:', {
+      return [];
+    }
+  }
+
+  /**
+   * Get user orders from the appropriate OrderBook contract (dynamic resolution)
+   * This is the preferred method for getting detailed order information
+   */
+  async getUserOrdersFromOrderBook(trader: Address, metricId?: string): Promise<Order[]> {
+    try {
+      // Dynamically resolve OrderBook address based on metricId
+      const orderBookAddress = await this.resolveOrderBookAddress(metricId);
+      
+      console.log('🔍 OrderService: Getting user orders from dynamic OrderBook:', {
         trader,
-        contractAddress: CONTRACT_ADDRESSES.orderRouter,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+        metricId,
+        orderBookAddress,
+        note: 'Using dynamic OrderBook resolution'
       });
+
+      // OrderBook.getUserOrders returns array of order IDs (bytes32[])
+      const orderIds = await this.client.readContract({
+        address: orderBookAddress,
+        abi: CONTRACT_ABIS.OrderBook,
+        functionName: 'getUserOrders',
+        args: [trader],
+      }) as readonly bigint[];
+
+      console.log('📊 OrderService: OrderBook getUserOrders result:', {
+        orderIdsCount: orderIds.length,
+        orderIds: orderIds.slice(0, 3), // Log first 3 IDs
+        metricId
+      });
+
+      // For each order ID, fetch the full order details
+      const orders: Order[] = [];
+      for (const orderId of orderIds) {
+        try {
+          const order = await this.getOrder(orderId, metricId);
+          if (order) {
+            console.log(`✅ OrderService: Successfully transformed order ${order.id} with metricId="${order.metricId}"`);
+            orders.push(order);
+          } else {
+            console.warn(`⚠️ OrderService: getOrder returned null for orderId ${orderId}`);
+          }
+        } catch (error) {
+          console.warn('⚠️ OrderService: Failed to fetch order details for ID:', orderId, error);
+        }
+      }
+      
+      console.log('📊 OrderService: Successfully fetched detailed orders:', {
+        totalOrders: orders.length,
+        ordersWithCorrectMetricId: orders.filter(o => o.metricId === metricId).length,
+        orderSummary: orders.map(o => ({ id: o.id, metricId: o.metricId, status: o.status })),
+        expectedMetricId: metricId
+      });
+      return orders;
+    } catch (error) {
+      console.error('❌ OrderService: Error fetching user orders from OrderBook:', error);
       return [];
     }
   }
 
   /**
    * Get order history for a user with pagination
+   * Uses dynamic OrderBook resolution based on metricId
    */
-  async getUserOrderHistory(trader: Address, limit: number = 50, offset: number = 0): Promise<Order[]> {
+  async getUserOrderHistory(trader: Address, limit: number = 50, offset: number = 0, metricId?: string): Promise<Order[]> {
     try {
-      const result = await this.client.readContract({
-        address: CONTRACT_ADDRESSES.orderRouter,
-        abi: ORDER_ROUTER_ABI,
-        functionName: 'getUserOrderHistory',
-        args: [trader, BigInt(limit), BigInt(offset)],
+      console.log('🔍 OrderService: Getting user order history using dynamic OrderBook approach:', {
+        trader,
+        limit,
+        offset,
+        metricId
       });
-
-      return (result as ContractOrder[]).map(order => this.transformContractOrder(order));
+      
+      // Get all orders from dynamic OrderBook and apply pagination manually
+      const allOrders = await this.getUserOrdersFromOrderBook(trader, metricId);
+      
+      // Sort by timestamp descending (most recent first)
+      const sortedOrders = allOrders.sort((a, b) => 
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      
+      // Apply pagination
+      const paginatedOrders = sortedOrders.slice(offset, offset + limit);
+      
+      console.log('📊 OrderService: Order history result:', {
+        totalOrders: allOrders.length,
+        returnedOrders: paginatedOrders.length,
+        offset,
+        limit
+      });
+      
+      return paginatedOrders;
     } catch (error) {
-      console.error('Error fetching user order history:', error);
+      console.error('❌ OrderService: Error fetching user order history:', error);
       return [];
     }
   }
@@ -93,17 +221,46 @@ export class OrderService {
    */
   async getMarketDepth(metricId: string, depth: number = 15): Promise<MarketDepth> {
     try {
-      const result = await this.client.readContract({
-        address: CONTRACT_ADDRESSES.orderRouter,
-        abi: ORDER_ROUTER_ABI,
-        functionName: 'getMarketDepth',
-        args: [metricId, BigInt(depth)],
+      // Use OrderBook address instead of orderRouter
+      const orderBookAddress = CONTRACT_ADDRESSES.aluminumOrderBook; // TODO: Make this dynamic based on metricId
+      
+      console.log('🔍 OrderService: Getting market depth from OrderBook:', {
+        metricId,
+        depth,
+        orderBookAddress,
+        note: 'Using OrderBook.getOrderBookDepth instead of TradingRouter'
       });
 
-      const [buyOrders, sellOrders] = result as [ContractOrder[], ContractOrder[]];
+      const result = await this.client.readContract({
+        address: orderBookAddress,
+        abi: CONTRACT_ABIS.OrderBook,
+        functionName: 'getOrderBookDepth',
+        args: [BigInt(depth)],
+      });
+
+      // getOrderBookDepth returns [bidPrices[], bidSizes[], askPrices[], askSizes[]]
+      const [bidPrices, bidSizes, askPrices, askSizes] = result as [bigint[], bigint[], bigint[], bigint[]];
       
-      const bids = buyOrders.map(order => this.transformToOrderBookEntry(order, 'bid'));
-      const asks = sellOrders.map(order => this.transformToOrderBookEntry(order, 'ask'));
+      // Convert to OrderBookEntry format
+      const bids: OrderBookEntry[] = bidPrices.map((price, index) => ({
+        id: `bid_${index}`,
+        price: Number(formatUnits(price, 6)), // PRICE_PRECISION = 1e6
+        quantity: Number(formatUnits(bidSizes[index], 6)),
+        total: Number(formatUnits(price * bidSizes[index], 12)), // price * size with precision adjustment
+        side: 'bid' as const,
+        timestamp: Date.now(),
+        trader: '0x0000000000000000000000000000000000000000' as Address
+      })).filter(entry => entry.price > 0 && entry.quantity > 0);
+
+      const asks: OrderBookEntry[] = askPrices.map((price, index) => ({
+        id: `ask_${index}`,
+        price: Number(formatUnits(price, 6)), // PRICE_PRECISION = 1e6
+        quantity: Number(formatUnits(askSizes[index], 6)),
+        total: Number(formatUnits(price * askSizes[index], 12)), // price * size with precision adjustment
+        side: 'ask' as const,
+        timestamp: Date.now(),
+        trader: '0x0000000000000000000000000000000000000000' as Address
+      })).filter(entry => entry.price > 0 && entry.quantity > 0);
 
       // Calculate spread and mid price
       const bestBid = bids.length > 0 ? Math.max(...bids.map(b => b.price)) : 0;
@@ -228,52 +385,156 @@ export class OrderService {
 
   /**
    * Transform contract order to UI order format
+   * Handles the actual contract response structure which differs from ContractOrder interface
    */
-  private transformContractOrder(contractOrder: ContractOrder): Order {
+  /**
+   * Transform contract order from array format (used by orders mapping)
+   */
+  private transformContractOrderArray(orderArray: any[], metricId?: string): Order {
+    if (!orderArray || !Array.isArray(orderArray) || orderArray.length < 12) {
+      throw new Error('Invalid contract order array: expected array with at least 12 elements');
+    }
+
+    const [
+      id,
+      user,
+      size,
+      price,
+      side,
+      orderType,
+      timeInForce,
+      expiryTime,
+      filledSize,
+      createdTime,
+      updatedTime,
+      status
+    ] = orderArray;
+
+    // Convert enum values to strings
+    const orderTypeString = orderType === 0 ? 'market' : 'limit';
+    const sideString = side === 0 ? 'buy' : 'sell';
+    const statusString = status === 0 ? 'pending' : status === 1 ? 'filled' : status === 2 ? 'cancelled' : 'partially_filled';
+    const timeInForceString = timeInForce === 0 ? 'gtc' : 'ioc';
+
+    // Convert from wei to standard units (assuming 6 decimals for price and size)
+    const quantity = size ? parseFloat(formatUnits(BigInt(size), 6)) : 0;
+    const priceFormatted = price ? parseFloat(formatUnits(BigInt(price), 6)) : 0;
+    const filledQuantity = filledSize ? parseFloat(formatUnits(BigInt(filledSize), 6)) : 0;
+
+    console.log('🔧 OrderService: Transforming contract order array:', {
+      id: id.toString(),
+      user,
+      size: size.toString(),
+      price: price.toString(),
+      side: `${side} (${sideString})`,
+      orderType: `${orderType} (${orderTypeString})`,
+      status: `${status} (${statusString})`,
+      quantity,
+      priceFormatted,
+      filledQuantity,
+      metricId
+    });
+
+    return {
+      id: id.toString(),
+      trader: user as Address,
+      metricId: metricId || 'unknown',
+      type: orderTypeString,
+      side: sideString,
+      quantity,
+      price: priceFormatted,
+      filledQuantity,
+      timestamp: Number(createdTime) * 1000,
+      expiryTime: Number(expiryTime) > 0 ? Number(expiryTime) * 1000 : null,
+      status: statusString,
+      timeInForce: timeInForceString,
+      stopPrice: null,
+      icebergQty: null,
+      postOnly: false,
+    };
+  }
+
+  private transformContractOrder(contractOrder: ActualContractOrder | any, metricId?: string): Order {
+    // Add null checks for all required properties
+    if (!contractOrder || typeof contractOrder !== 'object') {
+      throw new Error('Invalid contract order: order is null or not an object');
+    }
+
+    // Check for required properties with proper error messages
+    if (!contractOrder.orderId) {
+      throw new Error('Invalid contract order: missing orderId');
+    }
+    if (contractOrder.orderType === undefined || contractOrder.orderType === null) {
+      throw new Error('Invalid contract order: missing orderType');
+    }
+    if (contractOrder.side === undefined || contractOrder.side === null) {
+      throw new Error('Invalid contract order: missing side');
+    }
+    if (contractOrder.status === undefined || contractOrder.status === null) {
+      throw new Error('Invalid contract order: missing status');
+    }
+
+    // Handle the actual contract response structure
+    // The contract returns: size, filled, user instead of quantity, filledQuantity, trader
+    const size = contractOrder.size || contractOrder.quantity || 0n;
+    const filled = contractOrder.filled || contractOrder.filledQuantity || 0n;
+    const trader = contractOrder.user || contractOrder.trader || '0x0000000000000000000000000000000000000000';
+    const price = contractOrder.price || 0n;
+    const timestamp = contractOrder.timestamp || 0n;
+
     const orderType = this.getOrderTypeString(contractOrder.orderType);
     const side = contractOrder.side === OrderSide.BUY ? 'buy' : 'sell';
     const status = this.getOrderStatusString(contractOrder.status);
-    const timeInForce = this.getTimeInForceString(contractOrder.timeInForce);
+    
+    // Default timeInForce since it's not in the contract response
+    const timeInForce = this.getTimeInForceString(contractOrder.timeInForce || 0);
 
-    // Convert from wei to standard units (assuming 18 decimals for price and quantity)
-    const quantity = parseFloat(formatUnits(contractOrder.quantity, 18));
-    const price = parseFloat(formatUnits(contractOrder.price, 18));
-    const filledQuantity = parseFloat(formatUnits(contractOrder.filledQuantity, 18));
+    // Convert from wei to standard units (assuming 6 decimals for price and size based on contract precision)
+    const quantity = size ? parseFloat(formatUnits(size, 6)) : 0;
+    const priceFormatted = price ? parseFloat(formatUnits(price, 6)) : 0;
+    const filledQuantity = filled ? parseFloat(formatUnits(filled, 6)) : 0;
 
     return {
       id: contractOrder.orderId.toString(),
-      trader: contractOrder.trader,
-      metricId: contractOrder.metricId,
+      trader: trader as Address,
+      metricId: metricId || contractOrder.metricId || 'unknown', // Use passed metricId or fallback
       type: orderType,
       side,
       quantity,
-      price,
+      price: priceFormatted,
       filledQuantity,
-      timestamp: Number(contractOrder.timestamp) * 1000, // Convert to milliseconds
-      expiryTime: contractOrder.expiryTime > 0n ? Number(contractOrder.expiryTime) * 1000 : null,
+      timestamp: Number(timestamp) * 1000, // Convert to milliseconds
+      expiryTime: null, // Not provided by contract
       status,
       timeInForce,
-      stopPrice: contractOrder.stopPrice > 0n ? parseFloat(formatUnits(contractOrder.stopPrice, 18)) : null,
-      icebergQty: contractOrder.icebergQty > 0n ? parseFloat(formatUnits(contractOrder.icebergQty, 18)) : null,
-      postOnly: contractOrder.postOnly,
+      stopPrice: null, // Not provided by contract
+      icebergQty: null, // Not provided by contract
+      postOnly: false, // Not provided by contract
     };
   }
 
   /**
    * Transform contract order to order book entry
    */
-  private transformToOrderBookEntry(contractOrder: ContractOrder, side: 'bid' | 'ask'): OrderBookEntry {
-    const quantity = parseFloat(formatUnits(contractOrder.quantity, 18));
-    const price = parseFloat(formatUnits(contractOrder.price, 18));
+  private transformToOrderBookEntry(contractOrder: any, side: 'bid' | 'ask'): OrderBookEntry {
+    // Handle both ContractOrder interface and actual contract response
+    const size = contractOrder.size || contractOrder.quantity || 0n;
+    const price = contractOrder.price || 0n;
+    const trader = contractOrder.user || contractOrder.trader || '0x0000000000000000000000000000000000000000';
+    const timestamp = contractOrder.timestamp || 0n;
+    const orderId = contractOrder.orderId || '0';
+
+    const quantity = size ? parseFloat(formatUnits(size, 6)) : 0;
+    const priceFormatted = price ? parseFloat(formatUnits(price, 6)) : 0;
     
     return {
-      id: contractOrder.orderId.toString(),
-      price,
+      id: orderId.toString(),
+      price: priceFormatted,
       quantity,
-      total: price * quantity,
+      total: priceFormatted * quantity,
       side,
-      timestamp: Number(contractOrder.timestamp) * 1000,
-      trader: contractOrder.trader,
+      timestamp: Number(timestamp) * 1000,
+      trader: trader as Address,
     };
   }
 

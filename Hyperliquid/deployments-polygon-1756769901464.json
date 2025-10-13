@@ -1,0 +1,23 @@
+{
+  "network": "polygon",
+  "timestamp": "2025-09-01T23:38:21.464Z",
+  "deployer": "0x1Bc0a803de77a004086e6010cD3f72ca7684e444",
+  "addresses": {
+    "mockUSDC": "0xA2258Ff3aC4f5c77ca17562238164a0205A5b289",
+    "vaultRouter": "0x91d03f8d8F7fC48eA60853e9dDc225711B967fd5",
+    "orderBookFactory": "0x0fB0A98DC0cA49B72A0BC972D78e8bda7ef2EABF",
+    "tradingRouter": "0x58BC190eE9d66eE49Dc1eeeEd2aBc1284216c8e6",
+    "upgradeManager": "0xD1b426e3BB28E773cFB318Fc982b07d1c500171b",
+    "orderBooks": {
+      "Aluminum V1": "0xce64ddf0c08325a41E8e94D01967E0ff00E1C926"
+    }
+  },
+  "config": {
+    "network": "polygon",
+    "gasPrice": "30",
+    "gasLimit": 8000000,
+    "marketName": "Aluminum V1",
+    "marketDescription": "Aluminum V1 futures market for trading aluminum commodity derivatives",
+    "initialCollateralAmount": "1000000"
+  }
+}

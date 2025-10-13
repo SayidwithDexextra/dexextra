@@ -163,7 +163,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     {
       id: 'dexetera_usdc_mock',
       symbol: 'MOCK_USDC',
-      name: mockUSDCToken?.name || 'Dexetera Mock USDC',
+      name: mockUSDCToken?.name || 'HyperLiquid Mock USDC',
       amount: mockUSDCToken?.amount || '0.00 MOCK_USDC',
       value: mockUSDCToken?.value || '$0.00',
       icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png',
@@ -327,7 +327,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
         time: timeText,
         amount: depositAmount,
         network: 'Polygon',
-        contract: 'CentralVault'
+        contract: 'VaultRouter'
       })
       
     } catch (error) {
@@ -411,12 +411,12 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
   // Get appropriate target token based on deposit type
   const getTargetToken = () => {
     if (isDirectDeposit && selectedToken) {
-      // For MOCK_USDC direct deposits, target is the CentralVault
+      // For MOCK_USDC direct deposits, target is the VaultRouter
       return { 
         symbol: 'VAULT', 
         icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png',
-        name: 'CentralVault (Polygon)',
-        address: CONTRACTS.CentralVault.address
+        name: 'HyperLiquid VaultRouter (Polygon)',
+        address: CONTRACTS.VaultRouter.address
       }
     } else {
       // Non-MOCK_USDC tokens are not supported for direct deposits
@@ -517,7 +517,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                     </span>
                 {isVaultConnected && vaultBalance && (
                       <span className="text-[9px] text-green-400">
-                    • Vault: {parseFloat(vaultBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC
+                    • VaultRouter: {parseFloat(vaultBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MockUSDC
                   </span>
                 )}
                   </div>
@@ -624,7 +624,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                   <div className="flex items-center gap-2 p-2">
                     <div className="w-1 h-1 rounded-full flex-shrink-0 bg-green-400" />
                     <span className="text-[10px] text-green-400">
-                      💡 Select MOCK_USDC for direct deposits
+                      💡 Select MOCK_USDC for direct VaultRouter deposits
                     </span>
                   </div>
                 </div>
@@ -730,7 +730,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                           : 'bg-[#1A1A1A] border-[#333333] cursor-not-allowed opacity-50'
                 }`}
                 disabled={isConnecting || (selectedToken && !isVaultCollateralToken()) || (!selectedToken && isConnected)}
-              title={selectedToken && !isVaultCollateralToken() ? 'Only MOCK_USDC can be deposited to vault' : undefined}
+              title={selectedToken && !isVaultCollateralToken() ? 'Only MOCK_USDC can be deposited to VaultRouter' : undefined}
             >
                 {/* Status Indicator */}
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { OrderbookMarket } from './useOrderbookMarkets';
+import { shouldFetchOrderbookData, resolveSymbolToMetricId } from '@/lib/market-utils';
 
 export interface OrderbookMarketOrder {
   id: string;
@@ -92,12 +93,28 @@ export function useOrderbookMarket(
       return;
     }
 
+    // Skip API call for tokens that are unlikely to be orderbook markets
+    if (!shouldFetchOrderbookData(metricId)) {
+      console.log(`ℹ️ Skipping orderbook fetch for standard token: ${metricId}`);
+      setMarketData(null);
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
+
+    // Resolve the symbol to the correct metric ID dynamically (e.g., "aluminum_v2" -> "ALUMINUM_V2")
+    const resolvedMetricId = await resolveSymbolToMetricId(metricId);
+
+    console.log(`🔍 Fetching orderbook market data:`, {
+      originalSymbol: metricId,
+      resolvedMetricId: resolvedMetricId,
+      shouldFetch: shouldFetchOrderbookData(metricId)
+    });
+
     try {
       setError(null);
       
-      console.log('🔍 Fetching orderbook market data for:', metricId);
-
-      const response = await fetch(`/api/orderbook-markets/${encodeURIComponent(metricId)}`, {
+      const response = await fetch(`/api/orderbook-markets/${encodeURIComponent(resolvedMetricId)}`, {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
@@ -109,11 +126,6 @@ export function useOrderbookMarket(
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
-        console.error('❌ API Response Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText
-        });
         
         let errorData;
         try {
@@ -123,13 +135,36 @@ export function useOrderbookMarket(
         }
         
         if (response.status === 404) {
-          throw new Error(`Market not found: ${metricId}`);
+          // Market not found - this is expected for tokens that don't have orderbook markets
+          // Don't log as error, just set market data to null
+          console.log(`ℹ️ No orderbook market found for ${metricId} (this is normal for standard tokens)`);
+          setMarketData(null);
+          setError(null); // Don't set this as an error state
+          return;
         }
+        
+        // Only log actual errors (not 404s)
+        console.error('❌ API Response Error:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText
+        });
         
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as {
+        success: boolean;
+        error?: string;
+        market?: OrderbookMarket;
+        orders?: OrderbookMarketOrder[];
+        positions?: OrderbookMarketPosition[];
+        metadata?: {
+          total_orders: number;
+          total_positions: number;
+          deployment_status: 'deployed' | 'pending';
+        };
+      };
       
       if (!data.success) {
         throw new Error(data.error || 'API request failed');
@@ -143,7 +178,7 @@ export function useOrderbookMarket(
       });
 
       setMarketData({
-        market: data.market,
+        market: data.market!,
         orders: data.orders || [],
         positions: data.positions || [],
         metadata: data.metadata || {

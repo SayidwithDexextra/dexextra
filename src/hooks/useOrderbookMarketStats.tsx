@@ -30,13 +30,19 @@ interface UseOrderbookMarketStatsReturn {
   dataSource: 'contract' | 'fallback' | 'none';
 }
 
-// OrderBook ABI matching the actual contract interface
+// OrderBook ABI for HyperLiquid contracts
 const ORDERBOOK_ABI = [
-  // Returns MarketStats struct from the actual contract
-  'function getMarketStats() external view returns (tuple(uint256 lastPrice,uint256 volume24h,uint256 high24h,uint256 low24h,int256 priceChange24h,uint256 totalTrades,uint256 bestBid,uint256 bestAsk,uint256 spread))',
-  'function getBestBid() external view returns (uint256)',
-  'function getBestAsk() external view returns (uint256)',
-  'function decimals() external view returns (uint8)'
+  // HyperLiquid OrderBook interface - compatible with the deployed contracts
+  'function getBestPrices() external view returns (uint256 bestBidPrice, uint256 bestAskPrice)',
+  'function bestBid() external view returns (uint256)',
+  'function bestAsk() external view returns (uint256)',
+  'function getMarketInfo() external view returns (tuple(bytes32 marketId,string symbol,string metricId,uint256 currentPrice,uint256 lastPrice,uint256 openInterest,uint256 volume24h,uint256 funding,uint256 lastFundingTime,bool isActive,bool isCustomMetric))'
+];
+
+// TradingRouter ABI for unified market access
+const TRADING_ROUTER_ABI = [
+  'function getMultiMarketPrices(bytes32[] marketIds) external view returns (uint256[] bestBids, uint256[] bestAsks)',
+  'function isPaused() external view returns (bool)'
 ];
 
 export function useOrderbookMarketStats(
@@ -59,11 +65,16 @@ export function useOrderbookMarketStats(
     try {
       setError(null);
       
+      console.log(`🔍 Debug: marketAddress="${marketAddress}", chainId=${chainId}`);
+      
       if (!marketAddress || !ethers.isAddress(marketAddress)) {
-        throw new Error('Invalid market address provided');
+        console.warn(`⚠️ Skipping market stats fetch - invalid or missing market address: "${marketAddress}"`);
+        setIsLoading(false);
+        setDataSource('none');
+        return;
       }
 
-      console.log(`🔍 Fetching market stats for OrderBook: ${marketAddress}`);
+      console.log(`🔍 Fetching HyperLiquid market stats for OrderBook: ${marketAddress}`);
 
       // Create provider for the specified chain
       let provider: ethers.Provider;
@@ -84,87 +95,115 @@ export function useOrderbookMarketStats(
 
       const contract = new ethers.Contract(marketAddress, ORDERBOOK_ABI, provider);
 
-      // Fetch market stats and decimals
-      const [statsResult, decimalsResult] = await Promise.allSettled([
-        contract.getMarketStats(),
-        contract.decimals().catch(() => 6) // Default to 6 decimals for USD markets
-      ]);
+      // Try to fetch comprehensive market info first
+      try {
+        const marketInfo = await contract.getMarketInfo();
+        
+        // Destructure the market info tuple
+        const [
+          marketId,
+          symbol,
+          metricId,
+          currentPrice,
+          lastPrice,
+          openInterest,
+          volume24h,
+          funding,
+          lastFundingTime,
+          isActive,
+          isCustomMetric
+        ] = marketInfo;
 
-      // Process results
-      const stats = statsResult.status === 'fulfilled' ? statsResult.value : null;
-      let decimals = decimalsResult.status === 'fulfilled' ? decimalsResult.value : 6;
+        console.log(`✅ Successfully fetched HyperLiquid market info for ${marketAddress}:`, {
+          symbol,
+          metricId,
+          currentPrice: ethers.formatUnits(currentPrice, 18),
+          lastPrice: ethers.formatUnits(lastPrice, 18),
+          volume24h: ethers.formatUnits(volume24h, 18),
+          isActive
+        });
 
-      if (!stats) {
-        // Stats call failed; try deriving price from best bid/ask
+        // Convert prices from contract units to display prices
+        // Contract stores prices in 6-decimal precision (1e6)
+        // Contract price 5000000 → Display price $5.00 (divide by 1000000)
+        const PRICE_PRECISION = 1e6;
+        const currentPriceFormatted = parseFloat(currentPrice.toString()) / PRICE_PRECISION;
+        const lastPriceFormatted = parseFloat(lastPrice.toString()) / PRICE_PRECISION;
+        const volume24hFormatted = parseFloat(ethers.formatUnits(volume24h, 18));
+
+        // Use currentPrice as the main price, fallback to lastPrice
+        const effectivePrice = currentPriceFormatted > 0 ? currentPriceFormatted : lastPriceFormatted;
+
+        // Get best bid/ask prices
+        const [bestBidPrice, bestAskPrice] = await contract.getBestPrices();
+        const bestBid = parseFloat(bestBidPrice.toString()) / PRICE_PRECISION;
+        const bestAsk = parseFloat(bestAskPrice.toString()) / PRICE_PRECISION;
+
+        // Calculate price change (simplified for now)
+        const priceChange24h = effectivePrice > 0 && lastPriceFormatted > 0 
+          ? effectivePrice - lastPriceFormatted 
+          : 0;
+
+        setMarketData({
+          lastPrice: effectivePrice,
+          volume24h: volume24hFormatted,
+          high24h: Math.max(effectivePrice, lastPriceFormatted),
+          low24h: Math.min(effectivePrice > 0 ? effectivePrice : lastPriceFormatted, lastPriceFormatted > 0 ? lastPriceFormatted : effectivePrice),
+          priceChange24h,
+          totalTrades: 0, // Not available in basic market info
+          bestBid,
+          bestAsk,
+          spread: bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0,
+          lastUpdateTime: Date.now()
+        });
+        setDataSource('contract');
+        setIsLoading(false);
+        return;
+
+      } catch (marketInfoErr) {
+        console.warn('⚠️ getMarketInfo() failed, trying fallback methods:', marketInfoErr);
+        
+        // Fallback to individual method calls
         try {
-          const [bestBidWei, bestAskWei] = await Promise.all([
-            contract.getBestBid(),
-            contract.getBestAsk()
-          ]);
+          const [bestBidPrice, bestAskPrice] = await contract.getBestPrices();
+          const bestBid = parseFloat(ethers.formatUnits(bestBidPrice, 18));
+          const bestAsk = parseFloat(ethers.formatUnits(bestAskPrice, 18));
 
-          let derivedLastPrice = 0;
-          if (bestBidWei > 0n && bestAskWei > 0n) {
-            derivedLastPrice = parseFloat(ethers.formatUnits((bestBidWei + bestAskWei) / 2n, 18));
-          } else if (bestBidWei > 0n) {
-            derivedLastPrice = parseFloat(ethers.formatUnits(bestBidWei, 18));
-          } else if (bestAskWei > 0n) {
-            derivedLastPrice = parseFloat(ethers.formatUnits(bestAskWei, 18));
+          let derivedPrice = 0;
+          if (bestBid > 0 && bestAsk > 0) {
+            derivedPrice = (bestBid + bestAsk) / 2; // Mid-price
+          } else if (bestBid > 0) {
+            derivedPrice = bestBid;
+          } else if (bestAsk > 0) {
+            derivedPrice = bestAsk;
           }
 
-          setMarketData({
-            lastPrice: derivedLastPrice,
-            volume24h: 0,
-            high24h: derivedLastPrice,
-            low24h: derivedLastPrice,
-            priceChange24h: 0,
-            totalTrades: 0,
-            bestBid: parseFloat(ethers.formatUnits(bestBidWei || 0n, 18)),
-            bestAsk: parseFloat(ethers.formatUnits(bestAskWei || 0n, 18)),
-            spread: 0,
-            lastUpdateTime: Date.now()
-          });
-          setDataSource('contract');
-          setIsLoading(false);
-          return;
-        } catch (fallbackErr) {
-          throw new Error('Unable to fetch market statistics from contract');
+          if (derivedPrice > 0) {
+            setMarketData({
+              lastPrice: derivedPrice,
+              volume24h: 0,
+              high24h: derivedPrice,
+              low24h: derivedPrice,
+              priceChange24h: 0,
+              totalTrades: 0,
+              bestBid,
+              bestAsk,
+              spread: bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0,
+              lastUpdateTime: Date.now()
+            });
+            setDataSource('contract');
+            setIsLoading(false);
+            return;
+          }
+        } catch (pricesErr) {
+          console.warn('⚠️ getBestPrices() also failed:', pricesErr);
+          console.warn(`⚠️ Contract address used: ${marketAddress}, Chain ID: ${chainId}`);
+          throw new Error('Unable to fetch market statistics from HyperLiquid contract');
         }
       }
 
-      // Extract values from MarketStats tuple
-      const [
-        lastPriceBigInt,
-        volume24hBigInt, 
-        high24hBigInt,
-        low24hBigInt,
-        priceChange24hBigInt,
-        totalTradesBigInt,
-        bestBidBigInt,
-        bestAskBigInt,
-        spreadBigInt
-      ] = stats;
-
-      // Convert BigInt values to numbers using 18 decimals consistently
-      // This fixes the decimal precision issue where contracts report 8 decimals but prices are stored in 18 decimals
-      const lastPrice = parseFloat(ethers.formatUnits(lastPriceBigInt || BigInt(0), 18));
-      const volume24h = parseFloat(ethers.formatUnits(volume24hBigInt || BigInt(0), 18));
-      const high24h = parseFloat(ethers.formatUnits(high24hBigInt || BigInt(0), 18));
-      const low24h = parseFloat(ethers.formatUnits(low24hBigInt || BigInt(0), 18));
-      const priceChange24h = parseFloat(ethers.formatUnits(priceChange24hBigInt || BigInt(0), 18));
-      const totalTrades = Number(totalTradesBigInt || BigInt(0));
-      const bestBid = parseFloat(ethers.formatUnits(bestBidBigInt || BigInt(0), 18));
-      const bestAsk = parseFloat(ethers.formatUnits(bestAskBigInt || BigInt(0), 18));
-      const spread = parseFloat(ethers.formatUnits(spreadBigInt || BigInt(0), 18));
-
-      // If lastPrice is zero, derive from bid/ask to avoid zero display
-      const effectiveLastPrice = lastPrice === 0
-        ? (bestBid > 0 && bestAsk > 0
-            ? (bestBid + bestAsk) / 2
-            : (bestBid > 0 ? bestBid : (bestAsk > 0 ? bestAsk : 0)))
-        : lastPrice;
-
-      // Use fallback if still no price available and a fallback price is given
-      if (effectiveLastPrice === 0 && fallbackPrice && fallbackPrice > 0) {
+      // If we get here, no price data was available
+      if (fallbackPrice && fallbackPrice > 0) {
         console.warn('⚠️ No on-chain price available; using provided fallback');
         setMarketData({
           lastPrice: fallbackPrice,
@@ -173,47 +212,21 @@ export function useOrderbookMarketStats(
           low24h: fallbackPrice,
           priceChange24h: 0,
           totalTrades: 0,
-          bestBid,
-          bestAsk,
+          bestBid: 0,
+          bestAsk: 0,
           spread: 0,
           lastUpdateTime: Date.now()
         });
         setDataSource('fallback');
-        setIsLoading(false);
-        return;
+      } else {
+        setDataSource('none');
       }
-
-      console.log(`✅ Successfully fetched market stats for ${marketAddress}:`, {
-        lastPrice: effectiveLastPrice,
-        volume24h,
-        high24h,
-        low24h,
-        priceChange24h,
-        totalTrades,
-        bestBid,
-        bestAsk,
-        spread,
-        decimals
-      });
-
-      setMarketData({
-        lastPrice: effectiveLastPrice,
-        volume24h,
-        high24h,
-        low24h,
-        priceChange24h,
-        totalTrades,
-        bestBid,
-        bestAsk,
-        spread,
-        lastUpdateTime: Date.now()
-      });
-      setDataSource('contract');
       setIsLoading(false);
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch market statistics';
-      console.error('❌ Error fetching market stats:', errorMessage);
+      console.error('❌ Error fetching HyperLiquid market stats:', errorMessage);
+      console.error(`❌ Debug info - Address: "${marketAddress}", Chain: ${chainId}, Valid address: ${marketAddress ? ethers.isAddress(marketAddress) : false}`);
       setError(errorMessage);
 
       // Fall back to provided fallback price if available
@@ -241,8 +254,11 @@ export function useOrderbookMarketStats(
 
   // Auto-refresh effect
   useEffect(() => {
-    if (!marketAddress) {
+    if (!marketAddress || !ethers.isAddress(marketAddress)) {
+      console.log(`ℹ️ Skipping market stats fetch - no valid market address provided`);
       setIsLoading(false);
+      setError(null);
+      setDataSource('none');
       return;
     }
 

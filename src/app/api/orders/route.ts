@@ -311,7 +311,7 @@ export async function GET(request: NextRequest) {
     // Build query (deferred import of supabase client)
     const { supabaseAdmin } = await import('@/lib/supabase-admin');
     let query = supabaseAdmin
-      .from('off_chain_orders')
+      .from('orders')
       .select(`
         *,
         orderbook_markets!inner (

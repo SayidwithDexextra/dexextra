@@ -4,14 +4,31 @@ import { ethers } from 'ethers';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { PusherServerService } from '@/lib/pusher-server';
 
-// Order Book Event Topic Hashes (from our analysis)
-export const ORDER_EVENT_TOPICS = {
-  // OrderRouter events
-  ORDER_PLACED: '0x5b954fa335c624976b5c2dba7c7a172770d02d8b36e6da6cfcc1b79baa62bfc8',
-  ORDER_CANCELLED: '0xc4058ebc534b64ecb27b2d4eaa1904f98997ec18ebe6ada4117593dde89478cc',
-  ORDER_EXECUTED: '0x1cd65e6e4f6a6bfcff65064f4e22d514f481a38dcbe4c2ad13ccde1b22e06941',
+// Hyperliquid Event Topic Hashes (Updated September 2, 2025)
+// Source: contract-summary.md + ACTUAL deployed contract event signatures
+export const HYPERLIQUID_EVENT_TOPICS = {
+  // 🟢 HIGHEST PRIORITY - Essential for order book UI
+  // ACTUAL DEPLOYED CONTRACT HASHES (from Polygonscan transaction analysis)
+  ORDER_PLACED_ACTUAL: '0x348379522536ddee6c265b4008f5063ca68d4ee1e27925ba2a01236bab3c59e6', // REAL hash from Aluminum V1 OrderBook
+  ORDER_PLACED: '0xb18a04414e157e27a7bd658d83da50aeed90007f362102747b7d7f34b8b75ce1', // Calculated (may not match deployed)
+  ORDER_FILLED: '0xec7abeea99156aa60ed39992d78c95b0082f64d3469447a70c7fd11981912b9f',
+  TRADE_EXECUTED: '0xb0100c4a25ad7c8bfaa42766f529176b9340f45755da88189bd092353fe50f0b',
   
-  // OrderBook events  
+  // 🟡 HIGH PRIORITY - Important for transaction tables
+  ORDER_CANCELLED: '0xdc408a4b23cfe0edfa69e1ccca52c3f9e60bc441b3b25c09ec6defb38896a4f3',
+  ORDER_CANCELLED_ACTUAL: '0xb2705df32ac67fc3101f496cd7036bf59074a603544d97d73650b6f09744986a', // REAL hash from deployed contract
+  POSITION_CHANGED: '0x0c8435a0f8411018cf19a0463e3df6a28eaf6be12047606d6a194d4eef7941e5',
+  COLLATERAL_DEPOSITED: '0x56bf5f326bb68ef9ee892959743daa870afd33ec3251e5136317ae3cb1c6ccc6',
+  COLLATERAL_WITHDRAWN: '0x781581308889fe2553086d915caa15566aa19d071c47a980e90b71a7a45113d2',
+  POSITION_UPDATED: '0x98186e5bd1f3f83b0feafb1ba9482dc65f678d929b705c7d7714cec6bee0ab5c',
+  PNL_REALIZED: '0x908b4f47c9e48e3e3235843a31b7b41edf3cb7ed92150bd411b134f5c4f61f8a',
+  
+  // 🔵 MEDIUM PRIORITY - Advanced features  
+  MULTI_MARKET_ORDER_EXECUTED: '0xe713fe8d6e47a5cf53ff5369b736d221611ea9e7df22f147e0d460bce80ee062',
+  PORTFOLIO_REBALANCED: '0xdba6ecf824e543f91f2d9fce7c656c9eab3ed8706327214db08cf062e24b1e4b',
+  MARKET_CREATED: '0x355c14b2f991e42aebf9be15844bf25fa28d4d47a02cd508a5141353c6bfeaef',
+  
+  // Legacy compatibility (deprecated)
   ORDER_ADDED: '0x184a980efa61c0acfeff92c0613bf2d3aceedadec9002d919c6bde9218b56c68',
   ORDER_MATCHED: '0xe5426fa5d075d3a0a2ce3373a3df298c78eec0ded097810b0e69a92c21b4b0b3',
 } as const;
@@ -63,6 +80,8 @@ export interface ProcessedOrderEvent {
 export class OrderBookWebhookProcessor {
   private supabase;
   private pusherService: PusherServerService;
+  private contractAddresses: Map<string, { metricId: string; contractType: string }> = new Map();
+  private contractsLoaded = false;
 
   constructor() {
     if (!env.NEXT_PUBLIC_SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -76,6 +95,156 @@ export class OrderBookWebhookProcessor {
 
     // Initialize Pusher service for real-time broadcasting
     this.pusherService = new PusherServerService();
+  }
+
+  /**
+   * Refresh contract addresses from Supabase (useful when markets are added/updated)
+   */
+  async refreshContractAddresses(): Promise<void> {
+    console.log('🔄 [DYNAMIC] Refreshing contract addresses...');
+    this.contractsLoaded = false;
+    await this.loadContractAddresses();
+  }
+
+  /**
+   * Ensure that a market exists in the markets table for foreign key constraint
+   */
+  private async ensureMarketExists(marketId: string, contractAddress: string): Promise<void> {
+    try {
+      console.log(`🔍 [MARKET_CHECK] Checking if market ${marketId} exists in markets table...`);
+      
+      // Check if market already exists
+      const { data: existingMarket, error: checkError } = await this.supabase
+        .from('markets')
+        .select('market_id')
+        .eq('market_id', marketId)
+        .single();
+      
+      if (checkError && checkError.code !== 'PGRST116') {
+        console.error(`❌ [MARKET_CHECK] Error checking market existence:`, checkError);
+        return;
+      }
+      
+      if (existingMarket) {
+        console.log(`✅ [MARKET_CHECK] Market ${marketId} already exists`);
+        return;
+      }
+      
+      // Market doesn't exist, create it
+      console.log(`🆕 [MARKET_CHECK] Creating missing market entry for ${marketId}`);
+      
+      const { error: insertError } = await this.supabase
+        .from('markets')
+        .insert({
+          market_id: marketId,
+          symbol: `${marketId.toUpperCase()}_HYPERLIQUID`,
+          order_book_address: contractAddress,
+          is_active: true,
+          created_at: new Date().toISOString()
+        });
+      
+      if (insertError) {
+        console.error(`❌ [MARKET_CHECK] Failed to create market ${marketId}:`, insertError);
+      } else {
+        console.log(`✅ [MARKET_CHECK] Successfully created market ${marketId}`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ [MARKET_CHECK] Error ensuring market exists:`, error);
+    }
+  }
+
+  /**
+   * Load contract addresses dynamically from Supabase orderbook_markets table
+   */
+  private async loadContractAddresses(): Promise<void> {
+    try {
+      console.log('🔄 [DYNAMIC] Loading contract addresses from Supabase...');
+      
+      const { data: markets, error } = await this.supabase
+        .from('orderbook_markets')
+        .select(`
+          metric_id,
+          market_address,
+          factory_address,
+          central_vault_address,
+          order_router_address,
+          market_status,
+          is_active
+        `)
+        .eq('market_status', 'ACTIVE')
+        .eq('is_active', true);
+
+      if (error) {
+        console.error('❌ [DYNAMIC] Failed to load contract addresses:', error);
+        throw new Error(`Failed to load contract addresses: ${error.message}`);
+      }
+
+      // Clear existing addresses
+      this.contractAddresses.clear();
+
+      // Process each market and add its contracts to the map
+      for (const market of markets || []) {
+        const metricId = market.metric_id;
+        
+        // Add OrderBook contract (market_address)
+        if (market.market_address) {
+          const address = market.market_address.toLowerCase();
+          this.contractAddresses.set(address, { 
+            metricId, 
+            contractType: 'OrderBook' 
+          });
+          console.log(`✅ [DYNAMIC] Added OrderBook: ${address} → ${metricId}`);
+        }
+
+        // Add Factory contract
+        if (market.factory_address) {
+          const address = market.factory_address.toLowerCase();
+          this.contractAddresses.set(address, { 
+            metricId, 
+            contractType: 'Factory' 
+          });
+          console.log(`✅ [DYNAMIC] Added Factory: ${address} → ${metricId}`);
+        }
+
+        // Add VaultRouter contract (central_vault_address)
+        if (market.central_vault_address) {
+          const address = market.central_vault_address.toLowerCase();
+          this.contractAddresses.set(address, { 
+            metricId, 
+            contractType: 'VaultRouter' 
+          });
+          console.log(`✅ [DYNAMIC] Added VaultRouter: ${address} → ${metricId}`);
+        }
+
+        // Add TradingRouter contract (order_router_address)
+        if (market.order_router_address) {
+          const address = market.order_router_address.toLowerCase();
+          this.contractAddresses.set(address, { 
+            metricId, 
+            contractType: 'TradingRouter' 
+          });
+          console.log(`✅ [DYNAMIC] Added TradingRouter: ${address} → ${metricId}`);
+        }
+      }
+
+      this.contractsLoaded = true;
+      console.log(`✅ [DYNAMIC] Loaded ${this.contractAddresses.size} contract addresses from ${markets?.length || 0} active markets`);
+      
+      // Log summary of loaded contracts
+      const contractSummary = Array.from(this.contractAddresses.entries()).reduce((acc, [address, info]) => {
+        if (!acc[info.contractType]) acc[info.contractType] = 0;
+        acc[info.contractType]++;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      console.log('📊 [DYNAMIC] Contract summary:', contractSummary);
+
+    } catch (error) {
+      console.error('❌ [DYNAMIC] Error loading contract addresses:', error);
+      this.contractsLoaded = false;
+      throw error;
+    }
   }
 
   /**
@@ -94,6 +263,11 @@ export class OrderBookWebhookProcessor {
 
     try {
       console.log(`🔍 [DEBUG] Starting webhook processing for event type: ${webhookData.type}`);
+      
+      // Load contract addresses dynamically if not already loaded
+      if (!this.contractsLoaded) {
+        await this.loadContractAddresses();
+      }
       
       // Extract logs from different webhook formats
       const logs = this.extractLogsFromWebhook(webhookData);
@@ -170,16 +344,37 @@ export class OrderBookWebhookProcessor {
       logs.push(...webhookData.block.logs);
     }
 
-    // Filter for our contracts only
+    console.log(`🔍 [DEBUG] Total logs extracted: ${logs.length}`);
+    
+    // Debug: Log all contract addresses to see what we're working with
+    if (logs.length > 0) {
+      console.log(`🔍 [DEBUG] Contract addresses in logs:`, logs.map((log, i) => ({
+        index: i,
+        address: log.account.address,
+        normalized: log.account.address.toLowerCase(),
+        topics: log.topics.length,
+        firstTopic: log.topics[0]
+      })));
+    }
+
+    // Dynamic filtering based on loaded contract addresses
+    console.log(`🔍 [DYNAMIC] Filtering logs using dynamic contract addresses`);
+    
     const relevantLogs = logs.filter(log => {
       const address = log.account.address.toLowerCase();
-      return (
-        address === CONTRACT_ADDRESSES.orderRouter.toLowerCase() ||
-        address.startsWith('0x07d317c87e6d8af322463acf024f1e28d38f6117') // OrderBook pattern
-      );
+      const contractInfo = this.contractAddresses.get(address);
+      
+      if (contractInfo) {
+        console.log(`✅ [DYNAMIC] Found relevant log from ${contractInfo.contractType}: ${address} → ${contractInfo.metricId}`);
+        return true;
+      } else {
+        console.log(`🔍 [DYNAMIC] Filtering out log from unknown contract: ${address}`);
+        console.log(`🔍 [DYNAMIC] Known contracts:`, Array.from(this.contractAddresses.keys()).slice(0, 10));
+        return false;
+      }
     });
 
-    console.log(`🔍 Found ${relevantLogs.length} relevant logs from ${logs.length} total logs`);
+    console.log(`🔍 [DYNAMIC] Found ${relevantLogs.length} relevant logs from ${logs.length} total logs using dynamic contract list`);
     return relevantLogs;
   }
 
@@ -195,18 +390,33 @@ export class OrderBookWebhookProcessor {
     }
 
     const eventSignature = topics[0];
+    const contractInfo = this.contractAddresses.get(contractAddress);
 
-    // Process OrderRouter events
-    if (contractAddress === CONTRACT_ADDRESSES.orderRouter.toLowerCase()) {
-      return this.processOrderRouterEvent(log, eventSignature);
+    if (!contractInfo) {
+      console.log(`⚠️ [DYNAMIC] Unknown contract address: ${contractAddress}`);
+      return null;
     }
 
-    // Process OrderBook events (dynamic addresses)
-    if (contractAddress.startsWith('0x07d317c87e6d8af322463acf024f1e28d38f6117')) {
-      return this.processOrderBookEvent(log, eventSignature);
-    }
+    console.log(`🔍 [DYNAMIC] Processing ${contractInfo.contractType} event from ${contractInfo.metricId}: ${eventSignature}`);
 
-    return null;
+    // Route to appropriate processor based on dynamic contract type
+    switch (contractInfo.contractType) {
+      case 'TradingRouter':
+        return this.processTradingRouterEvent(log, eventSignature);
+      
+      case 'VaultRouter':
+        return this.processVaultRouterEvent(log, eventSignature);
+      
+      case 'OrderBook':
+        return this.processOrderBookEvent(log, eventSignature, contractInfo.metricId);
+      
+      case 'Factory':
+        return this.processFactoryEvent(log, eventSignature);
+      
+      default:
+        console.log(`⚠️ [DYNAMIC] Unknown contract type: ${contractInfo.contractType}`);
+        return null;
+    }
   }
 
   /**
@@ -218,7 +428,7 @@ export class OrderBookWebhookProcessor {
       const data = log.data;
 
       switch (eventSignature) {
-        case ORDER_EVENT_TOPICS.ORDER_PLACED:
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_PLACED:
           // OrderPlaced(uint256 indexed orderId, address indexed trader, string indexed metricId, uint8 orderType, uint8 side, uint256 quantity, uint256 price)
           console.log(`🔍 [DEBUG] Processing OrderPlaced event from OrderRouter`);
           console.log(`🔍 [DEBUG] Topics length: ${topics.length}, Data: ${data}`);
@@ -258,7 +468,7 @@ export class OrderBookWebhookProcessor {
           }
           break;
 
-        case ORDER_EVENT_TOPICS.ORDER_CANCELLED:
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_CANCELLED:
           // OrderCancelled(uint256 indexed orderId, address indexed trader, uint256 timestamp)
           if (topics.length >= 3) {
             const orderId = ethers.getBigInt(topics[1]).toString();
@@ -281,7 +491,7 @@ export class OrderBookWebhookProcessor {
           }
           break;
 
-        case ORDER_EVENT_TOPICS.ORDER_EXECUTED:
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_FILLED:
           // OrderExecuted(uint256 indexed orderId, address indexed trader, uint256 executedQuantity, uint256 executedPrice, uint256 timestamp)
           if (topics.length >= 3) {
             const orderId = ethers.getBigInt(topics[1]).toString();
@@ -317,16 +527,139 @@ export class OrderBookWebhookProcessor {
   }
 
   /**
-   * Process OrderBook events (OrderAdded, OrderMatched)
+   * Process OrderBook events (OrderAdded, OrderMatched, OrderPlaced, etc.)
    */
-  private processOrderBookEvent(log: AlchemyWebhookLog, eventSignature: string): ProcessedOrderEvent | null {
+  private processOrderBookEvent(log: AlchemyWebhookLog, eventSignature: string, metricId?: string): ProcessedOrderEvent | null {
     try {
       const topics = log.topics;
       const data = log.data;
 
       switch (eventSignature) {
-        case ORDER_EVENT_TOPICS.ORDER_ADDED:
-          // OrderAdded(uint256 indexed orderId, address indexed trader, uint8 side, uint256 quantity, uint256 price)
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_PLACED_ACTUAL:
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_PLACED:
+          // OrderPlaced(bytes32 indexed orderId, address indexed user, uint8 side, uint256 size, uint256 price, uint256 timestamp)
+          // NOTE: Both market and limit orders emit OrderPlaced events
+          console.log(`🔍 [DYNAMIC] Processing OrderPlaced event`);
+          if (topics.length >= 3) {
+            const orderId = topics[1]; // bytes32 orderId
+            const user = ethers.getAddress('0x' + topics[2].slice(26));
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['uint8', 'uint256', 'uint256', 'uint256'], data);
+
+            // Determine order type from price: market orders have price = 0, limit orders have price > 0
+            const rawPrice = decodedData[2];
+            const isMarketOrder = rawPrice === 0n;
+            const orderType = isMarketOrder ? 0 : 1; // 0 = MARKET, 1 = LIMIT
+
+            console.log(`📊 [ORDER_TYPE] Determining order type:`, {
+              rawPrice: rawPrice.toString(),
+              isMarketOrder,
+              orderType: isMarketOrder ? 'MARKET' : 'LIMIT'
+            });
+
+            return {
+              orderId: orderId,
+              trader: user,
+              metricId: metricId || 'UNKNOWN',
+              orderType: orderType, // Now correctly determined from price field
+              side: Number(decodedData[0]),
+              quantity: decodedData[1].toString(),
+              price: decodedData[2].toString(),
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'placed',
+              contractAddress: log.account.address
+            };
+          }
+          break;
+
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_FILLED:
+          // OrderFilled(bytes32 indexed orderId, address indexed taker, address indexed maker, uint256 size, uint256 price, uint256 timestamp)
+          console.log(`🔍 [DYNAMIC] Processing OrderFilled event`);
+          if (topics.length >= 4) {
+            const orderId = topics[1];
+            const taker = ethers.getAddress('0x' + topics[2].slice(26));
+            const maker = ethers.getAddress('0x' + topics[3].slice(26));
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256', 'uint256'], data);
+
+            return {
+              orderId: orderId,
+              trader: taker, // Use taker as primary trader
+              metricId: metricId || 'UNKNOWN',
+              orderType: 1, // LIMIT
+              side: 0, // Will be determined from order data
+              quantity: decodedData[0].toString(),
+              price: decodedData[1].toString(),
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'executed',
+              contractAddress: log.account.address
+            };
+          }
+          break;
+
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_CANCELLED:
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_CANCELLED_ACTUAL:
+          // OrderCancelled(bytes32 indexed orderId, address indexed user, uint256 timestamp)
+          console.log(`🔍 [DYNAMIC] Processing OrderCancelled event (signature: ${eventSignature})`);
+          if (topics.length >= 3) {
+            const orderId = topics[1];
+            const user = ethers.getAddress('0x' + topics[2].slice(26));
+
+            console.log(`📋 [CANCELLATION] Parsed cancellation event:`, {
+              orderId,
+              user,
+              txHash: log.transaction.hash,
+              blockNumber: log.transaction.blockNumber
+            });
+
+            return {
+              orderId: orderId,
+              trader: user,
+              metricId: metricId || 'UNKNOWN',
+              orderType: 1,
+              side: 0,
+              quantity: '0',
+              price: '0',
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'cancelled',
+              contractAddress: log.account.address
+            };
+          }
+          break;
+
+        case HYPERLIQUID_EVENT_TOPICS.TRADE_EXECUTED:
+          // TradeExecuted(address indexed buyer, address indexed seller, uint256 size, uint256 price, uint256 timestamp)
+          console.log(`🔍 [DYNAMIC] Processing TradeExecuted event`);
+          if (topics.length >= 3) {
+            const buyer = ethers.getAddress('0x' + topics[1].slice(26));
+            const seller = ethers.getAddress('0x' + topics[2].slice(26));
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256', 'uint256'], data);
+
+            // Create a trade event (not tied to specific order)
+            return {
+              orderId: `trade_${log.transaction.hash}_${log.index}`,
+              trader: buyer, // Primary trader (could create another for seller)
+              metricId: metricId || 'UNKNOWN',
+              orderType: 0, // MARKET (executed immediately)
+              side: 0, // BUY
+              quantity: decodedData[0].toString(),
+              price: decodedData[1].toString(),
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'executed',
+              contractAddress: log.account.address
+            };
+          }
+          break;
+
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_ADDED:
+          // Legacy: OrderAdded(uint256 indexed orderId, address indexed trader, uint8 side, uint256 quantity, uint256 price)
+          console.log(`🔍 [DYNAMIC] Processing legacy OrderAdded event`);
           if (topics.length >= 3) {
             const orderId = ethers.getBigInt(topics[1]).toString();
             const trader = ethers.getAddress('0x' + topics[2].slice(26));
@@ -339,7 +672,7 @@ export class OrderBookWebhookProcessor {
             return {
               orderId,
               trader,
-              metricId: '', // Will be derived from contract address
+              metricId: metricId || 'UNKNOWN',
               orderType: 1, // Assume LIMIT for OrderBook
               side: Number(decodedData[0]),
               quantity: decodedData[1].toString(),
@@ -353,14 +686,182 @@ export class OrderBookWebhookProcessor {
           }
           break;
 
-        case ORDER_EVENT_TOPICS.ORDER_MATCHED:
+        case HYPERLIQUID_EVENT_TOPICS.ORDER_MATCHED:
           // OrderMatched events can be processed for execution tracking
-          console.log(`📊 OrderMatched event detected in log ${log.index}`);
+          console.log(`📊 [DYNAMIC] OrderMatched event detected in log ${log.index} for ${metricId}`);
           // Implementation depends on specific matching requirements
+          break;
+
+        default:
+          console.warn(`⚠️ [DYNAMIC] Unknown OrderBook event signature: ${eventSignature}`);
+          console.log(`🔍 [DEBUG] Event details:`, {
+            contractAddress: log.account.address,
+            metricId,
+            topicsCount: topics.length,
+            dataLength: data?.length || 0,
+            txHash: log.transaction.hash,
+            blockNumber: log.transaction.blockNumber
+          });
+          
+          // Log topics for manual analysis
+          topics.forEach((topic, index) => {
+            console.log(`🔍 [DEBUG] Topic[${index}]: ${topic}`);
+          });
           break;
       }
     } catch (error) {
       console.error(`❌ Failed to process OrderBook event: ${(error as Error).message}`);
+    }
+
+    return null;
+  }
+
+
+  /**
+   * Process TradingRouter events (new Hyperliquid unified interface)
+   */
+  private processTradingRouterEvent(log: AlchemyWebhookLog, eventSignature: string): ProcessedOrderEvent | null {
+    try {
+      const topics = log.topics;
+      const data = log.data;
+
+      switch (eventSignature) {
+        case HYPERLIQUID_EVENT_TOPICS.MULTI_MARKET_ORDER_EXECUTED:
+          // MultiMarketOrderExecuted(address indexed user, uint256 orderCount, uint256 timestamp)
+          console.log(`📊 Multi-market order executed by ${topics[1]}`);
+          // This could trigger updates to multiple positions
+          return null; // Composite event, handled separately
+          
+        case HYPERLIQUID_EVENT_TOPICS.PORTFOLIO_REBALANCED:
+          // PortfolioRebalanced(address indexed user, uint256 marketCount, uint256 timestamp)
+          console.log(`⚖️ Portfolio rebalanced for user ${topics[1]}`);
+          return null; // Portfolio event, not a direct order
+      }
+    } catch (error) {
+      console.error(`❌ Failed to process TradingRouter event: ${(error as Error).message}`);
+    }
+
+    return null;
+  }
+
+  /**
+   * Process VaultRouter events (collateral and margin management)
+   */
+  private processVaultRouterEvent(log: AlchemyWebhookLog, eventSignature: string): ProcessedOrderEvent | null {
+    try {
+      const topics = log.topics;
+      const data = log.data;
+
+      switch (eventSignature) {
+        case HYPERLIQUID_EVENT_TOPICS.COLLATERAL_DEPOSITED:
+          // CollateralDeposited(address indexed user, uint256 amount, uint256 newBalance)
+          if (topics.length >= 2) {
+            const user = ethers.getAddress('0x' + topics[1].slice(26));
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256'], data);
+            
+            console.log(`💰 Collateral deposited: ${user}, amount: ${decodedData[0]}, new balance: ${decodedData[1]}`);
+            
+            return {
+              orderId: `deposit_${log.transaction.hash}_${log.index}`,
+              trader: user,
+              metricId: 'COLLATERAL_DEPOSIT',
+              orderType: 0,
+              side: 0, // Deposit is like a "buy" of collateral
+              quantity: decodedData[0].toString(),
+              price: '1000000', // 1 USDC = 1 USD (6 decimals)
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'executed', // Deposits are immediately executed
+              contractAddress: log.account.address
+            };
+          }
+          break;
+
+        case HYPERLIQUID_EVENT_TOPICS.COLLATERAL_WITHDRAWN:
+          // CollateralWithdrawn(address indexed user, uint256 amount, uint256 newBalance)
+          if (topics.length >= 2) {
+            const user = ethers.getAddress('0x' + topics[1].slice(26));
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256'], data);
+            
+            console.log(`💸 Collateral withdrawn: ${user}, amount: ${decodedData[0]}, new balance: ${decodedData[1]}`);
+            
+            return {
+              orderId: `withdraw_${log.transaction.hash}_${log.index}`,
+              trader: user,
+              metricId: 'COLLATERAL_WITHDRAWAL',
+              orderType: 0,
+              side: 1, // Withdrawal is like a "sell" of collateral
+              quantity: decodedData[0].toString(),
+              price: '1000000', // 1 USDC = 1 USD (6 decimals)
+              txHash: log.transaction.hash,
+              blockNumber: parseInt(log.transaction.blockNumber),
+              logIndex: log.index,
+              eventType: 'executed', // Withdrawals are immediately executed
+              contractAddress: log.account.address
+            };
+          }
+          break;
+
+        case HYPERLIQUID_EVENT_TOPICS.POSITION_UPDATED:
+          // PositionUpdated(address indexed user, bytes32 indexed marketId, int256 size, uint256 entryPrice)
+          if (topics.length >= 3) {
+            const user = ethers.getAddress('0x' + topics[1].slice(26));
+            const marketId = topics[2];
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['int256', 'uint256'], data);
+            
+            console.log(`📊 Position updated: ${user}, market: ${marketId}, size: ${decodedData[0]}, price: ${decodedData[1]}`);
+            // Position updates are handled separately, not as orders
+            return null;
+          }
+          break;
+
+        case HYPERLIQUID_EVENT_TOPICS.PNL_REALIZED:
+          // PnLRealized(address indexed user, bytes32 indexed marketId, int256 pnl)
+          if (topics.length >= 3) {
+            const user = ethers.getAddress('0x' + topics[1].slice(26));
+            const marketId = topics[2];
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['int256'], data);
+            
+            console.log(`💹 PnL realized: ${user}, market: ${marketId}, pnl: ${decodedData[0]}`);
+            // PnL events are tracked separately, not as orders
+            return null;
+          }
+          break;
+      }
+    } catch (error) {
+      console.error(`❌ Failed to process VaultRouter event: ${(error as Error).message}`);
+    }
+
+    return null;
+  }
+
+
+  /**
+   * Process Factory events (market creation and management)
+   */
+  private processFactoryEvent(log: AlchemyWebhookLog, eventSignature: string): ProcessedOrderEvent | null {
+    try {
+      const topics = log.topics;
+      const data = log.data;
+
+      switch (eventSignature) {
+        case HYPERLIQUID_EVENT_TOPICS.MARKET_CREATED:
+          // MarketCreated(bytes32 indexed marketId, address indexed orderBookAddress, string symbol, address indexed creator)
+          if (topics.length >= 4) {
+            const marketId = topics[1];
+            const orderBookAddress = ethers.getAddress('0x' + topics[2].slice(26));
+            const creator = ethers.getAddress('0x' + topics[3].slice(26));
+            const decodedData = ethers.AbiCoder.defaultAbiCoder().decode(['string'], data);
+            
+            console.log(`🏭 Market created: ${marketId}, orderbook: ${orderBookAddress}, symbol: ${decodedData[0]}, creator: ${creator}`);
+            // Market creation events are handled separately
+            return null;
+          }
+          break;
+      }
+    } catch (error) {
+      console.error(`❌ Failed to process Factory event: ${(error as Error).message}`);
     }
 
     return null;
@@ -381,172 +882,87 @@ export class OrderBookWebhookProcessor {
         rawMetricId: orderEvent.metricId
       });
 
-      // Strategy: Resolve metricId using contract address lookup
+      // Strategy: Use the dynamic metricId that was resolved during log processing
       let metricId = orderEvent.metricId;
       let marketId: string | null = null;
-      let normalizedAddress = '';
 
-      console.log(`🔍 [DEBUG] Initial metricId: "${metricId}" (type: ${typeof metricId})`);
-      console.log(`🔍 [DEBUG] Contract address: "${orderEvent.contractAddress}"`);
+      console.log(`🔍 [DYNAMIC] Using metricId from dynamic contract lookup: "${metricId}"`);
+      console.log(`🔍 [DYNAMIC] Contract address: "${orderEvent.contractAddress}"`);
 
-      // PRIMARY STRATEGY: Lookup by contract address
-      if (orderEvent.contractAddress) {
-        normalizedAddress = this.normalizeContractAddress(orderEvent.contractAddress);
-        console.log(`🔍 [DEBUG] Attempting contract address lookup for: ${orderEvent.contractAddress} (normalized: ${normalizedAddress})`);
+      // PRIMARY STRATEGY: Use the metricId directly as marketId (since it's from our dynamic lookup)
+      if (metricId && metricId !== 'UNKNOWN') {
+        marketId = metricId;
+        console.log(`✅ [DYNAMIC] Using dynamic metricId as marketId: ${marketId}`);
         
-        // First try exact match with normalized (lowercase) address
-        let { data: market, error: contractLookupError } = await this.supabase
+        // Ensure this marketId exists in the markets table (for foreign key constraint)
+        if (marketId) {
+          await this.ensureMarketExists(marketId, orderEvent.contractAddress?.toLowerCase() || '');
+        }
+      } else {
+        // FALLBACK: Try lookup in orderbook_markets table by contract address
+        const normalizedAddress = orderEvent.contractAddress?.toLowerCase() || '';
+        console.log(`🔍 [DYNAMIC] Fallback: Looking up marketId by contract address: ${normalizedAddress}`);
+        
+        const { data: market, error: contractLookupError } = await this.supabase
           .from('orderbook_markets')
-          .select('id, metric_id, market_status, market_address')
-          .eq('market_address', normalizedAddress)
+          .select('metric_id')
+          .ilike('market_address', normalizedAddress)
           .single();
-
-        // If not found, try case-insensitive lookup
-        if (contractLookupError?.code === 'PGRST116') {
-          console.log(`🔍 [DEBUG] Exact match failed, trying case-insensitive lookup...`);
-          const { data: marketCaseInsensitive, error: caseInsensitiveError } = await this.supabase
-            .from('orderbook_markets')
-            .select('id, metric_id, market_status, market_address')
-            .ilike('market_address', normalizedAddress)
-            .single();
+        
+        if (!contractLookupError && market && market.metric_id) {
+          marketId = market.metric_id;
+          console.log(`✅ [DYNAMIC] Found marketId via contract address lookup: ${marketId}`);
           
-          if (!caseInsensitiveError && marketCaseInsensitive) {
-            market = marketCaseInsensitive;
-            contractLookupError = null;
-            console.log(`✅ [DEBUG] Found market using case-insensitive lookup!`);
-          } else {
-            contractLookupError = caseInsensitiveError;
+          // Ensure this marketId exists in the markets table (for foreign key constraint)
+          if (marketId) {
+            await this.ensureMarketExists(marketId, normalizedAddress);
           }
-        }
-
-        if (contractLookupError) {
-          console.error(`❌ [DEBUG] Error in contract address lookup:`, contractLookupError);
-        }
-
-        if (market) {
-          metricId = market.metric_id;
-          marketId = market.id;
-          console.log(`✅ [DEBUG] Found market via contract address! metricId: "${metricId}", marketId: "${marketId}"`);
         } else {
-          console.warn(`⚠️ [DEBUG] No market found for contract address: ${orderEvent.contractAddress}`);
-          
-          // Debug: Show available contract addresses
-          const { data: allMarkets } = await this.supabase
-            .from('orderbook_markets')
-            .select('market_address, metric_id')
-            .not('market_address', 'is', null)
-            .limit(10);
-          
-          console.log(`🔍 [DEBUG] Available contract addresses in database:`, 
-            allMarkets?.map(m => ({ 
-              address: m.market_address, 
-              metricId: m.metric_id,
-              normalizedAddress: m.market_address ? this.normalizeContractAddress(m.market_address) : null,
-              matchesWebhook: m.market_address ? this.normalizeContractAddress(m.market_address) === normalizedAddress : false
-            }))
-          );
+          console.log(`⚠️ [DYNAMIC] No market found for contract address: ${normalizedAddress}`);
         }
       }
 
-      // FALLBACK STRATEGY 1: For non-placed events, lookup metricId from existing order
-      if (!metricId && orderEvent.orderId) {
-        console.log(`🔍 [DEBUG] Fallback: Attempting to lookup metricId from existing order ${orderEvent.orderId}`);
+      // FALLBACK STRATEGY: For non-placed events, lookup market from existing order
+      if (!marketId && orderEvent.orderId) {
+        console.log(`🔍 [DYNAMIC] Fallback: Attempting to lookup market from existing order ${orderEvent.orderId}`);
         const { data: existingOrder, error: lookupError } = await this.supabase
-          .from('market_orders')
-          .select(`
-            market_id,
-            orderbook_markets!inner(
-              metric_id
-            )
-          `)
+          .from('orders')
+          .select('market_id')
           .eq('order_id', orderEvent.orderId)
           .single();
         
         if (lookupError) {
-          console.error(`❌ [DEBUG] Error looking up existing order:`, lookupError);
+          console.error(`❌ [DYNAMIC] Error looking up existing order:`, lookupError);
         }
         
-        if (existingOrder && (existingOrder as any).orderbook_markets) {
-          metricId = (existingOrder as any).orderbook_markets.metric_id;
+        if (existingOrder) {
           marketId = existingOrder.market_id;
-          console.log(`✅ [DEBUG] Found metricId from existing order: "${metricId}"`);
+          console.log(`✅ [DYNAMIC] Found marketId from existing order: "${marketId}"`);
         } else {
-          console.warn(`⚠️ [DEBUG] No existing order found for orderId: ${orderEvent.orderId}`);
-        }
-      }
-
-      // FALLBACK STRATEGY 2: Hash-based lookup (for OrderRouter events)
-      if (!metricId && orderEvent.metricId) {
-        console.log(`🔍 [DEBUG] Fallback: Using hash-based metricId: "${orderEvent.metricId}"`);
-        metricId = orderEvent.metricId;
-      }
-
-      // FALLBACK STRATEGY 3: Use UNKNOWN for placed events
-      if (!metricId && orderEvent.eventType === 'placed') {
-        console.warn(`⚠️ [DEBUG] All strategies failed, using UNKNOWN for placed order`);
-        metricId = 'UNKNOWN';
-      }
-
-      console.log(`🔍 [DEBUG] Final metricId for market lookup: "${metricId}" (type: ${typeof metricId})`);
-
-      // If we don't have marketId yet, get it from metricId
-      if (!marketId && metricId) {
-        console.log(`🔍 [DEBUG] Querying orderbook_markets table for metricId: "${metricId}"`);
-        const { data: market, error: marketError } = await this.supabase
-        .from('orderbook_markets')
-          .select('id, metric_id, market_status')
-        .eq('metric_id', metricId)
-        .single();
-
-        if (marketError) {
-          console.error(`❌ [DEBUG] Error querying orderbook_markets:`, marketError);
-        }
-
-        console.log(`🔍 [DEBUG] Market query result:`, market);
-
-        if (market) {
-          marketId = market.id;
-          console.log(`✅ [DEBUG] Found marketId via metricId lookup: "${marketId}"`);
+          console.warn(`⚠️ [DYNAMIC] No existing order found for orderId: ${orderEvent.orderId}`);
         }
       }
 
       // Final validation
       if (!marketId) {
-        console.error(`❌ [DEBUG] No market found for metricId: "${metricId}" or contract: "${orderEvent.contractAddress}"`);
+        console.error(`❌ [DYNAMIC] No market found for metricId: "${metricId}" or contract: "${orderEvent.contractAddress}"`);
         
         // Additional debugging: Let's see what markets exist
-        console.log(`🔍 [DEBUG] Fetching all available markets for debugging...`);
+        console.log(`🔍 [DYNAMIC] Fetching all available markets for debugging...`);
         const { data: allMarkets, error: allMarketsError } = await this.supabase
           .from('orderbook_markets')
-          .select('id, metric_id, market_status, market_address')
-          .limit(20);
+          .select('metric_id, market_status, market_address')
+          .eq('market_status', 'ACTIVE')
+          .eq('is_active', true)
+          .limit(10);
         
         if (allMarketsError) {
-          console.error(`❌ [DEBUG] Error fetching all markets:`, allMarketsError);
+          console.error(`❌ [DYNAMIC] Error fetching all markets:`, allMarketsError);
         } else {
-          console.log(`🔍 [DEBUG] Available markets (first 20):`, allMarkets?.map(m => ({
-            id: m.id,
+          console.log(`🔍 [DYNAMIC] Available active markets:`, allMarkets?.map(m => ({
             metric_id: m.metric_id,
-            market_status: m.market_status,
             market_address: m.market_address
           })));
-          
-          // Try to find similar metricIds or contract addresses
-          const similarMarkets = allMarkets?.filter(m => {
-            const metricMatch = m.metric_id && metricId && (
-              m.metric_id.toLowerCase().includes(metricId.toLowerCase()) ||
-              metricId.toLowerCase().includes(m.metric_id.toLowerCase())
-            );
-            const contractMatch = m.market_address && orderEvent.contractAddress && 
-              m.market_address.toLowerCase() === this.normalizeContractAddress(orderEvent.contractAddress);
-            return metricMatch || contractMatch;
-          });
-          
-          if (similarMarkets && similarMarkets.length > 0) {
-            console.log(`🔍 [DEBUG] Similar markets found:`, similarMarkets);
-          } else {
-            console.log(`🔍 [DEBUG] No similar markets found for metricId: "${metricId}" or contract: "${orderEvent.contractAddress}"`);
-          }
         }
         
         return false;
@@ -567,7 +983,14 @@ export class OrderBookWebhookProcessor {
         
         case 'cancelled':
           console.log(`💾 [DEBUG] Updating order status to cancelled...`);
-          return await this.updateOrderStatus(orderEvent.orderId, 'cancelled');
+          const cancellationResult = await this.updateOrderStatus(orderEvent.orderId, 'cancelled');
+          
+          // Broadcast cancellation event for real-time UI updates
+          if (cancellationResult) {
+            await this.broadcastOrderCancellation(orderEvent);
+          }
+          
+          return cancellationResult;
         
         case 'executed':
           console.log(`💾 [DEBUG] Updating order execution details...`);
@@ -590,114 +1013,133 @@ export class OrderBookWebhookProcessor {
   }
 
   /**
-   * Save new order to Supabase
+   * Save new order to Supabase (simplified orders table)
    */
   private async saveNewOrder(orderEvent: ProcessedOrderEvent, marketId: string): Promise<boolean> {
     try {
       // Convert order data to Supabase format
-      // Use precise decimal handling for very small quantities
-      const quantityInEther = ethers.formatEther(orderEvent.quantity);
-      const priceInEther = ethers.formatEther(orderEvent.price);
+      // CORRECT DECIMAL HANDLING - OrderBook uses 6 decimals (USDC precision), NOT 18!
+      // Contract constant: PRICE_PRECISION = 1e6 (6 decimals for USDC compatibility)
+      const PRICE_PRECISION = 1000000; // 1e6
       
-      console.log(`🔢 [DEBUG] Wei to Ether conversion:`, {
-        rawQuantityWei: orderEvent.quantity,
-        rawPriceWei: orderEvent.price,
-        quantityInEther,
-        priceInEther,
-        quantityAsFloat: parseFloat(quantityInEther),
-        priceAsFloat: parseFloat(priceInEther)
-      });
+      const quantityConverted = parseFloat(orderEvent.quantity) / PRICE_PRECISION;
+      const priceConverted = parseFloat(orderEvent.price) / PRICE_PRECISION;
       
-      // For very small values, consider if this is the correct conversion
-      // The minimum precision might need adjustment based on your token decimals
-      const quantity = Math.max(parseFloat(quantityInEther), 1e-8);
-      const price = Math.max(parseFloat(priceInEther), 1e-8);
-      
-      // Warn if quantities are suspiciously small
-      if (quantity < 1e-6) {
-        console.warn(`⚠️ [DEBUG] Very small quantity detected: ${quantity}. Consider checking token decimals or conversion logic.`);
+      // Additional validation: For market orders, ensure size represents UNITS, not USDC value
+      let actualUnits = quantityConverted;
+      if (orderEvent.orderType === 0 && priceConverted > 0) { // Market order with price data
+        // If this is a market order and we have price, verify if quantity represents units or USDC
+        const estimatedUSDCValue = quantityConverted * priceConverted;
+        console.log(`🔍 [SIZE_VALIDATION] Market order size analysis:`, {
+          rawQuantity: orderEvent.quantity,
+          convertedQuantity: quantityConverted,
+          priceConverted,
+          estimatedUSDCValue,
+          likelyInterpretation: estimatedUSDCValue > 1000 ? 'quantity_is_units' : 'quantity_might_be_usdc_value'
+        });
       }
       
-      // Determine order type and status based on event type
+      console.log(`🔢 [DEBUG] Decimal conversion (6 decimals):`, {
+        rawQuantity: orderEvent.quantity,
+        rawPrice: orderEvent.price,
+        quantityConverted: actualUnits,
+        priceConverted,
+        precision: PRICE_PRECISION,
+        orderType: orderEvent.orderType,
+        interpretation: 'quantity_represents_token_units'
+      });
+      
+      // Validate raw values first to prevent constraint violations
+      if (orderEvent.quantity === '0' || orderEvent.quantity === '0x0') {
+        console.error(`❌ [ERROR] Invalid quantity: ${orderEvent.quantity} - violates positive_values constraint`);
+        return false;
+      }
+      
+      // Use converted values with proper precision
+      const quantity = actualUnits > 0 ? actualUnits : 0.000001; // Minimum fallback
+      const price = priceConverted > 0 ? priceConverted : null; // NULL allowed for market orders
+      
+      console.log(`✅ [DEBUG] Final values for database:`, {
+        quantity,
+        price,
+        meetsConstraints: quantity > 0 && (price === null || price > 0)
+      });
+      
+      // Additional validation to prevent constraint violation
+      if (quantity <= 0) {
+        console.error(`❌ [ERROR] Quantity ${quantity} violates size > 0 constraint`);
+        return false;
+      }
+      if (price !== null && price <= 0) {
+        console.error(`❌ [ERROR] Price ${price} violates price > 0 constraint`);
+        return false;
+      }
+      
+      // Determine order type and status based on contract orderType field, NOT eventType
+      // Both market and limit orders emit OrderPlaced events in the smart contract
       let orderType: string;
       let orderStatus: string;
       
-      if (orderEvent.eventType === 'added') {
-        // 'added' events represent market orders that are immediately executed
-        orderType = 'MARKET';
-        orderStatus = 'FILLED'; // Market orders are immediately filled
-        console.log(`📊 [DEBUG] Processing market order (added event)`);
+      // Use the actual orderType from the contract event
+      orderType = this.getOrderTypeString(orderEvent.orderType);
+      
+      // Determine status based on actual order type
+      if (orderEvent.orderType === 0) { // OrderType.MARKET = 0
+        orderStatus = 'FILLED'; // Market orders are immediately executed
+        console.log(`📊 [DEBUG] Processing MARKET order (orderType=0, eventType=${orderEvent.eventType})`);
       } else {
-        // 'placed' events represent limit orders waiting in the book
-        orderType = this.getOrderTypeString(orderEvent.orderType);
         orderStatus = 'PENDING'; // Limit orders start as pending
-        console.log(`📊 [DEBUG] Processing limit order (placed event)`);
+        console.log(`📊 [DEBUG] Processing LIMIT order (orderType=${orderEvent.orderType}, eventType=${orderEvent.eventType})`);
       }
       
+      // Additional handling for execution events
+      if (orderEvent.eventType === 'executed' || orderEvent.eventType === 'added') {
+        orderStatus = 'FILLED';
+        console.log(`📊 [DEBUG] Order execution detected, setting status to FILLED`);
+      }
+      
+      // Calculate USDC value for user understanding
+      const usdcValue = price ? quantity * price : null;
+      
+      // 🚨 Use upsert to avoid duplicate key violations
+      // Map to exact database schema - orders table
       const orderData = {
-        order_id: orderEvent.orderId,
+        order_id: orderEvent.orderId.toString(), // Ensure string type for database
         market_id: marketId,
-        trader_wallet_address: orderEvent.trader,
-        side: orderEvent.side === 0 ? 'BUY' : 'SELL', // Use uppercase to match schema
-        quantity: quantity,
-        price: price,
+        user_address: orderEvent.trader,
         order_type: orderType,
-        order_status: orderStatus,
-        filled_quantity: orderEvent.eventType === 'added' ? quantity : 0, // Market orders are fully filled
+        side: orderEvent.side === 0 ? 'BUY' : 'SELL',
+        size: quantity, // This correctly shows units purchased (e.g., 20.0 units)
+        price: price,
+        filled: 0,
+        status: orderStatus,
+        margin_reserved: quantity * (price ?? 1) * 0.1,
+        // Additional columns we added
+        tx_hash: orderEvent.txHash || null,
+        block_number: orderEvent.blockNumber || null,
+        log_index: orderEvent.logIndex || null,
+        contract_address: orderEvent.contractAddress || null,
+        event_type: orderEvent.eventType || 'placed',
+        quantity: quantity, // Alias column - shows units purchased
+        trader_address: orderEvent.trader, // Alias column
         created_at: new Date().toISOString(),
-        creation_transaction_hash: orderEvent.txHash,
-        creation_block_number: orderEvent.blockNumber
-        // Note: log_index not included as it doesn't exist in the schema
+        updated_at: new Date().toISOString()
       };
-
-      console.log(`💾 [DEBUG] Order data to insert:`, {
-        orderId: orderData.order_id,
-        marketId: orderData.market_id,
-        type: orderData.order_type,
-        status: orderData.order_status,
-        side: orderData.side,
-        quantity: orderData.quantity,
-        price: orderData.price,
-        filledQuantity: orderData.filled_quantity,
-        createdAt: orderData.created_at
+      
+      console.log(`💰 [ORDER_SUMMARY] Order value breakdown:`, {
+        units_purchased: quantity,
+        price_per_unit: price,
+        total_usdc_value: usdcValue,
+        order_type: orderType,
+        explanation: price ? `${quantity} units × $${price}/unit = $${usdcValue} USDC` : 'Market order - price determined at execution'
       });
 
-      console.log(`🔍 [DEBUG] Raw order event data:`, {
-        rawQuantity: orderEvent.quantity,
-        rawPrice: orderEvent.price,
-        quantityInEther: quantityInEther,
-        priceInEther: priceInEther,
-        finalQuantity: quantity,
-        finalPrice: price
-      });
+      console.log(`📝 [DEBUG] Inserting order data:`, orderData);
 
-      // 🚨 Use upsert on order_hash to avoid duplicate key violations and reuse UUID
-      const computedOrderHash = '0x' + ethers.keccak256(ethers.toUtf8Bytes(`${orderEvent.orderId}_${orderEvent.trader}_${orderEvent.txHash}`)).slice(2);
       const { data: upsertedRow, error } = await this.supabase
-        .from('off_chain_orders')
-        .upsert([
-          {
-            order_id: parseInt(orderEvent.orderId),
-            market_id: marketId,
-            trader_wallet_address: orderEvent.trader,
-            order_type: orderType,
-            side: orderEvent.side === 0 ? 'BUY' : 'SELL',
-            quantity: quantity,
-            price: price,
-            order_status: orderStatus,
-            time_in_force: 'GTC',
-            post_only: false,
-            reduce_only: false,
-            order_hash: computedOrderHash,
-            signature: '0x' + '0'.repeat(130),
-            nonce: parseInt(orderEvent.orderId) % 1000000,
-            required_collateral: quantity * (price || 1) * 0.1,
-            collateral_token_address: CONTRACT_ADDRESSES.USDC,
-            creation_transaction_hash: orderEvent.txHash,
-            creation_block_number: orderEvent.blockNumber
-          }
-        ], { onConflict: ['order_hash'] })
-        .select('id')
+        .from('orders')
+        .upsert([orderData], { onConflict: 'order_id' })
+        .select('order_id')
         .single();
 
       if (error) {
@@ -705,12 +1147,24 @@ export class OrderBookWebhookProcessor {
         return false;
       }
 
-      console.log(`✅ Successfully saved order ${orderEvent.orderId} to Supabase (UUID: ${upsertedRow?.id})`);
+      console.log(`✅ Successfully saved order ${orderEvent.orderId} to Supabase orders table`);
       
       // For executed orders (market orders or filled limit orders), update positions
-      if (orderStatus === 'FILLED' || orderEvent.eventType === 'added') {
+      if (orderStatus === 'FILLED' || orderEvent.eventType === 'executed') {
         console.log(`📊 [DEBUG] Order is filled, updating position...`);
-        await this.updatePosition(orderEvent, marketId, quantity, price);
+        await this.updatePosition(orderEvent, marketId, quantity, price ?? 1);
+        
+        // CRITICAL: For market orders, trigger unit decrementing in order book
+        if (orderType === 'MARKET') {
+          console.log(`🔄 [MARKET_ORDER] Triggering unit decrement for market order execution...`);
+          await this.processMarketOrderUnitDecrement({
+            orderId: orderEvent.orderId,
+            marketId: marketId,
+            side: orderEvent.side === 0 ? 'BUY' : 'SELL',
+            size: quantity,
+            orderType: 'MARKET'
+          });
+        }
       }
       
       return true;
@@ -1015,10 +1469,16 @@ export class OrderBookWebhookProcessor {
    */
   private async updateOrderStatus(orderId: string, status: string): Promise<boolean> {
     try {
+      // For cancelled orders, use the comprehensive cancellation handler
+      if (status.toLowerCase() === 'cancelled') {
+        return await this.updateOrderCancellation(orderId);
+      }
+
+      // For other status updates, use simple status update
       const { error } = await this.supabase
-        .from('market_orders')
+        .from('orders')
         .update({ 
-          order_status: status,
+          status: status,
           updated_at: new Date().toISOString()
         })
         .eq('order_id', orderId);
@@ -1032,6 +1492,171 @@ export class OrderBookWebhookProcessor {
       return true;
     } catch (error) {
       console.error(`❌ Failed to update order status: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Handle order cancellation with proper margin release and unit availability
+   */
+  private async updateOrderCancellation(orderId: string): Promise<boolean> {
+    try {
+      console.log(`🔄 [CANCELLATION] Processing order cancellation for order: ${orderId}`);
+
+      // First, get the current order details
+      const { data: order, error: orderLookupError } = await this.supabase
+        .from('orders')
+        .select('*')
+        .eq('order_id', orderId)
+        .single();
+
+      if (orderLookupError) {
+        console.error(`❌ [CANCELLATION] Failed to lookup order ${orderId}:`, orderLookupError);
+        return false;
+      }
+
+      if (!order) {
+        console.error(`❌ [CANCELLATION] Order ${orderId} not found`);
+        return false;
+      }
+
+      console.log(`📋 [CANCELLATION] Found order:`, {
+        orderId: order.order_id,
+        status: order.status,
+        size: order.size,
+        filled: order.filled,
+        marginReserved: order.margin_reserved,
+        userAddress: order.user_address
+      });
+
+      // Check if order is already cancelled or filled
+      if (order.status === 'CANCELLED') {
+        console.log(`⚠️ [CANCELLATION] Order ${orderId} is already cancelled`);
+        return true;
+      }
+
+      if (order.status === 'FILLED') {
+        console.log(`⚠️ [CANCELLATION] Cannot cancel filled order ${orderId}`);
+        return false;
+      }
+
+      // Calculate the remaining (unfilled) quantity that will be released
+      const totalSize = parseFloat(order.size || '0');
+      const filledSize = parseFloat(order.filled || '0');
+      const remainingSize = totalSize - filledSize;
+      const marginToRelease = parseFloat(order.margin_reserved || '0');
+
+      console.log(`📊 [CANCELLATION] Order quantities:`, {
+        totalSize,
+        filledSize,
+        remainingSize,
+        marginToRelease
+      });
+
+      // Update the order status to CANCELLED
+      const { error: updateError } = await this.supabase
+        .from('orders')
+        .update({
+          status: 'CANCELLED',
+          updated_at: new Date().toISOString(),
+          // Keep the filled amount as-is, but mark the remaining as cancelled
+          margin_reserved: 0 // Release all reserved margin
+        })
+        .eq('order_id', orderId);
+
+      if (updateError) {
+        console.error(`❌ [CANCELLATION] Failed to update order status:`, updateError);
+        return false;
+      }
+
+      console.log(`✅ [CANCELLATION] Successfully cancelled order ${orderId}`);
+      console.log(`💰 [CANCELLATION] Released ${remainingSize} units and ${marginToRelease} margin`);
+
+      // Update user portfolio to release margin
+      if (marginToRelease > 0) {
+        await this.releaseUserMargin(order.user_address, marginToRelease);
+      }
+
+      return true;
+
+    } catch (error) {
+      console.error(`❌ [CANCELLATION] Failed to process order cancellation: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Release margin from user portfolio when order is cancelled
+   */
+  private async releaseUserMargin(userAddress: string, marginAmount: number): Promise<boolean> {
+    try {
+      console.log(`💰 [MARGIN] Releasing ${marginAmount} margin for user: ${userAddress}`);
+
+      // Get current user portfolio
+      const { data: portfolio, error: portfolioError } = await this.supabase
+        .from('user_portfolios')
+        .select('*')
+        .eq('user_address', userAddress)
+        .single();
+
+      if (portfolioError && portfolioError.code !== 'PGRST116') {
+        console.error(`❌ [MARGIN] Error fetching user portfolio:`, portfolioError);
+        return false;
+      }
+
+      if (!portfolio) {
+        console.log(`⚠️ [MARGIN] No portfolio found for user ${userAddress}, creating one`);
+        
+        // Create portfolio if it doesn't exist
+        const { error: createError } = await this.supabase
+          .from('user_portfolios')
+          .insert({
+            user_address: userAddress,
+            total_collateral: 0,
+            margin_used: 0,
+            margin_reserved: 0,
+            realized_pnl: 0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (createError) {
+          console.error(`❌ [MARGIN] Failed to create user portfolio:`, createError);
+          return false;
+        }
+
+        console.log(`✅ [MARGIN] Created portfolio for user ${userAddress}`);
+        return true; // No margin to release if portfolio was just created
+      }
+
+      // Update portfolio to release margin
+      const currentMarginReserved = parseFloat(portfolio.margin_reserved || '0');
+      const newMarginReserved = Math.max(0, currentMarginReserved - marginAmount);
+
+      console.log(`💰 [MARGIN] Margin update:`, {
+        currentReserved: currentMarginReserved,
+        releasing: marginAmount,
+        newReserved: newMarginReserved
+      });
+
+      const { error: updateError } = await this.supabase
+        .from('user_portfolios')
+        .update({
+          margin_reserved: newMarginReserved,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_address', userAddress);
+
+      if (updateError) {
+        console.error(`❌ [MARGIN] Failed to update user portfolio:`, updateError);
+        return false;
+      }
+
+      console.log(`✅ [MARGIN] Successfully released ${marginAmount} margin for user ${userAddress}`);
+      return true;
+
+    } catch (error) {
+      console.error(`❌ [MARGIN] Failed to release margin: ${(error as Error).message}`);
       return false;
     }
   }
@@ -1149,8 +1774,8 @@ export class OrderBookWebhookProcessor {
    * Helper: Convert order type number to string
    */
   private getOrderTypeString(orderType: number): string {
-    const types = ['market', 'limit', 'stop_loss', 'take_profit', 'stop_limit', 'iceberg', 'fill_or_kill', 'immediate_or_cancel', 'all_or_none'];
-    return types[orderType] || 'unknown';
+    const types = ['MARKET', 'LIMIT', 'STOP', 'LIMIT', 'STOP', 'LIMIT', 'MARKET', 'MARKET', 'LIMIT'];
+    return types[orderType] || 'LIMIT'; // Default to LIMIT if unknown
   }
 
   /**
@@ -1191,6 +1816,155 @@ export class OrderBookWebhookProcessor {
       }
     } catch (error) {
       console.error(`❌ [DEBUG] Error in debugMetricIdHash:`, error);
+    }
+  }
+
+  /**
+   * Helper: Map internal event types to Pusher action types
+   */
+  private mapEventTypeToAction(eventType: 'placed' | 'cancelled' | 'executed' | 'added' | 'matched'): 'open' | 'close' | 'liquidate' {
+    switch (eventType) {
+      case 'placed':
+      case 'added':
+        return 'open';
+      case 'executed':
+      case 'matched':
+      case 'cancelled':
+        return 'close';
+      default:
+        return 'open'; // Default fallback
+    }
+  }
+
+  /**
+   * 🚀 Real-time broadcast order cancellation to connected clients
+   */
+  private async broadcastOrderCancellation(orderEvent: ProcessedOrderEvent): Promise<void> {
+    try {
+      console.log(`📡 [CANCELLATION] Broadcasting order cancellation for ${orderEvent.orderId}`);
+      
+      // Get market details to resolve metricId for broadcasting
+      let metricId = orderEvent.metricId;
+      
+      // If we don't have metricId, try to resolve it
+      if (!metricId || metricId === 'UNKNOWN' || metricId.startsWith('HASH_')) {
+        const normalizedAddress = this.normalizeContractAddress(orderEvent.contractAddress);
+        const { data: market } = await this.supabase
+          .from('orderbook_markets')
+          .select('metric_id')
+          .eq('market_address', normalizedAddress)
+          .single();
+        
+        if (market) {
+          metricId = market.metric_id;
+        }
+      }
+      
+      // Prepare cancellation broadcast data
+      const cancellationData = {
+        orderId: orderEvent.orderId,
+        trader: orderEvent.trader,
+        metricId: metricId,
+        eventType: 'cancelled',
+        timestamp: Date.now(),
+        txHash: orderEvent.txHash,
+        blockNumber: orderEvent.blockNumber,
+        action: 'order_cancelled'
+      };
+
+      console.log(`📡 [CANCELLATION] Broadcast data:`, cancellationData);
+
+      // Broadcast to multiple channels for comprehensive coverage
+      
+      // 1. Market-specific channel for this token symbol
+      if (metricId && metricId !== 'UNKNOWN') {
+        await this.pusherService['pusher'].trigger(`market-${metricId}`, 'order-cancelled', cancellationData);
+        console.log(`📡 [CANCELLATION] Sent to market-${metricId} channel`);
+      }
+
+      // 2. Global recent transactions channel
+      await this.pusherService['pusher'].trigger('recent-transactions', 'order-cancelled', cancellationData);
+      console.log(`📡 [CANCELLATION] Sent to recent-transactions channel`);
+
+      // 3. User-specific channel for authenticated updates
+      await this.pusherService['pusher'].trigger(`user-${orderEvent.trader}`, 'order-cancelled', cancellationData);
+      console.log(`📡 [CANCELLATION] Sent to user-${orderEvent.trader} channel`);
+
+      console.log(`✅ [CANCELLATION] Successfully broadcasted order cancellation for ${orderEvent.orderId}`);
+
+    } catch (error) {
+      console.error(`❌ [CANCELLATION] Failed to broadcast order cancellation:`, error);
+      // Don't throw error as this is a non-critical enhancement
+    }
+  }
+
+  /**
+   * 🔄 Process market order unit decrementing via edge function
+   */
+  private async processMarketOrderUnitDecrement(orderData: {
+    orderId: string;
+    marketId: string;
+    side: string;
+    size: number;
+    orderType: string;
+  }): Promise<void> {
+    try {
+      console.log(`🔄 [MARKET_ORDER] Processing unit decrement for order ${orderData.orderId}`);
+      
+      // Call the market-order-processor edge function
+      const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
+      const response = await fetch(`${supabaseUrl}/functions/v1/market-order-processor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({
+          action: 'process',
+          orderData: {
+            orderId: orderData.orderId,
+            marketId: orderData.marketId,
+            side: orderData.side,
+            size: orderData.size.toString(),
+            orderType: orderData.orderType
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json() as any;
+      
+      if (result.success) {
+        console.log(`✅ [MARKET_ORDER] Unit decrement completed:`, {
+          orderId: orderData.orderId,
+          unitsMatched: result.execution?.unitsMatched,
+          averagePrice: result.execution?.averagePrice,
+          priceImpact: result.execution?.priceImpact
+        });
+        
+        // Log order book impact for monitoring
+        if (result.orderBook) {
+          console.log(`📊 [ORDER_BOOK] Updated availability:`, {
+            marketId: orderData.marketId,
+            bestBidBefore: result.orderBook.before?.bestBid,
+            bestAskBefore: result.orderBook.before?.bestAsk,
+            bestBidAfter: result.orderBook.after?.bestBid,
+            bestAskAfter: result.orderBook.after?.bestAsk,
+            totalBidsAfter: result.orderBook.after?.totalBidVolume,
+            totalAsksAfter: result.orderBook.after?.totalAskVolume
+          });
+        }
+      } else {
+        console.error(`❌ [MARKET_ORDER] Unit decrement failed:`, result.error);
+      }
+
+    } catch (error) {
+      console.error(`❌ [MARKET_ORDER] Error processing unit decrement:`, error);
+      // Don't throw - this is a supplementary process that shouldn't break the main workflow
     }
   }
 
@@ -1239,30 +2013,28 @@ export class OrderBookWebhookProcessor {
       
       // 1. Market-specific channel for this token symbol
       if (metricId && metricId !== 'UNKNOWN') {
-        await this.pusherService.pusher.trigger(`market-${metricId}`, 'order-update', broadcastData);
+        await this.pusherService['pusher'].trigger(`market-${metricId}`, 'order-update', broadcastData);
         console.log(`📡 [BROADCAST] Sent to market-${metricId} channel`);
       }
 
       // 2. Global recent transactions channel
-      await this.pusherService.pusher.trigger('recent-transactions', 'new-order', broadcastData);
+      await this.pusherService['pusher'].trigger('recent-transactions', 'new-order', broadcastData);
       console.log(`📡 [BROADCAST] Sent to recent-transactions channel`);
 
       // 3. User-specific channel for authenticated updates
-      await this.pusherService.pusher.trigger(`user-${orderEvent.trader}`, 'order-update', broadcastData);
+      await this.pusherService['pusher'].trigger(`user-${orderEvent.trader}`, 'order-update', broadcastData);
       console.log(`📡 [BROADCAST] Sent to user-${orderEvent.trader} channel`);
 
       // 4. Trading events channel
+      const mappedAction = this.mapEventTypeToAction(orderEvent.eventType);
       await this.pusherService.broadcastTradingEvent({
         symbol: metricId || 'UNKNOWN',
-        action: orderEvent.eventType,
+        action: mappedAction,
         userAddress: orderEvent.trader,
-        orderType: broadcastData.orderType,
-        side: broadcastData.side,
-        quantity: broadcastData.quantity,
-        price: broadcastData.price,
-        timestamp: broadcastData.timestamp,
-        txHash: orderEvent.txHash,
-        blockNumber: orderEvent.blockNumber
+        positionSize: broadcastData.quantity.toString(),
+        markPrice: broadcastData.price,
+        isLong: broadcastData.side === 'BUY',
+        timestamp: broadcastData.timestamp
       });
 
       console.log(`✅ [BROADCAST] Successfully broadcasted order update for ${orderEvent.orderId}`);

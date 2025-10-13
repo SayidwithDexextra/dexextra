@@ -16,7 +16,7 @@ export async function GET(
 
     console.log('🔍 Fetching orderbook market by metric_id:', metric_id);
 
-    // Query the orderbook_markets table
+    // Query the orderbook_markets table  
     const { data: market, error } = await supabase
       .from('orderbook_markets')
       .select(`
@@ -47,15 +47,20 @@ export async function GET(
         chain_id,
         deployment_transaction_hash,
         deployment_block_number,
-        deployment_gas_used,
+        network,
+        gas_used,
+        deployment_error,
         market_status,
+        deployment_status,
         total_volume,
         total_trades,
+        open_interest,
         open_interest_long,
         open_interest_short,
+        highest_price,
+        lowest_price,
+        current_price,
         last_trade_price,
-        settlement_value,
-        settlement_timestamp,
         creator_wallet_address,
         creator_user_id,
         metric_resolution_id,
@@ -96,7 +101,7 @@ export async function GET(
     const [ordersResult, tradesResult, positionsResult] = await Promise.allSettled([
       // Fetch recent off-chain orders
       supabase
-        .from('off_chain_orders')
+        .from('orders')
         .select(`
           id,
           order_id,

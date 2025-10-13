@@ -2,6 +2,7 @@
 
 import { use, useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { ethers } from 'ethers';
 import { 
   TokenHeader, 
   TradingPanel, 
@@ -84,6 +85,21 @@ export default function TokenPage({ params }: TokenPageProps) {
     }
   };
 
+  // Debug market data before calling stats hook
+  useEffect(() => {
+    if (marketData?.market) {
+      console.log(`🏪 Debug TokenPage market data for ${symbol}:`, {
+        metric_id: marketData.market.metric_id,
+        market_address: marketData.market.market_address,
+        market_status: marketData.market.market_status,
+        chain_id: marketData.market.chain_id,
+        hasValidAddress: marketData.market.market_address ? ethers.isAddress(marketData.market.market_address) : false
+      });
+    } else {
+      console.log(`🏪 Debug TokenPage: No market data for ${symbol}`);
+    }
+  }, [marketData, symbol]);
+
   // Enhanced real-time price integration using OrderBook market data (on-chain only)
   const { marketData: stats, dataSource } = useOrderbookMarketStats(
     marketData?.market?.market_address,
@@ -92,8 +108,63 @@ export default function TokenPage({ params }: TokenPageProps) {
     { autoRefresh: true, refreshInterval: 60000 }
   );
 
-  const currentPrice = stats?.lastPrice || 0;
-  const markPrice = stats?.lastPrice || 0;
+  // Enhanced price resolution with priority for real-time market activity
+  const getResolvedPrice = () => {
+    // PRIORITY ORDER FOR DISPLAY PRICE:
+    // 1. Current active bid/ask spread (real market activity)
+    // 2. Contract lastPrice ONLY if recent and meaningful
+    // 3. Market tick_size (base price for new markets)
+    // 4. Default fallback
+    
+    // FIRST: Use real-time order book data if available
+    if (stats?.bestBid && stats.bestAsk && stats.bestBid > 0 && stats.bestAsk > 0) {
+      return (stats.bestBid + stats.bestAsk) / 2;
+    }
+    
+    // SECOND: Use smart contract lastPrice ONLY if it represents recent trading activity
+    // Note: lastPrice can be stale from old trades, so we need to be careful
+    if (stats?.lastPrice && stats.lastPrice > 0) {
+      // TODO: Add timestamp check here to ensure lastPrice is recent
+      // For now, we'll use it but consider it lower priority than order book
+      return stats.lastPrice;
+    }
+    
+    // THIRD: Use market tick_size as the base price for new markets
+    if (marketData?.market?.tick_size && marketData.market.tick_size > 0) {
+      return marketData.market.tick_size;
+    }
+    
+    // FOURTH: Database fallback
+    if (baseTokenData?.price && baseTokenData.price > 0) {
+      return baseTokenData.price;
+    }
+    
+    // Default fallback for completely new markets
+    return 1.0;
+  };
+
+  const currentPrice = getResolvedPrice();
+  const markPrice = currentPrice;
+  
+  // Debug logging for price resolution
+  console.log(`💰 Price resolution for ${symbol}:`, {
+    resolvedPrice: currentPrice,
+    sources: {
+      contractBestBid: stats?.bestBid,
+      contractBestAsk: stats?.bestAsk,
+      contractLastPrice: stats?.lastPrice,
+      marketTickSize: marketData?.market?.tick_size,
+      baseTokenPrice: baseTokenData?.price
+    },
+    priceSource: {
+      usingBidAsk: !!(stats?.bestBid && stats?.bestAsk && stats.bestBid > 0 && stats.bestAsk > 0),
+      usingLastPrice: !!(stats?.lastPrice && stats.lastPrice > 0 && !stats?.bestBid),
+      usingTickSize: !!(marketData?.market?.tick_size && !stats?.lastPrice),
+      usingFallback: currentPrice === 1.0
+    },
+    dataSource,
+    marketStatus: marketData?.market?.market_status
+  });
   const fundingRate = 0.0001 // Mock funding rate (would come from contract)
   const priceChange24h = baseTokenData?.priceChange24h || 0
   const priceChangePercent24h = baseTokenData ? (baseTokenData.priceChange24h / baseTokenData.price) * 100 : 0
@@ -128,15 +199,17 @@ export default function TokenPage({ params }: TokenPageProps) {
     }
     
     console.log(`💰 OrderBook market data for ${symbol}:`, {
-      dataSource: priceDataSource,
-      finalPrice,
-      finalPriceChange,
-      marketStatus: market.market_status,
-      totalVolume: market.total_volume,
-      totalTrades: market.total_trades,
-      lastTradePrice: stats?.lastPrice || 0,
-      lastUpdated: new Date(lastUpdated).toISOString()
-    });
+                dataSource: priceDataSource,
+                finalPrice,
+                finalPriceChange,
+                marketStatus: market.market_status,
+                totalVolume: market.total_volume,
+                totalTrades: market.total_trades,
+                smartContractLastPrice: stats?.lastPrice || 0,
+                marketTickSize: market.tick_size || 0,
+                hasActiveOrderBook: !!(stats?.bestBid || stats?.bestAsk),
+                lastUpdated: new Date(lastUpdated).toISOString()
+            });
     
     // Use real volume from OrderBook market
     const volume24h = market.total_volume || 0;
@@ -319,12 +392,12 @@ export default function TokenPage({ params }: TokenPageProps) {
             vammMarket={vammMarket} 
             initialAction={tradingAction}
             marketData={{
-              markPrice: Number(markPrice || currentPrice || tokenData?.price || 0),
+              markPrice: Number(markPrice || 0), // Use resolved smart contract price
               fundingRate: Number(fundingRate || 0),
-              currentPrice: Number(currentPrice || tokenData?.price || 0),
+              currentPrice: Number(currentPrice || 0), // Use resolved smart contract price  
               priceChange24h: Number(priceChange24h || 0),
               priceChangePercent24h: Number(priceChangePercent24h || 0),
-              dataSource: String(dataSource || 'static'),
+              dataSource: String(dataSource || 'contract'), // Indicate smart contract source
               lastUpdated: String(lastUpdated || '')
             }}
           />
@@ -361,12 +434,12 @@ export default function TokenPage({ params }: TokenPageProps) {
               vammMarket={vammMarket} 
               initialAction={tradingAction}
               marketData={{
-                markPrice: Number(markPrice || currentPrice || tokenData?.price || 0),
+                markPrice: Number(markPrice || 0), // Use resolved smart contract price
                 fundingRate: Number(fundingRate || 0),
-                currentPrice: Number(currentPrice || tokenData?.price || 0),
+                currentPrice: Number(currentPrice || 0), // Use resolved smart contract price
                 priceChange24h: Number(priceChange24h || 0),
                 priceChangePercent24h: Number(priceChangePercent24h || 0),
-                dataSource: String(dataSource || 'static'),
+                dataSource: String(dataSource || 'contract'), // Indicate smart contract source
                 lastUpdated: String(lastUpdated || '')
               }}
             />

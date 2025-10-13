@@ -147,7 +147,7 @@ export class ServerlessMatchingEngine {
         try {
           // Update the order with final status
           const { error: updateError } = await this.supabase
-            .from('off_chain_orders')
+            .from('orders')
             .update({
               filled_quantity: fullOrder.filled_quantity,
               order_status: fullOrder.order_status,
@@ -189,7 +189,7 @@ export class ServerlessMatchingEngine {
           
           // Update order with blockchain transaction hash
           await this.supabase
-            .from('off_chain_orders')
+            .from('orders')
             .update({
               // Note: creation_transaction_hash column may not exist, using a comment for now
               // creation_transaction_hash: blockchainResult.txHash,
@@ -272,7 +272,7 @@ export class ServerlessMatchingEngine {
         try {
           // Update the order with final status
           const { error: updateError } = await this.supabase
-            .from('off_chain_orders')
+            .from('orders')
             .update({
               filled_quantity: fullOrder.filled_quantity,
               order_status: fullOrder.order_status,
@@ -314,7 +314,7 @@ export class ServerlessMatchingEngine {
           
           // Update order with blockchain transaction hash
           await this.supabase
-            .from('off_chain_orders')
+            .from('orders')
             .update({
               creation_transaction_hash: blockchainResult.txHash,
               updated_at: new Date().toISOString()
@@ -390,13 +390,13 @@ export class ServerlessMatchingEngine {
 
     // STEP 1: Get off-chain orders (both LIMIT and MARKET orders)
     const { data: oppositeOrders, error } = await this.supabase
-      .from('off_chain_orders')
+      .from('orders')
       .select('*')
       .eq('market_id', order.market_id)
       .eq('side', oppositeSide)
       .in('order_type', ['LIMIT', 'MARKET']) // Include both LIMIT and MARKET orders
-      .in('order_status', ['PENDING', 'PARTIALLY_FILLED'])
-      .gt('remaining_quantity', 0) // Has remaining quantity
+      .in('status', ['PENDING', 'PARTIAL'])
+      .gt('size', 0) // Has remaining quantity
       .order('price', { ascending: priceOrder === 'asc' })
       .order('created_at', { ascending: true }); // Price-time priority
 
@@ -490,13 +490,13 @@ export class ServerlessMatchingEngine {
     const priceOrder = order.side === 'BUY' ? 'asc' : 'desc';
 
     const query = this.supabase
-      .from('off_chain_orders')
+      .from('orders')
       .select('*')
       .eq('market_id', order.market_id)
       .eq('side', oppositeSide)
       .in('order_type', ['LIMIT', 'MARKET']) // Include both LIMIT and MARKET orders
-      .in('order_status', ['PENDING', 'PARTIALLY_FILLED'])
-      .gt('remaining_quantity', 0);
+      .in('status', ['PENDING', 'PARTIAL'])
+      .gt('size', 0);
 
     // Apply price filter (but allow MARKET orders which have null prices)
     if (priceFilter === 'lte') {
@@ -615,16 +615,18 @@ export class ServerlessMatchingEngine {
         id: ''
       } as Order);
 
-      // Get all pending off-chain orders
+      // Try to get orders by matching metric_id instead of market UUID
+      // Since orders.market_id uses strings but orderbook_markets.id uses UUIDs
       const { data: offChainOrders, error: offChainError } = await this.supabase
-        .from('off_chain_orders')
+        .from('orders')
         .select('*')
-        .eq('market_id', market.id)
-        .in('order_status', ['PENDING', 'PARTIALLY_FILLED'])
-        .gt('remaining_quantity', 0);
+        .eq('market_id', metricId) // Use the metric_id directly
+        .in('status', ['PENDING', 'PARTIAL'])
+        .gt('size', 0);
 
       if (offChainError) {
-        throw new Error(`Failed to fetch off-chain orders: ${offChainError.message}`);
+        console.warn(`⚠️ Failed to fetch off-chain orders: ${offChainError.message}`);
+        // Don't throw error, just continue with empty orders array
       }
 
       const matches: Match[] = [];
@@ -635,8 +637,8 @@ export class ServerlessMatchingEngine {
 
       for (const buyOrder of onChainBuys) {
         for (const sellOrder of offChainSells) {
-          if (buyOrder.price >= sellOrder.price && buyOrder.remaining_quantity > 0 && sellOrder.remaining_quantity > 0) {
-            const matchQuantity = Math.min(buyOrder.remaining_quantity, sellOrder.remaining_quantity);
+          if (buyOrder.price >= sellOrder.price && buyOrder.remaining_quantity > 0 && (sellOrder.size - sellOrder.filled) > 0) {
+            const matchQuantity = Math.min(buyOrder.remaining_quantity, sellOrder.size - sellOrder.filled);
             
             if (matchQuantity > 0) {
               const match: Match = {
@@ -647,14 +649,14 @@ export class ServerlessMatchingEngine {
                 timestamp: new Date(),
                 marketId: market.id,
                 buyTraderAddress: buyOrder.trader_wallet_address,
-                sellTraderAddress: sellOrder.trader_wallet_address
+                sellTraderAddress: sellOrder.user_address
               };
 
               matches.push(match);
               
               // Update quantities for next iterations
               buyOrder.remaining_quantity -= matchQuantity;
-              sellOrder.remaining_quantity -= matchQuantity;
+              sellOrder.filled += matchQuantity;
               
               // Store the match with UUID mapping
               const retroUuidMap = new Map<string, string>();
@@ -676,8 +678,8 @@ export class ServerlessMatchingEngine {
 
       for (const sellOrder of onChainSells) {
         for (const buyOrder of offChainBuys) {
-          if (buyOrder.price >= sellOrder.price && buyOrder.remaining_quantity > 0 && sellOrder.remaining_quantity > 0) {
-            const matchQuantity = Math.min(buyOrder.remaining_quantity, sellOrder.remaining_quantity);
+          if (buyOrder.price >= sellOrder.price && (buyOrder.size - buyOrder.filled) > 0 && sellOrder.remaining_quantity > 0) {
+            const matchQuantity = Math.min(buyOrder.size - buyOrder.filled, sellOrder.remaining_quantity);
             
             if (matchQuantity > 0) {
               const match: Match = {
@@ -687,14 +689,14 @@ export class ServerlessMatchingEngine {
                 price: sellOrder.price, // Use sell order price
                 timestamp: new Date(),
                 marketId: market.id,
-                buyTraderAddress: buyOrder.trader_wallet_address,
+                buyTraderAddress: buyOrder.user_address,
                 sellTraderAddress: sellOrder.trader_wallet_address
               };
 
               matches.push(match);
               
               // Update quantities for next iterations
-              buyOrder.remaining_quantity -= matchQuantity;
+              buyOrder.filled += matchQuantity;
               sellOrder.remaining_quantity -= matchQuantity;
               
               // Store the match with UUID mapping
@@ -772,7 +774,7 @@ export class ServerlessMatchingEngine {
     });
 
     const { data: upsertedRows, error } = await this.supabase
-      .from('off_chain_orders')
+      .from('orders')
       .upsert([
         {
           order_id: insertData.order_id,
@@ -808,11 +810,11 @@ export class ServerlessMatchingEngine {
       throw new Error(`Failed to store order: ${error.message || JSON.stringify(error)}`);
     } else {
       const orderUuid = upsertedRows?.id;
-      console.log('✅ Order stored successfully in off_chain_orders:', orderUuid);
+      console.log('✅ Order stored successfully in orders:', orderUuid);
       if (orderUuid) {
         // Update additional fields that aren't in the safe insert function
         const { error: updateError } = await this.supabase
-          .from('off_chain_orders')
+          .from('orders')
           .update({
             filled_quantity: insertData.filled_quantity,
             source: insertData.source,
@@ -904,7 +906,7 @@ export class ServerlessMatchingEngine {
             const requiredCollateral = Math.max(quantity * (price || 1), 0.01);
 
             const { data: upsertHydrated, error: insertErr } = await this.supabase
-              .from('off_chain_orders')
+              .from('orders')
               .upsert([
                 {
                   order_id: numericId,
@@ -1000,9 +1002,9 @@ export class ServerlessMatchingEngine {
     if (error) {
       // Enhanced error handling for foreign key constraints
       if (error.code === '23503' && error.message.includes('trade_matches_buy_order_id_fkey')) {
-        throw new Error(`Foreign key constraint violation: Buy order UUID ${buyOrderUuid} not found in off_chain_orders table. Original order ID: ${match.buyOrderId}`);
+        throw new Error(`Foreign key constraint violation: Buy order UUID ${buyOrderUuid} not found in orders table. Original order ID: ${match.buyOrderId}`);
       } else if (error.code === '23503' && error.message.includes('trade_matches_sell_order_id_fkey')) {
-        throw new Error(`Foreign key constraint violation: Sell order UUID ${sellOrderUuid} not found in off_chain_orders table. Original order ID: ${match.sellOrderId}`);
+        throw new Error(`Foreign key constraint violation: Sell order UUID ${sellOrderUuid} not found in orders table. Original order ID: ${match.sellOrderId}`);
       } else if (error.code === '23503') {
         throw new Error(`Foreign key constraint violation in trade_matches: ${error.message}`);
       }
@@ -1023,7 +1025,7 @@ export class ServerlessMatchingEngine {
         const onchainNumericId = Number(raw);
         if (!Number.isNaN(onchainNumericId)) {
           const { data: byOnchainId, error: onchainErr } = await this.supabase
-            .from('off_chain_orders')
+            .from('orders')
             .select('id')
             .eq('order_id', onchainNumericId)
             .single();
@@ -1033,7 +1035,7 @@ export class ServerlessMatchingEngine {
           // Fallback: try by deterministic fallback order_hash used during hydration
           const fallbackHash = `0x${onchainNumericId.toString(16).padStart(64, '0')}`;
           const { data: byHash } = await this.supabase
-            .from('off_chain_orders')
+            .from('orders')
             .select('id')
             .eq('order_hash', fallbackHash)
             .single();
@@ -1046,7 +1048,7 @@ export class ServerlessMatchingEngine {
       // First try to find by UUID (if orderId is already a UUID)
       {
         const { data: orderByUuid, error: uuidError } = await this.supabase
-          .from('off_chain_orders')
+          .from('orders')
           .select('id')
           .eq('id', orderId)
           .single();
@@ -1060,7 +1062,7 @@ export class ServerlessMatchingEngine {
         const maybeInt = Number(orderId);
         if (!Number.isNaN(maybeInt)) {
           const { data: orderByIntId, error: intError } = await this.supabase
-            .from('off_chain_orders')
+            .from('orders')
             .select('id')
             .eq('order_id', maybeInt)
             .single();
@@ -1115,7 +1117,7 @@ export class ServerlessMatchingEngine {
   private async updateOrderFill(orderId: string, newFilledQuantity: number): Promise<void> {
     // Get current order to determine new status
     const { data: orderData } = await this.supabase
-      .from('off_chain_orders')
+      .from('orders')
       .select('quantity')
       .eq('id', orderId)
       .single();
@@ -1125,7 +1127,7 @@ export class ServerlessMatchingEngine {
     const newStatus = newFilledQuantity >= orderData.quantity ? 'FILLED' : 'PARTIALLY_FILLED';
 
     const { error } = await this.supabase
-      .from('off_chain_orders')
+      .from('orders')
       .update({
         filled_quantity: newFilledQuantity,
         order_status: newStatus,

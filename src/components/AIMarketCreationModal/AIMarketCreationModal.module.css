@@ -1,0 +1,144 @@
+.aiMarketCreationModalContainer {
+  position: relative;
+  z-index: 10000;
+}
+
+.triggerButton {
+  position: fixed;
+  bottom: 100px;
+  left: 80px; /* Aligned with container padding */
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background-color: #0F0F0F;
+  border: 1px solid #222222;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9CA3AF;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  z-index: 10000;
+}
+
+.triggerButton:hover {
+  background-color: #1A1A1A;
+  border-color: #333333;
+  color: white;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.buttonText {
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1;
+}
+
+.modalContent {
+  position: fixed;
+  bottom: 140px;
+  left: 80px; /* Aligned with container padding */
+  width: 360px;
+  background-color: #0F0F0F;
+  border-radius: 6px;
+  border: 1px solid #222222;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 10000;
+  transition: all 0.2s ease;
+}
+
+.modalContent:hover {
+  border-color: #333333;
+}
+
+.modalHeader {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #1A1A1A;
+  background-color: #0F0F0F;
+}
+
+.modalTitle {
+  margin: 0;
+  color: #9CA3AF;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.closeButton {
+  background: transparent;
+  border: none;
+  color: #606060;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.closeButton:hover {
+  background-color: #1A1A1A;
+  color: white;
+}
+
+.modalBody {
+  padding: 14px;
+}
+
+.description {
+  color: #808080;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 0 14px 0;
+}
+
+.modalFooter {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #1A1A1A;
+  background-color: #0F0F0F;
+}
+
+.learnMoreButton {
+  background: transparent;
+  border: none;
+  color: #3B82F6;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+}
+
+.learnMoreButton:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .triggerButton {
+    left: 32px; /* Match container's mobile padding */
+  }
+
+  .modalContent {
+    left: 32px;
+    width: calc(100% - 64px); /* Full width minus padding on both sides */
+    max-width: 360px;
+  }
+}

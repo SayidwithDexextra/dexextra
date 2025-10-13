@@ -22,7 +22,7 @@ const MOCK_USDC_ABI = [
   // Mock USDC specific functions
   'function mint(address to, uint256 amount) external',
   'function mintToSelf(uint256 amount) external',
-  'function faucet() external',
+  'function faucet(uint256 amount) external',
   'function mintStandard(address to) external',
   'function faucetWithEvent() external',
   
@@ -183,7 +183,7 @@ export default function Faucet({ className }: FaucetProps) {
     const decimals = await contract.decimals()
     const amount = ethers.parseUnits(state.customAmount, decimals)
     
-    const tx = await contract.mint(walletAddress, amount)
+    const tx = await contract.faucet(amount)
     await tx.wait()
     
     return {
@@ -273,7 +273,7 @@ export default function Faucet({ className }: FaucetProps) {
               <div className={styles.connectionText}>
                 <span className={styles.connectionTitle}>Connect Wallet</span>
                 <span className={styles.connectionDescription}>
-                  Connect your wallet to claim test USDC tokens
+                  Connect your wallet to claim HyperLiquid MockUSDC tokens
                 </span>
               </div>
             </div>
@@ -302,7 +302,7 @@ export default function Faucet({ className }: FaucetProps) {
               <div className={styles.balanceText}>
                 <span className={styles.balanceLabel}>Current Balance</span>
                 <span className={styles.balanceDescription}>
-                  Your mock USDC balance for testing
+                  Your HyperLiquid MockUSDC balance for testing
                 </span>
               </div>
             </div>
@@ -327,7 +327,7 @@ export default function Faucet({ className }: FaucetProps) {
               <div className={styles.inputText}>
                 <span className={styles.inputLabel}>Amount to Claim</span>
                 <span className={styles.inputDescription}>
-                  Enter USDC tokens to claim (up to 1,000,000)
+                  Enter HyperLiquid MockUSDC tokens to claim (up to 1,000,000)
                 </span>
               </div>
             </div>
@@ -380,7 +380,7 @@ export default function Faucet({ className }: FaucetProps) {
               <div className={styles.claimText}>
                 <span className={styles.claimLabel}>Claim Tokens</span>
                 <span className={styles.claimDescription}>
-                  Get test USDC tokens instantly • No limits
+                  Get HyperLiquid MockUSDC tokens instantly • No limits
                 </span>
               </div>
             </div>
@@ -417,7 +417,7 @@ export default function Faucet({ className }: FaucetProps) {
           </div>
           <div className={styles.infoItem}>
             <div className={styles.infoStepDot}></div>
-            <span className={styles.infoText}>Enter amount to claim (up to 1M USDC)</span>
+            <span className={styles.infoText}>Enter amount to claim (up to 1M MockUSDC)</span>
           </div>
           <div className={styles.infoItem}>
             <div className={styles.infoStepDot}></div>
@@ -425,7 +425,7 @@ export default function Faucet({ className }: FaucetProps) {
           </div>
           <div className={styles.infoItem}>
             <div className={styles.infoStepDot}></div>
-            <span className={styles.infoText}>Use for testing on Dexetra markets</span>
+            <span className={styles.infoText}>Use for testing HyperLiquid Aluminum V1 futures</span>
           </div>
         </div>
       </div>

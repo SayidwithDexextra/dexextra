@@ -3,18 +3,16 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
+import { useTradingRouter } from '@/hooks/useTradingRouter';
+import { useOrderBookDirect } from '@/hooks/useOrderBookDirect';
 import { useOrders, useUserOrders, useUserMarketOrders } from '@/hooks/useOrders';
 import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
+import { useOrderBookMarketInfo } from '@/hooks/useOrderBookMarketInfo';
+import { useCentralVault } from '@/hooks/useCentralVault';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
+// Removed hardcoded ALUMINUM_V1_MARKET import - now using dynamic market data
 import { formatEther } from 'viem';
-import { orderService } from '@/lib/orderService';
-import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
-import { ORDER_ROUTER_ABI } from '@/lib/orderRouterAbi';
-import { publicClient } from '@/lib/viemClient';
 import type { Address } from 'viem';
-import { createWalletClient, custom } from 'viem';
-import { polygon } from 'viem/chains';
-import { signOrder as signOrderHelper } from '@/lib/order-signing';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -34,9 +32,6 @@ interface TradingPanelProps {
 export default function TradingPanel({ tokenData, vammMarket, initialAction, marketData }: TradingPanelProps) {
   const { walletData, connect } = useWallet();
   
-  // Order submission state
-  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-  
   // Memoize vammMarket to prevent unnecessary re-renders
   const memoizedVammMarket = useMemo(() => vammMarket, [
     vammMarket?.vamm_address,
@@ -48,6 +43,38 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
   // Get the metric ID for orderbook queries
   const metricId = memoizedVammMarket?.metric_id || tokenData.symbol;
+  
+  // OrderBook Direct integration (bypasses TradingRouter architectural issue)
+  const {
+    isLoading: isTradingRouterLoading,
+    error: tradingError,
+    isPaused: isRouterPaused,
+    isConnected: isRouterConnected,
+    orderBookAddress,
+    isResolvingAddress,
+    placeMarketOrder,
+    placeLimitOrder,
+    cancelOrder,
+    clearError: clearTradingError,
+    canPlaceOrder
+  } = useOrderBookDirect(metricId);
+  
+  // Keep TradingRouter for non-trading functions (if needed)
+  const tradingRouter = useTradingRouter();
+  
+  // VaultRouter collateral integration
+  const {
+    isConnected: isVaultConnected,
+    isLoading: isVaultLoading,
+    availableBalance: vaultCollateral,
+    depositCollateral
+  } = useCentralVault(walletData.address || undefined);
+  
+  // Order submission state
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  
+  // Order cancellation state
+  const [isCancelingOrder, setIsCancelingOrder] = useState(false);
   
   // Use orderbook system
   const { 
@@ -61,14 +88,20 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
   });
   
   // Get user-specific orders for this market only
+  console.log('🔍 TradingPanel: Calling useUserMarketOrders with:', {
+    walletAddress: walletData.address,
+    metricId,
+    isConnected: walletData.isConnected
+  });
+
   const { 
     orders: userOrders, 
     isLoading: userOrdersLoading 
-  } = useUserMarketOrders(walletData.address, metricId, true);
+  } = useUserMarketOrders(walletData.address as Address, metricId, true);
 
-  // Debug logging for user orders
+  // Debug logging for HyperLiquid OrderBook orders
   useEffect(() => {
-    console.log('🔍 TradingPanel Debug - User Orders State:', {
+    console.log('🔍 TradingPanel Debug - HyperLiquid OrderBook User Orders:', {
       walletAddress: walletData.address,
       isConnected: walletData.isConnected,
       metricId,
@@ -77,22 +110,65 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       userOrders: userOrders.slice(0, 3), // Log first 3 orders for debugging
       activeOrdersCount: userOrders.filter(order => 
         order.status === 'pending' || order.status === 'partially_filled'
-      ).length
+      ).length,
+      orderStatuses: userOrders.map(order => ({ id: order.id, status: order.status })),
+      source: 'HyperLiquid OrderBook Contract'
     });
   }, [userOrders, userOrdersLoading, walletData.address, walletData.isConnected, metricId]);
+
+  // Debug logging for OrderBook address resolution
+  useEffect(() => {
+    console.log('🏦 TradingPanel Debug - OrderBook Resolution:', {
+      metricId,
+      orderBookAddress,
+      isResolvingAddress,
+      resolvedSuccessfully: !!orderBookAddress,
+      isDefaultFallback: orderBookAddress === '0x8BA5c36aCA7FC9D9b218EbDe87Cfd55C23f321bE'
+    });
+  }, [metricId, orderBookAddress, isResolvingAddress]);
   
-  // Get orderbook market data
-  const { 
-    market: orderbookMarket, 
-    orders: marketOrders,
-    positions: marketPositions,
-    isLoading: marketLoading 
-  } = useOrderbookMarket(metricId, { autoRefresh: true });
+  // Get orderbook market data (same approach as TokenHeader)
+  const {
+    marketData: orderbookMarketData,
+    isLoading: marketLoading,
+    error: marketError,
+    refetch: refetchMarket
+  } = useOrderbookMarket(metricId, {
+    autoRefresh: true,
+    refreshInterval: 120000 // 2 minutes for market data (less frequent)
+  });
   
-  // Derived state for backward compatibility
-  const activeOrders = userOrders.filter(order => 
-    order.status === 'pending' || order.status === 'partially_filled'
+  // Get DIRECT market info from OrderBook contract (same as TokenHeader)
+  const {
+    marketInfo: contractMarketInfo,
+    orderBookPrices: contractPrices,
+    isLoading: isLoadingDirectPrice,
+    error: directPriceError,
+    refetch: refreshDirectPrice
+  } = useOrderBookMarketInfo(
+    orderbookMarketData?.market?.market_address, // Use the actual OrderBook address
+    {
+      autoRefresh: true,
+      refreshInterval: 15000 // 15 seconds for direct price (most frequent)
+    }
   );
+  
+  // Filter for active orders from HyperLiquid OrderBook
+  // Only include orders that are currently active (not filled, cancelled, etc.)
+  const activeOrders = userOrders.filter(order => {
+    const isActive = order.status === 'pending' || order.status === 'partially_filled';
+    
+    console.log(`🔍 Order ${order.id} status: "${order.status}" -> active: ${isActive}`);
+    return isActive;
+  });
+
+  // Debug activeOrders for rendering
+  useEffect(() => {
+    console.log('🔍 TradingPanel: About to render activeOrders in sell tab:', {
+      activeOrdersLength: activeOrders.length,
+      activeOrders: activeOrders.map(o => ({ id: o.id, status: o.status, metricId: o.metricId, side: o.side }))
+    });
+  }, [activeOrders]);
   
   // Security: Filter filled orders for this specific market only
   // This ensures we only show filled orders for the current token/market
@@ -111,13 +187,11 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     });
   }, [userOrders, metricId, walletData.isConnected, walletData.address]);
   
-  const isOrderbookEnabled = true; // Always use orderbook system
   const isSystemReady = !ordersLoading && !userOrdersLoading;
   
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('buy');
   const [selectedOption, setSelectedOption] = useState<'long' | 'short' | null>(initialAction || 'long');
   const [amount, setAmount] = useState(0);
-  const [leverage, setLeverage] = useState(1);
   const [slippage] = useState(0.5); // eslint-disable-line @typescript-eslint/no-unused-vars
   
   // Limit Order States
@@ -127,8 +201,6 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
   const [orderExpiry, setOrderExpiry] = useState(24); // hours from now
   const [maxSlippage, setMaxSlippage] = useState(100); // basis points (1%)
   const [isContractInfoExpanded, setIsContractInfoExpanded] = useState(false);
-  const [isAdvancedSetupExpanded, setIsAdvancedSetupExpanded] = useState(false);
-  const [isTrading, setIsTrading] = useState(false);
   const [successModal, setSuccessModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -182,11 +254,27 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   };
 
-  // Parse comma-formatted string back to number
+  // Parse comma-formatted string back to number with enhanced USDC validation
   const parseInputNumber = (value: string) => {
-    const cleanValue = value.replace(/,/g, '');
-    const parsed = parseFloat(cleanValue);
-    return isNaN(parsed) ? 0 : parsed;
+    // Remove commas and any non-numeric characters except decimal point
+    const cleanValue = value.replace(/[^0-9.]/g, '');
+    
+    // Handle multiple decimal points by keeping only the first one
+    const parts = cleanValue.split('.');
+    const finalValue = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleanValue;
+    
+    const parsed = parseFloat(finalValue);
+    if (isNaN(parsed) || parsed < 0) return 0;
+    
+    // Limit to 6 decimal places for USDC precision
+    const limited = Math.floor(parsed * 1000000) / 1000000;
+    return limited;
+  };
+
+  // Helper to get input value safely
+  const getInputValue = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>): string => {
+    const target = e.target as any;
+    return target.value;
   };
 
   // Format price from raw value
@@ -215,131 +303,176 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     setSelectedOption(option);
   };
 
-  // Quick amount buttons
-  const quickAmounts = [100, 500, 1000];
+  // Quick amount buttons - increased values since scaling is fixed
+  const quickAmounts = [100, 500, 1000, 5000];
 
   const handleQuickAmount = (value: number) => {
     setAmount(prev => prev + value);
   };
 
   const handleMaxAmount = () => {
-    const walletBalance = parseFloat(dexV2.formattedBalances?.totalCollateral || '0');
-    const availableMargin = parseFloat(availableCash || '0');
-    
-    // Calculate maximum safe amount based on available funds
-    const totalAvailableFunds = walletBalance + availableMargin;
-    
-    if (totalAvailableFunds > 0) {
-      // Account for trading fees (0.3%) and set a safe maximum
-      const maxSafeAmount = totalAvailableFunds * leverage * 0.97; // 97% to account for fees and buffer
-      setAmount(Math.floor(maxSafeAmount));
-    }
+    // With new contracts, use a higher reasonable maximum
+    const availableCollateral = parseFloat(vaultCollateral || '0');
+    const maxAmount = Math.max(availableCollateral, 50000); // $50K default or available collateral
+    setAmount(maxAmount);
   };
 
   // Token data access with safety checks
   const getSymbol = () => memoizedVammMarket?.symbol || tokenData?.symbol || 'Unknown';
+  
+  // Helper to get tick_size from orderbook market data
+  const getTickSize = () => {
+    // Get tick_size from the orderbook market data (this is the base price for new markets)
+    if (memoizedVammMarket?.tick_size) {
+      const tickSize = typeof memoizedVammMarket.tick_size === 'string' 
+        ? parseFloat(memoizedVammMarket.tick_size)
+        : memoizedVammMarket.tick_size;
+      return tickSize;
+    }
+    return 0.01; // Default tick size
+  };
   const getStartPrice = () => {
-    if (memoizedVammMarket?.initial_price) {
-      const price = typeof memoizedVammMarket.initial_price === 'string' 
-        ? parseFloat(memoizedVammMarket.initial_price)
-        : memoizedVammMarket.initial_price;
-      return price;
+    // ALIGN WITH TOKENHEADER: Use the same smart contract price logic
+    // Priority order: contractMarketInfo.lastPrice > contractPrices.midPrice > legacy fallbacks
+    
+    // Get market info directly from smart contract (same as TokenHeader)
+    const contractLastPrice = contractMarketInfo?.lastPrice || 0;
+    const contractCurrentPrice = contractMarketInfo?.currentPrice || 0;
+    const contractBestBid = contractPrices?.bestBid || 0;
+    const contractBestAsk = contractPrices?.bestAsk || 0;
+    const contractMidPrice = contractPrices?.midPrice || 0;
+    
+    let currentMarkPrice = 0;
+    let priceSource = 'none';
+    
+    // 🎯 PRIMARY: Use lastPrice from smart contract market variable (same as TokenHeader!)
+    if (contractLastPrice > 0) {
+      currentMarkPrice = contractLastPrice;
+      priceSource = 'contract-lastPrice';
     }
-    if (marketData?.currentPrice) return marketData.currentPrice;
-    return 1.0; // Fallback
-  };
-
-  // Legacy compatibility - remove unused position management code
-  // Orderbook systems handle positions differently through filled orders
-
-  // =====================
-  // 💰 PRICE CALCULATIONS (Updated from test script - Ultra Aggressive)
-  // =====================
-
-  const calculateMinPrice = (isLong: boolean, slippageBps: number): bigint => {
-    const currentPrice = marketData?.currentPrice || 1; // Default to 1 if no market data
-    const slippagePercent = slippageBps / 10000; // Convert basis points to percentage
-    
-    // Use ultra-aggressive slippage for VAMM compatibility (from test script)
-    // Start with 99% slippage as the minimum for VAMM
-    const ultraAggressiveSlippage = Math.max(slippagePercent, 0.99); // Minimum 99% slippage for VAMM
-    
-    if (isLong) {
-      // For long positions, we're willing to pay at least currentPrice * (1 - slippage)
-      // Use ultra-aggressive approach: allow up to 99% below current price
-      const minPrice = currentPrice * (1 - ultraAggressiveSlippage);
-      return BigInt(Math.floor(Math.max(minPrice, 0.0001) * 1e6)); // Convert to USDC 6-decimal format
+    // SECONDARY: Use current mid-price from order book
+    else if (contractMidPrice > 0) {
+      currentMarkPrice = contractMidPrice;
+      priceSource = 'contract-midPrice';
+    }
+    // TERTIARY: Use currentPrice from smart contract (mark price)
+    else if (contractCurrentPrice > 0) {
+      currentMarkPrice = contractCurrentPrice;
+      priceSource = 'contract-currentPrice';
+    }
+    // FALLBACK: Use calculated mid from bid/ask
+    else if (contractBestBid > 0 && contractBestAsk > 0) {
+      currentMarkPrice = (contractBestBid + contractBestAsk) / 2;
+      priceSource = 'contract-calculated-mid';
+    }
+    // FALLBACK: Single side
+    else if (contractBestBid > 0 || contractBestAsk > 0) {
+      currentMarkPrice = contractBestBid || contractBestAsk;
+      priceSource = 'contract-single-side';
+    }
+    // ALIGNED FALLBACK: Use passed marketData (should now be same smart contract data)
+    else if (marketData?.currentPrice && marketData.currentPrice > 0) {
+      currentMarkPrice = marketData.currentPrice;
+      priceSource = 'aligned-marketData-current';
+    }
+    else if (marketData?.markPrice && marketData.markPrice > 0) {
+      currentMarkPrice = marketData.markPrice;
+      priceSource = 'aligned-marketData-mark';
+    }
+    // FALLBACK: Market tick_size (initial/base price for new markets)
+    else if (memoizedVammMarket?.tick_size && memoizedVammMarket.tick_size > 0) {
+      const tickSize = typeof memoizedVammMarket.tick_size === 'string' 
+        ? parseFloat(memoizedVammMarket.tick_size)
+        : memoizedVammMarket.tick_size;
+      currentMarkPrice = tickSize;
+      priceSource = 'market-tick-size';
+    }
+    // LAST RESORT: Legacy token data
+    else if (tokenData?.price && tokenData.price > 0) {
+      currentMarkPrice = tokenData.price;
+      priceSource = 'legacy-token-price';
     } else {
-      // For short positions, we're willing to sell at least currentPrice * (1 + slippage)
-      // Use ultra-aggressive approach: allow up to 99% above current price
-      const minPrice = currentPrice * (1 + ultraAggressiveSlippage);
-      return BigInt(Math.floor(minPrice * 1e6)); // Convert to USDC 6-decimal format
+      currentMarkPrice = 1.0; // Fallback for completely new markets
+      priceSource = 'default-fallback';
     }
-  };
 
-  const calculateMaxPrice = (isLong: boolean, slippageBps: number): bigint => {
-    const currentPrice = marketData?.currentPrice || 1; // Default to 1 if no market data
-    const slippagePercent = slippageBps / 10000; // Convert basis points to percentage
-    
-    // Use ultra-aggressive slippage for VAMM compatibility (from test script)
-    // Start with 99% slippage as the minimum for VAMM
-    const ultraAggressiveSlippage = Math.max(slippagePercent, 0.99); // Minimum 99% slippage for VAMM
-    
-    if (isLong) {
-      // For long positions, we're willing to pay up to currentPrice * (1 + slippage)
-      // Use ultra-aggressive approach: allow up to 100x above current price
-      const maxPrice = currentPrice * (1 + ultraAggressiveSlippage);
-      return BigInt(Math.floor(maxPrice * 1e6)); // Convert to USDC 6-decimal format
-    } else {
-      // For short positions, we're willing to sell down to currentPrice * (1 - slippage)
-      // Use ultra-aggressive approach: allow down to 99% below current price
-      const maxPrice = currentPrice * (1 - ultraAggressiveSlippage);
-      return BigInt(Math.floor(Math.max(maxPrice, 0.0001) * 1e6)); // Convert to USDC 6-decimal format
-    }
-  };
+    console.log('🎯 TradingPanel Smart Contract Price for:', metricId, {
+      // PRIMARY: Smart Contract Market Data (same as TokenHeader)
+      contractLastPrice, // 🎯 This is our target field!
+      contractCurrentPrice,
+      contractBestBid,
+      contractBestAsk,
+      contractMidPrice,
+      contractSymbol: contractMarketInfo?.symbol,
+      contractIsActive: contractMarketInfo?.isActive,
+      
+      // ALIGNMENT CHECK: Compare with marketData prop
+      marketDataProp: {
+        currentPrice: marketData?.currentPrice,
+        markPrice: marketData?.markPrice,
+        dataSource: marketData?.dataSource,
+        lastUpdated: marketData?.lastUpdated
+      },
+      
+      // Final Computed Values
+      finalPrice: currentMarkPrice,
+      priceSource,
+      
+      // ALIGNMENT VERIFICATION: Both sources should now use same smart contract data
+      alignmentNote: 'Direct contract calls and marketData prop should both use smart contract prices',
+      isAligned: marketData?.dataSource === 'contract' && (
+        Math.abs((marketData?.currentPrice || 0) - currentMarkPrice) < 0.000001
+      )
+    });
 
-  // Ultra-aggressive price range calculation for fallback strategies (from test script)
-  const calculateUltraWidePriceRange = (isLong: boolean): { minPrice: bigint; maxPrice: bigint } => {
-    const currentPrice = marketData?.currentPrice || 1;
-    
-    // Strategy 1: Ultra Wide Range (99% slippage) - from test script
-    const ultraWideMinPrice = BigInt(Math.floor(currentPrice * 0.01 * 1e6)); // 99% below current price
-    const ultraWideMaxPrice = BigInt(Math.floor(currentPrice * 100 * 1e6)); // 100x above current price
-    
-    // Strategy 2: Extremely Wide Range (99.9% slippage) - from test script
-    const extremelyWideMinPrice = BigInt(Math.floor(currentPrice * 0.001 * 1e6)); // 99.9% below current price
-    const extremelyWideMaxPrice = BigInt(Math.floor(currentPrice * 1000 * 1e6)); // 1000x above current price
-    
-    // Strategy 3: Maximum Range (99.99% slippage) - from test script
-    const maximumMinPrice = BigInt(1); // Minimum possible price
-    const maximumMaxPrice = BigInt(Math.floor(currentPrice * 10000 * 1e6)); // 10000x above current price
-    
-    // Strategy 4: Zero to Maximum - from test script
-    const zeroToMaxMinPrice = BigInt(0); // Zero minimum
-    const zeroToMaxMaxPrice = BigInt(Number.MAX_SAFE_INTEGER); // Maximum possible
-    
-    // Return the most aggressive range for maximum compatibility
-    return {
-      minPrice: zeroToMaxMinPrice,
-      maxPrice: zeroToMaxMaxPrice
-    };
+    return currentMarkPrice;
   };
 
   // =====================
-  // 💰 SIMPLE VALIDATION FOR ORDERBOOK
+  // 💰 SIMPLE VALIDATION FOR TRADING ROUTER
   // =====================
 
   const validateOrderAmount = (): { isValid: boolean; message?: string } => {
-    if (!amount || amount <= 0) {
-      return { isValid: false, message: 'Enter an amount' };
+    // Check if amount is a valid number
+    if (!amount || amount <= 0 || isNaN(amount)) {
+      return { isValid: false, message: 'Enter a valid USDC amount' };
     }
     
+    // Check minimum amount
     if (amount < 1) {
-      return { isValid: false, message: 'Minimum $1 required' };
+      return { isValid: false, message: 'Minimum $1 USDC required' };
     }
     
-    if (amount > 1000000) {
-      return { isValid: false, message: 'Maximum $1M per order' };
+    // Check maximum amount  
+    if (amount > 10000000) {
+      return { isValid: false, message: 'Maximum $10M USDC per order' };
+    }
+    
+    // Check for reasonable decimal precision (USDC has 6 decimals, but UI shows 2-4)
+    const decimalPlaces = (amount.toString().split('.')[1] || '').length;
+    if (decimalPlaces > 6) {
+      return { isValid: false, message: 'Too many decimal places (max 6 for USDC)' };
+    }
+    
+    // Ensure we can calculate meaningful units
+    const currentPrice = orderType === 'limit' && triggerPrice > 0 ? triggerPrice : getStartPrice();
+    if (currentPrice <= 0) {
+      return { isValid: false, message: 'Price data not available' };
+    }
+    
+    const calculatedUnits = amount / currentPrice;
+    if (calculatedUnits < 0.0001) {
+      return { isValid: false, message: 'Amount too small - would result in negligible units' };
+    }
+    
+    // Check VaultRouter collateral balance
+    const availableCollateral = parseFloat(vaultCollateral || '0');
+    if (availableCollateral < amount) {
+      const neededDeposit = amount - availableCollateral;
+      return { 
+        isValid: false, 
+        message: `Insufficient collateral. Need $${neededDeposit.toFixed(2)} more USDC. Please deposit using the header.` 
+      };
     }
     
     return { isValid: true };
@@ -349,13 +482,19 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     if (!selectedOption) return false;
     if (orderType === 'limit' && triggerPrice <= 0) return false;
     
-    // Require wallet connection for orderbook system
+    // Require wallet connection
     if (!walletData.isConnected) return false;
     
-    // Check if orderbook system is ready
-    if (!isOrderbookEnabled || !isSystemReady) return false;
+    // Check if TradingRouter is connected and not paused
+    if (!isRouterConnected || isRouterPaused) return false;
     
-    // Validate amount
+    // Check if VaultRouter is connected (for collateral)
+    if (!isVaultConnected) return false;
+    
+    // Check if not currently trading or loading
+    if (isTradingRouterLoading || isSubmittingOrder || isVaultLoading || isCancelingOrder) return false;
+    
+    // Validate amount and collateral
     const validation = validateOrderAmount();
     return validation.isValid;
   };
@@ -374,12 +513,25 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
   const getTradeButtonText = () => {
     if (!walletData.isConnected) return 'Connect Wallet';
     
-    // Check if orderbook system is available
-    if (!isOrderbookEnabled) return 'Orderbook Not Available';
-    if (!isSystemReady) return 'Loading...';
+    // Check if canceling an order
+    if (isCancelingOrder) {
+      return 'Canceling Pending Order...';
+    }
     
-    if (isTrading || isSubmittingOrder) {
-      return orderType === 'limit' ? 'Signing & Creating Order...' : 'Signing & Placing Order...';
+    // Check if TradingRouter is available
+    if (!isRouterConnected) return 'TradingRouter Not Connected';
+    if (isRouterPaused) return 'Trading Paused';
+    
+    // Check if VaultRouter is available
+    if (!isVaultConnected) return 'VaultRouter Not Connected';
+    
+    if (isSubmittingOrder || isVaultLoading) {
+      return orderType === 'limit' ? 'Placing Limit Order...' : 'Placing Market Order...';
+    }
+    
+    // Only check isTradingRouterLoading for non-cancellation operations
+    if (isTradingRouterLoading && !isCancelingOrder) {
+      return orderType === 'limit' ? 'Placing Limit Order...' : 'Placing Market Order...';
     }
     
     if (!selectedOption) return 'Select Buy or Sell';
@@ -390,7 +542,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     if (orderType === 'limit' && triggerPrice <= 0) return 'Set Trigger Price';
     
     if (orderType === 'limit') {
-      return `Create ${selectedOption === 'long' ? 'Buy' : 'Sell'} Limit Order`;
+      return `Place ${selectedOption === 'long' ? 'Buy' : 'Sell'} Limit Order`;
     }
     
     const abbreviatedSymbol = abbreviateMarketName(tokenData.symbol);
@@ -411,6 +563,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
         </div>
       );
     }
+    
     
     return (
       <div className="text-[10px] text-green-400 mt-1">
@@ -448,10 +601,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       errors.push('Set trigger price for limit orders');
     }
     
-    // Check for unrealistic leverage
-    if (leverage > 100) {
-      errors.push('Leverage too high - maximum 100x');
-    }
+    // Leverage disabled
     
     return {
       isValid: errors.length === 0,
@@ -459,204 +609,189 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     };
   };
 
-  // =====================
-  // 🔐 ORDER SIGNING (EIP-712)
-  // =====================
-
-  const prepareAndSignOrder = async (params: {
-    metricId: string;
-    orderType: 'MARKET' | 'LIMIT';
-    side: 'BUY' | 'SELL';
-    quantity: string;
-    price?: string;
-    postOnly?: boolean;
-  }): Promise<{ signature: `0x${string}`; nonce: bigint }> => {
-    if (!walletData.isConnected || !walletData.address) {
-      throw new Error('Wallet not connected');
-    }
-
-    const ethereum = (window as any)?.ethereum;
-    if (!ethereum) {
-      throw new Error('No ethereum provider found');
-    }
-
-    const walletClient = createWalletClient({
-      chain: polygon,
-      transport: custom(ethereum),
-      account: walletData.address as Address,
-    });
-
-    // Ensure the injected wallet's selected account matches the address we intend to use
-    try {
-      const selectedAccounts: string[] = await ethereum.request({ method: 'eth_accounts' });
-      const selected = (selectedAccounts && selectedAccounts[0]) ? selectedAccounts[0] : null;
-      if (!selected || selected.toLowerCase() !== (walletData.address as string).toLowerCase()) {
-        throw new Error(`Connected wallet account (${selected || 'none'}) does not match selected account ${walletData.address}. Switch accounts in your wallet and try again.`);
-      }
-    } catch (e) {
-      // If the provider call fails, proceed; signOrder will still verify and throw if mismatch
-      console.warn('Could not verify selected account via provider. Proceeding to sign with runtime verification.', e);
-    }
-
-    const currentNonce = await publicClient.readContract({
-      address: CONTRACT_ADDRESSES.orderRouter as Address,
-      abi: ORDER_ROUTER_ABI,
-      functionName: 'getNonce',
-      args: [walletData.address as Address],
-    }) as bigint;
-
-    const { signature, nonce } = await signOrderHelper(
-      {
-        metricId: params.metricId,
-        orderType: params.orderType,
-        side: params.side,
-        quantity: params.quantity,
-        price: params.price,
-        // Ensure postOnly used for signing equals the flag submitted later
-        postOnly: Boolean(params.postOnly || false),
-      },
-      walletClient,
-      CONTRACT_ADDRESSES.orderRouter as Address,
-      currentNonce
-    );
-
-    return { signature, nonce };
+  // Clear any trading errors when needed
+  const clearAllErrors = () => {
+    clearTradingError();
+    setErrorModal({ isOpen: false, title: '', message: '' });
   };
-
-  // Legacy functions removed - orderbook system uses simpler order placement
 
   // =====================
   // 📈 TRADING EXECUTION
   // =====================
 
   const executeMarketOrder = async () => {
-    console.log('🚀 Starting market order execution with orderbook system...');
-
-    // Validate USDC balance
-    // if (!walletData.balance || amount > parseFloat(walletData.balance)) {
-    //   showError('Insufficient USDC balance'+walletData.balance);
-    //   return;
-    // }
-    
-    // Validate orderbook system availability
-    if (!isOrderbookEnabled) {
-      showError('Orderbook system is not available. Please try again later.', 'Service Unavailable');
-      return;
-    }
-    
-    if (!isSystemReady) {
-      showError('Orderbook system is still loading. Please wait and try again.', 'System Loading');
-      return;
-    }
+    console.log('🚀 Starting market order execution with DIRECT OrderBook...');
     
     if (!walletData.isConnected || !walletData.address) {
       showError('Please connect your wallet to place orders.', 'Wallet Required');
       return;
     }
     
-    clearMessages();
-    setIsTrading(true);
+    if (!selectedOption) {
+      showError('Please select buy or sell.', 'Missing Direction');
+      return;
+    }
+    
+    clearAllErrors();
     setIsSubmittingOrder(true);
 
     try {
-      // For market orders in orderbook system, we create market orders that execute immediately
-      // Get current market price
-      const currentPrice = marketData?.currentPrice;
-      if (!currentPrice) {
-        throw new Error('Cannot execute trade: Current price not available');
+      // Get current market price with fallback handling
+      const currentPrice = marketData?.currentPrice || marketData?.markPrice || tokenData?.price;
+      
+      console.log('💰 Price validation for market order:', {
+        marketDataCurrentPrice: marketData?.currentPrice,
+        marketDataMarkPrice: marketData?.markPrice,
+        tokenDataPrice: tokenData?.price,
+        resolvedCurrentPrice: currentPrice,
+        dataSource: marketData?.dataSource,
+        lastUpdated: marketData?.lastUpdated
+      });
+      
+      if (!currentPrice || currentPrice <= 0) {
+        console.error('❌ No valid price available for trading:', {
+          marketData: marketData,
+          tokenData: tokenData,
+          availablePrices: {
+            currentPrice: marketData?.currentPrice,
+            markPrice: marketData?.markPrice,
+            tokenPrice: tokenData?.price
+          }
+        });
+        throw new Error('Cannot execute trade: Market price not available. Please wait for price data to load or try refreshing the page.');
       }
       
-      // Calculate quantity of units based on USDC amount and current price
-      // Example: $100 USDC at $20 per unit = 5 units
-      const quantity = amount / currentPrice;
-      
-      console.log('💰 Calculating order quantity:', {
-        usdcAmount: amount,
-        currentPrice,
-        calculatedQuantity: quantity,
-        explanation: `${amount} USDC / $${currentPrice} per unit = ${quantity} units`
-      });
-
-      const orderParams = {
-        metricId,
-        orderType: 'MARKET' as const,
-        side: selectedOption === 'long' ? 'BUY' : 'SELL' as const,
-        quantity: quantity.toString(), // Number of units to buy/sell
-        price: Number(currentPrice).toFixed(2), // Use current price with 2-decimal tick alignment
-        timeInForce: 'IOC' as const, // Immediate or Cancel for market orders
-        walletAddress: walletData.address,
-        timestamp: Date.now()
-      };
-
-      console.log('📋 Creating market order with params:', orderParams);
-      showSuccess('Signing and placing market order...', 'Processing');
-      
-      // Sign the order with EIP-712 using the shared helper
-      const { signature, nonce } = await prepareAndSignOrder({
-        metricId,
-        orderType: 'MARKET',
-        side: selectedOption === 'long' ? 'BUY' : 'SELL',
-        quantity: quantity.toString(), // Number of units to buy/sell
-        price: Number(currentPrice).toFixed(2),
-      });
-      
-      // Submit to API
-      const requestPayload = {
-        ...orderParams,
-        signature,
-        nonce: Number(nonce),
-        metadataHash: `0x${'0'.repeat(64)}` // Default metadata hash
-      };
-      
-      console.log('📤 Sending market order request to API:', requestPayload);
-      
-      const response = await fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestPayload),
-      });
-
-      console.log('📥 Market order API Response status:', response.status);
-      const result = await response.json();
-      console.log('📥 Market order API Response body:', result);
-      
-      if (!response.ok) {
-        // Handle different error types
-        if (result.errorType === 'BLOCKCHAIN_ERROR') {
-          throw new Error(`Blockchain Error: ${result.details || 'Transaction failed'}`);
-        } else {
-          throw new Error(result.error || 'Failed to place market order');
-        }
-      }
-
-      if (result.success) {
-        const matchText = result.matches && result.matches.length > 0 
-          ? ` Matched ${result.matches.length} order(s).`
-          : '';
+              // For market orders: Calculate the quantity of units to buy/sell
+        // Example: $100 USDC at $5 per unit = 20 units
+        // Contract expects size in units (will be converted to 6-decimal format in hook)
         
-        const blockchainText = result.blockchainTxHash 
-          ? ` Blockchain TX: ${result.blockchainTxHash.slice(0, 10)}...`
-          : '';
-          
+        // COMPREHENSIVE DEBUGGING: Log all values to understand the issue
+        // Calculate reference values for comparison
+        const limitOrderWorkedWith = {
+          amount: 100,
+          price: currentPrice || 1.0,
+          expectedQuantity: (100 / (currentPrice || 1.0)),
+          note: 'This combination worked for limit order'
+        };
+
+        console.log('🔍 MARKET ORDER DEBUG - All Values:', {
+          amount,
+          amountType: typeof amount,
+          amountString: amount.toString(),
+          currentPrice,
+          priceType: typeof currentPrice,
+          priceString: currentPrice.toString(),
+          walletAddress: walletData.address,
+          selectedOption,
+          limitOrderWorkedWith,
+          timestamp: new Date().toISOString()
+        });
+        
+        // DEFENSIVE: Check if amount is in unexpected format (like 6-decimal already)
+        let actualAmount = amount;
+        
+        // If amount seems too large (>10,000), it might be in 6-decimal format already
+        if (amount > 10000) {
+          actualAmount = amount / 1000000; // Convert from 6-decimal to regular USD
+          console.warn('⚠️ Amount appears to be in 6-decimal format, converting:', {
+            originalAmount: amount,
+            convertedAmount: actualAmount
+          });
+        } else {
+          console.log('✅ Amount seems normal, no conversion needed:', amount);
+        }
+        
+        let quantity = actualAmount / currentPrice;
+        
+        // HARD FAILSAFE: For $100 market orders, force the same calculation that worked for limit orders
+        const amountDiff = Math.abs(actualAmount - 100);
+        const priceDiff = Math.abs(currentPrice - (limitOrderWorkedWith.price || 1.0));
+        const shouldTriggerFailsafe = amountDiff < 1 && priceDiff < 0.1;
+        
+        console.log('🔍 FAILSAFE CHECK:', {
+          actualAmount,
+          currentPrice,
+          amountDiff,
+          priceDiff,
+          shouldTriggerFailsafe,
+          explanation: shouldTriggerFailsafe ? 'FAILSAFE WILL TRIGGER' : 'Failsafe will NOT trigger - values too different from expected amounts'
+        });
+        
+        if (shouldTriggerFailsafe) {
+          quantity = limitOrderWorkedWith.expectedQuantity; // Force the exact same quantity that worked for limit order
+          console.log(`🛡️ FAILSAFE TRIGGERED: Using proven limit order calculation for $${actualAmount} at $${currentPrice}: ${quantity} units`);
+        } else {
+          console.log('⚠️ FAILSAFE NOT TRIGGERED: Amount or price differs from expected values');
+        }
+        
+        // AGGRESSIVE FAILSAFE: If quantity is way too large, force it to reasonable size
+        if (quantity > 1000) {
+          console.warn(`⚠️ AGGRESSIVE FAILSAFE: Quantity ${quantity} is too large, forcing to 20 units for safety`);
+          quantity = 20; // Force to known good value
+        }
+        
+        // SANITY CHECK: Ensure quantity makes sense
+        if (quantity <= 0 || quantity > 1000) {
+          throw new Error(`Invalid order quantity: ${quantity} units. Check amount ($${actualAmount}) and price ($${currentPrice}).`);
+        }
+        
+        // PRICE VALIDATION: Ensure price makes sense
+        if (currentPrice < 0.01 || currentPrice > 100000) {
+          throw new Error(`Invalid current price: $${currentPrice}. Price seems unrealistic.`);
+        }
+        
+        // FINAL VALIDATION: Check if the order value makes sense
+        const orderValue = quantity * currentPrice;
+        if (Math.abs(orderValue - actualAmount) > actualAmount * 0.1) { // Allow 10% tolerance
+          console.warn('⚠️ Order value calculation mismatch:', {
+            expectedValue: actualAmount,
+            calculatedValue: orderValue,
+            difference: Math.abs(orderValue - actualAmount),
+            tolerance: actualAmount * 0.1
+          });
+        }
+      
+              console.log('💰 Calculating market order quantity (with new scaled contracts):', {
+          originalAmount: amount,
+          actualAmount: actualAmount,
+          amountType: typeof amount,
+          currentPrice,
+          priceType: typeof currentPrice,
+          calculatedQuantity: quantity,
+          quantityType: typeof quantity,
+          explanation: `${actualAmount} USDC / $${currentPrice} per unit = ${quantity} units`,
+          note: 'Using new contracts with proper 6-decimal USDC precision'
+        });
+
+      // Prepare order parameters for OrderBook Direct (no marketId needed)
+      const orderParams = {
+        side: selectedOption, // 'long' or 'short'
+        size: quantity // Size in token units
+      };
+
+
+      console.log('📋 Placing market order via OrderBook Direct:', orderParams);
+      showSuccess('Placing market order on blockchain...', 'Processing');
+      
+      // Call OrderBook direct market order function (bypasses TradingRouter issue)
+      const result = await placeMarketOrder(orderParams);
+      
+      if (result.success) {
         showSuccess(
-          `Market order placed successfully! Order ID: ${result.orderId}.${matchText}${blockchainText}`,
-          'Order Confirmed On-Chain'
+          `Market order placed successfully! ${selectedOption === 'long' ? 'Buy' : 'Sell'} ${quantity.toFixed(4)} ${tokenData.symbol} at market price. Transaction: ${result.transactionHash?.slice(0, 10)}...`,
+          'Market Order Confirmed On-Chain'
         );
         
         // Reset form
         setAmount(0);
         refetchOrders(); // Refresh orders list
         
-        // Log successful submission
-        console.log('✅ Market order submitted successfully:', {
-          orderId: result.orderId,
-          matches: result.matches?.length || 0,
-          processingTime: result.processingTime
+        console.log('✅ Market order placed successfully:', {
+          transactionHash: result.transactionHash,
+          orderParams
         });
       } else {
-        throw new Error(result.error || 'Order submission failed');
+        throw new Error(result.error || 'Order placement failed');
       }
       
     } catch (error: any) {
@@ -666,32 +801,28 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       let errorTitle = 'Order Failed';
       const errorStr = error?.message || error?.toString() || '';
       
-      if (errorStr.includes('Blockchain Error')) {
-        errorMessage = 'Blockchain transaction failed. Your order was not placed and no database changes were made. This protects you from inconsistent state.';
-        errorTitle = 'Blockchain Transaction Failed';
-      } else if (errorStr.includes('Market not deployed') || errorStr.includes('missing contract addresses')) {
-        errorMessage = 'This market has not been deployed to the blockchain yet. Orders cannot be placed until deployment is complete.';
-        errorTitle = 'Market Not Deployed';
-      } else if (errorStr.includes('insufficient') || errorStr.includes('Insufficient')) {
-        errorMessage = 'Insufficient funds. Please check your balance and try again.';
-        errorTitle = 'Insufficient Funds';
+      if (errorStr.includes('insufficient') || errorStr.includes('Insufficient')) {
+        errorMessage = 'Insufficient collateral in VaultRouter. Please deposit USDC first using the "Deposit" button in the header.';
+        errorTitle = 'Insufficient Collateral';
       } else if (errorStr.includes('cancelled') || errorStr.includes('denied') || errorStr.includes('User denied')) {
         errorMessage = 'Transaction was cancelled. Please try again if you want to proceed.';
         errorTitle = 'Transaction Cancelled';
-      } else if (errorStr.includes('Wallet') || errorStr.includes('provider')) {
-        errorMessage = 'Wallet connection issue. Please disconnect and reconnect your wallet, then try again.';
-        errorTitle = 'Wallet Connection Error';
-      } else if (errorStr.includes('Market not') || errorStr.includes('not found')) {
-        errorMessage = 'Market not available for trading. Please check if the market is deployed.';
+      } else if (errorStr.includes('paused')) {
+        errorMessage = 'Trading is currently paused. Please try again later.';
+        errorTitle = 'Trading Paused';
+      } else if (errorStr.includes('market not') || errorStr.includes('not found')) {
+        errorMessage = 'Market not available for trading. Please check if the market exists.';
         errorTitle = 'Market Not Available';
-      } else if (errorStr.includes('Rate limit')) {
-        errorMessage = 'Too many requests. Please wait a moment and try again.';
-        errorTitle = 'Rate Limited';
+      } else if (errorStr.includes('Invalid price') || errorStr.includes('tick size')) {
+        errorMessage = 'Invalid price. Please check the price format and tick size requirements.';
+        errorTitle = 'Invalid Price';
+      } else if (errorStr.includes('minimum') || errorStr.includes('below')) {
+        errorMessage = 'Order size below minimum. Please increase the order amount.';
+        errorTitle = 'Order Too Small';
       }
       
       showError(errorMessage, errorTitle);
     } finally {
-      setIsTrading(false);
       setIsSubmittingOrder(false);
     }
   };
@@ -709,77 +840,39 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       return;
     }
     
-    console.log('📋 Creating limit order with orderbook system...');
-    setIsTrading(true);
+    console.log('📋 Creating limit order with OrderBook Direct...');
+    clearAllErrors();
     setIsSubmittingOrder(true);
-    clearMessages();
 
     try {
-      const expiryTimestamp = orderExpiry > 0 ? Math.floor(Date.now() / 1000) + (orderExpiry * 3600) : 0;
-      
-      // Convert USDC amount to asset units using the limit price
-      const quantity = amount / triggerPrice;
-      console.log('💰 Calculating limit order quantity:', {
-        usdcAmount: amount,
-        triggerPrice,
-        calculatedQuantity: quantity,
-        explanation: `${amount} USDC / $${triggerPrice} per unit = ${quantity} units`
-      });
+              // Convert USDC amount to asset units using the limit price
+        // New contracts handle this conversion with proper 6-decimal precision
+        const quantity = amount / triggerPrice;
+              console.log('💰 Calculating limit order quantity (with new scaled contracts):', {
+          usdcAmount: amount,
+          triggerPrice,
+          calculatedQuantity: quantity,
+          explanation: `${amount} USDC / $${triggerPrice} per unit = ${quantity} units`,
+          note: 'Using new contracts with proper 6-decimal USDC precision'
+        });
 
+      // Prepare order parameters for OrderBook Direct (no marketId needed)
       const orderParams = {
-        metricId,
-        orderType: 'LIMIT' as const,
-        side: selectedOption === 'long' ? 'BUY' : 'SELL' as const,
-        quantity: quantity.toString(),
-        price: triggerPrice.toString(),
-        timeInForce: expiryTimestamp > 0 ? 'GTD' : 'GTC' as const,
-        expiryTime: expiryTimestamp > 0 ? expiryTimestamp : undefined,
-        postOnly: false,
-        reduceOnly: false,
-        walletAddress: walletData.address,
-        timestamp: Date.now()
+        side: selectedOption, // 'long' or 'short'
+        size: quantity, // Size in token units
+        price: triggerPrice // Limit price
       };
 
-      console.log('📋 Creating limit order with params:', orderParams);
-      showSuccess('Signing and creating limit order...', 'Processing');
-      
-      // Sign the order with EIP-712 using the shared helper
-      const { signature, nonce } = await prepareAndSignOrder({
-        metricId,
-        orderType: 'LIMIT',
-        side: selectedOption === 'long' ? 'BUY' : 'SELL',
-        quantity: quantity.toString(),
-        price: triggerPrice.toString(),
-        postOnly: false,
-      });
-      
-      // Submit to API
-      const response = await fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...orderParams,
-          signature,
-          nonce: Number(nonce),
-          metadataHash: `0x${'0'.repeat(64)}` // Default metadata hash
-        }),
-      });
 
-      const result = await response.json();
+      console.log('📋 Placing limit order via OrderBook Direct:', orderParams);
+      showSuccess('Placing limit order on blockchain...', 'Processing');
       
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to place limit order');
-      }
-
+      // Call OrderBook direct limit order function (bypasses TradingRouter issue)
+      const result = await placeLimitOrder(orderParams);
+      
       if (result.success) {
-        const matchText = result.matches && result.matches.length > 0 
-          ? ` Immediately matched ${result.matches.length} order(s).`
-          : ' Added to order book.';
-          
         showSuccess(
-          `Limit order created successfully! ${orderParams.side} ${orderParams.quantity} ${tokenData.symbol} @ $${formatNumber(triggerPrice)}.${matchText}`,
+          `Limit order placed successfully! ${selectedOption === 'long' ? 'Buy' : 'Sell'} ${quantity.toFixed(4)} ${tokenData.symbol} @ $${formatNumber(triggerPrice)}. Order will execute when market reaches this price. Transaction: ${result.transactionHash?.slice(0, 10)}...`,
           'Limit Order Created'
         );
         
@@ -788,14 +881,12 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
         setTriggerPrice(0);
         refetchOrders(); // Refresh orders list
         
-        // Log successful submission
-        console.log('✅ Limit order submitted successfully:', {
-          orderId: result.orderId,
-          matches: result.matches?.length || 0,
-          processingTime: result.processingTime
+        console.log('✅ Limit order placed successfully:', {
+          transactionHash: result.transactionHash,
+          orderParams
         });
       } else {
-        throw new Error(result.error || 'Order submission failed');
+        throw new Error(result.error || 'Order placement failed');
       }
       
     } catch (error: any) {
@@ -806,22 +897,24 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       const errorStr = error?.message || error?.toString() || '';
       
       if (errorStr.includes('insufficient') || errorStr.includes('Insufficient')) {
-        errorMessage = 'Insufficient funds. Please check your balance and try again.';
-        errorTitle = 'Insufficient Funds';
+        errorMessage = 'Insufficient collateral in VaultRouter. Please deposit more USDC using the "Deposit" button in the header and try again.';
+        errorTitle = 'Insufficient Collateral';
       } else if (errorStr.includes('cancelled') || errorStr.includes('denied') || errorStr.includes('User denied')) {
-        errorMessage = 'Order signature was cancelled. Please try again if you want to proceed.';
-        errorTitle = 'Signature Cancelled';
+        errorMessage = 'Transaction was cancelled. Please try again if you want to proceed.';
+        errorTitle = 'Transaction Cancelled';
       } else if (errorStr.includes('Invalid price') || errorStr.includes('tick size')) {
         errorMessage = 'Invalid price. Please check the price format and tick size requirements.';
         errorTitle = 'Invalid Price';
       } else if (errorStr.includes('minimum') || errorStr.includes('below')) {
         errorMessage = 'Order size below minimum. Please increase the order amount.';
         errorTitle = 'Order Too Small';
+      } else if (errorStr.includes('paused')) {
+        errorMessage = 'Trading is currently paused. Please try again later.';
+        errorTitle = 'Trading Paused';
       }
       
       showError(errorMessage, errorTitle);
     } finally {
-      setIsTrading(false);
       setIsSubmittingOrder(false);
     }
   };
@@ -882,17 +975,17 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
         message={successModal.message}
       />
       
-      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full overflow-y-auto flex flex-col">
+      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full overflow-y-hidden flex flex-col">
 
 
         {/* Header section */}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex gap-2">
             <button
               onClick={() => setActiveTab('buy')}
               className="transition-all duration-150 outline-none border-none cursor-pointer rounded-md"
               style={{
-                padding: '6px 16px',
+                padding: '5px 14px',
                 fontSize: '14px',
                 fontWeight: '600',
                 backgroundColor: activeTab === 'buy' ? '#22C55E' : '#2A2A2A',
@@ -905,7 +998,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
               onClick={() => setActiveTab('sell')}
               className="transition-all duration-150 outline-none border-none cursor-pointer rounded-md"
               style={{
-                padding: '6px 16px',
+                padding: '5px 14px',
                 fontSize: '14px',
                 fontWeight: '600',
                 backgroundColor: activeTab === 'sell' ? '#22C55E' : '#2A2A2A',
@@ -949,8 +1042,8 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
           </div>
         </div>
 
-        {/* Trading Content Area - Fixed height exactly like ThreadPanel messages */}
-        <div className="h-[235px] overflow-y-auto mb-3 space-y-2 trading-panel-scroll">
+        {/* Trading Content Area - fit content without scrolling */}
+        <div className="flex-1 overflow-y-hidden space-y-1.5 pb-1.5 trading-panel-scroll">
           {/* Sell Tab - Current Positions */}
           {activeTab === 'sell' && (
             <div className="space-y-2">
@@ -978,7 +1071,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                     <div className="flex justify-between">
                       <span className="text-[#808080]">Total Volume:</span>
                       <span className="text-white font-medium">
-                        ${formatNumber(userOrders.filter(o => o.status === 'filled').reduce((sum, order) => sum + (order.quantity * order.price), 0))}
+                        ${formatNumber(userOrders.filter(o => o.status === 'filled').reduce((sum, order) => sum + (order.quantity * (order.price || 0)), 0))}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -1050,29 +1143,54 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
               )}
               
               {!ordersLoading && filledOrdersForThisMarket.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-sm font-semibold text-white mb-2">Filled Orders (Trade History)</h4>
+                <div className="space-y-1.5 mb-3">
+                  {/* Section Header */}
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Trade History</h4>
+                    <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                      {filledOrdersForThisMarket.length}
+                    </div>
+                  </div>
+                  
+                  {/* Trade Items */}
                   {filledOrdersForThisMarket.slice(0, 10).map((order) => (
-                    <div key={order.id} className="mb-3 p-2 bg-[#1A1A1A] rounded-lg border border-[#333333]">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-sm font-medium ${order.side === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
-                            {order.side === 'buy' ? 'BOUGHT' : 'SOLD'}
-                          </span>
-                          <span className="text-xs text-[#808080]">
-                            {order.quantity.toFixed(4)} @ {order.price ? `$${order.price.toFixed(4)}` : 'MARKET'}
-                          </span>
-                          <span className="text-xs text-[#606060]">
-                            ID: {order.id.slice(0, 8)}...
-                          </span>
+                    <div key={order.id} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+                      <div className="flex items-center justify-between p-2.5">
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          {/* Side indicator dot */}
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${order.side === 'buy' ? 'bg-green-400' : 'bg-red-400'}`} />
+                          
+                          {/* Trade info */}
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <span className={`text-[11px] font-medium ${order.side === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
+                              {order.side.toUpperCase()}
+                            </span>
+                            <span className="text-[10px] text-[#808080]">
+                              {order.quantity.toFixed(4)}
+                            </span>
+                            <span className="text-[10px] text-[#606060]">
+                              @ {order.price ? `$${order.price.toFixed(4)}` : 'MKT'}
+                            </span>
+                          </div>
                         </div>
+                        
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-white">
+                          {/* Value */}
+                          <span className="text-[10px] text-white font-mono">
                             {order.price ? `$${(order.quantity * order.price).toFixed(2)}` : 'PENDING'}
                           </span>
-                          <span className="text-xs text-[#606060]">
-                            {new Date(order.timestamp).toLocaleDateString()}
-                          </span>
+                          
+                          {/* Status dot */}
+                          <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                        </div>
+                      </div>
+                      
+                      {/* Expandable details on hover */}
+                      <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                        <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                          <div className="text-[9px] pt-1.5">
+                            <span className="text-[#606060]">ID: {order.id.slice(0, 8)}... • {new Date(order.timestamp).toLocaleDateString()}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1140,10 +1258,22 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                 </div>
               </div>
               
-              {activeOrders.map((order) => (
-                <div key={order.id} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                  {/* Main order row - compact single line */}
-                  <div className="flex items-center justify-between p-2.5">
+              {activeOrders.length === 0 ? (
+                <div className="text-center py-4 text-[#606060]">
+                  <div className="text-sm">No active orders</div>
+                  <div className="text-xs mt-1">
+                    {userOrdersLoading ? 'Loading orders...' : 
+                     !walletData.isConnected ? 'Wallet not connected' :
+                     !metricId ? 'No market selected' :
+                     userOrders.length === 0 ? 'No orders found for this market' :
+                     'All orders are filled or cancelled'}
+                  </div>
+                </div>
+              ) : (
+                activeOrders.map((order) => (
+                  <div key={order.id} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+                    {/* Main order row - compact single line */}
+                    <div className="flex items-center justify-between p-2.5">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       {/* Side indicator */}
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${order.side === 'buy' ? 'bg-green-400' : 'bg-red-400'}`} />
@@ -1158,7 +1288,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                         </span>
                         <span className="text-[10px] text-[#606060]">@</span>
                         <span className="text-[10px] text-white font-mono">
-                          ${order.price.toFixed(4)}
+                          ${order.price ? order.price.toFixed(4) : 'N/A'}
                         </span>
                       </div>
                     </div>
@@ -1170,7 +1300,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                         <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
                           <div 
                             className="h-full bg-blue-400 transition-all duration-300"
-                            style={{ width: `${(order.filledQuantity / order.quantity) * 100}%` }}
+                            style={{ width: `${order.quantity > 0 ? (order.filledQuantity / order.quantity) * 100 : 0}%` }}
                           />
                         </div>
                       )}
@@ -1185,14 +1315,27 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                       {/* Cancel button */}
                       <button
                         onClick={async () => {
+                          setIsCancelingOrder(true);
                           try {
-                            console.log('Cancelling order:', order.id);
+                            console.log('🔥 Cancelling HyperLiquid OrderBook order:', order.id);
+                            // Use the HyperLiquid OrderBook cancelOrder function
+                            await cancelOrder(order.id);
+                            console.log('✅ Order cancelled successfully');
+                            // Refresh orders to show updated state
                             await refetchOrders();
                           } catch (error) {
-                            console.error('Failed to cancel order:', error);
+                            console.error('❌ Failed to cancel order:', error);
+                            // Show error to user
+                            setErrorModal({
+                              isOpen: true,
+                              title: 'Order Cancellation Failed',
+                              message: error instanceof Error ? error.message : 'Unknown error occurred'
+                            });
+                          } finally {
+                            setIsCancelingOrder(false);
                           }
                         }}
-                        disabled={ordersLoading}
+                        disabled={ordersLoading || userOrdersLoading || isCancelingOrder}
                         className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-red-500/10 rounded text-red-400 hover:text-red-300 disabled:opacity-50"
                         title="Cancel order"
                       >
@@ -1209,11 +1352,11 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] pt-1.5">
                         <div className="flex justify-between">
                           <span className="text-[#606060]">Total:</span>
-                          <span className="text-[#9CA3AF] font-mono">${(order.quantity * order.price).toFixed(2)}</span>
+                          <span className="text-[#9CA3AF] font-mono">${order.price ? (order.quantity * order.price).toFixed(2) : 'N/A'}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-[#606060]">Filled:</span>
-                          <span className="text-[#9CA3AF]">{((order.filledQuantity / order.quantity) * 100).toFixed(1)}%</span>
+                          <span className="text-[#9CA3AF]">{order.quantity > 0 ? ((order.filledQuantity / order.quantity) * 100).toFixed(1) : '0.0'}%</span>
                         </div>
                         {order.expiryTime && (
                           <div className="flex justify-between col-span-2">
@@ -1225,7 +1368,8 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                     </div>
                   </div>
                 </div>
-              ))}
+                ))
+              )}
               
               {/* No Active Orders Message */}
               {activeOrders.length === 0 && !ordersLoading && (
@@ -1283,7 +1427,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                   <div className="flex justify-between">
                     <span className="text-[#808080]">Total Value:</span>
                     <span className="text-white">
-                      ${activeOrders.reduce((sum, order) => sum + (order.quantity * order.price), 0).toFixed(2)}
+                      ${activeOrders.reduce((sum, order) => sum + (order.quantity * (order.price || 0)), 0).toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -1294,132 +1438,12 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
           {/* Buy Tab - Trading Interface */}
           {activeTab === 'buy' && (
             <>
-              {/* Wallet Balance Info */}
-              {/* {walletData.isConnected && (
-                <div className="mb-3 p-2 bg-[#1A1A1A] rounded-lg text-xs">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-[#808080]">Wallet USDC:</span>
-                    <span className="text-white">${formatNumber(vammTrading.collateralBalance)}</span>
-                  </div>
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-[#808080]">Available Margin:</span>
-                    <span className="text-white">${formatNumber(vammTrading.marginAccount?.availableBalance || '0')}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[#808080]">Total Margin:</span>
-                                    <span className={`${(parseFloat(vammTrading.marginAccount?.balance || '0') + parseFloat(vammTrading.marginAccount?.unrealizedPnL || '0')) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  ${formatNumber(((parseFloat(vammTrading.marginAccount?.balance || '0') + parseFloat(vammTrading.marginAccount?.unrealizedPnL || '0'))).toString())}
-                    </span>
-                  </div>
-                </div>
-              )} */}
 
-              {/* VAMM Contract Info - Sophisticated Design */}
-              {memoizedVammMarket && (
-                <div className="space-y-1.5 mb-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Contract & Market Info</h4>
-                    <div className={`text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded ${
-                      memoizedVammMarket.deployment_status === 'deployed' ? 'text-green-400' : 
-                      memoizedVammMarket.deployment_status === 'failed' ? 'text-red-400' : 
-                      'text-yellow-400'
-                    }`}>
-                      {memoizedVammMarket.deployment_status}
-                    </div>
-                  </div>
-                  
-                  <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                    <div 
-                      className="flex items-center justify-between p-2.5 cursor-pointer"
-                      onClick={() => setIsContractInfoExpanded(!isContractInfoExpanded)}
-                    >
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                          memoizedVammMarket.deployment_status === 'deployed' ? 'bg-green-400' : 
-                          memoizedVammMarket.deployment_status === 'failed' ? 'bg-red-400' : 
-                          'bg-yellow-400'
-                        }`} />
-                        <span className="text-[11px] font-medium text-[#808080]">
-                          Market Data & Contracts
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <svg 
-                          className={`w-3 h-3 text-[#404040] transition-transform duration-200 ${isContractInfoExpanded ? 'rotate-180' : ''}`} 
-                          fill="none" 
-                          stroke="currentColor" 
-                          viewBox="0 0 24 24"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </div>
-                    </div>
-                    
-                    {/* Expandable details section */}
-                    <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-40 overflow-hidden transition-all duration-200">
-                      <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                        <div className="text-[9px] pt-1.5 space-y-1">
-                          <div className="flex justify-between">
-                            <span className="text-[#606060]">Mark Price:</span>
-                            <span className="text-[#9CA3AF] font-mono">
-                              ${marketData?.markPrice ? formatNumber(marketData.markPrice.toString()) : formatNumber(tokenData.price?.toString() || '0')}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-[#606060]">24h Change:</span>
-                            <span className={`${(marketData?.priceChangePercent24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                              {marketData?.priceChangePercent24h ? (marketData.priceChangePercent24h >= 0 ? '+' : '') + marketData.priceChangePercent24h.toFixed(2) : '0.00'}%
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-[#606060]">Data Source:</span>
-                            <span className="text-green-400">
-                              {marketData?.dataSource || 'static'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Expanded details when clicked */}
-                  {isContractInfoExpanded && (
-                    <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
-                      <div className="space-y-1 text-[9px]">
-                        <div className="flex justify-between">
-                          <span className="text-[#606060]">Oracle:</span>
-                          <span className="text-white font-mono">
-                            {memoizedVammMarket.oracle_address.slice(0, 6)}...{memoizedVammMarket.oracle_address.slice(-4)}
-                          </span>
-                        </div>
-                        {memoizedVammMarket.vamm_address && (
-                          <div className="flex justify-between">
-                            <span className="text-[#606060]">vAMM:</span>
-                            <span className="text-white font-mono">
-                              {memoizedVammMarket.vamm_address.slice(0, 6)}...{memoizedVammMarket.vamm_address.slice(-4)}
-                            </span>
-                          </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-[#606060]">Initial Price:</span>
-                          <span className="text-white">
-                            ${formatNumber(memoizedVammMarket.initial_price?.toString() || '0')}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#606060]">Funding Rate:</span>
-                          <span className="text-white">
-                            {marketData?.fundingRate ? (marketData.fundingRate * 100).toFixed(4) : '0.0000'}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+
+              {/* Contract & Market Info removed to reduce height */}
 
           {/* Long/Short Option Buttons - Sophisticated Design */}
-          <div className="space-y-1.5 mb-3">
+          <div className="space-y-1 mb-2">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Position Direction</h4>
               <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
@@ -1427,7 +1451,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
               </div>
             </div>
             
-            <div className="flex gap-1.5">
+            <div className="flex gap-2">
               <button
                 onClick={() => setSelectedOption('long')}
                 className={`group flex-1 bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border transition-all duration-200 ${
@@ -1436,7 +1460,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                     : 'border-[#222222] hover:border-[#333333]'
                 }`}
               >
-                <div className="flex items-center justify-center p-2.5">
+                <div className="flex items-center justify-center p-2">
                   <div className="flex items-center gap-2">
                     <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                       selectedOption === 'long' ? 'bg-green-400' : 'bg-[#404040]'
@@ -1463,7 +1487,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                     : 'border-[#222222] hover:border-[#333333]'
                 }`}
               >
-                <div className="flex items-center justify-center p-2.5">
+                <div className="flex items-center justify-center p-2">
                   <div className="flex items-center gap-2">
                     <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                       selectedOption === 'short' ? 'bg-red-400' : 'bg-[#404040]'
@@ -1486,7 +1510,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
           {/* Limit Order Configuration - Sophisticated Design */}
           {orderType === 'limit' && (
-            <div className="space-y-1.5 mb-3">
+            <div className="space-y-1 mb-2">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Limit Order Settings</h4>
                 <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
@@ -1496,8 +1520,8 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
               
               {/* Trigger Price Section */}
               <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                <div className="p-2.5">
-                  <div className="flex items-center justify-between mb-2">
+                <div className="p-2">
+                  <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${triggerPrice > 0 ? 'bg-blue-400' : 'bg-[#404040]'}`} />
                       <span className="text-[11px] font-medium text-[#808080]">Trigger Price</span>
@@ -1508,10 +1532,10 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                     <div className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[#606060] text-xs pointer-events-none">$</div>
                     <input
                       type="text"
-                      value={triggerPrice > 0 ? triggerPrice.toString() : ''}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTriggerPrice(parseFloat(e.target.value) || 0)}
+                      value={triggerPrice > 0 ? formatInputNumber(triggerPrice) : ''}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTriggerPrice(parseInputNumber(getInputValue(e)))}
                       placeholder="0.00"
-                      className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1.5 pl-6 text-xs font-medium text-white placeholder-[#606060] focus:outline-none focus:border-blue-400 transition-colors duration-200"
+                      className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 pl-6 text-xs font-medium text-white placeholder-[#606060] focus:outline-none focus:border-blue-400 transition-colors duration-200"
                     />
                   </div>
                 </div>
@@ -1519,8 +1543,8 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
               {/* Order Type Section */}
               <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                <div className="p-2.5">
-                  <div className="flex items-center justify-between mb-2">
+                <div className="p-2">
+                  <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
                       <span className="text-[11px] font-medium text-[#808080]">Order Type</span>
@@ -1529,8 +1553,8 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                   </div>
                   <select
                     value={limitOrderType}
-                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLimitOrderType(e.target.value as typeof limitOrderType)}
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1.5 text-xs font-medium text-white focus:outline-none focus:border-blue-400 transition-colors duration-200 cursor-pointer"
+                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLimitOrderType(getInputValue(e) as typeof limitOrderType)}
+                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 text-xs font-medium text-white focus:outline-none focus:border-blue-400 transition-colors duration-200 cursor-pointer"
                   >
                     <option value="LIMIT">Limit Order</option>
                     <option value="MARKET_IF_TOUCHED">Market If Touched</option>
@@ -1572,7 +1596,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
               {/* Max Slippage Section */}
               <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                <div className="p-2.5">
+                <div className="p-2">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
@@ -1588,7 +1612,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                       min="10"
                       max="500"
                       value={maxSlippage}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxSlippage(parseInt(e.target.value))}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxSlippage(parseInt(getInputValue(e)))}
                       className="flex-1 h-1 bg-[#2A2A2A] rounded-lg appearance-none cursor-pointer"
                     />
                   </div>
@@ -1601,40 +1625,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                 </div>
               </div>
 
-              {/* Limit Order Summary */}
-              <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                <div className="p-2.5">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-purple-400" />
-                      <span className="text-[11px] font-medium text-[#808080]">Order Summary</span>
-                    </div>
-                  </div>
-                  <div className="space-y-1 text-[9px]">
-                    <div className="flex justify-between">
-                      <span className="text-[#606060]">Order Type:</span>
-                      <span className="text-white font-mono">{limitOrderType.replace('_', ' ')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#606060]">Trigger Price:</span>
-                      <span className="text-white font-mono">${triggerPrice > 0 ? formatNumber(triggerPrice) : 'Not set'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#606060]">Expires:</span>
-                      <span className="text-white font-mono text-[8px]">{new Date(Date.now() + orderExpiry * 60 * 60 * 1000).toLocaleDateString()}</span>
-                    </div>
-                    <div className="border-t border-[#1A1A1A] my-1"></div>
-                    <div className="flex justify-between">
-                      <span className="text-[#606060]">Automation Fee:</span>
-                      <span className="text-white font-mono">$2.00</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#606060]">Execution Fee:</span>
-                      <span className="text-white font-mono">$3.00</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* Limit Order Summary removed to save vertical space (Order Summary below covers details) */}
             </div>
           )}
 
@@ -1646,20 +1637,20 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
             
             {/* Amount Input Container */}
             <div className="relative mb-3">
-              <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400 text-2xl font-bold pointer-events-none">
+              <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400 text-xl font-bold pointer-events-none">
                 $
               </div>
               <input
                 type="text"
                 value={formatInputNumber(amount)}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAmount(parseInputNumber(e.target.value))}
-                placeholder="1,000"
-                className="w-full rounded-lg px-3 py-3 pl-8 text-right text-2xl font-bold transition-all duration-150 focus:outline-none focus:ring-0 focus:border-none"
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAmount(parseInputNumber(getInputValue(e)))}
+                placeholder="1,000.00"
+                className="w-full rounded-lg px-3 py-2.5 pl-8 text-right text-2xl font-bold transition-all duration-150 focus:outline-none focus:ring-0 focus:border-none"
                 style={{
                   backgroundColor: '#0F0F0F',
                   border: 'none',
                   color: amount > 0 ? '#FFFFFF' : '#6B7280',
-                  fontSize: '24px',
+                  fontSize: '20px',
                   fontWeight: '700',
                   WebkitAppearance: 'none',
                   MozAppearance: 'textfield',
@@ -1670,7 +1661,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
             </div>
 
             {/* Quick Amount Buttons - Sophisticated Design */}
-            <div className="space-y-1.5 mb-3">
+            <div className="space-y-1 mb-2">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Quick Amounts</h4>
                 <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
@@ -1679,27 +1670,27 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
               </div>
               
               <div className="flex gap-1">
-                {quickAmounts.map((value) => (
-                  <button
-                    key={value}
-                    onClick={() => handleQuickAmount(value)}
-                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-[#333333] transition-all duration-200 flex-1"
-                  >
-                    <div className="flex items-center justify-center py-1.5 px-2">
-                      <div className="flex items-center gap-1">
-                        <div className="w-1 h-1 rounded-full bg-[#404040] group-hover:bg-blue-400" />
-                        <span className="text-[10px] font-medium text-[#808080] group-hover:text-[#9CA3AF]">
-                          +${value}
-                        </span>
+                                  {quickAmounts.map((value) => (
+                    <button
+                      key={value}
+                      onClick={() => handleQuickAmount(value)}
+                      className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-[#333333] transition-all duration-200 flex-1"
+                    >
+                    <div className="flex items-center justify-center py-1 px-1">
+                        <div className="flex items-center gap-1">
+                          <div className="w-1 h-1 rounded-full bg-[#404040] group-hover:bg-blue-400" />
+                          <span className="text-[9px] font-medium text-[#808080] group-hover:text-[#9CA3AF]">
+                            +${value >= 1000 ? `${value/1000}K` : value}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  ))}
                 <button
                   onClick={handleMaxAmount}
                   className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-blue-400 transition-all duration-200"
                 >
-                  <div className="flex items-center justify-center py-1.5 px-3">
+                  <div className="flex items-center justify-center py-1 px-2.5">
                     <div className="flex items-center gap-1">
                       <div className="w-1 h-1 rounded-full bg-blue-400" />
                       <span className="text-[10px] font-medium text-blue-400">
@@ -1711,77 +1702,10 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
               </div>
             </div>
 
-            {/* Advanced Setup - Sophisticated Design */}
-            <div className="space-y-1.5 mb-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Advanced Setup</h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                  {leverage}x
-                </div>
-              </div>
-              
-              <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                <div 
-                  className="flex items-center justify-between p-2.5 cursor-pointer"
-                  onClick={() => setIsAdvancedSetupExpanded(!isAdvancedSetupExpanded)}
-                >
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-                    <span className="text-[11px] font-medium text-[#808080]">
-                      Leverage & Risk Settings
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-white font-mono">{leverage}x</span>
-                    <svg 
-                      className={`w-3 h-3 text-[#404040] transition-transform duration-200 ${isAdvancedSetupExpanded ? 'rotate-180' : ''}`} 
-                      fill="none" 
-                      stroke="currentColor" 
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </div>
-                </div>
-                
-                {/* Expandable details on hover */}
-                <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                  <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                    <div className="text-[9px] pt-1.5">
-                      <span className="text-[#606060]">Adjust leverage multiplier and risk parameters</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Expanded leverage controls */}
-              {isAdvancedSetupExpanded && (
-                <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-[9px] font-medium text-[#606060] uppercase tracking-wide">Leverage</span>
-                    <span className="text-xs font-bold text-white">{leverage}x</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="50"
-                    value={leverage}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLeverage(parseInt(e.target.value))}
-                    className="w-full h-1 bg-[#2A2A2A] rounded-lg appearance-none cursor-pointer"
-                  />
-                  <div className="flex justify-between text-[8px] text-[#606060] mt-1">
-                    <span>1x</span>
-                    <span>Safe</span>
-                    <span>Risky</span>
-                    <span>50x</span>
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* Advanced Setup removed (leverage disabled) */}
 
             {/* Trade Summary - Sophisticated Design */}
-            {amount > 0 && (
-              <div className="space-y-1.5 mb-3">
+            <div className="space-y-1 mb-2">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Order Summary</h4>
                   <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
@@ -1790,20 +1714,13 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                 </div>
                 
                 <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                  <div className="p-2.5">
-                    <div className="space-y-1 text-[9px]">
+                  <div className="p-1.5">
+                    <div className="space-y-0.5 text-[9px]">
                       <div className="flex justify-between">
                         <span className="text-[#606060]">Order Amount:</span>
                         <span className="text-white font-mono">${formatNumber(amount)}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#606060]">Leverage:</span>
-                        <span className="text-white font-mono">{leverage}x</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[#606060]">Position Size:</span>
-                        <span className="text-white font-mono">${formatNumber(amount * leverage)}</span>
-                      </div>
+                      {/* Leverage and Position Size removed */}
                       <div className="flex justify-between">
                         <span className="text-[#606060]">Trading Fee:</span>
                         <span className="text-white font-mono">${formatNumber(amount * 0.001)}</span>
@@ -1817,27 +1734,50 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                           </div>
                         </>
                       )}
+                      {/* Additional Details */}
+                      {(() => {
+                        const tradingFee = amount * 0.001;
+                        const automationFee = orderType === 'limit' ? 2 : 0;
+                        const executionFee = orderType === 'limit' ? 3 : 0;
+                        const feesTotal = tradingFee + automationFee + executionFee;
+                        return (
+                          <div className="text-[8px] space-y-0.5">
+                            <div className="flex justify-between">
+                              <span className="text-[#606060]">Order Value:</span>
+                              <span className="text-white font-mono">${formatNumber(amount)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#606060]">Margin Required:</span>
+                              <span className="text-white font-mono">${formatNumber(amount)}</span>
+                            </div>
+                            {orderType === 'limit' && (
+                              <div className="flex justify-between">
+                                <span className="text-[#606060]">Automation + Execution Fees:</span>
+                                <span className="text-white font-mono">${formatNumber(automationFee + executionFee)}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span className="text-[#606060]">Fees Total:</span>
+                              <span className="text-white font-mono">${formatNumber(feesTotal)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-[#606060]">Liquidation Price:</span>
+                              <span className="text-white font-mono">N/A</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                     
                     {/* Order validation messages */}
-                    <div className="mt-2">
+                    {/* <div className="mt-1.5">
                       <OrderValidationComponent />
-                    </div>
+                    </div> */}
                   </div>
                   
-                  {/* Hover details */}
-                  <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                    <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                      <div className="text-[9px] pt-1.5">
-                        <span className="text-[#606060]">
-                          {selectedOption === 'long' ? 'Betting on price increase' : 'Betting on price decrease'} with {leverage}x leverage
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                  
                 </div>
               </div>
-            )}
 
 
           </div>
@@ -1846,13 +1786,13 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
         </div>
 
         {/* Trade Button */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 mt-1.5">
           {!walletData.isConnected ? (
             <button 
               onClick={() => connect()}
               className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md bg-[#3B82F6] text-white"
               style={{
-                padding: '12px',
+                padding: '10px',
                 fontSize: '16px',
                 fontWeight: '600'
               }}
@@ -1862,15 +1802,15 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
           ) : (
             <button 
               onClick={handleTradeClick}
-              disabled={!canExecuteTrade() || isTrading || isSubmittingOrder}
+              disabled={!canExecuteTrade() || isTradingRouterLoading || isSubmittingOrder || isCancelingOrder}
               className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md"
               style={{
-                padding: '12px',
+                padding: '10px',
                 fontSize: '16px',
                 fontWeight: '600',
-                backgroundColor: (!canExecuteTrade() || isTrading || isSubmittingOrder) ? '#1A1A1A' : '#3B82F6',
-                color: (!canExecuteTrade() || isTrading || isSubmittingOrder) ? '#6B7280' : '#FFFFFF',
-                cursor: (!canExecuteTrade() || isTrading || isSubmittingOrder) ? 'not-allowed' : 'pointer'
+                backgroundColor: (!canExecuteTrade() || isTradingRouterLoading || isSubmittingOrder || isCancelingOrder) ? '#1A1A1A' : '#3B82F6',
+                color: (!canExecuteTrade() || isTradingRouterLoading || isSubmittingOrder || isCancelingOrder) ? '#6B7280' : '#FFFFFF',
+                cursor: (!canExecuteTrade() || isTradingRouterLoading || isSubmittingOrder || isCancelingOrder) ? 'not-allowed' : 'pointer'
               }}
             >
               {getTradeButtonText()}

@@ -20,6 +20,22 @@ export interface ContractOrder {
   metadataHash: `0x${string}`;
 }
 
+// Actual contract response structure (from OrderBook.getOrder)
+export interface ActualContractOrder {
+  orderId: bigint;
+  user: Address;
+  orderType: number;
+  side: number;
+  size: bigint;
+  price: bigint;
+  filled: bigint;
+  timestamp: bigint;
+  status: number;
+  marginReserved: bigint;
+  nextOrder: bigint;
+  prevOrder: bigint;
+}
+
 // Trade execution structure
 export interface TradeExecution {
   orderId: bigint;

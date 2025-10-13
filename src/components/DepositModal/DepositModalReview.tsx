@@ -288,7 +288,7 @@ export default function DepositModalReview({
             <div className="text-center">
               <div className="flex items-center gap-2 justify-center">
                 <span className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
-                  {isDirectDeposit ? 'Vault Review' : 'Quote Review'}
+                  {isDirectDeposit ? 'VaultRouter Review' : 'Quote Review'}
                 </span>
                 {isDirectDeposit && (
                   <div className="text-[9px] text-green-400 bg-green-500/10 px-1 py-0.5 rounded">
@@ -405,7 +405,7 @@ export default function DepositModalReview({
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-white">
-                    {isDirectDeposit ? (targetToken.name || 'Dexetra Vault') : 'Dexetra Wallet'}
+                    {isDirectDeposit ? (targetToken.name || 'HyperLiquid VaultRouter') : 'Dexetra Wallet'}
                   </span>
                 </div>
               </div>
@@ -437,7 +437,7 @@ export default function DepositModalReview({
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
                   <span className="text-[11px] font-medium text-[#808080]">
-                    {isDirectDeposit ? 'Vault credit' : 'You receive'}
+                    {isDirectDeposit ? 'VaultRouter credit' : 'You receive'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">

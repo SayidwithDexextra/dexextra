@@ -15,7 +15,7 @@ export function useTokenFromMarket(market: OrderbookMarket | null): TokenData | 
     return {
       name: market.description || market.metric_id,
       symbol: market.metric_id,
-      price: market.last_trade_price || market.tick_size || 0,
+      price: market.tick_size || 0, // Use tick_size as the base price for new markets, not historical trade data
       priceChange24h: 0, // TODO: Calculate from actual trade history
       volume24h: market.total_volume || 0,
       marketCap: (market.last_trade_price || market.tick_size || 0) * 1000000, // Estimated
@@ -78,7 +78,7 @@ export function useVAMMFromMarket(market: OrderbookMarket | null): VAMMMarketFro
       description: market.description,
       category: [market.category], // Convert string to array
       oracle_address: '0x0000000000000000000000000000000000000000', // Placeholder
-      initial_price: market.last_trade_price || market.tick_size || 0,
+      initial_price: market.tick_size || 0, // Use tick_size as base price, not last_trade_price to avoid stale trading data
       price_decimals: market.decimals,
       banner_image_url: market.banner_image_url,
       icon_image_url: market.icon_image_url,

@@ -49,7 +49,7 @@ The faucet is configured with the following constants:
 The component interacts with a MockUSDC contract deployed on Polygon that includes:
 
 - `balanceOf(address)`: Check user's USDC balance
-- `mint(address, uint256)`: Mint new tokens to user's address  
+- `faucet(uint256)`: Mint new tokens to caller's address (no access control required)
 - `decimals()`: Get token decimals (6 for USDC)
 
 ## Error Handling

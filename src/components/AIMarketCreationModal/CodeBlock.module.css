@@ -1,0 +1,20 @@
+.codeBlockWrapper {
+  margin: 12px 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #222222;
+  transition: all 0.2s ease;
+  background-color: #0F0F0F;
+}
+
+.codeBlockWrapper:hover {
+  border-color: #333333;
+  background-color: #1A1A1A;
+}
+
+.codeBlockWrapper pre {
+  margin: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.5 !important;
+  padding: 12px !important;
+}

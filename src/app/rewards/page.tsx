@@ -13,13 +13,13 @@ export default function RewardsPage() {
         <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400"></div>
-            <span className="text-[11px] font-medium text-white">Token Faucet</span>
+            <span className="text-[11px] font-medium text-white">HyperLiquid MockUSDC Faucet</span>
             <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded ml-auto">
               Rewards
             </div>
           </div>
           <div className="text-[10px] text-[#808080] leading-relaxed">
-            Claim unlimited test USDC tokens for exploring Dexetra markets and practicing trading strategies.
+            Claim unlimited MockUSDC tokens from our HyperLiquid deployment for exploring Aluminum V1 futures and practicing trading strategies.
           </div>
         </div>
 
@@ -28,36 +28,36 @@ export default function RewardsPage() {
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400"></div>
-              <span className="text-[11px] font-medium text-[#9CA3AF]">Network Status</span>
+              <span className="text-[11px] font-medium text-[#9CA3AF]">HyperLiquid Deployment</span>
             </div>
             <div className="w-1.5 h-1.5 rounded-full bg-green-400"></div>
           </div>
-          <div className="text-[10px] text-[#808080] mb-1">Polygon Mainnet</div>
-          <div className="text-[9px] text-[#606060]">Test environment • No gas fees for claiming</div>
+          <div className="text-[10px] text-[#808080] mb-1">Polygon Mainnet • Live</div>
+          <div className="text-[9px] text-[#606060]">MockUSDC: 0xA225...b289 • Verified</div>
         </div>
 
-        {/* Features Card */}
+        {/* HyperLiquid Features Card */}
         <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5 flex-1">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-yellow-400"></div>
-            <span className="text-[11px] font-medium text-[#9CA3AF]">Features</span>
+            <span className="text-[11px] font-medium text-[#9CA3AF]">HyperLiquid Features</span>
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
-              <span className="text-[10px] text-[#808080]">Unlimited token claiming</span>
+              <span className="text-[10px] text-[#808080]">Aluminum V1 futures trading</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
-              <span className="text-[10px] text-[#808080]">Instant transactions</span>
+              <span className="text-[10px] text-[#808080]">Optimized order matching</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
-              <span className="text-[10px] text-[#808080]">No daily limits</span>
+              <span className="text-[10px] text-[#808080]">VaultRouter collateral system</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
-              <span className="text-[10px] text-[#808080]">Practice trading safely</span>
+              <span className="text-[10px] text-[#808080]">Unlimited MockUSDC claiming</span>
             </div>
           </div>
         </div>
@@ -69,8 +69,8 @@ export default function RewardsPage() {
             <span className="text-[11px] font-medium text-[#606060]">Important Notice</span>
           </div>
           <div className="text-[9px] text-[#606060] leading-relaxed">
-            Test tokens have no real value and are for platform exploration only. 
-            Use them to understand trading mechanics before using real assets.
+            MockUSDC tokens from HyperLiquid deployment have no real value and are for platform exploration only. 
+            Use them to understand Aluminum V1 trading mechanics and test VaultRouter functionality.
           </div>
         </div>
       </div>
@@ -83,7 +83,7 @@ export default function RewardsPage() {
           <div className="flex items-center justify-between p-2.5 border-b border-[#1A1A1A] flex-shrink-0">
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400"></div>
-              <span className="text-[11px] font-medium text-white">USDC Faucet</span>
+              <span className="text-[11px] font-medium text-white">HyperLiquid MockUSDC Faucet</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-[#606060]">Ready to claim</span>
@@ -98,14 +98,17 @@ export default function RewardsPage() {
 
           {/* Quick Stats Footer */}
           <div className="flex-shrink-0 border-t border-[#1A1A1A] bg-[#0F0F0F]">
-            <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-12 overflow-hidden transition-all duration-200">
+            <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-16 overflow-hidden transition-all duration-200">
               <div className="px-2.5 py-2">
-                <div className="flex items-center justify-between text-[9px]">
+                <div className="flex flex-col gap-1 text-[9px]">
                   <div className="flex items-center gap-2">
                     <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
-                    <span className="text-[#808080]">Connected to Polygon • Test environment active</span>
+                    <span className="text-[#808080]">HyperLiquid deployment on Polygon • Live environment</span>
                   </div>
-                  <span className="text-[#606060]">Instant claiming available</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-1 h-1 rounded-full bg-blue-400 flex-shrink-0"></div>
+                    <span className="text-[#606060]">MockUSDC: 0xA2258Ff3aC4f5c77ca17562238164a0205A5b289</span>
+                  </div>
                 </div>
               </div>
             </div>

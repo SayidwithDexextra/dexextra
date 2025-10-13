@@ -91,25 +91,27 @@ function getTokenIcon(symbol: string): string {
 
 // Get network name from contract address (simplified)
 function getNetworkFromContract(contractAddress: string): string {
-  // Known Polygon addresses
+  // Known Polygon addresses (lowercase for comparison)
   const polygonAddresses = [
-    '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // USDC
-    '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', // USDT
-    '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063', // DAI
+    '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'.toLowerCase(), // USDC
+    '0xc2132D05D31c914a87C6611C10748AEb04B58e8F'.toLowerCase(), // USDT
+    '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063'.toLowerCase(), // DAI
+    '0xA2258Ff3aC4f5c77ca17562238164a0205A5b289'.toLowerCase(), // MockUSDC (HyperLiquid)
   ];
   
-  if (polygonAddresses.includes(contractAddress)) {
+  if (polygonAddresses.includes(contractAddress.toLowerCase())) {
     return 'polygon';
   }
   
   return 'polygon'; // Default to polygon
 }
 
-// V1 stablecoin addresses for price estimation
+// V1 stablecoin addresses for price estimation (lowercase for comparison)
 const STABLECOIN_ADDRESSES = [
-  '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // USDC
-  '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', // USDT
-  '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063', // DAI
+  '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'.toLowerCase(), // USDC
+  '0xc2132D05D31c914a87C6611C10748AEb04B58e8F'.toLowerCase(), // USDT
+  '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063'.toLowerCase(), // DAI
+  '0xA2258Ff3aC4f5c77ca17562238164a0205A5b289'.toLowerCase(), // MockUSDC (HyperLiquid)
 ];
 
 // ==========================================
@@ -230,7 +232,7 @@ export function useWalletPortfolio(walletAddress?: string): WalletPortfolioData 
     if (walletAddress) {
       fetchPortfolioData();
     }
-  }, [walletAddress]);
+  }, [walletAddress, fetchPortfolioData]);
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
@@ -241,7 +243,7 @@ export function useWalletPortfolio(walletAddress?: string): WalletPortfolioData 
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [walletAddress]);
+  }, [walletAddress, fetchPortfolioData]);
 
   // ==========================================
   // 📤 RETURN HOOK INTERFACE

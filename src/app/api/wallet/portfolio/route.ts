@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { env } from '@/lib/env'
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 // Removed contractDeployment import - smart contract functionality deleted
 
 const ALCHEMY_API_BASE = 'https://polygon-mainnet.g.alchemy.com/v2'
@@ -12,13 +13,9 @@ const getCustomTokenAddresses = () => {
     '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063', // DAI on Polygon
   ]
   
-  // Only include mock USDC in development mode
-  if (process.env.NODE_ENV === 'development') {
-    baseTokens.push('0x194b4517a61D569aC8DBC47a22ed6F665B77a331') // Mock USDC contract address (Updated Jan 27, 2025)
-    console.log('🧪 Development mode: Including Mock USDC in token balance checks')
-  } else {
-    console.log('🚀 Production mode: Excluding Mock USDC from token balance checks')
-  }
+  // Always include MockUSDC from current contract configuration
+  baseTokens.push(CONTRACT_ADDRESSES.mockUSDC) // MockUSDC from HyperLiquid deployment
+  console.log(`🔗 Including MockUSDC from contract config: ${CONTRACT_ADDRESSES.mockUSDC}`)
   
   return baseTokens
 }
@@ -335,17 +332,17 @@ export async function GET(request: NextRequest) {
     }
     
     // Debug logging for mock USDC
-    const mockUSDCAddress = '0x194b4517a61D569aC8DBC47a22ed6F665B77a331'.toLowerCase()
+    const mockUSDCAddress = CONTRACT_ADDRESSES.mockUSDC.toLowerCase()
     const mockUSDCBalance = tokenBalances.tokenBalances.find(token => 
       token.contractAddress.toLowerCase() === mockUSDCAddress
     )
     
-    // console.log('🔍 Mock USDC Debug:', {
-    //   mockUSDCAddress,
-    //   mockUSDCBalance: mockUSDCBalance?.tokenBalance,
-    //   mockUSDCError: mockUSDCBalance?.error,
-    //   totalTokensFound: tokenBalances.tokenBalances.length
-    // })
+    console.log('🔍 Mock USDC Debug:', {
+      mockUSDCAddress,
+      mockUSDCBalance: mockUSDCBalance?.tokenBalance,
+      mockUSDCError: mockUSDCBalance?.error,
+      totalTokensFound: tokenBalances.tokenBalances.length
+    })
     
     // Filter tokens with non-zero balances to get metadata for
     const nonZeroTokens = tokenBalances.tokenBalances
@@ -358,19 +355,17 @@ export async function GET(request: NextRequest) {
       tokenMetadata = await fetchTokenMetadataFromAlchemy(tokenAddresses)
     }
     
-    // Add fallback metadata for mock USDC if it's missing (development only)
-    if (process.env.NODE_ENV === 'development') {
-      const mockUSDCOriginalAddress = '0x194b4517a61D569aC8DBC47a22ed6F665B77a331'
-      if (!tokenMetadata[mockUSDCOriginalAddress] && tokenBalances.tokenBalances.some(token => 
-        token.contractAddress.toLowerCase() === mockUSDCAddress
-      )) {
-        console.log('📝 Adding fallback metadata for Mock USDC (development mode)')
-        tokenMetadata[mockUSDCOriginalAddress] = {
-          name: 'Mock USDC',
-          symbol: 'MOCK_USDC',
-          decimals: 6,
-          logo: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png'
-        }
+    // Add fallback metadata for mock USDC if it's missing
+    const mockUSDCOriginalAddress = CONTRACT_ADDRESSES.mockUSDC
+    if (!tokenMetadata[mockUSDCOriginalAddress] && tokenBalances.tokenBalances.some(token => 
+      token.contractAddress.toLowerCase() === mockUSDCAddress
+    )) {
+      console.log('📝 Adding fallback metadata for Mock USDC from contract config')
+      tokenMetadata[mockUSDCOriginalAddress] = {
+        name: 'HyperLiquid Mock USDC',
+        symbol: 'MOCK_USDC',
+        decimals: 6,
+        logo: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png'
       }
     }
 

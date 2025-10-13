@@ -1,13 +1,11 @@
 import { Address } from 'viem';
+import { CONTRACT_ADDRESSES as STATIC_CONTRACT_ADDRESSES } from './contracts';
 
-// Contract addresses from Polygon deployment (UPDATED January 27, 2025)
-export const CONTRACT_ADDRESSES = {
-  orderRouter: '0x836AaF8c558F7390d59591248e02435fc9Ea66aD' as Address,
-  centralVault: '0x602B4B1fe6BBC10096970D4693D94376527D04ab' as Address,
-  factory: '0xec83CDAf6DE9A6C97363966E2Be1c7CfE680687d' as Address,
-  umaOracleManager: '0x9Fc90Cd2E4345a51b55EC6ecEeDf31051Db20cD4' as Address,
-  mockUSDC: '0x194b4517a61D569aC8DBC47a22ed6F665B77a331' as Address,
-} as const;
+/**
+ * CONTRACT_ADDRESSES that uses static addresses from contracts.ts
+ * This provides backward compatibility with the static configuration
+ */
+export const CONTRACT_ADDRESSES = STATIC_CONTRACT_ADDRESSES;
 
 // Chain configuration
 export const CHAIN_CONFIG = {
@@ -196,6 +194,13 @@ export const ORDER_ROUTER_ABI = [
     type: 'function',
   },
 ] as const;
+
+// Market information using static addresses
+export const ALUMINUM_V1_MARKET = {
+  marketId: 'aluminum-v1-001', // Use metric_id instead of contract hash
+  symbol: 'Aluminum V1' as const,
+  orderBookAddress: CONTRACT_ADDRESSES.aluminumOrderBook,
+} as const;
 
 // Enums matching the smart contract
 export enum OrderType {
