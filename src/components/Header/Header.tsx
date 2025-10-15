@@ -13,7 +13,7 @@
  * - Real-time data refresh every 10 seconds
  * - Automatic formatting of MockUSDC values
  * - Error handling and connection status display
- * - Integration with HyperLiquid deployment on Polygon
+ * - Integration with HyperLiquid deployment
  */
 
 import { useState, useMemo, useEffect } from 'react'
@@ -22,7 +22,7 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
-import { DepositModal } from '../DepositModal'
+import DepositModal from '../DepositModal/DepositModal'
 import { useWallet } from '@/hooks/useWallet'
 import { CONTRACTS } from '@/lib/contracts'
 import DecryptedText from './DecryptedText';
@@ -58,6 +58,7 @@ export default function Header() {
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
   const { walletData, portfolio, refreshPortfolio } = useWallet()
   const router = useRouter()
+  const [hasMounted, setHasMounted] = useState(false)
   
   // HyperLiquid VaultRouter on-chain data
   const [isVaultConnected, setIsVaultConnected] = useState(false)
@@ -126,8 +127,8 @@ export default function Header() {
     try {
       if (!walletData.address) return
       
-      // Force use of Polygon RPC for contract calls to avoid network issues
-      console.log('🔗 Using direct Polygon RPC provider for contract calls')
+      // Use HyperLiquid Testnet RPC for contract calls
+      console.log('🔗 Using direct HyperLiquid Testnet RPC provider for contract calls')
       const provider = new ethers.JsonRpcProvider(CHAIN_CONFIG.rpcUrl)
 
       // Check network connection
@@ -152,61 +153,64 @@ export default function Header() {
         return
       }
 
-      // Use VaultRouter contract with ABI from CONTRACTS
-      console.log('🔍 VaultRouter config:', {
-        address: CONTRACTS.VaultRouter.address,
-        hasAbi: !!CONTRACTS.VaultRouter.abi,
-        abiLength: CONTRACTS.VaultRouter.abi?.length || 0
+      // Use CoreVault contract with ABI from CONTRACTS
+      console.log('🔍 CoreVault config:', {
+        address: CONTRACTS.CoreVault.address,
+        hasAbi: !!CONTRACTS.CoreVault.abi,
+        abiLength: CONTRACTS.CoreVault.abi?.length || 0
       })
       
-      // Verify contract exists at address
-      const code = await provider.getCode(CONTRACTS.VaultRouter.address)
+      // Verify CoreVault contract exists at address
+      const code = await provider.getCode(CONTRACTS.CoreVault.address)
       console.log('📝 Contract bytecode length:', code.length)
       
       if (code === '0x') {
-        console.error('❌ No contract deployed at VaultRouter address!')
+        console.error('❌ No contract deployed at CoreVault address!')
         setIsVaultConnected(false)
         return
       }
       
-      const vaultRouter = new ethers.Contract(CONTRACTS.VaultRouter.address, CONTRACTS.VaultRouter.abi, provider)
-      console.log('📋 Contract instance created successfully')
-      
-      let collateralTokenAddress: string
-      try {
-        collateralTokenAddress = await vaultRouter.collateralToken()
-        console.log('✅ collateralToken result:', collateralTokenAddress)
-      } catch (error) {
-        console.error('❌ Error calling collateralToken():', error)
-        console.error('Error details:', {
-          message: error.message,
-          code: error.code,
-          data: error.data
-        })
-        // Fallback to expected MockUSDC address
-        collateralTokenAddress = CONTRACT_ADDRESSES.mockUSDC
-        console.log('🔄 Using fallback MockUSDC address:', collateralTokenAddress)
-      }
-      
-      const erc20 = new ethers.Contract(collateralTokenAddress, ERC20_MIN_ABI, provider)
-      const decimals: number = Number(await erc20.decimals())
+      const coreVault = new ethers.Contract(CONTRACTS.CoreVault.address, CONTRACTS.CoreVault.abi, provider)
+      console.log('📋 CoreVault contract instance created successfully')
 
-      // Get comprehensive margin summary from VaultRouter
-      const marginSummary = await vaultRouter.getMarginSummary(walletData.address)
-      
-      // Extract values from the margin summary
-      const portfolioValue = marginSummary.portfolioValue
-      const availableCollateral = marginSummary.availableCollateral
-      const unrealizedPnL = marginSummary.unrealizedPnL
+      // Use MockUSDC to determine decimals for formatting
+      const mockUsdc = new ethers.Contract(CONTRACTS.MockUSDC.address, CONTRACTS.MockUSDC.abi, provider)
+      const decimals: number = Number(await mockUsdc.decimals())
+
+      // Get comprehensive margin summary from CoreVault
+      const [
+        totalCollateral,
+        marginUsedInPositions,
+        marginReservedForOrders,
+        availableMargin,
+        realizedPnL,
+        unrealizedPnL,
+        totalMarginCommitted,
+        isMarginHealthy
+      ] = await coreVault.getUnifiedMarginSummary(walletData.address)
+
+      // Log individual components for debugging
+      console.log('Portfolio Components:', {
+        totalCollateral: totalCollateral.toString(),
+        realizedPnL: realizedPnL.toString(),
+        unrealizedPnL: unrealizedPnL.toString(),
+        availableCollateral: availableMargin.toString()
+      })
 
       // Convert from wei to human readable numbers (MockUSDC has 6 decimals)
-      const portfolioValueFormatted = parseFloat(ethers.formatUnits(portfolioValue < 0 ? -portfolioValue : portfolioValue, decimals))
-      const portfolioValueSigned = portfolioValue < 0 ? -portfolioValueFormatted : portfolioValueFormatted
+      const formatSigned = (v: bigint, decimalsToUse: number = decimals) => {
+        const isNeg = v < 0n
+        const abs = isNeg ? -v : v
+        const num = parseFloat(ethers.formatUnits(abs, decimalsToUse))
+        return isNeg ? -num : num
+      }
+
+      // Adjust portfolio calculation if necessary
+      const portfolioValueSigned = formatSigned(totalCollateral, 6) + formatSigned(realizedPnL, 18) + formatSigned(unrealizedPnL, 18)
       
-      const availableCollateralFormatted = parseFloat(ethers.formatUnits(availableCollateral, decimals))
+      const availableCollateralFormatted = formatSigned(availableMargin, 6)
       
-      const unrealizedPnLFormatted = parseFloat(ethers.formatUnits(unrealizedPnL < 0 ? -unrealizedPnL : unrealizedPnL, decimals))
-      const unrealizedPnLSigned = unrealizedPnL < 0 ? -unrealizedPnLFormatted : unrealizedPnLFormatted
+      const unrealizedPnLSigned = formatSigned(unrealizedPnL, 18)
 
       // Update state
       setVaultPortfolioValue(portfolioValueSigned)
@@ -214,7 +218,8 @@ export default function Header() {
       setUnrealizedPnL(unrealizedPnLSigned)
       
     } catch (e) {
-      console.error('Failed to fetch VaultRouter data:', e)
+      const err = e as any
+      console.error('Failed to fetch CoreVault data:', err)
       // Soft-fail to avoid UI break
       setIsVaultConnected(false)
       setVaultPortfolioValue(0)
@@ -234,6 +239,11 @@ export default function Header() {
   }, [walletData.isConnected, walletData.address])
 
   // Debug logs removed to prevent any rendering interference 
+
+  // Ensure certain UI renders only after client mount to avoid hydration issues
+  useEffect(() => {
+    setHasMounted(true)
+  }, [])
 
   // Format portfolio and cash values from centralized vault
   const formatCurrency = (value: string, showSign = false) => {
@@ -318,32 +328,61 @@ export default function Header() {
             >
               <SearchIcon />
             </div>
-            <input
-              type="text"
-              placeholder="Search Active Markets"
-              value=""
-              readOnly
-              onClick={() => setIsSearchModalOpen(true)}
-              className="w-full pl-10 pr-12 py-2 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer"
-              style={{
-                height: '30px',
-                backgroundColor: '#2a2a2a',
-                borderColor: '#444444',
-                color: '#ffffff',
-                fontSize: '14px',
-                minWidth: '240px'
-              }}
-              onMouseEnter={(e) => {
-                const target = e.target as any
-                target.style.borderColor = '#555555'
-                target.style.boxShadow = '0 0 0 2px rgba(255, 255, 255, 0.05)'
-              }}
-              onMouseLeave={(e) => {
-                const target = e.target as any
-                target.style.borderColor = '#444444'
-                target.style.boxShadow = 'none'
-              }}
-            />
+            {hasMounted ? (
+              <input
+                type="text"
+                placeholder="Search Active Markets"
+                value=""
+                readOnly
+                onClick={() => setIsSearchModalOpen(true)}
+                className="w-full pl-10 pr-12 py-2 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer"
+                style={{
+                  height: '30px',
+                  backgroundColor: '#2a2a2a',
+                  borderColor: '#444444',
+                  color: '#ffffff',
+                  fontSize: '14px',
+                  minWidth: '240px'
+                }}
+                onMouseEnter={(e) => {
+                  const target = e.target as any
+                  target.style.borderColor = '#555555'
+                  target.style.boxShadow = '0 0 0 2px rgba(255, 255, 255, 0.05)'
+                }}
+                onMouseLeave={(e) => {
+                  const target = e.target as any
+                  target.style.borderColor = '#444444'
+                  target.style.boxShadow = 'none'
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                aria-label="Open search"
+                onClick={() => setIsSearchModalOpen(true)}
+                className="w-full pl-10 pr-12 py-2 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer text-left"
+                style={{
+                  height: '30px',
+                  backgroundColor: '#2a2a2a',
+                  borderColor: '#444444',
+                  color: '#ffffff',
+                  fontSize: '14px',
+                  minWidth: '240px'
+                }}
+                onMouseEnter={(e) => {
+                  const target = e.currentTarget as any
+                  target.style.borderColor = '#555555'
+                  target.style.boxShadow = '0 0 0 2px rgba(255, 255, 255, 0.05)'
+                }}
+                onMouseLeave={(e) => {
+                  const target = e.currentTarget as any
+                  target.style.borderColor = '#444444'
+                  target.style.boxShadow = 'none'
+                }}
+              >
+                Search Active Markets
+              </button>
+            )}
             <div 
               className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs px-1.5 py-0.5 rounded"
               style={{

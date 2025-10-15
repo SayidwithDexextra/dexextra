@@ -8,6 +8,9 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { ethers } from 'ethers';
+import { env } from '@/lib/env';
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 
 // ==========================================
 // 🏷️ V1 INTERFACES & TYPES
@@ -100,10 +103,10 @@ function getNetworkFromContract(contractAddress: string): string {
   ];
   
   if (polygonAddresses.includes(contractAddress.toLowerCase())) {
-    return 'polygon';
+    return 'hyperliquid_testnet';
   }
   
-  return 'polygon'; // Default to polygon
+  return 'hyperliquid_testnet'; // Default to hyperliquid_testnet
 }
 
 // V1 stablecoin addresses for price estimation (lowercase for comparison)
@@ -143,84 +146,64 @@ export function useWalletPortfolio(walletAddress?: string): WalletPortfolioData 
     setData(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      console.log('🔄 Fetching V1 portfolio for wallet:', walletAddress);
+      console.log('🔄 Fetching on-chain portfolio for wallet (HyperLiquid Testnet):', walletAddress);
 
-      // Call V1 portfolio API (Alchemy-based)
-      const response = await fetch(`/api/wallet/portfolio?address=${encodeURIComponent(walletAddress!)}`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const provider = new ethers.JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
+
+      // Minimal ERC20 ABI
+      const ERC20_ABI = [
+        'function balanceOf(address) view returns (uint256)',
+        'function decimals() view returns (uint8)',
+        'function symbol() view returns (string)',
+        'function name() view returns (string)'
+      ];
+
+      const mockUsdcAddress = (CONTRACT_ADDRESSES as any).mockUSDC || (CONTRACT_ADDRESSES as any).MOCK_USDC;
+      if (!mockUsdcAddress || mockUsdcAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('MockUSDC address not configured');
       }
 
-      const result = await response.json() as { success: boolean; data: AlchemyApiResponse; message?: string };
-      
-      if (!result.success) {
-        throw new Error(result.message || 'Failed to fetch portfolio');
-      }
+      const mockUsdc = new ethers.Contract(mockUsdcAddress, ERC20_ABI, provider);
+      const [rawBalance, decimals, symbol, name] = await Promise.all([
+        mockUsdc.balanceOf(walletAddress),
+        mockUsdc.decimals(),
+        mockUsdc.symbol().catch(() => 'MOCK_USDC'),
+        mockUsdc.name().catch(() => 'HyperLiquid Mock USDC'),
+      ]);
 
-      console.log('📊 V1 Portfolio data received:', result.data);
+      const balanceNum = parseFloat(ethers.formatUnits(rawBalance, Number(decimals)));
+      const valueUsd = balanceNum; // 1:1 assumption for stablecoin
 
-      const { tokenBalances, tokenMetadata }: AlchemyApiResponse = result.data;
-
-      // Process tokens
-      const processedTokens: TokenInfo[] = tokenBalances
-        .filter(token => !token.error && token.tokenBalance !== '0x0')
-        .map(token => {
-          const metadata = tokenMetadata[token.contractAddress];
-          if (!metadata) return null;
-
-          const balance = hexToDecimal(token.tokenBalance, metadata.decimals);
-          const isStablecoin = STABLECOIN_ADDRESSES.includes(token.contractAddress.toLowerCase());
-          const value = isStablecoin ? balance : balance; // Assume 1:1 for now, could add price API
-
-          return {
-            id: token.contractAddress,
-            symbol: metadata.symbol,
-            name: metadata.name,
-            amount: `${formatBalance(balance)} ${metadata.symbol}`,
-            value: `$${formatBalance(value, 2)}`,
-            network: getNetworkFromContract(token.contractAddress),
-            contractAddress: token.contractAddress,
-            decimals: metadata.decimals,
-            isLowBalance: balance < 50,
-            icon: getTokenIcon(metadata.symbol),
-            networkIcon: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTYiIGZpbGw9IiM4MjQ3RTUiLz4KPHBhdGggZD0iTTkgMTZMMTcgMjQgMjMgMTYgMTcgOCA5IDE2WiIgZmlsbD0id2hpdGUiLz4KPC9zdmc+'
-          };
-        })
-        .filter((token): token is TokenInfo => token !== null);
-
-      // Calculate totals
-      const totalValue = processedTokens.reduce((sum: number, token: TokenInfo) => {
-        const value = parseFloat(token.value.replace('$', ''));
-        return sum + (isNaN(value) ? 0 : value);
-      }, 0);
-
-      // Simple P&L calculation (could be enhanced with historical data)
-      const profitLoss = 0; // Would need historical data for accurate P&L
-      const profitLossPercentage = totalValue > 0 ? ((profitLoss / totalValue) * 100).toFixed(2) : '0';
+      const token: TokenInfo = {
+        id: mockUsdcAddress,
+        symbol: symbol || 'MOCK_USDC',
+        name: name || 'HyperLiquid Mock USDC',
+        amount: `${formatBalance(balanceNum)} ${symbol || 'MOCK_USDC'}`,
+        value: `$${formatBalance(valueUsd, 2)}`,
+        network: 'hyperliquid_testnet',
+        contractAddress: mockUsdcAddress,
+        decimals: Number(decimals),
+        isLowBalance: balanceNum < 50,
+        icon: getTokenIcon(symbol || 'MOCK_USDC'),
+        networkIcon: undefined,
+      };
 
       setData({
-        tokens: processedTokens,
+        tokens: [token],
         summary: {
-          totalValue: formatBalance(totalValue, 2),
-          profitLoss: formatBalance(profitLoss, 2),
-          profitLossPercentage
+          totalValue: formatBalance(valueUsd, 2),
+          profitLoss: '0.00',
+          profitLossPercentage: '0.00',
         },
         isLoading: false,
-        error: null
+        error: null,
       });
 
-      console.log('✅ V1 Portfolio data processed successfully');
-
+      console.log('✅ On-chain portfolio data processed successfully');
     } catch (error) {
-      console.error('❌ V1 Portfolio fetch failed:', error);
+      console.error('❌ On-chain portfolio fetch failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      setData(prev => ({
-        ...prev,
-        isLoading: false,
-        error: errorMessage
-      }));
+      setData(prev => ({ ...prev, isLoading: false, error: errorMessage }));
     }
   }, [walletAddress]);
 

@@ -9,9 +9,9 @@ interface NetworkStatusProps {
 
 export function NetworkStatus({ userAddress, showDetails = false }: NetworkStatusProps) {
   // Stub values - smart contract functionality removed
-  const userNetwork = 'polygon'
+  const userNetwork = 'hyperliquid_testnet'
   const isOnCorrectNetwork = true
-  const defaultNetworkName = 'Polygon'
+  const defaultNetworkName = 'HyperLiquid Testnet'
   const networkWarning = null
   const switchToCorrectNetwork = () => console.log('Network switching disabled')
   const canPerformTransactions = false
@@ -63,7 +63,7 @@ export function NetworkWarningBanner({ userAddress }: { userAddress?: string | n
   // Stub values - smart contract functionality removed
   const networkWarning = null
   const switchToCorrectNetwork = () => console.log('Network switching disabled')
-  const defaultNetworkName = 'Polygon'
+  const defaultNetworkName = 'HyperLiquid Testnet'
   const isOnCorrectNetwork = true
 
   if (!userAddress || isOnCorrectNetwork || !networkWarning) {

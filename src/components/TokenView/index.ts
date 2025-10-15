@@ -14,4 +14,7 @@ export { default as ThreadPanel } from './ThreadPanel';
 export { default as TradingPanel } from './TradingPanel';
 
 // Transaction Components
-export { default as TransactionTable } from './TransactionTable'; 
+export { default as TransactionTable } from './TransactionTable';
+
+// Market Activity Components
+export { default as MarketActivityTabs } from './MarketActivityTabs'; 

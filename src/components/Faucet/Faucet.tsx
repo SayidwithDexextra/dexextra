@@ -7,7 +7,7 @@ import { CONTRACTS } from '@/lib/contracts'
 import { FaucetProps, FaucetState, ClaimResult } from './types'
 import styles from './Faucet.module.css'
 
-const POLYGON_CHAIN_ID = 137
+const HYPERLIQUID_CHAIN_ID = 998
 
 // Mock USDC ABI (comprehensive for faucet functionality)
 const MOCK_USDC_ABI = [
@@ -43,7 +43,7 @@ export default function Faucet({ className }: FaucetProps) {
   })
 
   const [usdcBalance, setUsdcBalance] = useState<string>('0')
-  const [isPolygonNetwork, setIsPolygonNetwork] = useState<boolean>(false)
+  const [isHyperliquidNetwork, setIsHyperliquidNetwork] = useState<boolean>(false)
 
   // Check network and load initial data
   useEffect(() => {
@@ -64,25 +64,25 @@ export default function Faucet({ className }: FaucetProps) {
 
   // Load user data when wallet connects
   useEffect(() => {
-    if (isConnected && walletAddress && isPolygonNetwork) {
+    if (isConnected && walletAddress && isHyperliquidNetwork) {
       loadUserData()
     }
-  }, [isConnected, walletAddress, isPolygonNetwork])
+  }, [isConnected, walletAddress, isHyperliquidNetwork])
 
   const checkNetwork = async () => {
     try {
       if (!window.ethereum) return
       
       const chainId = await window.ethereum.request({ method: 'eth_chainId' })
-      const isPolygon = parseInt(chainId, 16) === POLYGON_CHAIN_ID
-      setIsPolygonNetwork(isPolygon)
+      const isHL = parseInt(chainId, 16) === HYPERLIQUID_CHAIN_ID
+      setIsHyperliquidNetwork(isHL)
     } catch (error) {
       console.error('Error checking network:', error)
     }
   }
 
   const loadUserData = async () => {
-    if (!walletAddress || !isPolygonNetwork) return
+    if (!walletAddress || !isHyperliquidNetwork) return
 
     setState(prev => ({ ...prev, isLoading: true, error: null }))
 
@@ -106,13 +106,13 @@ export default function Faucet({ className }: FaucetProps) {
     }
   }
 
-  const switchToPolygon = async () => {
+  const switchToHyperliquid = async () => {
     if (!window.ethereum) return
 
     try {
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: `0x${POLYGON_CHAIN_ID.toString(16)}` }],
+        params: [{ chainId: `0x${HYPERLIQUID_CHAIN_ID.toString(16)}` }],
       })
     } catch (error: any) {
       // If network not added, add it
@@ -121,19 +121,19 @@ export default function Faucet({ className }: FaucetProps) {
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
             params: [{
-              chainId: `0x${POLYGON_CHAIN_ID.toString(16)}`,
-              chainName: 'Polygon Mainnet',
+              chainId: `0x${HYPERLIQUID_CHAIN_ID.toString(16)}`,
+              chainName: 'HyperLiquid Testnet',
               nativeCurrency: {
-                name: 'MATIC',
-                symbol: 'MATIC',
+                name: 'HL',
+                symbol: 'HL',
                 decimals: 18,
               },
-              rpcUrls: ['https://polygon-rpc.com/'],
-              blockExplorerUrls: ['https://polygonscan.com/'],
+              rpcUrls: ['https://hyperliquid-testnet.g.alchemy.com/v2/demo'],
+              blockExplorerUrls: ['https://explorer.hyperliquid.xyz/'],
             }],
           })
         } catch (addError) {
-          console.error('Error adding Polygon network:', addError)
+          console.error('Error adding HyperLiquid network:', addError)
         }
       }
     }
@@ -168,7 +168,7 @@ export default function Faucet({ className }: FaucetProps) {
   }
 
   const claimTokens = async (): Promise<ClaimResult> => {
-    if (!walletAddress || !isPolygonNetwork) {
+    if (!walletAddress || !isHyperliquidNetwork) {
       throw new Error('Wallet not connected or wrong network')
     }
 
@@ -239,25 +239,25 @@ export default function Faucet({ className }: FaucetProps) {
     }
   }
 
-  const canClaim = isConnected && isPolygonNetwork && !state.isClaiming && validateAmount(state.customAmount)
+  const canClaim = isConnected && isHyperliquidNetwork && !state.isClaiming && validateAmount(state.customAmount)
 
   return (
     <div className={`${styles.faucetContainer} ${className || ''}`}>
       <div className={styles.formSection}>
         {/* Network Warning */}
-        {isConnected && !isPolygonNetwork && (
+        {isConnected && !isHyperliquidNetwork && (
           <div className={styles.warningContainer}>
             <div className={styles.warningContent}>
               <div className={styles.warningIcon}></div>
               <div className={styles.warningText}>
                 <span className={styles.warningTitle}>Network Switch Required</span>
                 <span className={styles.warningDescription}>
-                  Switch to Polygon network to continue
+                  Switch to HyperLiquid Testnet to continue
                 </span>
               </div>
             </div>
             <button 
-              onClick={switchToPolygon}
+              onClick={switchToHyperliquid}
               className={styles.warningAction}
             >
               Switch Network
@@ -295,7 +295,7 @@ export default function Faucet({ className }: FaucetProps) {
         )}
 
         {/* Balance Display */}
-        {isConnected && isPolygonNetwork && (
+        {isConnected && isHyperliquidNetwork && (
           <div className={styles.balanceContainer}>
             <div className={styles.balanceContent}>
               <div className={styles.balanceStatusDot}></div>
@@ -320,7 +320,7 @@ export default function Faucet({ className }: FaucetProps) {
         )}
 
         {/* Amount Input */}
-        {isConnected && isPolygonNetwork && (
+        {isConnected && isHyperliquidNetwork && (
           <div className={styles.inputContainer}>
             <div className={styles.inputContent}>
               <div className={styles.inputStatusDot}></div>
@@ -373,7 +373,7 @@ export default function Faucet({ className }: FaucetProps) {
         )}
 
         {/* Claim Section */}
-        {isConnected && isPolygonNetwork && (
+        {isConnected && isHyperliquidNetwork && (
           <div className={styles.claimContainer}>
             <div className={styles.claimContent}>
               <div className={styles.claimStatusDot}></div>
@@ -413,7 +413,7 @@ export default function Faucet({ className }: FaucetProps) {
         <div className={styles.infoContent}>
           <div className={styles.infoItem}>
             <div className={styles.infoStepDot}></div>
-            <span className={styles.infoText}>Connect wallet and switch to Polygon</span>
+            <span className={styles.infoText}>Connect wallet and switch to HyperLiquid Testnet</span>
           </div>
           <div className={styles.infoItem}>
             <div className={styles.infoStepDot}></div>

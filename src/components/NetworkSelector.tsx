@@ -70,8 +70,8 @@ const NetworkSelector: React.FC<NetworkSelectorProps> = ({
 
   // Sort networks: Polygon first, then Ethereum, then others
   const sortedNetworks = availableNetworks.sort((a, b) => {
-    if (a.name === 'polygon') return -1;
-    if (b.name === 'polygon') return 1;
+    if (a.name === 'hyperliquid_testnet') return -1;
+    if (b.name === 'hyperliquid_testnet') return 1;
     if (a.name === 'ethereum') return -1;
     if (b.name === 'ethereum') return 1;
     return a.displayName.localeCompare(b.displayName);

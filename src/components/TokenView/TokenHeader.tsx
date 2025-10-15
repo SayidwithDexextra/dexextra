@@ -5,16 +5,15 @@ import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
 import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
 import { useOrderBookPrice } from '@/hooks/useOrderBookPrice';
-import { useOrderBookMarketInfo } from '@/hooks/useOrderBookMarketInfo';
-import { useCentralVault } from '@/hooks/useCentralVault';
-import { useVaultRouterPositions } from '@/hooks/useVaultRouterPositions';
+import { useCoreVault } from '@/hooks/useCoreVault';
+// Legacy hooks removed
 // Removed hardcoded ALUMINUM_V1_MARKET import - now using dynamic market data
 
 // Helper: format numbers with commas for readability
 const formatNumberWithCommas = (value: number): string => {
   return value.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: value < 1 ? 6 : 2
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4
   });
 };
 
@@ -89,12 +88,49 @@ interface EnhancedTokenData {
 }
 
 export default function TokenHeader({ symbol }: TokenHeaderProps) {
-  const { walletData } = useWallet();
+  const { address, isConnected } = useWallet();
+  const [activeTab, setActiveTab] = useState(0);
+  const vaultData = useCoreVault(address || undefined);
+  
+  // Propagate core vault values globally so other components can react
+  useEffect(() => {
+    try {
+      const detail = {
+        address: address || null,
+        isConnected: isConnected,
+        isLoading: vaultData?.isLoading ?? true,
+        error: vaultData?.error ? String(vaultData.error) : null,
+        marginUsed: vaultData?.marginUsed ?? '0',
+        marginReserved: vaultData?.marginReserved ?? '0',
+        availableBalance: vaultData?.availableBalance ?? '0',
+        realizedPnL: (vaultData as any)?.realizedPnL ?? null,
+        unrealizedPnL: (vaultData as any)?.unrealizedPnL ?? null
+      };
+      const evt = new CustomEvent('coreVaultSummary', { detail });
+      if (typeof window !== 'undefined') window.dispatchEvent(evt);
+    } catch (e) {
+      // no-op
+    }
+  }, [address, isConnected, vaultData?.isLoading, vaultData?.error, vaultData?.marginUsed, vaultData?.marginReserved, vaultData?.availableBalance]);
   
   // Scroll detection state
   const [isPriceSectionVisible, setIsPriceSectionVisible] = useState(true);
+  const [isLimitTabActive, setIsLimitTabActive] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const priceSectionRef = useRef<HTMLDivElement>(null);
+  
+  // Listen for changes in limit tab status from TradingPanel
+  useEffect(() => {
+    const handleLimitTabChange: EventListener = (event: Event) => {
+      const customEvent = event as CustomEvent<{ isLimitTabActive: boolean }>;
+      setIsLimitTabActive(customEvent.detail.isLimitTabActive);
+    };
+
+    window.addEventListener('limitTabChange', handleLimitTabChange);
+    return () => {
+      window.removeEventListener('limitTabChange', handleLimitTabChange);
+    };
+  }, []);
   
   // OPTIMIZED DATA FETCHING STRATEGY:
   // 1. Market data: Fetch from orderbook_markets table
@@ -103,14 +139,10 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   
   // Get orderbook market data
   const {
-    marketData,
+    market: marketData,
     isLoading: isLoadingMarket,
-    error: marketError,
-    refetch: refetchMarket
-  } = useOrderbookMarket(symbol, {
-    autoRefresh: true,
-    refreshInterval: 120000 // 2 minutes for market data (less frequent)
-  });
+    error: marketError
+  } = useOrderbookMarket(symbol);
   
   // console.log('🏪 OrderBook Market Data Status:', {
   //   symbol,
@@ -126,219 +158,53 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
   // TradingRouter removed - using direct OrderBook calls only
 
-  // Get DIRECT market info from OrderBook contract (includes lastPrice from smart contract)
-  const {
-    marketInfo: contractMarketInfo,
-    orderBookPrices: contractPrices,
-    isLoading: isLoadingDirectPrice,
-    error: directPriceError,
-    refetch: refreshDirectPrice
-  } = useOrderBookMarketInfo(
-    marketData?.market?.market_address, // Use the actual OrderBook address
-    {
-      autoRefresh: true,
-      refreshInterval: 15000 // 15 seconds for direct price (most frequent)
-    }
-  );
+  // Market info and orderbook prices - removed legacy useOrderBookMarketInfo hook
+  const contractMarketInfo = null;
+  const contractPrices = null;
+  const isLoadingDirectPrice = false;
+  const directPriceError = null;
+  const refreshDirectPrice = null;
 
-  // Keep legacy hook for backward compatibility (but prioritize new data)
+  // Keep legacy hook for backward compatibility
   const {
-    priceData: legacyOrderBookPrice,
-  } = useOrderBookPrice(
-    marketData?.market?.market_address,
-    {
-      autoRefresh: false, // Disable auto-refresh since we're using the new hook as primary
-      refreshInterval: 0
-    }
-  );
+    priceData: legacyOrderBookPrice
+  } = useOrderBookPrice(marketData?.metricId);
   
-  // console.log('💰 OrderBook market statistics:', {
-  //   lastPrice: contractMarketData?.lastPrice,
-  //   volume24h: contractMarketData?.volume24h,
-  //   priceChange24h: contractMarketData?.priceChange24h,
-  //   bestBid: contractMarketData?.bestBid,
-  //   bestAsk: contractMarketData?.bestAsk,
-  //   isLoadingMarketStats,
-  //   marketStatsError,
-  //   dataSource,
-  //   marketAddress: marketData?.market?.market_address,
-  //   chainId: marketData?.market?.chain_id
-  // });
-
-  // Get user positions from VaultRouter
-  const {
-    positions: vaultPositions,
-    marginSummary,
-    isLoading: isLoadingPositions,
-    error: positionsError,
-    refetch: refetchPositions
-  } = useVaultRouterPositions(
-    walletData.isConnected && walletData.address ? walletData.address : undefined,
-    {
-      autoRefresh: true,
-      refreshInterval: 30000 // 30 seconds
-    }
-  );
-  
-  // Legacy position data (kept for backward compatibility)
-  const legacyPositions = marketData?.positions || [];
-  const isLoadingTrading = isLoadingPositions; // Use VaultRouter loading state
-  const tradingError = positionsError; // Use VaultRouter error state
-  const refreshTrading = refetchPositions; // Use VaultRouter refresh function
+  // Position data (placeholder as legacy hooks were removed)
+  const vaultPositions: any[] = [];
+  const marginSummary = { unrealizedPnL: 0 };
+  const isLoadingTrading = false;
+  const tradingError = null;
+  const refetchMarket = () => {}; // Placeholder for the refetch function
 
   // Manual refresh function
-  const handleManualRefresh = async () => {
-    console.log('🔄 Manual refresh triggered for OrderBook data and VaultRouter positions');
-    
-    // Refresh DIRECT OrderBook price data
-    if (refreshDirectPrice) {
-      await refreshDirectPrice();
-    }
-    
-    // Refresh VaultRouter positions data
-    if (refetchPositions) {
-      await refetchPositions();
-    }
-    
-    // Refresh market data
-    if (refetchMarket) {
-      await refetchMarket();
-    }
+  const handleManualRefresh = () => {
+    console.log('🔄 Manual refresh triggered for OrderBook data');
+    // Refresh functionality removed as we removed the legacy hooks
   };
 
   // Calculate enhanced token data from HyperLiquid orderbook market
   const enhancedTokenData = useMemo((): EnhancedTokenData | null => {
-    if (!marketData?.market) return null;
+    if (!marketData) return null;
 
-    const market = marketData.market;
+    const market = marketData;
     
-    // SMART CONTRACT MARKET INFO PRIORITY: Use lastPrice from getMarketInfo() as primary source
-    // Priority order: contractMarketInfo.lastPrice > contractPrices.midPrice > legacy fallbacks
-    
-    // Get market info directly from smart contract (our target: lastPrice field)
-    const contractLastPrice = contractMarketInfo?.lastPrice || 0;
-    const contractCurrentPrice = contractMarketInfo?.currentPrice || 0;
-    const contractBestBid = contractPrices?.bestBid || 0;
-    const contractBestAsk = contractPrices?.bestAsk || 0;
-    const contractMidPrice = contractPrices?.midPrice || 0;
-    
-    // Legacy data for fallback
-    const legacyBestBid = legacyOrderBookPrice?.bestBid || 0;
-    const legacyBestAsk = legacyOrderBookPrice?.bestAsk || 0;
-    const legacyMidPrice = legacyOrderBookPrice?.midPrice || 0;
-    const legacyLastTradePrice = legacyOrderBookPrice?.lastTradePrice || 0;
-    
-    // Calculate display price with PRIORITY TO LASTPRICE FROM SMART CONTRACT
-    let currentMarkPrice = 0;
-    let priceSource = 'none';
-    
-    // 🎯 PRIMARY: Use lastPrice from smart contract market variable (this is our target!)
-    if (contractLastPrice > 0) {
-      currentMarkPrice = contractLastPrice;
-      priceSource = 'contract-lastPrice';
-    }
-    // SECONDARY: Use current mid-price from order book
-    else if (contractMidPrice > 0) {
-      currentMarkPrice = contractMidPrice;
-      priceSource = 'contract-midPrice';
-    }
-    // TERTIARY: Use currentPrice from smart contract (mark price)
-    else if (contractCurrentPrice > 0) {
-      currentMarkPrice = contractCurrentPrice;
-      priceSource = 'contract-currentPrice';
-    }
-    // FALLBACK: Use calculated mid from bid/ask
-    else if (contractBestBid > 0 && contractBestAsk > 0) {
-      currentMarkPrice = (contractBestBid + contractBestAsk) / 2;
-      priceSource = 'contract-calculated-mid';
-    }
-    // FALLBACK: Single side
-    else if (contractBestBid > 0 || contractBestAsk > 0) {
-      currentMarkPrice = contractBestBid || contractBestAsk;
-      priceSource = 'contract-single-side';
-    }
-    // LAST RESORT: Legacy hook data
-    else if (legacyLastTradePrice > 0) {
-      currentMarkPrice = legacyLastTradePrice;
-      priceSource = 'legacy-lastTrade';
-    }
-    else if (legacyMidPrice > 0) {
-      currentMarkPrice = legacyMidPrice;
-      priceSource = 'legacy-mid';
-    }
-    
-    // Use contract bid/ask prices with legacy fallback
-    const bestBid = contractBestBid || legacyBestBid;
-    const bestAsk = contractBestAsk || legacyBestAsk;
+    // Since we removed the legacy hooks, we'll use simplified price handling
+    const legacyPrice = legacyOrderBookPrice?.price ? Number(legacyOrderBookPrice.price) : 0;
+    const currentMarkPrice = legacyPrice || 1000; // Default fallback price
     
     // HyperLiquid OrderBook contracts don't have funding rates or historical price changes
     const currentFundingRate = 0;
-    const priceChangeValue = 0; // No historical data available from direct OrderBook calls
-    const priceChangePercentValue = 0; // No historical data available from direct OrderBook calls
-
-    console.log('🎯 Smart Contract Market Info for:', symbol, {
-      // PRIMARY: Smart Contract Market Data
-      contractLastPrice, // 🎯 This is our target field!
-      contractCurrentPrice,
-      contractBestBid,
-      contractBestAsk,
-      contractMidPrice,
-      contractSymbol: contractMarketInfo?.symbol,
-      contractIsActive: contractMarketInfo?.isActive,
-      contractOpenInterest: contractMarketInfo?.openInterest,
-      contractVolume24h: contractMarketInfo?.volume24h,
-      
-      // FALLBACK: Legacy Hook Data
-      legacyBestBid,
-      legacyBestAsk,
-      legacyMidPrice,
-      legacyLastTradePrice,
-      
-      // Final Computed Values
-      finalPrice: currentMarkPrice,
-      finalBestBid: bestBid,
-      finalBestAsk: bestAsk,
-      priceSource, // Shows which price source was used
-      spread: bestAsk - bestBid,
-      
-      // Status
-      isLoadingDirectPrice,
-      directPriceError: directPriceError || 'none',
-      timestamp: new Date().toISOString()
-    });
-
+    const priceChangeValue = 0; 
+    const priceChangePercentValue = 0;
+    
     // Check if HyperLiquid contracts are deployed and available
-    const hasContracts = !!market.market_address && market.market_status === 'ACTIVE';
-    
-    // Use real-time price data from smart contract market info
-    const hasValidRealTimePrice = hasContracts && 
-      currentMarkPrice > 0 &&
-      contractMarketInfo?.isActive &&
-      !directPriceError && 
-      !isLoadingDirectPrice;
-    
-    console.log('✅ Smart Contract Price Validation:', {
-      currentMarkPrice,
-      priceSource, // Shows which price source was selected
-      contractLastPrice, // 🎯 Our primary target
-      contractCurrentPrice,
-      bestBid,
-      bestAsk,
-      hasValidRealTimePrice,
-      hasContracts,
-      contractIsActive: contractMarketInfo?.isActive,
-      isLoadingDirectPrice,
-      directPriceError: directPriceError || 'none',
-      marketStatus: market.market_status,
-      
-      priceChangeValue,
-      priceChangePercentValue
-    });
+    const hasContracts = market.isActive && market.marketStatus === 'ACTIVE';
     
     // Calculate market metrics based on orderbook data
     const estimatedSupply = 1000000; // Could be derived from open interest
     const marketCap = currentMarkPrice * estimatedSupply;
-    const volume24h = market.total_volume || 0;
+    const volume24h = 0; // No volume data available
     
     // Derive time-based changes from funding rate and price movement
     const timeBasedChanges = deriveTimeBasedChanges(
@@ -346,63 +212,37 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       priceChangePercentValue
     );
     
-    // Find user position for this market from VaultRouter
-    // Use the actual market ID from the current market data instead of hardcoded V1
-    const currentMarketId = marketData?.market?.metric_id || symbol;
-    const userPosition = vaultPositions?.find(pos => 
-      walletData.isConnected && 
-      pos.marketId.toLowerCase() === currentMarketId.toLowerCase()
-    );
-    
-    // Calculate unrealized PnL for this specific market
-    let unrealizedPnL = 0;
-    if (userPosition && currentMarkPrice > 0) {
-      const priceDiff = currentMarkPrice - userPosition.entryPrice;
-      unrealizedPnL = priceDiff * userPosition.sizeAbs * (userPosition.isLong ? 1 : -1);
-    }
-    
-    // Use total unrealized PnL from margin summary if available (more accurate)
-    const totalUnrealizedPnL = marginSummary?.unrealizedPnL || unrealizedPnL;
-    
     return {
-      symbol: market.metric_id,
-      name: market.metric_id.replace(/_/g, ' '), // Convert metric_id to readable name
-      description: market.description,
-      category: market.category,
-      chain: market.chain_id === 137 ? 'Polygon' : `Chain ${market.chain_id}`,
-      logo: market.icon_image_url,
-      price: currentMarkPrice,
-      markPrice: currentMarkPrice,
+      symbol: market.metricId,
+      name: market.metricId.replace(/_/g, ' '), // Convert metric_id to readable name
+      description: market.description || '',
+      category: 'General', // Default category
+      chain: 'Unknown', // Default chain
+      logo: '', // No logo available
+      price: Number(currentMarkPrice),
+      markPrice: Number(currentMarkPrice),
       fundingRate: currentFundingRate,
       priceChange24h: priceChangeValue,
       priceChangePercent24h: priceChangePercentValue,
       marketCap,
       volume24h,
       timeBasedChanges,
-      // Position info (only when wallet connected) - using VaultRouter data
-      hasPosition: walletData.isConnected && !!userPosition,
-      positionSize: walletData.isConnected ? (userPosition?.sizeAbs.toString() || '0') : '0',
-      unrealizedPnL: walletData.isConnected ? totalUnrealizedPnL.toString() : '0',
+      // Position info (only when wallet connected)
+      hasPosition: false, // Removed VaultRouter positions
+      positionSize: '0',
+      unrealizedPnL: '0',
       // Deployment and market status
       isDeployed: hasContracts,
-      created_at: market.created_at,
-      marketStatus: market.market_status,
-      settlementDate: market.settlement_date,
-      totalTrades: market.total_trades || 0,
-      openInterestLong: market.open_interest_long || 0,
-      openInterestShort: market.open_interest_short || 0
+      created_at: market.createdAt,
+      marketStatus: market.marketStatus,
+      settlementDate: '',
+      totalTrades: 0,
+      openInterestLong: 0,
+      openInterestShort: 0
     };
   }, [
     marketData, 
-    contractMarketInfo, // Primary: Smart contract market info (includes lastPrice!)
-    contractPrices, // Primary: Smart contract order book prices
-    legacyOrderBookPrice, // Fallback: Legacy price data
-    vaultPositions, // VaultRouter positions
-    marginSummary, // VaultRouter margin summary
-    isLoadingDirectPrice,
-    directPriceError,
-    walletData.isConnected, 
-    walletData.address, 
+    legacyOrderBookPrice, // Legacy price data
     symbol
   ]);
 
@@ -464,7 +304,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         <div className="text-red-400 text-sm text-center">
           <div className="mb-2">Error loading market data:</div>
           <div className="text-xs text-gray-400">
-            {marketError || 'Unknown error'}
+            {marketError ? marketError.toString() : 'Unknown error'}
           </div>
           <button 
             onClick={refetchMarket}
@@ -515,12 +355,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const isPositive = enhancedTokenData.priceChangePercent24h >= 0;
   const { change5m, change1h, change6h } = enhancedTokenData.timeBasedChanges;
   
-  // Check for valid real-time price for UI indicators (using smart contract market info)
+  // Check for valid real-time price for UI indicators (simplified since hooks removed)
   const showLiveIndicator = enhancedTokenData?.isDeployed && 
-    enhancedTokenData?.markPrice > 0 && 
-    contractMarketInfo?.isActive && 
-    !directPriceError && 
-    !isLoadingDirectPrice;
+    enhancedTokenData?.markPrice > 0;
 
   return (
     <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 h-full max-h-full flex flex-col">
@@ -537,29 +374,31 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             </div>
             
             <div className="flex items-center gap-2">
-              {enhancedTokenData.logo && (
-                <Image 
-                  src={enhancedTokenData.logo} 
-                  alt={enhancedTokenData.name}
-                  width={28}
-                  height={28}
-                  className="w-7 h-7 rounded border border-[#333333] object-cover flex-shrink-0"
-                />
-              )}
+              <Image 
+                src={enhancedTokenData.logo || '/placeholder-market.svg'} 
+                alt={enhancedTokenData.name || 'Market Icon'}
+                width={28}
+                height={28}
+                className="w-7 h-7 rounded border border-[#333333] object-cover flex-shrink-0"
+              />
               <div className="min-w-0 flex-1">
                 <h1 className="text-xs font-medium text-white mb-0.5 truncate">
                   {enhancedTokenData.name}
                 </h1>
                 <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
-                    {enhancedTokenData.symbol}
-                  </span>
-                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
-                    {enhancedTokenData.chain}
-                  </span>
-                  <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
-                    OrderBook
-                  </span>
+                  {['Margin Used', 'Reserved', 'Available'].map((tab, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setActiveTab(index)}
+                      className={`text-[10px] ${
+                        activeTab === index 
+                          ? 'text-white bg-[#2A2A2A]' 
+                          : 'text-[#606060] bg-[#1A1A1A] hover:bg-[#222222]'
+                      } px-2 py-0.5 rounded transition-colors duration-200`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
                   {!enhancedTokenData.isDeployed && (
                     <span className="text-[10px] text-yellow-400 bg-[#2A2A1A] px-1 py-0.5 rounded">
                       PENDING
@@ -591,9 +430,24 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                     {showLiveIndicator && (
                       <span className="text-[7px] text-green-400 bg-[#1A2A1A] px-1 py-0.5 rounded">LIVE</span>
                     )}
-                    <div className={`w-1 h-1 rounded-full ${showLiveIndicator ? 'bg-green-400 animate-pulse' : 'bg-blue-400'}`} />
+                    <div className={`w-1 h-1 rounded-full ${showLiveIndicator ? 'bg-green-400 animate-pulse' : 'bg-blue-400'}`}></div>
                   </div>
                 </div>
+                {/* Display Unrealized PNL when contracted */}
+                {isLimitTabActive && (
+                  <div className="mt-1 text-[10px] flex justify-between">
+                    <span className="text-[#606060]">
+                      {activeTab === 0 && 'Margin Used:'}
+                      {activeTab === 1 && 'Reserved Margin:'}
+                      {activeTab === 2 && 'Available Margin:'}
+                    </span>
+                    <span className="text-white font-mono">
+                      {activeTab === 0 && (vaultData?.marginUsed || '0')}
+                      {activeTab === 1 && (vaultData?.marginReserved || '0')}
+                      {activeTab === 2 && (vaultData?.availableBalance || '0')}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -601,7 +455,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       </div>
 
       {/* Scrollable Content Area */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto token-header-scroll space-y-1.5 p-1">
+      <div ref={scrollContainerRef} className={`flex-1 overflow-y-auto token-header-scroll space-y-1.5 p-1 transition-all duration-300 ease-in-out ${isLimitTabActive ? 'max-h-0 opacity-0' : 'max-h-full opacity-100'}`}>
 
       {/* Price Section - Sophisticated Design */}
       <div ref={priceSectionRef} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
@@ -621,8 +475,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           
           <div className="flex items-center justify-between">
             <div className="flex items-baseline gap-2">
-              <span className="text-base font-bold text-white">
-                ${formatNumberWithCommas(enhancedTokenData.markPrice)}
+              <span className="text-base font-bold text-white font-mono">
+                {enhancedTokenData.markPrice.toFixed(2)}
               </span>
               <span className={`text-[11px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
                 {isPositive ? '↑' : '↓'} {Math.abs(enhancedTokenData.priceChangePercent24h).toFixed(2)}%
@@ -651,23 +505,31 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           {/* Price Details */}
           <div className="mt-1.5 space-y-1 text-[9px]">
             <div className="flex justify-between">
-              <span className="text-[#606060]">Mark Price:</span>
+              <span className="text-[#606060]">
+                {activeTab === 0 && 'Margin Used:'}
+                {activeTab === 1 && 'Reserved Margin:'}
+                {activeTab === 2 && 'Available Margin:'}
+              </span>
               <div className="flex items-center gap-1">
-                <span className="text-white font-mono">${formatNumberWithCommas(enhancedTokenData.markPrice)}</span>
-                {isLoadingDirectPrice && <span className="text-blue-400 animate-spin">⟳</span>}
-                {!isLoadingDirectPrice && enhancedTokenData.isDeployed && showLiveIndicator && (
-                  <span className="text-green-400" title="Real-time from direct OrderBook contract">●</span>
+                <span className="text-white font-mono">
+                  {activeTab === 0 && formatNumberWithCommas(parseFloat(vaultData?.marginUsed || '0'))}
+                  {activeTab === 1 && formatNumberWithCommas(parseFloat(vaultData?.marginReserved || '0'))}
+                  {activeTab === 2 && formatNumberWithCommas(parseFloat(vaultData?.availableBalance || '0'))}
+                </span>
+                {vaultData?.isLoading && <span className="text-blue-400 animate-spin">⟳</span>}
+                {!vaultData?.isLoading && isConnected && (
+                  <span className="text-green-400" title="Real-time vault data">●</span>
                 )}
-                {directPriceError && (
-                  <span className="text-red-400" title="Error fetching OrderBook price data">⚠</span>
+                {vaultData?.error && (
+                  <span className="text-red-400" title="Error fetching vault data">⚠</span>
                 )}
               </div>
             </div>
             
-            <div className="flex justify-between">
+            {/* <div className="flex justify-between">
               <span className="text-[#606060]">Total Trades:</span>
               <span className="text-white font-mono">{enhancedTokenData.totalTrades}</span>
-            </div>
+            </div> */}
             
             {enhancedTokenData.isDeployed && enhancedTokenData.fundingRate !== 0 && (
               <div className="flex justify-between">

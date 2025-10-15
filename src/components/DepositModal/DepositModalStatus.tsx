@@ -68,7 +68,7 @@ export default function DepositModalStatus({
   status = 'pending',
   amount = '0.00',
   sourceToken = { symbol: 'USDC', icon: '💵' },
-  targetToken = { symbol: 'VAULT', icon: '🏦', name: 'Dexetra Vault' },
+  targetToken = { symbol: 'VAULT', icon: '🏦', name: 'Dexetra CoreVault' },
   transactionHash,
   estimatedTime = '< 1 min',
   actualTime,
@@ -185,7 +185,7 @@ export default function DepositModalStatus({
 
   const handleExplorerLink = () => {
     if (transactionHash && typeof window !== 'undefined') {
-      window.open(`https://polygonscan.com/tx/${transactionHash}`, '_blank')
+      window.open(`https://explorer.hyperliquid.xyz/tx/${transactionHash}`, '_blank')
     }
   }
 
@@ -332,7 +332,7 @@ export default function DepositModalStatus({
                   <span className="text-[11px] font-medium text-[#808080]">To</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-white">{targetToken.name || 'Dexetra Vault'}</span>
+                  <span className="text-[10px] text-white">{targetToken.name || 'Dexetra CoreVault'}</span>
                 </div>
               </div>
             </div>
@@ -392,7 +392,7 @@ export default function DepositModalStatus({
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
                       <span className="text-[11px] font-medium text-[#808080]">Network</span>
                     </div>
-                    <span className="text-[10px] text-white">Polygon</span>
+                    <span className="text-[10px] text-white">HyperLiquid Testnet</span>
                   </div>
                 </div>
 

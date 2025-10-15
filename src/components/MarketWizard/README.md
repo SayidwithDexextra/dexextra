@@ -205,8 +205,8 @@ CREATE TABLE orderbook_markets (
   creation_fee DECIMAL NOT NULL,
   is_active BOOLEAN DEFAULT true,
   user_address VARCHAR(42) NOT NULL,
-  network VARCHAR(20) DEFAULT 'polygon',
-  chain_id INTEGER DEFAULT 137,
+  network VARCHAR(20) DEFAULT 'hyperliquid_testnet',
+  chain_id INTEGER DEFAULT 998,
   created_at TIMESTAMP DEFAULT NOW()
 );
 ```

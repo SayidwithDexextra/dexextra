@@ -219,61 +219,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Get serverless matching engine (deferred import)
-    const { getServerlessMatchingEngine } = await import('@/lib/serverless-matching');
-    const matchingEngine = getServerlessMatchingEngine();
-
-    // Process order with serverless matching engine
-    const result = await matchingEngine.processOrder({
-      metricId: orderData.metricId,
-      trader_wallet_address: orderData.walletAddress,
-      order_type: orderData.orderType as 'MARKET' | 'LIMIT',
-      side: orderData.side as 'BUY' | 'SELL',
-      quantity: quantity,
-      price: orderData.price ? parseFloat(orderData.price) : undefined,
-      time_in_force: (orderData.timeInForce || 'GTC') as 'GTC' | 'IOC' | 'FOK' | 'GTD',
-      post_only: orderData.postOnly || false,
-      reduce_only: orderData.reduceOnly || false,
-      expires_at: orderData.expiryTime ? new Date(orderData.expiryTime).toISOString() : undefined,
-      signature: orderData.signature,
-      nonce: orderData.nonce
-    });
-    
-    const processingTime = Date.now() - startTime;
-
-    if (result.success) {
-      return NextResponse.json({
-        success: true,
-        orderId: result.order.id,
-        status: result.order.order_status,
-        filledQuantity: result.order.filled_quantity,
-        blockchainTxHash: (result as any).blockchainTxHash,
-        matches: result.matches.map(match => ({
-          matchId: `${match.buyOrderId}-${match.sellOrderId}`,
-          price: match.price.toString(),
-          quantity: match.quantity.toString(),
-          timestamp: match.timestamp
-        })),
-        processingTime: `${processingTime}ms`,
-        message: 'Order successfully placed and confirmed on blockchain'
-      });
-    } else {
-      // Return all errors as 400 (remove 402 blockchain error logic)
-      console.log('❌ Order processing failed:', result.error);
-      const statusCode = 400;
-      const errorType = 'ORDER_ERROR';
-      
-      return NextResponse.json(
-        { 
-          error: 'Order submission failed',
-          errorType,
-          details: result.error,
-          processingTime: `${processingTime}ms`,
-          message: 'Order processing failed. Please try again.'
-        },
-        { status: statusCode }
-      );
-    }
+    // OFFCHAIN serverless matching removed; this route should be migrated to onchain flow
+    return NextResponse.json(
+      { error: 'Offchain matching is disabled. Use on-chain order placement.' },
+      { status: 410 }
+    );
 
   } catch (error) {
     const processingTime = Date.now() - startTime;

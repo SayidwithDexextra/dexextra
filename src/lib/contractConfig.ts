@@ -1,238 +1,59 @@
-import { Address } from 'viem';
-import { CONTRACT_ADDRESSES as STATIC_CONTRACT_ADDRESSES } from './contracts';
-
 /**
- * CONTRACT_ADDRESSES that uses static addresses from contracts.ts
- * This provides backward compatibility with the static configuration
+ * Contract configuration for Dexetrav5
+ * Contains addresses and market information
  */
-export const CONTRACT_ADDRESSES = STATIC_CONTRACT_ADDRESSES;
 
-// Chain configuration
+import { env } from './env'
+// Prefer sourcing addresses from HyperLiquid Testnet deployment JSON
+// Fallback to existing hardcoded values if import or fields are missing
+// JSON path is relative to this file: src/lib -> ../../Dexetrav5/deployments
+// Next.js supports JSON imports by default
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import hyperliquidDeployment from '../../Dexetrav5/deployments/hyperliquid_testnet-deployment.json'
+
+// Contract addresses
+const deployed = (hyperliquidDeployment as any) || {};
+const deployedContracts = (deployed.contracts as any) || {};
+const deployedMarket = (deployed.aluminumMarket as any) || {};
+
+export const CONTRACT_ADDRESSES = {
+  MOCK_USDC: deployedContracts.MOCK_USDC || "0x69bfB7DAB0135fB6cD3387CF411624d874B3c799",
+  CORE_VAULT: deployedContracts.CORE_VAULT || "0x3F76468754fC1FA4a79C796C580824799281aCa0",
+  LIQUIDATION_MANAGER: deployedContracts.LIQUIDATION_MANAGER || "0x93bF290F0a2039E502b87c8767c71e77A50C79C2",
+  FUTURES_MARKET_FACTORY: deployedContracts.FUTURES_MARKET_FACTORY || "0x95c85427fdC7d6F04C948895fFe3dc6F84798EeC",
+  ALUMINUM_ORDERBOOK: deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
+  BTC_ORDERBOOK: deployedContracts.BTC_ORDERBOOK || deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
+
+  // CamelCase aliases used by hooks like useContract
+  mockUSDC: deployedContracts.MOCK_USDC || "0x69bfB7DAB0135fB6cD3387CF411624d874B3c799",
+  coreVault: deployedContracts.CORE_VAULT || "0x3F76468754fC1FA4a79C796C580824799281aCa0",
+  futuresMarketFactory: deployedContracts.FUTURES_MARKET_FACTORY || "0x95c85427fdC7d6F04C948895fFe3dc6F84798EeC",
+  aluminumOrderBook: deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
+  orderBook: deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
+
+  // Market information
+  MARKET_INFO: {
+    ALUMINUM: {
+      name: "Aluminum",
+      symbol: deployedMarket.symbol || "ALU-USD",
+      marketId: deployedMarket.marketId || deployedContracts.ALUMINUM_MARKET_ID || "0xc6348f46a4dac78005a64ff26ab0e3d114645a0d336494037e628c070eb137b4",
+      orderBook: deployedMarket.orderBook || deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
+      active: true
+    },
+    BTC: {
+      name: "Bitcoin",
+      symbol: "BTC-USD",
+      marketId: deployedMarket.marketId || "0xc6348f46a4dac78005a64ff26ab0e3d114645a0d336494037e628c070eb137b4", // placeholder
+      orderBook: deployedContracts.BTC_ORDERBOOK || deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
+      active: true
+    }
+  }
+};
+
+// Network/chain configuration sourced from validated env
 export const CHAIN_CONFIG = {
-  chainId: 137, // Polygon Mainnet
-  rpcUrl: 'https://polygon-rpc.com/',
-} as const;
-
-// OrderRouter ABI - focused on order querying functions
-export const ORDER_ROUTER_ABI = [
-  // Nonce getter for EIP-712
-  {
-    inputs: [{ name: 'trader', type: 'address' }],
-    name: 'getNonce',
-    outputs: [{ name: 'nonce', type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  // View functions for orders
-  {
-    inputs: [{ name: 'orderId', type: 'uint256' }],
-    name: 'getOrder',
-    outputs: [
-      {
-        components: [
-          { name: 'orderId', type: 'uint256' },
-          { name: 'trader', type: 'address' },
-          { name: 'metricId', type: 'string' },
-          { name: 'orderType', type: 'uint8' },
-          { name: 'side', type: 'uint8' },
-          { name: 'quantity', type: 'uint256' },
-          { name: 'price', type: 'uint256' },
-          { name: 'filledQuantity', type: 'uint256' },
-          { name: 'timestamp', type: 'uint256' },
-          { name: 'expiryTime', type: 'uint256' },
-          { name: 'status', type: 'uint8' },
-          { name: 'timeInForce', type: 'uint8' },
-          { name: 'stopPrice', type: 'uint256' },
-          { name: 'icebergQty', type: 'uint256' },
-          { name: 'postOnly', type: 'bool' },
-          { name: 'metadataHash', type: 'bytes32' },
-        ],
-        name: 'order',
-        type: 'tuple',
-      },
-    ],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    inputs: [{ name: 'trader', type: 'address' }],
-    name: 'getUserActiveOrders',
-    outputs: [
-      {
-        components: [
-          { name: 'orderId', type: 'uint256' },
-          { name: 'trader', type: 'address' },
-          { name: 'metricId', type: 'string' },
-          { name: 'orderType', type: 'uint8' },
-          { name: 'side', type: 'uint8' },
-          { name: 'quantity', type: 'uint256' },
-          { name: 'price', type: 'uint256' },
-          { name: 'filledQuantity', type: 'uint256' },
-          { name: 'timestamp', type: 'uint256' },
-          { name: 'expiryTime', type: 'uint256' },
-          { name: 'status', type: 'uint8' },
-          { name: 'timeInForce', type: 'uint8' },
-          { name: 'stopPrice', type: 'uint256' },
-          { name: 'icebergQty', type: 'uint256' },
-          { name: 'postOnly', type: 'bool' },
-          { name: 'metadataHash', type: 'bytes32' },
-        ],
-        name: 'orders',
-        type: 'tuple[]',
-      },
-    ],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    inputs: [
-      { name: 'trader', type: 'address' },
-      { name: 'limit', type: 'uint256' },
-      { name: 'offset', type: 'uint256' },
-    ],
-    name: 'getUserOrderHistory',
-    outputs: [
-      {
-        components: [
-          { name: 'orderId', type: 'uint256' },
-          { name: 'trader', type: 'address' },
-          { name: 'metricId', type: 'string' },
-          { name: 'orderType', type: 'uint8' },
-          { name: 'side', type: 'uint8' },
-          { name: 'quantity', type: 'uint256' },
-          { name: 'price', type: 'uint256' },
-          { name: 'filledQuantity', type: 'uint256' },
-          { name: 'timestamp', type: 'uint256' },
-          { name: 'expiryTime', type: 'uint256' },
-          { name: 'status', type: 'uint8' },
-          { name: 'timeInForce', type: 'uint8' },
-          { name: 'stopPrice', type: 'uint256' },
-          { name: 'icebergQty', type: 'uint256' },
-          { name: 'postOnly', type: 'bool' },
-          { name: 'metadataHash', type: 'bytes32' },
-        ],
-        name: 'orders',
-        type: 'tuple[]',
-      },
-    ],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    inputs: [
-      { name: 'metricId', type: 'string' },
-      { name: 'depth', type: 'uint256' },
-    ],
-    name: 'getMarketDepth',
-    outputs: [
-      {
-        components: [
-          { name: 'orderId', type: 'uint256' },
-          { name: 'trader', type: 'address' },
-          { name: 'metricId', type: 'string' },
-          { name: 'orderType', type: 'uint8' },
-          { name: 'side', type: 'uint8' },
-          { name: 'quantity', type: 'uint256' },
-          { name: 'price', type: 'uint256' },
-          { name: 'filledQuantity', type: 'uint256' },
-          { name: 'timestamp', type: 'uint256' },
-          { name: 'expiryTime', type: 'uint256' },
-          { name: 'status', type: 'uint8' },
-          { name: 'timeInForce', type: 'uint8' },
-          { name: 'stopPrice', type: 'uint256' },
-          { name: 'icebergQty', type: 'uint256' },
-          { name: 'postOnly', type: 'bool' },
-          { name: 'metadataHash', type: 'bytes32' },
-        ],
-        name: 'buyOrders',
-        type: 'tuple[]',
-      },
-      {
-        components: [
-          { name: 'orderId', type: 'uint256' },
-          { name: 'trader', type: 'address' },
-          { name: 'metricId', type: 'string' },
-          { name: 'orderType', type: 'uint8' },
-          { name: 'side', type: 'uint8' },
-          { name: 'quantity', type: 'uint256' },
-          { name: 'price', type: 'uint256' },
-          { name: 'filledQuantity', type: 'uint256' },
-          { name: 'timestamp', type: 'uint256' },
-          { name: 'expiryTime', type: 'uint256' },
-          { name: 'status', type: 'uint8' },
-          { name: 'timeInForce', type: 'uint8' },
-          { name: 'stopPrice', type: 'uint256' },
-          { name: 'icebergQty', type: 'uint256' },
-          { name: 'postOnly', type: 'bool' },
-          { name: 'metadataHash', type: 'bytes32' },
-        ],
-        name: 'sellOrders',
-        type: 'tuple[]',
-      },
-    ],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
-    inputs: [{ name: 'orderId', type: 'uint256' }],
-    name: 'getOrderExecutions',
-    outputs: [
-      {
-        components: [
-          { name: 'orderId', type: 'uint256' },
-          { name: 'executedQuantity', type: 'uint256' },
-          { name: 'executedPrice', type: 'uint256' },
-          { name: 'timestamp', type: 'uint256' },
-          { name: 'counterparty', type: 'address' },
-          { name: 'fees', type: 'uint256' },
-        ],
-        name: 'executions',
-        type: 'tuple[]',
-      },
-    ],
-    stateMutability: 'view',
-    type: 'function',
-  },
-] as const;
-
-// Market information using static addresses
-export const ALUMINUM_V1_MARKET = {
-  marketId: 'aluminum-v1-001', // Use metric_id instead of contract hash
-  symbol: 'Aluminum V1' as const,
-  orderBookAddress: CONTRACT_ADDRESSES.aluminumOrderBook,
-} as const;
-
-// Enums matching the smart contract
-export enum OrderType {
-  MARKET = 0,
-  LIMIT = 1,
-  STOP_LOSS = 2,
-  TAKE_PROFIT = 3,
-  STOP_LIMIT = 4,
-  ICEBERG = 5,
-  FILL_OR_KILL = 6,
-  IMMEDIATE_OR_CANCEL = 7,
-  ALL_OR_NONE = 8,
-}
-
-export enum OrderSide {
-  BUY = 0,
-  SELL = 1,
-}
-
-export enum OrderStatus {
-  PENDING = 0,
-  PARTIALLY_FILLED = 1,
-  FILLED = 2,
-  CANCELLED = 3,
-  EXPIRED = 4,
-  REJECTED = 5,
-}
-
-export enum TimeInForce {
-  GTC = 0, // Good Till Cancelled
-  IOC = 1, // Immediate or Cancel
-  FOK = 2, // Fill or Kill
-  GTD = 3, // Good Till Date
-}
-
+  rpcUrl: env.RPC_URL,
+  wsRpcUrl: env.WS_RPC_URL,
+  chainId: env.CHAIN_ID,
+} as const

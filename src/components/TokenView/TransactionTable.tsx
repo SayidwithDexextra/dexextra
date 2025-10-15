@@ -2,10 +2,11 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Transaction, OrderBookEntry } from '@/types/orders';
-import { useSupabaseRealtimeOrders } from '@/hooks/useSupabaseRealtimeOrders';
+// Legacy useSupabaseRealtimeOrders import removed
 import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
-import { useOrderAnimations } from '@/hooks/useOrderAnimations';
+// Legacy useOrderAnimations import removed
 import { OrderBookAnimatedQuantity } from '@/components/ui/AnimatedQuantity';
+import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
 
 interface TransactionTableProps {
   metricId?: string;
@@ -32,7 +33,7 @@ interface OrderFromAPI {
 }
 
 export default function TransactionTable({ metricId, currentPrice, height = '100%' }: TransactionTableProps) {
-  const [view, setView] = useState<'transactions' | 'orderbook'>('transactions');
+  const [view, setView] = useState<'transactions' | 'orderbook'>('orderbook');
   const [filter, setFilter] = useState<'all' | 'buy' | 'sell'>('all');
   const [sortBy, setSortBy] = useState<'timestamp' | 'price' | 'amount'>('timestamp');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -46,17 +47,13 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
     }
   }, [metricId]);
 
-  // 🚀 Use Supabase real-time subscriptions for instant database updates
-  const {
-    orders: dbOrders,
-    isLoading,
-    error,
-    isConnected,
-    refetch
-  } = useSupabaseRealtimeOrders({
-    metricId,
-    autoRefresh: true
-  });
+  // On-chain OrderBook data (HyperLiquid testnet Aluminum market)
+  const dbOrders: any[] = [];
+  const { data: obData, isLoading: obLoading, error: obError } = useOrderBookContractData('ALU-USD', { refreshInterval: 5000 });
+  const isLoading = view === 'orderbook' ? obLoading : false;
+  const error = view === 'orderbook' ? (obError ? ((obError as any).message || String(obError)) : null) : null;
+  const isConnected = !!obData?.orderBookAddress;
+  const refetch = () => {};
 
   // Only log connection status changes, not every render
   const prevIsConnected = React.useRef(isConnected);
@@ -93,11 +90,9 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
     }));
   }, [dbOrders]);
 
-  // 🎬 Animation management for smooth order transitions
-  const { isOrderNew, getAnimationDelay } = useOrderAnimations(dbOrders || [], {
-    staggerDelay: 75, // 75ms between each new order animation for clean cascading
-    newOrderWindow: 5000 // Consider orders "new" if created within 5 seconds
-  });
+  // Legacy animation hook removed - using placeholder values
+  const isOrderNew = () => false;
+  const getAnimationDelay = () => 0;
 
   // Only log state changes when significant changes occur
   const prevState = React.useRef<{ ordersCount: number; isLoading: boolean; error: string | null }>({ 
@@ -148,20 +143,57 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
     return filtered;
   }, [orders]);
 
-  // Separate bids and asks for traditional orderbook display
+  // Separate bids and asks for traditional orderbook display (prefer on-chain depth when available)
   const { bids, asks } = useMemo(() => {
+    if (obData?.depth) {
+      const nowIso = new Date().toISOString();
+      const bidOrders = (obData.depth.bidPrices || []).map((price, i) => ({
+        order_id: `BID-${price}-${i}`,
+        side: 'BUY',
+        order_status: 'PENDING',
+        price,
+        quantity: (obData.depth?.bidAmounts?.[i] ?? 0),
+        filled_quantity: 0,
+        created_at: nowIso,
+        trader_wallet_address: '0x0000000000000000000000000000000000000000'
+      })).sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest bid first
+
+      const askOrders = (obData.depth.askPrices || []).map((price, i) => ({
+        order_id: `ASK-${price}-${i}`,
+        side: 'SELL',
+        order_status: 'PENDING',
+        price,
+        quantity: (obData.depth?.askAmounts?.[i] ?? 0),
+        filled_quantity: 0,
+        created_at: nowIso,
+        trader_wallet_address: '0x0000000000000000000000000000000000000000'
+      })).sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest ask first for descending display
+
+      console.log('🔍 [ORDERBOOK][ONCHAIN] Bids:', bidOrders.length, 'Asks:', askOrders.length);
+      return { bids: bidOrders, asks: askOrders };
+    }
+
+    // Fallback to pending orders from DB (if any)
     const buyOrders = pendingOrders
       .filter(order => order.side.toLowerCase() === 'buy')
-      .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest price first for bids
-    
+      .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest bid first
     const sellOrders = pendingOrders
       .filter(order => order.side.toLowerCase() === 'sell')
-      .sort((a, b) => (a.price || 0) - (b.price || 0)); // Lowest price first for asks
-    
-    console.log('🔍 [ORDERBOOK] Bids:', buyOrders.length, 'Asks:', sellOrders.length);
-    
+      .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest ask first for descending display
+    console.log('🔍 [ORDERBOOK][DB] Bids:', buyOrders.length, 'Asks:', sellOrders.length);
     return { bids: buyOrders, asks: sellOrders };
-  }, [pendingOrders]);
+  }, [obData?.depth, pendingOrders]);
+
+  // Best Bid/Ask derived from depth with on-chain fallback values
+  const bestBidPrice = useMemo(() => {
+    if (bids && bids.length > 0 && bids[0].price) return bids[0].price;
+    return obData?.bestBid || 0;
+  }, [bids, obData?.bestBid]);
+
+  const bestAskPrice = useMemo(() => {
+    if (asks && asks.length > 0 && asks[asks.length - 1].price) return asks[asks.length - 1].price;
+    return obData?.bestAsk || 0;
+  }, [asks, obData?.bestAsk]);
 
   // Filtered and sorted data based on current view
   const filteredAndSortedData = useMemo(() => {
@@ -261,16 +293,6 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
       <div className="mb-2">
         <div className="flex bg-[#1A1A1A] rounded p-0.5 w-full">
           <button
-            onClick={() => setView('transactions')}
-            className={`flex-1 py-1 px-1.5 rounded text-[10px] font-medium transition-colors ${
-              view === 'transactions'
-                ? 'bg-[#333333] text-white'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            TRADES
-          </button>
-          <button
             onClick={() => setView('orderbook')}
             className={`flex-1 py-1 px-1.5 rounded text-[10px] font-medium transition-colors ${
               view === 'orderbook'
@@ -280,6 +302,16 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
           >
             BOOK
           </button>
+          <button
+            onClick={() => setView('transactions')}
+            className={`flex-1 py-1 px-1.5 rounded text-[10px] font-medium transition-colors ${
+              view === 'transactions'
+                ? 'bg-[#333333] text-white'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            TRADES
+          </button>
         </div>
 
       </div>
@@ -287,11 +319,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
       {/* Filters - Ultra Compact */}
       <div className="mb-2">
         {/* Loading/Error States */}
-        {isLoading ? (
-          <div className="text-[10px] text-gray-500 text-center py-2">
-            Loading {view === 'orderbook' ? 'pending orders' : 'trades'}...
-          </div>
-        ) : error ? (
+        {error ? (
           <div className="text-[10px] text-red-500 text-center py-2">
             {error}
           </div>
@@ -336,15 +364,15 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
       {/* Table Headers */}
       <div className="mb-1">
         {view === 'orderbook' ? (
-          <div className="grid grid-cols-3 gap-1 text-[10px] font-medium text-gray-500 px-1">
-            <div>SIZE</div>
-            <div className="text-center">PRICE</div>
-            <div className="text-right">TOTAL</div>
+          <div className="grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 text-[10px] font-medium text-gray-500 px-1">
+            <div className="flex items-center justify-center">PRICE</div>
+            <div className="flex items-center justify-center">SIZE (UNITS)</div>
+            <div className="flex items-center justify-center">TOTAL (USD)</div>
           </div>
         ) : (
-          <div className="grid grid-cols-4 gap-1 text-[10px] font-medium text-gray-500 px-1">
+          <div className="grid grid-cols-[0.5fr_1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-500 px-1">
             <div>SIDE</div>
-            <div className="text-right">SIZE</div>
+            <div className="text-right">SIZE (UNITS)</div>
             <div className="text-right">PRICE</div>
             <div className="text-right">TIME</div>
           </div>
@@ -369,18 +397,20 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                   </div>
                 ) : (
                   <div className="space-y-0">
-                    {asks.slice(0, 10).map((order, index) => {
+                    {(() => { let cumulativeAskUsd = 0; return asks.slice(0, 10).map((order, index) => {
                       const remainingQuantity = order.quantity - order.filled_quantity;
                       const maxQuantity = Math.max(...asks.map(o => o.quantity - o.filled_quantity));
                       const fillPercentage = maxQuantity > 0 ? (remainingQuantity / maxQuantity) * 100 : 0;
+                      const lineUsd = (remainingQuantity * (order.price || 0));
+                      // Removed cumulativeAskUsd += lineUsd; to avoid cumulative total
                       
                       return (
                         <AnimatedOrderRow
                           key={order.order_id}
                           orderId={order.order_id}
                           side="SELL"
-                          isNew={isOrderNew(order.order_id)}
-                          animationDelay={getAnimationDelay(order.order_id)}
+                          isNew={false}
+                          animationDelay={0}
                           className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
                         >
                           {/* Background depth bar */}
@@ -390,26 +420,20 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                           />
                           
                           {/* Content */}
-                          <div className="relative grid grid-cols-3 gap-1 py-0.5 px-1 text-[11px]">
-                            <div className="text-left text-gray-300 font-mono">
-                              <OrderBookAnimatedQuantity
-                                orderId={order.order_id}
-                                quantity={remainingQuantity}
-                                side="SELL"
-                                isNewOrder={isOrderNew(order.order_id)}
-                                className="text-gray-300"
-                              />
+                          <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
+                            <div className="flex items-center justify-center text-[#FF4747] font-mono font-medium tabular-nums">
+                              ${order.price !== undefined && order.price !== null ? order.price.toFixed(4) : '0.0000'}
                             </div>
-                            <div className="text-center text-[#FF4747] font-mono font-medium">
-                              ${order.price?.toFixed(2) || '0.00'}
+                            <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
+                              {remainingQuantity.toFixed(0)}
                             </div>
-                            <div className="text-right text-gray-400 font-mono text-[10px]">
-                              {(remainingQuantity * (order.price || 0)).toFixed(0)}
+                            <div className="flex items-center justify-center text-gray-400 font-mono text-[10px] tabular-nums">
+                              {formatCurrency(lineUsd)}
                             </div>
                           </div>
                         </AnimatedOrderRow>
                       );
-                    })}
+                    }) })()}
                   </div>
                 )}
               </div>
@@ -417,12 +441,12 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
 
             {/* Spread Display */}
             <div className="py-1 px-1 bg-[#1A1A1A] border-y border-gray-700">
-              <div className="text-[10px] text-gray-400 text-center font-mono">
-                {asks.length > 0 && bids.length > 0 && asks[0].price && bids[0].price ? (
+              <div className="text-[10px] text-gray-400 text-center font-mono tabular-nums">
+                {bestAskPrice > 0 && bestBidPrice > 0 ? (
                   <>
-                    Spread: ${(asks[0].price - bids[0].price).toFixed(2)}
+                    Spread: ${((bestAskPrice - bestBidPrice)).toFixed(4)}
                     <span className="text-[9px] text-gray-500 ml-2">
-                      ({(((asks[0].price - bids[0].price) / bids[0].price) * 100).toFixed(2)}%)
+                      ({((((bestAskPrice - bestBidPrice) / (bestBidPrice || 1)) * 100).toFixed(2))}%)
                     </span>
                   </>
                 ) : (
@@ -444,18 +468,20 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                   </div>
                 ) : (
                   <div className="space-y-0">
-                    {bids.slice(0, 10).map((order, index) => {
+                    {(() => { let cumulativeBidUsd = 0; return bids.slice(0, 10).map((order, index) => {
                       const remainingQuantity = order.quantity - order.filled_quantity;
                       const maxQuantity = Math.max(...bids.map(o => o.quantity - o.filled_quantity));
                       const fillPercentage = maxQuantity > 0 ? (remainingQuantity / maxQuantity) * 100 : 0;
+                      const lineUsd = (remainingQuantity * (order.price || 0));
+                      // Removed cumulativeBidUsd += lineUsd; to avoid cumulative total
                       
                       return (
                         <AnimatedOrderRow
                           key={order.order_id}
                           orderId={order.order_id}
                           side="BUY"
-                          isNew={isOrderNew(order.order_id)}
-                          animationDelay={getAnimationDelay(order.order_id)}
+                          isNew={false}
+                          animationDelay={0}
                           className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
                         >
                           {/* Background depth bar */}
@@ -465,26 +491,20 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                           />
                           
                           {/* Content */}
-                          <div className="relative grid grid-cols-3 gap-1 py-0.5 px-1 text-[11px]">
-                            <div className="text-left text-gray-300 font-mono">
-                              <OrderBookAnimatedQuantity
-                                orderId={order.order_id}
-                                quantity={remainingQuantity}
-                                side="BUY"
-                                isNewOrder={isOrderNew(order.order_id)}
-                                className="text-gray-300"
-                              />
+                          <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
+                            <div className="flex items-center justify-center text-[#00D084] font-mono font-medium tabular-nums">
+                              ${order.price !== undefined && order.price !== null ? order.price.toFixed(4) : '0.0000'}
                             </div>
-                            <div className="text-center text-[#00D084] font-mono font-medium">
-                              ${order.price?.toFixed(2) || '0.00'}
+                            <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
+                              {remainingQuantity.toFixed(0)}
                             </div>
-                            <div className="text-right text-gray-400 font-mono text-[10px]">
-                              {(remainingQuantity * (order.price || 0)).toFixed(0)}
+                            <div className="flex items-center justify-center text-gray-400 font-mono text-[10px] tabular-nums">
+                              {formatCurrency(lineUsd)}
                             </div>
                           </div>
                         </AnimatedOrderRow>
                       );
-                    })}
+                    }) })()}
                   </div>
                 )}
               </div>
@@ -514,8 +534,8 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                       key={order.order_id}
                       orderId={order.order_id}
                       side={order.side.toUpperCase() as 'BUY' | 'SELL'}
-                      isNew={isOrderNew(order.order_id)}
-                      animationDelay={getAnimationDelay(order.order_id)}
+                      isNew={false}
+                      animationDelay={0}
                       className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
                     >
                       {/* Background depth bar */}
@@ -527,7 +547,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                       />
                       
                       {/* Content */}
-                      <div className="relative grid grid-cols-4 gap-1 py-0.5 px-1 text-[11px]">
+                      <div className="relative grid grid-cols-[0.5fr_1fr_1fr_0.8fr] gap-1 py-0.5 px-1 text-[11px]">
                         <div className="flex items-center">
                           <span className={`px-1 py-0.5 rounded text-[10px] font-medium ${
                             order.side.toLowerCase() === 'buy' 
@@ -537,21 +557,20 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                             {order.side.toLowerCase() === 'buy' ? 'B' : 'S'}
                           </span>
                         </div>
-                        <div className="text-right text-gray-300 font-mono flex items-center justify-end">
+                        <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums">
                           <OrderBookAnimatedQuantity
                             orderId={order.order_id}
                             quantity={order.quantity}
                             side={order.side.toUpperCase() as 'BUY' | 'SELL'}
-                            isNewOrder={isOrderNew(order.order_id)}
+                            isNewOrder={false}
                             className="text-gray-300"
+                            formatQuantity={(q) => q.toFixed(4)}
                           />
                         </div>
-                        <div className={`text-right font-mono font-medium flex items-center justify-end ${
-                                                      order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'
-                        }`}>
-                          {order.price ? `$${order.price.toFixed(2)}` : 'MARKET'}
+                        <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
+                          {order.price ? `$${order.price.toFixed(4)}` : 'MARKET'}
                         </div>
-                        <div className="text-right text-gray-400 font-mono text-[10px] flex items-center justify-end">
+                        <div className="text-right text-gray-400 font-mono text-[10px] flex items-center justify-end tabular-nums">
                           {formatTime(order.created_at)}
                         </div>
                       </div>
@@ -563,25 +582,6 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
           </div>
         )}
       </div>
-
-
-
-
-
-      {/* Hidden Scrollbar Styles */}
-      <style jsx>{`
-        /* Hide scrollbars for all scrollable areas */
-        :global(.transaction-table-container::-webkit-scrollbar),
-        :global(.orders-table-scroll::-webkit-scrollbar) {
-          display: none;
-        }
-        
-        :global(.transaction-table-container),
-        :global(.orders-table-scroll) {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-      `}</style>
     </div>
   );
 }

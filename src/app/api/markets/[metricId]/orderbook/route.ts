@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ServiceManager } from '@/services/ServiceManager';
+// ServiceManager removed; using database snapshot or return 410 if not available
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { z } from 'zod';
 
@@ -56,22 +56,13 @@ export async function GET(
       );
     }
 
-    // Get order book from matching engine
-    const serviceManager = ServiceManager.getInstance();
-    const matchingEngine = serviceManager.getService('matchingEngine');
-    
-    if (!matchingEngine) {
-      return NextResponse.json(
-        { error: 'Matching engine not available' },
-        { status: 503 }
-      );
-    }
-
-    // Fetch real-time order book
-    const orderBook = await matchingEngine.getOrderBook(metricId, {
-      depth: queryParams.depth,
-      aggregation: queryParams.aggregation
-    });
+    // Offchain matching engine removed; use empty order book until onchain endpoint is wired
+    const orderBook = {
+      bids: [],
+      asks: [],
+      timestamp: Date.now(),
+      lastTradeTime: null
+    } as any;
 
     if (!orderBook) {
       return NextResponse.json(

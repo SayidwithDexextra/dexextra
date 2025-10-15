@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeServerServices, getInitializationStatus, forceReinitialize } from '@/lib/server-startup';
+// Server startup utilities removed
 
 /**
  * POST /api/server/startup - Initialize server services
@@ -9,20 +9,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const { force } = body as { force?: boolean };
 
-    if (force) {
-      console.log('🔄 Force re-initializing server services...');
-      forceReinitialize();
-    }
-
-    await initializeServerServices();
-    const status = getInitializationStatus();
-
     return NextResponse.json({
-      success: true,
-      message: 'Server services initialized successfully',
-      status,
+      error: 'Server startup utilities removed (on-chain only).',
       timestamp: new Date().toISOString()
-    });
+    }, { status: 410 });
 
   } catch (error) {
     console.error('❌ Server startup failed:', error);
@@ -41,11 +31,9 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const status = getInitializationStatus();
-
     return NextResponse.json({
       success: true,
-      status,
+      status: { isInitialized: true, services: { settlementProcessor: false } },
       timestamp: new Date().toISOString()
     });
 

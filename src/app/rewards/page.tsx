@@ -1,6 +1,7 @@
 'use client'
 
 import { Faucet } from '@/components/Faucet'
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 
 export default function RewardsPage() {
   return (
@@ -32,8 +33,8 @@ export default function RewardsPage() {
             </div>
             <div className="w-1.5 h-1.5 rounded-full bg-green-400"></div>
           </div>
-          <div className="text-[10px] text-[#808080] mb-1">Polygon Mainnet • Live</div>
-          <div className="text-[9px] text-[#606060]">MockUSDC: 0xA225...b289 • Verified</div>
+          <div className="text-[10px] text-[#808080] mb-1">HyperLiquid Testnet • Live</div>
+          <div className="text-[9px] text-[#606060]">MockUSDC: {`${(CONTRACT_ADDRESSES as any).mockUSDC?.slice(0,6)}...${(CONTRACT_ADDRESSES as any).mockUSDC?.slice(-4)}`} • Verified</div>
         </div>
 
         {/* HyperLiquid Features Card */}
@@ -51,10 +52,7 @@ export default function RewardsPage() {
               <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
               <span className="text-[10px] text-[#808080]">Optimized order matching</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
-              <span className="text-[10px] text-[#808080]">VaultRouter collateral system</span>
-            </div>
+
             <div className="flex items-center gap-2">
               <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
               <span className="text-[10px] text-[#808080]">Unlimited MockUSDC claiming</span>
@@ -103,11 +101,11 @@ export default function RewardsPage() {
                 <div className="flex flex-col gap-1 text-[9px]">
                   <div className="flex items-center gap-2">
                     <div className="w-1 h-1 rounded-full bg-green-400 flex-shrink-0"></div>
-                    <span className="text-[#808080]">HyperLiquid deployment on Polygon • Live environment</span>
+                    <span className="text-[#808080]">HyperLiquid Testnet deployment • Live environment</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-1 h-1 rounded-full bg-blue-400 flex-shrink-0"></div>
-                    <span className="text-[#606060]">MockUSDC: 0xA2258Ff3aC4f5c77ca17562238164a0205A5b289</span>
+                    <span className="text-[#606060]">MockUSDC: {(CONTRACT_ADDRESSES as any).mockUSDC}</span>
                   </div>
                 </div>
               </div>

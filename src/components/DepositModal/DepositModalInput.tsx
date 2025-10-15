@@ -534,14 +534,14 @@ export default function DepositModalInput({
                 fontWeight: 500,
                 marginBottom: '2px'
               }}>
-                Direct Vault Deposit
+                Direct CoreVault Deposit
               </div>
               <div style={{
                 fontSize: '11px',
                 color: '#b3b3b3',
                 lineHeight: 1.3
               }}>
-                Your {selectedToken.symbol} will be deposited directly to the Dexetra vault as trading collateral.
+                Your {selectedToken.symbol} will be deposited directly to the Dexetra CoreVault as trading collateral.
               </div>
             </div>
           </div>

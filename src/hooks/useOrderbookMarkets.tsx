@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
+// OrderbookMarket type based on the API response structure
 export interface OrderbookMarket {
   id: string;
   metric_id: string;
@@ -12,151 +13,130 @@ export interface OrderbookMarket {
   tick_size: number;
   settlement_date: string;
   trading_end_date: string;
-  market_address?: string;
-  factory_address?: string;
-  total_volume?: number;
-  total_trades?: number;
+  market_address: string | null;
+  factory_address: string | null;
+  total_volume: number;
+  total_trades: number;
   open_interest_long?: number;
   open_interest_short?: number;
-  last_trade_price?: number;
-  market_status: 'PENDING' | 'DEPLOYING' | 'ACTIVE' | 'TRADING_ENDED' | 'SETTLEMENT_REQUESTED' | 'SETTLED' | 'EXPIRED' | 'PAUSED' | 'ERROR';
+  last_trade_price: number | null;
+  market_status: string;
   creator_wallet_address: string;
-  banner_image_url?: string;
-  icon_image_url?: string;
+  banner_image_url: string | null;
+  icon_image_url: string | null;
   created_at: string;
-  deployed_at?: string;
+  deployed_at: string | null;
   chain_id: number;
-  network?: string;
 }
 
 interface UseOrderbookMarketsOptions {
   status?: string;
   category?: string;
+  creator?: string;
+  search?: string;
   limit?: number;
+  offset?: number;
   autoRefresh?: boolean;
-  refreshInterval?: number; // milliseconds
+  refreshInterval?: number;
 }
 
-interface UseOrderbookMarketsReturn {
+interface UseOrderbookMarketsResult {
   markets: OrderbookMarket[];
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
-  total: number;
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+  };
 }
 
-export function useOrderbookMarkets(options: UseOrderbookMarketsOptions = {}): UseOrderbookMarketsReturn {
+export function useOrderbookMarkets(options: UseOrderbookMarketsOptions = {}): UseOrderbookMarketsResult {
   const {
-    status = 'ACTIVE', // Default to active markets only
+    status,
     category,
+    creator,
+    search,
     limit = 50,
-    autoRefresh = true,
-    refreshInterval = 60000 // 1 minute default
+    offset = 0,
+    autoRefresh = false,
+    refreshInterval = 60000, // Default 1 minute
   } = options;
 
   const [markets, setMarkets] = useState<OrderbookMarket[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [total, setTotal] = useState(0);
+  const [pagination, setPagination] = useState({
+    limit,
+    offset,
+    total: 0
+  });
 
-  const fetchMarkets = useCallback(async () => {
+  const fetchMarkets = async () => {
     try {
-      setError(null);
+      setIsLoading(true);
       
-      // Build query parameters
-      const params = new URLSearchParams({
-        limit: limit.toString(),
-        offset: '0'
-      });
+      // Build query params
+      const params = new URLSearchParams();
+      if (status) params.append('status', status);
+      if (category) params.append('category', category);
+      if (creator) params.append('creator', creator);
+      if (search) params.append('search', search);
+      params.append('limit', limit.toString());
+      params.append('offset', offset.toString());
       
-      if (status) {
-        params.append('status', status);
-      }
+      // Fetch data from API
+      const response = await fetch(`/api/orderbook-markets?${params.toString()}`);
       
-      if (category) {
-        params.append('category', category);
-      }
-
-      console.log('🔍 Fetching orderbook markets with params:', { status, category, limit });
-
-      const response = await fetch(`/api/orderbook-markets?${params.toString()}`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-      });
-
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error('❌ API Response Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText
-        });
-        
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = { error: errorText };
-        }
-        
-        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to fetch markets');
       }
-
+      
       const data = await response.json();
       
       if (!data.success) {
-        throw new Error(data.error || 'API request failed');
+        throw new Error(data.error || 'Unknown error fetching markets');
       }
-
-      console.log(`✅ Successfully fetched ${data.markets?.length || 0} orderbook markets`);
       
       setMarkets(data.markets || []);
-      setTotal(data.pagination?.total || data.markets?.length || 0);
-      
+      setPagination({
+        limit,
+        offset,
+        total: data.pagination?.total || data.markets?.length || 0
+      });
+      setError(null);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch orderbook markets';
-      console.error('❌ Error fetching orderbook markets:', errorMessage);
-      setError(errorMessage);
-      
-      // Don't clear existing markets on error, just show the error
-      // This allows for better UX when network is temporarily unavailable
+      console.error('Error fetching orderbook markets:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch markets');
     } finally {
       setIsLoading(false);
     }
-  }, [status, category, limit]);
+  };
 
   // Initial fetch
   useEffect(() => {
     fetchMarkets();
-  }, [fetchMarkets]);
+  }, [status, category, creator, search, limit, offset]);
 
-  // Auto-refresh setup
+  // Set up auto-refresh if enabled
   useEffect(() => {
     if (!autoRefresh) return;
-
-    const interval = setInterval(() => {
-      // Only auto-refresh if there's no error and we're not currently loading
-      if (!error && !isLoading) {
-        fetchMarkets();
-      }
+    
+    const intervalId = setInterval(() => {
+      fetchMarkets();
     }, refreshInterval);
-
-    return () => clearInterval(interval);
-  }, [autoRefresh, refreshInterval, fetchMarkets, error, isLoading]);
-
-  const refetch = useCallback(async () => {
-    setIsLoading(true);
-    await fetchMarkets();
-  }, [fetchMarkets]);
+    
+    // Clean up interval on unmount
+    return () => clearInterval(intervalId);
+  }, [autoRefresh, refreshInterval, status, category, creator, search, limit, offset]);
 
   return {
     markets,
     isLoading,
     error,
-    refetch,
-    total
+    refetch: fetchMarkets,
+    pagination
   };
 }

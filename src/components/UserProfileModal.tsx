@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Image from 'next/image'
+import { useWallet } from '@/hooks/useWallet'
+import { supabase } from '@/lib/supabase'
 
 // Check Icon Component
 const CheckIcon = () => (
@@ -52,9 +54,27 @@ export default function UserProfileModal({
   isConnected = true,
   profilePhotoUrl
 }: UserProfileModalProps) {
+  const { disconnect } = useWallet() as { disconnect?: () => Promise<void> | void }
   const [isVisible, setIsVisible] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
   const [imageError, setImageError] = useState(false)
+  
+  const handleLogout = useCallback(async () => {
+    try {
+      // Best-effort Supabase sign-out (if using auth)
+      try {
+        await supabase.auth.signOut()
+      } catch {
+        // ignore if auth not initialized/used
+      }
+      // Disconnect wallet context/state
+      if (typeof disconnect === 'function') {
+        await Promise.resolve(disconnect())
+      }
+    } finally {
+      onClose()
+    }
+  }, [disconnect, onClose])
   
   // Handle modal opening/closing with animation
   useEffect(() => {
@@ -256,10 +276,7 @@ export default function UserProfileModal({
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = 'transparent'
             }}
-            onClick={() => {
-              // Handle logout
-              onClose()
-            }}
+            onClick={handleLogout}
           >
             <div style={{ color: '#ef4444' }}>
               <LogoutIcon />

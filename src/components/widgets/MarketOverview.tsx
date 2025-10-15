@@ -3,11 +3,11 @@
 import React from 'react';
 import MiniChart from './MiniChart';
 import { marketCapChartData, tradingVolumeChartData } from './utils/mockData';
-import useMarketData from '@/hooks/useMarketData';
+import useMarketOverviewData from '@/hooks/useMarketOverviewData';
 import styles from './styles/Widget.module.css';
 
 const MarketOverview: React.FC = () => {
-  const { marketCap, marketCapChange, tradingVolume, isLoading, error } = useMarketData();
+  const { marketCap, marketCapChange, tradingVolume, isLoading, error } = useMarketOverviewData();
 
   // Determine if market cap change is positive or negative
   const isPositive = marketCapChange >= 0;

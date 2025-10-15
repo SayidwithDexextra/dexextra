@@ -412,8 +412,8 @@ const MarketWizard: React.FC<MarketWizardProps> = ({ onSuccess, onError }) => {
         // Enhanced metadata fields
         block_number: deploymentResult.blockNumber,
         gas_used: deploymentResult.gasUsed,
-        network: 'polygon',
-        chain_id: 137,
+        network: 'hyperliquid_testnet',
+        chain_id: 998,
         
         // Initial order configuration
         initial_order_enabled: formData.initialOrder.enabled,

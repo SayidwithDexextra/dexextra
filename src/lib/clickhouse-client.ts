@@ -1,10 +1,10 @@
 // src/lib/clickhouse-client.ts
 // Optimized ClickHouse client with dynamic aggregation
-// Architecture: vamm_ticks → ohlcv_1m → dynamic aggregation for higher timeframes
+// Architecture: market_ticks → ohlcv_1m → dynamic aggregation for higher timeframes
 
 import { createClient, ClickHouseClient } from '@clickhouse/client';
 
-export interface VammTick {
+export interface MarketTick {
   symbol: string;
   ts: Date;
   price: number;
@@ -54,13 +54,13 @@ const TIMEFRAME_MAP: Record<string, TimeframeConfig> = {
 export class ClickHouseDataPipeline {
   private client: ClickHouseClient;
   private database: string;
-  private tickBuffer: VammTick[] = [];
+  private tickBuffer: MarketTick[] = [];
   private flushInterval: NodeJS.Timeout | null = null;
   private readonly BUFFER_SIZE = 100;
   private readonly FLUSH_INTERVAL_MS = 5000; // 5 seconds
 
   constructor() {
-    this.database = process.env.CLICKHOUSE_DATABASE || 'vamm_analytics';
+    this.database = process.env.CLICKHOUSE_DATABASE || 'market_analytics';
     
     this.client = createClient({
       url: process.env.CLICKHOUSE_HOST,
@@ -85,7 +85,7 @@ export class ClickHouseDataPipeline {
   /**
    * Insert a single tick into the buffer
    */
-  async insertTick(tick: VammTick): Promise<void> {
+  async insertTick(tick: MarketTick): Promise<void> {
     this.tickBuffer.push(tick);
     
     if (this.tickBuffer.length >= this.BUFFER_SIZE) {
@@ -96,7 +96,7 @@ export class ClickHouseDataPipeline {
   /**
    * Insert multiple ticks at once
    */
-  async insertTicks(ticks: VammTick[]): Promise<void> {
+  async insertTicks(ticks: MarketTick[]): Promise<void> {
     this.tickBuffer.push(...ticks);
     
     if (this.tickBuffer.length >= this.BUFFER_SIZE) {
@@ -115,7 +115,7 @@ export class ClickHouseDataPipeline {
 
     try {
       await this.client.insert({
-        table: 'vamm_ticks',
+        table: 'market_ticks',
         values: ticksToFlush,
         format: 'JSONEachRow'
       });
@@ -147,7 +147,7 @@ export class ClickHouseDataPipeline {
     const baseTime = new Date(data.timestamp);
     const volumePerTick = data.volume / 4;
     
-    const ticks: VammTick[] = [
+    const ticks: MarketTick[] = [
       {
         symbol: data.symbol,
         ts: new Date(baseTime.getTime()),
@@ -351,7 +351,7 @@ export class ClickHouseDataPipeline {
             uniq(symbol) AS symbolCount,
             min(ts) AS oldestTick,
             max(ts) AS newestTick
-          FROM vamm_ticks
+          FROM market_ticks
         `,
         format: 'JSONEachRow'
       });
@@ -411,7 +411,7 @@ export class ClickHouseDataPipeline {
     try {
       // Verify base tables exist
       await this.client.query({
-        query: 'SELECT 1 FROM vamm_ticks LIMIT 1',
+        query: 'SELECT 1 FROM market_ticks LIMIT 1',
         format: 'JSONEachRow'
       });
 

@@ -10,7 +10,7 @@ import DepositModalReview from './DepositModalReview'
 import DepositModalStatus from './DepositModalStatus'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { useWalletPortfolio } from '@/hooks/useWalletPortfolio'
-import { useCentralVault } from '@/hooks/useCentralVault'
+import { useCoreVault } from '@/hooks/useCoreVault'
 import { NetworkWarningBanner } from '@/components/NetworkStatus'
 import { CONTRACTS } from '@/lib/contracts'
 
@@ -60,7 +60,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     error: vaultError,
     vaultAddress,
     mockUSDCAddress 
-  } = useCentralVault(walletAddress)
+  } = useCoreVault(walletAddress)
   
   // Extract totalValue from V2 summary (convert string to number for legacy compatibility)
   const totalValue = parseFloat(summary.totalValue) || 0
@@ -103,10 +103,11 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
 
   // Fetch live balances for all stablecoins from portfolio data
   const stablecoinAddresses = {
-    usdt: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', // USDT on Polygon
-    usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // USDC on Polygon  
-    dai: '0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063',   // DAI on Polygon
-    mockUsdc: CONTRACTS.MockUSDC.address   // MOCK_USDC on Polygon (from latest deployment)
+    // Note: Only MockUSDC is supported for direct deposits on HyperLiquid Testnet
+    usdt: '0x0000000000000000000000000000000000000000',
+    usdc: '0x0000000000000000000000000000000000000000',  
+    dai: '0x0000000000000000000000000000000000000000',
+    mockUsdc: CONTRACTS.MockUSDC.address
   }
   
   const findTokenByAddress = (address: string) => {
@@ -128,8 +129,8 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
       amount: usdtToken?.amount || '0.00 USDT',
       value: usdtToken?.value || '$0.00',
       icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//tether-usdt-logo.png',
-      networkIcon: 'https://cryptologos.cc/logos/polygon-matic-logo.png',
-      network: 'polygon',
+      networkIcon: undefined,
+      network: 'hyperliquid_testnet',
       contractAddress: stablecoinAddresses.usdt,
       decimals: usdtToken?.decimals || 6,
       isLowBalance: usdtToken?.isLowBalance || false
@@ -141,8 +142,8 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
       amount: usdcToken?.amount || '0.00 USDC',
       value: usdcToken?.value || '$0.00',
       icon: 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg',
-      networkIcon: 'https://cryptologos.cc/logos/polygon-matic-logo.png',
-      network: 'polygon',
+      networkIcon: undefined,
+      network: 'hyperliquid_testnet',
       contractAddress: stablecoinAddresses.usdc,
       decimals: usdcToken?.decimals || 6,
       isLowBalance: usdcToken?.isLowBalance || false
@@ -154,8 +155,8 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
       amount: daiToken?.amount || '0.00 DAI',
       value: daiToken?.value || '$0.00',
       icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//multi-collateral-dai-dai-logo.svg',
-      networkIcon: 'https://cryptologos.cc/logos/polygon-matic-logo.png',
-      network: 'polygon',
+      networkIcon: undefined,
+      network: 'hyperliquid_testnet',
       contractAddress: stablecoinAddresses.dai,
       decimals: daiToken?.decimals || 18,
       isLowBalance: daiToken?.isLowBalance || false
@@ -163,12 +164,12 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
     {
       id: 'dexetera_usdc_mock',
       symbol: 'MOCK_USDC',
-      name: mockUSDCToken?.name || 'HyperLiquid Mock USDC',
+      name: mockUSDCToken?.name || 'HyperLiquid MockUSDC',
       amount: mockUSDCToken?.amount || '0.00 MOCK_USDC',
       value: mockUSDCToken?.value || '$0.00',
       icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png',
-      networkIcon: 'https://cryptologos.cc/logos/polygon-matic-logo.png',
-      network: 'polygon',
+      networkIcon: undefined,
+      network: 'hyperliquid_testnet',
       contractAddress: stablecoinAddresses.mockUsdc,
       decimals: mockUSDCToken?.decimals || 6,
       isLowBalance: mockUSDCToken?.isLowBalance || false
@@ -326,8 +327,8 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
         hash: txHash,
         time: timeText,
         amount: depositAmount,
-        network: 'Polygon',
-        contract: 'VaultRouter'
+        network: 'HyperLiquid Testnet',
+        contract: 'CoreVault'
       })
       
     } catch (error) {
@@ -362,17 +363,17 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
   // Get selected token information
   const getSelectedTokenInfo = () => {
     if (!selectedToken) {
-      // Default POL token with actual icon
+      // Default placeholder token
       return { 
-        symbol: 'POL', 
+        symbol: 'HL', 
         icon: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTYiIGZpbGw9IiM4MjQ3RTUiLz4KPHBhdGggZD0iTTkgMTZMMTcgMjQgMjMgMTYgMTcgOCA5IDE2WiIgZmlsbD0id2hpdGUiLz4KPC9zdmc+Cg=='
       }
     }
     const token = tokens.find(t => t.id === selectedToken)
     if (!token) {
-      // Default POL token with actual icon
+      // Default placeholder token
       return { 
-        symbol: 'POL', 
+        symbol: 'HL', 
         icon: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMTYiIGZpbGw9IiM4MjQ3RTUiLz4KPHBhdGggZD0iTTkgMTZMMTcgMjQgMjMgMTYgMTcgOCA5IDE2WiIgZmlsbD0id2hpdGUiLz4KPC9zdmc+Cg=='
       }
     }
@@ -411,12 +412,12 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
   // Get appropriate target token based on deposit type
   const getTargetToken = () => {
     if (isDirectDeposit && selectedToken) {
-      // For MOCK_USDC direct deposits, target is the VaultRouter
+                // For MOCK_USDC direct deposits, target is the CoreVault
       return { 
         symbol: 'VAULT', 
         icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png',
-        name: 'HyperLiquid VaultRouter (Polygon)',
-        address: CONTRACTS.VaultRouter.address
+        name: 'HyperLiquid CoreVault',
+        address: CONTRACTS.CoreVault.address
       }
     } else {
       // Non-MOCK_USDC tokens are not supported for direct deposits
@@ -508,7 +509,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                 Deposit
                     </span>
                     <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                      To Vault
+                      To CoreVault
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
@@ -517,7 +518,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                     </span>
                 {isVaultConnected && vaultBalance && (
                       <span className="text-[9px] text-green-400">
-                    • VaultRouter: {parseFloat(vaultBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MockUSDC
+                    • CoreVault: {parseFloat(vaultBalance).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MockUSDC
                   </span>
                 )}
                   </div>
@@ -624,7 +625,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                   <div className="flex items-center gap-2 p-2">
                     <div className="w-1 h-1 rounded-full flex-shrink-0 bg-green-400" />
                     <span className="text-[10px] text-green-400">
-                      💡 Select MOCK_USDC for direct VaultRouter deposits
+                      💡 Select MOCK_USDC for direct CoreVault deposits
                     </span>
                   </div>
                 </div>
@@ -730,7 +731,7 @@ export default function DepositModal({ isOpen, onClose }: DepositModalProps) {
                           : 'bg-[#1A1A1A] border-[#333333] cursor-not-allowed opacity-50'
                 }`}
                 disabled={isConnecting || (selectedToken && !isVaultCollateralToken()) || (!selectedToken && isConnected)}
-              title={selectedToken && !isVaultCollateralToken() ? 'Only MOCK_USDC can be deposited to VaultRouter' : undefined}
+              title={selectedToken && !isVaultCollateralToken() ? 'Only MOCK_USDC can be deposited to CoreVault' : undefined}
             >
                 {/* Status Indicator */}
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${

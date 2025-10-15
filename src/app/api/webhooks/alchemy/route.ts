@@ -574,7 +574,7 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
       logIndex: logIndex,
       contractAddress: log.address.toLowerCase(),
       timestamp: new Date(), // Note: Could fetch actual block timestamp for accuracy
-      chainId: typeof env.CHAIN_ID === 'number' ? env.CHAIN_ID : parseInt(env.CHAIN_ID || '137'),
+      chainId: typeof env.CHAIN_ID === 'number' ? env.CHAIN_ID : parseInt(env.CHAIN_ID || '998'),
       eventType: parsedLog.name,
     };
 

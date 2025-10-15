@@ -41,11 +41,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           result = await checkDatabase();
           break;
         case 'serverless-matching':
-          result = await checkServerlessMatching();
-          break;
+          return NextResponse.json({
+            service: 'Serverless Matching',
+            status: 'unhealthy',
+            responseTime: 0,
+            error: 'Offchain serverless matching is disabled',
+            lastCheck: new Date().toISOString()
+          });
         case 'settlement-processor':
-          result = await checkSettlementProcessor();
-          break;
+          return NextResponse.json({
+            service: 'Settlement Processor',
+            status: 'unhealthy',
+            responseTime: 0,
+            error: 'Settlement processor removed (on-chain only)',
+            lastCheck: new Date().toISOString()
+          });
         default:
           return NextResponse.json(
             { error: `Unknown service: ${service}` },
@@ -59,8 +69,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Full system health check
     const checks = await Promise.allSettled([
       checkDatabase(),
-      checkServerlessMatching(),
-      checkSettlementProcessor()
+      // Offchain serverless matching removed
+      // Settlement processor removed
     ]);
 
     const services: HealthCheckResult[] = checks.map((check, index) => {
@@ -165,105 +175,4 @@ async function checkDatabase(): Promise<HealthCheckResult> {
   }
 }
 
-/**
- * Check Serverless Matching Engine health
- */
-async function checkServerlessMatching(): Promise<HealthCheckResult> {
-  const startTime = Date.now();
-  
-  try {
-    // Test that we can initialize the serverless matching engine
-    const { getServerlessMatchingEngine } = await import('@/lib/serverless-matching');
-    const matchingEngine = getServerlessMatchingEngine();
-
-    // Verify we have required environment variables
-    const requiredVars = [
-      'NEXT_PUBLIC_SUPABASE_URL',
-      'SUPABASE_SERVICE_ROLE_KEY'
-    ];
-
-    const missingVars = requiredVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-      throw new Error(`Missing environment variables: ${missingVars.join(', ')}`);
-    }
-
-    return {
-      service: 'Serverless Matching',
-      status: 'healthy',
-      responseTime: Date.now() - startTime,
-      details: {
-        initialization: 'successful',
-        environment: 'configured'
-      },
-      lastCheck: new Date().toISOString()
-    };
-
-  } catch (error) {
-    return {
-      service: 'Serverless Matching',
-      status: 'unhealthy',
-      responseTime: Date.now() - startTime,
-      error: (error as Error).message,
-      lastCheck: new Date().toISOString()
-    };
-  }
-}
-
-/**
- * Check Settlement Processor health
- */
-async function checkSettlementProcessor(): Promise<HealthCheckResult> {
-  const startTime = Date.now();
-  
-  try {
-    // Import and check settlement processor status
-    const { settlementProcessor } = await import('@/lib/settlement-processor');
-    const status = settlementProcessor.getStatus();
-
-    // Verify required environment variables
-    const requiredVars = [
-      'NEXT_PUBLIC_SUPABASE_URL',
-      'SUPABASE_SERVICE_ROLE_KEY',
-      'SETTLEMENT_PRIVATE_KEY'
-    ];
-
-    const missingVars = requiredVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-      return {
-        service: 'Settlement Processor',
-        status: 'degraded',
-        responseTime: Date.now() - startTime,
-        error: `Missing environment variables: ${missingVars.join(', ')}`,
-        details: {
-          isRunning: status.isRunning,
-          isProcessing: status.isProcessing,
-          missingVars
-        },
-        lastCheck: new Date().toISOString()
-      };
-    }
-
-    return {
-      service: 'Settlement Processor',
-      status: status.isRunning ? 'healthy' : 'degraded',
-      responseTime: Date.now() - startTime,
-      details: {
-        isRunning: status.isRunning,
-        isProcessing: status.isProcessing,
-        environment: 'configured'
-      },
-      lastCheck: new Date().toISOString()
-    };
-
-  } catch (error) {
-    return {
-      service: 'Settlement Processor',
-      status: 'unhealthy',
-      responseTime: Date.now() - startTime,
-      error: (error as Error).message,
-      lastCheck: new Date().toISOString()
-    };
-  }
-}
+// Removed serverless matching and settlement processor health checks (on-chain only system)
