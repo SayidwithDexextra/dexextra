@@ -287,9 +287,17 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
                 if (hydrated.length > 0) break; // Stop if we found orders
               }
             }
-          } catch (e) {
-            console.error('[useOrderBook] Failed to fetch user order IDs', e);
-            setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
+          } catch (e: any) {
+            const msg = e?.message || '';
+            const code = e?.code || '';
+            const isMissingSelector = msg.includes('missing revert data') || code === 'CALL_EXCEPTION';
+            if (isMissingSelector) {
+              console.warn('[useOrderBook] getUserOrders not available on this OrderBook (facet missing). Falling back.', e);
+              // Proceed to fallbacks below without setting a hard error
+            } else {
+              console.error('[useOrderBook] Failed to fetch user order IDs', e);
+              setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
+            }
           }
         }
 
@@ -349,62 +357,76 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     let unsubscribeOrderCancelled: (() => void) | null = null;
 
     if (contracts && walletAddress) {
-      try {
-        // Event listener for new order placement
-        unsubscribeOrderPlaced = createPublicClient({
-          transport: http(CHAIN_CONFIG.rpcUrl),
-        }).watchContractEvent({
-          address: contracts.orderBookAddress,
-          abi: OrderBookEventABI as any,
-          eventName: 'OrderPlaced',
-          args: { trader: walletAddress },
-          onLogs: (logs: any[]) => {
-            console.log('[useOrderBook] OrderPlaced event detected', logs);
-            fetchMarketData(); // Refresh orders on event
-          },
-          onError: (error: Error) => {
-            console.error('[useOrderBook] Error in OrderPlaced event listener', error);
-          }
-        });
+      const setupEventWatchers = async () => {
+        try {
+          const eventClient = createPublicClient({ transport: http(CHAIN_CONFIG.rpcUrl) });
+          // Start from latest block to avoid large eth_getLogs ranges on free-tier RPC
+          let latestBlock: bigint | undefined = undefined;
+          try {
+            latestBlock = await eventClient.getBlockNumber();
+          } catch {}
 
-        // Event listener for order filled
-        unsubscribeOrderFilled = createPublicClient({
-          transport: http(CHAIN_CONFIG.rpcUrl),
-        }).watchContractEvent({
-          address: contracts.orderBookAddress,
-          abi: OrderBookEventABI as any,
-          eventName: 'OrderFilled',
-          args: { trader: walletAddress },
-          onLogs: (logs: any[]) => {
-            console.log('[useOrderBook] OrderFilled event detected', logs);
-            fetchMarketData(); // Refresh orders on event
-          },
-          onError: (error: Error) => {
-            console.error('[useOrderBook] Error in OrderFilled event listener', error);
-          }
-        });
+          // Event listener for new order placement
+          unsubscribeOrderPlaced = eventClient.watchContractEvent({
+            address: contracts.orderBookAddress,
+            abi: OrderBookEventABI as any,
+            eventName: 'OrderPlaced',
+            args: { trader: walletAddress },
+            fromBlock: latestBlock,
+            poll: true,
+            pollingInterval: 5_000,
+            onLogs: (logs: any[]) => {
+              console.log('[useOrderBook] OrderPlaced event detected', logs);
+              fetchMarketData(); // Refresh orders on event
+            },
+            onError: (error: Error) => {
+              console.error('[useOrderBook] Error in OrderPlaced event listener', error);
+            }
+          });
 
-        // Event listener for order cancellation
-        unsubscribeOrderCancelled = createPublicClient({
-          transport: http(CHAIN_CONFIG.rpcUrl),
-        }).watchContractEvent({
-          address: contracts.orderBookAddress,
-          abi: OrderBookEventABI as any,
-          eventName: 'OrderCancelled',
-          args: { trader: walletAddress },
-          onLogs: (logs: any[]) => {
-            console.log('[useOrderBook] OrderCancelled event detected', logs);
-            fetchMarketData(); // Refresh orders on event
-          },
-          onError: (error: Error) => {
-            console.error('[useOrderBook] Error in OrderCancelled event listener', error);
-          }
-        });
+          // Event listener for order filled
+          unsubscribeOrderFilled = eventClient.watchContractEvent({
+            address: contracts.orderBookAddress,
+            abi: OrderBookEventABI as any,
+            eventName: 'OrderFilled',
+            args: { trader: walletAddress },
+            fromBlock: latestBlock,
+            poll: true,
+            pollingInterval: 5_000,
+            onLogs: (logs: any[]) => {
+              console.log('[useOrderBook] OrderFilled event detected', logs);
+              fetchMarketData(); // Refresh orders on event
+            },
+            onError: (error: Error) => {
+              console.error('[useOrderBook] Error in OrderFilled event listener', error);
+            }
+          });
 
-        console.log('[useOrderBook] Event listeners set up for real-time order updates');
-      } catch (error) {
-        console.error('[useOrderBook] Failed to set up event listeners', error);
-      }
+          // Event listener for order cancellation
+          unsubscribeOrderCancelled = eventClient.watchContractEvent({
+            address: contracts.orderBookAddress,
+            abi: OrderBookEventABI as any,
+            eventName: 'OrderCancelled',
+            args: { trader: walletAddress },
+            fromBlock: latestBlock,
+            poll: true,
+            pollingInterval: 5_000,
+            onLogs: (logs: any[]) => {
+              console.log('[useOrderBook] OrderCancelled event detected', logs);
+              fetchMarketData(); // Refresh orders on event
+            },
+            onError: (error: Error) => {
+              console.error('[useOrderBook] Error in OrderCancelled event listener', error);
+            }
+          });
+
+          console.log('[useOrderBook] Event listeners set up for real-time order updates from block', latestBlock?.toString() || 'latest');
+        } catch (error) {
+          console.error('[useOrderBook] Failed to set up event listeners', error);
+        }
+      };
+
+      setupEventWatchers();
     }
 
     return () => {

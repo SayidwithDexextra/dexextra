@@ -1,4 +1,4 @@
-import { Address, formatUnits } from 'viem';
+import { Address, formatUnits, parseAbi } from 'viem';
 import { publicClient } from './viemClient';
 import { CONTRACT_ADDRESSES, ORDER_ROUTER_ABI, OrderType, OrderSide, OrderStatus, TimeInForce } from './contractConfig';
 import { CONTRACT_ABIS } from './contracts';
@@ -11,11 +11,20 @@ export class OrderService {
   private client = publicClient;
   private addressCache = new Map<string, { address: Address; timestamp: number }>();
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+  private readonly ORDERBOOK_ABI = parseAbi([
+    // Minimal VIEM-compatible ABI subset required by this service
+    'function getUserOrders(address user) external view returns (uint256[] orderIds)',
+    'function getOrder(uint256 orderId) external view returns (uint256 orderId_, address trader, uint256 price, uint256 amount, bool isBuy, uint256 timestamp, uint256 nextOrderId, uint256 marginRequired, bool isMarginOrder)',
+    'function getOrderBookDepth(uint256 levels) external view returns (uint256[] bidPrices, uint256[] bidAmounts, uint256[] askPrices, uint256[] askAmounts)',
+    'function bestBid() external view returns (uint256)',
+    'function bestAsk() external view returns (uint256)',
+    'function getBestPrices() external view returns (uint256 bidPrice, uint256 askPrice)'
+  ] as const);
 
   /**
    * Dynamically resolve OrderBook contract address for a given metricId with caching
    */
-  private async resolveOrderBookAddress(metricId?: string): Promise<Address> {
+  private resolveOrderBookAddress(metricId?: string): Address {
     if (!metricId) {
       console.log('⚠️ No metricId provided, using aluminum OrderBook as fallback');
       return CONTRACT_ADDRESSES.aluminumOrderBook;
@@ -28,37 +37,17 @@ export class OrderService {
       return cached.address;
     }
 
-    try {
-      console.log('🔍 OrderService: Resolving OrderBook address for metric_id:', metricId);
-      
-      const response = await fetch(`/api/orderbook-markets/${encodeURIComponent(metricId)}`);
-      const data = await response.json() as { 
-        success: boolean; 
-        error?: string; 
-        market?: { market_address?: string } 
-      };
-      
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || `Failed to fetch market data for ${metricId}`);
-      }
-      
-      if (!data.market?.market_address) {
-        throw new Error(`No OrderBook address found for market ${metricId}`);
-      }
-      
-      const address = data.market.market_address as Address;
-      console.log('✅ OrderService: Resolved OrderBook address:', { metricId, address });
-      
-      // Cache the resolved address
-      this.addressCache.set(metricId, { address, timestamp: Date.now() });
-      
-      return address;
-    } catch (error) {
-      console.error('❌ OrderService: Failed to resolve OrderBook address:', error);
-      // Fallback to aluminum OrderBook if resolution fails
-      console.log('⚠️ OrderService: Falling back to aluminum OrderBook as default');
-      return CONTRACT_ADDRESSES.aluminumOrderBook;
+    // Lookup in hardcoded MARKET_INFO config
+    const marketInfo = CONTRACT_ADDRESSES.MARKET_INFO[metricId];
+    const address = marketInfo?.orderBook ?? CONTRACT_ADDRESSES.aluminumOrderBook;
+    if (!marketInfo) {
+      console.warn(`⚠️ OrderService: No MARKET_INFO found for metricId: ${metricId}, falling back to aluminum OrderBook`);
     }
+
+    // Cache the resolved address
+    this.addressCache.set(metricId, { address, timestamp: Date.now() });
+    console.log('✅ OrderService: Resolved OrderBook address from config:', { metricId, address });
+    return address;
   }
 
   /**
@@ -67,7 +56,7 @@ export class OrderService {
   async getOrder(orderId: bigint, metricId?: string): Promise<Order | null> {
     try {
       // Dynamically resolve OrderBook address based on metricId
-      const orderBookAddress = await this.resolveOrderBookAddress(metricId);
+      const orderBookAddress = this.resolveOrderBookAddress(metricId);
       
       console.log('🔍 OrderService: Getting order from dynamic OrderBook:', {
         orderId: orderId.toString(),
@@ -78,12 +67,12 @@ export class OrderService {
 
       const result = await this.client.readContract({
         address: orderBookAddress,
-        abi: CONTRACT_ABIS.OrderBook,
-        functionName: 'orders',
+        abi: this.ORDERBOOK_ABI,
+        functionName: 'getOrder',
         args: [orderId],
       });
 
-      return this.transformContractOrderArray(result as any[], metricId);
+      return this.transformObOrderArray(result as any[], metricId);
     } catch (error) {
       console.error('❌ OrderService: Error fetching order from OrderBook:', error);
       return null;
@@ -126,7 +115,7 @@ export class OrderService {
   async getUserOrdersFromOrderBook(trader: Address, metricId?: string): Promise<Order[]> {
     try {
       // Dynamically resolve OrderBook address based on metricId
-      const orderBookAddress = await this.resolveOrderBookAddress(metricId);
+      const orderBookAddress = this.resolveOrderBookAddress(metricId);
       
       console.log('🔍 OrderService: Getting user orders from dynamic OrderBook:', {
         trader,
@@ -138,7 +127,7 @@ export class OrderService {
       // OrderBook.getUserOrders returns array of order IDs (bytes32[])
       const orderIds = await this.client.readContract({
         address: orderBookAddress,
-        abi: CONTRACT_ABIS.OrderBook,
+        abi: this.ORDERBOOK_ABI,
         functionName: 'getUserOrders',
         args: [trader],
       }) as readonly bigint[];
@@ -233,7 +222,7 @@ export class OrderService {
 
       const result = await this.client.readContract({
         address: orderBookAddress,
-        abi: CONTRACT_ABIS.OrderBook,
+        abi: this.ORDERBOOK_ABI,
         functionName: 'getOrderBookDepth',
         args: [BigInt(depth)],
       });
@@ -448,6 +437,48 @@ export class OrderService {
       expiryTime: Number(expiryTime) > 0 ? Number(expiryTime) * 1000 : null,
       status: statusString,
       timeInForce: timeInForceString,
+      stopPrice: null,
+      icebergQty: null,
+      postOnly: false,
+    };
+  }
+
+  /**
+   * Transform OrderBookStorage.Order (facet getOrder) array to UI Order
+   */
+  private transformObOrderArray(orderArray: any[], metricId?: string): Order {
+    if (!orderArray || !Array.isArray(orderArray) || orderArray.length < 9) {
+      throw new Error('Invalid OB order array: expected array with 9 elements');
+    }
+
+    const [
+      orderId,
+      trader,
+      price,
+      amount,
+      isBuy,
+      timestamp,
+      /* nextOrderId */ ,
+      /* marginRequired */ ,
+      /* isMarginOrder */
+    ] = orderArray;
+
+    const quantity = amount ? parseFloat(formatUnits(BigInt(amount), 6)) : 0;
+    const priceFormatted = price ? parseFloat(formatUnits(BigInt(price), 6)) : 0;
+
+    return {
+      id: orderId.toString(),
+      trader: trader as Address,
+      metricId: metricId || 'unknown',
+      type: 'limit',
+      side: isBuy ? 'buy' : 'sell',
+      quantity,
+      price: priceFormatted,
+      filledQuantity: 0,
+      timestamp: Number(timestamp) * 1000,
+      expiryTime: null,
+      status: 'pending',
+      timeInForce: 'gtc',
       stopPrice: null,
       icebergQty: null,
       postOnly: false,

@@ -88,9 +88,21 @@ interface EnhancedTokenData {
 }
 
 export default function TokenHeader({ symbol }: TokenHeaderProps) {
-  const { address, isConnected } = useWallet();
+  const wallet = useWallet() as any;
+  const address = wallet?.walletData?.address || undefined;
+  const isConnected = wallet?.walletData?.isConnected;
   const [activeTab, setActiveTab] = useState(0);
-  const vaultData = useCoreVault(address || undefined);
+  const vaultData = useCoreVault(address);
+
+  console.log('vaultDatax', vaultData);
+  
+  // Debug wallet connection issues
+  useEffect(() => {
+    console.log('Wallet connection status in TokenHeader:', { address, isConnected });
+    if (!isConnected) {
+      console.log('Wallet is not connected, vault data may not be available.');
+    }
+  }, [address, isConnected]);
   
   // Propagate core vault values globally so other components can react
   useEffect(() => {
@@ -106,6 +118,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         realizedPnL: (vaultData as any)?.realizedPnL ?? null,
         unrealizedPnL: (vaultData as any)?.unrealizedPnL ?? null
       };
+      console.log('detailx', detail);
       const evt = new CustomEvent('coreVaultSummary', { detail });
       if (typeof window !== 'undefined') window.dispatchEvent(evt);
     } catch (e) {
@@ -375,10 +388,10 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             
             <div className="flex items-center gap-2">
               <Image 
-                src={enhancedTokenData.logo || '/placeholder-market.svg'} 
+                src={enhancedTokenData.logo || 'https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExazZ5azl4dnJvdXIxb2tzdzRjdm1udHVtN25rcHFpcmxpdzdmNHBzeCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/c3OZsDoaz7kD6/giphy.gif'} 
                 alt={enhancedTokenData.name || 'Market Icon'}
-                width={28}
-                height={28}
+                width={34}
+                height={34}
                 className="w-7 h-7 rounded border border-[#333333] object-cover flex-shrink-0"
               />
               <div className="min-w-0 flex-1">
@@ -386,7 +399,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                   {enhancedTokenData.name}
                 </h1>
                 <div className="flex items-center gap-1 flex-wrap">
-                  {['Margin Used', 'Reserved', 'Available'].map((tab, index) => (
+                  {['Margin Used', 'Reserved', 'Available', 'Haircut'].map((tab, index) => (
                     <button
                       key={index}
                       onClick={() => setActiveTab(index)}
@@ -440,11 +453,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                       {activeTab === 0 && 'Margin Used:'}
                       {activeTab === 1 && 'Reserved Margin:'}
                       {activeTab === 2 && 'Available Margin:'}
+                      {activeTab === 3 && 'Socialized Loss:'}
                     </span>
                     <span className="text-white font-mono">
                       {activeTab === 0 && (vaultData?.marginUsed || '0')}
                       {activeTab === 1 && (vaultData?.marginReserved || '0')}
                       {activeTab === 2 && (vaultData?.availableBalance || '0')}
+                      {activeTab === 3 && (vaultData?.socializedLoss || '0')}
                     </span>
                   </div>
                 )}
@@ -509,13 +524,18 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 {activeTab === 0 && 'Margin Used:'}
                 {activeTab === 1 && 'Reserved Margin:'}
                 {activeTab === 2 && 'Available Margin:'}
+                {activeTab === 3 && 'Socialized Loss:'}
               </span>
               <div className="flex items-center gap-1">
-                <span className="text-white font-mono">
-                  {activeTab === 0 && formatNumberWithCommas(parseFloat(vaultData?.marginUsed || '0'))}
-                  {activeTab === 1 && formatNumberWithCommas(parseFloat(vaultData?.marginReserved || '0'))}
-                  {activeTab === 2 && formatNumberWithCommas(parseFloat(vaultData?.availableBalance || '0'))}
-                </span>
+                <span className={`font-mono ${activeTab === 3 && parseFloat(vaultData?.socializedLoss||'0') > 0 ? 'text-red-400' : 'text-white'}`}>{
+                  activeTab === 0 && formatNumberWithCommas(parseFloat(vaultData?.marginUsed || '0'))
+                }{
+                  activeTab === 1 && formatNumberWithCommas(parseFloat(vaultData?.marginReserved || '0'))
+                }{
+                  activeTab === 2 && formatNumberWithCommas(parseFloat(vaultData?.availableBalance || '0'))
+                }{
+                  activeTab === 3 && formatNumberWithCommas(parseFloat(vaultData?.socializedLoss || '0'))
+                }</span>
                 {vaultData?.isLoading && <span className="text-blue-400 animate-spin">⟳</span>}
                 {!vaultData?.isLoading && isConnected && (
                   <span className="text-green-400" title="Real-time vault data">●</span>

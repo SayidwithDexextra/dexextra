@@ -17,6 +17,8 @@ const deployed = (hyperliquidDeployment as any) || {};
 const deployedContracts = (deployed.contracts as any) || {};
 const deployedMarket = (deployed.aluminumMarket as any) || {};
 
+console.log('deployed', deployed);
+
 export const CONTRACT_ADDRESSES = {
   MOCK_USDC: deployedContracts.MOCK_USDC || "0x69bfB7DAB0135fB6cD3387CF411624d874B3c799",
   CORE_VAULT: deployedContracts.CORE_VAULT || "0x3F76468754fC1FA4a79C796C580824799281aCa0",
@@ -37,14 +39,14 @@ export const CONTRACT_ADDRESSES = {
     ALUMINUM: {
       name: "Aluminum",
       symbol: deployedMarket.symbol || "ALU-USD",
-      marketId: deployedMarket.marketId || deployedContracts.ALUMINUM_MARKET_ID || "0xc6348f46a4dac78005a64ff26ab0e3d114645a0d336494037e628c070eb137b4",
+      marketId: deployedMarket.marketId || deployedContracts.ALUMINUM_MARKET_ID || "0x84df5da1dc24d655e8d74a938f8fa61ebe4288d27c27238f318464ef5e6d0bb4",
       orderBook: deployedMarket.orderBook || deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
       active: true
     },
     BTC: {
       name: "Bitcoin",
       symbol: "BTC-USD",
-      marketId: deployedMarket.marketId || "0xc6348f46a4dac78005a64ff26ab0e3d114645a0d336494037e628c070eb137b4", // placeholder
+      marketId: deployedMarket.marketId || "0x84df5da1dc24d655e8d74a938f8fa61ebe4288d27c27238f318464ef5e6d0bb4", // placeholder
       orderBook: deployedContracts.BTC_ORDERBOOK || deployedContracts.ALUMINUM_ORDERBOOK || "0xFC27fc4786BE01510c3564117becD13fdB077bb3",
       active: true
     }

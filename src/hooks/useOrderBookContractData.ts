@@ -142,6 +142,23 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
       { type: 'function', name: 'bestBid', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
       { type: 'function', name: 'bestAsk', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
       { type: 'function', name: 'lastTradePrice', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+      // Trade history helpers (diamond trade execution facet)
+      { type: 'function', name: 'getLastTwentyTrades', stateMutability: 'view', inputs: [], outputs: [{ type: 'tuple[]', components: [
+        { type: 'uint256', name: 'tradeId' },
+        { type: 'address', name: 'buyer' },
+        { type: 'address', name: 'seller' },
+        { type: 'uint256', name: 'price' },
+        { type: 'uint256', name: 'amount' },
+        { type: 'uint256', name: 'timestamp' }
+      ] } as any] },
+      { type: 'function', name: 'getRecentTrades', stateMutability: 'view', inputs: [{ type: 'uint256', name: 'count' }], outputs: [{ type: 'tuple[]', components: [
+        { type: 'uint256', name: 'tradeId' },
+        { type: 'address', name: 'buyer' },
+        { type: 'address', name: 'seller' },
+        { type: 'uint256', name: 'price' },
+        { type: 'uint256', name: 'amount' },
+        { type: 'uint256', name: 'timestamp' }
+      ] } as any] },
     ] as const as any[];
     const abi = [...baseAbi, ...facetAbi];
     if (!abi || abi.length === 0) {
@@ -160,18 +177,18 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
 
         // Read best bid/ask and last trade price (fallback friendly)
         const [bestBidRaw, bestAskRaw] = await Promise.all([
-          publicClient.readContract({ address, abi, functionName: 'bestBid' }).catch(() => 0n),
-          publicClient.readContract({ address, abi, functionName: 'bestAsk' }).catch(() => 0n),
+          publicClient.readContract({ address, abi, functionName: 'bestBid', args: [] }).catch(() => 0n),
+          publicClient.readContract({ address, abi, functionName: 'bestAsk', args: [] }).catch(() => 0n),
         ]);
 
         // Optional reads
         const lastTradeRaw = await publicClient
-          .readContract({ address, abi, functionName: 'lastTradePrice' })
+          .readContract({ address, abi, functionName: 'lastTradePrice', args: [] })
           .catch(() => 0n);
 
         // Mark price via pricing facet if exposed
         const markPriceRaw = await publicClient
-          .readContract({ address, abi, functionName: 'calculateMarkPrice' })
+          .readContract({ address, abi, functionName: 'calculateMarkPrice', args: [] })
           .catch(() => 0n);
 
         // Optional market stats if facet exposes it
@@ -183,7 +200,8 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
           const stats: any = await publicClient.readContract({
             address,
             abi,
-            functionName: 'getMarketStats'
+            functionName: 'getMarketStats',
+            args: []
           });
           if (Array.isArray(stats) && stats.length >= 5) {
             volume24h = BigInt(stats[0]);
@@ -201,7 +219,8 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
           const counts: any = await publicClient.readContract({
             address,
             abi,
-            functionName: 'getActiveOrdersCount'
+            functionName: 'getActiveOrdersCount',
+            args: []
           });
           if (Array.isArray(counts) && counts.length >= 2) {
             activeBuyOrders = BigInt(counts[0]);
@@ -236,13 +255,15 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
         // Recent trades if exec facet exposes it
         let recentTrades: OrderBookLiveData['recentTrades'] = null;
         try {
-          const limit = 10n;
-          const trades: any = await publicClient.readContract({
-            address,
-            abi,
-            functionName: 'getRecentTrades',
-            args: [limit]
-          });
+          // Prefer getLastTwentyTrades if present
+          let trades: any = null;
+          try {
+            trades = await publicClient.readContract({ address, abi, functionName: 'getLastTwentyTrades', args: [] });
+          } catch (_e) {
+            // Fallback to getRecentTrades(count)
+            const limit = 20n;
+            trades = await publicClient.readContract({ address, abi, functionName: 'getRecentTrades', args: [limit] });
+          }
           if (Array.isArray(trades)) {
             recentTrades = trades.map((t: any) => ({
               price: scalePrice(t?.price ?? 0) || 0,

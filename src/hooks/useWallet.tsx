@@ -128,16 +128,20 @@ export function WalletProvider({ children }: WalletProviderProps) {
         // Detect available wallet providers
         const detectedProviders = detectWalletProviders()
         setProviders(detectedProviders)
+        console.log('Detected wallet providers:', detectedProviders.map(p => ({ name: p.name, isInstalled: p.isInstalled })));
 
         // Check for existing connection
         const existingConnection = await checkConnection()
         if (existingConnection) {
           setWalletData(existingConnection)
+          console.log('Existing connection found:', existingConnection.address);
           
           // If wallet is already connected, also load the user profile
           if (existingConnection.address) {
             await createOrGetUserProfile(existingConnection.address)
           }
+        } else {
+          console.log('No existing connection found.');
         }
       } catch (error) {
         console.error('Error initializing wallet:', error)

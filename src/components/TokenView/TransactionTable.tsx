@@ -34,7 +34,6 @@ interface OrderFromAPI {
 
 export default function TransactionTable({ metricId, currentPrice, height = '100%' }: TransactionTableProps) {
   const [view, setView] = useState<'transactions' | 'orderbook'>('orderbook');
-  const [filter, setFilter] = useState<'all' | 'buy' | 'sell'>('all');
   const [sortBy, setSortBy] = useState<'timestamp' | 'price' | 'amount'>('timestamp');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
@@ -48,16 +47,53 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
   }, [metricId]);
 
   // On-chain OrderBook data (HyperLiquid testnet Aluminum market)
-  const dbOrders: any[] = [];
   const { data: obData, isLoading: obLoading, error: obError } = useOrderBookContractData('ALU-USD', { refreshInterval: 5000 });
-  const isLoading = view === 'orderbook' ? obLoading : false;
-  const error = view === 'orderbook' ? (obError ? ((obError as any).message || String(obError)) : null) : null;
+  const [recentTrades, setRecentTrades] = useState<any[]>([]);
+  const [isLoadingTrades, setIsLoadingTrades] = useState(false);
+  const [tradeError, setTradeError] = useState<string | null>(null);
+
+  // Fetch recent trades
+  useEffect(() => {
+    console.log('obDatax', obData);
+    console.log('recentTradesx', recentTrades);
+    try {
+      setIsLoadingTrades(true);
+      const trades = obData?.recentTrades || [];
+      // Map recent trades (price 6dp, amount 18dp, timestamp seconds) to UI rows
+      const formattedTrades = trades.map((t, i, arr) => {
+        const prevPrice = i > 0 ? arr[i - 1].price : (arr.length > 1 ? arr[i + 1]?.price ?? t.price : t.price);
+        const side = (t.price ?? 0) >= (prevPrice ?? 0) ? 'BUY' : 'SELL';
+        return {
+          order_id: `${t.timestamp}-${i}`,
+          side,
+          order_status: 'FILLED',
+          price: t.price ?? 0,
+          quantity: t.amount ?? 0,
+          filled_quantity: t.amount ?? 0,
+          created_at: new Date((Number(t.timestamp) || 0) * 1000).toISOString(),
+          trader_wallet_address: '0x0000000000000000000000000000000000000000'
+        } as OrderFromAPI;
+      });
+      setRecentTrades(formattedTrades);
+      setTradeError(null);
+    } catch (err) {
+      console.error('Failed to transform recent trades:', err);
+      setTradeError((err as Error).message || 'Failed to transform recent trades');
+    } finally {
+      setIsLoadingTrades(false);
+    }
+  }, [obData?.recentTrades]);
+
+  const isLoading = view === 'orderbook' ? obLoading : isLoadingTrades;
+  const error = view === 'orderbook' 
+    ? (obError ? ((obError as any).message || String(obError)) : null)
+    : tradeError;
   const isConnected = !!obData?.orderBookAddress;
   const refetch = () => {};
 
   // Only log connection status changes, not every render
   const prevIsConnected = React.useRef(isConnected);
-  const prevOrdersCount = React.useRef(dbOrders?.length || 0);
+  const prevTradesCount = React.useRef(recentTrades.length);
   
   useEffect(() => {
     if (prevIsConnected.current !== isConnected) {
@@ -67,43 +103,28 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
   }, [isConnected]);
 
   useEffect(() => {
-    const currentCount = dbOrders?.length || 0;
-    if (prevOrdersCount.current !== currentCount) {
-      console.log('📊 [TRANSACTION_TABLE] Orders count changed:', { from: prevOrdersCount.current, to: currentCount });
-      prevOrdersCount.current = currentCount;
+    const currentCount = recentTrades.length;
+    if (prevTradesCount.current !== currentCount) {
+      console.log('📊 [TRANSACTION_TABLE] Trades count changed:', { from: prevTradesCount.current, to: currentCount });
+      prevTradesCount.current = currentCount;
     }
-  }, [dbOrders?.length]);
+  }, [recentTrades.length]);
 
-  // Transform database orders to the expected format
-  const orders: OrderFromAPI[] = useMemo(() => {
-    if (!dbOrders) return [];
-    
-    return dbOrders.map(order => ({
-      order_id: order.order_id.toString(),
-      side: order.side.toUpperCase(),
-      order_status: order.status.toUpperCase(),
-      price: order.price,
-      quantity: order.quantity || order.size,
-      filled_quantity: order.filled,
-      created_at: order.created_at,
-      trader_wallet_address: order.trader_address || order.user_address
-    }));
-  }, [dbOrders]);
 
   // Legacy animation hook removed - using placeholder values
   const isOrderNew = () => false;
   const getAnimationDelay = () => 0;
 
   // Only log state changes when significant changes occur
-  const prevState = React.useRef<{ ordersCount: number; isLoading: boolean; error: string | null }>({ 
-    ordersCount: 0, 
+  const prevState = React.useRef<{ tradesCount: number; isLoading: boolean; error: string | null }>({ 
+    tradesCount: 0, 
     isLoading: true, 
     error: null 
   });
   
   useEffect(() => {
     const currentState = {
-      ordersCount: orders.length,
+      tradesCount: recentTrades.length,
       isLoading,
       error
     };
@@ -111,37 +132,20 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
     if (JSON.stringify(prevState.current) !== JSON.stringify(currentState)) {
       console.log('🔍 [TRANSACTION_TABLE] State changed:', {
         ...currentState,
-        ordersWithPrice: orders.filter(o => o.price !== null).length,
-        ordersWithoutPrice: orders.filter(o => o.price === null).length
+        tradesWithPrice: recentTrades.filter(t => t.price !== null).length,
       });
       prevState.current = currentState;
     }
-  }, [orders.length, isLoading, error, orders]);
+  }, [recentTrades.length, isLoading, error]);
 
   // Get pending orders for BOOK tab (unfilled limit orders)
-  const pendingOrders = useMemo(() => {
-    const filtered = orders.filter(order => 
-      (order.order_status === 'PENDING' || order.order_status === 'PARTIAL') &&
-      order.price !== null // Only limit orders with prices for orderbook
-    );
-    
-    console.log('🔍 [ORDERBOOK] Found', filtered.length, 'orders for orderbook:', 
-      filtered.map(o => ({ side: o.side, price: o.price, status: o.order_status }))
-    );
-    return filtered;
-  }, [orders]);
+  const pendingOrders = useMemo(() => [], []);
 
   // Get filled orders for TRADES tab (completed trades)
-  // Include market orders even if pending since they execute immediately
   const filledOrders = useMemo(() => {
-    const filtered = orders.filter(order => 
-      order.order_status === 'FILLED' || 
-      order.order_status === 'PARTIAL' ||
-      (order.order_status === 'PENDING' && order.price === null) // Include market orders
-    );
-    console.log('🔍 [TRANSACTIONS] Found', filtered.length, 'orders for transactions');
-    return filtered;
-  }, [orders]);
+    console.log('🔍 [TRANSACTIONS] Found', recentTrades.length, 'recent trades');
+    return recentTrades;
+  }, [recentTrades]);
 
   // Separate bids and asks for traditional orderbook display (prefer on-chain depth when available)
   const { bids, asks } = useMemo(() => {
@@ -198,17 +202,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
   // Filtered and sorted data based on current view
   const filteredAndSortedData = useMemo(() => {
     // Choose data source based on view
-    let sourceData = view === 'orderbook' ? pendingOrders : filledOrders;
-    let filtered = sourceData;
-
-    // Apply filter
-    if (filter !== 'all') {
-      filtered = filtered.filter(item => {
-        if (filter === 'buy') return item.side.toLowerCase() === 'buy';
-        if (filter === 'sell') return item.side.toLowerCase() === 'sell';
-        return true;
-      });
-    }
+    let filtered = view === 'orderbook' ? pendingOrders : filledOrders;
 
     // Apply sorting
     filtered.sort((a, b) => {
@@ -240,7 +234,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
     });
 
     return filtered;
-  }, [view, pendingOrders, filledOrders, filter, sortBy, sortOrder]);
+  }, [view, pendingOrders, filledOrders, sortBy, sortOrder]);
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -324,31 +318,14 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
             {error}
           </div>
         ) : view === 'transactions' ? (
-          <>
-            <div className="grid grid-cols-3 gap-0.5 mb-1">
-              {(['all', 'buy', 'sell'] as const).map((filterOption) => (
-                <button
-                  key={filterOption}
-                  onClick={() => setFilter(filterOption)}
-                  className={`py-0.5 px-1 rounded text-[10px] font-medium transition-colors uppercase ${
-                    filter === filterOption
-                      ? 'bg-[#333333] text-white'
-                      : 'bg-[#1A1A1A] text-gray-500 hover:text-white'
-                  }`}
-                >
-                  {filterOption}
-                </button>
-              ))}
-            </div>
-            <div className="text-[10px] text-gray-500 text-center">
-              {filteredAndSortedData.length} filled
-              {!metricId && (
-                <span className="block text-[9px] text-gray-600">
-                  Connect wallet to see orders
-                </span>
-              )}
-            </div>
-          </>
+          <div className="text-[10px] text-gray-500 text-center py-1">
+            {filteredAndSortedData.length} filled
+            {!metricId && (
+              <span className="block text-[9px] text-gray-600">
+                Connect wallet to see orders
+              </span>
+            )}
+          </div>
         ) : (
           <div className="text-[10px] text-gray-500 text-center py-1">
             Order Book
@@ -370,8 +347,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
             <div className="flex items-center justify-center">TOTAL (USD)</div>
           </div>
         ) : (
-          <div className="grid grid-cols-[0.5fr_1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-500 px-1">
-            <div>SIDE</div>
+          <div className="grid grid-cols-[1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-500 px-1">
             <div className="text-right">SIZE (UNITS)</div>
             <div className="text-right">PRICE</div>
             <div className="text-right">TIME</div>
@@ -547,16 +523,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                       />
                       
                       {/* Content */}
-                      <div className="relative grid grid-cols-[0.5fr_1fr_1fr_0.8fr] gap-1 py-0.5 px-1 text-[11px]">
-                        <div className="flex items-center">
-                          <span className={`px-1 py-0.5 rounded text-[10px] font-medium ${
-                            order.side.toLowerCase() === 'buy' 
-                              ? 'bg-[#00D084]/20 text-[#00D084]' 
-                              : 'bg-[#FF4747]/20 text-[#FF4747]'
-                          }`}>
-                            {order.side.toLowerCase() === 'buy' ? 'B' : 'S'}
-                          </span>
-                        </div>
+                      <div className="relative grid grid-cols-[1fr_1fr_0.8fr] gap-1 py-0.5 px-1 text-[11px]">
                         <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums">
                           <OrderBookAnimatedQuantity
                             orderId={order.order_id}

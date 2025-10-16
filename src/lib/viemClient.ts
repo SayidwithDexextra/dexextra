@@ -1,10 +1,21 @@
-import { createPublicClient, http } from 'viem';
-import { polygon } from 'viem/chains';
+import { createPublicClient, defineChain, http } from 'viem';
+import { CHAIN_CONFIG } from './contractConfig';
 
-// Create a public client for reading from the Polygon network
+// Define chain from validated environment configuration
+const customChain = defineChain({
+  id: CHAIN_CONFIG.chainId,
+  name: 'hyperliquid_testnet',
+  nativeCurrency: { name: 'Testnet ETH', symbol: 'tETH', decimals: 18 },
+  rpcUrls: {
+    default: { http: [CHAIN_CONFIG.rpcUrl], webSocket: [CHAIN_CONFIG.wsRpcUrl] },
+    public: { http: [CHAIN_CONFIG.rpcUrl], webSocket: [CHAIN_CONFIG.wsRpcUrl] },
+  },
+});
+
+// Create a public client for reading from configured network
 export const publicClient = createPublicClient({
-  chain: polygon,
-  transport: http('https://polygon-rpc.com/'),
+  chain: customChain,
+  transport: http(CHAIN_CONFIG.rpcUrl),
 });
 
 // Backup RPC URLs in case primary fails
@@ -17,16 +28,16 @@ const BACKUP_RPC_URLS = [
 // Create client with fallback support
 export const createPolygonClient = () => {
   return createPublicClient({
-    chain: polygon,
-    transport: http('https://polygon-rpc.com/'),
+    chain: customChain,
+    transport: http(CHAIN_CONFIG.rpcUrl),
   });
 };
 
 // Helper to create client with custom RPC
 export const createClientWithRPC = (rpcUrl: string) => {
   return createPublicClient({
-    chain: polygon,
-    transport: http(rpcUrl),
+    chain: customChain,
+    transport: http(rpcUrl || CHAIN_CONFIG.rpcUrl),
   });
 };
 
