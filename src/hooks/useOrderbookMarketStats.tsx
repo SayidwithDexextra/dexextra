@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useOrderbookMarket } from './useOrderbookMarket';
+import { useMarket } from './useMarket';
 
 // This is a stub implementation to fix build errors
 // It will be replaced with proper implementation when needed
@@ -17,8 +17,8 @@ export interface MarketStats {
   lastUpdated: string;
 }
 
-export function useOrderbookMarketStats(metricId?: string) {
-  const { market, isLoading: isMarketLoading } = useOrderbookMarket(metricId);
+export function useOrderbookMarketStats(marketIdentifier?: string) {
+  const { market, isLoading: isMarketLoading } = useMarket(marketIdentifier);
   const [stats, setStats] = useState<MarketStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);

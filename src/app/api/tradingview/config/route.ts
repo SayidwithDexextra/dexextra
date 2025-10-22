@@ -10,9 +10,9 @@ export async function GET(request: NextRequest) {
     supports_time: true,
     exchanges: [
       {
-        value: 'VAMM',
-        name: 'vAMM Markets',
-        desc: 'Decentralized vAMM Trading'
+        value: 'ORDERBOOK',
+        name: 'Orderbook Markets',
+        desc: 'Decentralized Orderbook Trading'
       }
     ],
     symbols_types: [
@@ -58,12 +58,12 @@ export async function GET(request: NextRequest) {
     supports_time_frames: true,
     currency_codes: ['USD', 'USDC', 'ETH', 'BTC'],
     
-    // Custom features for vAMM
+    // Custom features for Orderbook markets
     custom: {
-      platform: 'DexExtra Custom vAMM',
+      platform: 'DexExtra Orderbook',
       version: '1.0.0',
-      description: 'Real-time custom market data from user-created vAMM contracts',
-      data_source: 'custom_vamm_markets'
+      description: 'Real-time market data from user-created on-chain orderbook markets',
+      data_source: 'orderbook_markets'
     }
   }
 

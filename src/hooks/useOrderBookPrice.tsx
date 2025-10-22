@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useOrderbookMarket } from './useOrderbookMarket';
+import { useMarket } from './useMarket';
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
 
 export interface PriceData {
@@ -20,12 +20,12 @@ function formatUsd(value: number): string {
   return v.toFixed(4);
 }
 
-export function useOrderBookPrice(metricId?: string) {
-  const { market, isLoading: isMarketLoading } = useOrderbookMarket(metricId);
-  // Use market.metricId/name/symbol as lookup key; fallback to metricId
+export function useOrderBookPrice(marketIdentifier?: string) {
+  const { market, isLoading: isMarketLoading } = useMarket(marketIdentifier);
+  // Use market.market_identifier/symbol/name as lookup key; fallback to marketIdentifier
   const symbolKey = useMemo(() => {
-    return market?.metricId || market?.symbol || market?.name || metricId || '';
-  }, [market, metricId]);
+    return market?.market_identifier || market?.symbol || market?.name || marketIdentifier || '';
+  }, [market, marketIdentifier]);
 
   const { data: obLive, isLoading: obLoading, error: obError } = useOrderBookContractData(symbolKey, { refreshInterval: 15000 });
 

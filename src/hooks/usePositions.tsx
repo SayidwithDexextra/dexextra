@@ -83,7 +83,7 @@ export function usePositions(marketSymbol?: string): PositionState {
           setState(prev => ({ ...prev, error: 'Wallet/provider not available', isLoading: false }));
           return;
         }
-        const contractInstances = await initializeContracts(runner);
+        const contractInstances = await initializeContracts({ providerOrSigner: runner });
         setContracts(contractInstances);
       } catch (error: any) {
         console.error('Failed to initialize contracts:', error);

@@ -14,7 +14,7 @@ import {
 import LightweightChart from '@/components/TokenView/LightweightChart';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
-import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
+import { useMarket } from '@/hooks/useMarket';
 // Removed imports for deleted hooks
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
 import NetworkSelector from '@/components/NetworkSelector';
@@ -33,12 +33,12 @@ export default function TokenPage({ params }: TokenPageProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
   
-  // Fetch real orderbook market data
+  // Fetch market data
   const {
     market,
     isLoading: isLoadingMarket,
     error: marketError
-  } = useOrderbookMarket(symbol);
+  } = useMarket(symbol);
   // Normalize to original shape expected elsewhere in this file
   const marketData: any = market ? { market } : { market: null };
   

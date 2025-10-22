@@ -17,17 +17,17 @@
  */
 
 import { useState, useMemo, useEffect } from 'react'
-import { ethers } from 'ethers'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import DepositModal from '../DepositModal/DepositModal'
 import { useWallet } from '@/hooks/useWallet'
-import { CONTRACTS } from '@/lib/contracts'
+// Removed direct contract reads; align with useCoreVault hook outputs
 import DecryptedText from './DecryptedText';
-import { NetworkStatus } from '@/components/NetworkStatus'
-import { CONTRACT_ADDRESSES, CHAIN_CONFIG } from '@/lib/contractConfig'
+// Removed NetworkStatus import (only used in commented code)
+// Removed direct contract config imports
+import { useCoreVault } from '@/hooks/useCoreVault'
 
 // Search Icon Component
 const SearchIcon = () => (
@@ -56,194 +56,37 @@ export default function Header() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
-  const { walletData, portfolio, refreshPortfolio } = useWallet()
+  const { walletData } = useWallet()
   const router = useRouter()
   const [hasMounted, setHasMounted] = useState(false)
   
-  // HyperLiquid VaultRouter on-chain data
-  const [isVaultConnected, setIsVaultConnected] = useState(false)
-  const [vaultAvailableCollateral, setVaultAvailableCollateral] = useState(0)
-  const [vaultPortfolioValue, setVaultPortfolioValue] = useState(0)
-  const [unrealizedPnL, setUnrealizedPnL] = useState(0)
+  // Align with useCoreVault data as single source of truth
+  const core = useCoreVault(walletData.address || undefined)
+  const isVaultConnected = !!core.isConnected
+  const vaultAvailableCollateral = parseFloat(core.availableBalance || '0')
+  // Portfolio value approximation consistent with TokenHeader broadcasting:
+  // totalCollateral (6d) + realizedPnL (24d formatted) + unrealizedPnL (24d formatted)
+  // All are already formatted to decimal strings by useCoreVault
+  const totalCollateralNum = parseFloat(core.totalCollateral || '0')
+  const realizedPnLNum = parseFloat(core.realizedPnL || '0')
+  const unrealizedPnLNum = parseFloat(core.unrealizedPnL || '0')
+  // Avoid double counting losses: negative realized is already deducted from collateral on-chain
+  const realizedForPortfolio = Math.max(0, realizedPnLNum)
+  const vaultPortfolioValue = totalCollateralNum + realizedForPortfolio + unrealizedPnLNum
+  const unrealizedPnL = unrealizedPnLNum
 
-  // Minimal ABIs for VaultRouter and ERC20
-  const VAULT_ROUTER_ABI = [
-    {
-      inputs: [],
-      name: 'collateralToken',
-      outputs: [{ name: '', type: 'address' }],
-      stateMutability: 'view',
-      type: 'function',
-    },
-    {
-      inputs: [{ name: 'user', type: 'address' }],
-      name: 'getPortfolioValue',
-      outputs: [{ name: '', type: 'int256' }],
-      stateMutability: 'view',
-      type: 'function',
-    },
-    {
-      inputs: [{ name: 'user', type: 'address' }],
-      name: 'getAvailableCollateral',
-      outputs: [{ name: '', type: 'uint256' }],
-      stateMutability: 'view',
-      type: 'function',
-    },
-    {
-      inputs: [{ name: 'user', type: 'address' }],
-      name: 'getUnrealizedPnL',
-      outputs: [{ name: '', type: 'int256' }],
-      stateMutability: 'view',
-      type: 'function',
-    },
-    {
-      inputs: [{ name: 'user', type: 'address' }],
-      name: 'getMarginSummary',
-      outputs: [
-        {
-          components: [
-            { name: 'totalCollateral', type: 'uint256' },
-            { name: 'marginUsed', type: 'uint256' },
-            { name: 'marginReserved', type: 'uint256' },
-            { name: 'availableCollateral', type: 'uint256' },
-            { name: 'realizedPnL', type: 'int256' },
-            { name: 'unrealizedPnL', type: 'int256' },
-            { name: 'portfolioValue', type: 'int256' },
-          ],
-          name: '',
-          type: 'tuple',
-        },
-      ],
-      stateMutability: 'view',
-      type: 'function',
-    },
-  ] as const
+  // Removed: direct ABIs and on-chain queries; rely on useCoreVault
 
-  const ERC20_MIN_ABI = [
-    { inputs: [], name: 'decimals', outputs: [{ name: '', type: 'uint8' }], stateMutability: 'view', type: 'function' },
-  ] as const
+  // Removed: manual fetchVaultData; rely on useCoreVault polling and formatting
 
-  const fetchVaultData = async () => {
-    try {
-      if (!walletData.address) return
-      
-      // Use HyperLiquid Testnet RPC for contract calls
-      console.log('🔗 Using direct HyperLiquid Testnet RPC provider for contract calls')
-      const provider = new ethers.JsonRpcProvider(CHAIN_CONFIG.rpcUrl)
-
-      // Check network connection
-      try {
-        const network = await provider.getNetwork()
-        const chainId = Number(network.chainId)
-        console.log('🌐 Network info:', {
-          chainId,
-          name: network.name,
-          expectedChainId: CHAIN_CONFIG.chainId,
-          isCorrectNetwork: chainId === CHAIN_CONFIG.chainId
-        })
-        setIsVaultConnected(chainId === CHAIN_CONFIG.chainId)
-        
-        if (chainId !== CHAIN_CONFIG.chainId) {
-          console.warn(`⚠️  Wrong network! Expected ${CHAIN_CONFIG.chainId} (Polygon), got ${chainId}`)
-          return
-        }
-      } catch (error) {
-        console.error('❌ Network connection failed:', error)
-        setIsVaultConnected(false)
-        return
-      }
-
-      // Use CoreVault contract with ABI from CONTRACTS
-      console.log('🔍 CoreVault config:', {
-        address: CONTRACTS.CoreVault.address,
-        hasAbi: !!CONTRACTS.CoreVault.abi,
-        abiLength: CONTRACTS.CoreVault.abi?.length || 0
-      })
-      
-      // Verify CoreVault contract exists at address
-      const code = await provider.getCode(CONTRACTS.CoreVault.address)
-      console.log('📝 Contract bytecode length:', code.length)
-      
-      if (code === '0x') {
-        console.error('❌ No contract deployed at CoreVault address!')
-        setIsVaultConnected(false)
-        return
-      }
-      
-      const coreVault = new ethers.Contract(CONTRACTS.CoreVault.address, CONTRACTS.CoreVault.abi, provider)
-      console.log('📋 CoreVault contract instance created successfully')
-
-      // Use MockUSDC to determine decimals for formatting
-      const mockUsdc = new ethers.Contract(CONTRACTS.MockUSDC.address, CONTRACTS.MockUSDC.abi, provider)
-      const decimals: number = Number(await mockUsdc.decimals())
-
-      // Get comprehensive margin summary from CoreVault
-      const [
-        totalCollateral,
-        marginUsedInPositions,
-        marginReservedForOrders,
-        availableMargin,
-        realizedPnL,
-        unrealizedPnL,
-        totalMarginCommitted,
-        isMarginHealthy
-      ] = await coreVault.getUnifiedMarginSummary(walletData.address)
-
-      // Log individual components for debugging
-      console.log('Portfolio Components:', {
-        totalCollateral: totalCollateral.toString(),
-        realizedPnL: realizedPnL.toString(),
-        unrealizedPnL: unrealizedPnL.toString(),
-        availableCollateral: availableMargin.toString()
-      })
-
-      // Convert from wei to human readable numbers (MockUSDC has 6 decimals)
-      const formatSigned = (v: bigint, decimalsToUse: number = decimals) => {
-        const isNeg = v < 0n
-        const abs = isNeg ? -v : v
-        const num = parseFloat(ethers.formatUnits(abs, decimalsToUse))
-        return isNeg ? -num : num
-      }
-
-      // Adjust portfolio calculation if necessary
-      const portfolioValueSigned = formatSigned(totalCollateral, 6) + formatSigned(realizedPnL, 18) + formatSigned(unrealizedPnL, 18)
-      
-      const availableCollateralFormatted = formatSigned(availableMargin, 6)
-      
-      const unrealizedPnLSigned = formatSigned(unrealizedPnL, 18)
-
-      // Update state
-      setVaultPortfolioValue(portfolioValueSigned)
-      setVaultAvailableCollateral(availableCollateralFormatted)
-      setUnrealizedPnL(unrealizedPnLSigned)
-      
-    } catch (e) {
-      const err = e as any
-      console.error('Failed to fetch CoreVault data:', err)
-      // Soft-fail to avoid UI break
-      setIsVaultConnected(false)
-      setVaultPortfolioValue(0)
-      setVaultAvailableCollateral(0)
-      setUnrealizedPnL(0)
-    }
-  }
-
-  // Auto-refresh vault data every 10s when connected
+  // No manual polling; useCoreVault already polls and debounces
   useEffect(() => {
-    if (!walletData.isConnected) return
-    fetchVaultData()
-    const interval = setInterval(() => {
-      fetchVaultData()
-    }, 10000)
-    return () => clearInterval(interval)
-  }, [walletData.isConnected, walletData.address])
+    setHasMounted(true)
+  }, [])
 
   // Debug logs removed to prevent any rendering interference 
 
   // Ensure certain UI renders only after client mount to avoid hydration issues
-  useEffect(() => {
-    setHasMounted(true)
-  }, [])
 
   // Format portfolio and cash values from centralized vault
   const formatCurrency = (value: string, showSign = false) => {
@@ -449,7 +292,7 @@ export default function Header() {
                     backgroundColor: isVaultConnected ? '#00d4aa' : '#ff6b6b',
                     opacity: walletData.isConnected ? 1 : 0.3
                   }}
-                  title={isVaultConnected ? 'Connected to HyperLiquid VaultRouter' : 'VaultRouter disconnected'}
+                  title={isVaultConnected ? 'Connected to CoreVault' : 'Vault disconnected'}
                 />
               </div>
               <DecryptedText

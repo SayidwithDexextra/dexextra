@@ -21,14 +21,14 @@ export async function GET(request: NextRequest) {
 
     console.log(`🔍 TradingView symbols lookup: "${symbol}"`);
 
-    // Query the vamm_markets table for this symbol
+    // Query the orderbook_markets table for this metric_id
     const { data: market, error } = await supabase
-      .from('vamm_markets')
+      .from('orderbook_markets')
       .select('*')
-      .eq('symbol', symbol)
+      .eq('metric_id', symbol)
       .eq('is_active', true)
       .eq('deployment_status', 'deployed')
-      .not('vamm_address', 'is', null)
+      .not('market_address', 'is', null)
       .single();
 
     if (error || !market) {
@@ -39,28 +39,27 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Determine market type from category
-    let marketType = 'futures'; // Default for vAMM markets
-    if (Array.isArray(market.category)) {
-      if (market.category.includes('crypto')) marketType = 'crypto';
-      else if (market.category.includes('stock')) marketType = 'stock';
-      else if (market.category.includes('index')) marketType = 'index';
-      else if (market.category.includes('commodity')) marketType = 'commodity';
-    }
+    // Determine market type from category string
+    const cat = (market.category || '').toString().toLowerCase();
+    let marketType = 'futures';
+    if (cat.includes('crypto')) marketType = 'crypto';
+    else if (cat.includes('stock')) marketType = 'stock';
+    else if (cat.includes('index')) marketType = 'index';
+    else if (cat.includes('commodity')) marketType = 'commodity';
 
     // Calculate price scale based on decimals
-    const priceDecimals = market.price_decimals || 8;
+    const priceDecimals = market.decimals || 8;
     const pricescale = Math.pow(10, priceDecimals);
 
     // Build symbol info response
     const symbolInfo = {
-      ticker: market.symbol,
-      name: market.symbol,
-      description: market.description || `${market.symbol} vAMM Market`,
+      ticker: market.metric_id,
+      name: market.metric_id,
+      description: market.description || `${market.metric_id} Orderbook Market`,
       type: marketType,
       session: '24x7', // vAMM markets are always open
       timezone: 'Etc/UTC',
-      exchange: 'VAMM',
+      exchange: 'ORDERBOOK',
       minmov: 1,
       pricescale: pricescale,
       has_intraday: true,
@@ -70,12 +69,12 @@ export async function GET(request: NextRequest) {
       volume_precision: 8,
       data_status: 'streaming',
       
-      // Custom vAMM market data
+      // Custom orderbook market data
       custom: {
-        vamm_address: market.vamm_address,
-        vault_address: market.vault_address,
-        oracle_address: market.oracle_address,
-        initial_price: market.initial_price,
+        market_address: market.market_address,
+        vault_address: market.central_vault_address,
+        oracle_address: market.uma_oracle_manager_address,
+        initial_price: market.last_trade_price,
         deployment_status: market.deployment_status,
         created_at: market.created_at,
         category: market.category,
@@ -83,7 +82,7 @@ export async function GET(request: NextRequest) {
       }
     };
 
-    console.log(`✅ Symbol resolved: ${market.symbol} (vAMM: ${market.vamm_address})`);
+    console.log(`✅ Symbol resolved: ${market.metric_id} (orderbook: ${market.market_address})`);
 
     return NextResponse.json(symbolInfo, {
       headers: {

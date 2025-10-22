@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
+import type { Address } from 'viem';
+import { createClientWithRPC } from '@/lib/viemClient';
 import { useWallet } from '@/hooks/useWallet';
 import { initializeContracts, formatTokenAmount, parseTokenAmount } from '@/lib/contracts';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
@@ -46,31 +48,72 @@ export function useCoreVault(walletAddress?: string) {
   useEffect(() => {
     async function init() {
       try {
-        const hlProvider = new ethers.JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
-        let runner: ethers.Signer | ethers.AbstractProvider = hlProvider;
+        console.log('Initializing contracts with RPC URL:', env.RPC_URL, 'Chain ID:', env.CHAIN_ID);
+        console.log('Core contract addresses:', {
+          CORE_VAULT: CONTRACT_ADDRESSES.CORE_VAULT,
+          MOCK_USDC: CONTRACT_ADDRESSES.MOCK_USDC,
+          LIQUIDATION_MANAGER: CONTRACT_ADDRESSES.LIQUIDATION_MANAGER
+        });
+        
+        // Force using HTTP provider since it's more reliable
+        const hlProvider = new ethers.JsonRpcProvider(env.RPC_URL || 'https://testnet-rpc.hyperliquid.xyz/v1');
+        
+        // Default to read-only provider
+        let runner = hlProvider;
+        let usingSigner = false;
 
-        if (env.PRIVATE_KEY) {
-          runner = new ethers.Wallet(env.PRIVATE_KEY, hlProvider);
-        } else if (typeof window !== 'undefined' && (window as any).ethereum) {
+        // Try to connect with wallet signer if available
+        if (typeof window !== 'undefined' && (window as any).ethereum && isConnected) {
           try {
+            console.log('Attempting to connect with wallet signer...');
             const browserProvider = new ethers.BrowserProvider((window as any).ethereum)
             const injectedSigner = await browserProvider.getSigner()
             const net = await browserProvider.getNetwork()
             const chainOk = Number(net.chainId) === env.CHAIN_ID
             if (!chainOk) {
+              console.warn(`Wrong network: ${Number(net.chainId)}, expected: ${env.CHAIN_ID}`);
               setError(new Error(`Wrong network. Showing read-only data for chainId ${env.CHAIN_ID}.`))
             } else {
               runner = injectedSigner
+              usingSigner = true;
+              console.log('Successfully connected with wallet signer');
             }
-          } catch {
+          } catch (err) {
+            console.warn('Failed to get wallet signer, falling back to read-only:', err);
             setError(new Error('Using read-only provider'))
+          }
+        } else if (env.PRIVATE_KEY) {
+          try {
+            console.log('Using private key signer');
+            runner = new ethers.Wallet(env.PRIVATE_KEY, hlProvider);
+            usingSigner = true;
+          } catch (err) {
+            console.warn('Failed to create private key wallet, falling back to read-only:', err);
           }
         }
 
         setIsLoading(true);
-        const contractInstances = await initializeContracts(runner);
+        console.log('Initializing contracts with', usingSigner ? 'signer' : 'read-only provider');
+        
+        const contractInstances = await initializeContracts({
+          providerOrSigner: runner
+        });
+        
+        // Verify if contracts were properly initialized
+        if (!contractInstances) {
+          throw new Error('Contract instances are null');
+        }
+        
+        if (!contractInstances.mockUSDC || !contractInstances.vault) {
+          throw new Error('Essential contracts missing from initialization');
+        }
+        
+        // Add additional aliases for backward compatibility
+        contractInstances.coreVault = contractInstances.vault;
+        
         setContracts(contractInstances);
         setIsInitialized(true);
+        console.log('Contracts initialized successfully');
       } catch (err) {
         console.error('Failed to initialize contracts:', err);
         setError(err instanceof Error ? err : new Error('Failed to initialize contracts'));
@@ -88,7 +131,8 @@ export function useCoreVault(walletAddress?: string) {
   const ensureInitialized = useCallback(async (): Promise<any | null> => {
     if (isInitialized && contracts) return contracts;
     try {
-      const hlProvider = new ethers.JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
+      console.log('Ensuring contracts are initialized...');
+      const hlProvider = new ethers.JsonRpcProvider(env.RPC_URL || 'https://testnet-rpc.hyperliquid.xyz/v1');
       let writeSigner: ethers.Signer | null = null;
 
       if (env.PRIVATE_KEY) {
@@ -102,17 +146,28 @@ export function useCoreVault(walletAddress?: string) {
           setIsInitialized(false)
           setContracts(null)
           setError(new Error(`Wrong network. Please switch to chainId ${env.CHAIN_ID}.`))
-          return false
+          return null
         }
         writeSigner = injectedSigner
       } else {
         setIsInitialized(false);
         setContracts(null);
-        return false;
+        return null;
       }
 
       setIsLoading(true);
-      const contractInstances = await initializeContracts(writeSigner || hlProvider);
+      const contractInstances = await initializeContracts({
+        providerOrSigner: writeSigner || hlProvider
+      });
+      
+      if (!contractInstances) {
+        throw new Error('Contract instances are null');
+      }
+      
+      if (!contractInstances.mockUSDC || !contractInstances.vault) {
+        throw new Error('Essential contracts missing from initialization');
+      }
+      
       setContracts(contractInstances);
       setIsInitialized(true);
       setError(null);
@@ -130,15 +185,56 @@ export function useCoreVault(walletAddress?: string) {
 
   // Fetch balances
   const fetchBalances = useCallback(async () => {
-    if (!isInitialized || !contracts || !userAddress) return;
+    if (!isInitialized || !contracts || !userAddress) {
+      console.log('Skip fetching balances - conditions not met:', { isInitialized, hasContracts: !!contracts, hasAddress: !!userAddress });
+      return;
+    }
 
     try {
       setIsLoading(true);
 
-      // Get USDC balance
-      const usdcBalance = await contracts.mockUSDC.balanceOf(userAddress);
+      // Verify contract instances are valid
+      if (!contracts.mockUSDC || !contracts.vault) {
+        throw new Error('Invalid contract instances');
+      }
+
+      // Verify addresses exist
+      let mockUsdcAddress;
+      let vaultAddress;
       
-      // Get unified margin summary
+      try {
+        mockUsdcAddress = await contracts.mockUSDC.getAddress().catch(() => null);
+        vaultAddress = await contracts.vault.getAddress().catch(() => null);
+      } catch (e) {
+        console.error('Error getting contract addresses:', e);
+        mockUsdcAddress = CONTRACT_ADDRESSES.MOCK_USDC;
+        vaultAddress = CONTRACT_ADDRESSES.CORE_VAULT;
+      }
+      
+      if (!mockUsdcAddress || !vaultAddress) {
+        throw new Error('Contract addresses are invalid');
+      }
+      
+      console.log('Fetching balances for', { userAddress, mockUsdcAddress, vaultAddress });
+
+      // Get USDC balance with error handling
+      let usdcBalance;
+      try {
+        usdcBalance = await contracts.mockUSDC.balanceOf(userAddress);
+      } catch (e) {
+        console.error('Error fetching USDC balance:', e);
+        usdcBalance = 0n;
+      }
+      
+      // Get unified margin summary with error handling
+      let marginSummary;
+      try {
+        marginSummary = await contracts.vault.getUnifiedMarginSummary(userAddress);
+      } catch (e) {
+        console.error('Error fetching margin summary:', e);
+        marginSummary = [0n, 0n, 0n, 0n, 0n, 0n, 0n, true];
+      }
+      
       const [
         totalCollateral,
         marginUsed,
@@ -148,18 +244,18 @@ export function useCoreVault(walletAddress?: string) {
         unrealizedPnL,
         _totalCommitted,
         isHealthy
-      ] = await contracts.vault.getUnifiedMarginSummary(userAddress);
+      ] = marginSummary;
 
       // Format the available balance for the UI
       setAvailableBalance(formatTokenAmount(availableCollateral));
       setTotalCollateralStr(formatTokenAmount(totalCollateral));
       setHealthy(Boolean(isHealthy));
       
-      // Calculate realized PnL using 24 decimals (price 6d * size 18d)
+      // Calculate realized PnL using 18 decimals (standard P&L scale)
       let realizedPnLStr = '0';
       try {
         const realizedPnLBig = BigInt(realizedPnL.toString());
-        realizedPnLStr = ethers.formatUnits(realizedPnLBig, 24);
+        realizedPnLStr = ethers.formatUnits(realizedPnLBig, 18);
       } catch {}
 
       // Prefer real-time unrealized PnL using current mark price; fallback to summary (24d)
@@ -208,7 +304,8 @@ export function useCoreVault(walletAddress?: string) {
       } catch {
         try {
           const unrealizedPnLBig = BigInt(unrealizedPnL.toString());
-          unrealizedPnLStr = ethers.formatUnits(unrealizedPnLBig, 24);
+          // Fallback path uses contract summary which returns 18d P&L
+          unrealizedPnLStr = ethers.formatUnits(unrealizedPnLBig, 18);
         } catch {}
       }
 
@@ -254,126 +351,9 @@ export function useCoreVault(walletAddress?: string) {
     }
   }, [isInitialized, userAddress, fetchBalances]);
 
-  // Set up event listeners for contract events to refresh data
+  // Remove on-chain event watching to reduce RPC load; rely on timed polling
   useEffect(() => {
-    if (!isInitialized || !contracts || !userAddress) return;
-
-    const vault = contracts.vault;
-    const handleDeposit = (user: string, amount: bigint) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('Deposit event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleWithdraw = (user: string, amount: bigint) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('Withdraw event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handlePositionUpdate = (user: string, marketId: string, oldSize: bigint, newSize: bigint, entryPrice: bigint, marginLocked: bigint) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('Position update event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleMarginLocked = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('MarginLocked event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleMarginReleased = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('MarginReleased event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleMarginReserved = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('MarginReserved event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleMarginUnreserved = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('MarginUnreserved event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleLiquidationExecuted = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('LiquidationExecuted event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleAvailableCollateralConfiscated = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('AvailableCollateralConfiscated event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleUserLossSocialized = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('UserLossSocialized event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    const handleHaircutApplied = (user: string) => {
-      if (user.toLowerCase() === userAddress.toLowerCase()) {
-        console.log('HaircutApplied event detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-
-    // Assuming events like 'DepositCollateral', 'WithdrawCollateral', 'PositionUpdated' exist in your contract
-    vault.on('CollateralDeposited', handleDeposit);
-    vault.on('CollateralWithdrawn', handleWithdraw);
-    vault.on('PositionUpdated', handlePositionUpdate);
-    vault.on('MarginLocked', handleMarginLocked);
-    vault.on('MarginReleased', handleMarginReleased);
-    vault.on('MarginReserved', handleMarginReserved);
-    vault.on('MarginUnreserved', handleMarginUnreserved);
-    vault.on('LiquidationExecuted', handleLiquidationExecuted);
-    vault.on('AvailableCollateralConfiscated', handleAvailableCollateralConfiscated);
-    vault.on('UserLossSocialized', handleUserLossSocialized);
-    vault.on('HaircutApplied', handleHaircutApplied);
-
-    // USDC balance changes outside the vault (transfers)
-    const usdc = contracts.mockUSDC;
-    const handleUsdcTransfer = (from: string, to: string) => {
-      const fromMatch = from && from.toLowerCase() === userAddress.toLowerCase();
-      const toMatch = to && to.toLowerCase() === userAddress.toLowerCase();
-      if (fromMatch || toMatch) {
-        console.log('USDC Transfer involving user detected, refreshing balances');
-        scheduleRefresh();
-      }
-    };
-    usdc.on('Transfer', handleUsdcTransfer);
-
     return () => {
-      vault.off('CollateralDeposited', handleDeposit);
-      vault.off('CollateralWithdrawn', handleWithdraw);
-      vault.off('PositionUpdated', handlePositionUpdate);
-      vault.off('MarginLocked', handleMarginLocked);
-      vault.off('MarginReleased', handleMarginReleased);
-      vault.off('MarginReserved', handleMarginReserved);
-      vault.off('MarginUnreserved', handleMarginUnreserved);
-      vault.off('LiquidationExecuted', handleLiquidationExecuted);
-      vault.off('AvailableCollateralConfiscated', handleAvailableCollateralConfiscated);
-      vault.off('UserLossSocialized', handleUserLossSocialized);
-      vault.off('HaircutApplied', handleHaircutApplied);
-      contracts.mockUSDC.off('Transfer', handleUsdcTransfer);
       if (refreshTimerRef.current) {
         clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
@@ -410,7 +390,15 @@ export function useCoreVault(walletAddress?: string) {
       const amountWei = parseTokenAmount(amount);
       
       // Get vault address
-      const vaultAddress = CONTRACT_ADDRESSES.CORE_VAULT;
+      let vaultAddress;
+      try {
+        vaultAddress = await currentContracts.vault.getAddress();
+      } catch (e) {
+        console.error('Error getting vault address:', e);
+        vaultAddress = CONTRACT_ADDRESSES.CORE_VAULT;
+      }
+      
+      if (!vaultAddress) throw new Error('Vault address not found');
       
       // Approve USDC transfer
       console.log(`Approving ${amount} USDC for vault...`);
@@ -478,6 +466,7 @@ export function useCoreVault(walletAddress?: string) {
     withdrawCollateral,
     vaultAddress,
     mockUSDCAddress,
-    fetchBalances
+    fetchBalances,
+    refresh: scheduleRefresh // Add a refresh function for external components
   };
 }

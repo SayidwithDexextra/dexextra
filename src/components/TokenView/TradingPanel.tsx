@@ -9,6 +9,7 @@ import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
 import { initializeContracts } from '@/lib/contracts';
+import { useMarket } from '@/hooks/useMarket';
 import type { Address } from 'viem';
 
 interface TradingPanelProps {
@@ -43,6 +44,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
   // Get the metric ID for orderbook queries
   const metricId = memoizedVammMarket?.metric_id || tokenData.symbol;
+  const { market: marketRow } = useMarket(metricId);
   
   // Initialize OrderBook hook
   const [orderBookState, orderBookActions] = useOrderBook(metricId);
@@ -588,6 +590,9 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     if (!isConnected) return false;
     if (isSubmittingOrder || isCancelingOrder) return false;
     if (!selectedOption) return false;
+    // Block trading if market is settled (DB status)
+    if ((marketRow as any)?.market_status === 'SETTLED') return false;
+    // Disable when market is settled (from header context) — removed undefined reference
     
     // Check if amount is set and valid
     if (!amount || amount <= 0 || isNaN(amount)) return false;
@@ -604,7 +609,8 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     selectedOption,
     amount,
     orderType,
-    triggerPrice
+    triggerPrice,
+    marketRow?.market_status
   ]);
 
   // Helper function to abbreviate long market names for button display
@@ -756,7 +762,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       }
       const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
       const signer = await browserProvider.getSigner();
-      const contracts = await initializeContracts(signer);
+      const contracts = await initializeContracts({ providerOrSigner: signer });
 
       // Fetch reference price from orderbook (bestAsk for buy, bestBid for sell)
       const bestBid: bigint = await contracts.obView.bestBid();
@@ -911,7 +917,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
       const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
       const signer = await browserProvider.getSigner();
-      const contracts = await initializeContracts(signer);
+      const contracts = await initializeContracts({ providerOrSigner: signer });
 
       // Parse amounts to on-chain units (price: 6 decimals USDC, size: 18 decimals)
       const priceWei = ethers.parseUnits(String(Number(triggerPrice).toFixed(6)), 6);
@@ -1616,15 +1622,15 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
                       type="text"
                       inputMode="decimal"
                       pattern="[0-9]*[.,]?[0-9]*"
-                      value={triggerPriceInput !== '' ? triggerPriceInput : (triggerPrice > 0 ? triggerPrice.toString() : '')}
+                      value={triggerPriceInput}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const raw = getInputValue(e);
-                        const sanitized = sanitizeDecimalInput(raw, 6);
-                        setTriggerPriceInput(sanitized);
-                        // Convert to number when possible
-                        const parsed = sanitized === '.' || sanitized === '' ? NaN : parseFloat(sanitized);
-                        console.log('Trigger Price Input:', { raw, sanitized, parsed });
-                        setTriggerPrice(!isNaN(parsed) ? parsed : 0);
+                        const value = e.target.value;
+                        // Allow only numbers and decimal point
+                        if (/^\d*\.?\d*$/.test(value)) {
+                          setTriggerPriceInput(value);
+                          const parsed = parseFloat(value);
+                          setTriggerPrice(!isNaN(parsed) ? parsed : 0);
+                        }
                       }}
                       placeholder="0.00"
                       className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 pl-6 text-xs font-medium text-white placeholder-[#606060] focus:outline-none focus:border-blue-400 transition-colors duration-200"

@@ -21,6 +21,17 @@ export class OrderService {
     'function getBestPrices() external view returns (uint256 bidPrice, uint256 askPrice)'
   ] as const);
 
+  private async ensureContractAvailable(address: Address): Promise<boolean> {
+    try {
+      // Check that bytecode exists at the target address on the configured network
+      // Many BAD_DATA decode errors are caused by pointing at the wrong chain or a non-contract address
+      const bytecode = await this.client.getBytecode({ address });
+      return !!bytecode && bytecode !== '0x';
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Dynamically resolve OrderBook contract address for a given metricId with caching
    */
@@ -64,7 +75,12 @@ export class OrderService {
         orderBookAddress,
         note: 'Using dynamic OrderBook resolution'
       });
-
+      // Guard: ensure contract exists on configured network
+      const exists = await this.ensureContractAvailable(orderBookAddress);
+      if (!exists) {
+        console.warn('⚠️ OrderService: OrderBook not deployed on configured network, skipping getOrder');
+        return null;
+      }
       const result = await this.client.readContract({
         address: orderBookAddress,
         abi: this.ORDERBOOK_ABI,
@@ -123,7 +139,12 @@ export class OrderService {
         orderBookAddress,
         note: 'Using dynamic OrderBook resolution'
       });
-
+      // Guard: ensure contract exists on configured network
+      const exists = await this.ensureContractAvailable(orderBookAddress);
+      if (!exists) {
+        console.warn('⚠️ OrderService: OrderBook not deployed on configured network, returning empty orders');
+        return [];
+      }
       // OrderBook.getUserOrders returns array of order IDs (bytes32[])
       const orderIds = await this.client.readContract({
         address: orderBookAddress,
@@ -161,8 +182,14 @@ export class OrderService {
         expectedMetricId: metricId
       });
       return orders;
-    } catch (error) {
-      console.error('❌ OrderService: Error fetching user orders from OrderBook:', error);
+    } catch (error: any) {
+      const msg = error?.message || '';
+      // Handle common decode/call errors gracefully to avoid UI crashes
+      if (msg.includes('could not decode result data') || msg.includes('ContractFunctionExecutionError')) {
+        console.warn('⚠️ OrderService: getUserOrders call failed (likely wrong network or facet missing). Returning empty list.');
+        return [];
+      }
+      console.error('❌ OrderService: Unexpected error fetching user orders from OrderBook:', error);
       return [];
     }
   }
@@ -211,7 +238,7 @@ export class OrderService {
   async getMarketDepth(metricId: string, depth: number = 15): Promise<MarketDepth> {
     try {
       // Use OrderBook address instead of orderRouter
-      const orderBookAddress = CONTRACT_ADDRESSES.aluminumOrderBook; // TODO: Make this dynamic based on metricId
+      const orderBookAddress = this.resolveOrderBookAddress(metricId);
       
       console.log('🔍 OrderService: Getting market depth from OrderBook:', {
         metricId,
@@ -219,7 +246,12 @@ export class OrderService {
         orderBookAddress,
         note: 'Using OrderBook.getOrderBookDepth instead of TradingRouter'
       });
-
+      // Guard: ensure contract exists on configured network
+      const exists = await this.ensureContractAvailable(orderBookAddress);
+      if (!exists) {
+        console.warn('⚠️ OrderService: OrderBook not deployed on configured network, returning empty depth');
+        return { bids: [], asks: [], spread: 0, midPrice: 0 };
+      }
       const result = await this.client.readContract({
         address: orderBookAddress,
         abi: this.ORDERBOOK_ABI,

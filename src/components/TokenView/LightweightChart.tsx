@@ -94,6 +94,65 @@ export default function LightweightChart({
   // Initialize Pusher
   const pusher = usePusher({ enableLogging: false });
 
+  // Helper: push a live tick from TokenHeader event into the area series
+  const applyLiveTick = useCallback((tickPrice: number, tickTimestamp: number) => {
+    try {
+      if (!areaSeriesRef.current) return;
+      const timeframeSeconds = getTimeframeSeconds(selectedTimeframe);
+      const alignedTime = Math.floor(Math.floor(tickTimestamp / 1000) / timeframeSeconds) * timeframeSeconds;
+
+      const newPoint = { time: alignedTime, value: Math.max(0, Number(tickPrice) || 0) };
+      const lastPoint = areaDataRef.current[areaDataRef.current.length - 1];
+
+      if (!lastPoint) {
+        areaDataRef.current = [newPoint];
+        areaSeriesRef.current.setData([{ time: newPoint.time as Time, value: newPoint.value }]);
+      } else {
+        if (newPoint.time === lastPoint.time) {
+          areaDataRef.current[areaDataRef.current.length - 1] = newPoint;
+          areaSeriesRef.current.update({ time: newPoint.time as Time, value: newPoint.value });
+        } else if (newPoint.time > lastPoint.time) {
+          areaDataRef.current.push(newPoint);
+          areaSeriesRef.current.update({ time: newPoint.time as Time, value: newPoint.value });
+        } else {
+          // stale tick, ignore
+          return;
+        }
+      }
+
+      // Update legend based on first vs current
+      const firstValue = areaDataRef.current[0]?.value || 0;
+      const changeValue = newPoint.value - firstValue;
+      const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
+
+      const isPositive = changeValue >= 0;
+      areaSeriesRef.current.applyOptions({
+        lineColor: isPositive ? positiveColor : negativeColor,
+        topColor: isPositive ? positiveTopColor : negativeTopColor,
+        bottomColor: isPositive ? positiveBottomColor : negativeBottomColor,
+        crosshairMarkerBorderColor: isPositive ? positiveColor : negativeColor,
+        crosshairMarkerBackgroundColor: isPositive ? positiveColor : negativeColor,
+      });
+
+      setLegendData({
+        price: newPoint.value,
+        change: changeValue,
+        changePercent: isFinite(changePercent) ? changePercent : 0,
+        time: new Date(newPoint.time * 1000).toLocaleTimeString(),
+      });
+
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent();
+      }
+      setHasData(true);
+      setDataSource('pusher');
+      setLastUpdate(new Date());
+      setError(null);
+    } catch (e) {
+      // swallow errors to avoid UI spam
+    }
+  }, [selectedTimeframe]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -464,6 +523,25 @@ export default function LightweightChart({
       }
     };
   }, [pusher, symbol, selectedTimeframe, handleChartDataUpdate, handleConnectionStateChange]);
+
+  // Subscribe to mark price events emitted from TokenHeader
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const { detail } = event as CustomEvent<{ symbol: string; price: number; timestamp: number }>;
+      if (!detail) return;
+      if (detail.symbol !== symbol) return; // only process current symbol
+      applyLiveTick(detail.price, detail.timestamp);
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('marketMarkPrice', handler as EventListener);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('marketMarkPrice', handler as EventListener);
+      }
+    };
+  }, [symbol, applyLiveTick]);
 
   // Fetch and update chart data with animation
   const fetchChartData = async (timeframe: string, animate: boolean = false) => {

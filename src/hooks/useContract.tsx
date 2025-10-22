@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { createPublicClient, http, Address, PublicClient, getContract } from 'viem';
-import { polygon } from 'viem/chains';
 import { useWallet } from './useWallet';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { CONTRACT_ABIS } from '@/lib/contracts';
@@ -58,7 +57,7 @@ export function useContract<T = any>(contractType: ContractType): ContractResult
   // Create public client for reading from contracts
   const publicClient = useMemo(() => {
     return createPublicClient({
-      chain: polygon,
+      chain: { id: CHAIN_CONFIG.chainId, name: 'hyperliquid_testnet' } as any,
       transport: http(CHAIN_CONFIG.rpcUrl),
     });
   }, []);

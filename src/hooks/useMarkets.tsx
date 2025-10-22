@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react';
 
-// OrderbookMarket type based on the API response structure
-export interface OrderbookMarket {
+// Market type based on the new unified markets table
+export interface Market {
   id: string;
-  metric_id: string;
+  market_identifier: string;
+  symbol: string;
+  name: string;
   description: string;
   category: string;
   decimals: number;
@@ -15,10 +17,11 @@ export interface OrderbookMarket {
   trading_end_date: string;
   market_address: string | null;
   factory_address: string | null;
+  market_id_bytes32: string | null;
   total_volume: number;
   total_trades: number;
-  open_interest_long?: number;
-  open_interest_short?: number;
+  open_interest_long: number;
+  open_interest_short: number;
   last_trade_price: number | null;
   market_status: string;
   creator_wallet_address: string;
@@ -27,9 +30,10 @@ export interface OrderbookMarket {
   created_at: string;
   deployed_at: string | null;
   chain_id: number;
+  network: string;
 }
 
-interface UseOrderbookMarketsOptions {
+interface UseMarketsOptions {
   status?: string;
   category?: string;
   creator?: string;
@@ -40,8 +44,8 @@ interface UseOrderbookMarketsOptions {
   refreshInterval?: number;
 }
 
-interface UseOrderbookMarketsResult {
-  markets: OrderbookMarket[];
+interface UseMarketsResult {
+  markets: Market[];
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
@@ -52,7 +56,7 @@ interface UseOrderbookMarketsResult {
   };
 }
 
-export function useOrderbookMarkets(options: UseOrderbookMarketsOptions = {}): UseOrderbookMarketsResult {
+export function useMarkets(options: UseMarketsOptions = {}): UseMarketsResult {
   const {
     status,
     category,
@@ -64,7 +68,7 @@ export function useOrderbookMarkets(options: UseOrderbookMarketsOptions = {}): U
     refreshInterval = 60000, // Default 1 minute
   } = options;
 
-  const [markets, setMarkets] = useState<OrderbookMarket[]>([]);
+  const [markets, setMarkets] = useState<Market[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({
@@ -87,7 +91,7 @@ export function useOrderbookMarkets(options: UseOrderbookMarketsOptions = {}): U
       params.append('offset', offset.toString());
       
       // Fetch data from API
-      const response = await fetch(`/api/orderbook-markets?${params.toString()}`);
+      const response = await fetch(`/api/markets?${params.toString()}`);
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -108,7 +112,7 @@ export function useOrderbookMarkets(options: UseOrderbookMarketsOptions = {}): U
       });
       setError(null);
     } catch (err) {
-      console.error('Error fetching orderbook markets:', err);
+      console.error('Error fetching markets:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch markets');
     } finally {
       setIsLoading(false);
@@ -140,3 +144,4 @@ export function useOrderbookMarkets(options: UseOrderbookMarketsOptions = {}): U
     pagination
   };
 }
+

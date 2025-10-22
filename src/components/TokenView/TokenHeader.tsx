@@ -3,7 +3,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
-import { useOrderbookMarket } from '@/hooks/useOrderbookMarket';
+import { useMarket } from '@/hooks/useMarket';
 import { useOrderBookPrice } from '@/hooks/useOrderBookPrice';
 import { useCoreVault } from '@/hooks/useCoreVault';
 // Legacy hooks removed
@@ -150,12 +150,12 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // 2. Price data: Real-time contract calls to OrderBook contracts
   // 3. Trading data: Fetch positions from market_positions table
   
-  // Get orderbook market data
+  // Get market data from the new unified markets table
   const {
     market: marketData,
     isLoading: isLoadingMarket,
     error: marketError
-  } = useOrderbookMarket(symbol);
+  } = useMarket(symbol);
   
   // console.log('🏪 OrderBook Market Data Status:', {
   //   symbol,
@@ -181,7 +181,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Keep legacy hook for backward compatibility
   const {
     priceData: legacyOrderBookPrice
-  } = useOrderBookPrice(marketData?.metricId);
+  } = useOrderBookPrice(marketData?.market_identifier);
   
   // Position data (placeholder as legacy hooks were removed)
   const vaultPositions: any[] = [];
@@ -212,7 +212,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     const priceChangePercentValue = 0;
     
     // Check if HyperLiquid contracts are deployed and available
-    const hasContracts = market.isActive && market.marketStatus === 'ACTIVE';
+    const hasContracts = market.market_status === 'ACTIVE';
     
     // Calculate market metrics based on orderbook data
     const estimatedSupply = 1000000; // Could be derived from open interest
@@ -226,8 +226,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     );
     
     return {
-      symbol: market.metricId,
-      name: market.metricId.replace(/_/g, ' '), // Convert metric_id to readable name
+      symbol: market.market_identifier,
+      name: market.name || market.market_identifier.replace(/_/g, ' '), // Use name or convert market_identifier to readable name
       description: market.description || '',
       category: 'General', // Default category
       chain: 'Unknown', // Default chain
@@ -246,8 +246,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       unrealizedPnL: '0',
       // Deployment and market status
       isDeployed: hasContracts,
-      created_at: market.createdAt,
-      marketStatus: market.marketStatus,
+      created_at: market.created_at,
+      marketStatus: market.market_status,
       settlementDate: '',
       totalTrades: 0,
       openInterestLong: 0,
@@ -268,6 +268,22 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   //   marketStatus: enhancedTokenData?.marketStatus,
   //   isDeployed: enhancedTokenData?.isDeployed
   // });
+
+  // Broadcast mark price to any interested listeners (e.g., charts)
+  useEffect(() => {
+    if (!enhancedTokenData) return;
+    try {
+      const detail = {
+        symbol: enhancedTokenData.symbol,
+        price: Number(enhancedTokenData.markPrice) || 0,
+        timestamp: Date.now()
+      };
+      const evt = new CustomEvent('marketMarkPrice', { detail });
+      if (typeof window !== 'undefined') window.dispatchEvent(evt);
+    } catch (e) {
+      // no-op
+    }
+  }, [enhancedTokenData?.symbol, enhancedTokenData?.markPrice]);
 
   // Scroll detection effect using Intersection Observer for better performance
   useEffect(() => {

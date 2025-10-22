@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Address, createPublicClient, http } from 'viem';
-import { polygon } from 'viem/chains';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import OrderBookArtifact from '@/lib/abis/OrderBook.json';
+import { usePusher } from '@/lib/pusher-client';
 
 type OrderBookLiveData = {
   orderBookAddress: Address | null;
@@ -24,7 +24,7 @@ type OrderBookLiveData = {
     askPrices: number[];
     askAmounts: number[];
   } | null;
-  recentTrades: Array<{ price: number; amount: number; timestamp: number }> | null;
+  recentTrades: Array<{ tradeId: string; price: number; amount: number; timestamp: number }> | null;
   lastUpdated: string;
 };
 
@@ -43,28 +43,37 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<OrderBookLiveData | null>(null);
+  const fetchNowRef = useRef<null | (() => void)>(null);
+  const lastRealtimeRefreshRef = useRef<number>(0);
 
   const refreshInterval = options?.refreshInterval ?? 15000;
 
   const publicClient = useMemo(() => {
-    return createPublicClient({ chain: polygon, transport: http(CHAIN_CONFIG.rpcUrl) });
+    return createPublicClient({ chain: { id: CHAIN_CONFIG.chainId, name: 'hyperliquid_testnet' } as any, transport: http(CHAIN_CONFIG.rpcUrl) });
   }, []);
-  // Pricing uses 6 decimals on-chain; scale to human-readable
+  // Human-readable scaling using BigInt-safe conversion to avoid overflow/precision loss
   const PRICE_DECIMALS = 6;
-  const SCALE_PRICE = Math.pow(10, PRICE_DECIMALS);
-  const toNum = (x: bigint | number | null) => (typeof x === 'bigint' ? Number(x) : x === null ? null : Number(x));
-  const scalePrice = (x: bigint | number | null): number | null => {
-    const n = toNum(x);
-    if (n === null) return null;
-    return n / SCALE_PRICE;
-  };
-  // Order sizes are stored in 18 decimals (token precision)
   const AMOUNT_DECIMALS = 18;
-  const SCALE_AMOUNT = Math.pow(10, AMOUNT_DECIMALS);
+  const TEN = 10n;
+  const pow10 = (d: number) => TEN ** BigInt(d);
+  const bigintToFloat = (x: bigint, decimals: number, maxFraction = 8): number => {
+    const base = pow10(decimals);
+    const intPart = x / base;
+    const fracPart = x % base;
+    const fracStrFull = fracPart.toString().padStart(decimals, '0');
+    const fracStr = maxFraction > 0 ? fracStrFull.slice(0, Math.min(maxFraction, decimals)) : '';
+    const str = fracStr ? `${intPart.toString()}.${fracStr}` : intPart.toString();
+    return parseFloat(str);
+  };
+  const scalePrice = (x: bigint | number | null): number | null => {
+    if (x === null || x === undefined) return null;
+    if (typeof x === 'bigint') return bigintToFloat(x, PRICE_DECIMALS, 8);
+    return x / Math.pow(10, PRICE_DECIMALS);
+  };
   const scaleAmount = (x: bigint | number | null): number => {
-    const n = toNum(x);
-    if (n === null) return 0;
-    return n / SCALE_AMOUNT;
+    if (x === null || x === undefined) return 0;
+    if (typeof x === 'bigint') return bigintToFloat(x, AMOUNT_DECIMALS, 12);
+    return x / Math.pow(10, AMOUNT_DECIMALS);
   };
 
   // Resolve market config by symbol
@@ -116,8 +125,7 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
     let cancelled = false;
     let timer: any;
 
-    // Compose ABI: base diamond ABI plus minimal facet views used here
-    const baseAbi = ((OrderBookArtifact as any)?.abi ?? []) as any[];
+    // Use a minimal, explicit ABI to avoid decoding mismatches
     const facetAbi = [
       // Pricing/View facet methods used for UI
       { type: 'function', name: 'calculateMarkPrice', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
@@ -149,7 +157,14 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
         { type: 'address', name: 'seller' },
         { type: 'uint256', name: 'price' },
         { type: 'uint256', name: 'amount' },
-        { type: 'uint256', name: 'timestamp' }
+        { type: 'uint256', name: 'timestamp' },
+        { type: 'uint256', name: 'buyOrderId' },
+        { type: 'uint256', name: 'sellOrderId' },
+        { type: 'bool', name: 'buyerIsMargin' },
+        { type: 'bool', name: 'sellerIsMargin' },
+        { type: 'uint256', name: 'tradeValue' },
+        { type: 'uint256', name: 'buyerFee' },
+        { type: 'uint256', name: 'sellerFee' }
       ] } as any] },
       { type: 'function', name: 'getRecentTrades', stateMutability: 'view', inputs: [{ type: 'uint256', name: 'count' }], outputs: [{ type: 'tuple[]', components: [
         { type: 'uint256', name: 'tradeId' },
@@ -157,10 +172,17 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
         { type: 'address', name: 'seller' },
         { type: 'uint256', name: 'price' },
         { type: 'uint256', name: 'amount' },
-        { type: 'uint256', name: 'timestamp' }
+        { type: 'uint256', name: 'timestamp' },
+        { type: 'uint256', name: 'buyOrderId' },
+        { type: 'uint256', name: 'sellOrderId' },
+        { type: 'bool', name: 'buyerIsMargin' },
+        { type: 'bool', name: 'sellerIsMargin' },
+        { type: 'uint256', name: 'tradeValue' },
+        { type: 'uint256', name: 'buyerFee' },
+        { type: 'uint256', name: 'sellerFee' }
       ] } as any] },
     ] as const as any[];
-    const abi = [...baseAbi, ...facetAbi];
+    const abi = [...facetAbi];
     if (!abi || abi.length === 0) {
       setError('OrderBook ABI not found');
       setIsLoading(false);
@@ -266,6 +288,7 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
           }
           if (Array.isArray(trades)) {
             recentTrades = trades.map((t: any) => ({
+              tradeId: String(t?.tradeId ?? ''),
               price: scalePrice(t?.price ?? 0) || 0,
               amount: scaleAmount(t?.amount ?? 0),
               timestamp: Number(t?.timestamp ?? 0),
@@ -279,18 +302,21 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
         const markPriceCalc = scalePrice(markPriceRaw as any) || null;
         const markPrice = markPriceCalc && markPriceCalc > 0 ? markPriceCalc : (bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : (lastTradePrice || 0));
 
+        const toNumNullable = (x: bigint | null): number | null => (x === null ? null : Number(x));
+        const toNumZero = (x: bigint | null): number => (x === null ? 0 : Number(x));
+
         const live: OrderBookLiveData = {
           orderBookAddress: address,
           bestBid,
           bestAsk,
           lastTradePrice,
           markPrice,
-          totalTrades: toNum(totalTrades),
-          volume24h: toNum(volume24h),
-          openInterest: toNum(openInterest),
+          totalTrades: toNumNullable(totalTrades),
+          volume24h: toNumNullable(volume24h),
+          openInterest: toNumNullable(openInterest),
           priceChange24h: scalePrice(priceChange24h),
-          activeBuyOrders: toNum(activeBuyOrders),
-          activeSellOrders: toNum(activeSellOrders),
+          activeBuyOrders: toNumZero(activeBuyOrders),
+          activeSellOrders: toNumZero(activeSellOrders),
           depth,
           recentTrades,
           lastUpdated: new Date().toISOString(),
@@ -312,6 +338,17 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
       }
     };
 
+    // expose immediate fetch for realtime triggers
+    fetchNowRef.current = () => {
+      // Simple debounce to avoid bursts
+      const now = Date.now();
+      if (now - lastRealtimeRefreshRef.current < 750) return;
+      lastRealtimeRefreshRef.current = now;
+      // Cancel any pending timer and fetch immediately
+      if (timer) clearTimeout(timer);
+      void fetchData();
+    };
+
     fetchData();
 
     return () => {
@@ -319,6 +356,36 @@ export function useOrderBookContractData(symbol: string, options?: { refreshInte
       if (timer) clearTimeout(timer);
     };
   }, [symbol, publicClient, refreshInterval]);
+
+  // Near real-time push: subscribe to server events and trigger fast refresh without on-chain filters
+  const pusher = usePusher();
+  useEffect(() => {
+    if (!pusher) return;
+
+    // Subscribe strictly by metric_id as provided in symbol
+    const metricId = symbol;
+
+    const handlers = {
+      'order-update': () => fetchNowRef.current?.(),
+      'trading-event': () => fetchNowRef.current?.(),
+      'price-update': () => fetchNowRef.current?.(),
+      'batch-price-update': () => fetchNowRef.current?.(),
+      'market-data-update': () => fetchNowRef.current?.(),
+    } as Record<string, (data: any) => void>;
+
+    const unsubs: Array<() => void> = [];
+    if (metricId) {
+      try { unsubs.push(pusher.subscribeToChannel(`market-${metricId}`, handlers)); } catch {}
+    }
+    // Optional: listen to global recent transactions to prompt refresh broadly
+    try {
+      unsubs.push(pusher.subscribeToChannel('recent-transactions', { 'new-order': () => fetchNowRef.current?.() }));
+    } catch {}
+
+    return () => {
+      unsubs.forEach((u) => { try { u(); } catch {} });
+    };
+  }, [pusher, symbol]);
 
   return { data, isLoading, error } as const;
 }

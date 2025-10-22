@@ -9,21 +9,21 @@ import { ProductCard, ProductCardData } from '@/components/ProductCard';
 import { MarketPreviewModal } from '@/components/MarketPreviewModal';
 import MarketTickerCardContainer from '@/components/MarketTickerCard/MarketTickerCardContainer';
 import { MarketTickerCardData } from '@/components/MarketTickerCard/types';
-import { useOrderbookMarkets } from '@/hooks/useOrderbookMarkets';
-import { transformOrderbookMarketsToCards, sortMarketsByPriority } from '@/lib/marketTransformers';
+import { useMarkets } from '@/hooks/useMarkets';
+import { transformMarketsToCards, sortMarketsByPriority } from '@/lib/marketTransformers';
 
 export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductCardData | null>(null);
   const router = useRouter();
 
-  // Fetch active orderbook markets from the database
+  // Fetch active markets from the database using the new hook
   const { 
-    markets: orderbookMarkets, 
+    markets, 
     isLoading: marketsLoading, 
     error: marketsError,
     refetch: refetchMarkets 
-  } = useOrderbookMarkets({
+  } = useMarkets({
     status: 'ACTIVE',
     limit: 20,
     autoRefresh: true,
@@ -31,10 +31,10 @@ export default function Home() {
   });
 
   // Sort markets by priority (active first, then by volume/date)
-  const sortedMarkets = sortMarketsByPriority(orderbookMarkets);
+  const sortedMarkets = sortMarketsByPriority(markets);
   
-  // Transform orderbook markets to card data format
-  const marketCardData = transformOrderbookMarketsToCards(sortedMarkets);
+  // Transform markets to card data format using the new transformer
+  const marketCardData = transformMarketsToCards(sortedMarkets);
   
   const recentEvents: any[] = []
   const eventsLoading = false
@@ -69,7 +69,7 @@ export default function Home() {
       author: 'Dmytri Ivanov',
       price: 69,
       currency: 'USD',
-      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhaam5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
+      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhham5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
       href: '/product/ainest-framer-template',
     },
     {
@@ -79,7 +79,7 @@ export default function Home() {
       author: 'Shaig',
       price: 79,
       currency: 'USD',
-      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhaam5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
+      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhham5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
       href: '/product/zentro-agency-template',
     },
   ];
@@ -111,22 +111,20 @@ export default function Home() {
   };
 
   const handleMarketCardLongPosition = (cardId: string) => {
-    const market = orderbookMarkets.find(m => m.id === cardId);
+    const market = markets.find(m => m.id === cardId);
     if (market) {
-      // Navigate to token page with "long" intent using metric_id
-      router.push(`/token/${market.metric_id}?action=long`);
+      // Navigate to token page with "long" intent using market_identifier instead of metric_id
+      router.push(`/token/${market.market_identifier}?action=long`);
     }
   };
 
   const handleMarketCardShortPosition = (cardId: string) => {
-    const market = orderbookMarkets.find(m => m.id === cardId);
+    const market = markets.find(m => m.id === cardId);
     if (market) {
-      // Navigate to token page with "short" intent using metric_id
-      router.push(`/token/${market.metric_id}?action=short`);
+      // Navigate to token page with "short" intent using market_identifier instead of metric_id
+      router.push(`/token/${market.market_identifier}?action=short`);
     }
   };
-
-
 
   return (
     <>
@@ -137,13 +135,11 @@ export default function Home() {
       
       <Hero data={heroData} />
 
-
-
       <div className="flex justify-center py-8">
         <Widget />
       </div>
       
-      {/* vAMM Markets Section */}
+      {/* Markets Section */}
       {marketsError ? (
         <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
           <div className="max-w-7xl mx-auto text-center">
@@ -153,7 +149,7 @@ export default function Home() {
       ) : marketsLoading ? (
         <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
           <div className="max-w-7xl mx-auto text-center">
-            <p className="text-white">Loading orderbook markets... ({orderbookMarkets.length} found so far)</p>
+            <p className="text-white">Loading markets... ({markets.length} found so far)</p>
           </div>
         </div>
       ) : marketCardData.length > 0 ? (
@@ -176,21 +172,6 @@ export default function Home() {
       )}
       
    
-
-      {/* <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 sm:gap-10 lg:gap-12 justify-items-center place-content-center">
-            {featuredProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                {...product}
-                onViewMarket={handleViewMarket}
-              />
-            ))}
-          </div>
-        </div>
-      </div> */}
-
       {/* Market Preview Modal */}
       {selectedProduct && (
         <MarketPreviewModal

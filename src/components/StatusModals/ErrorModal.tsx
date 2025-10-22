@@ -75,15 +75,22 @@ export default function ErrorModal({
       
       {/* Modal Card */}
       <div 
-        className="relative w-full max-w-sm min-h-[200px] text-center"
+        className="relative w-full max-w-sm min-h-[200px] text-center group bg-[#0F0F0F] hover:bg-[#1A1A1A]"
         style={{
-          background: 'linear-gradient(135deg, #000000 0%, #1A1A1A 100%)',
-          borderRadius: '24px',
+          border: '1px solid #222222',
+          borderRadius: '6px',
           padding: '32px',
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+          transition: 'all 0.2s',
           animation: isExiting 
             ? 'modalExit 300ms cubic-bezier(0.4, 0, 0.6, 1) forwards' 
             : 'modalPopEnter 400ms cubic-bezier(0.16, 1, 0.3, 1) forwards'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.border = '1px solid #333333';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.border = '1px solid #222222';
         }}
       >
         {/* Icon */}
@@ -95,7 +102,7 @@ export default function ErrorModal({
           }}
         >
           <svg 
-            className="w-6 h-6 text-white" 
+            className="w-6 h-6 text-red-400" 
             fill="none" 
             stroke="currentColor" 
             viewBox="0 0 24 24"
@@ -111,9 +118,9 @@ export default function ErrorModal({
         
         {/* Title */}
         <h2 
-          className="text-white font-bold mb-4"
+          className="text-white font-medium mb-4"
           style={{
-            fontSize: '20px',
+            fontSize: '11px',
             lineHeight: '1.25',
             fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif",
             overflow: 'hidden',
@@ -126,9 +133,9 @@ export default function ErrorModal({
         
         {/* Message */}
         <p 
-          className="text-gray-200 mb-6"
+          className="text-[#808080] mb-6"
           style={{
-            fontSize: '14px',
+            fontSize: '10px',
             lineHeight: '1.5',
             fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif",
             overflow: 'hidden',
@@ -147,20 +154,20 @@ export default function ErrorModal({
           onClick={onClose}
           className="transition-all duration-200 ease-in-out border-none cursor-pointer"
           style={{
-            backgroundColor: '#4B5563',
+            backgroundColor: '#2A2A2A',
             color: '#FFFFFF',
             padding: '12px 24px',
-            borderRadius: '16px',
-            fontSize: '14px',
-            fontWeight: '600',
+            borderRadius: '6px',
+            fontSize: '10px',
+            fontWeight: '500',
             minWidth: '100px',
             fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif"
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#6B7280';
+            e.currentTarget.style.backgroundColor = '#1A1A1A';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#4B5563';
+            e.currentTarget.style.backgroundColor = '#2A2A2A';
           }}
         >
           {buttonText}

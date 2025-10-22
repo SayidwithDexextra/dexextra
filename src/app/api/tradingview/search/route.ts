@@ -18,19 +18,19 @@ export async function GET(request: NextRequest) {
 
     console.log(`🔍 TradingView search: "${query}" (limit: ${limit})`);
 
-    // Build Supabase query for active vAMM markets
+    // Build Supabase query for active orderbook markets
     let supabaseQuery = supabase
-      .from('vamm_markets')
-      .select('symbol, description, category, vamm_address, vault_address, initial_price, created_at')
+      .from('orderbook_markets')
+      .select('metric_id, description, category, market_address, central_vault_address, last_trade_price, created_at')
       .eq('is_active', true)
       .eq('deployment_status', 'deployed')
-      .not('vamm_address', 'is', null);
+      .not('market_address', 'is', null);
 
     // Add search filter if query provided
     if (query.trim()) {
       const searchLower = query.toLowerCase();
       supabaseQuery = supabaseQuery.or(
-        `symbol.ilike.%${searchLower}%,description.ilike.%${searchLower}%`
+        `metric_id.ilike.%${searchLower}%,description.ilike.%${searchLower}%`
       );
     }
 
@@ -48,32 +48,32 @@ export async function GET(request: NextRequest) {
     }
 
     // Transform markets to TradingView format
-    const symbols = (markets || []).map(market => {
-      // Determine market type from category
-      let marketType = 'futures'; // Default for vAMM markets
-      if (Array.isArray(market.category)) {
-        if (market.category.includes('crypto')) marketType = 'crypto';
-        else if (market.category.includes('stock')) marketType = 'stock';
-        else if (market.category.includes('index')) marketType = 'index';
-        else if (market.category.includes('commodity')) marketType = 'commodity';
-      }
+    const symbols = (markets || []).map((market: any) => {
+      // Determine market type from category string
+      const cat = (market.category || '').toString().toLowerCase();
+      let marketType = 'futures';
+      if (cat.includes('crypto')) marketType = 'crypto';
+      else if (cat.includes('stock')) marketType = 'stock';
+      else if (cat.includes('index')) marketType = 'index';
+      else if (cat.includes('commodity')) marketType = 'commodity';
 
+      const symbol = market.metric_id;
       return {
-        symbol: market.symbol,
-        full_name: `VAMM:${market.symbol}`,
-        description: market.description || `${market.symbol} vAMM Market`,
-        exchange: 'VAMM',
-        ticker: market.symbol,
+        symbol,
+        full_name: `ORDERBOOK:${symbol}`,
+        description: market.description || `${symbol} Orderbook Market`,
+        exchange: 'ORDERBOOK',
+        ticker: symbol,
         type: marketType,
-        category: Array.isArray(market.category) ? market.category.join(', ') : market.category,
-        vamm_address: market.vamm_address,
-        vault_address: market.vault_address,
-        initial_price: market.initial_price,
+        category: cat,
+        market_address: market.market_address,
+        vault_address: market.central_vault_address,
+        initial_price: market.last_trade_price,
         created_at: market.created_at
       };
     });
 
-    console.log(`✅ Found ${symbols.length} vAMM markets for query: "${query}"`);
+    console.log(`✅ Found ${symbols.length} orderbook markets for query: "${query}"`);
 
     return NextResponse.json({
       symbols,

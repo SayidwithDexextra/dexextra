@@ -1,24 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
+import { createClient } from '@supabase/supabase-js';
 
-/**
- * GET /api/markets - Get list of available markets with real-time data
- */
+// Initialize Supabase client with service role key for full access
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+// GET endpoint to retrieve markets from the new unified markets table
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const status = searchParams.get('status');
-    const category = searchParams.get('category');
+    
+    // Query parameters
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
-    const includeStats = searchParams.get('includeStats') === 'true';
+    const status = searchParams.get('status'); // ACTIVE, PENDING, SETTLED, EXPIRED
+    const category = searchParams.get('category');
+    const creator = searchParams.get('creator'); // wallet address
+    const search = searchParams.get('search'); // text search
 
-    // Build base query
-    let query = supabaseAdmin
-      .from('orderbook_markets')
+    console.log('🔍 Fetching markets:', { limit, offset, status, category, creator, search });
+
+    // Build query against the new markets table
+    let query = supabase
+      .from('markets')
       .select(`
         id,
-        metric_id,
+        market_identifier,
+        symbol,
+        name,
         description,
         category,
         decimals,
@@ -26,157 +37,263 @@ export async function GET(request: NextRequest) {
         tick_size,
         settlement_date,
         trading_end_date,
-        market_status,
+        market_address,
+        factory_address,
+        market_id_bytes32,
         total_volume,
         total_trades,
         open_interest_long,
         open_interest_short,
         last_trade_price,
-        settlement_value,
-        created_at,
-        updated_at,
+        market_status,
+        deployment_status,
+        creator_wallet_address,
         banner_image_url,
-        icon_image_url
+        icon_image_url,
+        created_at,
+        deployed_at,
+        chain_id,
+        network
       `)
-      .order('total_volume', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .order('created_at', { ascending: false });
 
-    // Add filters
+    // Apply filters
     if (status) {
-      query = query.eq('market_status', status.toUpperCase());
+      query = query.eq('market_status', status);
     }
     
     if (category) {
       query = query.eq('category', category);
     }
 
-    const { data: markets, error } = await query;
+    if (creator) {
+      query = query.eq('creator_wallet_address', creator);
+    }
+
+    if (search) {
+      query = query.or(`market_identifier.ilike.%${search}%,description.ilike.%${search}%,name.ilike.%${search}%,symbol.ilike.%${search}%`);
+    }
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data: markets, error, count } = await query;
 
     if (error) {
-      throw error;
-    }
-
-    if (!markets || markets.length === 0) {
-      return NextResponse.json({
-        markets: [],
-        pagination: { limit, offset, total: 0, hasMore: false }
-      });
-    }
-
-    // For now, return markets without real-time stats
-    // TODO: Implement real-time order book data integration
-    const marketData = markets;
-
-    // Format response
-    const formattedMarkets = marketData.map(market => ({
-      id: market.id,
-      metricId: market.metric_id,
-      description: market.description,
-      category: market.category,
-      decimals: market.decimals,
-      minimumOrderSize: market.minimum_order_size,
-      tickSize: market.tick_size,
-      settlementDate: market.settlement_date,
-      tradingEndDate: market.trading_end_date,
-      status: market.market_status,
-      
-      // Trading statistics
-      statistics: {
-        totalVolume: market.total_volume,
-        totalTrades: market.total_trades,
-        openInterest: {
-          long: market.open_interest_long,
-          short: market.open_interest_short,
-          total: (parseFloat(market.open_interest_long || '0') + parseFloat(market.open_interest_short || '0')).toString()
+      console.error('❌ Database query error:', error);
+      return NextResponse.json(
+        { 
+          error: 'Failed to fetch markets',
+          details: error.message
         },
-        lastTradePrice: market.last_trade_price,
-        settlementValue: market.settlement_value
-      },
+        { status: 500 }
+      );
+    }
 
-      // Real-time data (if requested)
-      ...(includeStats && market.realTimeData && {
-        realTime: {
-          bestBid: market.realTimeData.bestBid,
-          bestAsk: market.realTimeData.bestAsk,
-          spread: market.realTimeData.spread,
-          spreadPercentage: market.realTimeData.bestBid && market.realTimeData.bestAsk 
-            ? (((parseFloat(market.realTimeData.bestAsk) - parseFloat(market.realTimeData.bestBid)) / parseFloat(market.realTimeData.bestBid)) * 100).toFixed(4) + '%'
-            : null,
-          volume24h: market.realTimeData.volume24h,
-          orderBookDepth: {
-            bids: market.realTimeData.bidDepth,
-            asks: market.realTimeData.askDepth
-          },
-          lastUpdate: market.realTimeData.lastUpdateTime
-        }
-      }),
-
-      // Media
-      images: {
-        banner: market.banner_image_url,
-        icon: market.icon_image_url
-      },
-
-      // Timestamps
-      createdAt: market.created_at,
-      updatedAt: market.updated_at,
-
-      // Market health indicators
-      healthIndicators: {
-        isActive: market.market_status === 'ACTIVE',
-        hasLiquidity: market.total_volume > 0,
-        timeToSettlement: market.settlement_date ? 
-          Math.max(0, new Date(market.settlement_date).getTime() - Date.now()) : null,
-        timeToTradingEnd: market.trading_end_date ? 
-          Math.max(0, new Date(market.trading_end_date).getTime() - Date.now()) : null
-      }
-    }));
+    console.log(`✅ Retrieved ${markets?.length || 0} markets`);
 
     return NextResponse.json({
-      markets: formattedMarkets,
+      success: true,
+      markets: markets || [],
       pagination: {
         limit,
         offset,
-        total: formattedMarkets.length,
-        hasMore: formattedMarkets.length === limit
-      },
-      metadata: {
-        includeStats,
-        totalActiveMarkets: formattedMarkets.filter(m => m.status === 'ACTIVE').length,
-        timestamp: new Date().toISOString()
+        total: count || markets?.length || 0
       }
     });
 
   } catch (error) {
-    console.error('Get markets error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch markets' },
-      { status: 500 }
-    );
-  }
-}
-
-/**
- * POST /api/markets - Create a new market (admin only)
- */
-export async function POST(request: NextRequest) {
-  try {
-    // For now, return not implemented
-    // Market creation should go through the MarketWizard component
+    console.error('❌ GET API Error:', error);
+    
     return NextResponse.json(
       { 
-        error: 'Market creation via API not implemented',
-        suggestion: 'Use the Market Wizard interface to create new markets'
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error'
       },
-      { status: 501 }
-    );
-
-  } catch (error) {
-    console.error('Market creation error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
       { status: 500 }
     );
   }
 }
 
+// PUT endpoint to update market (e.g., after contract deployment)
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { market_identifier, id, ...updateData } = body;
+
+    if (!market_identifier && !id) {
+      return NextResponse.json(
+        { error: 'market_identifier or id is required for updates' },
+        { status: 400 }
+      );
+    }
+
+    console.log('🔄 Updating market:', market_identifier || id);
+
+    // Add updated_at timestamp
+    const finalUpdateData = {
+      ...updateData,
+      updated_at: new Date().toISOString()
+    };
+
+    // If market is being deployed, set deployed_at
+    if (updateData.deployment_status === 'DEPLOYED' && !updateData.deployed_at) {
+      finalUpdateData.deployed_at = new Date().toISOString();
+    }
+
+    let query = supabase.from('markets').update(finalUpdateData);
+    
+    // Choose whether to query by ID or market_identifier
+    if (id) {
+      query = query.eq('id', id);
+    } else {
+      query = query.eq('market_identifier', market_identifier);
+    }
+    
+    const { data: updatedMarket, error } = await query.select().single();
+
+    if (error) {
+      console.error('❌ Update error:', error);
+      return NextResponse.json(
+        { 
+          error: 'Failed to update market',
+          details: error.message
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!updatedMarket) {
+      return NextResponse.json(
+        { error: 'Market not found' },
+        { status: 404 }
+      );
+    }
+
+    console.log('✅ Market updated successfully:', updatedMarket.market_identifier);
+
+    return NextResponse.json({
+      success: true,
+      market: updatedMarket,
+      message: 'Market updated successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ PUT API Error:', error);
+    
+    return NextResponse.json(
+      { 
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { status: 500 }
+    );
+  }
+}
+
+// POST endpoint to create a new market
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    
+    console.log('📝 Creating new market:', {
+      market_identifier: body.market_identifier,
+      name: body.name,
+      symbol: body.symbol,
+      user_address: body.user_address
+    });
+
+    // Validate required fields
+    const requiredFields = [
+      'market_identifier',
+      'symbol',
+      'name',
+      'description', 
+      'category',
+      'decimals',
+      'minimum_order_size',
+      'settlement_date',
+      'trading_end_date',
+      'data_request_window_seconds',
+      'oracle_provider',
+      'chain_id',
+      'network',
+      'creator_wallet_address'
+    ];
+
+    const missingFields = requiredFields.filter(field => !body[field]);
+    if (missingFields.length > 0) {
+      console.error('❌ Missing required fields:', missingFields);
+      return NextResponse.json(
+        { 
+          error: 'Missing required fields',
+          missing_fields: missingFields,
+          details: `Required fields: ${missingFields.join(', ')}`
+        },
+        { status: 400 }
+      );
+    }
+
+    // Insert new market
+    const { data: insertedMarket, error: insertError } = await supabase
+      .from('markets')
+      .insert([body])
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error('❌ Database insertion error:', insertError);
+      
+      // Handle specific error cases
+      if (insertError.code === '23505') { // Unique constraint violation
+        return NextResponse.json(
+          { 
+            error: 'Market with this identifier already exists',
+            details: insertError.message,
+            code: 'DUPLICATE_MARKET_IDENTIFIER'
+          },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json(
+        { 
+          error: 'Failed to create market',
+          details: insertError.message,
+          code: insertError.code
+        },
+        { status: 500 }
+      );
+    }
+
+    console.log('✅ Market created successfully:', {
+      id: insertedMarket.id,
+      market_identifier: insertedMarket.market_identifier,
+      market_address: insertedMarket.market_address
+    });
+
+    // Return success response
+    return NextResponse.json({
+      success: true,
+      market: insertedMarket,
+      message: 'Market created successfully'
+    }, { 
+      status: 201,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ API Error:', error);
+    
+    return NextResponse.json(
+      { 
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        details: 'Failed to process market creation request'
+      },
+      { status: 500 }
+    );
+  }
+}

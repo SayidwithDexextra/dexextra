@@ -32,6 +32,37 @@ interface OrderFromAPI {
   trader_wallet_address: string;
 }
 
+function toIsoFromTimestamp(ts: unknown): string {
+  let numeric = 0;
+  if (typeof ts === 'number') numeric = ts;
+  else if (typeof ts === 'bigint') numeric = Number(ts);
+  else if (typeof ts === 'string') numeric = Number(ts);
+
+  if (!Number.isFinite(numeric) || numeric < 0) numeric = 0;
+  const ms = numeric < 1e12 ? numeric * 1000 : numeric;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? new Date(0).toISOString() : d.toISOString();
+}
+
+// Port of interactive-trader formatting behavior for display consistency in the UI
+function formatPriceDisplay(value: number, displayDecimals = 4): string {
+  if (!value || value === 0) return '0.00';
+  if (value < 0.000001 && value > 0) {
+    // Very small prices get more precision to avoid scientific notation
+    return value.toFixed(8);
+  }
+  return value.toFixed(displayDecimals);
+}
+
+function formatAmountDisplay(value: number, displayDecimals = 4): string {
+  if (!value || value === 0) return '0.0000';
+  if (value < 0.00000001 && value > 0) {
+    // Very small amounts get more precision
+    return value.toFixed(12);
+  }
+  return value.toFixed(displayDecimals);
+}
+
 export default function TransactionTable({ metricId, currentPrice, height = '100%' }: TransactionTableProps) {
   const [view, setView] = useState<'transactions' | 'orderbook'>('orderbook');
   const [sortBy, setSortBy] = useState<'timestamp' | 'price' | 'amount'>('timestamp');
@@ -48,7 +79,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
 
   // On-chain OrderBook data (HyperLiquid testnet Aluminum market)
   const { data: obData, isLoading: obLoading, error: obError } = useOrderBookContractData('ALU-USD', { refreshInterval: 5000 });
-  const [recentTrades, setRecentTrades] = useState<any[]>([]);
+  const [recentTrades, setRecentTrades] = useState<OrderFromAPI[]>([]);
   const [isLoadingTrades, setIsLoadingTrades] = useState(false);
   const [tradeError, setTradeError] = useState<string | null>(null);
 
@@ -64,13 +95,13 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
         const prevPrice = i > 0 ? arr[i - 1].price : (arr.length > 1 ? arr[i + 1]?.price ?? t.price : t.price);
         const side = (t.price ?? 0) >= (prevPrice ?? 0) ? 'BUY' : 'SELL';
         return {
-          order_id: `${t.timestamp}-${i}`,
+          order_id: `${(t as any).tradeId || t.timestamp || i}`,
           side,
           order_status: 'FILLED',
           price: t.price ?? 0,
           quantity: t.amount ?? 0,
           filled_quantity: t.amount ?? 0,
-          created_at: new Date((Number(t.timestamp) || 0) * 1000).toISOString(),
+          created_at: toIsoFromTimestamp(t.timestamp),
           trader_wallet_address: '0x0000000000000000000000000000000000000000'
         } as OrderFromAPI;
       });
@@ -139,7 +170,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
   }, [recentTrades.length, isLoading, error]);
 
   // Get pending orders for BOOK tab (unfilled limit orders)
-  const pendingOrders = useMemo(() => [], []);
+  const pendingOrders = useMemo<OrderFromAPI[]>(() => [], []);
 
   // Get filled orders for TRADES tab (completed trades)
   const filledOrders = useMemo(() => {
@@ -190,13 +221,13 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
 
   // Best Bid/Ask derived from depth with on-chain fallback values
   const bestBidPrice = useMemo(() => {
-    if (bids && bids.length > 0 && bids[0].price) return bids[0].price;
-    return obData?.bestBid || 0;
+    const p = (bids && bids.length > 0) ? bids[0].price : null;
+    return (p ?? obData?.bestBid ?? 0) || 0;
   }, [bids, obData?.bestBid]);
 
   const bestAskPrice = useMemo(() => {
-    if (asks && asks.length > 0 && asks[asks.length - 1].price) return asks[asks.length - 1].price;
-    return obData?.bestAsk || 0;
+    const p = (asks && asks.length > 0) ? asks[asks.length - 1].price : null;
+    return (p ?? obData?.bestAsk ?? 0) || 0;
   }, [asks, obData?.bestAsk]);
 
   // Filtered and sorted data based on current view
@@ -238,10 +269,11 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
       minute: '2-digit',
-      hour12: false 
+      hour12: false
     });
   };
 
@@ -398,10 +430,10 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                           {/* Content */}
                           <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
                             <div className="flex items-center justify-center text-[#FF4747] font-mono font-medium tabular-nums">
-                              ${order.price !== undefined && order.price !== null ? order.price.toFixed(4) : '0.0000'}
+                              ${order.price !== undefined && order.price !== null ? formatPriceDisplay(order.price, 4) : '0.0000'}
                             </div>
                             <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
-                              {remainingQuantity.toFixed(0)}
+                              {formatAmountDisplay(remainingQuantity, 4)}
                             </div>
                             <div className="flex items-center justify-center text-gray-400 font-mono text-[10px] tabular-nums">
                               {formatCurrency(lineUsd)}
@@ -469,10 +501,10 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                           {/* Content */}
                           <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
                             <div className="flex items-center justify-center text-[#00D084] font-mono font-medium tabular-nums">
-                              ${order.price !== undefined && order.price !== null ? order.price.toFixed(4) : '0.0000'}
+                              ${order.price !== undefined && order.price !== null ? formatPriceDisplay(order.price, 4) : '0.0000'}
                             </div>
                             <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
-                              {remainingQuantity.toFixed(0)}
+                              {formatAmountDisplay(remainingQuantity, 4)}
                             </div>
                             <div className="flex items-center justify-center text-gray-400 font-mono text-[10px] tabular-nums">
                               {formatCurrency(lineUsd)}
@@ -531,11 +563,11 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
                             side={order.side.toUpperCase() as 'BUY' | 'SELL'}
                             isNewOrder={false}
                             className="text-gray-300"
-                            formatQuantity={(q) => q.toFixed(4)}
+                            formatQuantity={(q) => formatAmountDisplay(q, 4)}
                           />
                         </div>
                         <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
-                          {order.price ? `$${order.price.toFixed(4)}` : 'MARKET'}
+                          {order.price ? `$${formatPriceDisplay(order.price, 4)}` : 'MARKET'}
                         </div>
                         <div className="text-right text-gray-400 font-mono text-[10px] flex items-center justify-end tabular-nums">
                           {formatTime(order.created_at)}

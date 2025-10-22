@@ -1,4 +1,4 @@
-import { createPublicClient, defineChain, http } from 'viem';
+import { createPublicClient, defineChain, http, webSocket } from 'viem';
 import { CHAIN_CONFIG } from './contractConfig';
 
 // Define chain from validated environment configuration
@@ -38,6 +38,17 @@ export const createClientWithRPC = (rpcUrl: string) => {
   return createPublicClient({
     chain: customChain,
     transport: http(rpcUrl || CHAIN_CONFIG.rpcUrl),
+  });
+};
+
+// WebSocket client (if WS RPC is configured)
+export const createWsClient = () => {
+  if (!CHAIN_CONFIG.wsRpcUrl) {
+    throw new Error('WS RPC URL not configured');
+  }
+  return createPublicClient({
+    chain: customChain,
+    transport: webSocket(CHAIN_CONFIG.wsRpcUrl),
   });
 };
 

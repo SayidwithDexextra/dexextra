@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from './useWallet';
+import { usePositions } from './usePositions';
 import { initializeContracts } from '@/lib/contracts';
 import { CONTRACT_ADDRESSES, CHAIN_CONFIG } from '@/lib/contractConfig';
 import { orderService } from '@/lib/orderService';
@@ -7,6 +8,8 @@ import { formatUnits, parseEther, parseUnits } from 'viem';
 import { ethers } from 'ethers';
 import type { Address } from 'viem';
 import { createPublicClient, http } from 'viem';
+import { createClientWithRPC } from '@/lib/viemClient';
+import { usePusher } from '@/lib/pusher-client';
 // Minimal ABI fragments for events to avoid wildcard import issues
 const OrderBookEventABI = [
   {
@@ -54,6 +57,20 @@ export interface OrderBookOrder {
   expiryTime?: number;
 }
 
+export interface TradeHistoryItem {
+  tradeId: string;
+  buyer: Address;
+  seller: Address;
+  price: number;
+  amount: number;
+  tradeValue: number;
+  buyerFee: number;
+  sellerFee: number;
+  buyerIsMargin: boolean;
+  sellerIsMargin: boolean;
+  timestamp: number;
+}
+
 export interface OrderBookState {
   bestBid: number;
   bestAsk: number;
@@ -61,6 +78,12 @@ export interface OrderBookState {
   indexPrice: number;
   fundingRate: number;
   activeOrders: OrderBookOrder[];
+  tradeHistory: TradeHistoryItem[];
+  tradeCount: number;
+  totalVolume: number;
+  totalFees: number;
+  buyCount: number;
+  sellCount: number;
   isLoading: boolean;
   error: string | null;
 }
@@ -69,12 +92,19 @@ export interface OrderBookActions {
   placeMarketOrder: (size: number, isBuy: boolean, maxSlippageBps?: number) => Promise<boolean>;
   placeLimitOrder: (price: number, size: number, isBuy: boolean) => Promise<boolean>;
   cancelOrder: (orderId: string) => Promise<boolean>;
+  closePosition: (positionId: string, closeSize: number, maxSlippageBps?: number) => Promise<boolean>;
   refreshOrders: () => Promise<void>;
   getOrderBookDepth: (depth: number) => Promise<{
     bids: { price: number; size: number }[];
     asks: { price: number; size: number }[];
   }>;
   getBestPrices: () => Promise<{ bestBid: number; bestAsk: number }>;
+  getUserTradeHistory: (offset?: number, limit?: number) => Promise<{
+    trades: TradeHistoryItem[];
+    hasMore: boolean;
+  }>;
+  getUserTradeCountOnly: () => Promise<number>;
+  refreshTradeHistory: () => Promise<void>;
 }
 
 export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActions] {
@@ -83,6 +113,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
   const walletSigner = wallet?.walletData?.signer ?? wallet?.signer ?? null;
   const walletIsConnected: boolean = !!(wallet?.walletData?.isConnected ?? wallet?.isConnected);
   const [contracts, setContracts] = useState<any>(null);
+  const positionsState = usePositions(marketId);
   const [state, setState] = useState<OrderBookState>({
     bestBid: 0,
     bestAsk: 0,
@@ -90,9 +121,23 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     indexPrice: 0,
     fundingRate: 0,
     activeOrders: [],
+    tradeHistory: [],
+    tradeCount: 0,
+    totalVolume: 0,
+    totalFees: 0,
+    buyCount: 0,
+    sellCount: 0,
     isLoading: true,
     error: null
   });
+
+  // Keep track of last successful trade history fetch
+  const lastTradeHistoryRef = useRef<{
+    trades: TradeHistoryItem[];
+    hasMore: boolean;
+  } | null>(null);
+  const fastRefreshRef = useRef<null | (() => void)>(null);
+  const lastRealtimeRefreshRef = useRef<number>(0);
 
   // Initialize contracts when wallet is connected
   useEffect(() => {
@@ -101,9 +146,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         // Resolve orderbook by marketId hint
         let orderBookAddressOverride: string | undefined;
         if (marketId && /btc/i.test(marketId)) {
-          orderBookAddressOverride = CONTRACT_ADDRESSES.BTC_ORDERBOOK;
+          // Use market info from CONTRACT_ADDRESSES if available
+          const btcMarketInfo = (CONTRACT_ADDRESSES.MARKET_INFO as any)?.BTC;
+          orderBookAddressOverride = btcMarketInfo?.orderBook || CONTRACT_ADDRESSES.orderBook;
         } else {
-          orderBookAddressOverride = CONTRACT_ADDRESSES.ALUMINUM_ORDERBOOK;
+          // Default to aluminum orderbook or general orderbook
+          orderBookAddressOverride = CONTRACT_ADDRESSES.aluminumOrderBook || CONTRACT_ADDRESSES.orderBook;
         }
         // Choose runner: prefer signer; else derive signer from BrowserProvider; else fail
         let runner: ethers.Signer | ethers.AbstractProvider | undefined = undefined;
@@ -113,7 +161,21 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           try {
             const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
             const injectedSigner = await browserProvider.getSigner();
-            runner = injectedSigner;
+            // Validate connected network matches configured chain; otherwise fall back to read-only provider
+            try {
+              const net = await browserProvider.getNetwork();
+              const required = BigInt(CHAIN_CONFIG.chainId);
+              if (!net || net.chainId !== required) {
+                console.warn('[useOrderBook] Wrong network detected', { connected: net?.chainId?.toString?.(), required: required.toString() });
+                setState(prev => ({ ...prev, error: `Wrong network. Using read-only data for chainId ${CHAIN_CONFIG.chainId}.` }));
+                runner = new ethers.JsonRpcProvider(CHAIN_CONFIG.rpcUrl);
+              } else {
+                runner = injectedSigner;
+              }
+            } catch {
+              // If we cannot determine network, prefer signer but errors may occur later
+              runner = injectedSigner;
+            }
           } catch (e) {
             // As a last resort, use provider for reads only (writes will fail)
             runner = new ethers.BrowserProvider((window as any).ethereum);
@@ -130,8 +192,17 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
             return;
           }
         }
-        const contractInstances = await initializeContracts(runner, { orderBookAddressOverride });
-        console.log('[useOrderBook] Initialized contracts with OB', contractInstances.orderBookAddress, 'for marketId', marketId);
+        const contractInstances = await initializeContracts({ 
+          providerOrSigner: runner, 
+          orderBookAddressOverride 
+        });
+        console.log('[useOrderBook] Initialized contracts for marketId', marketId);
+        
+        // Ensure we have the trade execution facet
+        if (!contractInstances.obTradeExecution) {
+          console.warn('[useOrderBook] Trade execution facet not initialized');
+        }
+        
         setContracts(contractInstances);
 
         // Attempt dynamic OB resolution via CoreVault mapping if marketId known
@@ -147,9 +218,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           const marketBytes32 = matched?.marketId as string | undefined;
           if (marketBytes32 && contractInstances.vault?.marketToOrderBook) {
             const resolved = await contractInstances.vault.marketToOrderBook(marketBytes32);
-            if (resolved && typeof resolved === 'string' && resolved.toLowerCase() !== contractInstances.orderBookAddress.toLowerCase()) {
+            if (resolved && typeof resolved === 'string') {
               console.log('[useOrderBook] Re-initializing with resolved OB', resolved);
-              const reinit = await initializeContracts(runner, { orderBookAddressOverride: resolved });
+              const reinit = await initializeContracts({ 
+                providerOrSigner: runner, 
+                orderBookAddressOverride: resolved 
+              });
               setContracts(reinit);
             }
           }
@@ -178,6 +252,19 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         let hydrated: OrderBookOrder[] = [];
         if (walletAddress) {
           try {
+            // Ensure the OrderBook contract code exists on current network before calling
+            try {
+              const provider: any = (contracts.obView as any)?.runner?.provider || (contracts.obView as any)?.provider;
+              const obAddr = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
+              const code = provider && obAddr ? await provider.getCode(obAddr) : '0x';
+              if (!code || code === '0x') {
+                console.warn('[useOrderBook] OrderBook contract code not found on current network. Skipping on-chain order fetch.');
+                setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network', isLoading: false }));
+                return;
+              }
+            } catch (codeErr) {
+              // Proceed; any decode errors will be caught below
+            }
             const orderIds: bigint[] = await contracts.obView.getUserOrders(walletAddress);
             console.log('[useOrderBook] getUserOrders count =', orderIds.length);
             for (const id of orderIds) {
@@ -241,10 +328,29 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
             }
             // Enhanced fallback to query multiple known OrderBook contracts if still empty
             if (hydrated.length === 0) {
-              const knownOrderBooks = [CONTRACT_ADDRESSES.BTC_ORDERBOOK, CONTRACT_ADDRESSES.ALUMINUM_ORDERBOOK];
+              // Get all available market addresses from CONTRACT_ADDRESSES.MARKET_INFO
+              const marketInfo = CONTRACT_ADDRESSES.MARKET_INFO as Record<string, any>;
+              const knownOrderBooks = Object.values(marketInfo)
+                .filter(market => market && typeof market === 'object' && market.orderBook)
+                .map(market => market.orderBook as string);
+              
+              // Add default orderBook if not already included
+              if (CONTRACT_ADDRESSES.orderBook && 
+                  !knownOrderBooks.includes(CONTRACT_ADDRESSES.orderBook)) {
+                knownOrderBooks.push(CONTRACT_ADDRESSES.orderBook);
+              }
+              
               for (const obAddress of knownOrderBooks) {
                 try {
-                  const tempContracts = await initializeContracts(walletSigner || new ethers.BrowserProvider((window as any).ethereum), { orderBookAddressOverride: obAddress });
+                  const provider = walletSigner || 
+                    (typeof window !== 'undefined' && (window as any).ethereum ? 
+                      new ethers.BrowserProvider((window as any).ethereum) : 
+                      new ethers.JsonRpcProvider(CHAIN_CONFIG.rpcUrl));
+                      
+                  const tempContracts = await initializeContracts({
+                    providerOrSigner: provider,
+                    orderBookAddressOverride: obAddress
+                  });
                   const tempOrderIds = await tempContracts.obView.getUserOrders(walletAddress);
                   if (tempOrderIds.length > 0) {
                     console.log(`[useOrderBook] Fallback to OB ${obAddress} found ${tempOrderIds.length} orders`);
@@ -345,98 +451,50 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       }
     };
 
+    // Expose fast refresh for realtime triggers
+    fastRefreshRef.current = () => {
+      const now = Date.now();
+      if (now - lastRealtimeRefreshRef.current < 750) return;
+      lastRealtimeRefreshRef.current = now;
+      void fetchMarketData();
+    };
+
     // Initial fetch
     fetchMarketData();
 
     // Poll every 5 seconds for updates (increased from 2 seconds to reduce load)
     const interval = setInterval(fetchMarketData, 5000);
 
-    // Set up event listeners for real-time updates (if supported by the blockchain client)
-    let unsubscribeOrderPlaced: (() => void) | null = null;
-    let unsubscribeOrderFilled: (() => void) | null = null;
-    let unsubscribeOrderCancelled: (() => void) | null = null;
-
-    if (contracts && walletAddress) {
-      const setupEventWatchers = async () => {
-        try {
-          const eventClient = createPublicClient({ transport: http(CHAIN_CONFIG.rpcUrl) });
-          // Start from latest block to avoid large eth_getLogs ranges on free-tier RPC
-          let latestBlock: bigint | undefined = undefined;
-          try {
-            latestBlock = await eventClient.getBlockNumber();
-          } catch {}
-
-          // Event listener for new order placement
-          unsubscribeOrderPlaced = eventClient.watchContractEvent({
-            address: contracts.orderBookAddress,
-            abi: OrderBookEventABI as any,
-            eventName: 'OrderPlaced',
-            args: { trader: walletAddress },
-            fromBlock: latestBlock,
-            poll: true,
-            pollingInterval: 5_000,
-            onLogs: (logs: any[]) => {
-              console.log('[useOrderBook] OrderPlaced event detected', logs);
-              fetchMarketData(); // Refresh orders on event
-            },
-            onError: (error: Error) => {
-              console.error('[useOrderBook] Error in OrderPlaced event listener', error);
-            }
-          });
-
-          // Event listener for order filled
-          unsubscribeOrderFilled = eventClient.watchContractEvent({
-            address: contracts.orderBookAddress,
-            abi: OrderBookEventABI as any,
-            eventName: 'OrderFilled',
-            args: { trader: walletAddress },
-            fromBlock: latestBlock,
-            poll: true,
-            pollingInterval: 5_000,
-            onLogs: (logs: any[]) => {
-              console.log('[useOrderBook] OrderFilled event detected', logs);
-              fetchMarketData(); // Refresh orders on event
-            },
-            onError: (error: Error) => {
-              console.error('[useOrderBook] Error in OrderFilled event listener', error);
-            }
-          });
-
-          // Event listener for order cancellation
-          unsubscribeOrderCancelled = eventClient.watchContractEvent({
-            address: contracts.orderBookAddress,
-            abi: OrderBookEventABI as any,
-            eventName: 'OrderCancelled',
-            args: { trader: walletAddress },
-            fromBlock: latestBlock,
-            poll: true,
-            pollingInterval: 5_000,
-            onLogs: (logs: any[]) => {
-              console.log('[useOrderBook] OrderCancelled event detected', logs);
-              fetchMarketData(); // Refresh orders on event
-            },
-            onError: (error: Error) => {
-              console.error('[useOrderBook] Error in OrderCancelled event listener', error);
-            }
-          });
-
-          console.log('[useOrderBook] Event listeners set up for real-time order updates from block', latestBlock?.toString() || 'latest');
-        } catch (error) {
-          console.error('[useOrderBook] Failed to set up event listeners', error);
-        }
-      };
-
-      setupEventWatchers();
-    }
-
     return () => {
       clearInterval(interval);
-      if (unsubscribeOrderPlaced) unsubscribeOrderPlaced();
-      if (unsubscribeOrderFilled) unsubscribeOrderFilled();
-      if (unsubscribeOrderCancelled) unsubscribeOrderCancelled();
-      console.log('[useOrderBook] Cleaned up event listeners and interval');
+      console.log('[useOrderBook] Cleaned up polling interval');
     };
   }, [contracts, walletAddress, marketId]);
+
+  // Near real-time push via Pusher
+  const pusher = usePusher();
+  useEffect(() => {
+    if (!pusher) return;
+    if (!contracts) return;
+
+    const handlers = {
+      'order-update': () => fastRefreshRef.current?.(),
+      'trading-event': () => fastRefreshRef.current?.(),
+      'price-update': () => fastRefreshRef.current?.(),
+      'batch-price-update': () => fastRefreshRef.current?.(),
+    } as Record<string, (data: any) => void>;
+
+    const channelKey = marketId || '';
+    const unsubs: Array<() => void> = [];
+    if (channelKey) {
+      try { unsubs.push(pusher.subscribeToChannel(`market-${channelKey}`, handlers)); } catch {}
+    }
+    try { unsubs.push(pusher.subscribeToChannel('recent-transactions', { 'new-order': () => fastRefreshRef.current?.() })); } catch {}
+
+    return () => {
+      unsubs.forEach((u) => { try { u(); } catch {} });
+    };
+  }, [pusher, contracts, marketId]);
 
   // Place market order
   const placeMarketOrder = useCallback(async (
@@ -450,6 +508,15 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     }
 
     try {
+      // Settlement guard: prevent orders if market is settled
+      try {
+        const settled = await (contracts.obSettlement?.isSettled?.() as Promise<boolean>);
+        if (settled) {
+          setState(prev => ({ ...prev, error: 'Market has been settled. New orders are disabled.' }));
+          return false;
+        }
+      } catch { /* ignore if facet not present */ }
+
       const sizeWei = parseEther(size.toString());
       // Use slippage-protected market order
       const tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
@@ -482,6 +549,16 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     }
 
     try {
+      // Settlement guard
+      try {
+        const settled = await (contracts.obSettlement?.isSettled?.() as Promise<boolean>);
+        if (settled) {
+          setState(prev => ({ ...prev, error: 'Market has been settled. New orders are disabled.' }));
+          return false;
+        }
+      } catch { /* ignore if facet not present */ }
+
+      console.log('[DBG][placeLimitOrder] start', { marketId, walletAddress, price, size, isBuy });
       // Encode price with USDC decimals (6) and size with token decimals (18)
       const priceWei = parseUnits(price.toString(), 6);
       const sizeWei = parseEther(size.toString());
@@ -491,11 +568,14 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         sizeWei,
         isBuy
       );
+      console.log('[DBG][placeLimitOrder] tx sent', { hash: tx.hash });
       
       await tx.wait();
+      console.log('[DBG][placeLimitOrder] tx confirmed, awaiting refresh');
       
       // Refresh orders after successful placement
       await refreshOrders();
+      console.log('[DBG][placeLimitOrder] refresh complete');
       return true;
     } catch (error: any) {
       console.error('Failed to place limit order:', error);
@@ -509,6 +589,17 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     if (!contracts || !walletAddress) return;
 
     try {
+      // Guard against calling into non-existent code which yields BAD_DATA decode errors
+      try {
+        const provider: any = (contracts.obView as any)?.runner?.provider || (contracts.obView as any)?.provider;
+        const obAddr = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
+        const code = provider && obAddr ? await provider.getCode(obAddr) : '0x';
+        if (!code || code === '0x') {
+          console.warn('[useOrderBook] OrderBook contract code not found on current network. Skipping refresh.');
+          setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network' }));
+          return;
+        }
+      } catch {}
       const orderIds: bigint[] = await contracts.obView.getUserOrders(walletAddress);
       const hydrated: OrderBookOrder[] = [];
       for (const id of orderIds) {
@@ -692,13 +783,253 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     }
   }, [contracts]);
 
+  // Close position using market order
+  const closePosition = useCallback(async (
+    positionId: string,
+    closeSize: number,
+    maxSlippageBps: number = 100 // 1% default slippage
+  ): Promise<boolean> => {
+    if (!contracts || !walletAddress) {
+      setState(prev => ({ ...prev, error: 'Wallet not connected' }));
+      return false;
+    }
+
+    try {
+      const sizeWei = parseEther(closeSize.toString());
+      // Get position details to determine if it's long or short
+      const position = positionsState.positions.find(p => p.id === positionId);
+      if (!position) {
+        throw new Error('Position not found');
+      }
+      
+      // For long positions, we need to sell. For short positions, we need to buy
+      const isBuy = position.side === 'SHORT';
+      
+      // Use slippage-protected market order to close
+      const tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
+        sizeWei,
+        isBuy,
+        maxSlippageBps
+      );
+      
+      await tx.wait();
+      
+      // Refresh orders after successful closure
+      await refreshOrders();
+      return true;
+    } catch (error: any) {
+      console.error('Failed to close position:', error);
+      setState(prev => ({ ...prev, error: 'Failed to close position' }));
+      return false;
+    }
+  }, [contracts, walletAddress, positionsState.positions]);
+
+  // Get user's trade history
+  const getUserTradeHistory = useCallback(async (
+    offset: number = 0,
+    limit: number = 10
+  ): Promise<{
+    trades: TradeHistoryItem[];
+    hasMore: boolean;
+  }> => {
+    if (!contracts || !walletAddress) {
+      // Gracefully degrade: return cached results if available, else empty
+      if (lastTradeHistoryRef.current) {
+        return lastTradeHistoryRef.current;
+      }
+      return { trades: [], hasMore: false };
+    }
+
+    try {
+      // Helper: map trade tuple to TradeHistoryItem
+      const mapTrade = (t: any): TradeHistoryItem => {
+        const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
+        const tradeId = getField(t, 'tradeId', 0);
+        const buyer = getField(t, 'buyer', 1);
+        const seller = getField(t, 'seller', 2);
+        const price = getField(t, 'price', 3);
+        const amount = getField(t, 'amount', 4);
+        const timestamp = getField(t, 'timestamp', 5);
+        const buyerIsMargin = getField(t, 'buyerIsMargin', 8);
+        const sellerIsMargin = getField(t, 'sellerIsMargin', 9);
+        const tradeValue = getField(t, 'tradeValue', 10);
+        const buyerFee = getField(t, 'buyerFee', 11);
+        const sellerFee = getField(t, 'sellerFee', 12);
+        return {
+          tradeId: tradeId?.toString?.() ?? String(tradeId ?? ''),
+          buyer,
+          seller,
+          price: Number(formatUnits(price ?? 0, 6)),
+          amount: Number(formatUnits(amount ?? 0, 18)),
+          tradeValue: Number(formatUnits(tradeValue ?? 0, 6)),
+          buyerFee: Number(formatUnits(buyerFee ?? 0, 6)),
+          sellerFee: Number(formatUnits(sellerFee ?? 0, 6)),
+          buyerIsMargin: Boolean(buyerIsMargin),
+          sellerIsMargin: Boolean(sellerIsMargin),
+          timestamp: Number(timestamp ?? 0) * 1000
+        } as TradeHistoryItem;
+      };
+
+      // Step 1: try facet-based count and paginated trades
+      let userTradeCount: bigint = 0n;
+      let trades: any[] | null = null;
+      let hasMore: boolean = false;
+      let addressForReads: string | undefined;
+      try {
+        addressForReads = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
+      } catch {}
+
+      try {
+        if (contracts.obTradeExecution) {
+          userTradeCount = await contracts.obTradeExecution.getUserTradeCount(walletAddress);
+          const pageSize = Math.min(limit, Number(userTradeCount));
+          const res = await contracts.obTradeExecution.getUserTrades(walletAddress, offset, pageSize);
+          trades = res?.[0] ?? res?.tradeData ?? res ?? [];
+          hasMore = Boolean(res?.[1] ?? false);
+        }
+      } catch (e: any) {
+        console.warn('[useOrderBook] Facet trade history unavailable, falling back to read-only recent trades', e);
+      }
+
+      // Step 2: fallback via viem recent trades if facet path failed or empty
+      if (!trades || !Array.isArray(trades)) {
+        try {
+          const client = createClientWithRPC(CHAIN_CONFIG.rpcUrl);
+          // Minimal ABI for recent trades on exec facet
+          const TRADE_ABI = [
+            { type: 'function', name: 'getLastTwentyTrades', stateMutability: 'view', inputs: [], outputs: [{ type: 'tuple[]', components: [
+              { type: 'uint256', name: 'tradeId' },
+              { type: 'address', name: 'buyer' },
+              { type: 'address', name: 'seller' },
+              { type: 'uint256', name: 'price' },
+              { type: 'uint256', name: 'amount' },
+              { type: 'uint256', name: 'timestamp' },
+              { type: 'uint256', name: 'buyOrderId' },
+              { type: 'uint256', name: 'sellOrderId' },
+              { type: 'bool', name: 'buyerIsMargin' },
+              { type: 'bool', name: 'sellerIsMargin' },
+              { type: 'uint256', name: 'tradeValue' },
+              { type: 'uint256', name: 'buyerFee' },
+              { type: 'uint256', name: 'sellerFee' }
+            ] } as any] },
+            { type: 'function', name: 'getRecentTrades', stateMutability: 'view', inputs: [{ type: 'uint256', name: 'count' }], outputs: [{ type: 'tuple[]', components: [
+              { type: 'uint256', name: 'tradeId' },
+              { type: 'address', name: 'buyer' },
+              { type: 'address', name: 'seller' },
+              { type: 'uint256', name: 'price' },
+              { type: 'uint256', name: 'amount' },
+              { type: 'uint256', name: 'timestamp' },
+              { type: 'uint256', name: 'buyOrderId' },
+              { type: 'uint256', name: 'sellOrderId' },
+              { type: 'bool', name: 'buyerIsMargin' },
+              { type: 'bool', name: 'sellerIsMargin' },
+              { type: 'uint256', name: 'tradeValue' },
+              { type: 'uint256', name: 'buyerFee' },
+              { type: 'uint256', name: 'sellerFee' }
+            ] } as any] },
+          ] as const as any[];
+          const address = addressForReads as Address;
+          let recent: any[] | null = null;
+          try {
+            recent = await client.readContract({ address, abi: TRADE_ABI, functionName: 'getLastTwentyTrades', args: [] }) as any[];
+          } catch {
+            const count = BigInt(Math.max(limit, 10));
+            recent = await client.readContract({ address, abi: TRADE_ABI, functionName: 'getRecentTrades', args: [count] }) as any[];
+          }
+          // Filter to user-specific trades
+          const addrLc = walletAddress.toLowerCase();
+          const userTrades = (recent || []).filter((t: any) => {
+            const buyer = (t?.buyer || t?.[1] || '').toLowerCase?.() || '';
+            const seller = (t?.seller || t?.[2] || '').toLowerCase?.() || '';
+            return buyer === addrLc || seller === addrLc;
+          });
+          trades = userTrades.slice(offset, offset + limit);
+          hasMore = userTrades.length > offset + limit;
+          userTradeCount = BigInt(userTrades.length);
+        } catch (fallbackErr) {
+          console.warn('[useOrderBook] Recent trades fallback failed', fallbackErr);
+          trades = [];
+          hasMore = false;
+          userTradeCount = 0n;
+        }
+      }
+
+      const mappedTrades: TradeHistoryItem[] = (trades || []).map(mapTrade);
+
+      // Calculate statistics
+      let totalVolume = 0;
+      let totalFees = 0;
+      let buyCount = 0;
+      let sellCount = 0;
+      const addrLc = walletAddress.toLowerCase();
+      mappedTrades.forEach(trade => {
+        totalVolume += trade.tradeValue;
+        const userFee = trade.buyer.toLowerCase() === addrLc ? trade.buyerFee : trade.sellerFee;
+        totalFees += userFee;
+        if (trade.buyer.toLowerCase() === addrLc) buyCount++; else sellCount++;
+      });
+
+      // Update state with trade history and stats
+      setState(prev => ({
+        ...prev,
+        tradeHistory: mappedTrades,
+        tradeCount: Number(userTradeCount),
+        totalVolume,
+        totalFees,
+        buyCount,
+        sellCount
+      }));
+
+      // Cache and return
+      lastTradeHistoryRef.current = { trades: mappedTrades, hasMore };
+      return { trades: mappedTrades, hasMore };
+    } catch (error: any) {
+      console.error('Failed to fetch trade history:', error);
+      // Graceful degrade: return cached or empty instead of throwing
+      if (lastTradeHistoryRef.current) return lastTradeHistoryRef.current;
+      return { trades: [], hasMore: false };
+    }
+  }, [contracts, walletAddress]);
+
+  // Lightweight trade count fetcher for tab badge
+  const getUserTradeCountOnly = useCallback(async (): Promise<number> => {
+    if (!contracts || !walletAddress) return 0;
+    try {
+      if (!contracts.obTradeExecution) return state.tradeCount || 0;
+      const count: bigint = await contracts.obTradeExecution.getUserTradeCount(walletAddress);
+      const num = Number(count);
+      if (!Number.isFinite(num)) return state.tradeCount || 0;
+      // Update state only if changed to avoid re-renders
+      setState(prev => (prev.tradeCount === num ? prev : { ...prev, tradeCount: num }));
+      return num;
+    } catch (e) {
+      return state.tradeCount || 0;
+    }
+  }, [contracts, walletAddress, state.tradeCount]);
+
+  // Refresh trade history
+  const refreshTradeHistory = useCallback(async () => {
+    if (!contracts || !walletAddress) return;
+
+    try {
+      await getUserTradeHistory(0, 10); // Refresh first page by default
+    } catch (error: any) {
+      console.error('Failed to refresh trade history:', error);
+      setState(prev => ({ ...prev, error: 'Failed to refresh trade history' }));
+    }
+  }, [contracts, walletAddress, getUserTradeHistory]);
+
   const actions: OrderBookActions = {
     placeMarketOrder,
     placeLimitOrder,
     cancelOrder,
+    closePosition,
     refreshOrders,
     getOrderBookDepth,
-    getBestPrices
+    getBestPrices,
+    getUserTradeHistory,
+    getUserTradeCountOnly,
+    refreshTradeHistory
   };
 
   return [state, actions];

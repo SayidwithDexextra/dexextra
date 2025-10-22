@@ -29,10 +29,13 @@ const envSchema = z.object({
   // Network Configuration
   DEFAULT_NETWORK: z.string().default('hyperliquid_testnet'), // hyperliquid_testnet, ethereum, mumbai, sepolia, hardhat
 
-  // Contract Addresses (will be populated after deployment)
-  // Removed VAMM_FACTORY_ADDRESS reference
-  MOCK_USDC_ADDRESS: z.string().optional(),
+  // Core Contract Addresses
+  MOCK_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid USDC token address').optional(),
   MOCK_ORACLE_ADDRESS: z.string().optional(),
+  CORE_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid central vault address').optional(),
+  LIQUIDATION_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid liquidation manager address').optional(),
+  FUTURES_MARKET_FACTORY_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid factory address').optional(),
+  DEFAULT_ORDERBOOK_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid orderbook address').optional(),
   
   // Order Book System Contract Addresses
   ORDER_ROUTER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid order router address').optional(),
@@ -41,6 +44,12 @@ const envSchema = z.object({
   METRICS_MARKET_FACTORY_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid factory address').optional(),
   UMA_ORACLE_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid UMA oracle address').optional(),
   USDC_TOKEN_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid USDC token address').default('0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'),
+
+  // Market Table Default Configuration
+  DEFAULT_MARKET_DECIMALS: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(18)).default('8'),
+  DEFAULT_TICK_SIZE: z.string().transform(val => parseFloat(val)).pipe(z.number().min(0.00000001).max(10)).default('0.01'),
+  DEFAULT_MINIMUM_ORDER_SIZE: z.string().transform(val => parseFloat(val)).pipe(z.number().min(0.00000001).max(100)).default('0.1'),
+  DEFAULT_DATA_REQUEST_WINDOW_SECONDS: z.string().transform(val => parseInt(val)).pipe(z.number().min(60).max(86400)).default('3600'),
 
   // Event Listener Configuration
   EVENT_LISTENER_ENABLED: z.string().transform((val) => val === 'true').default('true'),
@@ -126,13 +135,19 @@ const processEnv = {
   CHAIN_ID: process.env.CHAIN_ID || '998',
   DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'hyperliquid_testnet',
   
-  // Settlement Configuration (removed - on-chain only system)
-  // SETTLEMENT_PRIVATE_KEY: process.env.SETTLEMENT_PRIVATE_KEY,
-  
-  // Contracts
-  // Removed VAMM_FACTORY_ADDRESS reference
+  // Core Contract Addresses
   MOCK_USDC_ADDRESS: process.env.MOCK_USDC_ADDRESS,
   MOCK_ORACLE_ADDRESS: process.env.MOCK_ORACLE_ADDRESS,
+  CORE_VAULT_ADDRESS: process.env.CORE_VAULT_ADDRESS,
+  LIQUIDATION_MANAGER_ADDRESS: process.env.LIQUIDATION_MANAGER_ADDRESS,
+  FUTURES_MARKET_FACTORY_ADDRESS: process.env.FUTURES_MARKET_FACTORY_ADDRESS,
+  DEFAULT_ORDERBOOK_ADDRESS: process.env.DEFAULT_ORDERBOOK_ADDRESS,
+  
+  // Market Table Default Configuration
+  DEFAULT_MARKET_DECIMALS: process.env.DEFAULT_MARKET_DECIMALS || '8',
+  DEFAULT_TICK_SIZE: process.env.DEFAULT_TICK_SIZE || '0.01',
+  DEFAULT_MINIMUM_ORDER_SIZE: process.env.DEFAULT_MINIMUM_ORDER_SIZE || '0.1',
+  DEFAULT_DATA_REQUEST_WINDOW_SECONDS: process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || '3600',
   
   // Event Listener
   EVENT_LISTENER_ENABLED: process.env.EVENT_LISTENER_ENABLED || 'true',
@@ -254,8 +269,6 @@ export const env = parsed.data
 export function getContractConfig() {
   const contracts = []
   
-  // Removed VAMM Factory contract configuration
-  
   if (env.MOCK_USDC_ADDRESS) {
     contracts.push({
       address: env.MOCK_USDC_ADDRESS,
@@ -276,7 +289,50 @@ export function getContractConfig() {
     })
   }
   
+  if (env.CORE_VAULT_ADDRESS) {
+    contracts.push({
+      address: env.CORE_VAULT_ADDRESS,
+      abi: [],
+      name: 'Core Vault',
+      type: 'Vault' as const,
+      startBlock: 0,
+    })
+  }
+  
+  if (env.LIQUIDATION_MANAGER_ADDRESS) {
+    contracts.push({
+      address: env.LIQUIDATION_MANAGER_ADDRESS,
+      abi: [],
+      name: 'Liquidation Manager',
+      type: 'LiquidationManager' as const,
+      startBlock: 0,
+    })
+  }
+  
+  if (env.FUTURES_MARKET_FACTORY_ADDRESS) {
+    contracts.push({
+      address: env.FUTURES_MARKET_FACTORY_ADDRESS,
+      abi: [],
+      name: 'Futures Market Factory',
+      type: 'Factory' as const,
+      startBlock: 0,
+    })
+  }
+  
   return contracts
+}
+
+/**
+ * Get core contract addresses
+ */
+export function getCoreContractAddresses() {
+  return {
+    mockUSDC: env.MOCK_USDC_ADDRESS,
+    coreVault: env.CORE_VAULT_ADDRESS,
+    liquidationManager: env.LIQUIDATION_MANAGER_ADDRESS,
+    futuresMarketFactory: env.FUTURES_MARKET_FACTORY_ADDRESS,
+    defaultOrderBook: env.DEFAULT_ORDERBOOK_ADDRESS,
+  }
 }
 
 /**
@@ -290,6 +346,18 @@ export function getOrderBookContractConfig() {
     metricsMarketFactory: env.METRICS_MARKET_FACTORY_ADDRESS,
     umaOracleManager: env.UMA_ORACLE_MANAGER_ADDRESS,
     usdcToken: env.USDC_TOKEN_ADDRESS,
+  }
+}
+
+/**
+ * Get market default configuration
+ */
+export function getMarketDefaults() {
+  return {
+    decimals: env.DEFAULT_MARKET_DECIMALS,
+    tickSize: env.DEFAULT_TICK_SIZE,
+    minimumOrderSize: env.DEFAULT_MINIMUM_ORDER_SIZE,
+    dataRequestWindowSeconds: env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS,
   }
 }
 
@@ -355,7 +423,7 @@ export function getEventListenerConfig() {
 }
 
 const environmentType = isClientSide ? 'client-side' : 'server-side'
- console.log(`✅ Environment variables validated successfully (${environmentType})`)
+console.log(`✅ Environment variables validated successfully (${environmentType})`)
 
 if (false) {
    console.log('🐛 Debug mode enabled')
@@ -374,4 +442,4 @@ if (false) {
   } else {
      console.log('  - Client-side mode (using NEXT_PUBLIC_ variables)')
   }  
-} 
+}

@@ -1,4 +1,6 @@
 import { WalletData, WalletProvider } from '@/types/wallet'
+import { env } from '@/lib/env'
+import { ethers } from 'ethers'
 // Removed networks import - smart contract functionality deleted
 
 // Ethereum provider interface
@@ -57,6 +59,30 @@ export const generateAvatar = (address: string): string => {
   const emojis = ['🦊', '🚀', '💎', '⚡', '🌟', '🔥', '💰', '🎯', '🌈', '🦄', '🏆', '💫']
   const index = parseInt(address.slice(-2), 16) % emojis.length
   return emojis[index]
+}
+
+// Lightweight fallback provider factory using validated env
+function getReadOnlyProvider(): ethers.JsonRpcProvider | null {
+  try {
+    if (!env?.RPC_URL) return null
+    return new ethers.JsonRpcProvider(env.RPC_URL)
+  } catch {
+    return null
+  }
+}
+
+async function fetchBalanceViaRpc(address: string): Promise<string> {
+  const provider = getReadOnlyProvider()
+  if (!provider) return '0'
+  try {
+    const wei = await provider.getBalance(address)
+    const eth = Number(ethers.formatEther(wei))
+    if (!Number.isFinite(eth) || eth < 0) return '0'
+    return eth.toFixed(6)
+  } catch (e) {
+    console.error('Fallback RPC balance fetch failed', e)
+    return '0'
+  }
 }
 
 // Enhanced wallet detection utilities with robust MetaMask detection
@@ -817,8 +843,8 @@ export const disconnect = async (): Promise<void> => {
 // Get account balance (mock implementation - replace with actual Web3 calls)
 export const getBalance = async (address: string): Promise<string> => {
   if (!window.ethereum) {
-    console.warn('No ethereum provider available')
-    return '0'
+    console.warn('No ethereum provider available; using read-only RPC fallback')
+    return fetchBalanceViaRpc(address)
   }
   
   if (!address || typeof address !== 'string') {
@@ -831,8 +857,8 @@ export const getBalance = async (address: string): Promise<string> => {
     
     // Check if the provider supports eth_getBalance
     if (typeof window.ethereum.request !== 'function') {
-      console.error('Provider does not support request method')
-      return '0'
+      console.error('Provider does not support request method; using fallback')
+      return fetchBalanceViaRpc(address)
     }
     
     // Get ETH balance
@@ -876,16 +902,19 @@ export const getBalance = async (address: string): Promise<string> => {
     if (error?.code === 4001) {
       console.error('User rejected the balance request')
     } else if (error?.code === -32603) {
-      console.error('Internal RPC error - possibly network issue')
+      console.error('Internal RPC error - possibly network issue; retrying via fallback RPC')
+      return fetchBalanceViaRpc(address)
     } else if (error?.code === -32602) {
       console.error('Invalid method parameters')
     } else if (error?.message?.includes('network')) {
-      console.error('Network connectivity issue')
+      console.error('Network connectivity issue; using fallback RPC')
+      return fetchBalanceViaRpc(address)
     } else if (error?.message?.includes('timeout')) {
-      console.error('Request timeout')
+      console.error('Request timeout; using fallback RPC')
+      return fetchBalanceViaRpc(address)
     }
     
-    return '0'
+    return fetchBalanceViaRpc(address)
   }
 }
 
