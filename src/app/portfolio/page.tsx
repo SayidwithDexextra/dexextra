@@ -2,9 +2,9 @@ import { Metadata } from 'next'
 import { PortfolioOverview } from '@/components/Portfolio'
 
 export const metadata: Metadata = {
-  title: 'Portfolio | DexEtra',
-  description: 'View and manage your DexEtra portfolio positions and performance',
-  keywords: 'portfolio, trading, assets, performance, DexEtra',
+  title: 'Portfolio | DexEtera',
+  description: 'View and manage your DexEtera portfolio positions and performance',
+  keywords: 'portfolio, trading, assets, performance, DexEtera',
 }
 
 export default function PortfolioPage() {

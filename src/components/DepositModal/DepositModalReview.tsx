@@ -267,7 +267,6 @@ export default function DepositModalReview({
             {/* Review Status Indicator */}
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
             
-            {/* Dexetra Icon */}
             <div className="relative group">
               <div 
                 className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 group-hover:scale-105"
@@ -278,7 +277,7 @@ export default function DepositModalReview({
               >
                 <img 
                   src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png" 
-                  alt="Dexetra" 
+                  alt="Dexetera" 
                   className="w-5 h-5"
                 />
               </div>
@@ -405,7 +404,7 @@ export default function DepositModalReview({
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-white">
-                    {isDirectDeposit ? (targetToken.name || 'HyperLiquid CoreVault') : 'Dexetra Wallet'}
+                    {isDirectDeposit ? (targetToken.name || 'HyperLiquid CoreVault') : 'Dexetera Wallet'}
                   </span>
                 </div>
               </div>

@@ -61,7 +61,7 @@ export default function DepositTestPage() {
           <div className="mt-6 p-3 bg-blue-100 dark:bg-blue-900 rounded-lg">
             <h3 className="font-medium mb-2">About the Implementation</h3>
             <p>
-              This implementation uses the Dexetrav5 contract configuration system to interact with 
+              This implementation uses the Dexeterav5 contract configuration system to interact with 
               the MockUSDC and CoreVault contracts. The useUSDCDeposit hook provides a clean interface 
               for requesting USDC from the faucet and depositing it to the vault.
             </p>

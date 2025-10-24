@@ -68,7 +68,7 @@ export default function DepositModalStatus({
   status = 'pending',
   amount = '0.00',
   sourceToken = { symbol: 'USDC', icon: '💵' },
-  targetToken = { symbol: 'VAULT', icon: '🏦', name: 'Dexetra CoreVault' },
+  targetToken = { symbol: 'VAULT', icon: '🏦', name: 'Dexetera CoreVault' },
   transactionHash,
   estimatedTime = '< 1 min',
   actualTime,
@@ -220,7 +220,6 @@ export default function DepositModalStatus({
               status === 'error' ? 'bg-red-400' : 'bg-gray-600'
             }`} />
             
-            {/* Dexetra Icon */}
             <div className="relative group">
               <div 
                 className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 group-hover:scale-105"
@@ -239,7 +238,7 @@ export default function DepositModalStatus({
               >
                 <img 
                   src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png" 
-                  alt="Dexetra" 
+                  alt="Dexetera" 
                   className="w-5 h-5"
                 />
               </div>
@@ -332,7 +331,7 @@ export default function DepositModalStatus({
                   <span className="text-[11px] font-medium text-[#808080]">To</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-white">{targetToken.name || 'Dexetra CoreVault'}</span>
+                  <span className="text-[10px] text-white">{targetToken.name || 'Dexetera CoreVault'}</span>
                 </div>
               </div>
             </div>

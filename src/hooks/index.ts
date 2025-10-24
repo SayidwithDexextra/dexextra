@@ -7,7 +7,7 @@ export { useWalletAddress } from './useWalletAddress';
 export { useWalletPortfolio } from './useWalletPortfolio';
 export { usePageTitle, useDynamicPageTitle } from './usePageTitle';
 
-// New Dexetrav5 CoreVault hook
+// New Dexeterav5 CoreVault hook
 export { useCoreVault } from './useCoreVault';
 
 // Legacy contract hooks - will be replaced with direct CoreVault integration

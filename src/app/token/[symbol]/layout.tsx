@@ -9,8 +9,8 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
   const { symbol } = await params;
   
   return {
-    title: `${symbol.toUpperCase()} Token | Dexetra`,
-    description: `Trade ${symbol.toUpperCase()} on Dexetra's decentralized trading platform. View real-time prices, charts, and trading data.`,
+    title: `${symbol.toUpperCase()} Token | Dexetera`,
+    description: `Trade ${symbol.toUpperCase()} on Dexetera's decentralized trading platform. View real-time prices, charts, and trading data.`,
   };
 }
 

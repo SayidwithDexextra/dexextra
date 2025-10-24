@@ -1,5 +1,5 @@
 /**
- * Contract configuration for Dexetrav5
+ * Contract configuration for Dexeterav5
  * Contains addresses and market information
  * Uses the new markets table for dynamic loading of market data
  */

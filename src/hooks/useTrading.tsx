@@ -21,7 +21,7 @@ export interface OrderResult {
 }
 
 /**
- * Hook for trading operations using Dexetrav5 contracts
+ * Hook for trading operations using Dexeterav5 contracts
  */
 export function useTrading(marketKey: string = 'ALUMINUM') {
   const [isLoading, setIsLoading] = useState(false);

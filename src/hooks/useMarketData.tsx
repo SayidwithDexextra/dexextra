@@ -46,7 +46,7 @@ export interface OrderBookLevel {
 }
 
 /**
- * Hook for fetching market data from Dexetrav5 contracts
+ * Hook for fetching market data from Dexeterav5 contracts
  */
 export function useMarketData(marketKey: string = 'ALUMINUM') {
   const [marketInfo, setMarketInfo] = useState<MarketInfo | null>(null);

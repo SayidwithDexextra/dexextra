@@ -178,20 +178,18 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
       {/* Main Modal Container - Sophisticated Minimal Design */}
       <div className="relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] shadow-2xl transform transition-all duration-300 hover:shadow-3xl">
         
-        {/* Header Section with Dexetra Branding */}
         <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
           <div className="flex items-center gap-3">
-            {/* Dexetra Logo */}
             <div className="w-7 h-7 bg-[#1A1A1A] rounded-md flex items-center justify-center flex-shrink-0">
               <img 
                 src="/Dexicon/LOGO-Dexetera-05.svg" 
-                alt="Dexetra" 
+                alt="Dexetera" 
                 className="w-5 h-5 opacity-90"
               />
             </div>
             <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
             <h2 className="text-sm font-medium text-white tracking-wide">
-              Connect to Dexetra
+              Connect to Dexetera
             </h2>
             <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-2 py-1 rounded">
               {topWallets.length}
@@ -382,7 +380,6 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
           </div>
         </div>
 
-        {/* Sophisticated Footer with Dexetra Branding */}
         <div className="px-6 py-4 border-t border-[#1A1A1A] bg-[#0A0A0A] rounded-b-xl">
           <div className="flex items-center justify-between">
             {/* Brand Section */}
@@ -390,12 +387,12 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
               <div className="w-4 h-4 bg-[#1A1A1A] rounded flex items-center justify-center">
                 <img 
                   src="/Dexicon/LOGO-Dexetera-05.svg" 
-                  alt="Dexetra" 
+                  alt="Dexetera" 
                   className="w-2.5 h-2.5 opacity-70"
                 />
               </div>
               <span className="text-[10px] text-[#808080] font-medium">
-                Dexetra
+                Dexetera
               </span>
             </div>
             

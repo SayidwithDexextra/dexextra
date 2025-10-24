@@ -7,7 +7,7 @@ import ClientLayout from '@/components/ClientLayout'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Dexetra - DeFi Unlocked',
+  title: 'Dexetera - DeFi Unlocked',
   description: 'Advanced DeFi Trading Platform',
   icons: {
     icon: [

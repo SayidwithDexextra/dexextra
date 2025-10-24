@@ -27,7 +27,6 @@ interface ContractResult<T = any> {
  * Hook to access Viem contract instances
  * 
  * This hook provides a consistent way to access contract instances
- * using the centralized Dexetrav5 configuration.
  */
 export function useContract<T = any>(contractType: ContractType): ContractResult<T> {
   const [isLoading, setIsLoading] = useState(true);

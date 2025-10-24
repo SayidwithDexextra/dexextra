@@ -16,11 +16,10 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
 }) => {
   return (
     <div className="fixed inset-0 z-[9999] bg-white flex flex-col items-center justify-center">
-      {/* Dexetra Logo with pulse animation */}
       <div className="animate-pulse">
         <Image
           src="/Dexicon/LOGO-Dexetera-07.svg"
-          alt="Dexetra Logo"
+          alt="Dexetera Logo"
           width={120}
           height={120}
           className="mb-8"

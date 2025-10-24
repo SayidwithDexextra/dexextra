@@ -44,7 +44,7 @@ export default function DepositModal({
   const vaultToken: Token = {
     symbol: 'VAULT',
     icon: '🏦',
-    name: 'Dexetra CoreVault'
+    name: 'Dexetera CoreVault'
   }
 
   // Reset state when modal closes

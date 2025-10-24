@@ -42,7 +42,7 @@ export default function Home() {
 
 
   const heroData = {
-    title: "DexEtra",
+    title: "DexEtera",
     author: "Trading Platform",
     isVerified: true,
     stats: {

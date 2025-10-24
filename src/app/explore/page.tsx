@@ -5,8 +5,8 @@ import CountdownTickerDemo from "@/components/CountdownTicker/CountdownTickerDem
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Explore Markets | Dexetra',
-  description: 'Discover trending markets and top performers on Dexetra',
+  title: 'Explore Markets | Dexetera',
+  description: 'Discover trending markets and top performers on Dexetera',
 };
 
 export default function ExplorePage() {

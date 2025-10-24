@@ -1,8 +1,8 @@
 import { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Create Market | Dexetra',
-  description: 'Create a new vAMM market on Dexetra platform',
+  title: 'Create Market | Dexetera',
+  description: 'Create a new vAMM market on Dexetera platform',
 };
 
 export default function CreateMarketLayout({
