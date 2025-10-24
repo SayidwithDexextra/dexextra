@@ -2,12 +2,27 @@
 
 import React, { useState, useEffect } from 'react';
 // Removed networks import - smart contract functionality deleted
-import { getCurrentNetwork, switchNetwork, getChainId } from '@/lib/wallet';
+import { getCurrentNetwork, switchNetwork } from '@/lib/wallet';
 
 interface NetworkSelectorProps {
   onNetworkChange?: (network: NetworkConfig) => void;
   showTestnets?: boolean;
   compact?: boolean;
+}
+
+type NetworkConfig = {
+  chainId: number;
+  displayName: string;
+  nativeCurrency: { symbol: string };
+  icon?: string;
+  name?: string;
+}
+
+const NETWORKS: Record<string, NetworkConfig> = {
+  polygon: { chainId: 137, displayName: 'Polygon', nativeCurrency: { symbol: 'MATIC' }, icon: '🟣', name: 'polygon' },
+  ethereum: { chainId: 1, displayName: 'Ethereum', nativeCurrency: { symbol: 'ETH' }, icon: '⟠', name: 'ethereum' },
+  mumbai: { chainId: 80001, displayName: 'Polygon Mumbai', nativeCurrency: { symbol: 'MATIC' }, icon: '🧪', name: 'mumbai' },
+  hardhat: { chainId: 31337, displayName: 'Hardhat Local', nativeCurrency: { symbol: 'ETH' }, icon: '🔨', name: 'hardhat' },
 }
 
 const NetworkSelector: React.FC<NetworkSelectorProps> = ({ 
@@ -65,7 +80,7 @@ const NetworkSelector: React.FC<NetworkSelectorProps> = ({
   // Filter networks based on showTestnets preference
   const availableNetworks = Object.values(NETWORKS).filter(network => {
     if (showTestnets) return true;
-    return network.isMainnet;
+    return Boolean((network as any).isMainnet);
   });
 
   // Sort networks: HyperLiquid first, then Ethereum, then others

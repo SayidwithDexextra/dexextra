@@ -371,7 +371,8 @@ export function debugSigningParameters(
     orderType: orderData.orderType === 'MARKET' ? 0 : 1,
     side: orderData.side === 'BUY' ? 0 : 1,
     quantity: BigInt(Math.floor(parseFloat(orderData.quantity) * 1e18)),
-    price: normalizedPriceStr ? BigInt(Math.floor(parseFloat(normalizedPriceStr) * 1e18)) : 0n,
+    // For debug helper, derive price similarly to getCanonicalOrder if provided
+    price: orderData.price ? BigInt(Math.floor(parseFloat(orderData.price) * 1e18)) : 0n,
     filledQuantity: 0n,
     timestamp: 0n,
     expiryTime: 0n,

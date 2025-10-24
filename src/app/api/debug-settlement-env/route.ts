@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
         nodeEnv: process.env.NODE_ENV,
         hasEnvLocal: true, // We know it exists from earlier check
         directProcessEnv: !!process.env.SETTLEMENT_PRIVATE_KEY,
-        envModule: !!env.SETTLEMENT_PRIVATE_KEY,
+        envModule: false,
         runtimeLoader: !!settlementKey,
         keyLength: settlementKey?.length || 0,
         keyValid: settlementKey ? (settlementKey.startsWith('0x') && settlementKey.length === 66) : false,

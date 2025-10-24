@@ -1,0 +1,606 @@
+
+> dexetra@0.1.0 build
+> next build
+
+   ▲ Next.js 15.3.4
+   - Environments: .env.local
+   - Experiments (use with caution):
+     ✓ optimizeCss
+
+   Creating an optimized production build ...
+ ⚠ Compiled with warnings in 7.0s
+
+./src/app/deposit-test/page.tsx
+Attempted import error: '@/components/DepositModal' does not contain a default export (imported as 'DepositModal').
+
+Import trace for requested module:
+./src/app/deposit-test/page.tsx
+
+./src/components/ContractConfigTest.tsx
+Attempted import error: 'getAllContractAddresses' is not exported from '@/lib/contractConfig' (imported as 'getAllContractAddresses').
+
+Import trace for requested module:
+./src/components/ContractConfigTest.tsx
+
+./src/components/ContractConfigTest.tsx
+Attempted import error: 'DEXETRAV5_CONFIG' is not exported from '@/lib/contractConfig' (imported as 'DEXETRAV5_CONFIG').
+
+Import trace for requested module:
+./src/components/ContractConfigTest.tsx
+
+./src/components/ContractConfigTest.tsx
+Attempted import error: 'DEXETRAV5_CONFIG' is not exported from '@/lib/contractConfig' (imported as 'DEXETRAV5_CONFIG').
+
+Import trace for requested module:
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/app/deposit-test/page.tsx
+Attempted import error: '@/components/DepositModal' does not contain a default export (imported as 'DepositModal').
+
+Import trace for requested module:
+./src/app/deposit-test/page.tsx
+
+./src/components/ContractConfigTest.tsx
+Attempted import error: 'getAllContractAddresses' is not exported from '@/lib/contractConfig' (imported as 'getAllContractAddresses').
+
+Import trace for requested module:
+./src/components/ContractConfigTest.tsx
+
+./src/components/ContractConfigTest.tsx
+Attempted import error: 'DEXETRAV5_CONFIG' is not exported from '@/lib/contractConfig' (imported as 'DEXETRAV5_CONFIG').
+
+Import trace for requested module:
+./src/components/ContractConfigTest.tsx
+
+./src/components/ContractConfigTest.tsx
+Attempted import error: 'DEXETRAV5_CONFIG' is not exported from '@/lib/contractConfig' (imported as 'DEXETRAV5_CONFIG').
+
+Import trace for requested module:
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/hooks/useContract.tsx
+Attempted import error: 'CONTRACT_ABIS' is not exported from '@/lib/contracts' (imported as 'CONTRACT_ABIS').
+
+Import trace for requested module:
+./src/hooks/useContract.tsx
+./src/components/ContractConfigTest.tsx
+
+./src/app/api/webhooks/alchemy/route.ts
+Attempted import error: 'CONTRACTS' is not exported from '@/lib/contracts' (imported as 'CONTRACTS').
+
+Import trace for requested module:
+./src/app/api/webhooks/alchemy/route.ts
+
+./src/app/api/webhooks/alchemy/route.ts
+Attempted import error: 'CONTRACTS' is not exported from '@/lib/contracts' (imported as 'CONTRACTS').
+
+Import trace for requested module:
+./src/app/api/webhooks/alchemy/route.ts
+
+./src/app/api/webhooks/alchemy/route.ts
+Attempted import error: 'CONTRACTS' is not exported from '@/lib/contracts' (imported as 'CONTRACTS').
+
+Import trace for requested module:
+./src/app/api/webhooks/alchemy/route.ts
+
+./src/app/api/webhooks/alchemy/route.ts
+Attempted import error: 'CONTRACTS' is not exported from '@/lib/contracts' (imported as 'CONTRACTS').
+
+Import trace for requested module:
+./src/app/api/webhooks/alchemy/route.ts
+
+   Linting and checking validity of types ...
+
+Failed to compile.
+
+./src/app/deposit-test/page.tsx
+55:23  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+55:42  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+
+./src/app/page.tsx
+3:20  Warning: 'useEffect' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+8:10  Warning: 'ProductCard' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+11:10  Warning: 'MarketTickerCardData' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+25:14  Warning: 'refetchMarkets' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+39:9  Warning: 'recentEvents' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+39:23  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+40:9  Warning: 'eventsLoading' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+41:9  Warning: 'eventsError' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+55:9  Warning: 'featuredProducts' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+96:9  Warning: 'handleViewMarket' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/app/rewards/page.tsx
+37:91  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+37:145  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+108:88  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/app/token/[symbol]/layout.tsx
+3:11  Warning: 'TokenLayoutProps' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/app/token/[symbol]/page.tsx
+9:3  Warning: 'TokenStats' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+11:3  Warning: 'ThreadPanel' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+22:8  Warning: 'CountdownTicker' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+44:9  Warning: The 'marketData' conditional could make the dependencies of useEffect Hook (at line 118) change on every render. To fix this, wrap the initialization of 'marketData' in its own useMemo() Hook.  react-hooks/exhaustive-deps
+44:9  Warning: The 'marketData' conditional could make the dependencies of useMemo Hook (at line 212) change on every render. To fix this, wrap the initialization of 'marketData' in its own useMemo() Hook.  react-hooks/exhaustive-deps
+44:21  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+47:9  Warning: 'baseTokenData' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+58:49  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+70:9  Warning: 'settlementData' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+77:9  Warning: 'handleLaunchComplete' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+82:9  Warning: 'handleSettlementComplete' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+180:9  Warning: 'isPriceLoading' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+185:9  Warning: 'collateralBalance' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+186:9  Warning: 'allowance' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+189:9  Warning: 'positions' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+190:9  Warning: 'isLoadingPositions' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+221:55  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+222:15  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+223:15  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/components/CountdownTicker/Silk.tsx
+1:1  Warning: Unused eslint-disable directive (no problems were reported from 'react/no-unknown-property').
+
+./src/components/DepositModal/DepositModalInput.tsx
+365:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+456:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+481:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/DepositModal/DepositModalReview.tsx
+279:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+389:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+422:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+444:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/DepositModal/DepositModalStatus.tsx
+240:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/Footer.tsx
+227:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/Hero/Dither.tsx
+1:1  Warning: Unused eslint-disable directive (no problems were reported from 'react/no-unknown-property').
+
+./src/components/Hero/Hero.tsx
+147:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/MarketPreviewModal/MarketPreviewModal.tsx
+218:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+237:25  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/MarketWizard/AIAssistant.tsx
+381:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+460:40  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+460:50  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+479:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/MarketWizard/steps/Step2TradingConfig.tsx
+68:165  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+
+./src/components/MarketWizard/steps/Step4MarketImages.tsx
+205:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+242:76  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+268:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+326:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/MarketWizard/steps/Step5ReviewDeploy.tsx
+284:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+290:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+298:23  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/MetricResolutionModal/MetricResolutionModal.tsx
+200:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+233:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+268:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/MetricResolutionModal/example.tsx
+106:41  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+106:49  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+
+./src/components/SearchModal.tsx
+529:44  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+529:58  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+
+./src/components/Settings/Settings.tsx
+223:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+472:68  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+
+./src/components/TokenView/AdvancedChart.tsx
+339:11  Warning: 'timeoutId' is never reassigned. Use 'const' instead.  prefer-const
+
+./src/components/TokenView/MarketActivityTabs.tsx
+159:13  Warning: 'startTimeLiq' is never reassigned. Use 'const' instead.  prefer-const
+168:11  Warning: 'startTimeTx' is never reassigned. Use 'const' instead.  prefer-const
+176:13  Warning: 'startTimeLiqAfter' is never reassigned. Use 'const' instead.  prefer-const
+1154:19  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/TokenView/TradingPanel.tsx
+101:37  Warning: Unused eslint-disable directive (no problems were reported from '@typescript-eslint/no-unused-vars').
+785:11  Warning: 'startTimePrices' is never reassigned. Use 'const' instead.  prefer-const
+831:13  Warning: 'startTimePreflight' is never reassigned. Use 'const' instead.  prefer-const
+850:15  Warning: 'startTimeGas' is never reassigned. Use 'const' instead.  prefer-const
+887:13  Warning: 'startTimeCollateral' is never reassigned. Use 'const' instead.  prefer-const
+909:11  Warning: 'startTimeTx' is never reassigned. Use 'const' instead.  prefer-const
+1072:13  Warning: 'startTimeCollateral' is never reassigned. Use 'const' instead.  prefer-const
+1099:13  Warning: 'startTimePreflight' is never reassigned. Use 'const' instead.  prefer-const
+1127:15  Warning: 'startTimeGas' is never reassigned. Use 'const' instead.  prefer-const
+1166:11  Warning: 'startTimeTx' is never reassigned. Use 'const' instead.  prefer-const
+1278:11  Warning: 'errorMessage' is never reassigned. Use 'const' instead.  prefer-const
+
+./src/components/TokenView/TransactionTable.tsx
+270:9  Warning: 'filtered' is never reassigned. Use 'const' instead.  prefer-const
+442:35  Warning: 'cumulativeAskUsd' is never reassigned. Use 'const' instead.  prefer-const
+513:35  Warning: 'cumulativeBidUsd' is never reassigned. Use 'const' instead.  prefer-const
+
+./src/components/VAMMWizard/steps/Step2MetricsSetup.tsx
+609:11  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+688:40  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+688:50  Warning: `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.  react/no-unescaped-entities
+707:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+789:118  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+
+./src/components/VAMMWizard/steps/Step2OracleSetup.tsx
+90:33  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+
+./src/components/VAMMWizard/steps/Step3MarketImages.tsx
+252:76  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+
+./src/components/VAMMWizard/steps/Step4MarketImages.tsx
+205:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+242:76  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+268:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+326:21  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/components/WalletDiagnostics.tsx
+28:15  Warning: `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.  react/no-unescaped-entities
+
+./src/components/WalletModal.tsx
+15:5  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+186:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+391:17  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./src/hooks/useCoreVault.tsx
+339:7  Error: Expected an assignment or function call and instead saw an expression.  @typescript-eslint/no-unused-expressions
+585:11  Warning: 'startTimeDeposit' is never reassigned. Use 'const' instead.  prefer-const
+619:11  Warning: 'startTimeWithdraw' is never reassigned. Use 'const' instead.  prefer-const
+
+./src/hooks/useOrderBook.tsx
+537:11  Warning: 'startTimeGas' is never reassigned. Use 'const' instead.  prefer-const
+574:11  Warning: 'startTimeTx' is never reassigned. Use 'const' instead.  prefer-const
+681:11  Warning: 'startTimeGas' is never reassigned. Use 'const' instead.  prefer-const
+725:11  Warning: 'startTimeTx' is never reassigned. Use 'const' instead.  prefer-const
+
+./src/hooks/useOrderBookContractData.ts
+4:19  Warning: 'createPublicClient' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+4:39  Warning: 'http' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+4:45  Warning: 'webSocket' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+7:10  Warning: 'env' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+53:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+54:35  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+55:39  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+87:50  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+90:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+119:9  Warning: 'marketConfig' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+120:55  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+122:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+126:42  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+137:72  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+151:48  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+152:46  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+153:49  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+156:40  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+247:63  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+248:55  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+251:45  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+275:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+279:43  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+287:40  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+316:17  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+325:27  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+329:26  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+393:14  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+408:14  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+439:19  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+486:18  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+545:23  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+564:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+565:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+566:61  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+567:60  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+588:26  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+613:27  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+633:25  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+641:45  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+659:19  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+716:66  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+726:28  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+736:53  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+742:37  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+763:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+769:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+809:6  Warning: React Hook useEffect has missing dependencies: 'refreshInterval', 'resolveOrderBookAddress', 'scaleAmount', 'scalePrice', and 'wsClient'. Either include them or remove the dependency array.  react-hooks/exhaustive-deps
+840:32  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/hooks/useWalletAddress.ts
+3:20  Warning: 'useEffect' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/hooks/useWalletPortfolio.ts
+7:10  Warning: 'env' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+96:6  Warning: React Hook useCallback has an unnecessary dependency: 'provider'. Either exclude it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./src/lib/clickhouse-client.ts
+213:9  Warning: 'whereConditions' is never reassigned. Use 'const' instead.  prefer-const
+
+./src/lib/contractConfig.ts
+56:30  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+118:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/contracts.ts
+3:10  Warning: 'getRunner' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+45:45  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+45:81  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+248:62  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+248:89  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+252:46  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+358:42  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+363:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+366:26  Warning: 'e' is defined but never used. Allowed unused caught errors must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/lib/dexetrav5Config.ts
+11:10  Warning: 'fileURLToPath' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+17:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+18:28  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+20:48  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+20:64  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+22:27  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+52:28  Error: A `require()` style import is forbidden.  @typescript-eslint/no-require-imports
+146:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+157:37  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/env.ts
+136:81  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/ethPriceService.ts
+11:18  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+63:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+74:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+85:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+96:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+114:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/imageUpload.ts
+47:13  Warning: 'data' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+90:25  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+156:19  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/liveQuotesService.ts
+136:16  Warning: 'conversionError' is defined but never used. Allowed unused caught errors must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/lib/marketService.ts
+7:10  Warning: 'env' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+272:1  Warning: Assign object to a variable before exporting as module default  import/no-anonymous-default-export
+
+./src/lib/network.ts
+55:20  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+59:10  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+88:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+90:67  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+105:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+108:65  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/order-signing.ts
+156:14  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+165:43  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+165:58  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+197:50  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+197:65  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+199:37  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+200:48  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+202:24  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+211:15  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+212:149  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+232:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+308:10  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/orderService.ts
+4:10  Warning: 'env' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+5:10  Warning: 'ORDER_ROUTER_ABI' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+11:10  Warning: 'ContractOrder' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+11:82  Warning: 'TradeExecution' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+61:35  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+61:65  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+65:21  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+67:49  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+118:62  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+240:21  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+456:51  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+472:7  Warning: 'updatedTime' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+523:45  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+562:71  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+624:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/profileApi.ts
+10:13  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+109:64  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/lib/pusher-client.ts
+14:20  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+37:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+53:29  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+53:34  Warning: 'options' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+53:43  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+55:51  Error: The `Function` type accepts any function-like value.
+Prefer explicitly defining any function parameters and return type.  @typescript-eslint/no-unsafe-function-type
+78:20  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+86:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+88:57  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+89:11  Warning: Unused eslint-disable directive (no problems were reported from 'no-console').
+92:59  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+93:11  Warning: Unused eslint-disable directive (no problems were reported from 'no-console').
+122:50  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+402:55  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+435:42  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+449:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+503:47  Warning: 'channelName' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/lib/pusher-server.ts
+64:32  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+267:9  Warning: Unused eslint-disable directive (no problems were reported from 'no-console').
+
+./src/lib/runtime-env-loader.ts
+13:5  Warning: '_loadedVars' is never reassigned. Use 'const' instead.  prefer-const
+
+./src/lib/userProfileService.ts
+8:3  Warning: 'CreateUserProfileRequest' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+239:21  Warning: 'uploadData' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/lib/viemClient.ts
+33:7  Warning: 'BACKUP_RPC_URLS' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/middleware.ts
+4:34  Warning: 'request' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/services/Logger.ts
+15:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+28:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+32:41  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+44:42  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+57:42  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+70:39  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+83:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+83:53  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/services/OrderLogger.ts
+15:54  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+37:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+41:50  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+67:43  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+71:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+89:40  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+93:51  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+112:44  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+116:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+129:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+133:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+133:53  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/services/PNLLogger.ts
+15:49  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+32:42  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+36:43  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+60:41  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+67:36  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+71:53  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+86:46  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+90:52  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+107:45  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+111:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+124:31  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+128:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+128:53  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/services/alchemyNotifyService.ts
+112:88  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/services/metric-oracle/AIResolverService.ts
+282:40  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+297:27  Warning: 'input' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/services/metric-oracle/MetricOracleDatabase.ts
+350:40  Warning: 'metricError' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+370:40  Warning: 'recentError' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/services/metric-oracle/PerformanceOptimizedMetricOracle.ts
+2:10  Warning: 'WebScrapingService' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+75:13  Warning: 'aiContext' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+152:51  Warning: 'index' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+280:11  Warning: 'chunks' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+443:43  Warning: 'resolution' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+444:11  Warning: 'cacheKey' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+486:38  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+486:56  Warning: 'metricContext' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+522:34  Warning: 'metric' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+522:59  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+527:58  Warning: 'sources' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+572:16  Warning: 'error' is defined but never used. Allowed unused caught errors must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/services/metric-oracle/ScreenshotStorageService.ts
+3:13  Warning: 'path' is defined but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+42:15  Warning: 'data' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+275:14  Warning: 'error' is defined but never used. Allowed unused caught errors must match /^_/u.  @typescript-eslint/no-unused-vars
+
+./src/services/orderBookWebhookProcessor.ts
+144:90  Warning: 'address' is defined but never used. Allowed unused args must match /^_/u.  @typescript-eslint/no-unused-vars
+384:19  Warning: 'maker' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+441:19  Warning: 'seller' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+554:11  Warning: 'metricId' is never reassigned. Use 'const' instead.  prefer-const
+659:11  Warning: 'actualUnits' is never reassigned. Use 'const' instead.  prefer-const
+714:7  Warning: 'orderType' is never reassigned. Use 'const' instead.  prefer-const
+736:13  Warning: 'orderData' is assigned a value but never used. Allowed unused vars must match /^_/u.  @typescript-eslint/no-unused-vars
+958:23  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+1385:14  Warning: 'error' is defined but never used. Allowed unused caught errors must match /^_/u.  @typescript-eslint/no-unused-vars
+1627:47  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+./src/services/realtime/orderbookWsWatcher.ts
+92:96  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+95:41  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+96:40  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+105:18  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+105:35  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+121:35  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+124:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+135:35  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+137:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+148:35  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+150:22  Warning: Unexpected any. Specify a different type.  @typescript-eslint/no-explicit-any
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules

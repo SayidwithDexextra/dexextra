@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useWallet } from '@/hooks/useWallet';
-import DepositModal from '@/components/DepositModal';
+import { DepositModal } from '@/components/DepositModal';
 
 export default function DepositTestPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);

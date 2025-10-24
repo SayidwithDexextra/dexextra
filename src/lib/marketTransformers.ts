@@ -56,7 +56,6 @@ export function transformMarketToCard(market: Market): MarketTickerCardData {
     settlementDate: market.settlement_date,
     metricId: market.market_identifier, // Use market_identifier instead of metric_id
     description: market.description,
-    symbol: market.symbol,
   };
 }
 
@@ -135,7 +134,7 @@ export function sortMarketsByPriority<T extends {
 }>(markets: T[]): T[] {
   return [...markets].sort((a, b) => {
     // First priority: Active markets first
-    const statusPriority = {
+    const statusPriority: Record<string, number> = {
       'ACTIVE': 1,
       'DEPLOYING': 2,
       'PENDING': 3,

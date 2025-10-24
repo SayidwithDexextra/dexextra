@@ -86,28 +86,6 @@ export function getSettlementPrivateKey(): string | null {
     }
   }
   
-  // LAST RESORT: Direct file read (for persistent issues)
-  try {
-    const fs = require('fs');
-    const envLocalPath = path.join(process.cwd(), '.env.local');
-    if (fs.existsSync(envLocalPath)) {
-      const envContent = fs.readFileSync(envLocalPath, 'utf8');
-      const lines = envContent.split('\n');
-      
-      for (const line of lines) {
-        if (line.startsWith('SETTLEMENT_PRIVATE_KEY=')) {
-          const key = line.split('=')[1];
-          if (key && key.startsWith('0x') && key.length === 66) {
-            console.log(`🔑 Found settlement private key via direct file read`);
-            return key;
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.warn('⚠️ Direct file read failed:', error);
-  }
-  
   console.warn('⚠️ No valid settlement private key found in any source');
   console.log('🔍 Available keys:', Object.keys(_loadedVars).filter(k => k.includes('PRIVATE')));
   return null;

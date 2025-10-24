@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { CONTRACT_ADDRESSES } from './contractConfig';
 import { getRunner, getRpcUrl, getChainId } from './network';
+import { env } from './env'
 
 // ABI definitions - prefer generated JSON where available, with fallback minimal ABI
 import CoreVaultGenerated from '@/lib/abis/CoreVault.json';
@@ -129,6 +130,38 @@ const OBTradeExecutionFacetABI = [
   "event OrderFilled(bytes32 indexed orderId, address indexed user, bool isBuy, uint256 price, uint256 quantity, uint256 timestamp, uint256 fees, address indexed feeRecipient)",
   "event TradeExecuted(bytes32 indexed orderId, address indexed maker, address indexed taker, bool isBuyOrder, uint256 price, uint256 quantity, uint256 timestamp)"
 ];
+
+// Minimal ABIs/addresses used by webhook processing and lightweight client reads
+// Expose a centralized CONTRACTS object for consumers that need abi+address pairs
+export const CONTRACTS = {
+  MockUSDC: {
+    address: CONTRACT_ADDRESSES.MOCK_USDC,
+    abi: MockUSDCABI,
+  },
+  CentralVault: {
+    address: CONTRACT_ADDRESSES.CORE_VAULT,
+    abi: CoreVaultABI,
+  },
+  MetricsMarketFactory: {
+    address: (env as any).METRICS_MARKET_FACTORY_ADDRESS || '0x0000000000000000000000000000000000000000',
+    // Minimal ABI containing only the MarketCreated event needed by webhook parsing
+    abi: [
+      {
+        type: 'event',
+        name: 'MarketCreated',
+        inputs: [
+          { indexed: true, name: 'marketId', type: 'bytes32' },
+          { indexed: false, name: 'symbol', type: 'string' },
+          { indexed: false, name: 'vamm', type: 'address' },
+          { indexed: false, name: 'vault', type: 'address' },
+          { indexed: false, name: 'oracle', type: 'address' },
+          { indexed: false, name: 'startingPrice', type: 'uint256' },
+          { indexed: false, name: 'marketType', type: 'uint8' },
+        ],
+      },
+    ] as const,
+  },
+} as const
 
 // OBLiquidityProvisionFacet - MM/LP specific functions
 const OBLiquidityProvisionFacetABI = [

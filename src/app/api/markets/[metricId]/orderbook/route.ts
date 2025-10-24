@@ -92,8 +92,8 @@ export async function GET(
     const midPrice = bestBid && bestAsk ? ((bestBid + bestAsk) / 2) : null;
 
     // Calculate depth metrics
-    const bidVolume = bids.reduce((sum, level) => sum + parseFloat(level.quantity), 0);
-    const askVolume = asks.reduce((sum, level) => sum + parseFloat(level.quantity), 0);
+    const bidVolume = bids.reduce((sum: number, level: any) => sum + parseFloat(level.quantity), 0);
+    const askVolume = asks.reduce((sum: number, level: any) => sum + parseFloat(level.quantity), 0);
     const totalVolume = bidVolume + askVolume;
 
     const processingTime = Date.now() - startTime;
@@ -129,8 +129,8 @@ export async function GET(
         // Depth metrics
         bidDepth: bids.length,
         askDepth: asks.length,
-        totalOrders: bids.reduce((sum, b) => sum + b.orderCount, 0) + 
-                    asks.reduce((sum, a) => sum + a.orderCount, 0)
+        totalOrders: bids.reduce((sum: number, b: any) => sum + (b.orderCount || 0), 0) + 
+                    asks.reduce((sum: number, a: any) => sum + (a.orderCount || 0), 0)
       },
 
       // Request metadata

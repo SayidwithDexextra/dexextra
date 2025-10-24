@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 import { useAluminumOrderBook } from './useContract';
-import { DEXETRAV5_CONFIG } from '@/lib/contractConfig';
+import DEXETRAV5_CONFIG from '@/lib/contractConfig';
 
 // Market data types
 export interface MarketInfo {
@@ -61,7 +61,7 @@ export function useMarketData(marketKey: string = 'ALUMINUM') {
   // Fetch market info from Dexetrav5 config
   useEffect(() => {
     try {
-      const info = DEXETRAV5_CONFIG.getMarketInfo(marketKey);
+      const info = (DEXETRAV5_CONFIG as any).MARKET_INFO?.[marketKey] || null;
       if (info) {
         setMarketInfo({
           symbol: info.symbol || '',

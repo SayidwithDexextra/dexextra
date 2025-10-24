@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     ];
 
     const broadcastPromises = channels.map(channel => 
-      pusherService.pusher.trigger(channel, 'order-update', testOrder)
+      (pusherService as any)["getPusher"]?.() ? (pusherService as any)["getPusher"]().trigger(channel, 'order-update', testOrder) : Promise.resolve()
     );
 
     await Promise.all(broadcastPromises);
@@ -136,8 +136,11 @@ export async function GET(request: NextRequest) {
     };
 
     // Broadcast the test order
-    await pusherService.pusher.trigger(`market-${metricId}`, 'order-update', testOrder);
-    await pusherService.pusher.trigger('recent-transactions', 'new-order', testOrder);
+    const p: any = (pusherService as any)["getPusher"]?.() || (pusherService as any).pusher;
+    if (p) {
+      await p.trigger(`market-${metricId}`, 'order-update', testOrder);
+      await p.trigger('recent-transactions', 'new-order', testOrder);
+    }
 
     return NextResponse.json({
       success: true,

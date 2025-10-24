@@ -12,7 +12,7 @@ export interface UseWalletAddressResult {
 }
 
 export function useWalletAddress(): UseWalletAddressResult {
-  const { address, isConnected, connect, disconnect } = useWallet();
+  const { walletData, connect, disconnect } = useWallet();
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
 
   const connectWallet = useCallback(async (): Promise<boolean> => {
@@ -33,8 +33,8 @@ export function useWalletAddress(): UseWalletAddressResult {
   }, [disconnect]);
 
   return {
-    walletAddress: address,
-    isConnected,
+    walletAddress: walletData.address,
+    isConnected: walletData.isConnected,
     isConnecting,
     connectWallet,
     disconnectWallet

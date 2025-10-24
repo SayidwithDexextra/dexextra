@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useMockUSDC, useCoreVault, useAluminumOrderBook } from '@/hooks/useContract';
-import { DEXETRAV5_CONFIG, getAllContractAddresses } from '@/lib/contractConfig';
+import DEXETRAV5_CONFIG, { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 
 /**
  * Test component to verify contract loading from Dexetrav5 config
@@ -20,15 +20,14 @@ export default function ContractConfigTest() {
   // Load configuration on mount
   useEffect(() => {
     // Get all contract addresses
-    const addresses = getAllContractAddresses();
-    setAllAddresses(addresses);
+    setAllAddresses(CONTRACT_ADDRESSES as any);
 
     // Get network configuration
-    const network = DEXETRAV5_CONFIG.getNetworkConfig();
+    const network = { chainId: DEXETRAV5_CONFIG.chainId, rpcUrl: DEXETRAV5_CONFIG.rpcUrl };
     setNetworkInfo(network);
 
     // Get market information
-    const markets = DEXETRAV5_CONFIG.getMarketInfo();
+    const markets = (DEXETRAV5_CONFIG as any).MARKET_INFO || {};
     setMarketInfo(markets);
   }, []);
 

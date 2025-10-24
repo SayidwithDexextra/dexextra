@@ -31,7 +31,7 @@ export interface UseWalletPortfolioResult {
 }
 
 export function useWalletPortfolio(walletAddress: string | null): UseWalletPortfolioResult {
-  const { provider } = useWallet();
+  // Provider no longer exposed on context; use unified read provider for reads
   const [tokens, setTokens] = useState<Token[]>([]);
   const [summary, setSummary] = useState<PortfolioSummary>({
     totalValue: '0.00',
@@ -93,7 +93,7 @@ export function useWalletPortfolio(walletAddress: string | null): UseWalletPortf
       setError(err instanceof Error ? err : new Error('Failed to fetch portfolio'));
       setIsLoading(false);
     }
-  }, [walletAddress, provider]);
+  }, [walletAddress]);
 
   useEffect(() => {
     fetchPortfolio();

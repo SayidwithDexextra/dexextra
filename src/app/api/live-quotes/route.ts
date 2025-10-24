@@ -33,14 +33,12 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch from CoinMarketCap API
+    const headers = new Headers()
+    if (CMC_API_KEY) headers.set('X-CMC_PRO_API_KEY', CMC_API_KEY)
+    headers.set('Accept', 'application/json')
     const response = await fetch(
       `${CMC_BASE_URL}/cryptocurrency/quotes/latest?symbol=${symbol}&convert=${convert}`,
-      {
-        headers: {
-          'X-CMC_PRO_API_KEY': CMC_API_KEY,
-          'Accept': 'application/json',
-        },
-      }
+      { headers }
     )
 
     if (!response.ok) {

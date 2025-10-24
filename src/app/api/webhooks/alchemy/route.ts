@@ -6,11 +6,8 @@ import { AlchemyNotifyService, getAlchemyNotifyService } from '@/services/alchem
 // import { getDynamicContractMonitor } from '@/services/dynamicContractMonitor'
 import { SmartContractEvent } from '@/types/events'
 import { env } from '@/lib/env'
-import { getClickHouseDataPipeline, VammTick } from '@/lib/clickhouse-client'
-import { 
-  CONTRACTS,
-  getContract
-} from '@/lib/contracts'
+import { getClickHouseDataPipeline } from '@/lib/clickhouse-client'
+import { CONTRACTS } from '@/lib/contracts'
 
 // Ensure Node.js runtime on Vercel (uses Node crypto, ethers, ClickHouse client)
 export const runtime = 'nodejs'
@@ -283,13 +280,13 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
         
         try {
           // Use decodeEventLog directly with ABI instead of Interface
-          const factoryEvent = decodeEventLog({
-            abi: CONTRACTS.MetricsMarketFactory.abi,
-            topics: activity.log.topics,
-            data: activity.log.data
-          });
-          
-          if (factoryEvent && factoryEvent.name === 'MarketCreated') {
+    const factoryEvent = decodeEventLog({
+      abi: CONTRACTS.MetricsMarketFactory.abi as any,
+      topics: activity.log.topics,
+      data: activity.log.data
+    }) as any;
+    
+    if (factoryEvent && (factoryEvent.eventName === 'MarketCreated' || factoryEvent.name === 'MarketCreated')) {
              console.log('🎯 MarketCreated event detected! Processing new deployment...');
             
             // Process with dynamic contract monitor
@@ -503,13 +500,14 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
 
     // Determine which ABI to use based on the contract or event signature
     const abis = [CONTRACTS.MetricsMarketFactory.abi, CONTRACTS.CentralVault.abi];
-    let parsedLog: ethers.LogDescription | null = null;
+    let parsedLog: any = null;
     let matchedAbi: readonly string[] | null = null;
 
     // Try to parse with each ABI until one works
     for (const abi of abis) {
       try {
-        const iface = new ethers.Interface(abi);
+        const { Interface } = await import('ethers');
+        const iface = new Interface(abi as any);
         parsedLog = iface.parseLog({
           topics: log.topics,
           data: log.data

@@ -282,10 +282,19 @@ export class ClickHouseDataPipeline {
         format: 'JSONEachRow'
       });
 
-      const data = await result.json<OHLCVCandle[]>();
-      
+      const data = (await result.json()) as any[];
+      const mapped: OHLCVCandle[] = (data || []).map((row: any) => ({
+        symbol: String(row.symbol),
+        time: Number(row.time),
+        open: Number(row.open),
+        high: Number(row.high),
+        low: Number(row.low),
+        close: Number(row.close),
+        volume: Number(row.volume),
+        trades: Number(row.trades),
+      }));
       // Return in chronological order (oldest first)
-      return data.reverse();
+      return mapped.reverse();
     } catch (error) {
       console.error(`❌ Failed to fetch ${timeframe} candles for ${symbol}:`, error);
       throw error;
@@ -308,8 +317,8 @@ export class ClickHouseDataPipeline {
         format: 'JSONEachRow'
       });
 
-      const data = await result.json<{ close: number }[]>();
-      return data.length > 0 ? data[0].close : null;
+      const data = (await result.json()) as any[];
+      return data.length > 0 ? Number(data[0].close) : null;
     } catch (error) {
       console.error(`❌ Failed to get latest price for ${symbol}:`, error);
       return null;
@@ -330,8 +339,8 @@ export class ClickHouseDataPipeline {
         format: 'JSONEachRow'
       });
 
-      const data = await result.json<{ symbol: string }[]>();
-      return data.map(row => row.symbol);
+      const data = (await result.json()) as any[];
+      return data.map(row => String(row.symbol));
     } catch (error) {
       console.error('❌ Failed to get available symbols:', error);
       return [];
@@ -356,12 +365,7 @@ export class ClickHouseDataPipeline {
         format: 'JSONEachRow'
       });
 
-      const tickStats = await tickStatsResult.json<{
-        tickCount: number;
-        symbolCount: number;
-        oldestTick?: string;
-        newestTick?: string;
-      }[]>();
+      const tickStats = (await tickStatsResult.json()) as any[];
 
       // Get candle stats
       const candleStatsResult = await this.client.query({
@@ -375,11 +379,7 @@ export class ClickHouseDataPipeline {
         format: 'JSONEachRow'
       });
 
-      const candleStats = await candleStatsResult.json<{
-        ohlcv1mCount: number;
-        oldestCandle?: string;
-        newestCandle?: string;
-      }[]>();
+      const candleStats = (await candleStatsResult.json()) as any[];
 
       const tStats = tickStats[0] || {};
       const cStats = candleStats[0] || {};
@@ -466,15 +466,7 @@ export class ClickHouseDataPipeline {
         format: 'JSONEachRow'
       });
 
-      const data = await result.json<{
-        totalVolume: number;
-        totalTrades: number;
-        avgPrice: number;
-        high24h: number;
-        low24h: number;
-        openPrice: number;
-        closePrice: number;
-      }[]>();
+      const data = (await result.json()) as any[];
 
       if (data.length === 0) return null;
 

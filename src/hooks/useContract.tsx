@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createPublicClient, http, Address, PublicClient, getContract } from 'viem';
 import { useWallet } from './useWallet';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
-import { CONTRACT_ABIS } from '@/lib/contracts';
+import { CONTRACTS } from '@/lib/contracts';
 import { getRpcUrl, getChainId } from '@/lib/network';
 
 // Define contract types for better type safety
@@ -35,21 +35,38 @@ export function useContract<T = any>(contractType: ContractType): ContractResult
   const { walletData } = useWallet();
 
   // Get contract address from centralized config
-  const address = CONTRACT_ADDRESSES[contractType] as Address;
+  // Resolve address per type (unknown types return null)
+  const address: Address | null = useMemo(() => {
+    switch (contractType) {
+      case 'mockUSDC':
+        return (CONTRACT_ADDRESSES as any).mockUSDC as Address;
+      case 'coreVault':
+        return (CONTRACT_ADDRESSES as any).coreVault as Address;
+      case 'futuresMarketFactory':
+        return (CONTRACT_ADDRESSES as any).futuresMarketFactory as Address;
+      // OrderBook addresses are market-specific and not global; return null here
+      case 'aluminumOrderBook':
+      case 'orderBook':
+      case 'tradingRouter':
+      default:
+        return null;
+    }
+  }, [contractType]);
 
   // Get ABI for the contract
   const abi = useMemo(() => {
     // Map contract type to ABI
     switch (contractType) {
       case 'mockUSDC':
-        return CONTRACT_ABIS.MockUSDC;
+        return CONTRACTS.MockUSDC.abi as any;
       case 'coreVault':
-        return CONTRACT_ABIS.CoreVault;
+        return CONTRACTS.CentralVault.abi as any;
       case 'futuresMarketFactory':
-        return CONTRACT_ABIS.FuturesMarketFactory;
+        // No full ABI available; return empty to avoid misuse
+        return [] as any;
       case 'aluminumOrderBook':
       case 'orderBook':
-        return CONTRACT_ABIS.OrderBook;
+        return [] as any;
       default:
         return [];
     }
@@ -81,7 +98,7 @@ export function useContract<T = any>(contractType: ContractType): ContractResult
       const contractInstance = getContract({
         address,
         abi,
-        publicClient,
+        client: publicClient as any,
       });
       
       setIsLoading(false);

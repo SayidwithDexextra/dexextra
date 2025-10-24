@@ -1229,6 +1229,30 @@ export const diagnoseWalletIssues = async (): Promise<void> => {
 }
 
 // Network switching functionality
+// Lightweight NetworkConfig for switching helpers
+type NetworkConfig = {
+  chainId: number
+  displayName: string
+  nativeCurrency: { name: string; symbol: string; decimals: number }
+  rpcUrl: string
+  blockExplorer: string
+}
+
+const formatChainIdForMetaMask = (chainId: number): `0x${string}` => {
+  return `0x${chainId.toString(16)}` as `0x${string}`
+}
+
+const NETWORKS: Record<string, NetworkConfig> = {
+  polygon: { chainId: 137, displayName: 'Polygon', nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 }, rpcUrl: env.RPC_URL, blockExplorer: 'https://polygonscan.com' },
+  mumbai: { chainId: 80001, displayName: 'Polygon Mumbai', nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 }, rpcUrl: env.RPC_URL, blockExplorer: 'https://mumbai.polygonscan.com' },
+  ethereum: { chainId: 1, displayName: 'Ethereum', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrl: env.RPC_URL, blockExplorer: 'https://etherscan.io' },
+  hardhat: { chainId: 31337, displayName: 'Hardhat', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrl: env.RPC_URL, blockExplorer: 'http://localhost:8545' },
+}
+
+const getNetworkByChainId = (chainId: number): NetworkConfig | undefined => {
+  return Object.values(NETWORKS).find(n => n.chainId === chainId)
+}
+
 export const switchNetwork = async (network: NetworkConfig): Promise<boolean> => {
   if (!window.ethereum) {
     throw new Error('No ethereum provider found')
