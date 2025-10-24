@@ -5,6 +5,7 @@ import { ethers } from 'ethers';
 import { useWallet } from './useWallet';
 import { CONTRACTS } from '@/lib/contracts';
 import { env } from '@/lib/env';
+import { getReadProvider } from '@/lib/network';
 
 export interface Token {
   name: string;
@@ -50,10 +51,10 @@ export function useWalletPortfolio(walletAddress: string | null): UseWalletPortf
       setIsLoading(true);
       setError(null);
 
-      // Always use Hyperliquid Testnet RPC for reads
-      const hlProvider = new ethers.JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
+      // Always use unified Hyperliquid provider for reads
+      const hlProvider = getReadProvider();
 
-      // Create MockUSDC contract instance (address from hyperliquid_testnet deployment)
+      // Create MockUSDC contract instance (address from hyperliquid deployment)
       const mockUSDC = new ethers.Contract(
         CONTRACTS.MockUSDC.address,
         CONTRACTS.MockUSDC.abi,

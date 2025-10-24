@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { CHAIN_CONFIG } from '@/lib/contractConfig';
+import { getChainId, getRpcUrl } from '@/lib/network';
 import OrderBookWebhookProcessor, { HYPERLIQUID_EVENT_TOPICS } from '@/services/orderBookWebhookProcessor';
 
 type Hex = `0x${string}`;
@@ -23,14 +24,17 @@ function toHexBlock(n: number): Hex {
 }
 
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ ok: false, error: 'Disabled in production' }, { status: 403 })
+  }
   const start = Date.now();
   try {
     // Provider
-    const rpcUrl = CHAIN_CONFIG?.rpcUrl as string;
+    const rpcUrl = getRpcUrl() || (CHAIN_CONFIG?.rpcUrl as string);
     if (!rpcUrl) {
       return NextResponse.json({ ok: false, error: 'Missing CHAIN_CONFIG.rpcUrl' }, { status: 500 });
     }
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl, getChainId());
     const latestBlock = await provider.getBlockNumber();
 
     // Params
@@ -47,7 +51,7 @@ export async function GET(request: NextRequest) {
     // Load dynamic addresses (active markets)
     const { data: markets } = await supabaseAdmin
       .from('orderbook_markets_resolved')
-      .select('market_address, factory_address, metric_id')
+      .select('market_address, metric_id')
       .eq('market_status', 'ACTIVE')
       .eq('is_active', true);
 

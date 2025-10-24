@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { parseUnits, Address } from 'viem';
 import { useWallet } from './useWallet';
 import { useAluminumOrderBook, useCoreVault, useMockUSDC } from './useContract';
+import { getViemGasOverrides } from '@/lib/gas';
 
 // Order types
 export interface OrderParams {
@@ -157,9 +158,10 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
         priceWei,
         sizeWei,
         params.isBuy
-      ]);
-      
-      await tx.wait();
+      ], getViemGasOverrides());
+      console.log('[Order TX][limit] submitted:', tx.hash);
+      const receipt = await tx.wait();
+      console.log('[Order TX][limit] confirmed:', tx.hash);
 
       setLastTransaction(tx.hash);
       setIsLoading(false);
@@ -229,9 +231,10 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
       const tx = await orderBookContract.write.placeMarginMarketOrder([
         sizeWei,
         params.isBuy
-      ]);
-      
-      await tx.wait();
+      ], getViemGasOverrides());
+      console.log('[Order TX][market] submitted:', tx.hash);
+      const receipt = await tx.wait();
+      console.log('[Order TX][market] confirmed:', tx.hash);
 
       setLastTransaction(tx.hash);
       setIsLoading(false);
@@ -268,7 +271,7 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
 
     try {
       // Cancel order
-      const tx = await orderBookContract.write.cancelOrder([orderId as `0x${string}`]);
+      const tx = await orderBookContract.write.cancelOrder([orderId as `0x${string}`], getViemGasOverrides());
       await tx.wait();
 
       setLastTransaction(tx.hash);

@@ -59,17 +59,18 @@ export default function Header() {
   const { walletData } = useWallet()
   const router = useRouter()
   const [hasMounted, setHasMounted] = useState(false)
+  const [vaultEvent, setVaultEvent] = useState<any | null>(null)
   
   // Align with useCoreVault data as single source of truth
   const core = useCoreVault(walletData.address || undefined)
   const isVaultConnected = !!core.isConnected
-  const vaultAvailableCollateral = parseFloat(core.availableBalance || '0')
+  const vaultAvailableCollateral = parseFloat((vaultEvent?.availableCollateral ?? core.availableBalance) || '0')
   // Portfolio value approximation consistent with TokenHeader broadcasting:
   // totalCollateral (6d) + realizedPnL (24d formatted) + unrealizedPnL (24d formatted)
   // All are already formatted to decimal strings by useCoreVault
-  const totalCollateralNum = parseFloat(core.totalCollateral || '0')
-  const realizedPnLNum = parseFloat(core.realizedPnL || '0')
-  const unrealizedPnLNum = parseFloat(core.unrealizedPnL || '0')
+  const totalCollateralNum = parseFloat((vaultEvent?.totalCollateral ?? core.totalCollateral) || '0')
+  const realizedPnLNum = parseFloat((vaultEvent?.realizedPnL ?? core.realizedPnL) || '0')
+  const unrealizedPnLNum = parseFloat((vaultEvent?.unrealizedPnL ?? core.unrealizedPnL) || '0')
   // Avoid double counting losses: negative realized is already deducted from collateral on-chain
   const realizedForPortfolio = Math.max(0, realizedPnLNum)
   const vaultPortfolioValue = totalCollateralNum + realizedForPortfolio + unrealizedPnLNum
@@ -82,6 +83,35 @@ export default function Header() {
   // No manual polling; useCoreVault already polls and debounces
   useEffect(() => {
     setHasMounted(true)
+  }, [])
+
+  // React to coreVaultSummary events to update UI immediately
+  useEffect(() => {
+    const onSummary = (e: any) => {
+      try {
+        // Minimal guard: only accept updates for connected user
+        setVaultEvent(e.detail || null)
+        console.log('[Dispatch] 🎧 [EVT][Header] Received coreVaultSummary', e.detail)
+      } catch {}
+    }
+    const onOrdersUpdated = (e: any) => {
+      try {
+        console.log('[Dispatch] 🎧 [EVT][Header] Received ordersUpdated', e?.detail)
+        // could trigger a lightweight state nudge if needed
+      } catch {}
+    }
+    console.log('[Dispatch] 🔗 [EVT][Header] Subscribing to coreVaultSummary')
+    if (typeof window !== 'undefined') {
+      window.addEventListener('coreVaultSummary', onSummary)
+      window.addEventListener('ordersUpdated', onOrdersUpdated)
+    }
+    return () => {
+      console.log('[Dispatch] 🧹 [EVT][Header] Unsubscribing from coreVaultSummary')
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('coreVaultSummary', onSummary)
+        window.removeEventListener('ordersUpdated', onOrdersUpdated)
+      }
+    }
   }, [])
 
   // Debug logs removed to prevent any rendering interference 
@@ -103,8 +133,21 @@ export default function Header() {
   // Calculate portfolio value from VaultRouter
   const totalPortfolioValue = useMemo(() => {
     const portfolioVal = vaultPortfolioValue || 0
+    console.log('[Dispatch] 🔁 [UI][Header] Recompute totalPortfolioValue', { portfolioVal })
     return formatCurrency(portfolioVal.toString())
   }, [vaultPortfolioValue])
+
+  // Trace derived values that trigger UI rendering
+  useEffect(() => {
+    console.log('[Dispatch] 🔁 [UI][Header] Derived values changed', {
+      isVaultConnected,
+      vaultAvailableCollateral,
+      totalCollateralNum,
+      realizedPnLNum,
+      unrealizedPnLNum,
+      vaultPortfolioValue
+    })
+  }, [isVaultConnected, vaultAvailableCollateral, totalCollateralNum, realizedPnLNum, unrealizedPnLNum, vaultPortfolioValue])
 
   // Handle different states for display values
   const displayPortfolioValue = !walletData.isConnected 
@@ -359,7 +402,10 @@ export default function Header() {
               onMouseLeave={(e) => {
                 (e.currentTarget as any).style.backgroundColor = '#4a9eff'
               }}
-              onClick={() => setIsDepositModalOpen(true)}
+              onClick={() => {
+                console.log('Deposit button clicked');
+                setIsDepositModalOpen(true);
+              }}
             >
               Deposit
             </button>

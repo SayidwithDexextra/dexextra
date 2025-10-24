@@ -12,6 +12,11 @@ import {
   getContract
 } from '@/lib/contracts'
 
+// Ensure Node.js runtime on Vercel (uses Node crypto, ethers, ClickHouse client)
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+export const preferredRegion = 'iad1'
+
 // Factory contract address for detecting new market deployments
 const FACTORY_ADDRESS = CONTRACTS.MetricsMarketFactory.address
 
@@ -574,7 +579,7 @@ async function parseLogToSmartContractEvent(log: any, contextBlockNumber?: numbe
       logIndex: logIndex,
       contractAddress: log.address.toLowerCase(),
       timestamp: new Date(), // Note: Could fetch actual block timestamp for accuracy
-      chainId: typeof env.CHAIN_ID === 'number' ? env.CHAIN_ID : parseInt(env.CHAIN_ID || '998'),
+      chainId: typeof env.CHAIN_ID === 'number' ? env.CHAIN_ID : parseInt(env.CHAIN_ID || '999'),
       eventType: parsedLog.name,
     };
 

@@ -1,7 +1,13 @@
 import { Address, formatUnits, parseAbi } from 'viem';
 import { publicClient } from './viemClient';
-import { CONTRACT_ADDRESSES, ORDER_ROUTER_ABI, OrderType, OrderSide, OrderStatus, TimeInForce } from './contractConfig';
-import { CONTRACT_ABIS } from './contracts';
+import { CONTRACT_ADDRESSES } from './contractConfig';
+import { env } from './env';
+import { ORDER_ROUTER_ABI } from './orderRouterAbi';
+// Local enums mirroring router contracts to avoid cross-file export issues
+enum OrderType { MARKET = 0, LIMIT = 1, STOP_LOSS = 2, TAKE_PROFIT = 3, STOP_LIMIT = 4, ICEBERG = 5, FILL_OR_KILL = 6, IMMEDIATE_OR_CANCEL = 7, ALL_OR_NONE = 8 }
+enum OrderSide { BUY = 0, SELL = 1 }
+enum OrderStatus { PENDING = 0, PARTIALLY_FILLED = 1, FILLED = 2, CANCELLED = 3, EXPIRED = 4, REJECTED = 5 }
+enum TimeInForce { GTC = 0, IOC = 1, FOK = 2, GTD = 3 }
 import { ContractOrder, ActualContractOrder, Order, OrderBookEntry, MarketDepth, TradeExecution, Transaction } from '@/types/orders';
 
 /**
@@ -11,6 +17,9 @@ export class OrderService {
   private client = publicClient;
   private addressCache = new Map<string, { address: Address; timestamp: number }>();
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+  private inFlightGetUserOrders = new Map<string, Promise<Order[]>>();
+  private lastGetUserOrdersTs = new Map<string, number>();
+  private backoffMs = 0;
   private readonly ORDERBOOK_ABI = parseAbi([
     // Minimal VIEM-compatible ABI subset required by this service
     'function getUserOrders(address user) external view returns (uint256[] orderIds)',
@@ -37,8 +46,8 @@ export class OrderService {
    */
   private resolveOrderBookAddress(metricId?: string): Address {
     if (!metricId) {
-      console.log('⚠️ No metricId provided, using aluminum OrderBook as fallback');
-      return CONTRACT_ADDRESSES.aluminumOrderBook;
+      console.error('❌ No metricId provided - cannot resolve OrderBook address');
+      throw new Error('No metricId provided to resolveOrderBookAddress');
     }
 
     // Check cache first
@@ -48,12 +57,30 @@ export class OrderService {
       return cached.address;
     }
 
-    // Lookup in hardcoded MARKET_INFO config
-    const marketInfo = CONTRACT_ADDRESSES.MARKET_INFO[metricId];
-    const address = marketInfo?.orderBook ?? CONTRACT_ADDRESSES.aluminumOrderBook;
+    // Flexible lookup in MARKET_INFO config (supports symbol, name, marketIdentifier)
+    const markets: Record<string, any> = (CONTRACT_ADDRESSES as any).MARKET_INFO || {};
+    const keyUpper = (metricId || '').toUpperCase();
+    const keyPrefixUpper = (metricId.split('-')[0] || metricId).toUpperCase();
+
+    let marketInfo: any = markets[metricId] || markets[keyUpper] || markets[keyPrefixUpper];
     if (!marketInfo) {
-      console.warn(`⚠️ OrderService: No MARKET_INFO found for metricId: ${metricId}, falling back to aluminum OrderBook`);
+      const entries = Object.values(markets) as any[];
+      const searchKey = (metricId || '').toLowerCase();
+      marketInfo = entries.find((m) => {
+        const mSymbol = (m?.symbol || '').toLowerCase();
+        const mName = (m?.name || '').toLowerCase();
+        const mId = (m?.marketIdentifier || '').toLowerCase();
+        return mSymbol === searchKey || mName === searchKey || mId === searchKey;
+      }) || null;
     }
+
+    // No default/global fallback – address must be market-specific
+    if (!marketInfo || !marketInfo.orderBook) {
+      console.error(`❌ OrderService: No OrderBook address found for metricId: ${metricId}`);
+      throw new Error(`No OrderBook address found for market: ${metricId}`);
+    }
+    
+    const address = marketInfo.orderBook;
 
     // Cache the resolved address
     this.addressCache.set(metricId, { address, timestamp: Date.now() });
@@ -88,7 +115,7 @@ export class OrderService {
         args: [orderId],
       });
 
-      return this.transformObOrderArray(result as any[], metricId);
+      return this.transformObOrderArray(result as unknown as any[], metricId);
     } catch (error) {
       console.error('❌ OrderService: Error fetching order from OrderBook:', error);
       return null;
@@ -130,6 +157,19 @@ export class OrderService {
    */
   async getUserOrdersFromOrderBook(trader: Address, metricId?: string): Promise<Order[]> {
     try {
+      // Visibility guard
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return [];
+
+      // Deduplicate requests (per trader+metricId)
+      const key = `${trader.toLowerCase()}::${metricId || 'ALL'}`;
+      const now = Date.now();
+      const lastTs = this.lastGetUserOrdersTs.get(key) || 0;
+      // Throttle to at most once per 5s per key
+      if (now - lastTs < 5000) {
+        const pending = this.inFlightGetUserOrders.get(key);
+        if (pending) return pending;
+      }
+
       // Dynamically resolve OrderBook address based on metricId
       const orderBookAddress = this.resolveOrderBookAddress(metricId);
       
@@ -146,12 +186,22 @@ export class OrderService {
         return [];
       }
       // OrderBook.getUserOrders returns array of order IDs (bytes32[])
-      const orderIds = await this.client.readContract({
+      // Apply simple backoff delay if previously rate limited
+      if (this.backoffMs > 0) {
+        await new Promise(res => setTimeout(res, this.backoffMs));
+      }
+
+      const req = this.client.readContract({
         address: orderBookAddress,
         abi: this.ORDERBOOK_ABI,
         functionName: 'getUserOrders',
         args: [trader],
-      }) as readonly bigint[];
+      }) as Promise<readonly bigint[]>;
+
+      this.inFlightGetUserOrders.set(key, (async () => {
+        const orderIds = await req;
+        this.lastGetUserOrdersTs.set(key, Date.now());
+        this.backoffMs = Math.max(0, Math.floor(this.backoffMs / 2));
 
       console.log('📊 OrderService: OrderBook getUserOrders result:', {
         orderIdsCount: orderIds.length,
@@ -160,8 +210,8 @@ export class OrderService {
       });
 
       // For each order ID, fetch the full order details
-      const orders: Order[] = [];
-      for (const orderId of orderIds) {
+        const orders: Order[] = [];
+        for (const orderId of orderIds) {
         try {
           const order = await this.getOrder(orderId, metricId);
           if (order) {
@@ -173,17 +223,26 @@ export class OrderService {
         } catch (error) {
           console.warn('⚠️ OrderService: Failed to fetch order details for ID:', orderId, error);
         }
-      }
-      
-      console.log('📊 OrderService: Successfully fetched detailed orders:', {
-        totalOrders: orders.length,
-        ordersWithCorrectMetricId: orders.filter(o => o.metricId === metricId).length,
-        orderSummary: orders.map(o => ({ id: o.id, metricId: o.metricId, status: o.status })),
-        expectedMetricId: metricId
-      });
-      return orders;
+        }
+        
+        console.log('📊 OrderService: Successfully fetched detailed orders:', {
+          totalOrders: orders.length,
+          ordersWithCorrectMetricId: orders.filter(o => o.metricId === metricId).length,
+          orderSummary: orders.map(o => ({ id: o.id, metricId: o.metricId, status: o.status })),
+          expectedMetricId: metricId
+        });
+        return orders;
+      })());
+
+      const result = await this.inFlightGetUserOrders.get(key)!;
+      this.inFlightGetUserOrders.delete(key);
+      return result;
     } catch (error: any) {
       const msg = error?.message || '';
+      // Backoff aggressively on 429
+      if (error?.code === 429 || /compute units per second capacity/i.test(msg)) {
+        this.backoffMs = Math.min(Math.max(this.backoffMs * 2, 5000), 120000);
+      }
       // Handle common decode/call errors gracefully to avoid UI crashes
       if (msg.includes('could not decode result data') || msg.includes('ContractFunctionExecutionError')) {
         console.warn('⚠️ OrderService: getUserOrders call failed (likely wrong network or facet missing). Returning empty list.');
@@ -323,24 +382,7 @@ export class OrderService {
     }
   }
 
-  /**
-   * Get trade executions for a specific order
-   */
-  async getOrderExecutions(orderId: bigint): Promise<TradeExecution[]> {
-    try {
-      const result = await this.client.readContract({
-        address: CONTRACT_ADDRESSES.orderRouter,
-        abi: ORDER_ROUTER_ABI,
-        functionName: 'getOrderExecutions',
-        args: [orderId],
-      });
-
-      return result as TradeExecution[];
-    } catch (error) {
-      console.error('Error fetching order executions:', error);
-      return [];
-    }
-  }
+  // getOrderExecutions removed: not supported in current router ABI; use OB trade facets instead
 
   /**
    * Get all orders for a specific metric (combines active and recent history)

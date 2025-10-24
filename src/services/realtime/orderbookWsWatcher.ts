@@ -1,7 +1,8 @@
 import { Address } from 'viem';
 import { createWsClient } from '@/lib/viemClient';
-import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { PusherServerService } from '@/lib/pusher-server';
+import marketService, { type Market } from '@/lib/marketService';
+import { env } from '@/lib/env';
 
 type Unsubscribe = () => void;
 
@@ -37,20 +38,15 @@ const ORDERBOOK_EVENT_ABI = [
   }
 ] as const;
 
-function getMarketKeyForOrderBookAddress(orderBookAddress: string): { symbol: string; metricId?: string } {
-  const markets = (CONTRACT_ADDRESSES as any)?.MARKET_INFO || {};
-  const entries = Object.values(markets) as any[];
+function getMarketKeyForOrderBookAddress(
+  orderBookAddress: string,
+  lookup: Map<string, Market>
+): { symbol: string; metricId?: string } {
   const lower = orderBookAddress.toLowerCase();
-  const matched = entries.find((m) => (m?.orderBook || '').toLowerCase() === lower);
+  const matched = lookup.get(lower);
   if (matched) {
-    return { symbol: String(matched.symbol || matched.name || 'UNKNOWN'), metricId: matched.marketId };
-  }
-  // Fallback by comparing against known aliases
-  if ((CONTRACT_ADDRESSES as any).ALUMINUM_ORDERBOOK?.toLowerCase() === lower) {
-    return { symbol: 'ALUMINUM', metricId: (markets as any)?.ALUMINUM?.marketId };
-  }
-  if ((CONTRACT_ADDRESSES as any).BTC_ORDERBOOK?.toLowerCase() === lower) {
-    return { symbol: 'BTC', metricId: (markets as any)?.BTC?.marketId };
+    // Use symbol and market_identifier from DB
+    return { symbol: String(matched.symbol || matched.name || 'UNKNOWN'), metricId: matched.market_identifier };
   }
   return { symbol: 'UNKNOWN' };
 }
@@ -59,25 +55,37 @@ function shouldIncludeAddress(addr?: string | null): addr is Address {
   return Boolean(addr && addr !== '0x0000000000000000000000000000000000000000');
 }
 
-export function startOrderbookWsWatchers(): Unsubscribe[] {
+export async function startOrderbookWsWatchers(): Promise<Unsubscribe[]> {
   const wsClient = createWsClient();
   const pusher = new PusherServerService();
 
+  // Load active markets from Supabase (no hard-coded values)
+  const allMarkets = await marketService.getAllMarkets(false);
+  const chainId = env.CHAIN_ID;
+  const activeMarkets = (allMarkets || [])
+    .filter((m) => m && m.market_address)
+    .filter((m) => typeof m.chain_id === 'number' ? m.chain_id === chainId : true);
+
+  // Build address list and lookup map
+  const addressLookup = new Map<string, Market>();
   const addresses: Address[] = [];
-  const alu = (CONTRACT_ADDRESSES as any).ALUMINUM_ORDERBOOK as string | undefined;
-  const btc = (CONTRACT_ADDRESSES as any).BTC_ORDERBOOK as string | undefined;
-  if (shouldIncludeAddress(alu)) addresses.push(alu as Address);
-  if (shouldIncludeAddress(btc) && (!alu || btc!.toLowerCase() !== alu!.toLowerCase())) addresses.push(btc as Address);
+  for (const m of activeMarkets) {
+    const addr = (m.market_address || '').toLowerCase();
+    if (shouldIncludeAddress(addr) && !addressLookup.has(addr)) {
+      addressLookup.set(addr, m);
+      addresses.push(addr as Address);
+    }
+  }
 
   if (addresses.length === 0) {
-    console.warn('[orderbookWsWatcher] No order book addresses configured to watch');
+    console.warn('[orderbookWsWatcher] No active markets with order book addresses found in Supabase');
     return [];
   }
 
   const unsubscribes: Unsubscribe[] = [];
 
   for (const address of addresses) {
-    const { symbol, metricId } = getMarketKeyForOrderBookAddress(address);
+    const { symbol, metricId } = getMarketKeyForOrderBookAddress(address, addressLookup);
     const channelSymbol = symbol ? `market-${symbol.toUpperCase()}` : null;
     const channelMetric = metricId ? `market-${metricId}` : null;
 
@@ -148,7 +156,7 @@ export function startOrderbookWsWatchers(): Unsubscribe[] {
     });
     unsubscribes.push(cancelUnsub);
 
-     console.log(`[orderbookWsWatcher] Watching ${address} for OrderPlaced/OrderFilled/OrderCancelled (symbol=${symbol}, metricId=${metricId || 'N/A'})`);
+     console.log(`[orderbookWsWatcher] Watching ${address} for OrderPlaced/OrderFilled/OrderCancelled (symbol=${symbol}, marketIdentifier=${metricId || 'N/A'})`);
   }
 
   return unsubscribes;

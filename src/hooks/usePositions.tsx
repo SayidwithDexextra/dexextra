@@ -3,6 +3,7 @@ import { useWallet } from './useWallet';
 import { initializeContracts } from '@/lib/contracts';
 import { formatUnits } from 'viem';
 import { ethers } from 'ethers';
+import { ensureHyperliquidWallet, getReadProvider } from '@/lib/network';
 import type { Address } from 'viem';
 
 interface Position {
@@ -19,6 +20,7 @@ interface Position {
   margin: number;
   leverage: number;
   timestamp: number;
+  isUnderLiquidation?: boolean;
 }
 
 interface PositionState {
@@ -67,16 +69,14 @@ export function usePositions(marketSymbol?: string): PositionState {
   useEffect(() => {
     const init = async () => {
       try {
-        let runner: ethers.Signer | ethers.AbstractProvider | undefined = undefined;
+        let runner: ethers.Signer | ethers.Provider | undefined = undefined;
         if (walletSigner) {
           runner = walletSigner as ethers.Signer;
         } else if (typeof window !== 'undefined' && (window as any).ethereum) {
           try {
-            const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
-            const injectedSigner = await browserProvider.getSigner();
-            runner = injectedSigner;
+            runner = await ensureHyperliquidWallet();
           } catch (e) {
-            runner = new ethers.BrowserProvider((window as any).ethereum);
+            runner = getReadProvider();
           }
         }
         if (!runner) {
@@ -145,6 +145,7 @@ export function usePositions(marketSymbol?: string): PositionState {
             let pnl = 0;
             let pnlPercent = 0;
             let liquidationPrice = 0;
+            let isUnderLiquidation = false;
 
             try {
               let markPriceBigInt: bigint = 0n;
@@ -185,6 +186,15 @@ export function usePositions(marketSymbol?: string): PositionState {
               } catch (e) {
                 // ignore
               }
+
+              // Check if position is currently under liquidation
+              try {
+                if (contracts?.vault?.isUnderLiquidationPosition) {
+                  isUnderLiquidation = await contracts.vault.isUnderLiquidationPosition(walletAddress, marketId);
+                }
+              } catch (_) {
+                isUnderLiquidation = false;
+              }
             } catch (e) {
               // ignore
             }
@@ -202,7 +212,8 @@ export function usePositions(marketSymbol?: string): PositionState {
               liquidationPrice,
               margin,
               leverage: 1,
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              isUnderLiquidation
             });
           } catch (e) {
             console.error('Error processing position', e);

@@ -38,7 +38,6 @@ export async function GET(request: NextRequest) {
         settlement_date,
         trading_end_date,
         market_address,
-        factory_address,
         market_id_bytes32,
         total_volume,
         total_trades,
@@ -54,7 +53,7 @@ export async function GET(request: NextRequest) {
         deployed_at,
         chain_id,
         network
-      `)
+      `, { count: 'exact' })
       .order('created_at', { ascending: false });
 
     // Apply filters

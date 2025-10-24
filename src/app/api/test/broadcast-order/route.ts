@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PusherServerService } from '@/lib/pusher-server';
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 /**
  * Test endpoint to simulate order broadcasts for testing the real-time system
  * DELETE this endpoint before production deployment
  */
 export async function POST(request: NextRequest) {
   try {
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ success: false, error: 'Disabled in production' }, { status: 403 })
+    }
     const body = await request.json();
     
     // Default test order data
@@ -79,6 +85,9 @@ export async function POST(request: NextRequest) {
  * GET endpoint to simulate different types of order events
  */
 export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ success: false, error: 'Disabled in production' }, { status: 403 })
+  }
   const { searchParams } = new URL(request.url);
   const type = searchParams.get('type') || 'placed';
   const metricId = searchParams.get('metricId') || 'SILVER_V2';

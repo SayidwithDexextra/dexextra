@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
       deployed_at: body.deployment_status === 'deployed' ? new Date().toISOString() : null,
 
       // Enhanced metadata
-      network: body.network || 'hyperliquid_testnet',
+      network: body.network || 'hyperliquid',
       gas_used: body.gas_used || null,
       deployment_error: null
     };

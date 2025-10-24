@@ -6,6 +6,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { useOrderBook } from '@/hooks/useOrderBook';
 import { usePositions } from '@/hooks/usePositions';
 import { initializeContracts } from '@/lib/contracts';
+import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 
 interface Position {
@@ -21,6 +22,7 @@ interface Position {
   margin: number;
   leverage: number;
   timestamp: number;
+  isUnderLiquidation?: boolean; // Flag to indicate if position is under liquidation
 }
 
 interface Order {
@@ -68,8 +70,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
   const wallet = useWallet() as any;
   const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
-  const [orderBookState, orderBookActions] = useOrderBook(symbol);
-  const positionsState = usePositions(symbol);
+  // Ensure we consistently use metricId (aligned with TradingPanel)
+  const metricId = symbol;
+  console.log('metricId MarketActivityTabs', metricId);
+  const [orderBookState, orderBookActions] = useOrderBook(metricId);
+  const positionsState = usePositions(metricId);
   
   // Throttle and in-flight guards for order history
   const isFetchingHistoryRef = useRef(false);
@@ -135,15 +140,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       // Resolve signer from injected provider
       let signer: ethers.Signer | null = null;
       if (typeof window !== 'undefined' && (window as any).ethereum) {
-        const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
-        signer = await browserProvider.getSigner();
+        signer = await ensureHyperliquidWallet();
       }
       if (!signer) {
         throw new Error('No signer available. Please connect your wallet.');
       }
 
       // Initialize contracts using shared config (includes CoreVault at configured address)
-      const contracts = await initializeContracts(signer);
+      const contracts = await initializeContracts({ providerOrSigner: signer });
 
       // Use actual marketId from position id (already bytes32 hex)
       const marketId = topUpPositionId as string;
@@ -151,11 +155,31 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
       // Optional: liquidation price before
       try {
+        console.log(`📡 [RPC] Checking liquidation price before top-up`);
+        let startTimeLiq = Date.now();
         const [liqBefore] = await contracts.vault.getLiquidationPrice(walletAddress, marketId);
-        console.log('Liq before:', String(liqBefore));
-      } catch {}
+        const durationLiq = Date.now() - startTimeLiq;
+        console.log(`✅ [RPC] Liquidation price check completed in ${durationLiq}ms`, { liqBefore: String(liqBefore) });
+      } catch (error) {
+        console.warn(`⚠️ [RPC] Liquidation price check failed:`, error);
+      }
 
+      console.log(`📡 [RPC] Submitting position top-up transaction`);
+      let startTimeTx = Date.now();
       const tx = await contracts.vault.topUpPositionMargin(marketId, amount6);
+      const durationTx = Date.now() - startTimeTx;
+      console.log(`✅ [RPC] Position top-up transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
+
+      // Optional: liquidation price after
+      try {
+        console.log(`📡 [RPC] Checking liquidation price after top-up`);
+        let startTimeLiqAfter = Date.now();
+        const [liqAfter] = await contracts.vault.getLiquidationPrice(walletAddress, marketId);
+        const durationLiqAfter = Date.now() - startTimeLiqAfter;
+        console.log(`✅ [RPC] Post top-up liquidation price check completed in ${durationLiqAfter}ms`, { liqAfter: String(liqAfter) });
+      } catch (error) {
+        console.warn(`⚠️ [RPC] Post top-up liquidation price check failed:`, error);
+      }
       console.log('Transaction sent, waiting for confirmation...');
       await tx.wait();
       console.log('Top-up successful!');
@@ -222,11 +246,46 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
   // Keep positions and open orders in sync with state (no network calls here)
   useEffect(() => {
-    if (!walletAddress) return;
+    const onOrdersUpdated = (e: any) => {
+      try {
+        console.log('[Dispatch] 🎧 [EVT][MarketActivityTabs] Received ordersUpdated', e?.detail);
+        // Ensure this local hook instance fetches latest orders
+        // Optional match on marketId; if provided and doesn't match, still refresh to be safe
+        orderBookActions.refreshOrders?.();
+      } catch {}
+    };
+    if (typeof window !== 'undefined') {
+      console.log('[Dispatch] 🔗 [EVT][MarketActivityTabs] Subscribing to ordersUpdated');
+      window.addEventListener('ordersUpdated', onOrdersUpdated);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        console.log('[Dispatch] 🧹 [EVT][MarketActivityTabs] Unsubscribing from ordersUpdated');
+        window.removeEventListener('ordersUpdated', onOrdersUpdated);
+      }
+    };
+  }, []);
+  
+
+  // Keep positions and open orders in sync with state
+  useEffect(() => {
+    if (!walletAddress) {
+      setPositions([]);
+      setOpenOrders([]);
+      return;
+    }
+
     try {
+      console.log('[Dispatch] 🔁 [UI][MarketActivityTabs] Sync positions from positionsState', {
+        count: positionsState.positions.length,
+        metricId
+      });
+      // Update positions
       setPositions(positionsState.positions);
+
+      // Update orders with real-time data
       const activeOrders = orderBookState.activeOrders;
-      const symbolUpper = symbol.toUpperCase();
+      const symbolUpper = metricId.toUpperCase();
 
       const mappedOrders: Order[] = activeOrders.map(order => ({
         id: order.id,
@@ -240,11 +299,20 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 order.status === 'partially_filled' ? 'PARTIAL' : 'FILLED',
         timestamp: order.timestamp || Date.now()
       }));
-      setOpenOrders(mappedOrders);
+
+      // Update always on change of orderBookState reference to avoid missing shallow-equal arrays
+      if (orderBookState && Array.isArray(activeOrders)) {
+        console.log('[Dispatch] 🔁 [UI][MarketActivityTabs] Update openOrders from orderBookState', { 
+          newCount: mappedOrders.length, 
+          oldCount: openOrders.length,
+          metricId
+        });
+        setOpenOrders(mappedOrders);
+      }
     } catch (error) {
       console.error('Error syncing order data:', error);
     }
-  }, [walletAddress, symbol, orderBookState, positionsState]);
+  }, [walletAddress, metricId, orderBookState]);
 
   // Fetch order history ONLY when History tab is active, throttle and skip when hidden
   useEffect(() => {
@@ -262,17 +330,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       isFetchingHistoryRef.current = true;
       setIsLoading(true);
       try {
-        console.log('[DBG][history][request]', { metricId: symbol, trader: walletAddress });
+        console.log('[Dispatch] 📡 [API][MarketActivityTabs] /api/orders/query request', { metricId, trader: walletAddress });
         const params = new URLSearchParams({
-          metricId: symbol, // symbol prop should be the DB metric_id
+          metricId, // use metric_id consistently
           trader: walletAddress,
           limit: '50'
         });
         const res = await fetch(`/api/orders/query?${params.toString()}`);
         if (res.ok) {
           const data = await res.json();
-          console.log('[DBG][history][response]', { total: data?.orders?.length, resolvedMarketId: data?.resolvedMarketId });
-          const symbolUpper = symbol.toUpperCase();
+          console.log('[Dispatch] ✅ [API][MarketActivityTabs] /api/orders/query response', { total: data?.orders?.length, resolvedMarketId: data?.resolvedMarketId });
+          const symbolUpper = metricId.toUpperCase();
           const hist = (data.orders || []).map((o: any) => ({
             id: o.order_id,
             symbol: symbolUpper,
@@ -287,10 +355,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           if (isMounted) setOrderHistory(hist);
         }
         else {
-          console.warn('[DBG][history][error-status]', res.status);
+          console.warn('[Dispatch] ⚠️ [API][MarketActivityTabs] /api/orders/query non-200', res.status);
         }
       } catch (e) {
-        console.error('[DBG][history][exception]', e);
+        console.error('[Dispatch] ❌ [API][MarketActivityTabs] /api/orders/query exception', e);
         // keep existing orderHistory on error
       } finally {
         lastHistoryFetchTsRef.current = Date.now();
@@ -317,7 +385,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         document.removeEventListener('visibilitychange', onVisibility);
       }
     };
-  }, [activeTab, walletAddress, symbol]);
+  }, [activeTab, walletAddress, metricId]);
 
   const tabs = [
     { id: 'positions' as TabType, label: 'Positions', count: positions.length },
@@ -374,15 +442,30 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     <tbody>
                       {positions.map((position, index) => (
             <React.Fragment key={`${position.id}-${index}`}>
-              <tr className={`group/row hover:bg-[#1A1A1A] transition-colors duration-200 ${
-                            index !== positions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
+              <tr className={`group/row transition-colors duration-200 ${
+                position.isUnderLiquidation 
+                  ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
+                  : 'hover:bg-[#1A1A1A]'
+              } ${
+                index !== positions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
               }`}>
                           <td className="px-2.5 py-2.5">
                             <div className="flex items-center gap-1.5">
                               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                                position.side === 'LONG' ? 'bg-green-400' : 'bg-red-400'
+                                position.isUnderLiquidation 
+                                  ? 'bg-yellow-400 animate-pulse'
+                                  : position.side === 'LONG' 
+                                    ? 'bg-green-400' 
+                                    : 'bg-red-400'
                               }`} />
-                              <span className="text-[11px] font-medium text-white">{position.symbol}</span>
+                              <div className="flex items-center gap-1">
+                                <span className="text-[11px] font-medium text-white">{position.symbol}</span>
+                                {position.isUnderLiquidation && (
+                                  <div className="px-1.5 py-0.5 bg-yellow-400/10 rounded">
+                                    <span className="text-[9px] font-medium text-yellow-400">LIQUIDATING</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </td>
                           <td className="px-2.5 py-2.5">
@@ -418,7 +501,33 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             </div>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">${position.liquidationPrice.toFixed(2)}</span>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <div className={`flex items-center justify-end gap-1.5 ${
+                                position.isUnderLiquidation 
+                                  ? 'bg-yellow-400/10 px-2 py-1 rounded border border-yellow-400/20'
+                                  : ''
+                              }`}>
+                                {position.isUnderLiquidation && (
+                                  <>
+                                    <svg className="w-3 h-3 text-yellow-400 animate-pulse" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                      <path d="M12 9V14M12 19C8.13401 19 5 15.866 5 12C5 8.13401 8.13401 5 12 5C15.866 5 19 8.13401 19 12C19 15.866 15.866 19 12 19ZM12 16V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                    </svg>
+                                  </>
+                                )}
+                                <span className={`text-[11px] font-mono ${
+                                  position.isUnderLiquidation 
+                                    ? 'text-yellow-400 font-bold'
+                                    : 'text-white'
+                                }`}>
+                                  ${position.liquidationPrice.toFixed(2)}
+                                </span>
+                              </div>
+                              {position.isUnderLiquidation && (
+                                <span className="text-[9px] font-medium text-yellow-400 animate-pulse">
+                                  UNDER LIQUIDATION
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
                   <button 
@@ -434,21 +543,47 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <td colSpan={8} className="px-0">
                     <div className="px-2.5 py-2 border-t border-[#222222]">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex flex-col gap-1">
-                              <span className="text-[10px] text-[#606060]">Current Margin</span>
-                              <span className="text-[11px] font-medium text-white font-mono">
-                                ${position.margin.toFixed(2)}
-                              </span>
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-[#606060]">Current Margin</span>
+                                <span className={`text-[11px] font-medium font-mono ${
+                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
+                                }`}>
+                                  ${position.margin.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] text-[#606060]">Leverage</span>
+                                <span className={`text-[11px] font-medium font-mono ${
+                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
+                                }`}>
+                                  {position.leverage}x
+                                </span>
+                              </div>
+                              {position.isUnderLiquidation && (
+                                <div className="flex flex-col gap-1">
+                                  <div className="bg-yellow-400/10 border border-yellow-400/20 rounded-md px-3 py-2">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <svg className="w-3 h-3 text-yellow-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M12 9V14M12 19C8.13401 19 5 15.866 5 12C5 8.13401 8.13401 5 12 5C15.866 5 19 8.13401 19 12C19 15.866 15.866 19 12 19ZM12 16V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                      </svg>
+                                      <span className="text-[10px] font-medium text-yellow-400 uppercase tracking-wide">Position Under Liquidation</span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-[9px] text-yellow-400/60">Time Remaining</span>
+                                        <span className="text-[11px] font-medium text-yellow-400 font-mono animate-pulse">00:30:00</span>
+                                      </div>
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-[9px] text-yellow-400/60">Required Margin</span>
+                                        <span className="text-[11px] font-medium text-yellow-400 font-mono">+$500.00</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                            <div className="flex flex-col gap-1">
-                              <span className="text-[10px] text-[#606060]">Leverage</span>
-                              <span className="text-[11px] font-medium text-white font-mono">
-                                {position.leverage}x
-                              </span>
-                            </div>
-                          </div>
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => handleTopUp(position.id, position.symbol, position.margin)}
@@ -640,9 +775,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       try {
         const { getUserTradeHistory } = orderBookActions;
         if (!getUserTradeHistory) {
+          console.log('[Dispatch] ⏭️ [UI][MarketActivityTabs] getUserTradeHistory not available');
           return;
         }
 
+        console.log('[Dispatch] 📡 [ACTION][MarketActivityTabs] getUserTradeHistory request', { offset: tradeOffset, limit: tradeLimit, symbol })
         const { trades: newTrades, hasMore } = await getUserTradeHistory(tradeOffset, tradeLimit);
         
         // Ensure we keep loading state visible for at least 500ms to prevent flickering
@@ -651,6 +788,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         // Only update state if component is still mounted and we have trades
         if (isMounted) {
           if (newTrades && newTrades.length > 0) {
+            console.log('[Dispatch] ✅ [ACTION][MarketActivityTabs] getUserTradeHistory response', { count: newTrades.length, hasMore })
             setTrades(newTrades);
             setHasMoreTrades(hasMore);
           }

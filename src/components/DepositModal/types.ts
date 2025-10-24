@@ -67,15 +67,11 @@ export interface PaymentMethod {
 }
 
 export interface Token {
-  id: string
   symbol: string
-  name: string
-  amount: string
-  value: string
-  network?: string
-  contractAddress: string // Verified contract address from Alchemy
-  decimals: number // Token decimals from metadata
-  isLowBalance?: boolean
   icon: string
-  networkIcon?: string
+  name?: string
+  amount?: string
+  value?: string
+  contractAddress?: string
+  decimals?: number
 } 

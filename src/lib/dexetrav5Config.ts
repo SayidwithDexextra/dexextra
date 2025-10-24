@@ -97,10 +97,10 @@ function createFallbackConfig(): Dexetrav5ContractsConfig {
     ADDRESSES: {},
     NAMES: {},
     NETWORKS: {
-      hyperliquid_testnet: {
-        name: "HyperLiquid Testnet",
-        chainId: 998,
-        blockConfirmations: 2,
+      hyperliquid: {
+        name: "HyperLiquid Mainnet",
+        chainId: 999,
+        blockConfirmations: 3,
       }
     },
     MARKET_INFO: {},
@@ -120,9 +120,9 @@ function createFallbackConfig(): Dexetrav5ContractsConfig {
     },
     getAllAddresses: () => ({}),
       getNetworkConfig: () => ({
-      name: "HyperLiquid Testnet",
-      chainId: 998,
-      blockConfirmations: 2,
+      name: "HyperLiquid Mainnet",
+      chainId: 999,
+      blockConfirmations: 3,
     }),
     displayConfig: () => console.warn('Fallback displayConfig called'),
     validateAddresses: () => { console.warn('Fallback validateAddresses called'); return false; },

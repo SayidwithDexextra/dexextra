@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { env } from '@/lib/env';
+import { getReadProvider } from '@/lib/network';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 
 // ==========================================
@@ -105,10 +106,10 @@ function getNetworkFromContract(contractAddress: string): string {
   ];
   
   if (polygonAddresses.includes(contractAddress.toLowerCase())) {
-    return 'hyperliquid_testnet';
+    return 'hyperliquid';
   }
-  
-  return 'hyperliquid_testnet'; // Default to hyperliquid_testnet
+
+  return 'hyperliquid'; // Default to hyperliquid
 }
 
 // V1 stablecoin addresses for price estimation (lowercase for comparison)
@@ -148,16 +149,10 @@ export function useWalletPortfolio(walletAddress?: string): WalletPortfolioData 
     setData(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      console.log('🔄 Fetching on-chain portfolio for wallet (HyperLiquid Testnet):', walletAddress);
+      console.log('🔄 Fetching on-chain portfolio for wallet (HyperLiquid Mainnet):', walletAddress);
 
-      // Use a provider that's compatible with browser environments
-      let provider: ethers.Provider;
-      try {
-        provider = new ethers.BrowserProvider(window.ethereum);
-      } catch (e) {
-        // Fallback to JsonRpcProvider if BrowserProvider fails
-        provider = new ethers.JsonRpcProvider(env.RPC_URL, env.CHAIN_ID);
-      }
+      // Use unified Hyperliquid read provider
+      const provider: ethers.Provider = getReadProvider();
 
       // Minimal ERC20 ABI
       const ERC20_ABI = [
@@ -205,7 +200,7 @@ export function useWalletPortfolio(walletAddress?: string): WalletPortfolioData 
           amount: `${formatBalance(balanceNum)} ${symbol || 'MOCK_USDC'}`,
           balance: rawBalance.toString(),
           value: `$${formatBalance(valueUsd, 2)}`,
-          network: 'hyperliquid_testnet',
+          network: 'hyperliquid',
           contractAddress: mockUsdcAddress,
           decimals: Number(decimals),
           isLowBalance: balanceNum < 50,
@@ -235,7 +230,7 @@ export function useWalletPortfolio(walletAddress?: string): WalletPortfolioData 
           amount: '0.00 MOCK_USDC',
           balance: '0',
           value: '$0.00',
-          network: 'hyperliquid_testnet',
+          network: 'hyperliquid',
           contractAddress: mockUsdcAddress,
           decimals: 6,
           isLowBalance: true,

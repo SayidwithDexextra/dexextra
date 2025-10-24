@@ -21,13 +21,6 @@ export interface Market {
   // Contract addresses
   market_id_bytes32: string;
   market_address: string;
-  factory_address: string;
-  central_vault_address: string;
-  order_router_address: string;
-  position_manager_address: string;
-  liquidation_manager_address: string;
-  vault_analytics_address: string;
-  usdc_token_address: string;
   
   // Blockchain data
   chain_id: number;
@@ -235,23 +228,10 @@ export async function getContractAddresses(identifier: string): Promise<Record<s
   
   return {
     MARKET_ADDRESS: market.market_address,
-    FACTORY_ADDRESS: market.factory_address,
-    CENTRAL_VAULT_ADDRESS: market.central_vault_address,
-    ORDER_ROUTER_ADDRESS: market.order_router_address,
-    POSITION_MANAGER_ADDRESS: market.position_manager_address || "",
-    LIQUIDATION_MANAGER_ADDRESS: market.liquidation_manager_address || "",
-    VAULT_ANALYTICS_ADDRESS: market.vault_analytics_address || "",
-    USDC_TOKEN_ADDRESS: market.usdc_token_address || "",
+    // Core contracts removed from DB; resolved via env
     
     // CamelCase aliases for hooks
     marketAddress: market.market_address,
-    factoryAddress: market.factory_address,
-    centralVaultAddress: market.central_vault_address,
-    orderRouterAddress: market.order_router_address,
-    positionManagerAddress: market.position_manager_address || "",
-    liquidationManagerAddress: market.liquidation_manager_address || "",
-    vaultAnalyticsAddress: market.vault_analytics_address || "",
-    usdcTokenAddress: market.usdc_token_address || "",
   };
 }
 

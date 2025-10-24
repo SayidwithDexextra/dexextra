@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { ethers } from 'ethers'
+import { ensureHyperliquidWallet, getReadProvider } from '@/lib/network'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
-import { CONTRACTS } from '@/lib/contracts'
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 import { FaucetProps, FaucetState, ClaimResult } from './types'
 import styles from './Faucet.module.css'
 
-const HYPERLIQUID_CHAIN_ID = 998
+const HYPERLIQUID_CHAIN_ID = 999
 
 // Mock USDC ABI (comprehensive for faucet functionality)
 const MOCK_USDC_ABI = [
@@ -55,9 +56,10 @@ export default function Faucet({ className }: FaucetProps) {
         checkNetwork()
       }
       
-      window.ethereum.on('chainChanged', handleChainChanged)
+      const eth = (window as Window & { ethereum?: { on: any; removeListener: any } }).ethereum!
+      eth.on('chainChanged', handleChainChanged)
       return () => {
-        window.ethereum.removeListener('chainChanged', handleChainChanged)
+        eth.removeListener('chainChanged', handleChainChanged)
       }
     }
   }, [])
@@ -82,13 +84,17 @@ export default function Faucet({ className }: FaucetProps) {
   }
 
   const loadUserData = async () => {
+    console.log('ThewalletAddress', walletAddress);
+    console.log('TheisHyperliquidNetwork', isHyperliquidNetwork);
     if (!walletAddress || !isHyperliquidNetwork) return
 
     setState(prev => ({ ...prev, isLoading: true, error: null }))
 
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum)
-      const contract = new ethers.Contract(CONTRACTS.MockUSDC.address, MOCK_USDC_ABI, provider)
+      const provider = getReadProvider()
+      const usdcAddress = CONTRACT_ADDRESSES.MOCK_USDC
+      console.log('MockUSDC address (from env):', usdcAddress)
+      const contract = new ethers.Contract(usdcAddress, MOCK_USDC_ABI, provider)
       
       const balance = await contract.balanceOf(walletAddress)
       const decimals = await contract.decimals()
@@ -122,13 +128,13 @@ export default function Faucet({ className }: FaucetProps) {
             method: 'wallet_addEthereumChain',
             params: [{
               chainId: `0x${HYPERLIQUID_CHAIN_ID.toString(16)}`,
-              chainName: 'HyperLiquid Testnet',
+              chainName: 'HyperLiquid Mainnet',
               nativeCurrency: {
                 name: 'HL',
                 symbol: 'HL',
                 decimals: 18,
               },
-              rpcUrls: ['https://hyperliquid-testnet.g.alchemy.com/v2/demo'],
+              rpcUrls: ['https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-'],
               blockExplorerUrls: ['https://explorer.hyperliquid.xyz/'],
             }],
           })
@@ -176,9 +182,8 @@ export default function Faucet({ className }: FaucetProps) {
       throw new Error('Please enter a valid amount between 0 and 1,000,000 USDC')
     }
 
-    const provider = new ethers.BrowserProvider(window.ethereum)
-    const signer = await provider.getSigner()
-    const contract = new ethers.Contract(CONTRACTS.MockUSDC.address, MOCK_USDC_ABI, signer)
+    const signer = await ensureHyperliquidWallet()
+    const contract = new ethers.Contract(CONTRACT_ADDRESSES.MOCK_USDC, MOCK_USDC_ABI, signer)
     
     const decimals = await contract.decimals()
     const amount = ethers.parseUnits(state.customAmount, decimals)
@@ -252,7 +257,7 @@ export default function Faucet({ className }: FaucetProps) {
               <div className={styles.warningText}>
                 <span className={styles.warningTitle}>Network Switch Required</span>
                 <span className={styles.warningDescription}>
-                  Switch to HyperLiquid Testnet to continue
+                  Switch to HyperLiquid Mainnet to continue
                 </span>
               </div>
             </div>
@@ -413,7 +418,7 @@ export default function Faucet({ className }: FaucetProps) {
         <div className={styles.infoContent}>
           <div className={styles.infoItem}>
             <div className={styles.infoStepDot}></div>
-            <span className={styles.infoText}>Connect wallet and switch to HyperLiquid Testnet</span>
+            <span className={styles.infoText}>Connect wallet and switch to HyperLiquid Mainnet</span>
           </div>
           <div className={styles.infoItem}>
             <div className={styles.infoStepDot}></div>

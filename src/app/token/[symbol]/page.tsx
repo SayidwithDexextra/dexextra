@@ -15,6 +15,7 @@ import LightweightChart from '@/components/TokenView/LightweightChart';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
 import { useMarket } from '@/hooks/useMarket';
+import { CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/lib/contractConfig';
 // Removed imports for deleted hooks
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
 import NetworkSelector from '@/components/NetworkSelector';
@@ -46,7 +47,25 @@ export default function TokenPage({ params }: TokenPageProps) {
   const baseTokenData = null; // Removed useTokenFromMarket hook
   const vammMarket = null; // Removed useVAMMFromMarket hook
   
-  const isLoading = isLoadingMarket;
+  // Ensure MARKET_INFO has this market before proceeding to avoid placeholder mode
+  const [isMarketInfoReady, setIsMarketInfoReady] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        // If already populated for this symbol on client, skip
+        const key = (symbol.split('-')[0] || symbol).toUpperCase();
+        const existing = (CONTRACT_ADDRESSES as any).MARKET_INFO?.[key];
+        if (!existing) {
+          await populateMarketInfoClient(symbol);
+        }
+      } catch {}
+      if (mounted) setIsMarketInfoReady(true);
+    })();
+    return () => { mounted = false };
+  }, [symbol]);
+
+  const isLoading = isLoadingMarket || !isMarketInfoReady;
   const error = marketError;
   const settlementData = null;
   
@@ -78,11 +97,20 @@ export default function TokenPage({ params }: TokenPageProps) {
   useEffect(() => {
     if (marketData?.market) {
       console.log(`🏪 Debug TokenPage market data for ${symbol}:`, {
-        metric_id: marketData.market.metric_id,
+        id: marketData.market.id,
+        market_identifier: marketData.market.market_identifier,
+        symbol: marketData.market.symbol,
+        name: marketData.market.name,
         market_address: marketData.market.market_address,
         market_status: marketData.market.market_status,
         chain_id: marketData.market.chain_id,
         hasValidAddress: marketData.market.market_address ? ethers.isAddress(marketData.market.market_address) : false
+      });
+      
+      // Additional debug for TransactionTable props
+      console.log(`🔄 TransactionTable props for ${symbol}:`, {
+        marketId: marketData.market.id,
+        marketIdentifier: marketData.market.market_identifier || symbol
       });
     } else {
       console.log(`🏪 Debug TokenPage: No market data for ${symbol}`);
@@ -90,7 +118,7 @@ export default function TokenPage({ params }: TokenPageProps) {
   }, [marketData, symbol]);
 
   // Live contract reads from OrderBook diamond
-  const { data: obLive, isLoading: obLoading, error: obError } = useOrderBookContractData(symbol, { refreshInterval: 15000 });
+  const { data: obLive, isLoading: obLoading, error: obError } = useOrderBookContractData(symbol, { refreshInterval: 15000, orderBookAddress: marketData?.market?.market_address || undefined, marketIdBytes32: marketData?.market?.market_id_bytes32 || undefined });
 
   // Enhanced price resolution with priority for real-time market activity
   const getResolvedPrice = () => {
@@ -357,7 +385,9 @@ export default function TokenPage({ params }: TokenPageProps) {
           {/* Middle: Transactions with full height */}
           <div className="w-80 h-full">
             <TransactionTable 
-              metricId={symbol}
+              marketId={market?.id}
+              marketIdentifier={market?.market_identifier || symbol}
+              orderBookAddress={obLive?.orderBookAddress || market?.market_address || undefined}
               height="100%"
             />
           </div>

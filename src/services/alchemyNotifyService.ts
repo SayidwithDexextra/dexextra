@@ -51,7 +51,7 @@ export class AlchemyNotifyService {
    * Get Alchemy network from chain ID
    */
   private getNetworkFromChainId(): Network {
-    const chainId = typeof env.CHAIN_ID === 'number' ? env.CHAIN_ID : parseInt(env.CHAIN_ID || '998');
+    const chainId = typeof env.CHAIN_ID === 'number' ? env.CHAIN_ID : parseInt(env.CHAIN_ID || '999');
     
     switch (chainId) {
       case 1:

@@ -50,6 +50,8 @@ const deriveTimeBasedChanges = (fundingRate: string, baseChange: number) => {
   };
 };
 
+// Import DecryptedText for animation
+import DecryptedText from '../Header/DecryptedText';
 
 
 interface TokenHeaderProps {
@@ -118,7 +120,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         realizedPnL: (vaultData as any)?.realizedPnL ?? null,
         unrealizedPnL: (vaultData as any)?.unrealizedPnL ?? null
       };
-      console.log('detailx', detail);
+      console.log('[Dispatch] 📢 [EVT][TokenHeader] Dispatch coreVaultSummary', detail);
       const evt = new CustomEvent('coreVaultSummary', { detail });
       if (typeof window !== 'undefined') window.dispatchEvent(evt);
     } catch (e) {
@@ -136,12 +138,23 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   useEffect(() => {
     const handleLimitTabChange: EventListener = (event: Event) => {
       const customEvent = event as CustomEvent<{ isLimitTabActive: boolean }>;
+      console.log('[Dispatch] 🎧 [EVT][TokenHeader] Received limitTabChange', customEvent.detail);
       setIsLimitTabActive(customEvent.detail.isLimitTabActive);
     };
+    const onOrdersUpdated = (e: any) => {
+      try {
+        console.log('[Dispatch] 🎧 [EVT][TokenHeader] Received ordersUpdated', e?.detail);
+        // If needed, could recalc a badge or force a render. No state change required here.
+      } catch {}
+    };
 
+    console.log('[Dispatch] 🔗 [EVT][TokenHeader] Subscribing to limitTabChange');
     window.addEventListener('limitTabChange', handleLimitTabChange);
+    window.addEventListener('ordersUpdated', onOrdersUpdated);
     return () => {
+      console.log('[Dispatch] 🧹 [EVT][TokenHeader] Unsubscribing from limitTabChange');
       window.removeEventListener('limitTabChange', handleLimitTabChange);
+      window.removeEventListener('ordersUpdated', onOrdersUpdated);
     };
   }, []);
   
@@ -204,7 +217,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     
     // Since we removed the legacy hooks, we'll use simplified price handling
     const legacyPrice = legacyOrderBookPrice?.price ? Number(legacyOrderBookPrice.price) : 0;
-    const currentMarkPrice = legacyPrice || 1000; // Default fallback price
+    const currentMarkPrice = legacyPrice || 0; // Remove default fallback price, let animation handle it
     
     // HyperLiquid OrderBook contracts don't have funding rates or historical price changes
     const currentFundingRate = 0;
@@ -278,12 +291,23 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         price: Number(enhancedTokenData.markPrice) || 0,
         timestamp: Date.now()
       };
+      console.log('[Dispatch] 📢 [EVT][TokenHeader] Dispatch marketMarkPrice', detail);
       const evt = new CustomEvent('marketMarkPrice', { detail });
       if (typeof window !== 'undefined') window.dispatchEvent(evt);
     } catch (e) {
       // no-op
     }
   }, [enhancedTokenData?.symbol, enhancedTokenData?.markPrice]);
+
+  // Debug when enhanced token data changes leading to UI updates
+  useEffect(() => {
+    if (!enhancedTokenData) return;
+    console.log('[Dispatch] 🔁 [UI][TokenHeader] enhancedTokenData updated', {
+      symbol: enhancedTokenData.symbol,
+      markPrice: enhancedTokenData.markPrice,
+      status: enhancedTokenData.marketStatus
+    });
+  }, [enhancedTokenData?.symbol, enhancedTokenData?.markPrice, enhancedTokenData?.marketStatus]);
 
   // Scroll detection effect using Intersection Observer for better performance
   useEffect(() => {
@@ -387,6 +411,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Check for valid real-time price for UI indicators (simplified since hooks removed)
   const showLiveIndicator = enhancedTokenData?.isDeployed && 
     enhancedTokenData?.markPrice > 0;
+  const isPriceLoading = isLoadingMarket || !enhancedTokenData || enhancedTokenData.markPrice === 0;
 
   return (
     <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 h-full max-h-full flex flex-col">
@@ -447,9 +472,25 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
               <div className="mt-1.5 pt-1.5 border-t border-[#333333] animate-in fade-in duration-200">
                 <div className="flex items-center justify-between">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-[13px] font-bold text-white">
-                      ${formatNumberWithCommas(enhancedTokenData.markPrice)}
-                    </span>
+                    {isPriceLoading ? (
+                      <DecryptedText
+                        text="$0.00"
+                        style={{
+                          fontSize: '13px',
+                          color: 'white',
+                          fontWeight: 'bold'
+                        }}
+                        characters="0123456789$."
+                        speed={100}
+                        maxIterations={12}
+                        animateOnMount={true}
+                        animateOnChange={true}
+                      />
+                    ) : (
+                      <span className="text-[13px] font-bold text-white">
+                        ${formatNumberWithCommas(enhancedTokenData.markPrice)}
+                      </span>
+                    )}
                     <span className={`text-[10px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
                       {isPositive ? '↑' : '↓'} {Math.abs(enhancedTokenData.priceChangePercent24h).toFixed(2)}%
                     </span>
@@ -506,9 +547,25 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           
           <div className="flex items-center justify-between">
             <div className="flex items-baseline gap-2">
-              <span className="text-base font-bold text-white font-mono">
-                {enhancedTokenData.markPrice.toFixed(2)}
-              </span>
+              {isPriceLoading ? (
+                <DecryptedText
+                  text="$0.00"
+                  style={{
+                    fontSize: '16px',
+                    color: 'white',
+                    fontWeight: 'bold'
+                  }}
+                  characters="0123456789$."
+                  speed={100}
+                  maxIterations={12}
+                  animateOnMount={true}
+                  animateOnChange={true}
+                />
+              ) : (
+                <span className="text-base font-bold text-white font-mono">
+                  {enhancedTokenData.markPrice.toFixed(2)}
+                </span>
+              )}
               <span className={`text-[11px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
                 {isPositive ? '↑' : '↓'} {Math.abs(enhancedTokenData.priceChangePercent24h).toFixed(2)}%
               </span>

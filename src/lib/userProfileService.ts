@@ -1,6 +1,7 @@
 // User Profile Service - handles all user profile database operations
 
 import { supabase } from './supabase';
+import { supabaseAdmin } from './supabase-admin';
 import type { 
   UserProfile, 
   PublicUserProfile, 
@@ -11,12 +12,18 @@ import type {
 
 export class UserProfileService {
   
+  // Use service-role client on the server, anon client on the client
+  private static get db() {
+    const isServer = typeof window === 'undefined';
+    return isServer ? supabaseAdmin : supabase;
+  }
+  
   /**
    * Get user profile by wallet address
    */
   static async getProfile(walletAddress: string): Promise<UserProfile | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.db
         .from('user_profiles')
         .select('*')
         .eq('wallet_address', walletAddress)
@@ -43,7 +50,7 @@ export class UserProfileService {
    */
   static async getPublicProfile(walletAddress: string): Promise<PublicUserProfile | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.db
         .from('public_user_profiles')
         .select('*')
         .eq('wallet_address', walletAddress)
@@ -72,7 +79,7 @@ export class UserProfileService {
     displayName?: string
   ): Promise<UserProfile> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.db
         .rpc('get_or_create_user_profile', {
           p_wallet_address: walletAddress,
           p_username: username,
@@ -96,7 +103,7 @@ export class UserProfileService {
     updates: UpdateUserProfileRequest
   ): Promise<UserProfile> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.db
         .from('user_profiles')
         .update(updates)
         .eq('wallet_address', walletAddress)
@@ -117,7 +124,7 @@ export class UserProfileService {
    */
   static async isUsernameAvailable(username: string, excludeWalletAddress?: string): Promise<boolean> {
     try {
-      let query = supabase
+      let query = this.db
         .from('user_profiles')
         .select('username')
         .eq('username', username)
@@ -143,7 +150,7 @@ export class UserProfileService {
    */
   static async searchProfiles(searchTerm: string): Promise<UserProfileSearchResult[]> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.db
         .rpc('search_user_profiles', { search_term: searchTerm });
 
       if (error) throw error;
@@ -160,7 +167,7 @@ export class UserProfileService {
    */
   static async deactivateProfile(walletAddress: string): Promise<void> {
     try {
-      const { error } = await supabase
+      const { error } = await this.db
         .from('user_profiles')
         .update({ is_active: false })
         .eq('wallet_address', walletAddress);
@@ -177,7 +184,7 @@ export class UserProfileService {
    */
   static async getProfileByUsername(username: string): Promise<PublicUserProfile | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.db
         .from('public_user_profiles')
         .select('*')
         .eq('username', username)
@@ -202,7 +209,7 @@ export class UserProfileService {
    */
   static async getRecentProfiles(limit: number = 20): Promise<PublicUserProfile[]> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await this.db
         .from('public_user_profiles')
         .select('*')
         .order('created_at', { ascending: false })
@@ -229,7 +236,7 @@ export class UserProfileService {
       const fileExt = file.name.split('.').pop();
       const fileName = `${walletAddress}/${type}_${Date.now()}.${fileExt}`;
       
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { data: uploadData, error: uploadError } = await this.db.storage
         .from('profile-images')
         .upload(fileName, file, {
           upsert: true
@@ -237,7 +244,7 @@ export class UserProfileService {
 
       if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: { publicUrl } } = this.db.storage
         .from('profile-images')
         .getPublicUrl(fileName);
 

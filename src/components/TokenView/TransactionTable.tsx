@@ -7,11 +7,14 @@ import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
 // Legacy useOrderAnimations import removed
 import { OrderBookAnimatedQuantity } from '@/components/ui/AnimatedQuantity';
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 
 interface TransactionTableProps {
-  metricId?: string;
+  marketId?: string; // UUID from markets table
+  marketIdentifier?: string; // Market identifier (e.g., 'ALU-USD')
   currentPrice?: number;
   height?: string | number;
+  orderBookAddress?: string; // Optional explicit OB address to bypass symbol resolution
 }
 
 // Helper function to transform market depth to order book entries
@@ -63,28 +66,59 @@ function formatAmountDisplay(value: number, displayDecimals = 4): string {
   return value.toFixed(displayDecimals);
 }
 
-export default function TransactionTable({ metricId, currentPrice, height = '100%' }: TransactionTableProps) {
+export default function TransactionTable({ marketId, marketIdentifier, currentPrice, height = '100%', orderBookAddress }: TransactionTableProps) {
   const [view, setView] = useState<'transactions' | 'orderbook'>('orderbook');
   const [sortBy, setSortBy] = useState<'timestamp' | 'price' | 'amount'>('timestamp');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
-  // Removed excessive render logging - only log when metricId changes
-  const prevMetricId = React.useRef(metricId);
+  // Log when market ID or identifier changes
+  const prevMarketId = React.useRef(marketId);
+  const prevMarketIdentifier = React.useRef(marketIdentifier);
   useEffect(() => {
-    if (prevMetricId.current !== metricId) {
-      console.log('🔍 [TRANSACTION_TABLE] MetricId changed:', { from: prevMetricId.current, to: metricId });
-      prevMetricId.current = metricId;
+    if (prevMarketId.current !== marketId) {
+      console.log('🔍 [TRANSACTION_TABLE] Market ID changed:', { from: prevMarketId.current, to: marketId });
+      prevMarketId.current = marketId;
     }
-  }, [metricId]);
+    if (prevMarketIdentifier.current !== marketIdentifier) {
+      console.log('🔍 [TRANSACTION_TABLE] Market identifier changed:', { from: prevMarketIdentifier.current, to: marketIdentifier });
+      prevMarketIdentifier.current = marketIdentifier;
+    }
+  }, [marketId, marketIdentifier]);
 
-  // On-chain OrderBook data (HyperLiquid testnet Aluminum market)
-  const { data: obData, isLoading: obLoading, error: obError } = useOrderBookContractData('ALU-USD', { refreshInterval: 5000 });
+  // On-chain OrderBook data using provided market identifier
+  // Pass marketIdentifier to the hook which uses it for OrderBook resolution
+  // The hook internally resolves this to the correct contract address
+  const validMarketIdentifier = useMemo(() => {
+    // Ensure we have a valid market identifier string
+    const id = marketIdentifier?.trim();
+    if (!id) {
+      console.warn('[TransactionTable] Empty market identifier provided');
+      return '';
+    }
+    return id;
+  }, [marketIdentifier]);
+  
+  // Try to resolve an explicit orderbook address from MARKET_INFO to avoid symbol races
+  const explicitOrderBookAddress = useMemo(() => {
+    try {
+      const markets: any = (CONTRACT_ADDRESSES as any).MARKET_INFO || {};
+      const key = (validMarketIdentifier?.split('-')[0] || validMarketIdentifier).toUpperCase();
+      const match = markets[key];
+      const addr = match?.orderBook as string | undefined;
+      return (addr && addr.startsWith('0x') && addr.length === 42) ? addr : undefined;
+    } catch {
+      return undefined;
+    }
+  }, [validMarketIdentifier]);
+
+  const { data: obData, isLoading: obLoading, error: obError } = useOrderBookContractData(validMarketIdentifier, { refreshInterval: 5000, orderBookAddress: orderBookAddress || explicitOrderBookAddress });
   const [recentTrades, setRecentTrades] = useState<OrderFromAPI[]>([]);
   const [isLoadingTrades, setIsLoadingTrades] = useState(false);
   const [tradeError, setTradeError] = useState<string | null>(null);
 
-  // Fetch recent trades
+  // Fetch recent trades and log on any order book update
   useEffect(() => {
+    console.log('validMarketIdentifierx', validMarketIdentifier);
     console.log('obDatax', obData);
     console.log('recentTradesx', recentTrades);
     try {
@@ -113,7 +147,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
     } finally {
       setIsLoadingTrades(false);
     }
-  }, [obData?.recentTrades]);
+  }, [obData?.lastUpdated]);
 
   const isLoading = view === 'orderbook' ? obLoading : isLoadingTrades;
   const error = view === 'orderbook' 
@@ -352,20 +386,20 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
         ) : view === 'transactions' ? (
           <div className="text-[10px] text-gray-500 text-center py-1">
             {filteredAndSortedData.length} filled
-            {!metricId && (
-              <span className="block text-[9px] text-gray-600">
-                Connect wallet to see orders
-              </span>
-            )}
+                {!marketIdentifier && (
+                  <span className="block text-[9px] text-gray-600">
+                    Connect wallet to see orders
+                  </span>
+                )}
           </div>
         ) : (
           <div className="text-[10px] text-gray-500 text-center py-1">
             Order Book
-            {!metricId && (
-              <span className="block text-[9px] text-gray-600">
-                Market data unavailable
-              </span>
-            )}
+                {!marketIdentifier && (
+                  <span className="block text-[9px] text-gray-600">
+                    Market data unavailable
+                  </span>
+                )}
           </div>
         )}
       </div>
@@ -524,7 +558,7 @@ export default function TransactionTable({ metricId, currentPrice, height = '100
             {filteredAndSortedData.length === 0 ? (
               <div className="text-[10px] text-gray-500 text-center py-4">
                 No filled orders found
-                {!metricId && (
+                {!marketIdentifier && (
                   <div className="text-[9px] text-gray-600 mt-1">
                     Market data unavailable
                   </div>

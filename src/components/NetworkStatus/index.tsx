@@ -17,8 +17,8 @@ export const NetworkWarningBanner = ({ userAddress }: NetworkWarningBannerProps)
           // Get current chain ID
           const chainId = await window.ethereum.request({ method: 'eth_chainId' });
           
-          // HyperLiquid Testnet chainId is 998 (0x3E6)
-          const expectedChainId = '0x3e6';
+          // HyperLiquid Mainnet chainId is 999 (0x3E7)
+          const expectedChainId = '0x3e7';
           
           // Check if on correct network
           const correct = chainId.toLowerCase() === expectedChainId.toLowerCase();
@@ -32,12 +32,12 @@ export const NetworkWarningBanner = ({ userAddress }: NetworkWarningBannerProps)
               '0x5': 'Goerli Testnet',
               '0x89': 'Polygon Mainnet',
               '0x13881': 'Mumbai Testnet',
-              '0x3e6': 'HyperLiquid Testnet'
+              '0x3e7': 'HyperLiquid Mainnet'
             };
             
             setNetworkName(networkNames[chainId] || `Unknown Network (${chainId})`);
           } else {
-            setNetworkName('HyperLiquid Testnet');
+            setNetworkName('HyperLiquid Mainnet');
           }
         } catch (error) {
           console.error('Failed to check network:', error);
@@ -59,7 +59,7 @@ export const NetworkWarningBanner = ({ userAddress }: NetworkWarningBannerProps)
       <div className="flex items-center gap-2">
         <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
         <span className="text-[10px] text-yellow-400">
-          Please switch to HyperLiquid Testnet. Currently on {networkName}.
+          Please switch to HyperLiquid Mainnet. Currently on {networkName}.
         </span>
       </div>
     </div>

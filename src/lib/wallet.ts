@@ -1,5 +1,6 @@
 import { WalletData, WalletProvider } from '@/types/wallet'
 import { env } from '@/lib/env'
+import { getReadProvider as getUnifiedReadProvider, getChainId as getConfiguredChainId, getRpcUrl as getConfiguredRpcUrl } from '@/lib/network'
 import { ethers } from 'ethers'
 // Removed networks import - smart contract functionality deleted
 
@@ -64,8 +65,7 @@ export const generateAvatar = (address: string): string => {
 // Lightweight fallback provider factory using validated env
 function getReadOnlyProvider(): ethers.JsonRpcProvider | null {
   try {
-    if (!env?.RPC_URL) return null
-    return new ethers.JsonRpcProvider(env.RPC_URL)
+    return getUnifiedReadProvider()
   } catch {
     return null
   }
@@ -398,10 +398,66 @@ export const connectMetaMask = async (): Promise<WalletData> => {
   }
   
   try {
+    // If accounts already connected, short-circuit without prompting
+    try {
+      const existingAccounts = await provider.request({ method: 'eth_accounts' })
+      if (Array.isArray(existingAccounts) && existingAccounts.length > 0) {
+        const address = existingAccounts[0]
+        const balance = await getBalance(address)
+        const chainId = await getChainId()
+        return {
+          address,
+          balance,
+          isConnected: true,
+          isConnecting: false,
+          chainId,
+          avatar: generateAvatar(address),
+        }
+      }
+    } catch {}
+
+    // Guard against providers that never resolve by applying a timeout
+    const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
+      return new Promise<T>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('Timed out waiting for MetaMask. Open the extension and approve the request.')), ms)
+        promise
+          .then((val) => {
+            clearTimeout(t)
+            resolve(val)
+          })
+          .catch((err) => {
+            clearTimeout(t)
+            reject(err)
+          })
+      })
+    }
+
     // Use the specific MetaMask provider
-    const accounts = await provider.request({
-      method: 'eth_requestAccounts',
-    })
+    let accounts: string[] | undefined
+    try {
+      accounts = await withTimeout(
+        provider.request({ method: 'eth_requestAccounts' }),
+        12000
+      )
+    } catch (primaryError: any) {
+      // If already processing or no prompt surfaced, try permissions flow once
+      if (primaryError?.code === -32002 || /timed out/i.test(String(primaryError?.message))) {
+        try {
+          await withTimeout(
+            provider.request({
+              method: 'wallet_requestPermissions',
+              params: [{ eth_accounts: {} }],
+            }),
+            12000
+          )
+          accounts = await provider.request({ method: 'eth_accounts' })
+        } catch (permError) {
+          throw primaryError
+        }
+      } else {
+        throw primaryError
+      }
+    }
     
     if (!accounts || accounts.length === 0) {
       throw new Error('No accounts found or user rejected the request')
@@ -430,9 +486,11 @@ export const connectMetaMask = async (): Promise<WalletData> => {
     if (error.code === 4001) {
       throw new Error('User rejected the connection request')
     } else if (error.code === -32002) {
-      throw new Error('MetaMask is already processing a request. Please check MetaMask.')
+      throw new Error('MetaMask is already processing a request. Please open the MetaMask extension and complete the approval.')
     } else if (error.message?.includes('User rejected')) {
       throw new Error('User rejected the connection request')
+    } else if (/timed out/i.test(String(error.message))) {
+      throw new Error('Timed out waiting for MetaMask. Please open the MetaMask extension and approve the connection request.')
     } else {
       throw new Error(`Failed to connect to MetaMask: ${error.message || 'Unknown error'}`)
     }
@@ -843,8 +901,12 @@ export const disconnect = async (): Promise<void> => {
 // Get account balance (mock implementation - replace with actual Web3 calls)
 export const getBalance = async (address: string): Promise<string> => {
   if (!window.ethereum) {
-    console.warn('No ethereum provider available; using read-only RPC fallback')
-    return fetchBalanceViaRpc(address)
+    console.error('No ethereum provider available; not retrying via fallback', {
+      attemptedRpcUrl: getConfiguredRpcUrl(),
+      configuredChainId: getConfiguredChainId(),
+      address,
+    })
+    return '0'
   }
   
   if (!address || typeof address !== 'string') {
@@ -857,8 +919,12 @@ export const getBalance = async (address: string): Promise<string> => {
     
     // Check if the provider supports eth_getBalance
     if (typeof window.ethereum.request !== 'function') {
-      console.error('Provider does not support request method; using fallback')
-      return fetchBalanceViaRpc(address)
+      console.error('Provider does not support request method; not retrying via fallback', {
+        attemptedRpcUrl: getConfiguredRpcUrl(),
+        configuredChainId: getConfiguredChainId(),
+        address,
+      })
+      return '0'
     }
     
     // Get ETH balance
@@ -902,35 +968,52 @@ export const getBalance = async (address: string): Promise<string> => {
     if (error?.code === 4001) {
       console.error('User rejected the balance request')
     } else if (error?.code === -32603) {
-      console.error('Internal RPC error - possibly network issue; retrying via fallback RPC')
-      return fetchBalanceViaRpc(address)
+      console.error('Internal RPC error - not retrying via fallback', {
+        attemptedRpcUrl: getConfiguredRpcUrl(),
+        configuredChainId: getConfiguredChainId(),
+        address,
+      })
+      return '0'
     } else if (error?.code === -32602) {
       console.error('Invalid method parameters')
     } else if (error?.message?.includes('network')) {
-      console.error('Network connectivity issue; using fallback RPC')
-      return fetchBalanceViaRpc(address)
+      console.error('Network connectivity issue; not retrying via fallback', {
+        attemptedRpcUrl: getConfiguredRpcUrl(),
+        configuredChainId: getConfiguredChainId(),
+        address,
+      })
+      return '0'
     } else if (error?.message?.includes('timeout')) {
-      console.error('Request timeout; using fallback RPC')
-      return fetchBalanceViaRpc(address)
+      console.error('Request timeout; not retrying via fallback', {
+        attemptedRpcUrl: getConfiguredRpcUrl(),
+        configuredChainId: getConfiguredChainId(),
+        address,
+      })
+      return '0'
     }
-    
-    return fetchBalanceViaRpc(address)
+
+    console.error('Unhandled balance error; not retrying via fallback', {
+      attemptedRpcUrl: getConfiguredRpcUrl(),
+      configuredChainId: getConfiguredChainId(),
+      address,
+    })
+    return '0'
   }
 }
 
 // Get current chain ID
 export const getChainId = async (): Promise<number> => {
   if (!window.ethereum) {
-    console.warn('No ethereum provider available for chain ID')
-    return 1 // Default to Ethereum mainnet
+    console.warn('No ethereum provider available for chain ID; using configured chainId')
+    return getConfiguredChainId()
   }
   
   try {
      console.log('Fetching chain ID...')
     
     if (typeof window.ethereum.request !== 'function') {
-      console.error('Provider does not support request method for chain ID')
-      return 1
+      console.error('Provider does not support request method for chain ID; using configured chainId')
+      return getConfiguredChainId()
     }
     
     const chainId = await window.ethereum.request({
@@ -940,15 +1023,15 @@ export const getChainId = async (): Promise<number> => {
      console.log('Raw chain ID response:', chainId)
     
     if (!chainId) {
-      console.warn('No chain ID returned from provider')
-      return 1
+      console.warn('No chain ID returned from provider; using configured chainId')
+      return getConfiguredChainId()
     }
     
     const parsedChainId = parseInt(chainId, 16)
     
     if (isNaN(parsedChainId) || parsedChainId <= 0) {
-      console.error('Invalid chain ID:', chainId, 'parsed as:', parsedChainId)
-      return 1
+      console.error('Invalid chain ID:', chainId, 'parsed as:', parsedChainId, '; using configured chainId')
+      return getConfiguredChainId()
     }
     
      console.log('Chain ID:', parsedChainId)
@@ -971,8 +1054,8 @@ export const getChainId = async (): Promise<number> => {
     } else if (error?.message?.includes('network')) {
       console.error('Network issue when fetching chain ID')
     }
-    
-    return 1
+
+    return getConfiguredChainId()
   }
 }
 

@@ -19,15 +19,21 @@ const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
 
   // Blockchain Configuration
-  RPC_URL: z.string().url().default('https://polygon-rpc.com/'),
-  WS_RPC_URL: z.string().url().default('wss://polygon-rpc.com/'),
-  CHAIN_ID: z.string().transform(Number).default('137'), // Default to Polygon Mainnet
+  RPC_URL: z.string().url().default('https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-'),
+  // Optional backup RPC HTTP URLs
+  RPC_URL_BACKUP: z.string().url().optional(),
+  // Optional comma-separated list of additional RPC URLs
+  RPC_URLS: z.string().optional(),
+  WS_RPC_URL: z.string().url().default('wss://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-'),
+  // Optional backup WS URL
+  WS_RPC_URL_BACKUP: z.string().url().optional(),
+  CHAIN_ID: z.string().transform(Number).default('999'), // Default to Polygon Mainnet
   
   // Settlement Configuration (removed - on-chain only system)
   // SETTLEMENT_PRIVATE_KEY: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
   
   // Network Configuration
-  DEFAULT_NETWORK: z.string().default('hyperliquid_testnet'), // hyperliquid_testnet, ethereum, mumbai, sepolia, hardhat
+  DEFAULT_NETWORK: z.string().default('hyperliquid'), // hyperliquid, hyperliquid_testnet, ethereum, mumbai, sepolia, hardhat
 
   // Core Contract Addresses
   MOCK_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid USDC token address').optional(),
@@ -35,7 +41,14 @@ const envSchema = z.object({
   CORE_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid central vault address').optional(),
   LIQUIDATION_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid liquidation manager address').optional(),
   FUTURES_MARKET_FACTORY_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid factory address').optional(),
+  POSITION_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid position manager address').optional(),
+  VAULT_ANALYTICS_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid vault analytics address').optional(),
   DEFAULT_ORDERBOOK_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid orderbook address').optional(),
+  
+  // Legacy Market-Specific Addresses (for backward compatibility only)
+  // These should eventually be removed in favor of the dynamic market loading from Supabase
+  ALUMINUM_ORDERBOOK_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid aluminum orderbook address').optional(),
+  ALUMINUM_MARKET_ID: z.string().optional(),
   
   // Order Book System Contract Addresses
   ORDER_ROUTER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid order router address').optional(),
@@ -101,11 +114,17 @@ const envSchema = z.object({
   // Trading Fees (in basis points)
   MAKER_FEE_RATE: z.string().transform(val => parseInt(val)).pipe(z.number().min(0).max(1000)).default('10'),
   TAKER_FEE_RATE: z.string().transform(val => parseInt(val)).pipe(z.number().min(0).max(1000)).default('15'),
+
+  // Gas configuration
+  GAS_BUFFER_PERCENT: z.string().transform(val => parseInt(val)).pipe(z.number().min(0).max(500)).default('80'),
+  DEFAULT_GAS_LIMIT: z.string().transform(val => parseInt(val)).pipe(z.number().min(100000).max(30000000)).default('12000000'),
+  MIN_GAS_LIMIT: z.string().transform(val => parseInt(val)).pipe(z.number().min(0).max(30000000)).default('0').optional(),
+  MAX_GAS_LIMIT: z.string().transform(val => parseInt(val)).pipe(z.number().min(0).max(30000000)).default('0').optional(),
   
   // WebSocket Configuration
   WEBSOCKET_PORT: z.string().transform(val => parseInt(val)).pipe(z.number().min(1000).max(65535)).default('3001'),
   MAX_WEBSOCKET_CONNECTIONS: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(10000)).default('1000'),
-
+  
   // Feature Flags
   ENABLE_FEATURE_X: z.string().transform((val) => val === 'true').default('false'),
   DEBUG_MODE: z.string().transform((val) => val === 'true').default('false'),
@@ -130,18 +149,27 @@ const processEnv = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   
   // Blockchain
-  RPC_URL: process.env.RPC_URL || 'https://hyperliquid-testnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',
-  WS_RPC_URL: process.env.WS_RPC_URL || 'wss://testnet-ws.hyperliquid.xyz/v1',
-  CHAIN_ID: process.env.CHAIN_ID || '998',
-  DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'hyperliquid_testnet',
+  RPC_URL: process.env.NEXT_PUBLIC_RPC_URL || 'https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',
+  RPC_URL_BACKUP: process.env.RPC_URL_BACKUP,
+  RPC_URLS: process.env.RPC_URLS,
+  WS_RPC_URL: process.env.WS_RPC_URL || 'wss://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',
+  WS_RPC_URL_BACKUP: process.env.WS_RPC_URL_BACKUP,
+  CHAIN_ID: process.env.CHAIN_ID || '999',
+  DEFAULT_NETWORK: process.env.DEFAULT_NETWORK || 'hyperliquid',
   
   // Core Contract Addresses
-  MOCK_USDC_ADDRESS: process.env.MOCK_USDC_ADDRESS,
+  MOCK_USDC_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_MOCK_USDC_ADDRESS : process.env.MOCK_USDC_ADDRESS,
   MOCK_ORACLE_ADDRESS: process.env.MOCK_ORACLE_ADDRESS,
-  CORE_VAULT_ADDRESS: process.env.CORE_VAULT_ADDRESS,
-  LIQUIDATION_MANAGER_ADDRESS: process.env.LIQUIDATION_MANAGER_ADDRESS,
-  FUTURES_MARKET_FACTORY_ADDRESS: process.env.FUTURES_MARKET_FACTORY_ADDRESS,
-  DEFAULT_ORDERBOOK_ADDRESS: process.env.DEFAULT_ORDERBOOK_ADDRESS,
+  CORE_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_CORE_VAULT_ADDRESS : process.env.CORE_VAULT_ADDRESS,
+  LIQUIDATION_MANAGER_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_LIQUIDATION_MANAGER_ADDRESS : process.env.LIQUIDATION_MANAGER_ADDRESS,
+  FUTURES_MARKET_FACTORY_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS : process.env.FUTURES_MARKET_FACTORY_ADDRESS,
+  POSITION_MANAGER_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_POSITION_MANAGER_ADDRESS : process.env.POSITION_MANAGER_ADDRESS,
+  VAULT_ANALYTICS_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_VAULT_ANALYTICS_ADDRESS : process.env.VAULT_ANALYTICS_ADDRESS,
+  DEFAULT_ORDERBOOK_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_DEFAULT_ORDERBOOK_ADDRESS : process.env.DEFAULT_ORDERBOOK_ADDRESS,
+  
+  // Legacy Market-Specific Addresses
+  ALUMINUM_ORDERBOOK_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_ALUMINUM_ORDERBOOK_ADDRESS : process.env.ALUMINUM_ORDERBOOK_ADDRESS,
+  ALUMINUM_MARKET_ID: isClientSide ? process.env.NEXT_PUBLIC_ALUMINUM_MARKET_ID : process.env.ALUMINUM_MARKET_ID,
   
   // Market Table Default Configuration
   DEFAULT_MARKET_DECIMALS: process.env.DEFAULT_MARKET_DECIMALS || '8',
@@ -194,6 +222,12 @@ const processEnv = {
   // Trading Fees
   MAKER_FEE_RATE: process.env.MAKER_FEE_RATE || '10',
   TAKER_FEE_RATE: process.env.TAKER_FEE_RATE || '15',
+
+  // Gas configuration
+  GAS_BUFFER_PERCENT: process.env.GAS_BUFFER_PERCENT || '80',
+  DEFAULT_GAS_LIMIT: process.env.DEFAULT_GAS_LIMIT || '12000000',
+  MIN_GAS_LIMIT: process.env.MIN_GAS_LIMIT || '0',
+  MAX_GAS_LIMIT: process.env.MAX_GAS_LIMIT || '0',
   
   // WebSocket Configuration
   WEBSOCKET_PORT: process.env.WEBSOCKET_PORT || '3001',
@@ -319,6 +353,26 @@ export function getContractConfig() {
     })
   }
   
+  if (env.POSITION_MANAGER_ADDRESS) {
+    contracts.push({
+      address: env.POSITION_MANAGER_ADDRESS,
+      abi: [],
+      name: 'Position Manager',
+      type: 'PositionManager' as const,
+      startBlock: 0,
+    })
+  }
+  
+  if (env.VAULT_ANALYTICS_ADDRESS) {
+    contracts.push({
+      address: env.VAULT_ANALYTICS_ADDRESS,
+      abi: [],
+      name: 'Vault Analytics',
+      type: 'VaultAnalytics' as const,
+      startBlock: 0,
+    })
+  }
+  
   return contracts
 }
 
@@ -331,7 +385,13 @@ export function getCoreContractAddresses() {
     coreVault: env.CORE_VAULT_ADDRESS,
     liquidationManager: env.LIQUIDATION_MANAGER_ADDRESS,
     futuresMarketFactory: env.FUTURES_MARKET_FACTORY_ADDRESS,
+    positionManager: env.POSITION_MANAGER_ADDRESS,
+    vaultAnalytics: env.VAULT_ANALYTICS_ADDRESS,
     defaultOrderBook: env.DEFAULT_ORDERBOOK_ADDRESS,
+    
+    // Legacy market-specific addresses (for backward compatibility)
+    aluminumOrderBook: env.ALUMINUM_ORDERBOOK_ADDRESS,
+    aluminumMarketId: env.ALUMINUM_MARKET_ID,
   }
 }
 

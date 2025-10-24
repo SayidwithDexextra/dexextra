@@ -16,7 +16,7 @@ export interface Market {
   settlement_date: string;
   trading_end_date: string;
   market_address: string | null;
-  factory_address: string | null;
+  // factory_address removed from DB
   market_id_bytes32: string | null;
   total_volume: number;
   total_trades: number;

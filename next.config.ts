@@ -14,17 +14,35 @@ const nextConfig: NextConfig = {
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     dangerouslyAllowSVG: true,
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
-    // Allow images from ANY domain on the web
+    // Restrict to known remote hosts for production
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: '**',
+        hostname: 'khhknmobkkkvvogznxdj.supabase.co',
+        port: '',
+        pathname: '/storage/v1/object/public/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+        port: '',
+        pathname: '/**',
+      },
+      { protocol: 'https', hostname: 'media1.giphy.com', port: '', pathname: '/**' },
+      { protocol: 'https', hostname: 'media2.giphy.com', port: '', pathname: '/**' },
+      { protocol: 'https', hostname: 'media3.giphy.com', port: '', pathname: '/**' },
+      { protocol: 'https', hostname: 'media4.giphy.com', port: '', pathname: '/**' },
+      { protocol: 'https', hostname: 'media5.giphy.com', port: '', pathname: '/**' },
+      { protocol: 'https', hostname: 'media6.giphy.com', port: '', pathname: '/**' },
+      {
+        protocol: 'https',
+        hostname: 'assets.coingecko.com',
         port: '',
         pathname: '/**',
       },
       {
-        protocol: 'http',
-        hostname: '**',
+        protocol: 'https',
+        hostname: 'example.com',
         port: '',
         pathname: '/**',
       },

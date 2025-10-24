@@ -68,8 +68,10 @@ const NetworkSelector: React.FC<NetworkSelectorProps> = ({
     return network.isMainnet;
   });
 
-  // Sort networks: Polygon first, then Ethereum, then others
+  // Sort networks: HyperLiquid first, then Ethereum, then others
   const sortedNetworks = availableNetworks.sort((a, b) => {
+    if (a.name === 'hyperliquid') return -1;
+    if (b.name === 'hyperliquid') return 1;
     if (a.name === 'hyperliquid_testnet') return -1;
     if (b.name === 'hyperliquid_testnet') return 1;
     if (a.name === 'ethereum') return -1;

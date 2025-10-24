@@ -392,7 +392,7 @@ export default function DepositModalStatus({
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
                       <span className="text-[11px] font-medium text-[#808080]">Network</span>
                     </div>
-                    <span className="text-[10px] text-white">HyperLiquid Testnet</span>
+                    <span className="text-[10px] text-white">HyperLiquid Mainnet</span>
                   </div>
                 </div>
 

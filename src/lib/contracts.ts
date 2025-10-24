@@ -1,11 +1,12 @@
 import { ethers } from 'ethers';
 import { CONTRACT_ADDRESSES } from './contractConfig';
-import { env } from './env';
+import { getRunner, getRpcUrl, getChainId } from './network';
 
-// ABI definitions - these should be imported from JSON files generated during compilation
-// For now we'll define minimal ABIs needed for the deposit functionality
-// Core contract ABIs
-const CoreVaultABI = [
+// ABI definitions - prefer generated JSON where available, with fallback minimal ABI
+import CoreVaultGenerated from '@/lib/abis/CoreVault.json';
+
+// Core contract ABIs (fallback if generated not present)
+const CoreVaultFallbackABI = [
   // Events needed for listener management
   "event CollateralDeposited(address indexed user, uint256 amount)",
   "event CollateralWithdrawn(address indexed user, uint256 amount)",
@@ -35,9 +36,13 @@ const CoreVaultABI = [
   // Returns (liqPrice, hasPosition)
   "function getLiquidationPrice(address user, bytes32 marketId) external view returns (uint256, bool)",
   "function getEffectiveMaintenanceMarginBps(address user, bytes32 marketId) external view returns (uint256)",
+  // Liquidation status helpers
+  "function isUnderLiquidationPosition(address user, bytes32 marketId) external view returns (bool)",
   // Helper mapping in CoreVault to find OrderBook for market
   "function marketToOrderBook(bytes32) external view returns (address)"
 ];
+
+const CoreVaultABI = (CoreVaultGenerated as any)?.abi || (CoreVaultGenerated as any) || CoreVaultFallbackABI;
 
 const LiquidationManagerABI = [
   // Liquidation functions
@@ -74,28 +79,37 @@ const OBViewFacetABI = [
   "function getActiveOrders() external view returns (bytes32[])",
   "function getActiveOrdersCount() external view returns (uint256)",
   "function getOrdersForUser(address user) external view returns (bytes32[])",
-  "function getOrderStatusByID(bytes32 orderId) external view returns (bool active, uint256 filledAmount, uint256 price, uint256 remainingQuantity, address user)"
+  "function getOrderStatusByID(bytes32 orderId) external view returns (bool active, uint256 filledAmount, uint256 price, uint256 remainingQuantity, address user)",
+  // Compatibility getters present on some view facet builds
+  "function bestBid() external view returns (uint256)",
+  "function bestAsk() external view returns (uint256)"
 ];
 
-// OBPricingFacet - read-only functions for pricing
+// OBPricingFacet - read-only functions for pricing (aligned with deployed facet)
 const OBPricingFacetABI = [
-  "function getBestBid() external view returns (uint256)",
-  "function getBestAsk() external view returns (uint256)",
-  "function getMid() external view returns (uint256)",
-  "function getLastTradePrice() external view returns (uint256)",
-  "function getPriceInfo() external view returns (uint256 bestBid, uint256 bestAsk, uint256 mid, uint256 lastTrade)",
-  "function getMarketPriceData() external view returns (uint256 markPrice, uint256 indexPrice, int256 fundingRate)"
+  "function getBestPrices() external view returns (uint256 bidPrice, uint256 askPrice)",
+  "function getOrderBookDepth(uint256 levels) external view returns (uint256[] bidPrices, uint256[] bidAmounts, uint256[] askPrices, uint256[] askAmounts)",
+  "function getOrderBookDepthFromPointers(uint256 levels) external view returns (uint256[] bidPrices, uint256[] bidAmounts, uint256[] askPrices, uint256[] askAmounts)",
+  "function getSpread() external view returns (uint256)",
+  "function calculateMarkPrice() external view returns (uint256)",
+  "function getMarketPriceData() external view returns (uint256 midPrice, uint256 bestBidPrice, uint256 bestAskPrice, uint256 lastTradePriceReturn, uint256 markPrice, uint256 spread, uint256 spreadBps, bool isValid)",
+  // Some deployments expose these on pricing facet
+  "function bestBid() external view returns (uint256)",
+  "function bestAsk() external view returns (uint256)"
 ];
 
-// OBOrderPlacementFacet - order placement functions
+// OBOrderPlacementFacet - order placement functions (aligned with Solidity facet)
 const OBOrderPlacementFacetABI = [
-  "function placeMarketOrder(bool isBuy, uint256 quantity) external returns (bytes32)",
-  "function placeLimitOrder(bool isBuy, uint256 price, uint256 quantity) external returns (bytes32)",
-  "function batchCancelOrders(bytes32[] calldata orderIds) external",
-  "function cancelOrder(bytes32 orderId) external",
-  "function cancelAllOrders() external",
-  "event OrderPlaced(bytes32 indexed orderId, address indexed user, bool isBuy, uint256 price, uint256 quantity, uint256 timestamp)",
-  "event OrderCancelled(bytes32 indexed orderId, address indexed user, uint256 timestamp, uint256 quantity)"
+  "function placeLimitOrder(uint256 price, uint256 amount, bool isBuy) external returns (uint256)",
+  "function placeMarginLimitOrder(uint256 price, uint256 amount, bool isBuy) external returns (uint256)",
+  "function placeMarketOrder(uint256 amount, bool isBuy) external returns (uint256)",
+  "function placeMarginMarketOrder(uint256 amount, bool isBuy) external returns (uint256)",
+  "function placeMarketOrderWithSlippage(uint256 amount, bool isBuy, uint256 slippageBps) external returns (uint256)",
+  "function placeMarginMarketOrderWithSlippage(uint256 amount, bool isBuy, uint256 slippageBps) external returns (uint256)",
+  "function cancelOrder(uint256 orderId) external",
+  "event OrderPlaced(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder)",
+  "event OrderCancelled(uint256 indexed orderId, address indexed trader)",
+  "event OrderModified(uint256 indexed oldOrderId, uint256 indexed newOrderId, address indexed trader, uint256 newPrice, uint256 newAmount)"
 ];
 
 // OBSettlementFacet - settlement/expiry functions
@@ -137,6 +151,7 @@ export interface DexContracts {
   obLiquidityProvision: ethers.Contract;
   obSettlement: ethers.Contract;
   vault: ethers.Contract; // Alias for coreVault for compatibility
+  isPlaceholderMode?: boolean; // Indicates if using placeholder contracts for UI
 }
 
 // Options for contract initialization
@@ -144,6 +159,10 @@ export interface ContractInitOptions {
   chainId?: number;
   orderBookAddressOverride?: string;
   providerOrSigner?: ethers.Provider | ethers.Signer;
+  // New options for market-specific resolution
+  marketIdentifier?: string;
+  marketSymbol?: string;
+  network?: string;
 }
 
 // Format a token amount from BigInt to decimal string
@@ -177,12 +196,11 @@ export function initializeContracts(options?: ContractInitOptions): DexContracts
       CORE_VAULT: CONTRACT_ADDRESSES.CORE_VAULT,
       MOCK_USDC: CONTRACT_ADDRESSES.MOCK_USDC,
       LIQUIDATION_MANAGER: CONTRACT_ADDRESSES.LIQUIDATION_MANAGER,
-      orderBook: CONTRACT_ADDRESSES.orderBook
+      // No global orderBook - each market has its own OrderBook contract
     });
     
-    // Use provided signer/provider or fallback to read-only provider
-    const fallbackRpc = env.RPC_URL || 'https://testnet-rpc.hyperliquid.xyz/v1';
-    const runner = options?.providerOrSigner || new ethers.JsonRpcProvider(fallbackRpc);
+    // Use provided signer/provider or unified network runner
+    const runner = options?.providerOrSigner || (new ethers.JsonRpcProvider(getRpcUrl(), getChainId()) as ethers.Provider);
     console.log("Using provider:", runner.constructor.name);
     
     if (!CONTRACT_ADDRESSES.CORE_VAULT || !ethers.isAddress(CONTRACT_ADDRESSES.CORE_VAULT)) {
@@ -198,7 +216,7 @@ export function initializeContracts(options?: ContractInitOptions): DexContracts
     }
     
     // Initialize core contracts
-    console.log("Creating vault contract...");
+    console.log("Creating vault contract with address:", CONTRACT_ADDRESSES.CORE_VAULT, "(from .env.local)");
     const coreVault = new ethers.Contract(
       CONTRACT_ADDRESSES.CORE_VAULT,
       CoreVaultABI,
@@ -220,9 +238,61 @@ export function initializeContracts(options?: ContractInitOptions): DexContracts
     );
 
     // Initialize Diamond OrderBook facets
-    // Use fallback address if orderBookAddress is null or undefined
-    const DEFAULT_ORDER_BOOK_ADDRESS = "0xFC27fc4786BE01510c3564117becD13fdB077bb3";
-    const orderBookAddress = options?.orderBookAddressOverride || CONTRACT_ADDRESSES.orderBook || DEFAULT_ORDER_BOOK_ADDRESS;
+    // Strictly use the provided market-specific orderBook address
+    // No fallbacks to prevent cross-market contamination
+    let orderBookAddress = options?.orderBookAddressOverride;
+    
+    // If no override provided but market identifiers are available, try to find the specific market
+    if (!orderBookAddress && (options?.marketIdentifier || options?.marketSymbol)) {
+      try {
+        const entries = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
+        const currentChainId = getChainId();
+        
+        // Find market by identifier or symbol on current chain only
+        const marketMatch = entries.find((m: any) => {
+          // First check chain ID to prevent cross-chain contamination
+          if (m?.chainId !== currentChainId) return false;
+          
+          // Then check identifiers
+          const matchesIdentifier = options?.marketIdentifier && 
+            (m?.marketIdentifier?.toLowerCase() === options.marketIdentifier.toLowerCase());
+          const matchesSymbol = options?.marketSymbol && 
+            (m?.symbol?.toLowerCase() === options.marketSymbol.toLowerCase());
+            
+          return matchesIdentifier || matchesSymbol;
+        });
+        
+        if (marketMatch?.orderBook) {
+          orderBookAddress = marketMatch.orderBook;
+          console.log(`Using market-specific OrderBook for ${options?.marketIdentifier || options?.marketSymbol} on chain ${currentChainId}:`, orderBookAddress);
+        } else {
+          console.warn(`No market found for ${options?.marketIdentifier || options?.marketSymbol} on chain ${currentChainId}`);
+        }
+      } catch (e) {
+        console.error('Error finding market-specific OrderBook:', e);
+      }
+    }
+    
+    // For market-specific contexts, we require a specific OrderBook address
+    // For general contexts (like home page), we can use a dummy/placeholder contract
+    const isMarketSpecificContext = options?.marketIdentifier || options?.marketSymbol;
+    
+    if (!orderBookAddress) {
+      if (isMarketSpecificContext) {
+        // In market-specific context, fail if no address is found
+        throw new Error('No OrderBook address provided and no matching market found on current chain');
+      } else {
+        // For general contexts (like home page), use a placeholder address
+        // This allows the home page to initialize without errors
+        console.log('No specific market context - using placeholder contract for UI initialization only');
+        orderBookAddress = "0x0000000000000000000000000000000000000001";
+      }
+    }
+    
+    // Validate chain ID if specified in options to prevent cross-chain contamination
+    if (options?.chainId && options.chainId !== getChainId()) {
+      throw new Error(`Chain ID mismatch: market is on chain ${options.chainId}, but current network is ${getChainId()}`);
+    }
     
     // Log the address being used to help with debugging
     console.log('Using OrderBook address:', orderBookAddress);
@@ -232,6 +302,9 @@ export function initializeContracts(options?: ContractInitOptions): DexContracts
       console.error('Invalid OrderBook address:', orderBookAddress);
       throw new Error(`Invalid OrderBook address: ${orderBookAddress}`);
     }
+    
+    // Check if we're using the placeholder address for non-market-specific contexts
+    const isPlaceholderAddress = orderBookAddress === "0x0000000000000000000000000000000000000001";
     
     console.log("Creating OrderBook view facet...");
     const obView = new ethers.Contract(
@@ -276,6 +349,46 @@ export function initializeContracts(options?: ContractInitOptions): DexContracts
     );
 
     console.log("All contracts initialized successfully");
+    
+    // For placeholder addresses, wrap contract methods in try/catch to prevent errors
+    if (isPlaceholderAddress) {
+      console.log("Using placeholder contracts - all methods will be no-ops");
+      
+      // Create proxy wrappers that catch all errors for placeholder contracts
+      const createSafeProxy = (contract: any) => {
+        return new Proxy(contract, {
+          get(target, prop) {
+            const original = target[prop];
+            if (typeof original === 'function') {
+              return async (...args: any[]) => {
+                try {
+                  return await original.apply(target, args);
+                } catch (e) {
+                  console.log(`Placeholder contract method ${String(prop)} called - ignoring error`);
+                  return null;
+                }
+              };
+            }
+            return original;
+          }
+        });
+      };
+      
+      return {
+        coreVault,
+        liquidationManager,
+        mockUSDC,
+        obView: createSafeProxy(obView),
+        obPricing: createSafeProxy(obPricing),
+        obOrderPlacement: createSafeProxy(obOrderPlacement),
+        obTradeExecution: createSafeProxy(obTradeExecution),
+        obLiquidityProvision: createSafeProxy(obLiquidityProvision),
+        obSettlement: createSafeProxy(obSettlement),
+        vault: coreVault, // Alias for compatibility
+        isPlaceholderMode: true
+      };
+    }
+    
     return {
       coreVault,
       liquidationManager,
@@ -286,7 +399,8 @@ export function initializeContracts(options?: ContractInitOptions): DexContracts
       obTradeExecution,
       obLiquidityProvision,
       obSettlement,
-      vault: coreVault // Add vault alias for coreVault
+      vault: coreVault, // Alias for compatibility
+      isPlaceholderMode: false
     };
   } catch (error) {
     console.error("Error initializing contracts:", error);

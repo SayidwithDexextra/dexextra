@@ -9,6 +9,8 @@ import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
 import { initializeContracts } from '@/lib/contracts';
+import { isHyperLiquid, getEthersFallbackOverrides, getBufferedGasLimit } from '@/lib/gas';
+import { ensureHyperliquidWallet } from '@/lib/network';
 import { useMarket } from '@/hooks/useMarket';
 import type { Address } from 'viem';
 
@@ -47,6 +49,7 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
   const { market: marketRow } = useMarket(metricId);
   
   // Initialize OrderBook hook
+  console.log('metricId OrderBook hook', metricId);
   const [orderBookState, orderBookActions] = useOrderBook(metricId);
   
   // Order submission state
@@ -760,13 +763,33 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       if (typeof window === 'undefined' || !(window as any).ethereum) {
         throw new Error('No wallet provider available. Please install a wallet.');
       }
-      const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await browserProvider.getSigner();
-      const contracts = await initializeContracts({ providerOrSigner: signer });
+      const signer = await ensureHyperliquidWallet();
+      
+      // Ensure we have the market row data
+      if (!marketRow) {
+        throw new Error(`Market data not available for ${metricId}`);
+      }
+      
+      // Strictly use the market's own contract addresses
+      const contracts = await initializeContracts({ 
+        providerOrSigner: signer,
+        orderBookAddressOverride: marketRow.market_address || undefined,
+        marketIdentifier: marketRow.market_identifier || undefined,
+        marketSymbol: marketRow.symbol || undefined,
+        network: marketRow.network || undefined,
+        chainId: marketRow.chain_id
+      });
 
       // Fetch reference price from orderbook (bestAsk for buy, bestBid for sell)
+      console.log(`📡 [RPC] Fetching reference prices from OrderBook`);
+      let startTimePrices = Date.now();
       const bestBid: bigint = await contracts.obView.bestBid();
       const bestAsk: bigint = await contracts.obView.bestAsk();
+      const durationPrices = Date.now() - startTimePrices;
+      console.log(`✅ [RPC] Reference prices fetched in ${durationPrices}ms`, {
+        bestBid: bestBid.toString(),
+        bestAsk: bestAsk.toString()
+      });
       const isBuy = selectedOption === 'long';
       const referencePrice: bigint = isBuy ? bestAsk : bestBid;
 
@@ -804,23 +827,113 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
       // Preflight static call to surface revert reasons early
       try {
+        console.log(`📡 [RPC] Running preflight static call for market order`);
+        let startTimePreflight = Date.now();
         await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.staticCall(
           sizeWei,
           isBuy,
           slippageBps
         );
+        const durationPreflight = Date.now() - startTimePreflight;
+        console.log(`✅ [RPC] Preflight check passed in ${durationPreflight}ms`);
       } catch (preflightErr) {
+        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
         // Re-throw to let error mapper present a friendly message
         throw preflightErr;
       }
 
       // Execute market order with slippage protection
-      const tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
-        sizeWei,
-        isBuy,
-        slippageBps
-      );
-      await tx.wait();
+      let mktOverrides: any = {};
+      if (isHyperLiquid()) {
+        try {
+          console.log(`📡 [RPC] Estimating gas for market order`);
+          let startTimeGas = Date.now();
+          const est = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.estimateGas(
+            sizeWei,
+            isBuy,
+            slippageBps
+          );
+          const durationGas = Date.now() - startTimeGas;
+          mktOverrides = { gasLimit: getBufferedGasLimit(est) };
+          console.log(`✅ [RPC] Gas estimation completed in ${durationGas}ms`, { gasLimit: mktOverrides.gasLimit?.toString() });
+        } catch (error) {
+          console.warn(`⚠️ [RPC] Gas estimation failed:`, error);
+          // Avoid sending an oversized static gas; let the wallet/provider estimate
+          mktOverrides = {};
+        }
+      }
+      // Pre-send native balance check to avoid -32603 from insufficient gas funds
+      try {
+        const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
+        const fromAddr = await signer.getAddress();
+        const feeData = await provider.getFeeData();
+        const gasPrice: bigint = (feeData?.maxFeePerGas ?? feeData?.gasPrice ?? 0n) as bigint;
+        const estGas: bigint = (mktOverrides?.gasLimit as bigint) || 0n;
+        if (gasPrice > 0n && estGas > 0n) {
+          const needed = gasPrice * estGas;
+          const balance = await provider.getBalance(fromAddr);
+          if (balance < needed) {
+            throw new Error(`Insufficient native balance for gas. Needed ~${ethers.formatEther(needed)} ETH, have ${ethers.formatEther(balance)}.`);
+          }
+        }
+      } catch (balErr: any) {
+        console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
+      }
+
+      // Pre-trade validation: available collateral vs required (1:1 margin)
+      try {
+        const userAddr = address as string;
+        console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
+        let startTimeCollateral = Date.now();
+        const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
+        const durationCollateral = Date.now() - startTimeCollateral;
+        const required: bigint = (sizeWei * referencePrice) / 10n ** 18n;
+        console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
+          available: ethers.formatUnits(available, 6),
+          required: ethers.formatUnits(required, 6)
+        });
+
+        if (available < required) {
+          throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(required, 6)}, available $${ethers.formatUnits(available, 6)}.`);
+        }
+      } catch (e: any) {
+        // If unable to fetch, surface error to user as it likely blocks placement
+        if (!(e?.message || '').toLowerCase().includes('insufficient')) {
+          console.warn('⚠️ [RPC] Collateral check warning:', e?.message || e);
+        }
+        // Re-throw to be handled by error mapping below
+        throw e;
+      }
+
+      console.log(`📡 [RPC] Submitting market order transaction`);
+      let startTimeTx = Date.now();
+      let tx;
+      try {
+        tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
+          sizeWei,
+          isBuy,
+          slippageBps,
+          mktOverrides
+        );
+      } catch (sendErr: any) {
+        const msg = sendErr?.message || '';
+        const isInternal = msg.includes('-32603') || msg.includes('Internal JSON-RPC error') || (sendErr?.code === 'UNKNOWN_ERROR');
+        if (isInternal) {
+          console.warn('⚠️ [RPC] Send failed (-32603). Retrying with no gas override...');
+          tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
+            sizeWei,
+            isBuy,
+            slippageBps
+          );
+        } else {
+          throw sendErr;
+        }
+      }
+      const durationTx = Date.now() - startTimeTx;
+      console.log(`✅ [RPC] Market order transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
+      console.log('[Order TX][market] submitted:', tx.hash);
+      const receipt = await tx.wait();
+      console.log('[Order TX][market] confirmed:', tx.hash);
 
       showSuccess(
         `Market ${selectedOption} order placed successfully!`,
@@ -915,38 +1028,63 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
         throw new Error('No wallet provider available. Please install a wallet.');
       }
 
-      const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await browserProvider.getSigner();
-      const contracts = await initializeContracts({ providerOrSigner: signer });
+      const signer = await ensureHyperliquidWallet();
+      
+      // Ensure we have the market row data
+      if (!marketRow) {
+        throw new Error(`Market data not available for ${metricId}`);
+      }
+      
+      // Strictly use the market's own contract addresses
+      const contracts = await initializeContracts({ 
+        providerOrSigner: signer,
+        orderBookAddressOverride: marketRow.market_address || undefined,
+        marketIdentifier: marketRow.market_identifier || undefined,
+        marketSymbol: marketRow.symbol || undefined,
+        network: marketRow.network || undefined,
+        chainId: marketRow.chain_id
+      });
 
       // Parse amounts to on-chain units (price: 6 decimals USDC, size: 18 decimals)
       const priceWei = ethers.parseUnits(String(Number(triggerPrice).toFixed(6)), 6);
 
-      // Pre-trade validation: leverage/margin configuration
+      // Sanity check: ensure OB contract code exists on-chain for current network
       try {
-        const levInfo = await contracts.obView.getLeverageInfo();
-        const leverageEnabled = Boolean(levInfo?.[0]);
-        const marginBps = Number(levInfo?.[2] ?? 0);
-        if (!leverageEnabled && marginBps !== 10000) {
-          throw new Error(`Invalid margin configuration (marginRequirementBps=${marginBps}, leverageEnabled=${leverageEnabled}).`);
+        const obAddress = await (contracts.obOrderPlacement as any)?.getAddress?.();
+        const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
+        if (provider && obAddress) {
+          const code = await provider.getCode(obAddress);
+          if (!code || code === '0x') {
+            throw new Error('OrderBook not deployed on current network. Please switch networks.');
+          }
         }
-      } catch (e: any) {
-        // If the check fails due to RPC/view issues, show a warning and continue
-        console.warn('Pre-trade leverage check warning:', e?.message || e);
+      } catch (addrErr) {
+        console.warn('⚠️ [RPC] OrderBook code check warning:', (addrErr as any)?.message || addrErr);
       }
+
+      // Pre-trade validation: leverage/margin configuration
+      // Skip leverage check: not available on current facet build
 
       // Pre-trade validation: available collateral vs required (1:1 margin)
       try {
         const userAddr = address as string;
+        console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
+        let startTimeCollateral = Date.now();
         const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
+        const durationCollateral = Date.now() - startTimeCollateral;
         const required: bigint = (sizeWei * priceWei) / 10n ** 18n;
+        console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
+          available: ethers.formatUnits(available, 6),
+          required: ethers.formatUnits(required, 6)
+        });
+
         if (available < required) {
           throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(required, 6)}, available $${ethers.formatUnits(available, 6)}.`);
         }
       } catch (e: any) {
         // If unable to fetch, surface error to user as it likely blocks placement
         if (!(e?.message || '').toLowerCase().includes('insufficient')) {
-          console.warn('Collateral check warning:', e?.message || e);
+          console.warn('⚠️ [RPC] Collateral check warning:', e?.message || e);
         }
         // Re-throw to be handled by error mapping below
         throw e;
@@ -954,8 +1092,121 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
 
       // Place limit order via smart contract (margin path)
       const isBuy = selectedOption === 'long';
-      const tx = await contracts.obOrderPlacement.placeMarginLimitOrder(priceWei, sizeWei, isBuy);
-      await tx.wait();
+      // Determine available placement function via preflight
+      let placeFn: 'placeMarginLimitOrder' | 'placeLimitOrder' = 'placeMarginLimitOrder';
+      try {
+        console.log(`📡 [RPC] Running preflight static call for limit order (margin)`);
+        let startTimePreflight = Date.now();
+        await contracts.obOrderPlacement.placeMarginLimitOrder.staticCall(
+          priceWei,
+          sizeWei,
+          isBuy
+        );
+        const durationPreflight = Date.now() - startTimePreflight;
+        console.log(`✅ [RPC] Preflight (margin) passed in ${durationPreflight}ms`);
+      } catch (preflightErr: any) {
+        const msg = preflightErr?.message || preflightErr?.shortMessage || '';
+        if (/function does not exist/i.test(msg) || /Diamond: Function does not exist/i.test(msg)) {
+          console.warn('⚠️ [RPC] margin limit not found; falling back to placeLimitOrder');
+          // Try non-margin variant
+          await contracts.obOrderPlacement.placeLimitOrder.staticCall(
+            priceWei,
+            sizeWei,
+            isBuy
+          );
+          placeFn = 'placeLimitOrder';
+        } else {
+          console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+          throw preflightErr;
+        }
+      }
+      let limOverrides: any = {};
+      if (isHyperLiquid()) {
+        try {
+          console.log(`📡 [RPC] Estimating gas for limit order`);
+          let startTimeGas = Date.now();
+          const est = placeFn === 'placeMarginLimitOrder'
+            ? await contracts.obOrderPlacement.placeMarginLimitOrder.estimateGas(
+                priceWei,
+                sizeWei,
+                isBuy
+              )
+            : await contracts.obOrderPlacement.placeLimitOrder.estimateGas(
+                priceWei,
+                sizeWei,
+                isBuy
+              );
+          const durationGas = Date.now() - startTimeGas;
+          limOverrides = { gasLimit: getBufferedGasLimit(est) };
+          console.log(`✅ [RPC] Limit order gas estimation completed in ${durationGas}ms`, { gasLimit: limOverrides.gasLimit?.toString() });
+        } catch (error) {
+          console.warn(`⚠️ [RPC] Limit order gas estimation failed:`, error);
+          limOverrides = getEthersFallbackOverrides();
+        }
+      }
+      // Pre-send native balance check to avoid -32603 from insufficient gas funds
+      try {
+        const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
+        const fromAddr = await signer.getAddress();
+        const feeData = await provider.getFeeData();
+        const gasPrice: bigint = (feeData?.maxFeePerGas ?? feeData?.gasPrice ?? 0n) as bigint;
+        const estGas: bigint = (limOverrides?.gasLimit as bigint) || 0n;
+        if (gasPrice > 0n && estGas > 0n) {
+          const needed = gasPrice * estGas;
+          const balance = await provider.getBalance(fromAddr);
+          if (balance < needed) {
+            throw new Error(`Insufficient native balance for gas. Needed ~${ethers.formatEther(needed)} ETH, have ${ethers.formatEther(balance)}.`);
+          }
+        }
+      } catch (balErr: any) {
+        console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
+      }
+
+      console.log(`📡 [RPC] Submitting limit order transaction`);
+      let startTimeTx = Date.now();
+      let tx;
+      try {
+        tx = placeFn === 'placeMarginLimitOrder'
+          ? await contracts.obOrderPlacement.placeMarginLimitOrder(
+              priceWei,
+              sizeWei,
+              isBuy,
+              limOverrides
+            )
+          : await contracts.obOrderPlacement.placeLimitOrder(
+              priceWei,
+              sizeWei,
+              isBuy,
+              limOverrides
+            );
+      } catch (sendErr: any) {
+        const msg = sendErr?.message || '';
+        const isInternal = msg.includes('-32603') || msg.includes('Internal JSON-RPC error') || (sendErr?.code === 'UNKNOWN_ERROR');
+        if (isInternal) {
+          console.warn('⚠️ [RPC] Send failed (-32603). Retrying with fallback gas override...');
+          const fallback = getEthersFallbackOverrides();
+          tx = placeFn === 'placeMarginLimitOrder'
+            ? await contracts.obOrderPlacement.placeMarginLimitOrder(
+                priceWei,
+                sizeWei,
+                isBuy,
+                fallback
+              )
+            : await contracts.obOrderPlacement.placeLimitOrder(
+                priceWei,
+                sizeWei,
+                isBuy,
+                fallback
+              );
+        } else {
+          throw sendErr;
+        }
+      }
+      const durationTx = Date.now() - startTimeTx;
+      console.log('[Dispatch] ✅ [RPC] Limit order transaction submitted in', durationTx, 'ms', { txHash: tx.hash });
+      console.log('[Dispatch] [Order TX][limit] submitted:', tx.hash);
+      const receipt = await tx.wait();
+      console.log('[Dispatch] [Order TX][limit] confirmed:', tx.hash);
 
       showSuccess(
         `Limit ${selectedOption} order placed successfully!`,
@@ -963,7 +1214,9 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
       );
       
       // Refresh orders after successful placement
+      console.log('[Dispatch] 🔄 [UI][TradingPanel] Calling refreshOrders after limit order placement');
       await orderBookActions.refreshOrders();
+      console.log('[Dispatch] ✅ [UI][TradingPanel] refreshOrders complete');
       
       // Clear input fields after successful order
       setAmount(0);
