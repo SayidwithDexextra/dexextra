@@ -9,9 +9,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_URL: z.string().url().default('http://localhost:3000'),
 
-  // Supabase (Server-side)
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_ANON_KEY: z.string().min(1),
+  // Supabase (Server-side) - optional to allow NEXT_PUBLIC fallbacks on Vercel
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_ANON_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 
   // Supabase (Client-side - prefixed with NEXT_PUBLIC_)
@@ -142,8 +142,8 @@ const processEnv = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   APP_URL: process.env.APP_URL || 'http://localhost:3000',
   // On client side, fall back to NEXT_PUBLIC_ versions for server-only vars
-  SUPABASE_URL: isClientSide ? process.env.NEXT_PUBLIC_SUPABASE_URL : process.env.SUPABASE_URL,
-  SUPABASE_ANON_KEY: isClientSide ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY : process.env.SUPABASE_ANON_KEY,
+  SUPABASE_URL: isClientSide ? process.env.NEXT_PUBLIC_SUPABASE_URL : (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL),
+  SUPABASE_ANON_KEY: isClientSide ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY : (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -264,8 +264,7 @@ const requiredVars = {
     server: [
       'APP_URL',
       'AUTH_SECRET', 
-      'SUPABASE_URL',
-      'SUPABASE_ANON_KEY',
+      // Supabase server vars are optional when NEXT_PUBLIC_* are provided
       'API_KEY',
       'API_URL',
       'RPC_URL',
