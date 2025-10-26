@@ -8,7 +8,7 @@ const MarketTickerCardDemo: React.FC = () => {
   const sampleMarkets = useMockMarketTickerData();
 
   const handleLongPosition = (cardId: string) => {
-    console.log('Long position clicked for card:', cardId);
+    console.log('Long position clicked on card:', cardId);
     // Handle long position logic here
   };
 
