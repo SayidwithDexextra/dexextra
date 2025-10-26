@@ -192,3 +192,4 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_key
 - Screen reader friendly labels and descriptions
 - Focus management between steps
 - Error announcements 
+lka
