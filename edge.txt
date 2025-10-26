@@ -1,0 +1,206 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createWalletClient, http, encodeFunctionData } from "npm:viem";
+import { privateKeyToAccount } from "npm:viem/accounts";
+// Minimal ABI for pokeLiquidations
+const OB_ABI = [
+  {
+    inputs: [],
+    name: "pokeLiquidations",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function"
+  }
+];
+const HYPERLIQUID_CHAIN_ID = 999; // default to Hyperliquid mainnet
+const HYPERLIQUID_DEFAULT_RPC = "https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-";
+function getRpcUrl(chainId) {
+  const specific = Deno.env.get(`RPC_URL_${chainId}`);
+  if (specific) return specific;
+  if (chainId === HYPERLIQUID_CHAIN_ID) {
+    return Deno.env.get("HYPERLIQUID_RPC_URL") || HYPERLIQUID_DEFAULT_RPC;
+  }
+  return Deno.env.get("RPC_URL") || HYPERLIQUID_DEFAULT_RPC;
+}
+function getAccount() {
+  let pk = Deno.env.get("RELAYER_PRIVATE_KEY") || "";
+  pk = pk.trim();
+  // Strip accidental wrapping quotes
+  if ((pk.startsWith('"') && pk.endsWith('"')) || (pk.startsWith("'") && pk.endsWith("'"))) {
+    pk = pk.slice(1, -1);
+  }
+  // If raw 64-hex without 0x, prefix it
+  if (/^[0-9a-fA-F]{64}$/.test(pk)) {
+    pk = `0x${pk}`;
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
+    throw new Error("RELAYER_PRIVATE_KEY must be a 0x-prefixed 64-hex string");
+  }
+  return privateKeyToAccount(pk);
+}
+function buildChain(chainId, rpcUrl) {
+  return {
+    id: chainId,
+    name: chainId === HYPERLIQUID_CHAIN_ID ? "hyperliquid" : `chain-${chainId}`,
+    nativeCurrency: {
+      name: "HL",
+      symbol: "HL",
+      decimals: 18
+    },
+    rpcUrls: {
+      default: {
+        http: [
+          rpcUrl
+        ]
+      },
+      public: {
+        http: [
+          rpcUrl
+        ]
+      }
+    }
+  };
+}
+async function callPokeDirect(address, chainId) {
+  try {
+    const rpcUrl = getRpcUrl(chainId || HYPERLIQUID_CHAIN_ID);
+    const account = getAccount();
+    const chain = buildChain(chainId || HYPERLIQUID_CHAIN_ID, rpcUrl);
+    const wallet = createWalletClient({
+      account,
+      chain,
+      transport: http(rpcUrl)
+    });
+    const data = encodeFunctionData({
+      abi: OB_ABI,
+      functionName: "pokeLiquidations"
+    });
+    const hash = await wallet.sendTransaction({
+      to: address,
+      data
+    });
+    return {
+      ok: true,
+      tx: hash
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: String(e?.message || e)
+    };
+  }
+}
+function extractAddresses(body) {
+  // Priority 1: explicit addresses array
+  if (Array.isArray(body?.addresses) && body.addresses.length > 0) {
+    return Array.from(new Set(body.addresses.map((a)=>(a || '').toLowerCase()).filter(Boolean)));
+  }
+  // Priority 2: GraphQL webhook logs → account.address
+  const logs = [];
+  if (body?.event?.data?.block?.logs) logs.push(...body.event.data.block.logs);
+  if (body?.block?.logs) logs.push(...body.block.logs);
+  const addrs = new Set();
+  for (const l of logs){
+    const addr = (l?.account?.address || l?.address || '').toLowerCase();
+    if (addr) addrs.add(addr);
+  }
+  return Array.from(addrs.values());
+}
+async function processAddressesNow(addresses, chainId) {
+  const concurrency = 3; // modest to avoid long webhooks
+  let i = 0;
+  async function worker() {
+    while(i < addresses.length){
+      const idx = i++;
+      const addr = addresses[idx];
+      try {
+        await callPokeDirect(addr, chainId || HYPERLIQUID_CHAIN_ID);
+      } catch (_) {}
+    }
+  }
+  await Promise.all(Array.from({
+    length: Math.min(concurrency, addresses.length)
+  }).map(()=>worker()));
+}
+function json(headers) {
+  return {
+    headers: {
+      "content-type": "application/json",
+      ...headers || {}
+    }
+  };
+}
+async function verifyAlchemySignatureAsync(raw, headerSig) {
+  const key = Deno.env.get("ALCHEMY_WEBHOOK_SIGNING_KEY");
+  if (!key || !headerSig) return false;
+  const enc = new TextEncoder();
+  const algorithm = { name: "HMAC", hash: "SHA-256" };
+  try {
+    const cryptoKey = await crypto.subtle.importKey("raw", enc.encode(key), algorithm, false, ["sign"]);
+    // Normalize header signature: allow optional 'sha256=' prefix and whitespace
+    const normalized = headerSig.trim().toLowerCase().replace(/^sha256=/, "");
+    if (!/^([0-9a-f]{2})+$/i.test(normalized)) return false;
+    // Compute expected HMAC hex
+    const mac = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(raw));
+    const expectedHex = Array.from(new Uint8Array(mac)).map((b)=>b.toString(16).padStart(2, '0')).join('');
+    return expectedHex === normalized;
+  } catch (_) {
+    return false;
+  }
+}
+Deno.serve(async (req)=>{
+  console.log(req);
+  const method = req.method.toUpperCase();
+  if (method === "POST") {
+    // Read raw body for signature verification
+    const raw = await req.text();
+    // ACK-first: always 200 JSON
+    // Do verification and processing without blocking the response
+    setTimeout(async ()=>{
+      try {
+        // Alchemy signature verification (if configured)
+        const alcSig = req.headers.get("x-alchemy-signature");
+        const validAlchemy = await verifyAlchemySignatureAsync(raw, alcSig);
+        console.log("alcSig", validAlchemy, alcSig);
+        // Fallback shared-secret header (optional)
+        const liqKey = Deno.env.get("LIQ_WEBHOOK_KEY");
+        console.log("liqKey", liqKey);
+        const presented = req.headers.get("x-liq-webhook-key");
+        const validShared = liqKey ? presented === liqKey : true; // if not set, allow
+        if (!validAlchemy && liqKey && !validShared) {
+          // Invalid signature and shared-secret required → skip processing
+          return;
+        }
+        // Parse JSON safely
+        let body = {};
+        try {
+          body = JSON.parse(raw || '{}');
+        } catch  {
+          body = {};
+        }
+        const chainId = Number(body && (body.chainId ?? body.chain_id) || HYPERLIQUID_CHAIN_ID);
+        const addresses = extractAddresses(body);
+        console.log("addresses", addresses);
+        if (addresses.length > 0) {
+          await processAddressesNow(addresses, chainId);
+        }
+      } catch (_) {
+      // swallow all errors in background path
+      }
+    }, 0);
+    return new Response(JSON.stringify({
+      ok: true,
+      accepted: true
+    }), {
+      status: 200,
+      ...json()
+    });
+  }
+  // Health & method fallback
+  return new Response(JSON.stringify({
+    ok: true,
+    message: "liquidation-keeper (ACK-first, signature-aware)"
+  }), {
+    status: 200,
+    ...json()
+  });
+});

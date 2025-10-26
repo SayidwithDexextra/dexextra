@@ -134,6 +134,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const priceSectionRef = useRef<HTMLDivElement>(null);
   
+  // Helper to conditionally apply 2-decimal formatting in Market mode when header is expanded
+  const displayVaultValue = (value: string | number | undefined | null) => {
+    const num = Number(value ?? 0);
+    const isMarketMode = !isLimitTabActive;
+    return formatNumberWithCommas(isMarketMode ? Number(num.toFixed(2)) : num);
+  };
+  
   // Listen for changes in limit tab status from TradingPanel
   useEffect(() => {
     const handleLimitTabChange: EventListener = (event: Event) => {
@@ -515,8 +522,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                     <span className="text-white font-mono">
                       {activeTab === 0 && (vaultData?.marginUsed || '0')}
                       {activeTab === 1 && (vaultData?.marginReserved || '0')}
-                      {activeTab === 2 && (vaultData?.availableBalance || '0')}
-                      {activeTab === 3 && (vaultData?.socializedLoss || '0')}
+                      {activeTab === 2 && Number(vaultData?.availableBalance ?? 0).toFixed(2)}
+                      {activeTab === 3 && Number(vaultData?.socializedLoss ?? 0).toFixed(2)}
                     </span>
                   </div>
                 )}
@@ -601,13 +608,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
               </span>
               <div className="flex items-center gap-1">
                 <span className={`font-mono ${activeTab === 3 && parseFloat(vaultData?.socializedLoss||'0') > 0 ? 'text-red-400' : 'text-white'}`}>{
-                  activeTab === 0 && formatNumberWithCommas(parseFloat(vaultData?.marginUsed || '0'))
+                  activeTab === 0 && displayVaultValue(vaultData?.marginUsed)
                 }{
-                  activeTab === 1 && formatNumberWithCommas(parseFloat(vaultData?.marginReserved || '0'))
+                  activeTab === 1 && displayVaultValue(vaultData?.marginReserved)
                 }{
-                  activeTab === 2 && formatNumberWithCommas(parseFloat(vaultData?.availableBalance || '0'))
+                  activeTab === 2 && displayVaultValue(vaultData?.availableBalance)
                 }{
-                  activeTab === 3 && formatNumberWithCommas(parseFloat(vaultData?.socializedLoss || '0'))
+                  activeTab === 3 && displayVaultValue(vaultData?.socializedLoss)
                 }</span>
                 {vaultData?.isLoading && <span className="text-blue-400 animate-spin">⟳</span>}
                 {!vaultData?.isLoading && isConnected && (

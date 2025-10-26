@@ -22,6 +22,7 @@ import { useRouter } from 'next/navigation'
 import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import DepositModal from '../DepositModal/DepositModal'
+import WalletModal from '../WalletModal'
 import { useWallet } from '@/hooks/useWallet'
 // Removed direct contract reads; align with useCoreVault hook outputs
 import DecryptedText from './DecryptedText';
@@ -56,6 +57,7 @@ export default function Header() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
+  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false)
   const { walletData } = useWallet()
   const router = useRouter()
   const [hasMounted, setHasMounted] = useState(false)
@@ -436,7 +438,7 @@ export default function Header() {
             onMouseLeave={(e) => {
               (e.currentTarget as any).style.backgroundColor = 'transparent'
             }}
-            onClick={() => setIsProfileModalOpen(true)}
+            onClick={() => walletData.isConnected ? setIsProfileModalOpen(true) : setIsWalletModalOpen(true)}
           >
             {/* Avatar */}
             <div 
@@ -492,6 +494,12 @@ export default function Header() {
       {/* {walletData.address && (
         <NetworkStatus userAddress={walletData.address} showDetails={true} />
       )} */}
+
+      {/* Wallet Modal */}
+      <WalletModal
+        isOpen={isWalletModalOpen}
+        onClose={() => setIsWalletModalOpen(false)}
+      />
     </>
   )
 } 

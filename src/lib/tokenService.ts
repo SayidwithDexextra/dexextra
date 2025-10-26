@@ -497,41 +497,58 @@ export async function fetchWalletNFTs(_walletAddress: string): Promise<NFTItem[]
   return []
 }
 
-// Create an axios request with timeout
-async function axiosWithTimeout(url: string, options: AxiosRequestConfig = {}, timeoutMs: number = 10000) {
-   console.log("🔄 Making request to:", url)
-   console.log("📝 Request options:", JSON.stringify(options, null, 2))
-  
-  const config: AxiosRequestConfig = {
-    ...options,
-    url,
-    timeout: timeoutMs,
+// Create an axios request with timeout and retry logic
+async function axiosWithTimeout(url: string, options: AxiosRequestConfig = {}, timeoutMs: number = 30000) {
+  const maxRetries = 3;
+  let attempt = 0;
+
+  while (attempt < maxRetries) {
+    try {
+      console.log(`🔄 Making request to: ${url} (attempt ${attempt + 1}/${maxRetries})`)
+      console.log("📝 Request options:", JSON.stringify(options, null, 2))
+      
+      const config: AxiosRequestConfig = {
+        ...options,
+        url,
+        timeout: timeoutMs,
+      }
+
+      const response = await axios(config)
+      console.log("✅ Request successful:", response.status, response.statusText)
+      return response
+      
+    } catch (error) {
+      console.error(`❌ Request failed (attempt ${attempt + 1}/${maxRetries}):`, error)
+      
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          console.error("⏱️  Request timed out")
+        }
+        if (error.response) {
+          console.error("📋 Response data:", error.response.data)
+          console.error("📊 Response status:", error.response.status)
+          console.error("📋 Response headers:", error.response.headers)
+        } else if (error.request) {
+          console.error("📡 No response received:", error.request)
+        }
+      }
+
+      // If this was our last attempt, throw the error
+      if (attempt === maxRetries - 1) {
+        throw error
+      }
+
+      // Calculate delay for next retry using exponential backoff
+      const delay = Math.min(1000 * Math.pow(2, attempt), 10000)
+      console.log(`Retrying in ${delay}ms...`)
+      await new Promise(resolve => setTimeout(resolve, delay))
+      
+      attempt++
+    }
   }
 
-  try {
-     console.log("🔄 Making request to:", url)
-     console.log("📝 Request options:", JSON.stringify(config, null, 2))
-    const response = await axios(config)
-     console.log("✅ Request successful:", response.status, response.statusText)
-    return response
-  } catch (error) {
-    console.error("❌ Request failed:", error)
-    
-    if (axios.isAxiosError(error)) {
-      if (error.code === 'ECONNABORTED') {
-        console.error("⏱️  Request timed out")
-        throw new Error('Request timeout')
-      }
-      if (error.response) {
-        console.error("📋 Response data:", error.response.data)
-        console.error("📊 Response status:", error.response.status)
-        console.error("📋 Response headers:", error.response.headers)
-      } else if (error.request) {
-        console.error("📡 No response received:", error.request)
-      }
-    }
-    throw error
-  }
+  // This should never be reached due to the throw in the last attempt
+  throw new Error('Request failed after all retries')
 }
 
 // Refresh token prices periodically with enhanced error handling

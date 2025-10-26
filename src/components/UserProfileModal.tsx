@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Image from 'next/image'
+import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
 import { supabase } from '@/lib/supabase'
 
@@ -54,6 +55,7 @@ export default function UserProfileModal({
   isConnected = true,
   profilePhotoUrl
 }: UserProfileModalProps) {
+  const router = useRouter()
   const { disconnect } = useWallet() as { disconnect?: () => Promise<void> | void }
   const [isVisible, setIsVisible] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
@@ -244,7 +246,7 @@ export default function UserProfileModal({
               e.currentTarget.style.backgroundColor = 'transparent'
             }}
             onClick={() => {
-              // Handle profile navigation
+              router.push('/settings')
               onClose()
             }}
           >

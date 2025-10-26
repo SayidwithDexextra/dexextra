@@ -31,6 +31,21 @@ export default function DepositModal({
   const { walletAddress } = useWalletAddress()
   const coreVault = useCoreVault()
   
+  // Status indicator classes based on current state
+  const getStatusDotClass = (step: string) => {
+    switch (step) {
+      case 'processing':
+        return cssStyles.statusDotPending
+      case 'success':
+        return cssStyles.statusDotSuccess
+      case 'error':
+        return cssStyles.statusDotError
+      default:
+        return ''
+    }
+  }
+  const statusDotClass = getStatusDotClass(step)
+  
   const mockUSDC: Token = {
     symbol: 'USDC',
     icon: '💵',
@@ -107,6 +122,18 @@ export default function DepositModal({
     <div className={`${cssStyles.modalOverlay} ${isOpen ? cssStyles.visible : cssStyles.hidden}`}>
       <div className={cssStyles.modalContainer}>
         <div className={`${cssStyles.modal} ${isOpen ? cssStyles.visible : cssStyles.hidden}`}>
+          {/* Status Indicator */}
+          {step !== 'input' && (
+            <div className="flex items-center gap-2 absolute top-2 right-2">
+              <div className={statusDotClass} />
+              {step === 'processing' && (
+                <div className={cssStyles.statusProgress}>
+                  <div className={cssStyles.statusProgressBar} style={{ width: '60%' }} />
+                </div>
+              )}
+            </div>
+          )}
+          
           {/* Modal Content */}
           {step === 'input' && (
             <DepositModalInput

@@ -61,7 +61,7 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
         <div className={styles.header}>
           <h3 className={styles.title}>{title}</h3>
           <span className={styles.price}>
-            {currency}{price}
+            {currency}{price.toFixed(2)}
           </span>
         </div>
 

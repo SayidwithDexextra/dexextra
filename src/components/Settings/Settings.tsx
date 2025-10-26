@@ -52,9 +52,28 @@ export default function Settings({ className }: SettingsProps) {
     }
   }, [walletData.userProfile, walletData.isConnected, walletData.address, refreshProfile])
 
+  // Validate username as user types
+  const validateUsername = (username: string): string | null => {
+    if (!username) return null // Allow empty username
+    
+    const usernameRegex = /^[a-zA-Z0-9_-]{3,30}$/
+    if (!usernameRegex.test(username)) {
+      return 'Username must be 3-30 characters long and can only contain letters, numbers, underscores, and hyphens'
+    }
+    if (username.startsWith('0x')) {
+      return 'Username cannot start with 0x'
+    }
+    return null
+  }
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
+    
+    // Validate username on change
+    if (name === 'username') {
+      setUsernameError(validateUsername(value))
+    }
   }
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'profile' | 'banner' = 'profile') => {
@@ -151,14 +170,18 @@ export default function Settings({ className }: SettingsProps) {
     }
   }
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [usernameError, setUsernameError] = useState<string | null>(null)
+
   const handleSave = async () => {
     if (!walletData.isConnected || !walletData.address) {
-      alert('Please connect your wallet first')
+      setErrorMessage('Please connect your wallet first')
       return
     }
 
     setSaveStatus('saving')
     setIsLoading(true)
+    setErrorMessage(null)
 
     try {
       // Convert form data to update request format
@@ -176,17 +199,26 @@ export default function Settings({ className }: SettingsProps) {
       await refreshProfile()
       
       setSaveStatus('success')
-       console.log('Profile updated successfully!')
+      console.log('Profile updated successfully!')
       
       // Clear success status after 3 seconds
       setTimeout(() => setSaveStatus('idle'), 3000)
     } catch (error) {
       console.error('Error saving profile:', error)
       setSaveStatus('error')
-      alert('Failed to save profile. Please try again.')
+      
+      // Set specific error message
+      if (error instanceof Error) {
+        setErrorMessage(error.message)
+      } else {
+        setErrorMessage('Failed to save profile. Please try again.')
+      }
       
       // Clear error status after 5 seconds
-      setTimeout(() => setSaveStatus('idle'), 5000)
+      setTimeout(() => {
+        setSaveStatus('idle')
+        setErrorMessage(null)
+      }, 5000)
     } finally {
       setIsLoading(false)
     }
@@ -333,18 +365,58 @@ export default function Settings({ className }: SettingsProps) {
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="username" className="block text-[11px] font-medium text-[#808080] mb-2">
-                  Username *
-                </label>
-                <input
-                  type="text"
-                  id="username"
-                  name="username"
-                  value={formData.username}
-                  onChange={handleInputChange}
-                  placeholder="Enter username..."
-                  className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md px-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#00d4aa] focus:outline-none transition-colors duration-200"
-                />
+                <div className="flex items-center justify-between mb-2">
+                  <label htmlFor="username" className="block text-[11px] font-medium text-[#808080]">
+                    Username *
+                  </label>
+                  {formData.username && (
+                    <div className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      usernameError 
+                        ? 'bg-red-500/10 text-red-500' 
+                        : 'bg-green-500/10 text-green-500'
+                    }`}>
+                      {usernameError ? 'Invalid' : 'Valid'}
+                    </div>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    value={formData.username}
+                    onChange={handleInputChange}
+                    placeholder="Enter username..."
+                    className={`w-full bg-[#1A1A1A] border rounded-md px-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:outline-none transition-colors duration-200 ${
+                      usernameError
+                        ? 'border-red-500/50 focus:border-red-500'
+                        : formData.username
+                        ? 'border-green-500/50 focus:border-green-500'
+                        : 'border-[#333333] focus:border-[#00d4aa]'
+                    }`}
+                  />
+                  {formData.username && (
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                      {usernameError ? (
+                        <svg className="w-4 h-4 text-red-500" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M15 9l-6 6M9 9l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 text-green-500" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M8 12l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-2 flex items-start gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#606060] flex-shrink-0 mt-1" />
+                  <span className="text-[9px] text-[#606060]">
+                    Username must be 3-30 characters long and can only contain letters, numbers, underscores, and hyphens
+                  </span>
+                </div>
               </div>
 
               <div>
@@ -619,11 +691,21 @@ export default function Settings({ className }: SettingsProps) {
           </div>
         </div>
 
+        {/* Error Message */}
+        {errorMessage && (
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-md">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+              <span className="text-[11px] text-red-500">{errorMessage}</span>
+            </div>
+          </div>
+        )}
+
         {/* Save Actions */}
         <div className="flex justify-end">
           <button 
             onClick={handleSave} 
-            disabled={isLoading || !walletData.isConnected}
+            disabled={isLoading || !walletData.isConnected || !!usernameError}
             className={`px-6 py-3 rounded-md font-medium text-sm transition-all duration-200 flex items-center gap-2 ${
               saveStatus === 'saving' 
                 ? 'bg-yellow-500 text-black cursor-not-allowed' 

@@ -1,5 +1,6 @@
 import { MarketTickerCardData } from '@/components/MarketTickerCard/types';
 import { Market } from '@/hooks/useMarkets';
+import type { MarketOverviewRow } from '@/hooks/useMarketOverview';
 
 // Legacy type definition since useOrderbookMarkets has been removed
 interface OrderbookMarket {
@@ -64,6 +65,34 @@ export function transformMarketToCard(market: Market): MarketTickerCardData {
  */
 export function transformMarketsToCards(markets: Market[]): MarketTickerCardData[] {
   return markets.map(transformMarketToCard);
+}
+
+// Prefer mark_price from overview when available
+export function transformOverviewToCards(rows: MarketOverviewRow[]): MarketTickerCardData[] {
+  return rows.map((row) => {
+    const raw = (row.mark_price ?? 0) as number;
+    const scale = Math.pow(10, row.decimals || 6);
+    const price = raw > 0 ? raw / scale : (row.tick_size || 0);
+    const title = row.name || row.symbol || row.market_identifier || '';
+    const categories = [row.category];
+    const imageUrl = row.icon_image_url || row.banner_image_url || '/placeholder-market.svg';
+    const imageAlt = `${row.symbol || row.market_identifier} market icon`;
+    return {
+      id: row.market_id,
+      title,
+      categories,
+      price,
+      currency: '$',
+      imageUrl,
+      imageAlt,
+      marketStatus: row.market_status,
+      totalVolume: row.total_volume || 0,
+      totalTrades: row.total_trades || 0,
+      settlementDate: undefined,
+      metricId: row.market_identifier || row.symbol,
+      description: '',
+    };
+  });
 }
 
 /**

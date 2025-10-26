@@ -9,7 +9,7 @@ interface SearchModalProps {
 }
 
 // Import types for real data structures
-interface VAMMMarket {
+interface Market {
   id: string;
   symbol: string;
   description: string;
@@ -22,8 +22,6 @@ interface VAMMMarket {
   supporting_photo_urls?: string[];
   deployment_fee: number;
   is_active: boolean;
-  vamm_address?: string;
-  vault_address?: string;
   market_id?: string;
   deployment_status: string;
   created_at: string;
@@ -41,7 +39,7 @@ interface UserProfileSearchResult {
 }
 
 interface SearchResults {
-  markets: VAMMMarket[];
+  markets: Market[];
   users: UserProfileSearchResult[];
   isLoading: boolean;
   error: string | null;
@@ -121,20 +119,20 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       const marketsCategoryData = await marketsCategoryResponse.json()
       const usersData = await usersResponse.json()
 
-      let markets: VAMMMarket[] = []
+      let markets: Market[] = []
       let users: UserProfileSearchResult[] = []
 
       // Combine symbol and category search results, removing duplicates
-      const marketMap = new Map<string, VAMMMarket>()
+      const marketMap = new Map<string, Market>()
       
       if (marketsSymbolData.success && marketsSymbolData.markets) {
-        marketsSymbolData.markets.forEach((market: VAMMMarket) => {
+        marketsSymbolData.markets.forEach((market: Market) => {
           marketMap.set(market.id, market)
         })
       }
 
       if (marketsCategoryData.success && marketsCategoryData.markets) {
-        marketsCategoryData.markets.forEach((market: VAMMMarket) => {
+        marketsCategoryData.markets.forEach((market: Market) => {
           marketMap.set(market.id, market)
         })
       }
@@ -213,7 +211,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
   }, [isOpen, onClose])
 
   // Handle market selection
-  const handleMarketSelect = useCallback((market: VAMMMarket) => {
+  const handleMarketSelect = useCallback((market: Market) => {
     // Save the search term that led to this selection
     if (searchValue.trim()) {
       saveRecentSearch(searchValue)
@@ -403,11 +401,18 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                           market.deployment_status === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'
                         }`} />
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <div className={`flex items-center justify-center rounded text-[9px] font-medium w-6 h-6 ${
-                            market.deployment_status === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
-                          }`}>
-                            {market.symbol.charAt(0).toUpperCase()}
-                          </div>
+                          {market.icon_image_url ? (
+                            <div 
+                              className="w-6 h-6 rounded bg-cover bg-center bg-no-repeat"
+                              style={{ backgroundImage: `url(${market.icon_image_url})` }}
+                            />
+                          ) : (
+                            <div className={`flex items-center justify-center rounded text-[9px] font-medium w-6 h-6 ${
+                              market.deployment_status === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
+                            }`}>
+                              {market.symbol.charAt(0).toUpperCase()}
+                            </div>
+                          )}
                           <div className="min-w-0 flex-1">
                             <div className="text-[11px] font-medium text-white">
                               {market.symbol}
@@ -421,7 +426,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       <div className="flex items-center gap-2">
                         <div className="text-right">
                           <div className="text-[10px] text-white font-mono">
-                            ${market.initial_price.toFixed(4)}
+                            ${market.initial_price ? market.initial_price.toFixed(4) : '0.0000'}
                           </div>
                           <div className={`text-[9px] ${
                             market.deployment_status === 'deployed' ? 'text-green-400' : 'text-yellow-400'
@@ -437,19 +442,32 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
                         <div className="text-[9px] pt-1.5">
                           <div className="flex flex-wrap gap-1">
-                            {market.category.slice(0, 3).map((cat, index) => (
-                              <span
-                                key={index}
-                                className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20"
-                              >
-                                {cat}
-                              </span>
-                            ))}
-                            {market.category.length > 3 && (
-                              <span className="text-[9px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
-                                +{market.category.length - 3}
-                              </span>
-                            )}
+                            {(() => {
+                              // Convert category to array if it's a string
+                              const categories = Array.isArray(market.category) 
+                                ? market.category 
+                                : typeof market.category === 'string'
+                                  ? market.category.split(',').map(c => c.trim())
+                                  : [];
+                              
+                              return (
+                                <>
+                                  {categories.slice(0, 3).map((cat, index) => (
+                                    <span
+                                      key={index}
+                                      className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20"
+                                    >
+                                      {cat}
+                                    </span>
+                                  ))}
+                                  {categories.length > 3 && (
+                                    <span className="text-[9px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
+                                      +{categories.length - 3}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>

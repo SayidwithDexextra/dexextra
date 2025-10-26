@@ -102,9 +102,9 @@ class TradingViewDatafeed {
         supports_time: true,
         exchanges: [
           {
-            value: 'VAMM',
-            name: 'vAMM Markets',
-            desc: 'Virtual Automated Market Maker'
+            value: 'DEX',
+            name: 'DEX Markets',
+            desc: 'Decentralized Exchange'
           }
         ],
         symbols_types: [
@@ -129,9 +129,9 @@ class TradingViewDatafeed {
       .then((data: any) => {
         const symbols = (data.symbols || []).map((item: any) => ({
           symbol: item.symbol,
-          full_name: item.full_name || `VAMM:${item.symbol}`,
+          full_name: item.full_name || `DEX:${item.symbol}`,
           description: item.description || item.name || item.symbol,
-          exchange: item.exchange || 'VAMM',
+          exchange: item.exchange || 'DEX',
           ticker: item.ticker || item.symbol,
           type: item.type || 'crypto'
         }));
@@ -147,7 +147,7 @@ class TradingViewDatafeed {
   resolveSymbol(symbolName: string, onResolve: (symbolInfo: any) => void, onError: (error: string) => void) {
     // console.log('[Datafeed] resolveSymbol called', symbolName);
     
-    const [exchange, symbol] = symbolName.includes(':') ? symbolName.split(':') : ['VAMM', symbolName];
+    const [exchange, symbol] = symbolName.includes(':') ? symbolName.split(':') : ['DEX', symbolName];
     
     fetch(`${this.baseUrl}/symbols?symbol=${encodeURIComponent(symbol)}`)
       .then(response => response.json())

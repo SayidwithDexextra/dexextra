@@ -16,7 +16,6 @@ import type { Address } from 'viem';
 
 interface TradingPanelProps {
   tokenData: TokenData;
-  vammMarket?: any; // Legacy compatibility, keeping for now
   initialAction?: 'long' | 'short' | null;
   marketData?: {
     markPrice: number;
@@ -29,23 +28,14 @@ interface TradingPanelProps {
   };
 }
 
-export default function TradingPanel({ tokenData, vammMarket, initialAction, marketData }: TradingPanelProps) {
+export default function TradingPanel({ tokenData, initialAction, marketData }: TradingPanelProps) {
   const wallet = useWallet() as any;
   const isConnected = !!(wallet?.walletData?.isConnected ?? wallet?.isConnected);
   const address = (wallet?.walletData?.address ?? wallet?.address) as string | null;
   const connect = wallet?.connect as (() => Promise<void>);
-  
-  // Memoize vammMarket to prevent unnecessary re-renders
-  const memoizedVammMarket = useMemo(() => vammMarket, [
-    vammMarket?.vamm_address,
-    vammMarket?.vault_address,
-    vammMarket?.symbol,
-    vammMarket?.initial_price,
-    vammMarket?.deployment_status
-  ]);
 
   // Get the metric ID for orderbook queries
-  const metricId = memoizedVammMarket?.metric_id || tokenData.symbol;
+  const metricId = tokenData.symbol;
   const { market: marketRow } = useMarket(metricId);
   
   // Initialize OrderBook hook
@@ -264,21 +254,18 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
   };
 
   // Token data access with safety checks
-  const getSymbol = () => memoizedVammMarket?.symbol || tokenData?.symbol || 'Unknown';
+  const getSymbol = () => tokenData?.symbol || 'Unknown';
   
   // Helper to get tick_size from orderbook market data
   const getTickSize = () => {
-    // Get tick_size from the orderbook market data (this is the base price for new markets)
-    if (memoizedVammMarket?.tick_size) {
-      const tickSize = typeof memoizedVammMarket.tick_size === 'string' 
-        ? parseFloat(memoizedVammMarket.tick_size)
-        : memoizedVammMarket.tick_size;
-      return tickSize;
+    // Get tick_size from the orderbook market data
+    if (marketRow?.tick_size && marketRow.tick_size > 0) {
+      return marketRow.tick_size;
     }
     return 0.01; // Default tick size
   };
   const getStartPrice = () => {
-    // Legacy hooks removed, using simplified price logic
+    // Using simplified price logic
     let currentMarkPrice = 0;
     let priceSource = 'none';
     
@@ -290,14 +277,6 @@ export default function TradingPanel({ tokenData, vammMarket, initialAction, mar
     else if (marketData?.markPrice && marketData.markPrice > 0) {
       currentMarkPrice = marketData.markPrice;
       priceSource = 'marketData-mark';
-    }
-    // FALLBACK: Market tick_size (initial/base price for new markets)
-    else if (memoizedVammMarket?.tick_size && memoizedVammMarket.tick_size > 0) {
-      const tickSize = typeof memoizedVammMarket.tick_size === 'string' 
-        ? parseFloat(memoizedVammMarket.tick_size)
-        : memoizedVammMarket.tick_size;
-      currentMarkPrice = tickSize;
-      priceSource = 'market-tick-size';
     }
     // LAST RESORT: Legacy token data
     else if (tokenData?.price && tokenData.price > 0) {

@@ -82,6 +82,17 @@ export class ProfileApi {
     updates: Partial<UserProfile>
   ): Promise<UserProfile> {
     try {
+      // Client-side validation
+      if (updates.username) {
+        const usernameRegex = /^[a-zA-Z0-9_-]{3,30}$/;
+        if (!usernameRegex.test(updates.username)) {
+          throw new Error('Username must be 3-30 characters long and can only contain letters, numbers, underscores, and hyphens');
+        }
+        if (updates.username.startsWith('0x')) {
+          throw new Error('Username cannot start with 0x');
+        }
+      }
+
       const response = await fetch('/api/profile', {
         method: 'PUT',
         headers: {
@@ -93,36 +104,50 @@ export class ProfileApi {
         }),
       });
 
-      const result: ApiResponse<UserProfile> = await response.json();
+      let result: ApiResponse<UserProfile>;
+      try {
+        result = await response.json();
+      } catch (e) {
+        throw new Error(`Failed to parse server response: ${e.message}`);
+      }
 
       if (!response.ok || !result.success) {
-        // Enhanced error message with more context
-        let errorMessage = result.error || 'Failed to update profile';
+        let errorMessage = '';
         
-        // Add status code for debugging
-        if (response.status !== 200) {
-          errorMessage += ` (HTTP ${response.status})`;
-        }
-        
-        // Add validation details if available
-        if (result.details && Array.isArray(result.details)) {
-          const validationErrors = result.details.map((detail: any) => 
-            `${detail.path?.join('.') || 'field'}: ${detail.message}`
-          ).join(', ');
-          errorMessage += ` - Validation errors: ${validationErrors}`;
+        // Handle specific error cases
+        if (response.status === 401 || response.status === 403) {
+          errorMessage = 'You are not authorized to update this profile. Please reconnect your wallet.';
+        } else if (response.status === 409) {
+          errorMessage = 'Username is already taken. Please choose another one.';
+        } else if (response.status === 400) {
+          // Handle validation errors
+          if (result.details && Array.isArray(result.details)) {
+            const validationErrors = result.details
+              .map((detail: any) => `${detail.path?.join('.') || 'field'}: ${detail.message}`)
+              .join(', ');
+            errorMessage = `Invalid input - ${validationErrors}`;
+          } else {
+            errorMessage = result.error || 'Invalid input data';
+          }
+        } else {
+          errorMessage = result.error || `Failed to update profile (HTTP ${response.status})`;
         }
         
         throw new Error(errorMessage);
       }
 
       if (!result.data) {
-        throw new Error('No profile data returned');
+        throw new Error('No profile data returned from server');
       }
 
       return result.data;
     } catch (error) {
       console.error('Error updating profile:', error);
-      throw error;
+      // Ensure we always throw an Error object with a message
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('An unexpected error occurred while updating profile');
     }
   }
 

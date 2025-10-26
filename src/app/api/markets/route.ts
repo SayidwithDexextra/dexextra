@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category');
     const creator = searchParams.get('creator'); // wallet address
     const search = searchParams.get('search'); // text search
+    const symbol = searchParams.get('symbol'); // exact/partial symbol search
 
     console.log('🔍 Fetching markets:', { limit, offset, status, category, creator, search });
 
@@ -65,6 +66,11 @@ export async function GET(request: NextRequest) {
       query = query.eq('category', category);
     }
 
+    if (symbol) {
+      // Support partial symbol match
+      query = query.ilike('symbol', `%${symbol}%`);
+    }
+
     if (creator) {
       query = query.eq('creator_wallet_address', creator);
     }
@@ -89,11 +95,41 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Enrich with latest mark_price from market_tickers and compute initial_price
+    let enrichedMarkets = markets || [];
+    if (enrichedMarkets.length > 0) {
+      const ids = enrichedMarkets.map((m: any) => m.id);
+      const { data: tickers, error: tErr } = await supabase
+        .from('market_tickers')
+        .select('market_id, mark_price, last_update, is_stale')
+        .in('market_id', ids);
+      if (tErr) {
+        console.warn('⚠️ ticker enrichment failed:', tErr.message);
+      } else {
+        const idToTicker = new Map<string, any>();
+        (tickers || []).forEach((t: any) => idToTicker.set(t.market_id, t));
+        enrichedMarkets = enrichedMarkets.map((m: any) => {
+          const t = idToTicker.get(m.id);
+          const decimals = Number(m.decimals || 6);
+          const scale = Math.pow(10, decimals);
+          const mark = t?.mark_price != null ? Number(t.mark_price) : null;
+          const initial_price = mark != null ? (mark / scale) : m.tick_size || 0;
+          return {
+            ...m,
+            initial_price,
+            price_decimals: decimals,
+            _ticker_last_update: t?.last_update || null,
+            _ticker_is_stale: t?.is_stale ?? null,
+          };
+        });
+      }
+    }
+
     console.log(`✅ Retrieved ${markets?.length || 0} markets`);
 
     return NextResponse.json({
       success: true,
-      markets: markets || [],
+      markets: enrichedMarkets,
       pagination: {
         limit,
         offset,

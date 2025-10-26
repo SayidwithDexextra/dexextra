@@ -15,6 +15,7 @@ import LightweightChart from '@/components/TokenView/LightweightChart';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
 import { useMarket } from '@/hooks/useMarket';
+import { useMarketTicker } from '@/hooks/useMarketTicker';
 import { CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/lib/contractConfig';
 // Removed imports for deleted hooks
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
@@ -40,12 +41,12 @@ export default function TokenPage({ params }: TokenPageProps) {
     isLoading: isLoadingMarket,
     error: marketError
   } = useMarket(symbol);
+  const { data: dbTicker } = useMarketTicker({ identifier: symbol, refreshInterval: 5000 });
   // Normalize to original shape expected elsewhere in this file
   const marketData: any = market ? { market } : { market: null };
   
   // Using placeholder values instead of deleted hooks
   const baseTokenData = null; // Removed useTokenFromMarket hook
-  const vammMarket = null; // Removed useVAMMFromMarket hook
   
   // Ensure MARKET_INFO has this market before proceeding to avoid placeholder mode
   const [isMarketInfoReady, setIsMarketInfoReady] = useState(false);
@@ -90,7 +91,6 @@ export default function TokenPage({ params }: TokenPageProps) {
     // - Updating UI to show settlement results
     // - Sending analytics events
     
-    // VAMM flow removed in OrderBook-only mode
   };
 
   // Debug market data before calling stats hook
@@ -141,6 +141,11 @@ export default function TokenPage({ params }: TokenPageProps) {
       return obLive.lastTradePrice;
     }
     
+    // THIRD: Use database mark_price from ticker if available and not stale
+    if (dbTicker?.mark_price && dbTicker.mark_price > 0 && !dbTicker.is_stale) {
+      return dbTicker.mark_price;
+    }
+
     // THIRD: Use market tick_size as the base price for new markets
     if (marketData?.market?.tick_size && marketData.market.tick_size > 0) {
       return marketData.market.tick_size;
@@ -164,12 +169,14 @@ export default function TokenPage({ params }: TokenPageProps) {
       contractBestBid: obLive?.bestBid,
       contractBestAsk: obLive?.bestAsk,
       contractLastPrice: obLive?.lastTradePrice,
+      dbMarkPrice: dbTicker?.mark_price,
       marketTickSize: marketData?.market?.tick_size,
     },
     priceSource: {
       usingBidAsk: !!(obLive?.bestBid && obLive?.bestAsk && obLive.bestBid > 0 && obLive.bestAsk > 0),
       usingLastPrice: !!(obLive?.lastTradePrice && obLive.lastTradePrice > 0 && !(obLive?.bestBid && obLive?.bestAsk)),
-      usingTickSize: !!(marketData?.market?.tick_size && !(obLive?.lastTradePrice)),
+      usingDbTicker: !!(dbTicker?.mark_price && !dbTicker?.is_stale && !(obLive?.lastTradePrice)),
+      usingTickSize: !!(marketData?.market?.tick_size && !(obLive?.lastTradePrice) && !(dbTicker?.mark_price)),
       usingFallback: currentPrice === 1.0
     },
     marketStatus: marketData?.market?.market_status
@@ -275,7 +282,6 @@ export default function TokenPage({ params }: TokenPageProps) {
             <>
               <div className="text-yellow-500 text-xl font-semibold">⚠️ Wrong Network</div>
               <div className="text-gray-300 text-sm mb-4">
-                The VAMM contracts are deployed on <span className="text-purple-400 font-medium">Polygon Mainnet</span>. 
                 Please switch your wallet to Polygon to access this market.
               </div>
               
@@ -348,7 +354,6 @@ export default function TokenPage({ params }: TokenPageProps) {
         <div className="w-full">
           <TradingPanel 
             tokenData={tokenData} 
-            vammMarket={vammMarket} 
             initialAction={tradingAction}
             marketData={{
               markPrice: Number(markPrice || 0), // Use resolved smart contract price
@@ -400,7 +405,6 @@ export default function TokenPage({ params }: TokenPageProps) {
             <div className="flex-1 min-h-0 overflow-hidden">
               <TradingPanel 
                 tokenData={tokenData} 
-                vammMarket={vammMarket} 
                 initialAction={tradingAction}
                 marketData={{
                   markPrice: Number(markPrice || 0), // Use resolved smart contract price

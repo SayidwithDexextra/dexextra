@@ -76,6 +76,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [orderBookState, orderBookActions] = useOrderBook(metricId);
   const positionsState = usePositions(metricId);
   
+  // Ensure event listener always calls the latest refreshOrders (avoid stale closure)
+  const refreshOrdersRef = useRef(orderBookActions.refreshOrders);
+  useEffect(() => {
+    refreshOrdersRef.current = orderBookActions.refreshOrders;
+  }, [orderBookActions.refreshOrders]);
+  
   // Throttle and in-flight guards for order history
   const isFetchingHistoryRef = useRef(false);
   const lastHistoryFetchTsRef = useRef(0);
@@ -251,7 +257,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         console.log('[Dispatch] 🎧 [EVT][MarketActivityTabs] Received ordersUpdated', e?.detail);
         // Ensure this local hook instance fetches latest orders
         // Optional match on marketId; if provided and doesn't match, still refresh to be safe
-        orderBookActions.refreshOrders?.();
+        refreshOrdersRef.current?.();
+        console.log('[Dispatch] 🔁 [UI][MarketActivityTabs] ordersUpdated refreshed');
       } catch {}
     };
     if (typeof window !== 'undefined') {

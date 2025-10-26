@@ -103,6 +103,17 @@ export class UserProfileService {
     updates: UpdateUserProfileRequest
   ): Promise<UserProfile> {
     try {
+      // First validate the username format if it's being updated
+      if (updates.username) {
+        const usernameRegex = /^[a-zA-Z0-9_-]{3,30}$/;
+        if (!usernameRegex.test(updates.username)) {
+          throw new Error('Username must be 3-30 characters long and can only contain letters, numbers, underscores, and hyphens');
+        }
+        if (updates.username.startsWith('0x')) {
+          throw new Error('Username cannot start with 0x');
+        }
+      }
+
       const { data, error } = await this.db
         .from('user_profiles')
         .update(updates)
@@ -110,12 +121,28 @@ export class UserProfileService {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        // Handle specific database errors
+        if (error.code === '23505') { // Unique violation
+          throw new Error('Username is already taken');
+        }
+        if (error.code === '42501') { // RLS violation
+          throw new Error('You can only update your own profile');
+        }
+        throw new Error(`Database error: ${error.message}`);
+      }
+
+      if (!data) {
+        throw new Error('Profile not found');
+      }
 
       return data;
     } catch (error) {
       console.error('Error updating user profile:', error);
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error('Failed to update profile');
     }
   }
 
