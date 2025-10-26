@@ -426,20 +426,16 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         {view === 'orderbook' ? (
           /* Traditional OrderBook Display */
           <div className="flex-1 flex flex-col">
-            {/* Ask Orders (Sell Orders) - Top half */}
-            <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="text-[9px] text-gray-500 mb-1 px-1 flex items-center justify-between">
-                <span>ASKS (SELL)</span>
-                <span className="text-[#FF4747]">{asks.length} orders</span>
-              </div>
-              <div className="flex-1 overflow-y-auto orders-table-scroll">
+            {/* Ask Orders (Sell Orders) - Just above spread */}
+            <div className="overflow-hidden flex flex-col justify-end" style={{ minHeight: '200px' }}>
+              <div className="overflow-y-auto orders-table-scroll flex-grow-0" style={{ maxHeight: '200px' }}>
                 {asks.length === 0 ? (
                   <div className="text-[10px] text-gray-500 text-center py-2">
                     No sell orders
                   </div>
                 ) : (
-                  <div className="space-y-0">
-                    {(() => { let cumulativeAskUsd = 0; return asks.slice(0, 10).map((order, index) => {
+                  <div className="space-y-0 flex flex-col justify-end">
+                    {(() => { let cumulativeAskUsd = 0; return [...asks].slice(0, 10).map((order, index) => {
                       const remainingQuantity = order.quantity - order.filled_quantity;
                       const maxQuantity = Math.max(...asks.map(o => o.quantity - o.filled_quantity));
                       const fillPercentage = maxQuantity > 0 ? (remainingQuantity / maxQuantity) * 100 : 0;
@@ -481,8 +477,14 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
               </div>
             </div>
 
+            {/* Ask Orders Label */}
+            <div className="text-[9px] text-gray-500 px-1 py-0.5 flex items-center justify-between">
+              <span>ASKS (SELL)</span>
+              <span className="text-[#FF4747]">{asks.length} orders</span>
+            </div>
+
             {/* Spread Display */}
-            <div className="py-1 px-1 bg-[#1A1A1A] border-y border-gray-700">
+            <div className="pt-0 pb-1 px-1 bg-[#1A1A1A] border-y border-gray-700">
               <div className="text-[10px] text-gray-400 text-center font-mono tabular-nums">
                 {bestAskPrice > 0 && bestBidPrice > 0 ? (
                   <>
