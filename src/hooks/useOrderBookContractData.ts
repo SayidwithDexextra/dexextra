@@ -450,6 +450,17 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
       }
       fetchInProgressRef.current = true;
       try {
+        // If no symbol and no valid explicit address is provided, do nothing until inputs are ready
+        const normalizedSymbol = (symbol || '').trim();
+        const explicitAddr = (_options?.orderBookAddress as string | undefined) || undefined;
+        const hasValidExplicitAddr = !!(explicitAddr && explicitAddr.startsWith('0x') && explicitAddr.length === 42);
+        if (!normalizedSymbol && !hasValidExplicitAddr) {
+          setIsLoading(false);
+          // Allow subsequent attempts once inputs change
+          fetchInProgressRef.current = false;
+          return;
+        }
+
         setIsLoading(true);
         setError(null);
 

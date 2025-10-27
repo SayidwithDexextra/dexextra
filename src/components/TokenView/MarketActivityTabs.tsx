@@ -320,7 +320,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     } catch (error) {
       console.error('Error syncing order data:', error);
     }
-  }, [walletAddress, metricId, orderBookState]);
+  }, [walletAddress, metricId, orderBookState, positionsState.positions]);
 
   // Fetch order history ONLY when History tab is active, throttle and skip when hidden
   useEffect(() => {
