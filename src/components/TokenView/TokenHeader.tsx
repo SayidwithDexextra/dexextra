@@ -177,6 +177,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     error: marketError
   } = useMarket(symbol);
   
+  // Keep legacy hook for contract mark price
+  const {
+    priceData: legacyOrderBookPrice
+  } = useOrderBookPrice(marketData?.market_identifier);
+  
   // console.log('🏪 OrderBook Market Data Status:', {
   //   symbol,
   //   hasMarketData: !!marketData,
@@ -198,10 +203,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const directPriceError = null;
   const refreshDirectPrice = null;
 
-  // Keep legacy hook for backward compatibility
-  const {
-    priceData: legacyOrderBookPrice
-  } = useOrderBookPrice(marketData?.market_identifier);
+  // Position/contract stats legacy hooks remain removed elsewhere
   
   // Position data (placeholder as legacy hooks were removed)
   const vaultPositions: any[] = [];
@@ -216,28 +218,27 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     // Refresh functionality removed as we removed the legacy hooks
   };
 
-  // Calculate enhanced token data from HyperLiquid orderbook market
+  // Calculate enhanced token data from unified markets table and contract mark price
   const enhancedTokenData = useMemo((): EnhancedTokenData | null => {
     if (!marketData) return null;
 
     const market = marketData;
     
-    // Since we removed the legacy hooks, we'll use simplified price handling
-    const legacyPrice = legacyOrderBookPrice?.price ? Number(legacyOrderBookPrice.price) : 0;
-    const currentMarkPrice = legacyPrice || 0; // Remove default fallback price, let animation handle it
+    // Use smart contract mark price via legacy orderbook hook
+    const currentMarkPrice = Number(legacyOrderBookPrice?.price ?? 0);
     
-    // HyperLiquid OrderBook contracts don't have funding rates or historical price changes
+    // Funding and historical change not tracked in DB yet
     const currentFundingRate = 0;
     const priceChangeValue = 0; 
     const priceChangePercentValue = 0;
     
-    // Check if HyperLiquid contracts are deployed and available
-    const hasContracts = market.market_status === 'ACTIVE';
+    // Deployment status based on DB
+    const isDeployed = (market as any).deployment_status === 'DEPLOYED' || !!market.market_address || market.market_status === 'ACTIVE';
     
-    // Calculate market metrics based on orderbook data
-    const estimatedSupply = 1000000; // Could be derived from open interest
+    // Basic metrics from DB (total_volume is lifetime; placeholder for 24h)
+    const estimatedSupply = 1000000; // Placeholder until supply metric exists
     const marketCap = currentMarkPrice * estimatedSupply;
-    const volume24h = 0; // No volume data available
+    const volume24h = Number((market as any).total_volume ?? 0);
     
     // Derive time-based changes from funding rate and price movement
     const timeBasedChanges = deriveTimeBasedChanges(
@@ -246,12 +247,12 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     );
     
     return {
-      symbol: market.market_identifier,
-      name: market.name || market.market_identifier.replace(/_/g, ' '), // Use name or convert market_identifier to readable name
+      symbol: market.symbol || market.market_identifier,
+      name: market.name || market.market_identifier.replace(/_/g, ' '),
       description: market.description || '',
-      category: 'General', // Default category
-      chain: 'Unknown', // Default chain
-      logo: '', // No logo available
+      category: market.category || 'General',
+      chain: market.network || 'Unknown',
+      logo: (market as any).icon_image_url || undefined,
       price: Number(currentMarkPrice),
       markPrice: Number(currentMarkPrice),
       fundingRate: currentFundingRate,
@@ -265,17 +266,17 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       positionSize: '0',
       unrealizedPnL: '0',
       // Deployment and market status
-      isDeployed: hasContracts,
+      isDeployed,
       created_at: market.created_at,
       marketStatus: market.market_status,
-      settlementDate: '',
-      totalTrades: 0,
-      openInterestLong: 0,
-      openInterestShort: 0
+      settlementDate: (market as any).settlement_date || '',
+      totalTrades: (market as any).total_trades ?? 0,
+      openInterestLong: (market as any).open_interest_long ?? 0,
+      openInterestShort: (market as any).open_interest_short ?? 0
     };
   }, [
-    marketData, 
-    legacyOrderBookPrice, // Legacy price data
+    marketData,
+    legacyOrderBookPrice,
     symbol
   ]);
 
@@ -436,7 +437,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             
             <div className="flex items-center gap-2">
               <Image 
-                src={enhancedTokenData.logo || 'https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExazZ5azl4dnJvdXIxb2tzdzRjdm1udHVtN25rcHFpcmxpdzdmNHBzeCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/c3OZsDoaz7kD6/giphy.gif'} 
+                src={enhancedTokenData.logo || 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExaW4xdGtpeWFtaHpqdXpwN25udnNpNmRpaHp4ZjQ3Z2h1YzdmdnQzbSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/l41YbRMqR9jrrCodq/giphy.gif'} 
                 alt={enhancedTokenData.name || 'Market Icon'}
                 width={34}
                 height={34}

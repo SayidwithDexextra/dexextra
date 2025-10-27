@@ -5,6 +5,7 @@ import { formatUnits } from 'viem';
 import { ethers } from 'ethers';
 import { ensureHyperliquidWallet, getReadProvider } from '@/lib/network';
 import type { Address } from 'viem';
+import { useMarket } from './useMarket';
 
 interface Position {
   id: string;
@@ -64,6 +65,8 @@ export function usePositions(marketSymbol?: string): PositionState {
     isLoading: true,
     error: null
   });
+  // Resolve the current market to get its bytes32 marketId for filtering
+  const { market, isLoading: isMarketLoading, error: marketError } = useMarket(marketSymbol);
 
   // Initialize contracts when wallet is connected
   useEffect(() => {
@@ -100,8 +103,15 @@ export function usePositions(marketSymbol?: string): PositionState {
 
   // Fetch positions data
   useEffect(() => {
-    if (!contracts || !walletAddress) {
+    // If a specific market is requested, wait until it resolves before fetching
+    if (!contracts || !walletAddress || (marketSymbol && isMarketLoading)) {
       setState(prev => ({ ...prev, isLoading: false }));
+      return;
+    }
+
+    // If a specific market was requested but not found, show empty positions
+    if (marketSymbol && !isMarketLoading && !market) {
+      setState({ positions: [], isLoading: false, error: 'Market not found' });
       return;
     }
 
@@ -118,8 +128,16 @@ export function usePositions(marketSymbol?: string): PositionState {
             if (!pos) continue;
 
             const marketId = pos.marketId;
-            const symbol = marketSymbol ? marketSymbol.toUpperCase() : 'UNKNOWN';
+            console.log('marketId usePositions', marketId);
+            // If a specific market is requested, filter positions to that marketId
+            const filterMarketIdHex = (market?.market_id_bytes32 || '').toLowerCase();
+            const posMarketIdHex = String(marketId || '').toLowerCase();
+            if (marketSymbol && filterMarketIdHex && posMarketIdHex !== filterMarketIdHex) {
+              continue;
+            }
 
+            const symbol = (market?.symbol ? market.symbol : (marketSymbol || 'UNKNOWN')).toUpperCase();
+            console.log('symbol usePositions', symbol);
             // Signed size in 18 decimals
             const positionSizeBig = (() => {
               try { return ethers.toBigInt(pos.size ?? 0); } catch { return 0n; }
@@ -239,7 +257,7 @@ export function usePositions(marketSymbol?: string): PositionState {
     return () => {
       clearInterval(interval);
     };
-  }, [contracts, walletAddress, marketSymbol]);
+  }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32]);
 
   return state;
 }

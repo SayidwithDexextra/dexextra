@@ -71,11 +71,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const wallet = useWallet() as any;
   const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
   // Ensure we consistently use metricId (aligned with TradingPanel)
+  console.log('symbol MarketActivityTabs', symbol);
   const metricId = symbol;
   console.log('metricId MarketActivityTabs', metricId);
   const [orderBookState, orderBookActions] = useOrderBook(metricId);
   const positionsState = usePositions(metricId);
-  
+  console.log('positionsState MarketActivityTabs', positionsState);
   // Ensure event listener always calls the latest refreshOrders (avoid stale closure)
   const refreshOrdersRef = useRef(orderBookActions.refreshOrders);
   useEffect(() => {

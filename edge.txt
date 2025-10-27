@@ -25,7 +25,7 @@ function getAccount() {
   let pk = Deno.env.get("RELAYER_PRIVATE_KEY") || "";
   pk = pk.trim();
   // Strip accidental wrapping quotes
-  if ((pk.startsWith('"') && pk.endsWith('"')) || (pk.startsWith("'") && pk.endsWith("'"))) {
+  if (pk.startsWith('"') && pk.endsWith('"') || pk.startsWith("'") && pk.endsWith("'")) {
     pk = pk.slice(1, -1);
   }
   // If raw 64-hex without 0x, prefix it
@@ -113,7 +113,8 @@ async function processAddressesNow(addresses, chainId) {
       const idx = i++;
       const addr = addresses[idx];
       try {
-        await callPokeDirect(addr, chainId || HYPERLIQUID_CHAIN_ID);
+        let res = await callPokeDirect(addr, chainId || HYPERLIQUID_CHAIN_ID);
+        console.log(res);
       } catch (_) {}
     }
   }
@@ -133,9 +134,14 @@ async function verifyAlchemySignatureAsync(raw, headerSig) {
   const key = Deno.env.get("ALCHEMY_WEBHOOK_SIGNING_KEY");
   if (!key || !headerSig) return false;
   const enc = new TextEncoder();
-  const algorithm = { name: "HMAC", hash: "SHA-256" };
+  const algorithm = {
+    name: "HMAC",
+    hash: "SHA-256"
+  };
   try {
-    const cryptoKey = await crypto.subtle.importKey("raw", enc.encode(key), algorithm, false, ["sign"]);
+    const cryptoKey = await crypto.subtle.importKey("raw", enc.encode(key), algorithm, false, [
+      "sign"
+    ]);
     // Normalize header signature: allow optional 'sha256=' prefix and whitespace
     const normalized = headerSig.trim().toLowerCase().replace(/^sha256=/, "");
     if (!/^([0-9a-f]{2})+$/i.test(normalized)) return false;
