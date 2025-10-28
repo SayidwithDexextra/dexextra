@@ -9,7 +9,7 @@ import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
 import { initializeContracts } from '@/lib/contracts';
-import { isHyperLiquid, getEthersFallbackOverrides, getBufferedGasLimit } from '@/lib/gas';
+// Removed gas override utilities to rely on provider estimation
 import { ensureHyperliquidWallet } from '@/lib/network';
 import { useMarket } from '@/hooks/useMarket';
 import type { Address } from 'viem';
@@ -821,26 +821,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         throw preflightErr;
       }
 
-      // Execute market order with slippage protection
-      let mktOverrides: any = {};
-      if (isHyperLiquid()) {
-        try {
-          console.log(`📡 [RPC] Estimating gas for market order`);
-          let startTimeGas = Date.now();
-          const est = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.estimateGas(
-            sizeWei,
-            isBuy,
-            slippageBps
-          );
-          const durationGas = Date.now() - startTimeGas;
-          mktOverrides = { gasLimit: getBufferedGasLimit(est) };
-          console.log(`✅ [RPC] Gas estimation completed in ${durationGas}ms`, { gasLimit: mktOverrides.gasLimit?.toString() });
-        } catch (error) {
-          console.warn(`⚠️ [RPC] Gas estimation failed:`, error);
-          // Avoid sending an oversized static gas; let the wallet/provider estimate
-          mktOverrides = {};
-        }
-      }
+      // Execute market order with slippage protection using default provider estimation
+      const mktOverrides: any = {};
       // Pre-send native balance check to avoid -32603 from insufficient gas funds
       try {
         const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
@@ -865,6 +847,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
         let startTimeCollateral = Date.now();
         const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
+        console.log('Available collateral:', available.toString());
         const durationCollateral = Date.now() - startTimeCollateral;
         const required: bigint = (sizeWei * referencePrice) / 10n ** 18n;
         console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
@@ -887,27 +870,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       console.log(`📡 [RPC] Submitting market order transaction`);
       let startTimeTx = Date.now();
       let tx;
-      try {
-        tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
-          sizeWei,
-          isBuy,
-          slippageBps,
-          mktOverrides
-        );
-      } catch (sendErr: any) {
-        const msg = sendErr?.message || '';
-        const isInternal = msg.includes('-32603') || msg.includes('Internal JSON-RPC error') || (sendErr?.code === 'UNKNOWN_ERROR');
-        if (isInternal) {
-          console.warn('⚠️ [RPC] Send failed (-32603). Retrying with no gas override...');
-          tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
-            sizeWei,
-            isBuy,
-            slippageBps
-          );
-        } else {
-          throw sendErr;
-        }
-      }
+      tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
+        sizeWei,
+        isBuy,
+        slippageBps,
+        mktOverrides
+      );
       const durationTx = Date.now() - startTimeTx;
       console.log(`✅ [RPC] Market order transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
       console.log('[Order TX][market] submitted:', tx.hash);
@@ -1099,30 +1067,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           throw preflightErr;
         }
       }
-      let limOverrides: any = {};
-      if (isHyperLiquid()) {
-        try {
-          console.log(`📡 [RPC] Estimating gas for limit order`);
-          let startTimeGas = Date.now();
-          const est = placeFn === 'placeMarginLimitOrder'
-            ? await contracts.obOrderPlacement.placeMarginLimitOrder.estimateGas(
-                priceWei,
-                sizeWei,
-                isBuy
-              )
-            : await contracts.obOrderPlacement.placeLimitOrder.estimateGas(
-                priceWei,
-                sizeWei,
-                isBuy
-              );
-          const durationGas = Date.now() - startTimeGas;
-          limOverrides = { gasLimit: getBufferedGasLimit(est) };
-          console.log(`✅ [RPC] Limit order gas estimation completed in ${durationGas}ms`, { gasLimit: limOverrides.gasLimit?.toString() });
-        } catch (error) {
-          console.warn(`⚠️ [RPC] Limit order gas estimation failed:`, error);
-          limOverrides = getEthersFallbackOverrides();
-        }
-      }
+      // Use default provider estimation for limit order
+      const limOverrides: any = {};
       // Pre-send native balance check to avoid -32603 from insufficient gas funds
       try {
         const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
@@ -1144,43 +1090,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       console.log(`📡 [RPC] Submitting limit order transaction`);
       let startTimeTx = Date.now();
       let tx;
-      try {
-        tx = placeFn === 'placeMarginLimitOrder'
-          ? await contracts.obOrderPlacement.placeMarginLimitOrder(
-              priceWei,
-              sizeWei,
-              isBuy,
-              limOverrides
-            )
-          : await contracts.obOrderPlacement.placeLimitOrder(
-              priceWei,
-              sizeWei,
-              isBuy,
-              limOverrides
-            );
-      } catch (sendErr: any) {
-        const msg = sendErr?.message || '';
-        const isInternal = msg.includes('-32603') || msg.includes('Internal JSON-RPC error') || (sendErr?.code === 'UNKNOWN_ERROR');
-        if (isInternal) {
-          console.warn('⚠️ [RPC] Send failed (-32603). Retrying with fallback gas override...');
-          const fallback = getEthersFallbackOverrides();
-          tx = placeFn === 'placeMarginLimitOrder'
-            ? await contracts.obOrderPlacement.placeMarginLimitOrder(
-                priceWei,
-                sizeWei,
-                isBuy,
-                fallback
-              )
-            : await contracts.obOrderPlacement.placeLimitOrder(
-                priceWei,
-                sizeWei,
-                isBuy,
-                fallback
-              );
-        } else {
-          throw sendErr;
-        }
-      }
+      tx = placeFn === 'placeMarginLimitOrder'
+        ? await contracts.obOrderPlacement.placeMarginLimitOrder(
+            priceWei,
+            sizeWei,
+            isBuy,
+            limOverrides
+          )
+        : await contracts.obOrderPlacement.placeLimitOrder(
+            priceWei,
+            sizeWei,
+            isBuy,
+            limOverrides
+          );
       const durationTx = Date.now() - startTimeTx;
       console.log('[Dispatch] ✅ [RPC] Limit order transaction submitted in', durationTx, 'ms', { txHash: tx.hash });
       console.log('[Dispatch] [Order TX][limit] submitted:', tx.hash);

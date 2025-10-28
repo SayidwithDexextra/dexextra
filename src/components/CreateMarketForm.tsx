@@ -1,499 +1,285 @@
-'use client'
+import { useState } from 'react';
+import { ethers } from 'ethers';
 
-import { useState, useRef } from 'react'
-import Image from 'next/image'
-import { Button } from '@/components/ui/Button'
-
-interface FormData {
-  marketName: string
-  symbol: string
-  description: string
-  underlyingAsset: string
-  contractSize: string
-  expirationDate: string
-  settlementType: string
-  minimumPriceIncrement: string
-  initialMarginRate: string
-  maintenanceMarginRate: string
-  positionLimit: string
-  dailyPriceLimit: string
-  tradingHours: string
-  category: string
+interface CreateMarketFormProps {
+  onSubmit: (marketData: MarketFormData) => Promise<void>;
+  isLoading?: boolean;
 }
 
-interface UploadedFile {
-  file: File
-  preview: string
-  name: string
-  size: string
+interface MarketFormData {
+  symbol: string;
+  metricUrl: string;
+  startPrice: string;
+  dataSource: string;
+  tags: string[];
+  marginBps: number;
+  feeBps: number;
+  treasury: string;
+  disableLeverage: boolean;
 }
 
-export default function CreateMarketForm() {
-  const [formData, setFormData] = useState<FormData>({
-    marketName: '',
+const DEFAULT_MARGIN_BPS = 10000; // 100%
+const DEFAULT_FEE_BPS = 0;
+
+export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps) => {
+  const [formData, setFormData] = useState<MarketFormData>({
     symbol: '',
-    description: '',
-    underlyingAsset: '',
-    contractSize: '',
-    expirationDate: '',
-    settlementType: 'cash',
-    minimumPriceIncrement: '',
-    initialMarginRate: '',
-    maintenanceMarginRate: '',
-    positionLimit: '',
-    dailyPriceLimit: '',
-    tradingHours: '24/7',
-    category: 'cryptocurrency'
-  })
+    metricUrl: '',
+    startPrice: '1',
+    dataSource: '',
+    tags: [],
+    marginBps: DEFAULT_MARGIN_BPS,
+    feeBps: DEFAULT_FEE_BPS,
+    treasury: '',
+    disableLeverage: true,
+  });
 
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
-  const [isDragOver, setIsDragOver] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [tagInput, setTagInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target
-    setFormData(prev => ({ ...prev, [name]: value }))
-  }
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
 
-  const handleFileSelect = () => {
-    fileInputRef.current?.click()
-  }
+  const handleTagAdd = () => {
+    if (tagInput && !formData.tags.includes(tagInput.toUpperCase())) {
+      setFormData(prev => ({
+        ...prev,
+        tags: [...prev.tags, tagInput.toUpperCase()]
+      }));
+      setTagInput('');
+    }
+  };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    processFiles(files)
-  }
+  const handleTagRemove = (tag: string) => {
+    setFormData(prev => ({
+      ...prev,
+      tags: prev.tags.filter(t => t !== tag)
+    }));
+  };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(true)
-  }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-  }
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-    const files = Array.from(e.dataTransfer.files)
-    processFiles(files)
-  }
-
-  const processFiles = (files: File[]) => {
-    const imageFiles = files.filter(file => file.type.startsWith('image/'))
-    
-    imageFiles.forEach(file => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const newFile: UploadedFile = {
-          file,
-          preview: reader.result as string,
-          name: file.name,
-          size: `${(file.size / 1024 / 1024).toFixed(1)}MB`
-        }
-        setUploadedFiles(prev => [...prev, newFile])
+    try {
+      // Basic validation
+      if (!formData.symbol) throw new Error('Symbol is required');
+      if (!formData.metricUrl) throw new Error('Metric URL is required');
+      if (!formData.startPrice || isNaN(Number(formData.startPrice))) {
+        throw new Error('Valid start price is required');
       }
-      reader.readAsDataURL(file)
-    })
-  }
+      if (!formData.dataSource) throw new Error('Data source is required');
+      if (!ethers.isAddress(formData.treasury)) {
+        throw new Error('Valid treasury address is required');
+      }
 
-  const removeFile = (index: number) => {
-    setUploadedFiles(prev => prev.filter((_, i) => i !== index))
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-     console.log('Form Data:', formData)
-     console.log('Uploaded Files:', uploadedFiles)
-    // Handle form submission here
-  }
+      await onSubmit(formData);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    }
+  };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-      {/* Form Section */}
-      <div className="lg:col-span-2">
-        <form onSubmit={handleSubmit} className="space-y-8">
-          {/* Basic Market Information */}
-          <div className="bg-[#2a2a2a] rounded-xl p-8 border border-[#404040]">
-            <h2 className="text-lg font-medium text-white mb-6">Basic Market Information</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Market Name
-                </label>
-                <input
-                  type="text"
-                  name="marketName"
-                  value={formData.marketName}
-                  onChange={handleInputChange}
-                  placeholder="Bitcoin Futures Dec 2024"
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                />
-              </div>
+    <div className="w-full max-w-2xl mx-auto">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+            Create New Market
+          </h4>
+          <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+            {formData.tags.length} Tags
+          </div>
+        </div>
 
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Symbol
+        {/* Main Form Container */}
+        <div className="bg-[#0F0F0F] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+          <div className="p-4 space-y-4">
+            {/* Symbol & Start Price Row */}
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <label className="block text-[11px] font-medium text-[#808080] mb-1">
+                  Market Symbol
                 </label>
                 <input
                   type="text"
                   name="symbol"
                   value={formData.symbol}
                   onChange={handleInputChange}
-                  placeholder="BTCUSD1224"
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
+                  placeholder="e.g. ALU-USD"
+                  className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="block text-[11px] font-medium text-[#808080] mb-1">
+                  Start Price (USD)
+                </label>
+                <input
+                  type="text"
+                  name="startPrice"
+                  value={formData.startPrice}
+                  onChange={handleInputChange}
+                  placeholder="1.00"
+                  className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
                 />
               </div>
             </div>
 
-            <div className="mt-6">
-              <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                Description
+            {/* Metric URL */}
+            <div>
+              <label className="block text-[11px] font-medium text-[#808080] mb-1">
+                Metric URL
               </label>
-              <textarea
-                name="description"
-                value={formData.description}
+              <input
+                type="url"
+                name="metricUrl"
+                value={formData.metricUrl}
                 onChange={handleInputChange}
-                placeholder="Detailed description of the futures market..."
-                rows={4}
-                className="w-full px-4 py-3 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors resize-none"
+                placeholder="https://example.com/metric"
+                className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Underlying Asset
-                </label>
-                <select
-                  name="underlyingAsset"
-                  value={formData.underlyingAsset}
-                  onChange={handleInputChange}
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                >
-                  <option value="">Select underlying asset</option>
-                  <option value="BTC">Bitcoin (BTC)</option>
-                  <option value="ETH">Ethereum (ETH)</option>
-                  <option value="SOL">Solana (SOL)</option>
-                  <option value="ADA">Cardano (ADA)</option>
-                  <option value="MATIC">Polygon (MATIC)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Category
-                </label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleInputChange}
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                >
-                  <option value="cryptocurrency">Cryptocurrency</option>
-                  <option value="defi">DeFi</option>
-                  <option value="nft">NFT</option>
-                  <option value="gaming">Gaming</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Contract Specifications */}
-          <div className="bg-[#2a2a2a] rounded-xl p-8 border border-[#404040]">
-            <h2 className="text-lg font-medium text-white mb-6">Contract Specifications</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Contract Size
-                </label>
-                <input
-                  type="text"
-                  name="contractSize"
-                  value={formData.contractSize}
-                  onChange={handleInputChange}
-                  placeholder="1.0"
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Expiration Date
-                </label>
-                <input
-                  type="date"
-                  name="expirationDate"
-                  value={formData.expirationDate}
-                  onChange={handleInputChange}
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Settlement Type
-                </label>
-                <select
-                  name="settlementType"
-                  value={formData.settlementType}
-                  onChange={handleInputChange}
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                >
-                  <option value="cash">Cash Settlement</option>
-                  <option value="physical">Physical Delivery</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Trading Hours
-                </label>
-                <select
-                  name="tradingHours"
-                  value={formData.tradingHours}
-                  onChange={handleInputChange}
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                >
-                  <option value="24/7">24/7</option>
-                  <option value="market-hours">Market Hours Only</option>
-                  <option value="custom">Custom Hours</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Trading Parameters */}
-          <div className="bg-[#2a2a2a] rounded-xl p-8 border border-[#404040]">
-            <h2 className="text-lg font-medium text-white mb-6">Trading Parameters</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Minimum Price Increment
-                </label>
-                <input
-                  type="text"
-                  name="minimumPriceIncrement"
-                  value={formData.minimumPriceIncrement}
-                  onChange={handleInputChange}
-                  placeholder="0.01"
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Daily Price Limit (%)
-                </label>
-                <input
-                  type="text"
-                  name="dailyPriceLimit"
-                  value={formData.dailyPriceLimit}
-                  onChange={handleInputChange}
-                  placeholder="10"
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Initial Margin Rate (%)
-                </label>
-                <input
-                  type="text"
-                  name="initialMarginRate"
-                  value={formData.initialMarginRate}
-                  onChange={handleInputChange}
-                  placeholder="5"
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                  Maintenance Margin Rate (%)
-                </label>
-                <input
-                  type="text"
-                  name="maintenanceMarginRate"
-                  value={formData.maintenanceMarginRate}
-                  onChange={handleInputChange}
-                  placeholder="3"
-                  className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
-                />
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <label className="block text-sm font-medium text-[#a1a1a1] mb-2">
-                Position Limit
+            {/* Data Source */}
+            <div>
+              <label className="block text-[11px] font-medium text-[#808080] mb-1">
+                Data Source
               </label>
               <input
                 type="text"
-                name="positionLimit"
-                value={formData.positionLimit}
+                name="dataSource"
+                value={formData.dataSource}
                 onChange={handleInputChange}
-                placeholder="1000"
-                className="w-full h-12 px-4 bg-[#353535] border border-[#404040] rounded-lg text-white placeholder-[#666666] focus:border-[#3b82f6] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/20 transition-colors"
+                placeholder="e.g. CoinGecko API"
+                className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
               />
             </div>
-          </div>
 
-          {/* File Upload Section with Click-Spark */}
-          <div className="bg-[#2a2a2a] rounded-xl p-8 border border-[#404040]">
-            <h2 className="text-lg font-medium text-white mb-6">Market Images</h2>
-            
-            <div
-              className="border-2 border-dashed border-[#404040] rounded-lg p-8 text-center cursor-pointer transition-all duration-200 hover:border-[#3b82f6] hover:bg-[#353535]"
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={handleFileSelect}
-              style={{
-                borderColor: isDragOver ? '#3b82f6' : '#404040',
-                backgroundColor: isDragOver ? '#353535' : 'transparent'
-              }}
-            >
-              <div className="text-4xl mb-4">📁</div>
-              <p className="text-[#a1a1a1] mb-2">
-                Drag and drop your market images here, or click to browse
-              </p>
-              <p className="text-sm text-[#666666]">
-                Supports: JPG, PNG, GIF (Max 5MB each)
-              </p>
-            </div>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-
-            {/* File Preview with Remove Button Click-Spark */}
-            {uploadedFiles.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
-                {uploadedFiles.map((file, index) => (
-                  <div key={index} className="relative group">
-                    <Image
-                      src={file.preview}
-                      alt={file.name}
-                      width={96}
-                      height={96}
-                      className="w-full h-24 object-cover rounded-lg border border-[#404040]"
-                    />
+            {/* Tags Section */}
+            <div>
+              <label className="block text-[11px] font-medium text-[#808080] mb-1">
+                Market Tags
+              </label>
+              <div className="flex gap-2 flex-wrap mb-2">
+                {formData.tags.map(tag => (
+                  <div
+                    key={tag}
+                    className="bg-[#1A1A1A] text-[10px] text-white px-2 py-1 rounded-full flex items-center gap-1"
+                  >
+                    <span>{tag}</span>
                     <button
                       type="button"
-                      onClick={() => removeFile(index)}
-                      className="absolute -top-2 -right-2 w-6 h-6 bg-[#ef4444] text-white rounded-full flex items-center justify-center text-xs transition-all duration-200 hover:scale-110"
+                      onClick={() => handleTagRemove(tag)}
+                      className="text-[#606060] hover:text-red-400 transition-colors"
                     >
                       ×
                     </button>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-
-          {/* Submit Section */}
-          <div className="flex gap-4 justify-end">
-            <Button variant="secondary" type="button">
-              Save as Draft
-            </Button>
-            <Button variant="primary" type="submit">
-              Create Market
-            </Button>
-          </div>
-        </form>
-      </div>
-
-      {/* Image Upload Section */}
-      <div className="lg:col-span-1">
-        <div className="bg-[#2a2a2a] rounded-xl p-8 border border-[#404040] sticky top-8">
-          <h2 className="text-lg font-medium text-white mb-6">Market Images</h2>
-          
-          {/* File Upload Area */}
-          <div
-            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer ${
-              isDragOver 
-                ? 'border-[#3b82f6] bg-[#1e3a8a]/10' 
-                : 'border-[#404040] hover:border-[#525252]'
-            }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={handleFileSelect}
-          >
-            <div className="space-y-3">
-              <div className="w-12 h-12 mx-auto bg-[#353535] rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-[#a1a1a1]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-white font-medium">Upload market images</p>
-                <p className="text-[#a1a1a1] text-sm">Drag and drop or click to select</p>
-                <p className="text-[#666666] text-xs mt-1">PNG, JPG up to 10MB</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  placeholder="Add tag (press Enter)"
+                  onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleTagAdd())}
+                  className="flex-1 bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={handleTagAdd}
+                  className="px-3 py-2 bg-[#1A1A1A] border border-[#222222] rounded text-[11px] text-[#808080] hover:border-[#333333] transition-colors"
+                >
+                  Add
+                </button>
               </div>
             </div>
-          </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/*"
-            onChange={handleFileChange}
-            className="hidden"
-          />
+            {/* Treasury Address */}
+            <div>
+              <label className="block text-[11px] font-medium text-[#808080] mb-1">
+                Treasury Address
+              </label>
+              <input
+                type="text"
+                name="treasury"
+                value={formData.treasury}
+                onChange={handleInputChange}
+                placeholder="0x..."
+                className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors font-mono"
+              />
+            </div>
 
-          {/* Uploaded Files */}
-          {uploadedFiles.length > 0 && (
-            <div className="mt-6 space-y-3">
-              <h3 className="text-sm font-medium text-[#a1a1a1]">Uploaded Images ({uploadedFiles.length})</h3>
-              
-              {uploadedFiles.map((file, index) => (
-                <div key={index} className="bg-[#353535] rounded-lg p-4 border border-[#404040]">
-                  <div className="flex items-start space-x-3">
-                    <Image
-                      src={file.preview}
-                      alt={file.name}
-                      width={64}
-                      height={64}
-                      className="w-16 h-16 object-cover rounded-lg border border-[#404040]"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{file.name}</p>
-                      <p className="text-[#a1a1a1] text-xs">{file.size}</p>
-                      <div className="mt-2 bg-[#2a2a2a] rounded-full h-1">
-                        <div className="bg-[#3b82f6] h-1 rounded-full w-full"></div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        removeFile(index)
-                      }}
-                      className="text-[#a1a1a1] hover:text-white transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
+            {/* Advanced Settings */}
+            <div className="pt-4 border-t border-[#1A1A1A]">
+              <h5 className="text-[11px] font-medium text-[#808080] mb-3">
+                Advanced Settings
+              </h5>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] text-[#808080]">
+                    Margin (basis points)
+                  </label>
+                  <input
+                    type="number"
+                    name="marginBps"
+                    value={formData.marginBps}
+                    onChange={handleInputChange}
+                    className="w-24 bg-[#1A1A1A] border border-[#222222] rounded px-2 py-1 text-[11px] text-white text-right"
+                  />
                 </div>
-              ))}
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] text-[#808080]">
+                    Fee (basis points)
+                  </label>
+                  <input
+                    type="number"
+                    name="feeBps"
+                    value={formData.feeBps}
+                    onChange={handleInputChange}
+                    className="w-24 bg-[#1A1A1A] border border-[#222222] rounded px-2 py-1 text-[11px] text-white text-right"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] text-[#808080]">
+                    Disable Leverage
+                  </label>
+                  <input
+                    type="checkbox"
+                    name="disableLeverage"
+                    checked={formData.disableLeverage}
+                    onChange={(e) => setFormData(prev => ({ ...prev, disableLeverage: e.target.checked }))}
+                    className="w-4 h-4 bg-[#1A1A1A] border border-[#222222] rounded text-blue-400 focus:ring-0 focus:ring-offset-0"
+                  />
+                </div>
+              </div>
             </div>
-          )}
+          </div>
         </div>
-      </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="text-[11px] text-red-400 mt-2">
+            {error}
+          </div>
+        )}
+
+        {/* Submit Button */}
+        <button
+          type="submit"
+          disabled={isLoading}
+          className={`w-full py-2 px-4 rounded-md text-[11px] font-medium transition-all duration-200 ${
+            isLoading
+              ? 'bg-[#1A1A1A] text-[#606060] cursor-not-allowed'
+              : 'bg-blue-500 hover:bg-blue-600 text-white'
+          }`}
+        >
+          {isLoading ? 'Creating Market...' : 'Create Market'}
+        </button>
+      </form>
     </div>
-  )
-} 
+  );
+};

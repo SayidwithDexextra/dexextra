@@ -118,8 +118,26 @@ export function usePositions(marketSymbol?: string): PositionState {
     const fetchPositions = async () => {
       try {
         setState(prev => ({ ...prev, isLoading: true }));
-        const positionsData = await contracts.vault.getUserPositions(walletAddress);
+        // Use a minimal ABI reader to avoid ABI shape issues when decoding tuples
+        let positionsData: any[] = [];
+        try {
+          const vaultAddress = (contracts?.vault as any)?.target || (contracts?.vault as any)?.address;
+          const runner = (contracts?.vault as any)?.runner || (contracts?.obPricing as any)?.runner;
+          const fallbackVaultAbi = [
+            "function getUserPositions(address) view returns (tuple(bytes32 marketId, int256 size, uint256 entryPrice, uint256 marginLocked, uint256 socializedLossAccrued6, uint256 haircutUnits18, uint256 liquidationPrice)[])"
+          ];
+          if (vaultAddress && runner) {
+            const vaultReader = new ethers.Contract(vaultAddress, fallbackVaultAbi, runner);
+            positionsData = await vaultReader.getUserPositions(walletAddress);
+          } else {
+            positionsData = await contracts.vault.getUserPositions(walletAddress);
+          }
+        } catch (e) {
+          // Fallback to the original method if minimal ABI approach fails
+          positionsData = await contracts.vault.getUserPositions(walletAddress);
+        }
         try { console.log('[usePositions] raw positions count:', Array.isArray(positionsData) ? positionsData.length : positionsData); } catch {}
+        console.log('positionsData usePositions', positionsData);
         const processedPositions: Position[] = [];
 
         for (const raw of positionsData) {
@@ -168,11 +186,43 @@ export function usePositions(marketSymbol?: string): PositionState {
             try {
               let markPriceBigInt: bigint = 0n;
               try {
-                if (contracts?.obPricing?.calculateMarkPrice) {
-                  markPriceBigInt = await contracts.obPricing.calculateMarkPrice();
-                } else if (contracts?.obPricing?.getMarketPriceData) {
-                  const mp = await contracts.obPricing.getMarketPriceData();
-                  markPriceBigInt = (mp?.markPrice ?? (Array.isArray(mp) ? mp[0] : 0n)) as bigint;
+                // Resolve the specific OrderBook for this market and query its pricing facet
+                let orderBookAddress: string | null = null;
+                try {
+                  if (contracts?.vault?.marketToOrderBook) {
+                    orderBookAddress = await contracts.vault.marketToOrderBook(marketId);
+                  }
+                } catch (_) {
+                  orderBookAddress = null;
+                }
+
+                if (orderBookAddress && orderBookAddress !== ethers.ZeroAddress) {
+                  const pricingAbi = [
+                    "function calculateMarkPrice() view returns (uint256)",
+                    "function getMarketPriceData() view returns (uint256,uint256,uint256,uint256,uint256,uint256,uint256,bool)",
+                  ];
+                  const runner = (contracts?.vault as any)?.runner || (contracts?.obPricing as any)?.runner;
+                  const obPricingForMarket = new ethers.Contract(orderBookAddress, pricingAbi, runner);
+
+                  try {
+                    markPriceBigInt = await obPricingForMarket.calculateMarkPrice();
+                  } catch (_) {
+                    try {
+                      const mp = await obPricingForMarket.getMarketPriceData();
+                      // markPrice is typically index 4 when present
+                      markPriceBigInt = (Array.isArray(mp) ? (mp[4] as bigint) : 0n) || 0n;
+                    } catch {
+                      markPriceBigInt = 0n;
+                    }
+                  }
+                } else {
+                  // Fallback to whatever pricing facet is bound (may be placeholder/non-market-specific)
+                  if (contracts?.obPricing?.calculateMarkPrice) {
+                    markPriceBigInt = await contracts.obPricing.calculateMarkPrice();
+                  } else if (contracts?.obPricing?.getMarketPriceData) {
+                    const mp = await contracts.obPricing.getMarketPriceData();
+                    markPriceBigInt = (mp?.markPrice ?? (Array.isArray(mp) ? mp[0] : 0n)) as bigint;
+                  }
                 }
               } catch (_) {
                 markPriceBigInt = 0n;
@@ -181,6 +231,7 @@ export function usePositions(marketSymbol?: string): PositionState {
               if (markPriceBigInt > 0n) {
                 markPrice = parseFloat(ethers.formatUnits(markPriceBigInt, 6));
 
+                // For signed size, use (mark - entry) * size to get correct sign for longs/shorts
                 const priceDiffBig = markPriceBigInt - entryPriceBig; // 6 decimals
                 const pnlBig = (priceDiffBig * positionSizeBig) / 1000000n; // -> 18 decimals
                 pnl = parseFloat(ethers.formatUnits(pnlBig, 18));
@@ -217,6 +268,15 @@ export function usePositions(marketSymbol?: string): PositionState {
               // ignore
             }
 
+            // Calculate leverage if possible
+            let leverage = 1;
+            try {
+              const notionalValue = displaySize * entryPrice;
+              leverage = margin > 0 ? Math.round(notionalValue / margin) : 1;
+            } catch (e) {
+              console.error('Error calculating leverage', e);
+            }
+
             processedPositions.push({
               id: String(marketId),
               marketId: String(marketId),
@@ -229,7 +289,7 @@ export function usePositions(marketSymbol?: string): PositionState {
               pnlPercent,
               liquidationPrice,
               margin,
-              leverage: 1,
+              leverage,
               timestamp: Date.now(),
               isUnderLiquidation
             });
