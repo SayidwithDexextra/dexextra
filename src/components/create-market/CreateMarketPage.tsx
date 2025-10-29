@@ -5,15 +5,41 @@ import { ethers } from 'ethers';
 import { CreateMarketForm } from './CreateMarketForm';
 import type { MarketFormData } from '@/hooks/useCreateMarketForm';
 import { useRouter } from 'next/navigation';
+import { DeploymentProgressPanel, type ProgressStep, type StepStatus } from './DeploymentProgressPanel';
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
+  const initialSteps: ProgressStep[] = [
+    { id: 'cut', title: 'Prepare Facet Cut', description: 'Building market facet configuration', status: 'pending' },
+    { id: 'wallet', title: 'Connect Wallet', description: 'Requesting wallet permissions', status: 'pending' },
+    { id: 'factory', title: 'Resolve Factory', description: 'Loading factory and ABI', status: 'pending' },
+    { id: 'tx', title: 'Send Transaction', description: 'Creating market on-chain', status: 'pending' },
+    { id: 'confirm', title: 'Confirm & Parse', description: 'Waiting for confirmations', status: 'pending' },
+    { id: 'roles', title: 'Grant Admin Roles', description: 'Authorizing server role', status: 'pending' },
+    { id: 'save', title: 'Save Market', description: 'Persisting market metadata', status: 'pending' },
+  ];
+
+  const [steps, setSteps] = useState<ProgressStep[]>(initialSteps);
+  const [showProgress, setShowProgress] = useState(false);
+
+  const resetSteps = () => setSteps(initialSteps.map(s => ({ ...s, status: 'pending' })));
+  const setStepStatus = (id: string, status: StepStatus) =>
+    setSteps(prev => prev.map(s => (s.id === id ? { ...s, status } : s)));
+  const markActive = (id: string) => setStepStatus(id, 'active');
+  const markDone = (id: string) => setStepStatus(id, 'done');
+  const markError = (id: string) => setStepStatus(id, 'error');
+
+  
+
   const handleCreateMarket = async (marketData: MarketFormData) => {
     setIsLoading(true);
+    setShowProgress(true);
+    resetSteps();
     try {
       // 1) Build facet cut from server (uses env facet addresses + ABIs)
+      markActive('cut');
       const cutRes = await fetch('/api/orderbook/cut');
       if (!cutRes.ok) throw new Error('Failed to build facet cut');
       const { cut, initFacet } = await cutRes.json();
@@ -23,21 +49,26 @@ export const CreateMarketPage = () => {
         typeof c.action === 'number' ? c.action : 0,
         c.functionSelectors,
       ]);
+      markDone('cut');
 
       // 2) Connect user's wallet
       // @ts-ignore
+      markActive('wallet');
       if (!(globalThis as any).window?.ethereum) throw new Error('Wallet not found');
       // @ts-ignore
       const provider = new ethers.BrowserProvider((globalThis as any).window.ethereum);
       const signer = await provider.getSigner();
+      markDone('wallet');
 
       // 3) Resolve factory address & ABI
+      markActive('factory');
       const factoryAddress =
         process.env.NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS ||
         (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY;
       if (!factoryAddress) throw new Error('Factory address not configured');
       const factoryAbi = (await import('@/lib/abis/FuturesMarketFactory.json')).default.abi;
       const factory = new ethers.Contract(factoryAddress, factoryAbi, signer);
+      markDone('factory');
 
       // 4) Params
       const symbol = marketData.symbol;
@@ -49,6 +80,7 @@ export const CreateMarketPage = () => {
       const treasury = marketData.treasury;
 
       // 5) Create market
+      markActive('tx');
       const tx = await factory.createFuturesMarketDiamond(
         symbol,
         metricUrl,
@@ -61,6 +93,10 @@ export const CreateMarketPage = () => {
         initFacet,
         '0x'
       );
+      markDone('tx');
+
+      // 6) Confirm & parse
+      markActive('confirm');
       const receipt = await tx.wait();
 
       // 6) Parse event
@@ -80,9 +116,11 @@ export const CreateMarketPage = () => {
         }
       } catch {}
       if (!orderBook || !marketId) throw new Error('Could not parse created market');
+      markDone('confirm');
 
       // 7) Server-admin role grant (required)
       {
+        markActive('roles');
         const resp = await fetch('/api/markets/grant-roles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -95,10 +133,12 @@ export const CreateMarketPage = () => {
           const err = await resp.json().catch(() => ({} as any));
           throw new Error(err?.error || 'Admin role grant failed');
         }
+        markDone('roles');
       }
 
       // 8) Save to Supabase via server API
       try {
+        markActive('save');
         const network = await provider.getNetwork();
         await fetch('/api/markets/save', {
           method: 'POST',
@@ -120,7 +160,7 @@ export const CreateMarketPage = () => {
             chainId: Number(network.chainId),
             networkName: String(process.env.NEXT_PUBLIC_NETWORK_NAME || ''),
             creatorWalletAddress: await signer.getAddress(),
-            iconImageUrl: null,
+            iconImageUrl: (marketData as any).iconUrl ? String((marketData as any).iconUrl).trim() : null,
             bannerImageUrl: null,
             supportingPhotoUrls: [],
             marketAddress: orderBook,
@@ -130,11 +170,16 @@ export const CreateMarketPage = () => {
             gasUsed: receipt?.gasUsed?.toString?.() || null,
           }),
         });
+        markDone('save');
       } catch {}
 
-      router.push('/markets');
+      const targetSymbol = String(symbol || '').toUpperCase();
+      router.push(`/token/${encodeURIComponent(targetSymbol)}`);
     } catch (error) {
       console.error('Error creating market:', error);
+      // Mark the first active step as error for visual feedback
+      const active = steps.find(s => s.status === 'active');
+      if (active) markError(active.id);
       throw error;
     } finally {
       setIsLoading(false);
@@ -144,24 +189,36 @@ export const CreateMarketPage = () => {
   return (
     <div className="h-screen flex items-center bg-[#0F0F0F]">
       <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header Card */}
-        <div className="group bg-[#0F0F0F] hover:bg-[#101010] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
-          <div className="flex items-center justify-between p-4">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-                <h2 className="text-white text-lg font-medium truncate">Create New Market</h2>
+        {!showProgress && (
+          <>
+            {/* Header Card */}
+            <div className="group bg-[#0F0F0F] hover:bg-[#101010] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+              <div className="flex items-center justify-between p-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                    <h2 className="text-white text-lg font-medium truncate">Create New Market</h2>
+                  </div>
+                  <div className="mt-1 text-[11px] text-[#808080] truncate">
+                    Configure market parameters and resolve data sources with AI
+                  </div>
+                </div>
               </div>
-              <div className="mt-1 text-[11px] text-[#808080] truncate">
-                Configure market parameters and resolve data sources with AI
-              </div>
+              <div className="h-px bg-gradient-to-r from-blue-500/40 via-transparent to-transparent" />
+            </div>
+
+            {/* Form */}
+            <CreateMarketForm onSubmit={handleCreateMarket} isLoading={isLoading} />
+          </>
+        )}
+
+        {showProgress && (
+          <div className="flex items-center justify-center">
+            <div className="w-full max-w-2xl">
+              <DeploymentProgressPanel visible={true} steps={steps} />
             </div>
           </div>
-          <div className="h-px bg-gradient-to-r from-blue-500/40 via-transparent to-transparent" />
-        </div>
-
-        {/* Form */}
-        <CreateMarketForm onSubmit={handleCreateMarket} isLoading={isLoading} />
+        )}
       </div>
     </div>
   );

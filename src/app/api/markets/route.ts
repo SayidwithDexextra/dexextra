@@ -110,14 +110,13 @@ export async function GET(request: NextRequest) {
         (tickers || []).forEach((t: any) => idToTicker.set(t.market_id, t));
         enrichedMarkets = enrichedMarkets.map((m: any) => {
           const t = idToTicker.get(m.id);
-          const decimals = Number(m.decimals || 6);
-          const scale = Math.pow(10, decimals);
+          // Mark price in Supabase is stored with USDC precision (1e6)
           const mark = t?.mark_price != null ? Number(t.mark_price) : null;
-          const initial_price = mark != null ? (mark / scale) : m.tick_size || 0;
+          const initial_price = mark != null ? (mark / 1_000_000) : m.tick_size || 0;
           return {
             ...m,
             initial_price,
-            price_decimals: decimals,
+            price_decimals: Number(m.decimals || 6),
             _ticker_last_update: t?.last_update || null,
             _ticker_is_stale: t?.is_stale ?? null,
           };

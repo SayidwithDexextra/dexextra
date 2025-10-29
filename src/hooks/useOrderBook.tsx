@@ -227,9 +227,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
             return;
           }
         }
+        // Prefer bytes32 market id when available for CoreVault mapping resolution
+        let marketBytes32 = (marketRow as any)?.market_identifier_bytes32 || (marketRow as any)?.market_id_bytes32 || (match?.marketId as string | undefined);
         const contractInstances = await initializeContracts({ 
           providerOrSigner: runner, 
-          orderBookAddressOverride 
+          orderBookAddressOverride,
+          marketIdBytes32: marketBytes32
         });
         console.log('[useOrderBook] Initialized contracts for marketId', marketId, 'address', orderBookAddressOverride);
         
@@ -241,7 +244,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         setContracts(contractInstances);
 
       // Use market's bytes32 ID for CoreVault mapping
-      const marketBytes32 = (marketRow as any)?.market_identifier_bytes32 || (match.marketId as string | undefined);
+      marketBytes32 = (marketRow as any)?.market_identifier_bytes32 || (marketRow as any)?.market_id_bytes32 || (match.marketId as string | undefined);
       if (marketBytes32 && contractInstances.vault?.marketToOrderBook) {
         try {
           const resolved = await contractInstances.vault.marketToOrderBook(marketBytes32);
@@ -617,7 +620,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       const priceWei = parseUnits(price.toString(), 6);
       const sizeWei = parseEther(size.toString());
 
-      // Determine available placement function via preflight
+      // Determine available placement function via preflight (margin only)
       let placeFn: 'placeMarginLimitOrder' | 'placeLimitOrder' = 'placeMarginLimitOrder';
       try {
         await contracts.obOrderPlacement.placeMarginLimitOrder.staticCall(
@@ -627,24 +630,41 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         );
       } catch (preflightErr: any) {
         const msg = preflightErr?.shortMessage || preflightErr?.message || preflightErr?.data?.message || String(preflightErr);
-        if (/function does not exist/i.test(msg) || /Diamond: Function does not exist/i.test(msg)) {
-          placeFn = 'placeLimitOrder';
+        // Diagnostic logging to verify we are using the correct OB diamond address
+        try {
+          const obAddr = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
+            ? await (contracts.obOrderPlacement as any).getAddress()
+            : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
+          const obViewAddr = typeof (contracts.obView as any)?.getAddress === 'function'
+            ? await (contracts.obView as any).getAddress()
+            : ((contracts.obView as any)?.target || (contracts.obView as any)?.address);
+          const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
+          let net: any = null;
+          try { net = await provider?.getNetwork?.(); } catch {}
+          let mapped: string | null = null;
           try {
-            await contracts.obOrderPlacement.placeLimitOrder.staticCall(
-              priceWei,
-              sizeWei,
-              isBuy
-            );
-          } catch (fallbackErr) {
-            console.error('❌ [RPC] Preflight (fallback) failed:', fallbackErr);
-            setState(prev => ({ ...prev, error: msg || 'Limit order preflight failed' }));
-            return false;
-          }
-        } else {
-          console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
-          setState(prev => ({ ...prev, error: msg || 'Limit order preflight failed' }));
-          return false;
+            const mktIdHex = (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32;
+            if (mktIdHex && (contracts.vault as any)?.marketToOrderBook) {
+              mapped = await (contracts.vault as any).marketToOrderBook(mktIdHex);
+            }
+          } catch {}
+          let code = '0x';
+          try { if (obAddr && provider) { code = await provider.getCode(obAddr); } } catch {}
+          console.error('[DIAG][useOrderBook][limit-preflight] address and network diagnostics', {
+            orderBookAddressOverride: (marketRow as any)?.market_address,
+            obOrderPlacement: obAddr,
+            obView: obViewAddr,
+            coreVault: (contracts.vault as any)?.target || (contracts.vault as any)?.address,
+            coreVaultMappedOB: mapped,
+            chainId: (net && (net.chainId?.toString?.() || net.chainId)) || 'unknown',
+            obCodeLength: (code || '').length
+          });
+        } catch (diagErr) {
+          console.warn('[DIAG][useOrderBook][limit-preflight] logging failed', diagErr);
         }
+        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+        setState(prev => ({ ...prev, error: msg || 'Limit order preflight failed' }));
+        return false;
       }
 
       // Use default provider estimation for limit order
@@ -672,19 +692,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       console.log(`📡 [RPC] Submitting limit order transaction`);
       let startTimeTx = Date.now();
       let tx;
-      tx = placeFn === 'placeMarginLimitOrder'
-        ? await contracts.obOrderPlacement.placeMarginLimitOrder(
-            priceWei,
-            sizeWei,
-            isBuy,
-            limOverrides
-          )
-        : await contracts.obOrderPlacement.placeLimitOrder(
-            priceWei,
-            sizeWei,
-            isBuy,
-            limOverrides
-          );
+      tx = await contracts.obOrderPlacement.placeMarginLimitOrder(
+        priceWei,
+        sizeWei,
+        isBuy,
+        limOverrides
+      );
       const durationTx = Date.now() - startTimeTx;
       console.log(`✅ [RPC] Limit order transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
       console.log('[DBG][placeLimitOrder] tx sent', { hash: tx.hash });

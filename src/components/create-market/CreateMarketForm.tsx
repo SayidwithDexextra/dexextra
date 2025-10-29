@@ -228,9 +228,9 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-[#808080]">Market Icon</span>
-                <div className="flex items-center gap-2">
-                  {formData.iconImagePreview ? (
-                    <img src={formData.iconImagePreview} alt="Market Icon" className="w-6 h-6 rounded" />
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(formData.iconImagePreview || formData.iconUrl) ? (
+                    <img src={formData.iconImagePreview || formData.iconUrl} alt="Market Icon" className="w-6 h-6 rounded" />
                   ) : (
                     <div className="w-6 h-6 rounded bg-[#1A1A1A] border border-[#222222]" />
                   )}
@@ -250,6 +250,14 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
                       Remove
                     </button>
                   )}
+                  <input
+                    type="url"
+                    name="iconUrl"
+                    value={formData.iconUrl || ''}
+                    onChange={handleInputChange}
+                    placeholder="Icon URL (https://...)"
+                    className="w-56 bg-[#1A1A1A] border border-[#222222] rounded px-2 py-1 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none"
+                  />
                   <input
                     ref={iconInputRef}
                     type="file"

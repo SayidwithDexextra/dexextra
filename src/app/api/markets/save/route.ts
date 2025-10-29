@@ -80,7 +80,7 @@ export async function POST(req: Request) {
         name: name || symbol,
         description: description || `OrderBook market for ${symbol}`,
         category: category || (Array.isArray(initialOrder?.tags) && initialOrder.tags[0]) || 'CUSTOM',
-        decimals: Number.isFinite(decimals) ? decimals : Number(process.env.DEFAULT_MARKET_DECIMALS || 8),
+        decimals: 6,
         minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
         tick_size: 0.01,
         requires_kyc: Boolean(requiresKyc),
@@ -101,6 +101,8 @@ export async function POST(req: Request) {
         deployment_transaction_hash: transactionHash || null,
         deployment_block_number: blockNumber != null ? Number(blockNumber) : null,
         deployment_gas_used: gasUsed ? Number(gasUsed) : null,
+        deployment_status: 'DEPLOYED',
+        market_status: 'ACTIVE',
         deployed_at: new Date().toISOString(),
       };
       const { data: inserted, error: insertErr } = await supabase
@@ -119,17 +121,28 @@ export async function POST(req: Request) {
         deployment_transaction_hash: transactionHash || null,
         deployment_block_number: blockNumber != null ? Number(blockNumber) : null,
         deployment_gas_used: gasUsed ? Number(gasUsed) : null,
+        deployment_status: 'DEPLOYED',
+        market_status: 'ACTIVE',
         deployed_at: new Date().toISOString(),
       };
       const { error: updErr } = await supabase.from('markets').update(updatePayload).eq('id', marketIdUuid);
       if (updErr) throw updErr;
     }
 
-    // ensure ticker row
+    // ensure ticker row with initial mark price from startPrice (1e6 precision)
     try {
+      const startPriceRaw = (initialOrder && (initialOrder as any).startPrice) ?? (body as any)?.startPrice;
+      let markPriceScaled = 0;
+      if (startPriceRaw != null) {
+        const numeric = Number(startPriceRaw);
+        if (!Number.isNaN(numeric) && Number.isFinite(numeric)) {
+          markPriceScaled = Math.round(numeric * 1_000_000);
+        }
+      }
+
       await supabase.from('market_tickers').upsert(
         [
-          { market_id: marketIdUuid, mark_price: 0, last_update: new Date().toISOString(), is_stale: true },
+          { market_id: marketIdUuid, mark_price: markPriceScaled, last_update: new Date().toISOString(), is_stale: true },
         ],
         { onConflict: 'market_id' }
       );

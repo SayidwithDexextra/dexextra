@@ -5,6 +5,9 @@ import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { useCoreVault } from '@/hooks/useCoreVault';
+import { publicClient } from '@/lib/viemClient';
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
+import type { Address } from 'viem';
 // Legacy hooks removed
 // Removed hardcoded ALUMINUM_V1_MARKET import - now using dynamic market data
 
@@ -175,6 +178,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const isLoadingMarket = md.isLoading;
   const marketError = md.error as any;
   
+  // Prevent flicker: once header has initial data, do not re-enter loading on background refreshes
+  const [hasLoadedHeaderOnce, setHasLoadedHeaderOnce] = useState(false);
+  useEffect(() => {
+    if (!hasLoadedHeaderOnce && !isLoadingMarket && marketData) {
+      setHasLoadedHeaderOnce(true);
+    }
+  }, [hasLoadedHeaderOnce, isLoadingMarket, marketData]);
+  
   // console.log('🏪 OrderBook Market Data Status:', {
   //   symbol,
   //   hasMarketData: !!marketData,
@@ -211,14 +222,86 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     // Refresh functionality removed as we removed the legacy hooks
   };
 
+  // Effective mark price with CoreVault.getMarkPrice fallback
+  const [effectiveMarkPrice, setEffectiveMarkPrice] = useState<number>(0);
+  const [markPriceSource, setMarkPriceSource] = useState<'orderbook' | 'vault_fallback' | 'resolved'>('resolved');
+
+  useEffect(() => {
+    const obPrice = Number(md.markPrice ?? 0);
+    const resolved = Number(md.resolvedPrice ?? 0);
+    const base = obPrice > 0 ? obPrice : (resolved > 0 ? resolved : 0);
+
+    const bestBid = Number(md.bestBid ?? 0);
+    const bestAsk = Number(md.bestAsk ?? 0);
+    const lastTrade = Number(md.lastTradePrice ?? 0);
+    const noOrderFlow = (bestBid <= 0) && (bestAsk <= 0) && (lastTrade <= 0);
+    const isDefaultCalc = Math.abs(obPrice - 1) < 1e-9; // 1e6 scaled -> 1.0 when empty
+    const obMissingOrZero = !Number.isFinite(obPrice) || obPrice <= 0;
+
+    const marketIdBytes32 = (marketData as any)?.market_id_bytes32 as string | undefined;
+    const vaultAddr = (CONTRACT_ADDRESSES as any)?.CORE_VAULT as string | undefined;
+
+    if ((!isDefaultCalc && !obMissingOrZero) || !noOrderFlow) {
+      try { console.log('[TokenHeader] Using OB/resolved price without fallback', { obPrice, resolved, base, bestBid, bestAsk, lastTrade }); } catch {}
+      setEffectiveMarkPrice(base);
+      setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+      return;
+    }
+
+    const tryFallback = async () => {
+      try { console.log('[TokenHeader] Attempting CoreVault.getMarkPrice fallback', { obPrice, resolved, bestBid, bestAsk, lastTrade, marketIdBytes32, vaultAddr }); } catch {}
+      try {
+        if (!marketIdBytes32 || typeof marketIdBytes32 !== 'string' || !marketIdBytes32.startsWith('0x')) {
+          try { console.log('[TokenHeader] Fallback aborted: invalid marketIdBytes32'); } catch {}
+          setEffectiveMarkPrice(base);
+          setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+          return;
+        }
+        if (!vaultAddr || typeof vaultAddr !== 'string' || !vaultAddr.startsWith('0x')) {
+          try { console.log('[TokenHeader] Fallback aborted: invalid CORE_VAULT address'); } catch {}
+          setEffectiveMarkPrice(base);
+          setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+          return;
+        }
+
+        const CORE_VAULT_ABI_MIN = [
+          { type: 'function', name: 'getMarkPrice', stateMutability: 'view', inputs: [{ name: 'marketId', type: 'bytes32' }], outputs: [{ type: 'uint256' }] }
+        ] as const as any[];
+
+        const raw = await publicClient.readContract({
+          address: vaultAddr as Address,
+          abi: CORE_VAULT_ABI_MIN,
+          functionName: 'getMarkPrice',
+          args: [marketIdBytes32 as `0x${string}`]
+        });
+        const price = typeof raw === 'bigint' ? Number(raw) / 1e6 : Number(raw);
+          
+        if (price > 0) {
+          console.log('🔄 CoreVault.getMarkPrice fallback successful', price);
+          setEffectiveMarkPrice(price);
+          setMarkPriceSource('vault_fallback');
+          return;
+        }
+      } catch (e) {
+        try { console.warn('[TokenHeader] CoreVault.getMarkPrice fallback failed', e); } catch {}
+      }
+      try { console.log('[TokenHeader] Fallback unavailable; using base price', { base }); } catch {}
+      setEffectiveMarkPrice(base);
+      setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+    };
+
+    void tryFallback();
+  }, [md.markPrice, md.resolvedPrice, md.bestBid, md.bestAsk, md.lastTradePrice, (marketData as any)?.market_id_bytes32]);
+
   // Calculate enhanced token data from unified markets table and contract mark price
   const enhancedTokenData = useMemo((): EnhancedTokenData | null => {
     if (!marketData) return null;
 
     const market = marketData;
     
-    // Use provider price
-    const currentMarkPrice = Number((md.markPrice ?? md.resolvedPrice) || 0);
+    // Use effective price with CoreVault fallback when OB returns default and no order flow
+    const baseComputed = Number((md.markPrice ?? md.resolvedPrice) || 0);
+    const currentMarkPrice = Number(effectiveMarkPrice > 0 ? effectiveMarkPrice : baseComputed);
     
     // Funding and historical change not tracked in DB yet
     const currentFundingRate = 0;
@@ -271,6 +354,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     marketData,
     md.markPrice,
     md.resolvedPrice,
+    effectiveMarkPrice,
     symbol
   ]);
 
@@ -329,7 +413,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     };
   }, [enhancedTokenData]); // Re-run when token data changes
   // Loading state - only show loading if market data is loading
-  if (isLoadingMarket) {
+  const shouldShowHeaderLoading = !hasLoadedHeaderOnce && (isLoadingMarket || !marketData);
+
+  if (shouldShowHeaderLoading) {
     return (
       <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-4 min-h-[200px] flex items-center justify-center">
         <div className="text-white text-sm">Loading orderbook market data...</div>
@@ -398,7 +484,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Check for valid real-time price for UI indicators (simplified since hooks removed)
   const showLiveIndicator = enhancedTokenData?.isDeployed && 
     enhancedTokenData?.markPrice > 0;
-  const isPriceLoading = isLoadingMarket || !enhancedTokenData || enhancedTokenData.markPrice === 0;
+  // Only show skeleton before the first render; afterwards, display numeric value even during background refreshes
+  const isPriceLoading = !hasLoadedHeaderOnce && (!enhancedTokenData || isLoadingMarket);
 
   return (
     <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 h-full max-h-full flex flex-col">

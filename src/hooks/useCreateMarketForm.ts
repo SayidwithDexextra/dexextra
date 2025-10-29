@@ -17,6 +17,7 @@ export interface MarketFormData {
   metricDescription: string;
   iconImageFile?: File | null;
   iconImagePreview?: string;
+  iconUrl?: string;
 }
 
 const DEFAULT_MARGIN_BPS = 10000; // 100%
@@ -37,6 +38,7 @@ export const useCreateMarketForm = () => {
     metricDescription: '',
     iconImageFile: null,
     iconImagePreview: '',
+    iconUrl: '',
   });
 
   const [tagInput, setTagInput] = useState('');

@@ -213,6 +213,8 @@ export interface ContractInitOptions {
   marketIdentifier?: string;
   marketSymbol?: string;
   network?: string;
+  // Stronger mapping: prefer bytes32 marketId for CoreVault lookup if provided
+  marketIdBytes32?: string;
 }
 
 // Format a token amount from BigInt to decimal string
@@ -240,7 +242,7 @@ export function parseTokenAmount(amount: string): bigint {
 }
 
 // Initialize contract instances with provider or signer
-export function initializeContracts(options?: ContractInitOptions): DexContracts {
+export async function initializeContracts(options?: ContractInitOptions): Promise<DexContracts> {
   try {
     console.log("CONTRACT_ADDRESSES:", {
       CORE_VAULT: CONTRACT_ADDRESSES.CORE_VAULT,
@@ -351,6 +353,26 @@ export function initializeContracts(options?: ContractInitOptions): DexContracts
     if (!orderBookAddress || orderBookAddress === '0x' || !ethers.isAddress(orderBookAddress)) {
       console.error('Invalid OrderBook address:', orderBookAddress);
       throw new Error(`Invalid OrderBook address: ${orderBookAddress}`);
+    }
+    
+    // Cross-check against CoreVault mapping if a bytes32 marketId is provided
+    try {
+      const idHex = options?.marketIdBytes32;
+      const looksBytes32 = typeof idHex === 'string' && idHex.startsWith('0x') && idHex.length === 66;
+      if (looksBytes32 && (coreVault as any)?.marketToOrderBook) {
+        const mapped = await (coreVault as any).marketToOrderBook(idHex);
+        if (mapped && typeof mapped === 'string' && mapped.startsWith('0x') && mapped.length === 42) {
+          if (mapped.toLowerCase() !== orderBookAddress.toLowerCase()) {
+            console.warn('[initializeContracts] CoreVault mapping differs from provided OrderBook address; using mapped address', {
+              provided: orderBookAddress,
+              mapped
+            });
+            orderBookAddress = mapped;
+          }
+        }
+      }
+    } catch (mapErr) {
+      console.warn('[initializeContracts] Warning: CoreVault marketToOrderBook mapping check failed', mapErr);
     }
     
     // Check if we're using the placeholder address for non-market-specific contexts

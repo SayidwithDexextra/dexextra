@@ -54,6 +54,13 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const md = useMarketData();
 
   const tokenData = md.tokenData;
+  // Prevent flicker: once we have initial data, keep rendering content even if background polling toggles isLoading
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  useEffect(() => {
+    if (!hasLoadedOnce && !md.error && tokenData) {
+      setHasLoadedOnce(true);
+    }
+  }, [hasLoadedOnce, md.error, tokenData]);
   const currentPrice = (md.markPrice ?? md.resolvedPrice) || 0;
   const markPrice = currentPrice;
   const fundingRate = 0;
@@ -67,11 +74,13 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   ));
 
   const shouldShowLoading = useMemo(() => {
-    if (md.isLoading) return true;
-    if (md.error) return false;
-    if (!tokenData) return true;
+    // Only show the loading screen before the first successful data load
+    if (!hasLoadedOnce) {
+      if (md.isLoading) return true;
+      if (!tokenData) return true;
+    }
     return false;
-  }, [md.isLoading, md.error, tokenData]);
+  }, [hasLoadedOnce, md.isLoading, tokenData]);
 
   const loadingMessage = "Loading Trading Interface...";
   const loadingSubtitle = `Fetching ${symbol} market data, mark price, and available margin`;

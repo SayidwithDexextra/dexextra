@@ -71,8 +71,8 @@ export function transformMarketsToCards(markets: Market[]): MarketTickerCardData
 export function transformOverviewToCards(rows: MarketOverviewRow[]): MarketTickerCardData[] {
   return rows.map((row) => {
     const raw = (row.mark_price ?? 0) as number;
-    const scale = Math.pow(10, row.decimals || 6);
-    const price = raw > 0 ? raw / scale : (row.tick_size || 0);
+    // Mark price in Supabase is stored with USDC precision (1e6)
+    const price = raw > 0 ? raw / 1_000_000 : (row.tick_size || 0);
     const title = row.name || row.symbol || row.market_identifier || '';
     const categories = [row.category];
     const imageUrl = row.icon_image_url || row.banner_image_url || '/placeholder-market.svg';

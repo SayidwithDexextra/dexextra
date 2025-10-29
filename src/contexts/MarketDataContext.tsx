@@ -83,9 +83,9 @@ export function MarketDataProvider({ symbol, children }: ProviderProps) {
     if (obLive?.lastTradePrice && obLive.lastTradePrice > 0) {
       return obLive.lastTradePrice;
     }
-    // 3) Use DB ticker mark price if not stale
+    // 3) Use DB ticker mark price if not stale (stored with 1e6 precision)
     if (dbTicker?.mark_price && dbTicker.mark_price > 0 && !dbTicker.is_stale) {
-      return dbTicker.mark_price;
+      return dbTicker.mark_price / 1_000_000;
     }
     // 4) Use tick_size as base for new markets
     if ((market as any)?.tick_size && (market as any)?.tick_size > 0) {

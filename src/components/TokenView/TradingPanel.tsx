@@ -757,7 +757,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         marketIdentifier: marketRow.market_identifier || undefined,
         marketSymbol: marketRow.symbol || undefined,
         network: marketRow.network || undefined,
-        chainId: marketRow.chain_id
+        chainId: marketRow.chain_id,
+        marketIdBytes32: (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32 || undefined
       });
 
       // Fetch reference price from orderbook (bestAsk for buy, bestBid for sell)
@@ -842,7 +843,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
       }
 
-      // Pre-trade validation: available collateral vs required (1:1 margin)
+      // Pre-trade validation: available collateral vs required (accurate margin bps)
       try {
         const userAddr = address as string;
         console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
@@ -850,14 +851,25 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
         console.log('Available collateral:', available.toString());
         const durationCollateral = Date.now() - startTimeCollateral;
-        const required: bigint = (sizeWei * referencePrice) / 10n ** 18n;
+        const notional6: bigint = (sizeWei * referencePrice) / 10n ** 18n;
+        let marginReqBps: bigint = 10000n;
+        try {
+          const levInfo = await (contracts.obView as any).getLeverageInfo?.();
+          if (levInfo && levInfo.length >= 3) {
+            const mr = BigInt(levInfo[2]?.toString?.() ?? levInfo[2]);
+            marginReqBps = mr > 0n ? mr : 10000n;
+          }
+        } catch {}
+        const effectiveBps = (selectedOption === 'short') ? 15000n : marginReqBps;
+        const requiredMargin6: bigint = (notional6 * effectiveBps) / 10000n;
         console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
           available: ethers.formatUnits(available, 6),
-          required: ethers.formatUnits(required, 6)
+          required: ethers.formatUnits(requiredMargin6, 6),
+          bps: effectiveBps.toString()
         });
 
-        if (available < required) {
-          throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(required, 6)}, available $${ethers.formatUnits(available, 6)}.`);
+        if (available < requiredMargin6) {
+          throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(requiredMargin6, 6)}, available $${ethers.formatUnits(available, 6)}.`);
         }
       } catch (e: any) {
         // If unable to fetch, surface error to user as it likely blocks placement
@@ -990,7 +1002,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         marketIdentifier: marketRow.market_identifier || undefined,
         marketSymbol: marketRow.symbol || undefined,
         network: marketRow.network || undefined,
-        chainId: marketRow.chain_id
+        chainId: marketRow.chain_id,
+        marketIdBytes32: (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32 || undefined
       });
 
       // Parse amounts to on-chain units (price: 6 decimals USDC, size: 18 decimals)
@@ -1013,34 +1026,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       // Pre-trade validation: leverage/margin configuration
       // Skip leverage check: not available on current facet build
 
-      // Pre-trade validation: available collateral vs required (1:1 margin)
-      try {
-        const userAddr = address as string;
-        console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
-        let startTimeCollateral = Date.now();
-        const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
-        const durationCollateral = Date.now() - startTimeCollateral;
-        const required: bigint = (sizeWei * priceWei) / 10n ** 18n;
-        console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
-          available: ethers.formatUnits(available, 6),
-          required: ethers.formatUnits(required, 6)
-        });
-
-        if (available < required) {
-          throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(required, 6)}, available $${ethers.formatUnits(available, 6)}.`);
-        }
-      } catch (e: any) {
-        // If unable to fetch, surface error to user as it likely blocks placement
-        if (!(e?.message || '').toLowerCase().includes('insufficient')) {
-          console.warn('⚠️ [RPC] Collateral check warning:', e?.message || e);
-        }
-        // Re-throw to be handled by error mapping below
-        throw e;
-      }
-
-      // Place limit order via smart contract (margin path)
+      // Determine available placement function via preflight BEFORE collateral checks
       const isBuy = selectedOption === 'long';
-      // Determine available placement function via preflight
       let placeFn: 'placeMarginLimitOrder' | 'placeLimitOrder' = 'placeMarginLimitOrder';
       try {
         console.log(`📡 [RPC] Running preflight static call for limit order (margin)`);
@@ -1053,19 +1040,81 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         const durationPreflight = Date.now() - startTimePreflight;
         console.log(`✅ [RPC] Preflight (margin) passed in ${durationPreflight}ms`);
       } catch (preflightErr: any) {
+        // Diagnostic logging to verify we are using the correct OB diamond address
+        try {
+          const obAddr = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
+            ? await (contracts.obOrderPlacement as any).getAddress()
+            : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
+          const obViewAddr = typeof (contracts.obView as any)?.getAddress === 'function'
+            ? await (contracts.obView as any).getAddress()
+            : ((contracts.obView as any)?.target || (contracts.obView as any)?.address);
+          const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
+          let net: any = null;
+          try { net = await provider?.getNetwork?.(); } catch {}
+          let mapped: string | null = null;
+          try {
+            const mktIdHex = (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32;
+            if (mktIdHex && (contracts.vault as any)?.marketToOrderBook) {
+              mapped = await (contracts.vault as any).marketToOrderBook(mktIdHex);
+            }
+          } catch {}
+          let code = '0x';
+          try { if (obAddr && provider) { code = await provider.getCode(obAddr); } } catch {}
+          console.error('[DIAG][limit-preflight] address and network diagnostics', {
+            orderBookAddressOverride: (marketRow as any)?.market_address,
+            obOrderPlacement: obAddr,
+            obView: obViewAddr,
+            coreVault: (contracts.vault as any)?.target || (contracts.vault as any)?.address,
+            coreVaultMappedOB: mapped,
+            chainId: (net && (net.chainId?.toString?.() || net.chainId)) || 'unknown',
+            obCodeLength: (code || '').length
+          });
+        } catch (diagErr) {
+          console.warn('[DIAG][limit-preflight] logging failed', diagErr);
+        }
         const msg = preflightErr?.message || preflightErr?.shortMessage || '';
-        if (/function does not exist/i.test(msg) || /Diamond: Function does not exist/i.test(msg)) {
-          console.warn('⚠️ [RPC] margin limit not found; falling back to placeLimitOrder');
-          // Try non-margin variant
-          await contracts.obOrderPlacement.placeLimitOrder.staticCall(
-            priceWei,
-            sizeWei,
-            isBuy
-          );
-          placeFn = 'placeLimitOrder';
-        } else {
-          console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
-          throw preflightErr;
+        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+        // Do not fall back to non-margin; limit orders must be supported on this market
+        throw preflightErr;
+      }
+
+      // Collateral check only for margin limit orders; compute accurate required margin using on-chain bps
+      if (placeFn === 'placeMarginLimitOrder') {
+        try {
+          const userAddr = address as string;
+          console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
+          let startTimeCollateral = Date.now();
+          const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
+          const durationCollateral = Date.now() - startTimeCollateral;
+          // notional in 6 decimals
+          const notional6: bigint = (sizeWei * priceWei) / 10n ** 18n;
+          // get leverage/margin requirement bps from view facet
+          let marginReqBps: bigint = 10000n;
+          try {
+            const levInfo = await (contracts.obView as any).getLeverageInfo?.();
+            if (levInfo && levInfo.length >= 3) {
+              // tuple(enabled, maxLev, marginReqBps, controller)
+              const mr = BigInt(levInfo[2]?.toString?.() ?? levInfo[2]);
+              marginReqBps = mr > 0n ? mr : 10000n;
+            }
+          } catch {}
+          // shorts require 150% margin
+          const effectiveBps = (selectedOption === 'short') ? 15000n : marginReqBps;
+          const requiredMargin6: bigint = (notional6 * effectiveBps) / 10000n;
+          console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
+            available: ethers.formatUnits(available, 6),
+            required: ethers.formatUnits(requiredMargin6, 6),
+            bps: effectiveBps.toString()
+          });
+
+          if (available < requiredMargin6) {
+            throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(requiredMargin6, 6)}, available $${ethers.formatUnits(available, 6)}.`);
+          }
+        } catch (e: any) {
+          if (!(e?.message || '').toLowerCase().includes('insufficient')) {
+            console.warn('⚠️ [RPC] Collateral check warning:', e?.message || e);
+          }
+          throw e;
         }
       }
       // Use default provider estimation for limit order
