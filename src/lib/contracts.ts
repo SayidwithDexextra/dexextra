@@ -43,7 +43,7 @@ const CoreVaultFallbackABI = [
   "function marketToOrderBook(bytes32) external view returns (address)"
 ];
 
-const CoreVaultABI = (CoreVaultGenerated as any)?.abi || (CoreVaultGenerated as any) || CoreVaultFallbackABI;
+export const CoreVaultABI = (CoreVaultGenerated as any)?.abi || (CoreVaultGenerated as any) || CoreVaultFallbackABI;
 
 const LiquidationManagerABI = [
   // Liquidation functions
@@ -70,7 +70,7 @@ const MockUSDCABI = [
 
 // Order Book ABIs - Diamond facets
 // OBViewFacet - read-only functions for market data
-const OBViewFacetABI = [
+export const OBViewFacetABI = [
   "function getMarketId() external view returns (bytes32)",
   "function getOrderBook() external view returns (tuple(uint256 price, uint256 quantity)[] bids, tuple(uint256 price, uint256 quantity)[] asks)",
   "function getUserOrders(address user) external view returns (uint256[])",
@@ -87,7 +87,7 @@ const OBViewFacetABI = [
 ];
 
 // OBPricingFacet - read-only functions for pricing (aligned with deployed facet)
-const OBPricingFacetABI = [
+export const OBPricingFacetABI = [
   "function getBestPrices() external view returns (uint256 bidPrice, uint256 askPrice)",
   "function getOrderBookDepth(uint256 levels) external view returns (uint256[] bidPrices, uint256[] bidAmounts, uint256[] askPrices, uint256[] askAmounts)",
   "function getOrderBookDepthFromPointers(uint256 levels) external view returns (uint256[] bidPrices, uint256[] bidAmounts, uint256[] askPrices, uint256[] askAmounts)",
@@ -100,7 +100,7 @@ const OBPricingFacetABI = [
 ];
 
 // OBOrderPlacementFacet - order placement functions (aligned with Solidity facet)
-const OBOrderPlacementFacetABI = [
+export const OBOrderPlacementFacetABI = [
   "function placeLimitOrder(uint256 price, uint256 amount, bool isBuy) external returns (uint256)",
   "function placeMarginLimitOrder(uint256 price, uint256 amount, bool isBuy) external returns (uint256)",
   "function placeMarketOrder(uint256 amount, bool isBuy) external returns (uint256)",
@@ -114,14 +114,14 @@ const OBOrderPlacementFacetABI = [
 ];
 
 // OBSettlementFacet - settlement/expiry functions
-const OBSettlementFacetABI = [
+export const OBSettlementFacetABI = [
   "function settleMarket(uint256 finalPrice) external",
   "function isSettled() external view returns (bool)",
   "function adminCancelAllRestingOrders() external"
 ];
 
 // OBTradeExecutionFacet - trade execution functions
-const OBTradeExecutionFacetABI = [
+export const OBTradeExecutionFacetABI = [
   "function executeMarketOrder(address user, bool isBuy, uint256 quantity) external returns (uint256)",
   "function executeLimitOrder(address user, bool isBuy, uint256 price, uint256 quantity) external returns (bytes32)",
   "function getUserTradeCount(address user) external view returns (uint256)",
@@ -164,12 +164,29 @@ export const CONTRACTS = {
 } as const
 
 // OBLiquidityProvisionFacet - MM/LP specific functions
-const OBLiquidityProvisionFacetABI = [
+export const OBLiquidityProvisionFacetABI = [
   "function placeBidAskPair(uint256 bidPrice, uint256 askPrice, uint256 quantity) external returns (bytes32, bytes32)",
   "function placeLiquidityOrder(bool isBuy, uint256 price, uint256 quantity) external returns (bytes32)",
   "function updateLiquidityOrder(bytes32 orderId, uint256 newPrice, uint256 newQuantity) external returns (bytes32)",
   "event LiquidityProvided(address indexed user, bytes32 indexed bidOrderId, bytes32 indexed askOrderId, uint256 bidPrice, uint256 askPrice, uint256 quantity, uint256 timestamp)",
   "event LiquidityWithdrawn(address indexed user, bytes32 indexed bidOrderId, bytes32 indexed askOrderId, uint256 timestamp)"
+];
+
+// Admin facet - owner-controlled configuration
+export const OBAdminFacetABI = [
+  "function updateTradingParameters(uint256 _marginRequirementBps, uint256 _tradingFee, address _feeRecipient) external",
+  "function enableLeverage(uint256 _maxLeverage, uint256 _marginRequirementBps) external",
+  "function disableLeverage() external",
+  "function setMarginRequirement(uint256 _marginRequirementBps) external",
+  "function setLeverageController(address _newController) external",
+  "function updateMaxSlippage(uint256 _maxSlippageBps) external"
+];
+
+// Liquidation facet - operational controls and entrypoint
+export const OBLiquidationFacetABI = [
+  "function setConfigLiquidationScanOnTrade(bool enable) external",
+  "function setConfigLiquidationDebug(bool enable) external",
+  "function pokeLiquidations() external"
 ];
 
 // OrderBook system V1 and V2 interfaces

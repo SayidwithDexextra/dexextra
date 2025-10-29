@@ -36,7 +36,7 @@ export const CreateMarketPage = () => {
         process.env.NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS ||
         (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY;
       if (!factoryAddress) throw new Error('Factory address not configured');
-      const factoryAbi = (await import('@/../Dexetrav5/artifacts/src/FuturesMarketFactory.sol/FuturesMarketFactory.json')).default.abi;
+      const factoryAbi = (await import('@/lib/abis/FuturesMarketFactory.json')).default.abi;
       const factory = new ethers.Contract(factoryAddress, factoryAbi, signer);
 
       // 4) Params

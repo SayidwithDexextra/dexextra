@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
+import { CoreVaultABI } from '@/lib/contracts';
 
 export async function POST(req: Request) {
   try {
@@ -23,8 +24,7 @@ export async function POST(req: Request) {
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const wallet = new ethers.Wallet(adminPk, provider);
 
-    const coreVaultAbi = (await import('@/../Dexetrav5/artifacts/src/CoreVault.sol/CoreVault.json')).default.abi;
-    const coreVault = new ethers.Contract(coreVaultAddress, coreVaultAbi, wallet);
+    const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
 
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));

@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
-
-// Import facet ABIs from Dexetrav5 artifacts
-// Ensure these files exist; paths reflect typical Hardhat artifact layout
-import OBAdmin from '@/../Dexetrav5/artifacts/src/diamond/facets/OBAdminFacet.sol/OBAdminFacet.json';
-import OBPricing from '@/../Dexetrav5/artifacts/src/diamond/facets/OBPricingFacet.sol/OBPricingFacet.json';
-import OBOrderPlacement from '@/../Dexetrav5/artifacts/src/diamond/facets/OBOrderPlacementFacet.sol/OBOrderPlacementFacet.json';
-import OBTradeExecution from '@/../Dexetrav5/artifacts/src/diamond/facets/OBTradeExecutionFacet.sol/OBTradeExecutionFacet.json';
-import OBLiquidation from '@/../Dexetrav5/artifacts/src/diamond/facets/OBLiquidationFacet.sol/OBLiquidationFacet.json';
-import OBView from '@/../Dexetrav5/artifacts/src/diamond/facets/OBViewFacet.sol/OBViewFacet.json';
-import OBSettlement from '@/../Dexetrav5/artifacts/src/diamond/facets/OBSettlementFacet.sol/OBSettlementFacet.json';
+import {
+  OBAdminFacetABI,
+  OBPricingFacetABI,
+  OBOrderPlacementFacetABI,
+  OBTradeExecutionFacetABI,
+  OBLiquidationFacetABI,
+  OBViewFacetABI,
+  OBSettlementFacetABI,
+} from '@/lib/contracts';
 
 function selectorsFromAbi(abi: any[]): string[] {
   return abi
@@ -40,13 +39,13 @@ export async function GET() {
     }
 
     const cut = [
-      { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(OBAdmin.abi) },
-      { facetAddress: pricingFacet, action: 0, functionSelectors: selectorsFromAbi(OBPricing.abi) },
-      { facetAddress: placementFacet, action: 0, functionSelectors: selectorsFromAbi(OBOrderPlacement.abi) },
-      { facetAddress: execFacet, action: 0, functionSelectors: selectorsFromAbi(OBTradeExecution.abi) },
-      { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(OBLiquidation.abi) },
-      { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(OBView.abi) },
-      { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(OBSettlement.abi) },
+      { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(OBAdminFacetABI as any[]) },
+      { facetAddress: pricingFacet, action: 0, functionSelectors: selectorsFromAbi(OBPricingFacetABI as any[]) },
+      { facetAddress: placementFacet, action: 0, functionSelectors: selectorsFromAbi(OBOrderPlacementFacetABI as any[]) },
+      { facetAddress: execFacet, action: 0, functionSelectors: selectorsFromAbi(OBTradeExecutionFacetABI as any[]) },
+      { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(OBLiquidationFacetABI as any[]) },
+      { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(OBViewFacetABI as any[]) },
+      { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(OBSettlementFacetABI as any[]) },
     ];
 
     return NextResponse.json({ cut, initFacet });
