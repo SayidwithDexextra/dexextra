@@ -1,14 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import supabase from '@/lib/supabase-browser';
 import { Market } from './useMarkets';
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// Supabase client is a shared singleton from lib/supabase-browser
 
 // Return type for the hook
 interface UseMarketResult {

@@ -3,8 +3,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
-import { useMarket } from '@/hooks/useMarket';
-import { useOrderBookPrice } from '@/hooks/useOrderBookPrice';
+import { useMarketData } from '@/contexts/MarketDataContext';
 import { useCoreVault } from '@/hooks/useCoreVault';
 // Legacy hooks removed
 // Removed hardcoded ALUMINUM_V1_MARKET import - now using dynamic market data
@@ -170,17 +169,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // 2. Price data: Real-time contract calls to OrderBook contracts
   // 3. Trading data: Fetch positions from market_positions table
   
-  // Get market data from the new unified markets table
-  const {
-    market: marketData,
-    isLoading: isLoadingMarket,
-    error: marketError
-  } = useMarket(symbol);
-  
-  // Keep legacy hook for contract mark price
-  const {
-    priceData: legacyOrderBookPrice
-  } = useOrderBookPrice(marketData?.market_identifier);
+  // Use consolidated market data provider
+  const md = useMarketData();
+  const marketData = md.market as any;
+  const isLoadingMarket = md.isLoading;
+  const marketError = md.error as any;
   
   // console.log('🏪 OrderBook Market Data Status:', {
   //   symbol,
@@ -224,8 +217,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
     const market = marketData;
     
-    // Use smart contract mark price via legacy orderbook hook
-    const currentMarkPrice = Number(legacyOrderBookPrice?.price ?? 0);
+    // Use provider price
+    const currentMarkPrice = Number((md.markPrice ?? md.resolvedPrice) || 0);
     
     // Funding and historical change not tracked in DB yet
     const currentFundingRate = 0;
@@ -276,7 +269,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     };
   }, [
     marketData,
-    legacyOrderBookPrice,
+    md.markPrice,
+    md.resolvedPrice,
     symbol
   ]);
 
@@ -290,22 +284,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   //   isDeployed: enhancedTokenData?.isDeployed
   // });
 
-  // Broadcast mark price to any interested listeners (e.g., charts)
-  useEffect(() => {
-    if (!enhancedTokenData) return;
-    try {
-      const detail = {
-        symbol: enhancedTokenData.symbol,
-        price: Number(enhancedTokenData.markPrice) || 0,
-        timestamp: Date.now()
-      };
-      console.log('[Dispatch] 📢 [EVT][TokenHeader] Dispatch marketMarkPrice', detail);
-      const evt = new CustomEvent('marketMarkPrice', { detail });
-      if (typeof window !== 'undefined') window.dispatchEvent(evt);
-    } catch (e) {
-      // no-op
-    }
-  }, [enhancedTokenData?.symbol, enhancedTokenData?.markPrice]);
+  // Market price event dispatch is handled by MarketDataProvider
 
   // Debug when enhanced token data changes leading to UI updates
   useEffect(() => {

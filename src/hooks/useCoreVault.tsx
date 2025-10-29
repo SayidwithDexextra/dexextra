@@ -42,6 +42,7 @@ export function useCoreVault(walletAddress?: string) {
   const [socializedLoss, setSocializedLoss] = useState<string>('0');
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initStartedRef = useRef<boolean>(false);
   
   // Use provided wallet address or default to connected wallet
   const userAddress = walletAddress || address;
@@ -57,6 +58,8 @@ export function useCoreVault(walletAddress?: string) {
   useEffect(() => {
     async function init() {
       try {
+        if (isInitialized || contracts || initStartedRef.current) return;
+        initStartedRef.current = true;
         console.log('Initializing contracts with RPC URL:', env.RPC_URL, 'Chain ID:', env.CHAIN_ID);
         console.log('Core contract addresses:', {
           CORE_VAULT: CONTRACT_ADDRESSES.CORE_VAULT,
@@ -130,11 +133,12 @@ export function useCoreVault(walletAddress?: string) {
         setContracts(null);
       } finally {
         setIsLoading(false);
+        initStartedRef.current = false;
       }
     }
 
     init();
-  }, [isConnected]);
+  }, [isConnected, isInitialized, contracts]);
 
   // Lazy initializer to ensure contracts before a write action
   const ensureInitialized = useCallback(async (): Promise<any | null> => {

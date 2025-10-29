@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
-import { useOrderBook } from '@/hooks/useOrderBook';
+import { useMarketData } from '@/contexts/MarketDataContext';
 import { useMarginSummary } from '@/hooks/useMarginSummary';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { formatEther, parseEther } from 'viem';
@@ -11,7 +11,6 @@ import { ethers } from 'ethers';
 import { initializeContracts } from '@/lib/contracts';
 // Removed gas override utilities to rely on provider estimation
 import { ensureHyperliquidWallet } from '@/lib/network';
-import { useMarket } from '@/hooks/useMarket';
 import type { Address } from 'viem';
 
 interface TradingPanelProps {
@@ -36,11 +35,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
   // Get the metric ID for orderbook queries
   const metricId = tokenData.symbol;
-  const { market: marketRow } = useMarket(metricId);
+  const md = useMarketData();
+  const marketRow = md.market as any;
   
   // Initialize OrderBook hook
   console.log('metricId OrderBook hook', metricId);
-  const [orderBookState, orderBookActions] = useOrderBook(metricId);
+  const orderBookState = md.orderBookState;
+  const orderBookActions = md.orderBookActions;
   
   // Order submission state
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);

@@ -6,8 +6,7 @@ import { Transaction, OrderBookEntry } from '@/types/orders';
 import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
 // Legacy useOrderAnimations import removed
 import { OrderBookAnimatedQuantity } from '@/components/ui/AnimatedQuantity';
-import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
-import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
+import { useMarketData } from '@/contexts/MarketDataContext';
 
 interface TransactionTableProps {
   marketId?: string; // UUID from markets table
@@ -85,33 +84,27 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     }
   }, [marketId, marketIdentifier]);
 
-  // On-chain OrderBook data using provided market identifier
-  // Pass marketIdentifier to the hook which uses it for OrderBook resolution
-  // The hook internally resolves this to the correct contract address
+  const md = useMarketData();
   const validMarketIdentifier = useMemo(() => {
-    // Ensure we have a valid market identifier string
-    const id = marketIdentifier?.trim();
+    const id = (marketIdentifier || md.symbol || '').trim();
     if (!id) {
       console.warn('[TransactionTable] Empty market identifier provided');
       return '';
     }
     return id;
-  }, [marketIdentifier]);
-  
-  // Try to resolve an explicit orderbook address from MARKET_INFO to avoid symbol races
-  const explicitOrderBookAddress = useMemo(() => {
-    try {
-      const markets: any = (CONTRACT_ADDRESSES as any).MARKET_INFO || {};
-      const key = (validMarketIdentifier?.split('-')[0] || validMarketIdentifier).toUpperCase();
-      const match = markets[key];
-      const addr = match?.orderBook as string | undefined;
-      return (addr && addr.startsWith('0x') && addr.length === 42) ? addr : undefined;
-    } catch {
-      return undefined;
-    }
-  }, [validMarketIdentifier]);
+  }, [marketIdentifier, md.symbol]);
 
-  const { data: obData, isLoading: obLoading, error: obError } = useOrderBookContractData(validMarketIdentifier, { refreshInterval: 5000, orderBookAddress: orderBookAddress || explicitOrderBookAddress });
+  const obData = useMemo(() => ({
+    depth: md.depth,
+    bestBid: md.bestBid ?? 0,
+    bestAsk: md.bestAsk ?? 0,
+    orderBookAddress: md.orderBookAddress,
+    recentTrades: md.recentTrades ?? [],
+    lastUpdated: md.lastUpdated ?? new Date().toISOString()
+  }), [md.depth, md.bestBid, md.bestAsk, md.orderBookAddress, md.recentTrades, md.lastUpdated]);
+
+  const obLoading = md.isLoading;
+  const obError = md.error;
   const [recentTrades, setRecentTrades] = useState<OrderFromAPI[]>([]);
   const [isLoadingTrades, setIsLoadingTrades] = useState(false);
   const [tradeError, setTradeError] = useState<string | null>(null);

@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '@/hooks/useWallet';
-import { useOrderBook } from '@/hooks/useOrderBook';
-import { usePositions } from '@/hooks/usePositions';
+import { useMarketData } from '@/contexts/MarketDataContext';
 import { initializeContracts } from '@/lib/contracts';
 import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
@@ -74,8 +73,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   console.log('symbol MarketActivityTabs', symbol);
   const metricId = symbol;
   console.log('metricId MarketActivityTabs', metricId);
-  const [orderBookState, orderBookActions] = useOrderBook(metricId);
-  const positionsState = usePositions(metricId);
+  const md = useMarketData();
+  const orderBookState = md.orderBookState;
+  const orderBookActions = md.orderBookActions;
+  const positionsState = md.positionsState;
   console.log('positionsState MarketActivityTabs', positionsState);
   // Ensure event listener always calls the latest refreshOrders (avoid stale closure)
   const refreshOrdersRef = useRef(orderBookActions.refreshOrders);
@@ -86,6 +87,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Throttle and in-flight guards for order history
   const isFetchingHistoryRef = useRef(false);
   const lastHistoryFetchTsRef = useRef(0);
+
+  // Enable positions polling only when Positions tab is active
+  useEffect(() => {
+    try {
+      if (activeTab === 'positions') md.enablePositions();
+      else md.disablePositions();
+    } catch {}
+  }, [activeTab, md]);
 
   // Add success/error modal state
   const [successModal, setSuccessModal] = useState<{

@@ -62,10 +62,5 @@
   "github": {
     "silent": true
   },
-  "crons": [
-    {
-      "path": "/api/tasks/update-tickers",
-      "schedule": "*/1 * * * *"
-    }
-  ]
+  
 } 

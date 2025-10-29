@@ -54,7 +54,7 @@ function normalizePositionStruct(positionLike: any) {
   };
 }
 
-export function usePositions(marketSymbol?: string): PositionState {
+export function usePositions(marketSymbol?: string, options?: { enabled?: boolean }): PositionState {
   const wallet = useWallet() as any;
   const walletAddress: string | null = wallet?.walletData?.address ?? wallet?.address ?? null;
   const walletSigner = wallet?.walletData?.signer ?? wallet?.signer ?? null;
@@ -103,8 +103,15 @@ export function usePositions(marketSymbol?: string): PositionState {
 
   // Fetch positions data
   useEffect(() => {
+    const enabled = options?.enabled !== false;
     // If a specific market is requested, wait until it resolves before fetching
     if (!contracts || !walletAddress || (marketSymbol && isMarketLoading)) {
+      setState(prev => ({ ...prev, isLoading: false }));
+      return;
+    }
+
+    // If disabled, do not fetch or poll
+    if (!enabled) {
       setState(prev => ({ ...prev, isLoading: false }));
       return;
     }
@@ -317,7 +324,7 @@ export function usePositions(marketSymbol?: string): PositionState {
     return () => {
       clearInterval(interval);
     };
-  }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32]);
+  }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32, options?.enabled]);
 
   return state;
 }

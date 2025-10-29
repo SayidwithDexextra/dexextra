@@ -145,7 +145,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
   const lastRealtimeRefreshRef = useRef<number>(0);
   const ENABLE_ORDERBOOK_POLLING = false;
 
-  // Initialize contracts when wallet is connected
+  // Initialize contracts when wallet is connected and market is resolvable
   useEffect(() => {
     const init = async () => {
       try {
@@ -163,7 +163,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           return marketMatches.includes(searchKey);
         });
         
-        if (!match) {
+        // If we cannot resolve a market yet, skip initialization quietly and wait for later
+        if (!match && !marketRow) {
+          return;
+        }
+
+        if (!match && marketRow) {
           console.warn(`[useOrderBook] No market found for ${marketId} on chain ${currentChain}`);
           setState(prev => ({ 
             ...prev, 
