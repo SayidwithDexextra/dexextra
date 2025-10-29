@@ -21,8 +21,8 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
   onCardShortPosition,
   className,
 }) => {
-  // Render only dynamic cards fed from live data
-  const cardsWithStatic: MarketTickerCardData[] = cards.slice(0, 2);
+  // Render all dynamic cards fed from live data
+  const cardsWithStatic: MarketTickerCardData[] = cards;
 
   return (
     <section className={className}>

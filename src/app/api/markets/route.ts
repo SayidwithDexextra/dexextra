@@ -307,6 +307,30 @@ export async function POST(request: NextRequest) {
       market_address: insertedMarket.market_address
     });
 
+    // Ensure a default ticker row exists for this market
+    try {
+      const { error: tickerErr } = await supabase
+        .from('market_tickers')
+        .upsert(
+          [
+            {
+              market_id: insertedMarket.id,
+              mark_price: 0,
+              last_update: new Date().toISOString(),
+              is_stale: true,
+            },
+          ],
+          { onConflict: 'market_id' }
+        );
+      if (tickerErr) {
+        console.warn('⚠️ Ticker upsert failed:', tickerErr.message);
+      } else {
+        console.log('✅ Ticker initialized for market', insertedMarket.id);
+      }
+    } catch (e) {
+      console.warn('⚠️ Ticker upsert threw:', (e as Error).message);
+    }
+
     // Return success response
     return NextResponse.json({
       success: true,

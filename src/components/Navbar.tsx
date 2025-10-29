@@ -280,7 +280,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                  {/* Create Market Button - Only show when open */}
          {isOpen && (
            <button
-             onClick={() => router.push('/create-market')}
+             onClick={() => router.push('/markets/create')}
              className="flex items-center justify-center text-white font-semibold text-base transition-all duration-200 hover:opacity-80 cursor-pointer"
              style={{
                height: '50px',

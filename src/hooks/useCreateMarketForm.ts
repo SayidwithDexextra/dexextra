@@ -13,6 +13,10 @@ export interface MarketFormData {
   feeBps: number;
   treasury: string;
   disableLeverage: boolean;
+  metric: string;
+  metricDescription: string;
+  iconImageFile?: File | null;
+  iconImagePreview?: string;
 }
 
 const DEFAULT_MARGIN_BPS = 10000; // 100%
@@ -29,6 +33,10 @@ export const useCreateMarketForm = () => {
     feeBps: DEFAULT_FEE_BPS,
     treasury: '',
     disableLeverage: true,
+    metric: '',
+    metricDescription: '',
+    iconImageFile: null,
+    iconImagePreview: '',
   });
 
   const [tagInput, setTagInput] = useState('');
@@ -58,11 +66,11 @@ export const useCreateMarketForm = () => {
 
   const validateForm = () => {
     if (!formData.symbol) throw new Error('Symbol is required');
-    if (!formData.metricUrl) throw new Error('Metric URL is required');
+    if (!formData.metricUrl) throw new Error('Metric URL is required (use AI assistant)');
     if (!formData.startPrice || isNaN(Number(formData.startPrice))) {
       throw new Error('Valid start price is required');
     }
-    if (!formData.dataSource) throw new Error('Data source is required');
+    if (!formData.dataSource) throw new Error('Data source is required (use AI assistant)');
     if (!ethers.isAddress(formData.treasury)) {
       throw new Error('Valid treasury address is required');
     }
@@ -78,6 +86,7 @@ export const useCreateMarketForm = () => {
     handleTagRemove,
     setTagInput,
     validateForm,
+    setFormData,
   };
 };
 
