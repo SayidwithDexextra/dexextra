@@ -4,7 +4,7 @@ import { AIResolverService } from './AIResolverService';
 import { TextProcessingService } from './TextProcessingService';
 import { MetricOracleDatabase } from './MetricOracleDatabase';
 import { ScrapedSource, ProcessedChunk } from './types';
-import { launchBrowser, type Browser } from './puppeteerLauncher';
+import { launchBrowser, isServerlessEnvironment, type Browser } from './puppeteerLauncher';
 
 interface CacheEntry {
   content: string;
@@ -41,8 +41,11 @@ export class PerformanceOptimizedMetricOracle {
     this.textProcessor = new TextProcessingService();
     this.database = new MetricOracleDatabase();
     
-    // Pre-warm browser pool
-    this.initializeBrowserPool();
+    // Adjust concurrency for serverless environments to avoid ETXTBSY
+    if (isServerlessEnvironment()) {
+      this.maxBrowsers = 1;
+    }
+    // Lazy-initialize pool on first use
   }
 
   /**
@@ -422,6 +425,13 @@ export class PerformanceOptimizedMetricOracle {
       return this.browserPool.pop()!;
     }
     
+    // If pool not initialized yet, initialize lazily
+    if (this.browserPool.length === 0) {
+      await this.initializeBrowserPool();
+      if (this.browserPool.length > 0) {
+        return this.browserPool.pop()!;
+      }
+    }
     // Fallback: create new browser if pool is empty
     return await launchBrowser();
   }
