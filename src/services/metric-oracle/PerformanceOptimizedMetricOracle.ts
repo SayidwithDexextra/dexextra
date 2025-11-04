@@ -4,7 +4,7 @@ import { AIResolverService } from './AIResolverService';
 import { TextProcessingService } from './TextProcessingService';
 import { MetricOracleDatabase } from './MetricOracleDatabase';
 import { ScrapedSource, ProcessedChunk } from './types';
-import puppeteer, { Browser } from 'puppeteer';
+import { launchBrowser, type Browser } from './puppeteerLauncher';
 
 interface CacheEntry {
   content: string;
@@ -401,17 +401,12 @@ export class PerformanceOptimizedMetricOracle {
     
     for (let i = 0; i < this.maxBrowsers; i++) {
       try {
-        const browser = await puppeteer.launch({
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
-            '--window-size=1920x1080'
-          ]
-        });
+        const browser = await launchBrowser([
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--disable-gpu',
+          '--window-size=1920x1080',
+        ]);
         
         this.browserPool.push(browser);
       } catch (error) {
@@ -428,10 +423,7 @@ export class PerformanceOptimizedMetricOracle {
     }
     
     // Fallback: create new browser if pool is empty
-    return await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    return await launchBrowser();
   }
 
   private returnBrowserToPool(browser: Browser) {

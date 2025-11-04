@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import puppeteer from 'puppeteer';
+import { launchBrowser } from '@/services/metric-oracle/puppeteerLauncher';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 const InputSchema = z.object({
   url: z.string().url(),
@@ -16,7 +19,7 @@ const InputSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  let browser: puppeteer.Browser | null = null;
+  let browser: any | null = null;
   try {
     const body = await request.json();
     const input = InputSchema.parse(body);
@@ -25,10 +28,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Provide xpath, js_extractor, or css_selector' }, { status: 400 });
     }
 
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    browser = await launchBrowser();
 
     const page = await browser.newPage();
     page.setDefaultTimeout(20000);
