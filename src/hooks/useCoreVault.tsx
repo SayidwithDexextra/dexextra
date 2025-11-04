@@ -140,6 +140,63 @@ export function useCoreVault(walletAddress?: string) {
     init();
   }, [isConnected, isInitialized, contracts]);
 
+  // Ensure we have signer-bound contracts for write operations
+  const getWriteContracts = useCallback(async (): Promise<any> => {
+    // Reuse existing signer-bound instances if available
+    try {
+      const runner: any = (contracts as any)?.vault?.runner;
+      const hasSend = runner && typeof runner.sendTransaction === 'function';
+      if (contracts && hasSend) return contracts;
+    } catch {}
+
+    const hlProvider = getReadProvider();
+    let writeSigner: ethers.Signer | null = null;
+
+    // Prefer injected wallet on correct chain
+    if (typeof window !== 'undefined' && (window as any).ethereum) {
+      try {
+        const browserProvider = new ethers.BrowserProvider((window as any).ethereum)
+        const net = await browserProvider.getNetwork()
+        const chainOk = Number(net.chainId) === getChainId()
+        if (!chainOk) {
+          throw new Error(`Wrong network. Please switch to chainId ${getChainId()}.`)
+        }
+        writeSigner = await browserProvider.getSigner()
+      } catch {}
+    }
+
+    // Fallback to PRIVATE_KEY if configured
+    if (!writeSigner && env.PRIVATE_KEY) {
+      try {
+        writeSigner = new ethers.Wallet(env.PRIVATE_KEY, hlProvider)
+      } catch {}
+    }
+
+    if (!writeSigner) {
+      throw new Error('Wallet not connected. Please connect your wallet to perform this action.')
+    }
+
+    setIsLoading(true);
+    try {
+      const contractInstances = await initializeContracts({ providerOrSigner: writeSigner })
+      if (!contractInstances?.mockUSDC || !contractInstances?.vault) {
+        throw new Error('Essential contracts missing from initialization')
+      }
+      // Alias retained for compatibility
+      (contractInstances as any).coreVault = contractInstances.vault;
+      setContracts(contractInstances)
+      setIsInitialized(true)
+      setError(null)
+      return contractInstances
+    } catch (err) {
+      setIsInitialized(false)
+      setContracts(null)
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }, [contracts])
+
   // Lazy initializer to ensure contracts before a write action
   const ensureInitialized = useCallback(async (): Promise<any | null> => {
     if (isInitialized && contracts) return contracts;
@@ -528,7 +585,7 @@ export function useCoreVault(walletAddress?: string) {
 
   // Deposit collateral - returns transaction hash for compatibility with DepositModal
   const depositCollateral = useCallback(async (amount: string): Promise<string> => {
-    const currentContracts = contracts || (await ensureInitialized());
+    const currentContracts = await getWriteContracts();
     if (!currentContracts) throw new Error('Contracts not initialized or wallet not connected');
     if (!userAddress) throw new Error('Wallet address not available');
 
@@ -605,11 +662,11 @@ export function useCoreVault(walletAddress?: string) {
       }
       throw err;
     }
-  }, [contracts, userAddress, fetchBalances, ensureInitialized]);
+  }, [userAddress, fetchBalances, getWriteContracts]);
 
   // Withdraw collateral
   const withdrawCollateral = useCallback(async (amount: string): Promise<string> => {
-    const currentContracts = contracts || (await ensureInitialized());
+    const currentContracts = await getWriteContracts();
     if (!currentContracts) throw new Error('Contracts not initialized or wallet not connected');
     if (!userAddress) throw new Error('Wallet address not available');
 
@@ -634,7 +691,7 @@ export function useCoreVault(walletAddress?: string) {
       console.error('Withdrawal failed:', err);
       throw err;
     }
-  }, [contracts, userAddress, fetchBalances, ensureInitialized]);
+  }, [userAddress, fetchBalances, getWriteContracts]);
 
   // State for margin values
   const [marginValues, setMarginValues] = useState({
