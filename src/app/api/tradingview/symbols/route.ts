@@ -21,13 +21,13 @@ export async function GET(request: NextRequest) {
 
     console.log(`🔍 TradingView symbols lookup: "${symbol}"`);
 
-    // Query the orderbook_markets table for this metric_id
+    // Query unified view for this metric_id
     const { data: market, error } = await supabase
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select('*')
       .eq('metric_id', symbol)
       .eq('is_active', true)
-      .eq('deployment_status', 'deployed')
+      .eq('deployment_status', 'DEPLOYED')
       .not('market_address', 'is', null)
       .single();
 

@@ -128,13 +128,62 @@ export async function POST(request: NextRequest) {
       deployment_error: null
     };
 
-    console.log('💾 Inserting market data into database...');
+    console.log('💾 Inserting market into unified markets table...');
 
-    // Insert into orderbook_markets table
+    // Map legacy payload into markets schema
+    const insertPayload: any = {
+      market_identifier: String(body.metric_id || '').toUpperCase(),
+      symbol: body.symbol || body.metric_id || null,
+      name: body.name || body.symbol || body.metric_id || null,
+      description: body.description,
+      category: body.category,
+      decimals: body.decimals,
+      minimum_order_size: body.minimum_order_size,
+      tick_size: body.tick_size || 0.01,
+      requires_kyc: body.requires_kyc || false,
+      settlement_date: body.settlement_date,
+      trading_end_date: body.trading_end_date,
+      data_request_window_seconds: (body.data_request_window_hours || 24) * 3600,
+      auto_settle: body.auto_settle !== false,
+      oracle_provider: body.oracle_provider,
+      initial_order: body.initial_order_enabled ? {
+        enabled: true,
+        side: body.initial_order_side,
+        quantity: body.initial_order_quantity,
+        price: body.initial_order_price,
+        time_in_force: body.initial_order_time_in_force,
+        expiry_time: body.initial_order_expiry_time || null
+      } : { enabled: false },
+      market_config: body.creation_fee != null ? { creation_fee: body.creation_fee } : null,
+      banner_image_url: body.banner_image_url || null,
+      icon_image_url: body.icon_image_url || null,
+      supporting_photo_urls: body.supporting_photo_urls || [],
+      is_active: body.is_active !== false,
+      market_address: body.market_address || null,
+      chain_id: body.chain_id || 137,
+      deployment_transaction_hash: body.transaction_hash || null,
+      deployment_block_number: body.block_number || null,
+      deployment_gas_used: body.gas_used || null,
+      network: body.network || 'hyperliquid',
+      total_volume: 0,
+      total_trades: 0,
+      open_interest_long: 0,
+      open_interest_short: 0,
+      last_trade_price: body.initial_order_enabled ? body.initial_order_price : null,
+      market_status: body.deployment_status === 'deployed' ? 'ACTIVE' : 'PENDING',
+      deployment_status: (body.deployment_status || 'PENDING').toUpperCase(),
+      creator_wallet_address: body.user_address || null,
+      creator_user_id: null,
+      metric_resolution_id: body.metric_resolution_id || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      deployed_at: body.deployment_status === 'deployed' ? new Date().toISOString() : null,
+    };
+
     const { data: insertedMarket, error: insertError } = await supabase
-      .from('orderbook_markets')
-      .insert([marketData])
-      .select()
+      .from('markets')
+      .insert([insertPayload])
+      .select('id, market_identifier, market_address, deployment_status, market_status, created_at')
       .single();
 
     if (insertError) {
@@ -162,9 +211,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('✅ Market created successfully:', {
+    console.log('✅ Market created successfully (markets):', {
       id: insertedMarket.id,
-      metric_id: insertedMarket.metric_id,
+      market_identifier: insertedMarket.market_identifier,
       market_address: insertedMarket.market_address
     });
 
@@ -173,9 +222,9 @@ export async function POST(request: NextRequest) {
       success: true,
       market: {
         id: insertedMarket.id,
-        metric_id: insertedMarket.metric_id,
+        metric_id: insertedMarket.market_identifier,
         market_address: insertedMarket.market_address,
-        factory_address: insertedMarket.factory_address,
+        factory_address: null,
         deployment_status: insertedMarket.deployment_status,
         market_status: insertedMarket.market_status,
         created_at: insertedMarket.created_at
@@ -219,7 +268,7 @@ export async function GET(request: NextRequest) {
 
     // Build query
     let query = supabase
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select(`
         id,
         metric_id,
@@ -231,7 +280,6 @@ export async function GET(request: NextRequest) {
         settlement_date,
         trading_end_date,
         market_address,
-        factory_address,
         total_volume,
         total_trades,
         open_interest_long,
@@ -318,13 +366,39 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    console.log('🔄 Updating orderbook market:', metric_id);
+    console.log('🔄 Updating market (markets table):', metric_id);
 
     // Add updated_at timestamp
-    const finalUpdateData = {
-      ...updateData,
+    // Map legacy update fields into markets schema
+    const finalUpdateData: any = {
       updated_at: new Date().toISOString()
     };
+
+    if (updateData.description !== undefined) finalUpdateData.description = updateData.description;
+    if (updateData.category !== undefined) finalUpdateData.category = updateData.category;
+    if (updateData.decimals !== undefined) finalUpdateData.decimals = updateData.decimals;
+    if (updateData.minimum_order_size !== undefined) finalUpdateData.minimum_order_size = updateData.minimum_order_size;
+    if (updateData.tick_size !== undefined) finalUpdateData.tick_size = updateData.tick_size;
+    if (updateData.requires_kyc !== undefined) finalUpdateData.requires_kyc = updateData.requires_kyc;
+    if (updateData.settlement_date !== undefined) finalUpdateData.settlement_date = updateData.settlement_date;
+    if (updateData.trading_end_date !== undefined) finalUpdateData.trading_end_date = updateData.trading_end_date;
+    if (updateData.data_request_window_seconds !== undefined) finalUpdateData.data_request_window_seconds = updateData.data_request_window_seconds;
+    if (updateData.auto_settle !== undefined) finalUpdateData.auto_settle = updateData.auto_settle;
+    if (updateData.oracle_provider !== undefined) finalUpdateData.oracle_provider = updateData.oracle_provider;
+    if (updateData.initial_order !== undefined) finalUpdateData.initial_order = updateData.initial_order;
+    if (updateData.banner_image_url !== undefined) finalUpdateData.banner_image_url = updateData.banner_image_url;
+    if (updateData.icon_image_url !== undefined) finalUpdateData.icon_image_url = updateData.icon_image_url;
+    if (updateData.supporting_photo_urls !== undefined) finalUpdateData.supporting_photo_urls = updateData.supporting_photo_urls;
+    if (updateData.is_active !== undefined) finalUpdateData.is_active = updateData.is_active;
+    if (updateData.market_address !== undefined) finalUpdateData.market_address = updateData.market_address;
+    if (updateData.chain_id !== undefined) finalUpdateData.chain_id = updateData.chain_id;
+    if (updateData.transaction_hash !== undefined) finalUpdateData.deployment_transaction_hash = updateData.transaction_hash;
+    if (updateData.block_number !== undefined) finalUpdateData.deployment_block_number = updateData.block_number;
+    if (updateData.network !== undefined) finalUpdateData.network = updateData.network;
+    if (updateData.gas_used !== undefined) finalUpdateData.deployment_gas_used = updateData.gas_used;
+    if (updateData.market_status !== undefined) finalUpdateData.market_status = String(updateData.market_status).toUpperCase();
+    if (updateData.deployment_status !== undefined) finalUpdateData.deployment_status = String(updateData.deployment_status).toUpperCase();
+    if (updateData.user_address !== undefined) finalUpdateData.creator_wallet_address = updateData.user_address;
 
     // If market is being deployed, set deployed_at
     if (updateData.deployment_status === 'deployed' && !updateData.deployed_at) {
@@ -332,9 +406,9 @@ export async function PUT(request: NextRequest) {
     }
 
     const { data: updatedMarket, error } = await supabase
-      .from('orderbook_markets')
+      .from('markets')
       .update(finalUpdateData)
-      .eq('metric_id', metric_id)
+      .eq('market_identifier', String(metric_id || '').toUpperCase())
       .select()
       .single();
 

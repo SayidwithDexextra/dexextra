@@ -94,9 +94,7 @@ export const OBPricingFacetABI = [
   "function getSpread() external view returns (uint256)",
   "function calculateMarkPrice() external view returns (uint256)",
   "function getMarketPriceData() external view returns (uint256 midPrice, uint256 bestBidPrice, uint256 bestAskPrice, uint256 lastTradePriceReturn, uint256 markPrice, uint256 spread, uint256 spreadBps, bool isValid)",
-  // Some deployments expose these on pricing facet
-  "function bestBid() external view returns (uint256)",
-  "function bestAsk() external view returns (uint256)"
+  // Note: bestBid/bestAsk are not part of current OBPricingFacet deployments; they exist on OBViewFacet
 ];
 
 // OBOrderPlacementFacet - order placement functions (aligned with Solidity facet)

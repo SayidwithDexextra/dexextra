@@ -11,6 +11,10 @@ export interface MetricResolution {
     screenshot_url: string;
     quote: string;
     match_score: number;
+    css_selector?: string;
+    xpath?: string;
+    html_snippet?: string;
+    js_extractor?: string;
   }>;
 }
 
@@ -28,6 +32,16 @@ export interface ScrapedSource {
   screenshot_url?: string;
   error?: string;
   timestamp: Date;
+  candidates?: Array<{
+    selector: string;
+    xpath: string;
+    text: string;
+    html_snippet: string;
+    id?: string;
+    className?: string;
+    dataAttrs?: Record<string, string>;
+  }>;
+  raw_html_excerpt?: string;
 }
 
 export interface ProcessedChunk {

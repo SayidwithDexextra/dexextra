@@ -27,7 +27,7 @@ async function checkDatabaseOrders() {
       .select(
         `
         *,
-        orderbook_markets!inner (
+        orderbook_markets_view!inner (
           metric_id,
           description,
           market_status
@@ -47,7 +47,9 @@ async function checkDatabaseOrders() {
         console.log("\n📝 OFF-CHAIN ORDERS DETAILS:");
         offChainOrders.forEach((order, index) => {
           console.log(`\n   ${index + 1}. Order ID: ${order.order_id}`);
-          console.log(`      Market: ${order.orderbook_markets.metric_id}`);
+          console.log(
+            `      Market: ${order.orderbook_markets_view.metric_id}`
+          );
           console.log(`      Type: ${order.order_type} ${order.side}`);
           console.log(`      Quantity: ${order.quantity}`);
           console.log(`      Price: $${order.price || "Market"}`);
@@ -70,7 +72,7 @@ async function checkDatabaseOrders() {
       .select(
         `
         *,
-        orderbook_markets!inner (
+        orderbook_markets_view!inner (
           metric_id,
           description
         )
@@ -88,7 +90,9 @@ async function checkDatabaseOrders() {
         console.log("\n📈 RECENT TRADES:");
         tradeMatches.slice(0, 10).forEach((trade, index) => {
           console.log(`\n   ${index + 1}. Match ID: ${trade.match_id}`);
-          console.log(`      Market: ${trade.orderbook_markets.metric_id}`);
+          console.log(
+            `      Market: ${trade.orderbook_markets_view.metric_id}`
+          );
           console.log(`      Price: $${trade.trade_price}`);
           console.log(`      Quantity: ${trade.trade_quantity}`);
           console.log(`      Value: $${trade.total_value}`);
@@ -105,7 +109,7 @@ async function checkDatabaseOrders() {
     // Check orderbook_markets for any with orders or trades
     console.log("\n🏪 CHECKING MARKET STATISTICS:");
     const { data: markets, error: marketsError } = await supabase
-      .from("orderbook_markets")
+      .from("orderbook_markets_view")
       .select("*")
       .order("total_volume", { ascending: false });
 

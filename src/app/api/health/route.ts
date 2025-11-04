@@ -145,7 +145,7 @@ async function checkDatabase(): Promise<HealthCheckResult> {
   try {
     // Simple query to test database connectivity
     const { data, error } = await supabaseAdmin
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select('id')
       .limit(1);
 

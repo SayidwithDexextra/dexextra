@@ -10,7 +10,7 @@ function isBytes32(value: string): boolean {
 }
 
 async function resolveMarketId(input: string): Promise<string> {
-  const tryResolve = async (table: 'orderbook_markets_resolved' | 'orderbook_markets'): Promise<string | null> => {
+  const tryResolve = async (table: 'orderbook_markets_resolved' | 'orderbook_markets_view'): Promise<string | null> => {
     // By address
     if (isHexAddress(input)) {
       const byAddr = await supabaseAdmin
@@ -52,7 +52,7 @@ async function resolveMarketId(input: string): Promise<string> {
 
   const fromResolved = await tryResolve('orderbook_markets_resolved');
   if (fromResolved) return fromResolved;
-  const fromBase = await tryResolve('orderbook_markets');
+  const fromBase = await tryResolve('orderbook_markets_view');
   if (fromBase) return fromBase;
   return input;
 }

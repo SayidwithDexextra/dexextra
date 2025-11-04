@@ -16,9 +16,9 @@ export async function GET(
 
     console.log('🔍 Fetching orderbook market by metric_id:', metric_id);
 
-    // Query the orderbook_markets table  
+    // Query the unified view backed by markets  
     const { data: market, error } = await supabase
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select(`
         id,
         metric_id,
@@ -40,10 +40,6 @@ export async function GET(
         creation_fee,
         is_active,
         market_address,
-        factory_address,
-        central_vault_address,
-        order_router_address,
-        uma_oracle_manager_address,
         chain_id,
         deployment_transaction_hash,
         deployment_block_number,

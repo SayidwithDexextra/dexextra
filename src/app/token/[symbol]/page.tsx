@@ -20,6 +20,7 @@ import CryptoMarketTicker from '@/components/CryptoMarketTicker/CryptoMarketTick
 import { MarketDataProvider, useMarketData } from '@/contexts/MarketDataContext';
 // Removed contractDeployment import
 // Removed useVAMMSettlement hook
+import { MetricLivePrice } from '@/components';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -187,6 +188,31 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             />
           </div>
           <div className="w-80 flex flex-col gap-1 h-full">
+            <div className="flex-shrink-0">
+              {(() => {
+                const locator = ((md.market as any)?.market_config?.ai_source_locator) || null;
+                const url = locator?.url || locator?.primary_source_url || null;
+                const cssSel = locator?.css_selector || null;
+                const xpath = locator?.xpath || null;
+                const jsx = locator?.js_extractor || null;
+                const htmlSnippet = locator?.html_snippet || null;
+                return (
+                  <MetricLivePrice
+                    value={Number(markPrice || currentPrice || 0)}
+                    prefix="$"
+                    isLive={Boolean(((md.market as any)?.market_status === 'ACTIVE') && Number(markPrice || currentPrice) > 0)}
+                    className="w-full"
+                    marketIdentifier={symbol}
+                    url={url || undefined}
+                    cssSelector={cssSel || undefined}
+                    xpath={xpath || undefined}
+                    jsExtractor={jsx || undefined}
+                    htmlSnippet={htmlSnippet || undefined}
+                    pollIntervalMs={10000}
+                  />
+                );
+              })()}
+            </div>
             <div className="flex-shrink-0 max-h-80 overflow-hidden">
               <TokenHeader symbol={symbol} />
             </div>

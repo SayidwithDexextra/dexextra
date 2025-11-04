@@ -12,6 +12,13 @@ interface MarketAIAssistantProps {
     metricUrl: string;
     dataSource: string;
     startPrice: string;
+    sourceLocator?: {
+      url: string;
+      css_selector?: string;
+      xpath?: string;
+      html_snippet?: string;
+      js_extractor?: string;
+    };
   }) => void;
   onRequireInputs?: () => void;
 }
@@ -123,7 +130,11 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
               url: source.url,
               screenshot_url: source.screenshot_url || '',
               quote: source.quote,
-              match_score: source.match_score
+              match_score: source.match_score,
+              css_selector: source.css_selector,
+              xpath: source.xpath,
+              html_snippet: source.html_snippet,
+              js_extractor: source.js_extractor
             }))
           },
           performance: {
@@ -144,11 +155,19 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
           modalData
         }));
 
-        // Update form with the analyzed data
+        // Update form with the analyzed data and best source locator
+        const bestSource = metricData.sources[0];
         onMetricResolution({
-          metricUrl: state.urls[0],
-          dataSource: metricData.sources[0]?.url || 'AI Analysis',
-          startPrice: metricData.asset_price_suggestion || '1'
+          metricUrl: bestSource?.url || state.urls[0],
+          dataSource: bestSource?.url || 'AI Analysis',
+          startPrice: metricData.asset_price_suggestion || '1',
+          sourceLocator: bestSource ? {
+            url: bestSource.url,
+            css_selector: bestSource.css_selector,
+            xpath: bestSource.xpath,
+            html_snippet: bestSource.html_snippet,
+            js_extractor: bestSource.js_extractor
+          } : undefined
         });
 
       } else if (responseData.status === 'processing') {
@@ -205,7 +224,11 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
                 url: source.url,
                 screenshot_url: source.screenshot_url || '',
                 quote: source.quote,
-                match_score: source.match_score
+                match_score: source.match_score,
+                css_selector: source.css_selector,
+                xpath: source.xpath,
+                html_snippet: source.html_snippet,
+                js_extractor: source.js_extractor
               }))
             },
             performance: {
@@ -226,10 +249,18 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
             modalData
           }));
 
+          const bestSource = metricData.sources[0];
           onMetricResolution({
-            metricUrl: state.urls[0],
-            dataSource: metricData.sources[0]?.url || 'AI Analysis',
-            startPrice: metricData.asset_price_suggestion || '1'
+            metricUrl: bestSource?.url || state.urls[0],
+            dataSource: bestSource?.url || 'AI Analysis',
+            startPrice: metricData.asset_price_suggestion || '1',
+            sourceLocator: bestSource ? {
+              url: bestSource.url,
+              css_selector: bestSource.css_selector,
+              xpath: bestSource.xpath,
+              html_snippet: bestSource.html_snippet,
+              js_extractor: bestSource.js_extractor
+            } : undefined
           });
 
         } else if (data.status === 'failed') {
@@ -326,7 +357,7 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
               Analyzing...
             </span>
           ) : (
-            '🔍 Analyze Market Data'
+            '✅ Validate Metric'
           )}
         </button>
 

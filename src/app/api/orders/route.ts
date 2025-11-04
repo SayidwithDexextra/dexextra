@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
 
     // Check if market exists
     const { data: market, error: marketError } = await supabaseAdmin
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select('id, market_status, minimum_order_size, tick_size')
       .eq('metric_id', orderData.metricId)
       .single();
@@ -264,7 +264,7 @@ export async function GET(request: NextRequest) {
       .from('orders')
       .select(`
         *,
-        orderbook_markets!inner (
+        orderbook_markets_view!inner (
           metric_id,
           description,
           market_status
@@ -276,7 +276,7 @@ export async function GET(request: NextRequest) {
 
     // Add filters
     if (metricId) {
-      query = query.eq('orderbook_markets.metric_id', metricId);
+      query = query.eq('orderbook_markets_view.metric_id', metricId);
     }
     
     if (status) {
@@ -292,8 +292,8 @@ export async function GET(request: NextRequest) {
     // Format response
     const formattedOrders = orders?.map((order: any) => ({
       orderId: order.order_id,
-      metricId: order.orderbook_markets.metric_id,
-      marketDescription: order.orderbook_markets.description,
+      metricId: order.orderbook_markets_view.metric_id,
+      marketDescription: order.orderbook_markets_view.description,
       orderType: order.order_type,
       side: order.side,
       quantity: order.quantity,

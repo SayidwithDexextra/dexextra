@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     // 3. Match based on description containing the symbol
     
     const { data: markets, error } = await supabase
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select('metric_id, description, market_address')
       .eq('is_active', true)
       .or(`metric_id.eq.${symbol},metric_id.ilike.${symbol},description.ilike.%${symbol}%`)

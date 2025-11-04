@@ -2,7 +2,6 @@ import { MetricResolution, MetricInput } from './types';
 import { WebScrapingService } from './WebScrapingService';
 import { AIResolverService } from './AIResolverService';
 import { TextProcessingService } from './TextProcessingService';
-import { ScreenshotStorageService } from './ScreenshotStorageService';
 import { MetricOracleDatabase } from './MetricOracleDatabase';
 import { ScrapedSource, ProcessedChunk } from './types';
 import puppeteer, { Browser } from 'puppeteer';
@@ -28,7 +27,6 @@ interface ProcessingJob {
 export class PerformanceOptimizedMetricOracle {
   private aiResolver: AIResolverService;
   private textProcessor: TextProcessingService;
-  private screenshotStorage: ScreenshotStorageService;
   private database: MetricOracleDatabase;
   
   // Performance optimizations
@@ -41,7 +39,6 @@ export class PerformanceOptimizedMetricOracle {
   constructor() {
     this.aiResolver = new AIResolverService();
     this.textProcessor = new TextProcessingService();
-    this.screenshotStorage = new ScreenshotStorageService();
     this.database = new MetricOracleDatabase();
     
     // Pre-warm browser pool
@@ -95,6 +92,11 @@ export class PerformanceOptimizedMetricOracle {
       this.cacheResult(input, resolution);
 
       const totalTime = Date.now() - startTime;
+
+      // Store resolution in background (with processing time)
+      this.database
+        .storeResolution(input, resolution, { processingTimeMs: totalTime })
+        .catch(console.error);
       console.log(`🏁 FAST: Completed in ${totalTime}ms (${(totalTime/1000).toFixed(2)}s)`);
       
       return resolution;
@@ -202,47 +204,103 @@ export class PerformanceOptimizedMetricOracle {
                   for (const selector of contentSelectors) {
                     const element = document.querySelector(selector);
                     if (element) {
-                      textContent = element.innerText || element.textContent || '';
+                      textContent = (element as HTMLElement).innerText || element.textContent || '';
                       if (textContent.trim()) break;
                     }
                   }
                 }
-                
+                // Attempt to locate likely price/metric elements
+                const numberLike = /([$€£¥]?\s?\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?%?)/;
+                const keywordLike = /(price|value|quote|last|live|current|spot|index|rate)/i;
+
+                function getXPath(el: Element): string {
+                  const idx = (sib: Element, name: string) => Array.from(sib.parentNode ? sib.parentNode.children : []).filter(n => n.nodeName === name).indexOf(sib) + 1;
+                  const segs = [] as string[];
+                  for (let e: Element | null = el; e && e.nodeType === 1; e = e.parentElement) {
+                    let s = e.nodeName.toLowerCase();
+                    if (e.id) { segs.unshift(s + '[@id="' + e.id + '"]'); break; }
+                    const i = idx(e, e.nodeName);
+                    segs.unshift(s + '[' + i + ']');
+                  }
+                  return '//' + segs.join('/');
+                }
+
+                function getCssSelector(el: Element): string {
+                  if (el.id) return `#${el.id}`;
+                  const parts: string[] = [];
+                  let e: Element | null = el;
+                  while (e && e.nodeType === 1 && parts.length < 6) {
+                    let part = e.nodeName.toLowerCase();
+                    if (e.className && typeof e.className === 'string') {
+                      const cls = e.className.trim().split(/\s+/).slice(0,2).join('.');
+                      if (cls) part += '.' + cls;
+                    }
+                    const siblings = e.parentElement ? Array.from(e.parentElement.children).filter(x => x.nodeName === e!.nodeName) : [];
+                    if (siblings.length > 1) {
+                      const index = siblings.indexOf(e) + 1;
+                      part += `:nth-of-type(${index})`;
+                    }
+                    parts.unshift(part);
+                    e = e.parentElement;
+                  }
+                  return parts.join(' > ');
+                }
+
+                const candidates: Array<{ selector: string; xpath: string; text: string; html_snippet: string; id?: string; className?: string; dataAttrs?: Record<string,string>; }> = [];
+                const priceHints = Array.from(document.querySelectorAll('[id*="price" i], [class*="price" i], [data-], [class*="quote" i], [id*="quote" i]')) as Element[];
+                const textNodes = priceHints.length ? priceHints : Array.from(document.querySelectorAll('span, div, p, h1, h2, h3'));
+                textNodes.slice(0, 500).forEach(el => {
+                  const text = (el.textContent || '').trim();
+                  if (!text) return;
+                  if (!numberLike.test(text) && !keywordLike.test(text)) return;
+                  const selector = getCssSelector(el);
+                  const xpath = getXPath(el);
+                  const html = (el as HTMLElement).outerHTML || '';
+                  const snippet = html.length > 2000 ? html.slice(0, 2000) : html;
+                  const dataAttrs: Record<string,string> = {};
+                  Array.from(el.attributes).forEach(attr => {
+                    if (attr.name.startsWith('data-')) dataAttrs[attr.name] = attr.value;
+                  });
+                  candidates.push({ selector, xpath, text, html_snippet: snippet, id: (el as HTMLElement).id, className: (el as HTMLElement).className, dataAttrs });
+                });
+
+                const raw = document.documentElement ? (document.documentElement.outerHTML || '') : '';
+                const rawExcerpt = raw.length > 20000 ? raw.slice(0, 20000) : raw;
+
                 return {
                   title: document.title || 'No title',
                   content: textContent.trim(),
                   contentLength: textContent.trim().length,
-                  url: window.location.href
+                  url: window.location.href,
+                  candidates,
+                  raw_html_excerpt: rawExcerpt
                 };
               } catch (error) {
+                const msg = (error && (error as any).message) ? (error as any).message : String(error);
                 return {
                   title: 'Extraction failed',
-                  content: 'Failed to extract content: ' + error.message,
+                  content: 'Failed to extract content: ' + msg,
                   contentLength: 0,
-                  url: window.location.href
+                  url: window.location.href,
+                  candidates: [],
+                  raw_html_excerpt: ''
                 };
               }
             });
 
-            // Take screenshot before closing page
-            let screenshot_url: string | undefined;
-            try {
-              screenshot_url = await this.fastScreenshot(page, url, metricName);
-            } catch (screenshotError) {
-              console.error(`⚠️ Screenshot failed for ${url}:`, screenshotError);
-            }
-            
+            // Close page
             await page.close();
-            
-            // Cache the result
-            this.cacheContent(url, content.title, content.content, screenshot_url);
+            // Cache the result (no screenshot)
+            this.cacheContent(url, content.title, content.content, undefined);
             
             return {
               url,
               title: content.title,
               content: content.content,
-              screenshot_url,
-              timestamp: new Date()
+              
+              timestamp: new Date(),
+              candidates: content.candidates || [],
+              raw_html_excerpt: content.raw_html_excerpt || ''
             } as ScrapedSource;
             
           } finally {
@@ -308,8 +366,9 @@ export class PerformanceOptimizedMetricOracle {
                 text: chunkText,
                 source_url: source.url,
                 relevance_score: relevanceScore,
-                position: i
-              });
+                position: i,
+                context: ''
+              } as any);
             }
           }
         }
@@ -317,7 +376,7 @@ export class PerformanceOptimizedMetricOracle {
         return fastChunks;
         
       } catch (error) {
-        console.error(`⚠️ FAST: Content processing failed for ${source.url}:`, error);
+        console.error(`⚠️ FAST: Content processing failed for ${source.url}:`, error instanceof Error ? error.message : String(error));
         return [];
       }
     });
@@ -411,7 +470,7 @@ export class PerformanceOptimizedMetricOracle {
       
       if (dbResults.length > 0) {
         const cached = dbResults[0];
-        return JSON.parse(cached.resolution_data as string) as MetricResolution;
+        return (cached as any).resolution_data as MetricResolution;
       }
       
     } catch (error) {
@@ -481,42 +540,6 @@ export class PerformanceOptimizedMetricOracle {
     score += numberMatches * 0.2;
     
     return Math.min(score, 1.0);
-  }
-
-  private async fastScreenshot(page: any, url: string, metricContext: string): Promise<string | undefined> {
-    try {
-      // Wait for page to be fully loaded before screenshot
-      await page.waitForFunction(() => document.readyState === 'complete');
-      
-      // Additional wait for dynamic content and JavaScript
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const timestamp = Date.now();
-      const hash = Buffer.from(url).toString('base64').substring(0, 10);
-      const filename = `fast_${timestamp}_${hash}.png`;
-      
-      // Take screenshot with error handling
-      await page.screenshot({
-        path: `/tmp/${filename}`,
-        type: 'png',
-        clip: { x: 0, y: 0, width: 1200, height: 800 },
-        timeout: 10000 // 10s timeout for screenshot
-      });
-      
-      // Background upload (don't await)
-      this.screenshotStorage.uploadScreenshot(`/tmp/${filename}`, `fast/${filename}`)
-        .then(url => {
-          console.log(`📸 Screenshot uploaded: ${url}`);
-          return url;
-        })
-        .catch(error => console.error('Background upload failed:', error));
-      
-      return `fast/${filename}`;
-      
-    } catch (error) {
-      console.error('❌ Fast screenshot failed:', error);
-      return undefined;
-    }
   }
 
   private async prepareAIContext(metric: string): Promise<any> {

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
+import path from 'path';
 import {
   OBAdminFacetABI,
   OBPricingFacetABI,
@@ -10,17 +11,63 @@ import {
   OBSettlementFacetABI,
 } from '@/lib/contracts';
 
+function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
+  try {
+    console.log(JSON.stringify({
+      area: 'market_creation',
+      context: 'orderbook_cut',
+      step,
+      status,
+      timestamp: new Date().toISOString(),
+      ...((data && typeof data === 'object') ? data : {})
+    }));
+  } catch {}
+}
+
 function selectorsFromAbi(abi: any[]): string[] {
-  return abi
-    .filter((f) => f?.type === 'function')
-    .map((f) => {
-      const sig = `${f.name}(${(f.inputs || []).map((i: any) => i.type).join(',')})`;
-      return ethers.id(sig).slice(0, 10);
-    });
+  try {
+    // Support string-based ABIs and JSON ABI fragments uniformly via ethers.Interface
+    const iface = new ethers.Interface(abi as any);
+    return (iface.fragments as any[])
+      .filter((frag) => frag?.type === 'function')
+      .map((frag) => ethers.id((frag as any).format('sighash')).slice(0, 10));
+  } catch (e: any) {
+    // Fallback to previous best-effort (may return empty if abi items are strings)
+    try {
+      return (abi || [])
+        .filter((f: any) => f && typeof f === 'object' && f.type === 'function')
+        .map((f: any) => {
+          const sig = `${f.name}(${(f.inputs || []).map((i: any) => i.type).join(',')})`;
+          return ethers.id(sig).slice(0, 10);
+        });
+    } catch {
+      return [];
+    }
+  }
+}
+
+function loadFacetAbi(contractName: string, fallbackAbi: any[]): any[] {
+  try {
+    const artifactPath = path.join(
+      process.cwd(),
+      'Dexetrav5',
+      'artifacts',
+      'src',
+      'diamond',
+      'facets',
+      `${contractName}.sol`,
+      `${contractName}.json`
+    );
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const artifact = require(artifactPath);
+    if (artifact && Array.isArray(artifact.abi)) return artifact.abi;
+  } catch {}
+  return fallbackAbi;
 }
 
 export async function GET() {
   try {
+    logStep('build_cut', 'start');
     const initFacet =
       process.env.ORDER_BOOK_INIT_FACET || process.env.NEXT_PUBLIC_ORDER_BOOK_INIT_FACET;
 
@@ -35,21 +82,76 @@ export async function GET() {
     const settleFacet = process.env.OB_SETTLEMENT_FACET || process.env.NEXT_PUBLIC_OB_SETTLEMENT_FACET;
 
     if (!initFacet || !adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet) {
+      logStep('validate_env', 'error', {
+        missing: {
+          initFacet: !initFacet,
+          adminFacet: !adminFacet,
+          pricingFacet: !pricingFacet,
+          placementFacet: !placementFacet,
+          execFacet: !execFacet,
+          liqFacet: !liqFacet,
+          viewFacet: !viewFacet,
+          settleFacet: !settleFacet,
+        }
+      });
       return NextResponse.json({ error: 'Missing one or more facet addresses in env' }, { status: 400 });
     }
+    logStep('validate_env', 'success');
+
+    // Load ABIs from artifacts when available to avoid selector drift/duplication
+    const adminAbi = loadFacetAbi('OBAdminFacet', OBAdminFacetABI as any[]);
+    const pricingAbi = loadFacetAbi('OBPricingFacet', OBPricingFacetABI as any[]);
+    const placementAbi = loadFacetAbi('OBOrderPlacementFacet', OBOrderPlacementFacetABI as any[]);
+    const execAbi = loadFacetAbi('OBTradeExecutionFacet', OBTradeExecutionFacetABI as any[]);
+    const liqAbi = loadFacetAbi('OBLiquidationFacet', OBLiquidationFacetABI as any[]);
+    const viewAbi = loadFacetAbi('OBViewFacet', OBViewFacetABI as any[]);
+    const settleAbi = loadFacetAbi('OBSettlementFacet', OBSettlementFacetABI as any[]);
 
     const cut = [
-      { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(OBAdminFacetABI as any[]) },
-      { facetAddress: pricingFacet, action: 0, functionSelectors: selectorsFromAbi(OBPricingFacetABI as any[]) },
-      { facetAddress: placementFacet, action: 0, functionSelectors: selectorsFromAbi(OBOrderPlacementFacetABI as any[]) },
-      { facetAddress: execFacet, action: 0, functionSelectors: selectorsFromAbi(OBTradeExecutionFacetABI as any[]) },
-      { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(OBLiquidationFacetABI as any[]) },
-      { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(OBViewFacetABI as any[]) },
-      { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(OBSettlementFacetABI as any[]) },
+      { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(adminAbi) },
+      { facetAddress: pricingFacet, action: 0, functionSelectors: selectorsFromAbi(pricingAbi) },
+      { facetAddress: placementFacet, action: 0, functionSelectors: selectorsFromAbi(placementAbi) },
+      { facetAddress: execFacet, action: 0, functionSelectors: selectorsFromAbi(execAbi) },
+      { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(liqAbi) },
+      { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(viewAbi) },
+      { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(settleAbi) },
     ];
 
-    return NextResponse.json({ cut, initFacet });
+    // Fail fast if any facet has zero selectors to avoid creating an unusable Diamond
+    const emptyFacets = cut
+      .filter((c) => !Array.isArray(c.functionSelectors) || c.functionSelectors.length === 0)
+      .map((c) => c.facetAddress);
+    if (emptyFacets.length > 0) {
+      logStep('build_cut', 'error', { reason: 'empty_selectors', emptyFacets });
+      return NextResponse.json({ error: 'Facet selectors could not be built', emptyFacets }, { status: 500 });
+    }
+
+    // Detect cross-facet duplicate selectors which would revert with "LibDiamond: Selector exists"
+    const selectorToFacets: Record<string, string[]> = {};
+    for (const entry of cut) {
+      for (const sel of entry.functionSelectors) {
+        selectorToFacets[sel] = selectorToFacets[sel] || [];
+        selectorToFacets[sel].push(entry.facetAddress);
+      }
+    }
+    const duplicates = Object.entries(selectorToFacets)
+      .filter(([, arr]) => arr.length > 1)
+      .map(([sel, arr]) => ({ selector: sel, facets: arr }));
+    if (duplicates.length > 0) {
+      logStep('build_cut', 'error', { reason: 'duplicate_selectors', duplicatesCount: duplicates.length, duplicates });
+      return NextResponse.json({ error: 'Duplicate selectors across facets', duplicates }, { status: 500 });
+    }
+
+    const perFacet = cut.map((c) => ({ facetAddress: c.facetAddress, selectors: c.functionSelectors.length }));
+    const totalSelectors = cut.reduce((sum, c) => sum + (c.functionSelectors?.length || 0), 0);
+    logStep('build_cut', 'success', { perFacet, totalSelectors });
+
+    logStep('respond', 'start');
+    const resp = NextResponse.json({ cut, initFacet });
+    logStep('respond', 'success');
+    return resp;
   } catch (e: any) {
+    logStep('build_cut', 'error', { error: e?.message || String(e) });
     return NextResponse.json({ error: e?.message || 'Failed to build facet cut' }, { status: 500 });
   }
 }

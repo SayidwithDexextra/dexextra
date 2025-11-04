@@ -18,12 +18,12 @@ export async function GET(request: NextRequest) {
 
     console.log(`🔍 TradingView search: "${query}" (limit: ${limit})`);
 
-    // Build Supabase query for active orderbook markets
+    // Build Supabase query for active orderbook markets (unified view)
     let supabaseQuery = supabase
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select('metric_id, description, category, market_address, central_vault_address, last_trade_price, created_at')
       .eq('is_active', true)
-      .eq('deployment_status', 'deployed')
+      .eq('deployment_status', 'DEPLOYED')
       .not('market_address', 'is', null);
 
     // Add search filter if query provided

@@ -25,29 +25,42 @@ async function main() {
 
   const supabase = createClient(supabaseUrl, supabaseKey);
 
-  // Fetch current markets to report changes
+  // Fetch current markets to report changes (unified markets table)
   const { data: markets, error: fetchErr } = await supabase
-    .from("orderbook_markets")
-    .select("id, metric_id, order_router_address");
+    .from("markets")
+    .select("id, market_identifier, market_config");
   if (fetchErr) throw fetchErr;
 
   console.log("Found markets:", markets?.length || 0);
   for (const m of markets || []) {
-    if (m.order_router_address?.toLowerCase() === newRouter.toLowerCase()) {
-      console.log(
-        `- ${m.metric_id}: already up-to-date (${m.order_router_address})`
-      );
+    const current =
+      (m.market_config && m.market_config.order_router_address) || null;
+    if (
+      current?.toLowerCase &&
+      current.toLowerCase() === newRouter.toLowerCase()
+    ) {
+      console.log(`- ${m.market_identifier}: already up-to-date (${current})`);
       continue;
     }
     const { error: updErr } = await supabase
-      .from("orderbook_markets")
-      .update({ order_router_address: newRouter })
+      .from("markets")
+      .update({
+        market_config: {
+          ...(m.market_config || {}),
+          order_router_address: newRouter,
+        },
+      })
       .eq("id", m.id);
     if (updErr) {
-      console.error(`❌ Failed updating ${m.metric_id}:`, updErr.message);
+      console.error(
+        `❌ Failed updating ${m.market_identifier}:`,
+        updErr.message
+      );
     } else {
       console.log(
-        `✅ Updated ${m.metric_id}: ${m.order_router_address} -> ${newRouter}`
+        `✅ Updated ${m.market_identifier}: ${
+          current || "[none]"
+        } -> ${newRouter}`
       );
     }
   }
@@ -59,8 +72,3 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-
-
-
-
-

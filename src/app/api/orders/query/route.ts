@@ -20,7 +20,7 @@ function isBytes32(value: string): boolean {
   return /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
-async function resolveMarketIdFrom(table: 'orderbook_markets_resolved' | 'orderbook_markets', input: string): Promise<string | null> {
+async function resolveMarketIdFrom(table: 'orderbook_markets_resolved' | 'orderbook_markets_view', input: string): Promise<string | null> {
   // Address -> metric_id
   if (isHexAddress(input)) {
     const byAddr = await supabaseAdmin
@@ -64,7 +64,7 @@ async function resolveMarketIdDynamic(input: string): Promise<string> {
   // Prefer resolved view, then base table
   const fromResolved = await resolveMarketIdFrom('orderbook_markets_resolved', input);
   if (fromResolved) return fromResolved;
-  const fromBase = await resolveMarketIdFrom('orderbook_markets', input);
+  const fromBase = await resolveMarketIdFrom('orderbook_markets_view', input);
   if (fromBase) return fromBase;
   return input; // fallback
 }

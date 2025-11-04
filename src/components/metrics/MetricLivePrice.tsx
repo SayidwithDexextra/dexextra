@@ -1,0 +1,154 @@
+'use client';
+
+import React from 'react';
+import { useMetricLivePrice } from '../../hooks/useMetricLivePrice';
+import { getSupabaseClient } from '../../lib/supabase-browser';
+
+export interface MetricLivePriceProps {
+  marketId?: string;
+  token?: string;
+  marketIdentifier?: string; // legacy prop alias for token
+  className?: string;
+  label?: string;            // legacy UI label
+  prefix?: string;           // display prefix, e.g. '$'
+  suffix?: string;           // display suffix
+  isLive?: boolean;          // legacy flag for UI badge
+  compact?: boolean;         // compact spacing
+  value?: number | string;   // initial fallback value to display
+}
+
+export function MetricLivePrice(props: MetricLivePriceProps) {
+  const {
+    marketId,
+    token,
+    marketIdentifier,
+    className = '',
+    label = 'Metric Value',
+    prefix = '',
+    suffix = '',
+    isLive = true,
+    compact = true,
+    value: initialValue,
+  } = props;
+
+  const supabase = getSupabaseClient();
+  const [resolvedId, setResolvedId] = React.useState<string | null>(marketId || null);
+  const [sourceUrl, setSourceUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const resolve = async () => {
+      if (marketId) { setResolvedId(marketId); return; }
+      const t = token || marketIdentifier;
+      if (!t) { setResolvedId(null); return; }
+      try {
+        console.log('[MetricLivePrice] resolving marketId from token', t);
+        const { data, error } = await supabase
+          .from('markets')
+          .select('id')
+          .or(`market_identifier.eq.${t},symbol.eq.${t}`)
+          .maybeSingle();
+        if (!cancelled) {
+          if (error) {
+            console.log('[MetricLivePrice] resolve error', error.message);
+            setResolvedId(null);
+          } else {
+            console.log('[MetricLivePrice] resolved id', data?.id);
+            setResolvedId(data?.id ?? null);
+          }
+        }
+      } catch {
+        if (!cancelled) setResolvedId(null);
+      }
+    };
+    resolve();
+    return () => { cancelled = true; };
+  }, [supabase, marketId, token, marketIdentifier]);
+
+  const { value: liveValue, updatedAt, isLoading, error } = useMetricLivePrice(resolvedId || '');
+
+  const displayValue = React.useMemo(() => {
+    const v = liveValue as any;
+    const n = typeof v === 'number' ? v : (v != null ? Number(v) : NaN);
+    if (Number.isFinite(n)) return n;
+    return null;
+  }, [liveValue]);
+
+  const formattedValue = React.useMemo(() => {
+    if (displayValue == null) return '—';
+    const abs = Math.abs(displayValue);
+    const decimals = abs >= 100 ? 2 : abs >= 1 ? 3 : 6;
+    return `${displayValue.toFixed(decimals)}`;
+  }, [displayValue]);
+
+  const valueText = React.useMemo(() => {
+    return formattedValue === '—' ? '—' : `${prefix}${formattedValue}${suffix}`;
+  }, [formattedValue, prefix, suffix]);
+
+  // Load locator URL for fallback display when no live value yet
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!resolvedId) { setSourceUrl(null); return; }
+      try {
+        const { data, error } = await supabase
+          .from('markets')
+          .select('market_config')
+          .eq('id', resolvedId)
+          .maybeSingle();
+        if (cancelled) return;
+        if (error) { setSourceUrl(null); return; }
+        const loc = (data as any)?.market_config?.ai_source_locator || null;
+        const url = loc?.url || loc?.primary_source_url || null;
+        setSourceUrl(url || null);
+      } catch { setSourceUrl(null); }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [supabase, resolvedId]);
+
+  if (error) return <div className={className}>Error</div>;
+
+  return (
+    <div
+      className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 ${className}`}
+      title={updatedAt || undefined}
+    >
+      <div className={`flex items-center justify-between ${compact ? 'p-2' : 'p-2.5'}`}>
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isLoading ? 'bg-blue-400 animate-pulse' : (isLive ? 'bg-green-400' : 'bg-[#404040]')}`} />
+          <span className="text-[11px] font-medium text-[#808080] leading-none">{label}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {displayValue != null ? (
+            <span className="text-[10px] text-white font-mono leading-none">{valueText}</span>
+          ) : (
+            <span className="text-[9px] text-[#8a8a8a] leading-none truncate max-w-[180px]">
+              {sourceUrl ? (
+                <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                  {(() => { try { const u = new URL(sourceUrl); return u.hostname; } catch { return sourceUrl.length > 48 ? sourceUrl.slice(0,48) + '…' : sourceUrl; } })()}
+                </a>
+              ) : '—'}
+            </span>
+          )}
+          {isLoading && (
+            <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+              <div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+        <div className={`${compact ? 'px-2' : 'px-2.5'} pb-2 border-t border-[#1A1A1A]`}>
+          <div className="text-[9px] pt-1.5">
+            <span className="text-[#606060]">{updatedAt ? `Updated ${new Date(updatedAt).toLocaleString()}` : 'No update yet'}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default MetricLivePrice;
+
+

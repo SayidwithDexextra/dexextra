@@ -11,13 +11,19 @@ export interface MarketFormData {
   tags: string[];
   marginBps: number;
   feeBps: number;
-  treasury: string;
   disableLeverage: boolean;
   metric: string;
   metricDescription: string;
   iconImageFile?: File | null;
   iconImagePreview?: string;
   iconUrl?: string;
+  sourceLocator?: {
+    url: string;
+    css_selector?: string;
+    xpath?: string;
+    html_snippet?: string;
+    js_extractor?: string;
+  };
 }
 
 const DEFAULT_MARGIN_BPS = 10000; // 100%
@@ -32,13 +38,13 @@ export const useCreateMarketForm = () => {
     tags: [],
     marginBps: DEFAULT_MARGIN_BPS,
     feeBps: DEFAULT_FEE_BPS,
-    treasury: '',
     disableLeverage: true,
     metric: '',
     metricDescription: '',
     iconImageFile: null,
     iconImagePreview: '',
     iconUrl: '',
+    sourceLocator: undefined,
   });
 
   const [tagInput, setTagInput] = useState('');
@@ -73,9 +79,6 @@ export const useCreateMarketForm = () => {
       throw new Error('Valid start price is required');
     }
     if (!formData.dataSource) throw new Error('Data source is required (use AI assistant)');
-    if (!ethers.isAddress(formData.treasury)) {
-      throw new Error('Valid treasury address is required');
-    }
   };
 
   return {

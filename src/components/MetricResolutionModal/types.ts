@@ -16,6 +16,10 @@ export interface MetricResolution {
     screenshot_url: string;
     quote: string;
     match_score: number;
+    css_selector?: string;
+    xpath?: string;
+    html_snippet?: string;
+    js_extractor?: string;
   }>;
 }
 

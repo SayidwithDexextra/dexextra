@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { ethers } from 'ethers';
-import { CreateMarketForm } from './CreateMarketForm';
+import dynamic from 'next/dynamic';
+const CreateMarketFormClient = dynamic(() => import('./CreateMarketForm').then(m => m.CreateMarketForm), { ssr: false });
 import type { MarketFormData } from '@/hooks/useCreateMarketForm';
 import { useRouter } from 'next/navigation';
 import { DeploymentProgressPanel, type ProgressStep, type StepStatus } from './DeploymentProgressPanel';
+import { OBAdminFacetABI } from '@/lib/contracts';
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -77,7 +79,7 @@ export const CreateMarketPage = () => {
       const startPrice6 = ethers.parseUnits(String(marketData.startPrice || '1'), 6);
       const dataSource = marketData.dataSource || 'User Provided';
       const tags = marketData.tags || [];
-      const treasury = marketData.treasury;
+      const sourceLocator = (marketData as any).sourceLocator || null;
 
       // 5) Create market
       markActive('tx');
@@ -133,6 +135,18 @@ export const CreateMarketPage = () => {
           const err = await resp.json().catch(() => ({} as any));
           throw new Error(err?.error || 'Admin role grant failed');
         }
+
+        // Configure trading parameters and set fee recipient to creator wallet
+        try {
+          const obAdmin = new ethers.Contract(orderBook, OBAdminFacetABI, signer);
+          // Use default parameters; advanced settings are not user-configurable
+          await obAdmin.updateTradingParameters(
+            10000, // marginBps default
+            0,     // feeBps default
+            await signer.getAddress()
+          );
+          try { await obAdmin.disableLeverage(); } catch {}
+        } catch {}
         markDone('roles');
       }
 
@@ -157,6 +171,7 @@ export const CreateMarketPage = () => {
             autoSettle: true,
             oracleProvider: null,
             initialOrder: { metricUrl, startPrice: String(marketData.startPrice), dataSource, tags },
+            aiSourceLocator: sourceLocator,
             chainId: Number(network.chainId),
             networkName: String(process.env.NEXT_PUBLIC_NETWORK_NAME || ''),
             creatorWalletAddress: await signer.getAddress(),
@@ -207,8 +222,8 @@ export const CreateMarketPage = () => {
               <div className="h-px bg-gradient-to-r from-blue-500/40 via-transparent to-transparent" />
             </div>
 
-            {/* Form */}
-            <CreateMarketForm onSubmit={handleCreateMarket} isLoading={isLoading} />
+            {/* Form (client-only to avoid hydration mismatches from extensions/dynamic attrs) */}
+            <CreateMarketFormClient onSubmit={handleCreateMarket} isLoading={isLoading} />
           </>
         )}
 

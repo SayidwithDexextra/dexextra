@@ -150,7 +150,7 @@ async function checkDatabaseTables() {
   console.log("\n🔍 CHECKING DATABASE TABLES:");
 
   const tables = [
-    "orderbook_markets",
+    "orderbook_markets_view",
     "market_orders",
     "market_positions",
     "off_chain_orders",
@@ -178,7 +178,7 @@ async function checkDatabaseTables() {
 async function getActiveMarkets() {
   try {
     const { data: markets, error } = await supabase
-      .from("orderbook_markets")
+      .from("orderbook_markets_view")
       .select(
         `
         id,
@@ -519,7 +519,7 @@ async function analyzeBlockchainOrders() {
     const existingTables = await checkDatabaseTables();
 
     // Step 2: Get markets from database if available
-    const markets = existingTables.includes("orderbook_markets")
+    const markets = existingTables.includes("orderbook_markets_view")
       ? await getActiveMarkets()
       : [];
     console.log(`\n📊 Found ${markets.length} markets in database`);

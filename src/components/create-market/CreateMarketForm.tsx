@@ -23,12 +23,12 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
     setFormData
   } = useCreateMarketForm();
 
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
-  const [highlightMetric, setHighlightMetric] = useState(false);
+  const [highlightName, setHighlightName] = useState(false);
   const [highlightDescription, setHighlightDescription] = useState(false);
   const assistantRef = useRef<MarketAIAssistantHandle | null>(null);
   const [autoSubmitOnResolution, setAutoSubmitOnResolution] = useState(false);
+  const [highlightStartPrice, setHighlightStartPrice] = useState(false);
 
   const handleIconPick = () => iconInputRef.current?.click();
   const handleIconChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -45,13 +45,13 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
 
   const handleRequireInputs = () => {
     // restart animation reliably by toggling off → on on the next frame
-    setHighlightMetric(false);
+    setHighlightName(false);
     setHighlightDescription(false);
     requestAnimationFrame(() => {
-      setHighlightMetric(true);
+      setHighlightName(true);
       setHighlightDescription(true);
       setTimeout(() => {
-        setHighlightMetric(false);
+        setHighlightName(false);
         setHighlightDescription(false);
       }, 1200);
     });
@@ -76,14 +76,22 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
     }
   };
 
-  const handleMetricResolution = (data: { metricUrl: string; dataSource: string; startPrice: string }) => {
+  const handleMetricResolution = (data: { metricUrl: string; dataSource: string; startPrice: string; sourceLocator?: { url: string; css_selector?: string; xpath?: string; html_snippet?: string; js_extractor?: string; } }) => {
     const updated = {
       ...formData,
       metricUrl: data.metricUrl,
       dataSource: data.dataSource,
-      startPrice: data.startPrice
+      startPrice: data.startPrice,
+      sourceLocator: data.sourceLocator
     };
     setFormData(updated);
+
+    // Highlight the start price when it becomes available
+    setHighlightStartPrice(false);
+    requestAnimationFrame(() => {
+      setHighlightStartPrice(true);
+      setTimeout(() => setHighlightStartPrice(false), 1400);
+    });
 
     if (autoSubmitOnResolution) {
       setAutoSubmitOnResolution(false);
@@ -114,65 +122,26 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
         {/* Main Form Container */}
         <div className="bg-[#0F0F0F] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
           <div className="p-4 space-y-4">
-            {/* Symbol, Start Price, Treasury Row */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="flex-1">
-                <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                  Market Symbol
-                </label>
-                <input
-                  type="text"
-                  name="symbol"
-                  value={formData.symbol}
-                  onChange={handleInputChange}
-                  placeholder="e.g. ALU-USD"
-                  className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                  Start Price (USD)
-                </label>
-                <input
-                  type="text"
-                  name="startPrice"
-                  value={formData.startPrice}
-                  onChange={handleInputChange}
-                  placeholder="1.00"
-                  className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
-                />
-              </div>
-              <div className="flex-1">
-                <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                  Treasury Address
-                </label>
-                <input
-                  type="text"
-                  name="treasury"
-                  value={formData.treasury}
-                  onChange={handleInputChange}
-                  placeholder="0x..."
-                  className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Metric and Description for AI */}
+            {/* Name & Description */}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex-1">
                 <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                  Metric to Resolve
+                  Name
                 </label>
                 <div className="relative">
                   <input
                     type="text"
-                    name="metric"
-                    value={formData.metric}
-                    onChange={handleInputChange}
-                    placeholder="e.g. Aluminum spot price (USD/ton)"
-                    className={`w-full bg-[#1A1A1A] border ${highlightMetric ? 'border-red-500 ring-2 ring-red-500' : 'border-[#222222]'} rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors`}
+                    name="symbol"
+                    value={formData.symbol}
+                    onChange={(e) => {
+                      handleInputChange(e);
+                      const value = e.target.value;
+                      setFormData(prev => ({ ...prev, metric: value }));
+                    }}
+                    placeholder="e.g. ALU-USD"
+                    className={`w-full bg-[#1A1A1A] border ${highlightName ? 'border-red-500 ring-2 ring-red-500' : 'border-[#222222]'} rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors`}
                   />
-                  {highlightMetric && (
+                  {highlightName && (
                     <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-3 w-3">
                       <span className="absolute inline-flex h-full w-full rounded-full bg-red-500/70 animate-[ping_0.6s_ease-out_2]"></span>
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
@@ -182,7 +151,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
               </div>
               <div className="flex-1">
                 <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                  Description/Context
+                  Description
                 </label>
                 <div className="relative">
                   <input
@@ -206,11 +175,11 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
             {/* AI Assistant for Metric URL */}
             <div>
               <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                Market Data Source
+                AI Market Assistant
               </label>
               <MarketAIAssistant
                 ref={assistantRef}
-                metric={formData.metric}
+                metric={formData.symbol || formData.metric}
                 description={formData.metricDescription}
                 compact
                 onMetricResolution={handleMetricResolution}
@@ -220,160 +189,123 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
               <input type="hidden" name="metricUrl" value={formData.metricUrl} />
             </div>
 
-            {/* Data Source (inline) */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-center justify-between text-[11px] text-[#808080]">
-                <span className="truncate">Resolved Source</span>
-                <span className="text-white truncate max-w-[65%] text-right">{formData.dataSource || '—'}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-[#808080]">Market Icon</span>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {(formData.iconImagePreview || formData.iconUrl) ? (
-                    <img src={formData.iconImagePreview || formData.iconUrl} alt="Market Icon" className="w-6 h-6 rounded" />
-                  ) : (
-                    <div className="w-6 h-6 rounded bg-[#1A1A1A] border border-[#222222]" />
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleIconPick}
-                    className="px-2 py-1 bg-[#1A1A1A] border border-[#222222] rounded text-[11px] text-[#808080] hover:border-[#333333]"
-                  >
-                    Upload
-                  </button>
-                  {formData.iconImagePreview && (
-                    <button
-                      type="button"
-                      onClick={handleIconRemove}
-                      className="px-2 py-1 bg-transparent border border-[#222222] rounded text-[11px] text-[#808080] hover:text-red-400 hover:border-[#333333]"
-                    >
-                      Remove
-                    </button>
-                  )}
-                  <input
-                    type="url"
-                    name="iconUrl"
-                    value={formData.iconUrl || ''}
-                    onChange={handleInputChange}
-                    placeholder="Icon URL (https://...)"
-                    className="w-56 bg-[#1A1A1A] border border-[#222222] rounded px-2 py-1 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none"
-                  />
-                  <input
-                    ref={iconInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleIconChange}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Tags Section */}
-            <div>
-              <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                Market Tags
-              </label>
-              <div className="flex gap-2 flex-wrap mb-2">
-                {formData.tags.slice(0, 3).map(tag => (
-                  <div
-                    key={`tag-${tag}`}
-                    className="bg-[#1A1A1A] text-[10px] text-white px-2 py-0.5 rounded-full flex items-center gap-1.5"
-                  >
-                    <span>{tag}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleTagRemove(tag)}
-                      className="text-[#606060] hover:text-red-400 transition-colors"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-                {formData.tags.length > 3 && (
-                  <div className="text-[10px] text-[#808080] bg-[#1A1A1A] px-2 py-0.5 rounded-full">
-                    +{formData.tags.length - 3} more
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  placeholder="Add tag (press Enter)"
-                  onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleTagAdd())}
-                  className="flex-1 bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={handleTagAdd}
-                  className="px-3 py-2 bg-[#1A1A1A] border border-[#222222] rounded text-[11px] text-[#808080] hover:border-[#333333] transition-colors"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-            {/* Advanced Settings */}
-            <div className="pt-4 border-t border-[#1A1A1A]">
-              <div className="flex items-center justify-between mb-2">
-                <h5 className="text-[11px] font-medium text-[#808080]">
-                  Advanced Settings
-                </h5>
-                <button
-                  type="button"
-                  onClick={() => setIsAdvancedOpen(v => !v)}
-                  className="text-[11px] text-[#808080] hover:text-white"
-                >
-                  {isAdvancedOpen ? 'Hide' : 'Show'}
-                </button>
-              </div>
-              {isAdvancedOpen && (
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-[11px] text-[#808080] mb-2">
-                    Margin (bps)
-                  </label>
-                  <input
-                    type="number"
-                    name="marginBps"
-                    value={formData.marginBps}
-                    onChange={handleInputChange}
-                    className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white text-right"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[#808080] mb-2">
-                    Fee (bps)
-                  </label>
-                  <input
-                    type="number"
-                    name="feeBps"
-                    value={formData.feeBps}
-                    onChange={handleInputChange}
-                    className="w-full bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white text-right"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] text-[#808080] mb-2">
-                    Disable Leverage
-                  </label>
-                  <div className="flex h-[34px] items-center justify-end">
+            {/* Reveal-only fields after successful metric validation */}
+            {Boolean(formData.metricUrl && formData.dataSource) && (
+              <>
+                {/* Start Price and Resolved Source */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex-1">
+                    <label className="block text-[11px] font-medium text-[#808080] mb-2">
+                      Start Price (USD)
+                    </label>
                     <input
-                      type="checkbox"
-                      name="disableLeverage"
-                      checked={formData.disableLeverage}
-                      onChange={(e) => handleInputChange({
-                        ...e,
-                        target: { ...e.target, name: 'disableLeverage', value: e.target.checked }
-                      } as any)}
-                      className="w-4 h-4 bg-[#1A1A1A] border border-[#222222] rounded text-blue-400 focus:ring-0 focus:ring-offset-0"
+                      type="text"
+                      name="startPrice"
+                      value={formData.startPrice}
+                      onChange={handleInputChange}
+                      placeholder="1.00"
+                      className={`w-full bg-[#1A1A1A] border ${highlightStartPrice ? 'border-blue-400 ring-2 ring-blue-400/50' : 'border-[#222222]'} rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors`}
                     />
                   </div>
+                  <div className="flex items-center justify-between text-[11px] text-[#808080]">
+                    <span className="truncate">Resolved Source</span>
+                    <span className="text-white truncate max-w-[65%] text-right">{formData.dataSource || '—'}</span>
+                  </div>
                 </div>
-              </div>
-              )}
-            </div>
+
+                {/* Market Icon */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-[#808080]">Market Icon</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {(formData.iconImagePreview || formData.iconUrl) ? (
+                        <img src={formData.iconImagePreview || formData.iconUrl} alt="Market Icon" className="w-6 h-6 rounded" />
+                      ) : (
+                        <div className="w-6 h-6 rounded bg-[#1A1A1A] border border-[#222222]" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleIconPick}
+                        className="px-2 py-1 bg-[#1A1A1A] border border-[#222222] rounded text-[11px] text-[#808080] hover:border-[#333333]"
+                      >
+                        Upload
+                      </button>
+                      {formData.iconImagePreview && (
+                        <button
+                          type="button"
+                          onClick={handleIconRemove}
+                          className="px-2 py-1 bg-transparent border border-[#222222] rounded text-[11px] text-[#808080] hover:text-red-400 hover:border-[#333333]"
+                        >
+                          Remove
+                        </button>
+                      )}
+                      <input
+                        type="url"
+                        name="iconUrl"
+                        value={formData.iconUrl || ''}
+                        onChange={handleInputChange}
+                        placeholder="Icon URL (https://...)"
+                        className="w-56 bg-[#1A1A1A] border border-[#222222] rounded px-2 py-1 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none"
+                      />
+                      <input
+                        ref={iconInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleIconChange}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tags Section */}
+                <div>
+                  <label className="block text-[11px] font-medium text-[#808080] mb-2">
+                    Market Tags
+                  </label>
+                  <div className="flex gap-2 flex-wrap mb-2">
+                    {formData.tags.slice(0, 3).map(tag => (
+                      <div
+                        key={`tag-${tag}`}
+                        className="bg-[#1A1A1A] text-[10px] text-white px-2 py-0.5 rounded-full flex items-center gap-1.5"
+                      >
+                        <span>{tag}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleTagRemove(tag)}
+                          className="text-[#606060] hover:text-red-400 transition-colors"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                    {formData.tags.length > 3 && (
+                      <div className="text-[10px] text-[#808080] bg-[#1A1A1A] px-2 py-0.5 rounded-full">
+                        +{formData.tags.length - 3} more
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      placeholder="Add tag (press Enter)"
+                      onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), handleTagAdd())}
+                      className="flex-1 bg-[#1A1A1A] border border-[#222222] rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTagAdd}
+                      className="px-3 py-2 bg-[#1A1A1A] border border-[#222222] rounded text-[11px] text-[#808080] hover:border-[#333333] transition-colors"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+            
           </div>
         </div>
 

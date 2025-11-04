@@ -32,7 +32,7 @@ export async function GET(
       .from('orders')
       .select(`
         *,
-        orderbook_markets!inner (
+        orderbook_markets_view!inner (
           metric_id,
           description,
           market_status,
@@ -59,9 +59,9 @@ export async function GET(
     // Format response
     const formattedOrder = {
       orderId: order.order_id,
-      metricId: order.orderbook_markets.metric_id,
-      marketDescription: order.orderbook_markets.description,
-      marketStatus: order.orderbook_markets.market_status,
+      metricId: order.orderbook_markets_view.metric_id,
+      marketDescription: order.orderbook_markets_view.description,
+      marketStatus: order.orderbook_markets_view.market_status,
       orderType: order.order_type,
       side: order.side,
       quantity: order.quantity,
@@ -103,9 +103,9 @@ export async function GET(
 
       // Market context
       marketContext: {
-        lastTradePrice: order.orderbook_markets.last_trade_price,
-        priceImpact: order.price && order.orderbook_markets.last_trade_price 
-          ? ((parseFloat(order.price) - parseFloat(order.orderbook_markets.last_trade_price)) / parseFloat(order.orderbook_markets.last_trade_price) * 100).toFixed(4) + '%'
+        lastTradePrice: order.orderbook_markets_view.last_trade_price,
+        priceImpact: order.price && order.orderbook_markets_view.last_trade_price 
+          ? ((parseFloat(order.price) - parseFloat(order.orderbook_markets_view.last_trade_price)) / parseFloat(order.orderbook_markets_view.last_trade_price) * 100).toFixed(4) + '%'
           : null
       }
     };

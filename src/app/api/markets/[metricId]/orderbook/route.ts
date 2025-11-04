@@ -37,7 +37,7 @@ export async function GET(
 
     // Verify market exists
     const { data: market, error: marketError } = await supabaseAdmin
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select('id, market_status, tick_size, decimals, description')
       .eq('metric_id', metricId)
       .single();
@@ -181,7 +181,7 @@ export async function POST(
 
     // Get market info
     const { data: market, error: marketError } = await supabaseAdmin
-      .from('orderbook_markets')
+      .from('orderbook_markets_view')
       .select('id, description')
       .eq('metric_id', metricId)
       .single();

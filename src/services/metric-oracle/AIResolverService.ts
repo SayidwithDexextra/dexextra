@@ -20,20 +20,26 @@ export interface AIAnalysisResult {
     quote: string;
     match_score: number;
   }>;
+  javascript_extractor?: string;
+  javascript_extractor_b64?: string;
+  // Optional explicit locators for the primary source
+  css_selector?: string;
+  xpath?: string;
 }
 
 export class AIResolverService {
   private openai: OpenAI;
   private model: string;
+  private enabled: boolean;
 
   constructor() {
     // Initialize OpenAI client
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    const apiKey = process.env.OPENAI_API_KEY;
+    this.enabled = !!apiKey && String(process.env.METRIC_AI_DISABLED).toLowerCase() !== 'true';
+    this.openai = new OpenAI({ apiKey });
     
-    // Use GPT-4 for better reasoning capabilities
-    this.model = process.env.OPENAI_MODEL || 'gpt-4-turbo-preview';
+    // Prefer a larger modern model by default; override via OPENAI_MODEL
+    this.model = process.env.OPENAI_MODEL || 'gpt-4.1';
   }
 
   /**
@@ -43,31 +49,102 @@ export class AIResolverService {
     console.log(`🧠 AI analyzing metric: "${input.metric}"`);
     
     try {
+      // Short-circuit if AI is disabled or not configured
+      if (!this.enabled) {
+        console.warn('⚠️ AI disabled or OPENAI_API_KEY not set; using fallback resolution');
+        return this.generateFallbackResolution(input);
+      }
+
       // Prepare the analysis prompt
       const systemPrompt = this.buildSystemPrompt();
       const userPrompt = this.buildUserPrompt(input);
       
       console.log('🤖 Sending request to OpenAI...');
       
-      // Call OpenAI API
-      const response = await this.openai.chat.completions.create({
+      // Call OpenAI API with compatibility shim for token parameter naming
+      const basePayload: any = {
         model: this.model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.1, // Low temperature for more consistent results
-        max_tokens: 2000,
-        response_format: { type: 'json_object' } // Ensure JSON output
-      });
+        response_format: { type: 'json_object' }
+      };
+      // Optionally include temperature via env override
+      const tempEnv = process.env.OPENAI_TEMPERATURE;
+      if (typeof tempEnv === 'string' && tempEnv.trim() !== '') {
+        const t = Number(tempEnv);
+        if (Number.isFinite(t)) basePayload.temperature = t;
+      }
 
-      const content = response.choices[0]?.message?.content;
+      const isUnsupportedTokens = (e: any) => {
+        const c = e?.code || e?.error?.code;
+        const p = e?.param || e?.error?.param;
+        return c === 'unsupported_parameter' && (p === 'max_tokens' || p === 'max_output_tokens' || p === 'max_completion_tokens');
+      };
+      const isUnsupportedTemp = (e: any) => {
+        const c = e?.code || e?.error?.code;
+        const p = e?.param || e?.error?.param;
+        return c === 'unsupported_value' && p === 'temperature';
+      };
+
+      let response;
+      // Attempt 1: prefer max_completion_tokens for modern models
+      try {
+        response = await this.openai.chat.completions.create({ ...basePayload, max_completion_tokens: 2000 } as any);
+      } catch (e1: any) {
+        if (isUnsupportedTemp(e1)) {
+          // Retry without temperature, keep max_completion_tokens
+          const { temperature, ...noTemp } = basePayload;
+          try {
+            response = await this.openai.chat.completions.create({ ...noTemp, max_completion_tokens: 2000 } as any);
+          } catch (e1b: any) {
+            if (isUnsupportedTokens(e1b)) {
+              // Fallback to legacy max_tokens without temperature
+              response = await this.openai.chat.completions.create({ ...noTemp, max_tokens: 2000 } as any);
+            } else {
+              throw e1b;
+            }
+          }
+        } else if (isUnsupportedTokens(e1)) {
+          // Legacy fallback: try max_tokens (may still have temperature)
+          try {
+            response = await this.openai.chat.completions.create({ ...basePayload, max_tokens: 2000 } as any);
+          } catch (e2: any) {
+            if (isUnsupportedTemp(e2)) {
+              const { temperature, ...noTemp } = basePayload;
+              response = await this.openai.chat.completions.create({ ...noTemp, max_tokens: 2000 } as any);
+            } else {
+              throw e2;
+            }
+          }
+        } else {
+          throw e1;
+        }
+      }
+
+      let content = response.choices[0]?.message?.content?.trim();
       if (!content) {
-        throw new Error('No response from AI model');
+        // Retry once without response_format and without temperature to maximize compatibility
+        try {
+          const { response_format, ...noRF } = basePayload;
+          const { temperature, ...noTemp } = noRF as any;
+          try {
+            const res2 = await this.openai.chat.completions.create({ ...noTemp, max_completion_tokens: 2000 } as any);
+            content = res2.choices[0]?.message?.content?.trim();
+          } catch (e2: any) {
+            // Last attempt: legacy max_tokens
+            const res3 = await this.openai.chat.completions.create({ ...noTemp, max_tokens: 2000 } as any);
+            content = res3.choices[0]?.message?.content?.trim();
+          }
+        } catch {}
+        if (!content) {
+          throw new Error('No response from AI model');
+        }
       }
 
       // Parse the AI response
-      const aiResult = JSON.parse(content) as AIAnalysisResult;
+      const aiResult = this.parseAIJson(content) as AIAnalysisResult;
       
       // Build the final resolution
       const resolution = this.buildMetricResolution(input, aiResult);
@@ -82,6 +159,40 @@ export class AIResolverService {
       // Fallback to basic analysis if AI fails
       return this.generateFallbackResolution(input);
     }
+  }
+
+  /**
+   * Attempt to safely parse JSON emitted by the LLM, repairing common formatting issues.
+   */
+  private parseAIJson(raw: string): any {
+    const attempts: Array<(s: string) => string> = [
+      (s) => s,
+      // Remove code fences
+      (s) => s.replace(/```json[\r\n]?|```/g, ''),
+      // Remove BOM and unusual control characters
+      (s) => s.replace(/\uFEFF/g, '').replace(/[\u0000-\u0019]/g, ''),
+      // Remove trailing commas before } or ]
+      (s) => s.replace(/,\s*(\}|\])/g, '$1'),
+    ];
+
+    for (const fix of attempts) {
+      const candidate = fix(raw);
+      try {
+        return JSON.parse(candidate);
+      } catch {}
+    }
+
+    // Fallback: extract outermost JSON object
+    try {
+      const start = raw.indexOf('{');
+      const end = raw.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end > start) {
+        const slice = raw.slice(start, end + 1);
+        return JSON.parse(slice.replace(/,\s*(\}|\])/g, '$1'));
+      }
+    } catch {}
+
+    throw new Error('Failed to parse AI JSON response');
   }
 
   /**
@@ -100,9 +211,8 @@ INSTRUCTIONS:
 3. REJECT historical data, trends, or past values unless explicitly noted as current
 4. Compare current values across sources and resolve discrepancies
 5. Assign confidence scores heavily weighted on data recency
-6. Calculate an asset price based on the metric value (see ASSET PRICE CALCULATION below)
-7. Provide clear reasoning emphasizing why this is the current value
-8. Always return valid JSON in the specified format
+6. Provide clear reasoning emphasizing why this is the current value
+7. Always return valid JSON in the specified format
 
 EVALUATION CRITERIA (in order of importance):
 1. DATA RECENCY: Current/live data > recent data > historical data
@@ -111,29 +221,13 @@ EVALUATION CRITERIA (in order of importance):
 4. Consistency across current sources
 5. Presence of timestamps indicating recent updates
 
-ASSET PRICE CALCULATION:
-Convert the metric value to an asset price between $10.00 - $100.00 using this algorithm:
-1. Take the numeric metric value (ignore units, commas, etc.)
-2. Convert to scientific notation format (e.g., 8,237,468,680 → 8.237468680 × 10^9)
-3. Take the mantissa (the number before × 10^x, e.g., 8.237468680)
-4. Multiply by 10 to scale into price range (e.g., 8.237468680 × 10 = 82.37468680)
-5. Round to 2 decimal places and ensure it's between $10.00 - $100.00
-6. If result < $10.00, set to $10.00. If result > $100.00, set to $100.00.
-
-EXAMPLES:
-- World population: 8,237,468,680 → 8.237468680 → 82.37 → $82.37
-- Monthly listeners: 1,345 → 1.345 → 13.45 → $13.45
-- Bitcoin price: $45,231.50 → 4.523150 → 45.23 → $45.23
-- Very small number: 0.00456 → 4.56 → 45.60 → $45.60
-- Very large number: 999,999,999,999 → 9.99999999999 → 99.99 → $99.99
-
 OUTPUT FORMAT (JSON):
 {
   "value": "exact current numeric value or descriptive value",
   "unit": "unit of measurement (e.g., 'people', 'USD', 'percentage')",
   "as_of": "current date/time when value is valid (ISO format, prefer TODAY)",
   "confidence": 0.95,
-  "asset_price_suggestion": "XX.XX",
+  "asset_price_suggestion": "Set equal to the numeric metric value as a string",
   "reasoning": "detailed explanation emphasizing why this is the CURRENT value and when it was last updated",
   "source_quotes": [
     {
@@ -141,7 +235,10 @@ OUTPUT FORMAT (JSON):
       "quote": "exact text from source supporting the CURRENT value",
       "match_score": 0.98
     }
-  ]
+  ],
+  "css_selector": "Precise CSS selector that targets the exact DOM node containing the numeric value on the FIRST source URL. Prefer stable ids or data-*; avoid volatile classes.",
+  "xpath": "Precise XPath expression that targets the exact DOM node containing the numeric value on the FIRST source URL. Prefer label-anchored or id-anchored paths.",
+  "javascript_extractor_b64": "Base64-encoded IIFE JavaScript that, when executed in the browser console on the FIRST source_quotes[0].url page, returns the metric's numeric value as a string. The decoded code must only use document.querySelector on the precise CSS selector, sanitize text to digits/.-, and return the cleaned string. No network requests, no async, no external libraries, no DOM mutations. Example (decoded): (function(){ const el = document.querySelector('CSS'); if(!el) return ''; const t = (el.textContent||''); const cleaned = t.replace(/[^0-9+\\-.,]/g,'').replace(/,/g,''); return cleaned; })();"
 }
 
 CONFIDENCE SCORING (heavily weighted for recency):
@@ -151,6 +248,13 @@ CONFIDENCE SCORING (heavily weighted for recency):
 - 0.3-0.5: Only historical data available or conflicting current information
 - 0.0-0.3: No current data found, only outdated historical information
 
+ADDITIONAL RULES FOR LOCATORS & EXTRACTOR:
+- The first entry in source_quotes MUST be the best/primary source you used.
+- Return the extractor only in "javascript_extractor_b64" (base64). Do NOT include raw code blocks.
+- The extractor MUST be designed to work on that first source URL.
+- Prefer stable selectors (ids, data-* attrs) when possible. Do not rely on volatile class names if avoidable.
+- Use the provided candidate locators to pick the most reliable CSS selector and XPath. Only emit css_selector/xpath if they directly resolve to the numeric node. If none are reliable, leave fields empty.
+
 REJECT: Historical trends, past data points, outdated statistics, or archived information unless it's the only available current reference.`;
   }
 
@@ -158,7 +262,7 @@ REJECT: Historical trends, past data points, outdated statistics, or archived in
    * Build the user prompt with metric data
    */
   private buildUserPrompt(input: AIResolverInput): string {
-    const { metric, description, sources } = input;
+    const { metric, description, sources, scrapedSources } = input;
     
     let prompt = `METRIC TO RESOLVE: "${metric}"`;
     
@@ -193,10 +297,28 @@ REJECT: Historical trends, past data points, outdated statistics, or archived in
         prompt += `${chunk.text}\n`;
       });
       
+      // Append locator candidates summary for this source (top 5)
+      const scraped = scrapedSources.find(s => s.url === url);
+      if (scraped && Array.isArray(scraped.candidates) && scraped.candidates.length > 0) {
+        const topCands = scraped.candidates.slice(0, 5);
+        prompt += `\nLocator candidates (top ${topCands.length}):\n`;
+        topCands.forEach((c, i) => {
+          const trimmed = (c.text || '').slice(0, 160).replace(/\s+/g, ' ').trim();
+          const htmlTrim = (c.html_snippet || '').slice(0, 600);
+          prompt += `#${i+1}:\nCSS: ${c.selector}\nXPath: ${c.xpath}\nText: ${trimmed}\nHTML: ${htmlTrim}\n`;
+        });
+      }
+
+      // Include raw HTML excerpt for the first source only to guide precise selection
+      if (sourceIndex === 1 && scraped?.raw_html_excerpt) {
+        const rawPreview = scraped.raw_html_excerpt.slice(0, 4000);
+        prompt += `\nRAW_HTML_EXCERPT (truncated):\n${rawPreview}\n`;
+      }
+
       sourceIndex++;
     }
     
-    prompt += `\n\nTASK: Analyze the above sources and determine the most accurate current value for "${metric}". Return your analysis as valid JSON following the specified format.`;
+    prompt += `\n\nTASK: Analyze the above sources and determine the most accurate current value for "${metric}". Return your analysis as valid JSON following the specified format. Ensure the first element in source_quotes is the primary URL. Using the provided locator candidates, choose a robust css_selector and xpath that directly resolve to the numeric node. Also include a javascript_extractor_b64 matching the chosen css selector.`;
     
     return prompt;
   }
@@ -207,18 +329,63 @@ REJECT: Historical trends, past data points, outdated statistics, or archived in
   private buildMetricResolution(input: AIResolverInput, aiResult: AIAnalysisResult): MetricResolution {
     // Map AI source quotes to resolution format
     const sources = aiResult.source_quotes.map(quote => {
-      // Find matching scraped source for screenshot
+      // Find matching scraped source for screenshot and locator candidates
       const scrapedSource = input.scrapedSources.find(s => s.url === quote.url);
-      
-      return {
+      // Try to pick the best candidate matching the quoted text
+      let css_selector: string | undefined;
+      let xpath: string | undefined;
+      let html_snippet: string | undefined;
+      const candidates = scrapedSource?.candidates || [];
+      if (candidates.length > 0) {
+        // naive match by inclusion or highest text similarity
+        const lowerQuote = (quote.quote || '').toLowerCase();
+        let best = candidates[0];
+        let bestScore = 0;
+        candidates.forEach(c => {
+          const text = (c.text || '').toLowerCase();
+          let score = 0;
+          if (text && lowerQuote) {
+            if (text.includes(lowerQuote) || lowerQuote.includes(text)) score += 2;
+            // length proximity bonus
+            score += Math.max(0, 1 - Math.abs(text.length - lowerQuote.length) / Math.max(1, lowerQuote.length));
+          }
+          if (score > bestScore) { bestScore = score; best = c; }
+        });
+        css_selector = best.selector;
+        xpath = best.xpath;
+        html_snippet = best.html_snippet;
+      }
+      const sourceObj: any = {
         url: quote.url,
         screenshot_url: scrapedSource?.screenshot_url || '',
         quote: quote.quote,
-        match_score: quote.match_score
+        match_score: quote.match_score,
+        css_selector,
+        xpath,
+        html_snippet
       };
+
+      return sourceObj;
     });
 
     // Validate and sanitize AI response
+    // Attach AI-provided locators and javascript_extractor to the first/best source when provided
+    if (Array.isArray(sources) && sources.length > 0) {
+      let extractor: string | undefined;
+      if (aiResult.javascript_extractor_b64) {
+        try {
+          extractor = Buffer.from(aiResult.javascript_extractor_b64, 'base64').toString('utf8');
+        } catch {}
+      }
+      if (!extractor && aiResult.javascript_extractor) {
+        extractor = aiResult.javascript_extractor;
+      }
+      const primary = (sources[0] as any);
+      if (extractor) primary.js_extractor = extractor;
+      if (aiResult.css_selector) primary.css_selector = aiResult.css_selector;
+      if (aiResult.xpath) primary.xpath = aiResult.xpath;
+    }
+
     const validatedResult = {
       metric: input.metric,
       value: aiResult.value || 'Data not available',

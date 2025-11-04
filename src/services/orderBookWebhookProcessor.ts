@@ -1441,7 +1441,7 @@ export class OrderBookWebhookProcessor {
       
       // Fetch all markets to see if we can find a pattern
       const { data: markets, error } = await this.supabase
-        .from('orderbook_markets')
+        .from('orderbook_markets_view')
         .select('metric_id')
         .limit(50);
       
@@ -1670,7 +1670,7 @@ export class OrderBookWebhookProcessor {
       if (!metricId || metricId === 'UNKNOWN' || metricId.startsWith('HASH_')) {
         const normalizedAddress = this.normalizeContractAddress(orderEvent.contractAddress);
         const { data: market } = await this.supabase
-          .from('orderbook_markets')
+          .from('orderbook_markets_view')
           .select('metric_id')
           .eq('market_address', normalizedAddress)
           .single();

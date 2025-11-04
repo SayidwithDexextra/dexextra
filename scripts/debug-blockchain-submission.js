@@ -73,7 +73,7 @@ async function debugBlockchainSubmission() {
     );
 
     const { data: market, error } = await supabase
-      .from("orderbook_markets")
+      .from("orderbook_markets_view")
       .select(
         "metric_id, order_router_address, central_vault_address, market_status"
       )
@@ -107,8 +107,3 @@ debugBlockchainSubmission().catch((error) => {
   console.error("💥 Debug script failed:", error);
   process.exit(1);
 });
-
-
-
-
-

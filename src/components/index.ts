@@ -27,6 +27,9 @@ export { MarketTickerCard } from './MarketTickerCard';
 // UI Components
 export { Button } from './ui/Button';
 
+// Metric Price Components
+export { MetricLivePrice } from './metrics/MetricLivePrice';
+
 // Layout Components
 export { default as Header } from './Header';
 export { default as Footer } from './Footer';
@@ -45,7 +48,7 @@ export { MarketPreviewModal, ErrorBoundary } from './MarketPreviewModal';
 export { ErrorModal, SuccessModal } from './StatusModals';
 
 // Form Components
-export { default as CreateMarketForm } from './CreateMarketForm'
+// Legacy CreateMarketForm removed; use create-market/CreateMarketForm directly
 export { DepositModal } from './DepositModal';
 export { MarketWizard } from './MarketWizard';
 // export { default as TradingPanel } from './TradingPanel';
