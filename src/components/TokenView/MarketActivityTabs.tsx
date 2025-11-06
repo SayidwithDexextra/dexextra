@@ -78,11 +78,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const orderBookActions = md.orderBookActions;
   const positionsState = md.positionsState;
   console.log('positionsState MarketActivityTabs', positionsState);
-  // Ensure event listener always calls the latest refreshOrders (avoid stale closure)
-  const refreshOrdersRef = useRef(orderBookActions.refreshOrders);
-  useEffect(() => {
-    refreshOrdersRef.current = orderBookActions.refreshOrders;
-  }, [orderBookActions.refreshOrders]);
+  // Removed ordersUpdated -> refreshOrders recursion guard; UI re-renders from state updates
   
   // Throttle and in-flight guards for order history
   const isFetchingHistoryRef = useRef(false);
@@ -260,28 +256,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   };
 
-  // Keep positions and open orders in sync with state (no network calls here)
-  useEffect(() => {
-    const onOrdersUpdated = (e: any) => {
-      try {
-        console.log('[Dispatch] 🎧 [EVT][MarketActivityTabs] Received ordersUpdated', e?.detail);
-        // Ensure this local hook instance fetches latest orders
-        // Optional match on marketId; if provided and doesn't match, still refresh to be safe
-        refreshOrdersRef.current?.();
-        console.log('[Dispatch] 🔁 [UI][MarketActivityTabs] ordersUpdated refreshed');
-      } catch {}
-    };
-    if (typeof window !== 'undefined') {
-      console.log('[Dispatch] 🔗 [EVT][MarketActivityTabs] Subscribing to ordersUpdated');
-      window.addEventListener('ordersUpdated', onOrdersUpdated);
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        console.log('[Dispatch] 🧹 [EVT][MarketActivityTabs] Unsubscribing from ordersUpdated');
-        window.removeEventListener('ordersUpdated', onOrdersUpdated);
-      }
-    };
-  }, []);
+  // Removed ordersUpdated listener to prevent infinite refresh loop; state updates propagate via hooks
   
 
   // Keep positions and open orders in sync with state

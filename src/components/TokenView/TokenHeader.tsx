@@ -229,38 +229,39 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   useEffect(() => {
     const obPrice = Number(md.markPrice ?? 0);
     const resolved = Number(md.resolvedPrice ?? 0);
-    const base = obPrice > 0 ? obPrice : (resolved > 0 ? resolved : 0);
 
-    const bestBid = Number(md.bestBid ?? 0);
-    const bestAsk = Number(md.bestAsk ?? 0);
     const lastTrade = Number(md.lastTradePrice ?? 0);
-    const noOrderFlow = (bestBid <= 0) && (bestAsk <= 0) && (lastTrade <= 0);
+    const hasTrades = Number.isFinite(lastTrade) && lastTrade > 0;
     const isDefaultCalc = Math.abs(obPrice - 1) < 1e-9; // 1e6 scaled -> 1.0 when empty
     const obMissingOrZero = !Number.isFinite(obPrice) || obPrice <= 0;
 
     const marketIdBytes32 = (marketData as any)?.market_id_bytes32 as string | undefined;
     const vaultAddr = (CONTRACT_ADDRESSES as any)?.CORE_VAULT as string | undefined;
 
-    if ((!isDefaultCalc && !obMissingOrZero) || !noOrderFlow) {
-      try { console.log('[TokenHeader] Using OB/resolved price without fallback', { obPrice, resolved, base, bestBid, bestAsk, lastTrade }); } catch {}
-      setEffectiveMarkPrice(base);
-      setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+    // Only allow OrderBook to be authoritative when trades are present
+    const useOrderbookNow = hasTrades && !isDefaultCalc && !obMissingOrZero;
+    if (useOrderbookNow) {
+      try { console.log('[TokenHeader] Using OrderBook price (trades present)', { obPrice, lastTrade }); } catch {}
+      setEffectiveMarkPrice(obPrice);
+      setMarkPriceSource('orderbook');
       return;
     }
 
+    const baseWithoutOrderbook = resolved > 0 ? resolved : 0; // Prefer resolved over OB when no trades
+
     const tryFallback = async () => {
-      try { console.log('[TokenHeader] Attempting CoreVault.getMarkPrice fallback', { obPrice, resolved, bestBid, bestAsk, lastTrade, marketIdBytes32, vaultAddr }); } catch {}
+      try { console.log('[TokenHeader] Attempting CoreVault.getMarkPrice fallback (no trades or OB not authoritative)', { obPrice, resolved, lastTrade, marketIdBytes32, vaultAddr }); } catch {}
       try {
         if (!marketIdBytes32 || typeof marketIdBytes32 !== 'string' || !marketIdBytes32.startsWith('0x')) {
           try { console.log('[TokenHeader] Fallback aborted: invalid marketIdBytes32'); } catch {}
-          setEffectiveMarkPrice(base);
-          setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+          setEffectiveMarkPrice(baseWithoutOrderbook);
+          setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
           return;
         }
         if (!vaultAddr || typeof vaultAddr !== 'string' || !vaultAddr.startsWith('0x')) {
           try { console.log('[TokenHeader] Fallback aborted: invalid CORE_VAULT address'); } catch {}
-          setEffectiveMarkPrice(base);
-          setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+          setEffectiveMarkPrice(baseWithoutOrderbook);
+          setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
           return;
         }
 
@@ -275,7 +276,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           args: [marketIdBytes32 as `0x${string}`]
         });
         const price = typeof raw === 'bigint' ? Number(raw) / 1e6 : Number(raw);
-          
+        
         if (price > 0) {
           console.log('🔄 CoreVault.getMarkPrice fallback successful', price);
           setEffectiveMarkPrice(price);
@@ -285,13 +286,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       } catch (e) {
         try { console.warn('[TokenHeader] CoreVault.getMarkPrice fallback failed', e); } catch {}
       }
-      try { console.log('[TokenHeader] Fallback unavailable; using base price', { base }); } catch {}
-      setEffectiveMarkPrice(base);
-      setMarkPriceSource(obPrice > 0 ? 'orderbook' : 'resolved');
+      try { console.log('[TokenHeader] Fallback unavailable; using resolved/base price', { baseWithoutOrderbook }); } catch {}
+      setEffectiveMarkPrice(baseWithoutOrderbook);
+      setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
     };
 
     void tryFallback();
-  }, [md.markPrice, md.resolvedPrice, md.bestBid, md.bestAsk, md.lastTradePrice, (marketData as any)?.market_id_bytes32]);
+  }, [md.markPrice, md.resolvedPrice, md.lastTradePrice, (marketData as any)?.market_id_bytes32]);
 
   // Calculate enhanced token data from unified markets table and contract mark price
   const enhancedTokenData = useMemo((): EnhancedTokenData | null => {

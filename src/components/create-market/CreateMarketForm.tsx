@@ -328,6 +328,41 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
         >
           {isLoading ? 'Creating Market...' : 'Create Market'}
         </button>
+
+        {/* Debug Bypass: Skip AI Validation and Create Immediately */}
+        <div className="pt-1">
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={async () => {
+              setError(null);
+              try {
+                if (!formData.symbol || !String(formData.symbol).trim()) {
+                  handleRequireInputs();
+                  throw new Error('Symbol is required');
+                }
+                const debugData: MarketFormData = {
+                  ...formData,
+                  metricUrl: formData.metricUrl || 'https://example.com',
+                  dataSource: formData.dataSource || 'Debug',
+                  startPrice: formData.startPrice || '1',
+                  tags: Array.isArray(formData.tags) ? formData.tags : [],
+                } as any;
+                try { console.log('[create-market][debug] Bypass enabled → skipping AI metric validation'); } catch {}
+                await onSubmit(debugData);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : 'Failed to start debug create');
+              }
+            }}
+            className={`w-full py-2.5 px-4 rounded-md text-[11px] font-medium transition-all duration-200 border ${
+              isLoading
+                ? 'bg-[#0F0F0F] text-[#606060] border-[#222222] cursor-not-allowed'
+                : 'bg-[#0F0F0F] text-red-300 border-red-600/50 hover:border-red-500 hover:text-red-200'
+            }`}
+          >
+            {isLoading ? 'Please wait…' : 'Debug: Skip Validation and Create Now'}
+          </button>
+        </div>
       </form>
     </div>
   );

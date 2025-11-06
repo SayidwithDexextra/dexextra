@@ -31,6 +31,8 @@ export interface Market {
   deployed_at: string | null;
   chain_id: number;
   network: string;
+  initial_order?: any;
+  market_config?: any;
 }
 
 interface UseMarketsOptions {

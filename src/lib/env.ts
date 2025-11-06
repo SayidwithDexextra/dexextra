@@ -81,6 +81,9 @@ const envSchema = z.object({
   // External Services
   API_KEY: z.string().min(1).default('placeholder-api-key'),
   API_URL: z.string().url().default('https://api.example.com'),
+  // Wayback Machine SavePageNow API (server-side optional)
+  WAYBACK_API_ACCESS_KEY: z.string().optional(),
+  WAYBACK_API_SECRET: z.string().optional(),
   
   // CoinMarketCap API Key
   CMC_API_KEY: z.string().optional(),
@@ -190,6 +193,8 @@ const processEnv = {
   AUTH_EXPIRES_IN: process.env.AUTH_EXPIRES_IN || '7d',
   API_KEY: isClientSide ? 'client-side-placeholder' : (process.env.API_KEY || 'placeholder-api-key'),
   API_URL: isClientSide ? 'https://api.example.com' : (process.env.API_URL || 'https://api.example.com'),
+  WAYBACK_API_ACCESS_KEY: process.env.WAYBACK_API_ACCESS_KEY,
+  WAYBACK_API_SECRET: process.env.WAYBACK_API_SECRET,
   CMC_API_KEY: process.env.CMC_API_KEY,
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
   ALCHEMY_WEBHOOK_AUTH_TOKEN: process.env.ALCHEMY_WEBHOOK_AUTH_TOKEN,

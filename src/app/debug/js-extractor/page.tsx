@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import useMetricLivePrice from '@/hooks/useMetricLivePrice';
+import { archivePage, type ArchiveResult } from '@/lib/archivePage';
 
 type ApiSource = {
   url: string;
@@ -51,8 +52,20 @@ export default function DebugJSExtractorPage() {
   const [genError, setGenError] = useState<string | null>(null);
   const [genResult, setGenResult] = useState<{ url?: string | null; xpath: string | null; css_selector?: string | null; numeric_value?: string | null; quote?: string | null; confidence?: number; reasoning?: string; context_snippet?: string | null } | null>(null);
 
+  // Web Archive tester state
+  const [archiveUrlInput, setArchiveUrlInput] = useState('');
+  const [archiveCaptureOutlinks, setArchiveCaptureOutlinks] = useState(false);
+  const [archiveCaptureScreenshot, setArchiveCaptureScreenshot] = useState(true);
+  const [archiveSkipRecent, setArchiveSkipRecent] = useState(true);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveResult, setArchiveResult] = useState<ArchiveResult | null>(null);
+
+  // Prevent hydration mismatch by mounting client-only UI after first render
+  const [isClient, setIsClient] = React.useState(false);
+  React.useEffect(() => { setIsClient(true); }, []);
+
   // Live preview from generated XPath/CSS
-  const genLive = useMetricLivePrice({
+  const genLive: any = (useMetricLivePrice as any)({
     url: genResult?.url || undefined,
     xpath: genResult?.xpath || undefined,
     cssSelector: genResult?.css_selector || undefined,
@@ -566,6 +579,45 @@ export default function DebugJSExtractorPage() {
     }
   };
 
+  const runArchiveTest = async () => {
+    try {
+      setArchiveLoading(true);
+      setArchiveResult(null);
+      // Prefer explicit input; fallback to primary result URL; then first URL in input
+      const fallbackFromResult = result?.primary_source_url || '';
+      const firstUrl = (() => {
+        const arr = parseUrls(urlsInput);
+        return arr.length > 0 ? arr[0] : '';
+      })();
+      const url = (archiveUrlInput || fallbackFromResult || firstUrl).trim();
+      if (!url) {
+        setArchiveResult({ success: false, error: 'No URL provided. Enter a URL or run analysis to populate one.' });
+        return;
+      }
+      const resp = await fetch('/api/archives/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url,
+          captureOutlinks: archiveCaptureOutlinks,
+          captureScreenshot: archiveCaptureScreenshot,
+          skipIfRecentlyArchived: archiveSkipRecent,
+        }),
+      });
+      const data = await resp.json();
+      setArchiveResult(data as ArchiveResult);
+      try {
+        if (data?.success && data?.waybackUrl) {
+          console.info('Wayback snapshot link:', data.waybackUrl);
+        }
+      } catch {}
+    } catch (e: any) {
+      setArchiveResult({ success: false, error: e?.message || 'Unexpected error during archive' });
+    } finally {
+      setArchiveLoading(false);
+    }
+  };
+
   const testGenerated = async () => {
     if (!genResult || !genResult.url) { setTestStatus('Generate first'); return; }
     const fake: ApiResponse = {
@@ -727,6 +779,87 @@ export default function DebugJSExtractorPage() {
     <div suppressHydrationWarning style={{ maxWidth: 900, margin: '24px auto', padding: 16 }}>
       <h2 style={{ fontSize: 16, marginBottom: 12 }}>Debug: JS Extractor</h2>
 
+      {/* Web Archive Tester (client-only to avoid hydration mismatches from extensions/dynamic attrs) */}
+      {isClient && (
+      <div style={{ border: '1px solid #223', padding: 16, borderRadius: 8, marginBottom: 16, background: '#0d0f1a' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 13, color: '#93c5fd' }}>Wayback Machine — SavePageNow Tester</div>
+          <button
+            type="button"
+            onClick={() => {
+              setArchiveUrlInput(result?.primary_source_url || parseUrls(urlsInput)[0] || '');
+            }}
+            style={{ padding: '6px 10px', border: '1px solid #333', background: '#1f2937', color: '#fff', borderRadius: 6 }}
+          >
+            Use Primary/First URL
+          </button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10 }}>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, color: '#888', marginBottom: 6 }}>URL to archive</label>
+            <input
+              suppressHydrationWarning
+              type="text"
+              value={archiveUrlInput}
+              onChange={(e) => setArchiveUrlInput(e.target.value)}
+              placeholder="https://example.com/page"
+              style={{ width: '100%', padding: 8, background: '#111', color: '#fff', border: '1px solid #333', borderRadius: 6 }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ddd' }}>
+              <input type="checkbox" checked={archiveCaptureOutlinks} onChange={(e) => setArchiveCaptureOutlinks(e.target.checked)} />
+              Capture outlinks
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ddd' }}>
+              <input type="checkbox" checked={archiveCaptureScreenshot} onChange={(e) => setArchiveCaptureScreenshot(e.target.checked)} />
+              Capture screenshot
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ddd' }}>
+              <input type="checkbox" checked={archiveSkipRecent} onChange={(e) => setArchiveSkipRecent(e.target.checked)} />
+              Skip if recently archived
+            </label>
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={runArchiveTest}
+              disabled={archiveLoading}
+              style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #0ea5e9', background: archiveLoading ? '#222' : '#0ea5e9', color: '#fff' }}
+            >
+              {archiveLoading ? 'Saving…' : 'Save Page Now'}
+            </button>
+          </div>
+          {archiveResult && (
+            <div style={{ border: '1px solid #1f2937', borderRadius: 6, padding: 12, background: '#0b0b0b' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: '#888' }}>Status</div>
+                  <div style={{ color: archiveResult.success ? '#34d399' : '#fca5a5', fontSize: 14 }}>
+                    {archiveResult.success ? 'Success' : (archiveResult.error || 'Failed')}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#888' }}>Timestamp</div>
+                  <div style={{ color: '#e5e7eb', fontSize: 12 }}>{archiveResult.timestamp || '—'}</div>
+                </div>
+                <div style={{ gridColumn: '1 / span 2' }}>
+                  <div style={{ fontSize: 12, color: '#888' }}>Wayback URL</div>
+                  {archiveResult.waybackUrl ? (
+                    <a href={archiveResult.waybackUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', fontSize: 12, wordBreak: 'break-all' }}>
+                      {archiveResult.waybackUrl}
+                    </a>
+                  ) : (
+                    <div style={{ color: '#9ca3af', fontSize: 12 }}>—</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      )}
+
       <form onSubmit={handleSubmit} style={{ border: '1px solid #222', padding: 16, borderRadius: 8, marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
           {/* Preset box */}
@@ -850,8 +983,8 @@ export default function DebugJSExtractorPage() {
                 <div style={{ fontSize: 12, color: '#888' }}>Live (Generated XPath/CSS) — polls every 15s</div>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginTop: 6 }}>
                   <div style={{ color: '#f59e0b', fontSize: 18, fontWeight: 600 }}>{(genLive.value ?? genHeadlessValue) ?? '—'}</div>
-                  {(genLive.asOf || genHeadlessAsOf) && (
-                    <div style={{ fontSize: 11, color: '#9ca3af' }}>as of {genLive.asOf || genHeadlessAsOf}</div>
+                  {(genLive.updatedAt || genHeadlessAsOf) && (
+                    <div style={{ fontSize: 11, color: '#9ca3af' }}>as of {genLive.updatedAt || genHeadlessAsOf}</div>
                   )}
                   {genLive.isLoading && (
                     <div style={{ fontSize: 11, color: '#9ca3af' }}>loading…</div>

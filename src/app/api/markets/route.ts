@@ -53,7 +53,9 @@ export async function GET(request: NextRequest) {
         created_at,
         deployed_at,
         chain_id,
-        network
+        network,
+        initial_order,
+        market_config
       `, { count: 'exact' })
       .order('created_at', { ascending: false });
 

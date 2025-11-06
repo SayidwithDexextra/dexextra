@@ -1,30 +1,28 @@
 'use client';
 
 import { useState } from 'react';
-import { ethers } from 'ethers';
 import dynamic from 'next/dynamic';
 const CreateMarketFormClient = dynamic(() => import('./CreateMarketForm').then(m => m.CreateMarketForm), { ssr: false });
 import type { MarketFormData } from '@/hooks/useCreateMarketForm';
 import { useRouter } from 'next/navigation';
 import { DeploymentProgressPanel, type ProgressStep, type StepStatus } from './DeploymentProgressPanel';
-import { OBAdminFacetABI } from '@/lib/contracts';
+import { ErrorModal } from '@/components/StatusModals';
+// Archive snapshot is executed via server proxy to avoid browser CORS
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
   const initialSteps: ProgressStep[] = [
-    { id: 'cut', title: 'Prepare Facet Cut', description: 'Building market facet configuration', status: 'pending' },
-    { id: 'wallet', title: 'Connect Wallet', description: 'Requesting wallet permissions', status: 'pending' },
-    { id: 'factory', title: 'Resolve Factory', description: 'Loading factory and ABI', status: 'pending' },
-    { id: 'tx', title: 'Send Transaction', description: 'Creating market on-chain', status: 'pending' },
-    { id: 'confirm', title: 'Confirm & Parse', description: 'Waiting for confirmations', status: 'pending' },
-    { id: 'roles', title: 'Grant Admin Roles', description: 'Authorizing server role', status: 'pending' },
-    { id: 'save', title: 'Save Market', description: 'Persisting market metadata', status: 'pending' },
+    { id: 'tx', title: 'Send Transaction', description: 'Creating market on-chain (server)', status: 'pending' },
+    { id: 'confirm', title: 'Confirm & Parse', description: 'Waiting for confirmations (server)', status: 'pending' },
+    { id: 'roles', title: 'Grant Admin Roles', description: 'Authorizing roles (server)', status: 'pending' },
+    { id: 'save', title: 'Save Market', description: 'Persisting market metadata (server)', status: 'pending' },
   ];
 
   const [steps, setSteps] = useState<ProgressStep[]>(initialSteps);
   const [showProgress, setShowProgress] = useState(false);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title: string; message: string }>({ isOpen: false, title: '', message: '' });
 
   const resetSteps = () => setSteps(initialSteps.map(s => ({ ...s, status: 'pending' })));
   const setStepStatus = (id: string, status: StepStatus) =>
@@ -35,158 +33,84 @@ export const CreateMarketPage = () => {
 
   
 
+  const isUserRejected = (_e: any): boolean => false;
+
   const handleCreateMarket = async (marketData: MarketFormData) => {
     setIsLoading(true);
     setShowProgress(true);
     resetSteps();
     try {
-      // 1) Build facet cut from server (uses env facet addresses + ABIs)
-      markActive('cut');
-      const cutRes = await fetch('/api/orderbook/cut');
-      if (!cutRes.ok) throw new Error('Failed to build facet cut');
-      const { cut, initFacet } = await cutRes.json();
-      // Normalize cut into tuple format [facetAddress, action, functionSelectors]
-      const cutArg = (Array.isArray(cut) ? cut : []).map((c: any) => [
-        c.facetAddress,
-        typeof c.action === 'number' ? c.action : 0,
-        c.functionSelectors,
-      ]);
-      markDone('cut');
-
-      // 2) Connect user's wallet
-      // @ts-ignore
-      markActive('wallet');
-      if (!(globalThis as any).window?.ethereum) throw new Error('Wallet not found');
-      // @ts-ignore
-      const provider = new ethers.BrowserProvider((globalThis as any).window.ethereum);
-      const signer = await provider.getSigner();
-      markDone('wallet');
-
-      // 3) Resolve factory address & ABI
-      markActive('factory');
-      const factoryAddress =
-        process.env.NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS ||
-        (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY;
-      if (!factoryAddress) throw new Error('Factory address not configured');
-      const factoryAbi = (await import('@/lib/abis/FuturesMarketFactory.json')).default.abi;
-      const factory = new ethers.Contract(factoryAddress, factoryAbi, signer);
-      markDone('factory');
-
-      // 4) Params
+      // Params
       const symbol = marketData.symbol;
       const metricUrl = marketData.metricUrl;
-      const settlementTs = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
-      const startPrice6 = ethers.parseUnits(String(marketData.startPrice || '1'), 6);
       const dataSource = marketData.dataSource || 'User Provided';
       const tags = marketData.tags || [];
       const sourceLocator = (marketData as any).sourceLocator || null;
 
-      // 5) Create market
-      markActive('tx');
-      const tx = await factory.createFuturesMarketDiamond(
-        symbol,
-        metricUrl,
-        settlementTs,
-        startPrice6,
-        dataSource,
-        tags,
-        await signer.getAddress(),
-        cutArg,
-        initFacet,
-        '0x'
-      );
-      markDone('tx');
-
-      // 6) Confirm & parse
-      markActive('confirm');
-      const receipt = await tx.wait();
-
-      // 6) Parse event
-      let orderBook: string | null = null;
-      let marketId: string | null = null;
-      try {
-        const iface = new ethers.Interface(factoryAbi);
-        for (const log of receipt.logs || []) {
-          try {
-            const parsed = iface.parseLog(log);
-            if (parsed?.name === 'FuturesMarketCreated') {
-              orderBook = parsed.args?.orderBook as string;
-              marketId = parsed.args?.marketId as string;
-              break;
-            }
-          } catch {}
-        }
-      } catch {}
-      if (!orderBook || !marketId) throw new Error('Could not parse created market');
-      markDone('confirm');
-
-      // 7) Server-admin role grant (required)
-      {
-        markActive('roles');
-        const resp = await fetch('/api/markets/grant-roles', {
+      // Best-effort Wayback Machine snapshot of the metric/source URL.
+      // This runs in the background and never blocks market creation.
+      const metricUrlToArchive = typeof metricUrl === 'string' ? metricUrl.trim() : '';
+      if (metricUrlToArchive) {
+        void fetch('/api/archives/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            orderBook,
-            coreVault: process.env.NEXT_PUBLIC_CORE_VAULT_ADDRESS || (process.env as any).NEXT_PUBLIC_CORE_VAULT_ADDRESS || null,
+            url: metricUrlToArchive,
+            captureOutlinks: false,
+            captureScreenshot: true,
+            skipIfRecentlyArchived: true,
           }),
-        });
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({} as any));
-          throw new Error(err?.error || 'Admin role grant failed');
-        }
-
-        // Configure trading parameters and set fee recipient to creator wallet
-        try {
-          const obAdmin = new ethers.Contract(orderBook, OBAdminFacetABI, signer);
-          // Use default parameters; advanced settings are not user-configurable
-          await obAdmin.updateTradingParameters(
-            10000, // marginBps default
-            0,     // feeBps default
-            await signer.getAddress()
-          );
-          try { await obAdmin.disableLeverage(); } catch {}
-        } catch {}
-        markDone('roles');
+        })
+          .then(async (r) => {
+            const data = await r.json().catch(() => null);
+            if (r.ok && data?.success) {
+              console.info('Wayback snapshot created', {
+                url: metricUrlToArchive,
+                waybackUrl: data?.waybackUrl,
+                timestamp: data?.timestamp,
+              });
+            } else {
+              console.warn('Wayback snapshot failed', {
+                url: metricUrlToArchive,
+                status: r.status,
+                error: data?.error,
+              });
+            }
+          })
+          .catch(err => {
+            console.warn('Wayback snapshot error', {
+              url: metricUrlToArchive,
+              error: (err as any)?.message || String(err),
+            });
+          });
       }
 
-      // 8) Save to Supabase via server API
-      try {
-        markActive('save');
-        const network = await provider.getNetwork();
-        await fetch('/api/markets/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            marketIdentifier: symbol,
-            symbol,
-            name: `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`,
-            description: `OrderBook market for ${symbol}`,
-            category: Array.isArray(tags) && tags.length ? tags[0] : 'CUSTOM',
-            decimals: Number(process.env.DEFAULT_MARKET_DECIMALS || 8),
-            minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
-            settlementDate: settlementTs,
-            tradingEndDate: null,
-            dataRequestWindowSeconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
-            autoSettle: true,
-            oracleProvider: null,
-            initialOrder: { metricUrl, startPrice: String(marketData.startPrice), dataSource, tags },
-            aiSourceLocator: sourceLocator,
-            chainId: Number(network.chainId),
-            networkName: String(process.env.NEXT_PUBLIC_NETWORK_NAME || ''),
-            creatorWalletAddress: await signer.getAddress(),
-            iconImageUrl: (marketData as any).iconUrl ? String((marketData as any).iconUrl).trim() : null,
-            bannerImageUrl: null,
-            supportingPhotoUrls: [],
-            marketAddress: orderBook,
-            marketIdBytes32: marketId,
-            transactionHash: receipt?.hash || null,
-            blockNumber: receipt?.blockNumber || null,
-            gasUsed: receipt?.gasUsed?.toString?.() || null,
-          }),
-        });
-        markDone('save');
-      } catch {}
+      // Send to server for fully automated deploy from Deployer
+      markActive('tx');
+      const resp = await fetch('/api/markets/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol,
+          metricUrl,
+          startPrice: String(marketData.startPrice || '1'),
+          dataSource,
+          tags,
+          aiSourceLocator: sourceLocator,
+          iconImageUrl: (marketData as any).iconUrl ? String((marketData as any).iconUrl).trim() : null,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({} as any));
+        throw new Error(err?.error || 'Server create failed');
+      }
+      const { orderBook, marketId } = await resp.json();
+      markDone('tx');
+
+      // Server performs confirmation, roles, and saving. Reflect in UI.
+      markDone('confirm');
+      markDone('roles');
+      markDone('save');
 
       const targetSymbol = String(symbol || '').toUpperCase();
       router.push(`/token/${encodeURIComponent(targetSymbol)}`);
@@ -204,6 +128,15 @@ export const CreateMarketPage = () => {
   return (
     <div className="h-screen flex items-center bg-[#0F0F0F]">
       <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Cancel/Error modal */}
+        <ErrorModal
+          isOpen={errorModal.isOpen}
+          onClose={() => { setErrorModal({ isOpen: false, title: '', message: '' }); setShowProgress(false); }}
+          title={errorModal.title}
+          message={errorModal.message}
+          buttonText="Back to Form"
+          autoClose={false}
+        />
         {!showProgress && (
           <>
             {/* Header Card */}
