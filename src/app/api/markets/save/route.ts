@@ -129,6 +129,15 @@ async function verifyDiamondFacets(marketAddress: string, chainId?: number) {
       loupe.facetAddresses().catch(() => []),
       loupe.facets().catch(() => []),
     ]);
+    // Log full facets array for diagnostics
+    try {
+      logStep('loupe_facets', 'success', {
+        marketAddress,
+        facetAddresses,
+        facets,
+        facetCount: Array.isArray(facets) ? facets.length : 0,
+      });
+    } catch {}
 
     const onchainSelectors = new Set<string>();
     for (const f of facets || []) {

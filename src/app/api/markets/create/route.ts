@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
+import { archivePage } from '@/lib/archivePage';
 import {
   OBAdminFacetABI,
   OBPricingFacetABI,
@@ -192,6 +193,10 @@ export async function POST(req: Request) {
       { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(viewAbi) },
       { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(settleAbi) },
     ];
+  try {
+    const cutSummary = cut.map((c) => ({ facetAddress: c.facetAddress, selectorCount: (c.functionSelectors || []).length }));
+    logStep('facet_cut_built', 'success', { cutSummary, cut });
+  } catch {}
     const emptyFacets = cut.filter(c => !c.functionSelectors?.length).map(c => c.facetAddress);
     if (emptyFacets.length) {
       return NextResponse.json({ error: 'Facet selectors could not be built', emptyFacets }, { status: 500 });
@@ -286,6 +291,51 @@ export async function POST(req: Request) {
     }
     if (!orderBook || !marketId) return NextResponse.json({ error: 'Could not parse created market' }, { status: 500 });
 
+  // Ensure required placement selectors exist on the Diamond (defensive)
+  try {
+    logStep('ensure_selectors', 'start', { orderBook });
+    const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
+    const CutABI = [
+      'function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)',
+    ];
+    const loupe = new ethers.Contract(orderBook, LoupeABI, wallet);
+    const diamondCut = new ethers.Contract(orderBook, CutABI, wallet);
+    const placementSigs = [
+      'placeLimitOrder(uint256,uint256,bool)',
+      'placeMarginLimitOrder(uint256,uint256,bool)',
+      'placeMarketOrder(uint256,bool)',
+      'placeMarginMarketOrder(uint256,bool)',
+      'placeMarketOrderWithSlippage(uint256,bool,uint256)',
+      'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
+      'cancelOrder(uint256)',
+    ];
+    const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
+    const missing: string[] = [];
+    for (const sel of requiredSelectors) {
+      try {
+        const addr: string = await loupe.facetAddress(sel);
+        if (!addr || addr.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+          missing.push(sel);
+        }
+      } catch {
+        missing.push(sel);
+      }
+    }
+    if (missing.length > 0) {
+      logStep('ensure_selectors_missing', 'start', { missingCount: missing.length });
+      const cut = [{ facetAddress: placementFacet, action: 0, functionSelectors: missing }];
+      const ov = await nonceMgr.nextOverrides();
+      const txCut = await diamondCut.diamondCut(cut as any, ethers.ZeroAddress, '0x', ov as any);
+      logStep('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
+      await txCut.wait();
+      logStep('ensure_selectors_diamondCut_mined', 'success');
+    } else {
+      logStep('ensure_selectors', 'success', { message: 'All placement selectors present' });
+    }
+  } catch (e: any) {
+    logStep('ensure_selectors', 'error', { error: e?.message || String(e) });
+  }
+
     // Grant roles on CoreVault
     logStep('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
     const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
@@ -329,11 +379,36 @@ export async function POST(req: Request) {
     }
 
     // Save to Supabase
+    let archivedWaybackUrl: string | null = null;
+    let archivedWaybackTs: string | null = null;
     logStep('save_market', 'start');
     try {
       const supabase = getSupabase();
+      // Attempt to archive the metric URL via SavePageNow (server-side, authenticated if keys exist)
       if (supabase) {
         const network = await provider.getNetwork();
+        try {
+          const access = process.env.WAYBACK_API_ACCESS_KEY as string | undefined;
+          const secret = process.env.WAYBACK_API_SECRET as string | undefined;
+          const authHeader = access && secret ? `LOW ${access}:${secret}` : undefined;
+          const archiveRes = await archivePage(metricUrl, {
+            captureOutlinks: false,
+            captureScreenshot: true,
+            skipIfRecentlyArchived: true,
+            headers: {
+              ...(authHeader ? { Authorization: authHeader } : {}),
+              'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'http://localhost:3000'})`,
+            },
+          });
+          if (archiveRes?.success && archiveRes.waybackUrl) {
+            archivedWaybackUrl = String(archiveRes.waybackUrl);
+            archivedWaybackTs = archiveRes.timestamp ? String(archiveRes.timestamp) : null;
+          } else {
+            try { console.warn('[markets/create] Wayback archive failed', archiveRes?.error); } catch {}
+          }
+        } catch (e: any) {
+          try { console.warn('[markets/create] Wayback archive error', e?.message || String(e)); } catch {}
+        }
         const insertPayload: any = {
           market_identifier: symbol,
           symbol,
@@ -349,8 +424,11 @@ export async function POST(req: Request) {
           data_request_window_seconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
           auto_settle: true,
           oracle_provider: null,
-          initial_order: { metricUrl, startPrice: String(startPrice), dataSource, tags },
-          market_config: aiSourceLocator ? { ai_source_locator: aiSourceLocator } : null,
+          initial_order: { metricUrl, startPrice: String(startPrice), dataSource, tags, waybackUrl: archivedWaybackUrl || null, waybackTimestamp: archivedWaybackTs || null },
+          market_config: {
+            ...(aiSourceLocator ? { ai_source_locator: aiSourceLocator } : {}),
+            wayback_snapshot: archivedWaybackUrl ? { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: metricUrl } : null,
+          },
           chain_id: Number(network.chainId),
           network: String(process.env.NEXT_PUBLIC_NETWORK_NAME || process.env.NETWORK_NAME || ''),
           creator_wallet_address: creatorWalletAddress,
@@ -382,6 +460,7 @@ export async function POST(req: Request) {
       marketId,
       transactionHash: receipt?.hash || tx.hash,
       feeRecipient,
+      waybackUrl: archivedWaybackUrl,
     });
   } catch (e: any) {
     logStep('unhandled_error', 'error', { error: e?.message || String(e) });
