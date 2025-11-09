@@ -16,6 +16,8 @@ type SettleState = {
   error: string | null;
   success: string | null;
   isAnalyzing: boolean;
+  waybackUrl?: string | null;
+  waybackTs?: string | null;
 };
 
 export default function SettlementPage() {
@@ -30,6 +32,8 @@ export default function SettlementPage() {
     error: null,
     success: null,
     isAnalyzing: false,
+    waybackUrl: null,
+    waybackTs: null,
   });
 
   const selectedMarket = useMemo(() => markets.find(m => m.id === state.marketId) || null, [markets, state.marketId]);
@@ -90,7 +94,35 @@ export default function SettlementPage() {
 
       setState(prev => ({ ...prev, txHash: tx.hash }));
 
+      // Best-effort: archive primary metric source via Wayback and capture URL
+      let waybackUrl: string | null = null;
+      let waybackTs: string | null = null;
       try {
+        const metricUrl = (selectedMarket as any)?.initial_order?.metricUrl || (selectedMarket as any)?.initial_order?.metric_url || null;
+        const aiSourceUrl = (selectedMarket as any)?.market_config?.ai_source_locator?.url || null;
+        const primaryUrl = (typeof metricUrl === 'string' && metricUrl) || (typeof aiSourceUrl === 'string' && aiSourceUrl) || null;
+        if (primaryUrl) {
+          const arch = await fetch('/api/archives/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: primaryUrl, captureScreenshot: true, skipIfRecentlyArchived: true })
+          });
+          if (arch.ok) {
+            const j = await arch.json().catch(() => ({} as any));
+            if (j && j.success && j.waybackUrl) {
+              waybackUrl = j.waybackUrl;
+              waybackTs = j.timestamp || null;
+              setState(prev => ({ ...prev, waybackUrl, waybackTs }));
+            }
+          }
+        }
+      } catch {}
+
+      try {
+        // Merge market_config with settlement Wayback URL if available
+        const mergedConfig = waybackUrl
+          ? { ...((selectedMarket as any)?.market_config || {}), settlement_wayback_url: waybackUrl, settlement_wayback_timestamp: waybackTs }
+          : undefined;
         await fetch('/api/markets', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -100,6 +132,7 @@ export default function SettlementPage() {
             settlement_value: Number(price),
             settlement_timestamp: new Date().toISOString(),
             is_active: false,
+            ...(mergedConfig ? { market_config: mergedConfig } : {})
           }),
         });
         await refetch();
@@ -107,7 +140,7 @@ export default function SettlementPage() {
 
       setState(prev => ({
         ...prev,
-        success: `Settlement executed. Tx: ${tx.hash.substring(0, 10)}…` ,
+        success: `Settlement executed. Tx: ${tx.hash.substring(0, 10)}…${waybackUrl ? `\nArchived snapshot: ${waybackUrl}` : ''}` ,
         isSubmitting: false,
         confirming: false,
       }));
@@ -136,6 +169,36 @@ export default function SettlementPage() {
       }
 
       setState(prev => ({ ...prev, isAnalyzing: true, error: null }));
+
+      // Fire-and-forget: Attempt to archive the primary URL during AI analysis (with light retries)
+      try {
+        const primaryUrl = (typeof metricUrl === 'string' && metricUrl) || (typeof aiSourceUrl === 'string' && aiSourceUrl) || null;
+        if (primaryUrl) {
+          (async () => {
+            try {
+              const attempt = async () => {
+                const resp = await fetch('/api/archives/save', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ url: primaryUrl, captureScreenshot: false, skipIfRecentlyArchived: true })
+                });
+                const j = await resp.json().catch(() => ({} as any));
+                return { ok: resp.ok && j?.success, data: j } as const;
+              };
+
+              for (let i = 0; i < 3; i++) {
+                const res = await attempt();
+                if (res.ok && res.data?.waybackUrl) {
+                  setState(prev => ({ ...prev, waybackUrl: res.data.waybackUrl, waybackTs: res.data.timestamp || null }));
+                  break;
+                }
+                // backoff: 3s, 5s
+                await new Promise(r => setTimeout(r, i === 0 ? 3000 : 5000));
+              }
+            } catch {}
+          })();
+        }
+      } catch {}
 
       const metric = selectedMarket.market_identifier || selectedMarket.symbol;
       const response = await fetch('/api/resolve-metric-fast', {
@@ -197,6 +260,22 @@ export default function SettlementPage() {
               <span className="text-[#606060]">OB:</span>
               <span className="text-[10px] text-white font-mono ml-1">{m.market_address || '—'}</span>
             </div>
+            <div className="text-[9px] pt-1.5">
+              <span className="text-[#606060]">Archive:</span>
+              {m?.market_config?.settlement_wayback_url ? (
+                <a
+                  href={m.market_config.settlement_wayback_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-blue-400 hover:text-blue-300 ml-1 truncate inline-block max-w-[80%] align-middle"
+                  title={m.market_config.settlement_wayback_url}
+                >
+                  {m.market_config.settlement_wayback_url}
+                </a>
+              ) : (
+                <span className="text-[10px] text-white font-mono ml-1">—</span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -252,6 +331,25 @@ export default function SettlementPage() {
         ))}
       </div>
 
+      {state.waybackUrl && (
+        <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] mt-2">
+          <div className="p-2.5">
+            <div className="text-[9px] text-[#606060]">Archived snapshot:</div>
+            <a
+              href={state.waybackUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-blue-400 hover:text-blue-300 break-all"
+            >
+              {state.waybackUrl}
+            </a>
+            {state.waybackTs && (
+              <div className="text-[9px] text-[#606060] mt-0.5">Timestamp: <span className="text-white">{state.waybackTs}</span></div>
+            )}
+          </div>
+        </div>
+      )}
+
       {selectedMarket && (
         <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
           <div className="flex items-center justify-between p-2.5">
@@ -298,6 +396,21 @@ export default function SettlementPage() {
             </div>
             <div className="mt-2 text-[9px] text-[#606060]">
               Network: <span className="text-white">{selectedMarket.network} (chainId {selectedMarket.chain_id})</span>
+            </div>
+            <div className="mt-1 text-[9px] text-[#606060]">
+              Archive:{' '}
+              {(selectedMarket as any)?.market_config?.settlement_wayback_url ? (
+                <a
+                  href={(selectedMarket as any).market_config.settlement_wayback_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 break-all"
+                >
+                  {(selectedMarket as any).market_config.settlement_wayback_url}
+                </a>
+              ) : (
+                <span className="text-white">—</span>
+              )}
             </div>
           </div>
         </div>

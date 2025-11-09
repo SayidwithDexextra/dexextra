@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
     console.log('[SPN] Using auth', { hasAccess: Boolean(access), hasSecret: Boolean(secret) });
 
 
+    
     const res = await archivePage(url, {
       captureOutlinks: Boolean(body?.captureOutlinks),
       captureScreenshot: Boolean(body?.captureScreenshot),

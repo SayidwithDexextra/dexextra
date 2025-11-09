@@ -330,7 +330,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
         </button>
 
         {/* Debug Bypass: Skip AI Validation and Create Immediately */}
-        <div className="pt-1">
+        {/* <div className="pt-1">
           <button
             type="button"
             disabled={isLoading}
@@ -362,7 +362,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
           >
             {isLoading ? 'Please wait…' : 'Debug: Skip Validation and Create Now'}
           </button>
-        </div>
+        </div> */}
       </form>
     </div>
   );

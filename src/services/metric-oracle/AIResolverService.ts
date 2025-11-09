@@ -61,7 +61,13 @@ export class AIResolverService {
       
       console.log('🤖 Sending request to OpenAI...');
       
-      // Call OpenAI API with compatibility shim for token parameter naming
+      // Build messages, including Wayback screenshots if available (vision models)
+      const waybackImages = (input.scrapedSources || [])
+        .map(s => s.screenshot_url)
+        .filter((u): u is string => typeof u === 'string' && !!u)
+        .slice(0, 3);
+
+      // Default: text-only
       const basePayload: any = {
         model: this.model,
         messages: [
@@ -70,6 +76,25 @@ export class AIResolverService {
         ],
         response_format: { type: 'json_object' }
       };
+
+      // If screenshots exist, attempt multimodal call
+      let multimodalPayload: any | null = null;
+      const visionEnabled = String(process.env.METRIC_AI_ENABLE_VISION || '').toLowerCase() === 'true';
+      if (visionEnabled && waybackImages.length > 0) {
+        const visionModel = process.env.OPENAI_VISION_MODEL || this.model;
+        const contentParts = [
+          { type: 'text', text: userPrompt },
+          ...waybackImages.map(url => ({ type: 'image_url', image_url: { url } }))
+        ];
+        multimodalPayload = {
+          model: visionModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: contentParts as any }
+          ],
+          response_format: { type: 'json_object' }
+        };
+      }
       // Optionally include temperature via env override
       const tempEnv = process.env.OPENAI_TEMPERATURE;
       if (typeof tempEnv === 'string' && tempEnv.trim() !== '') {
@@ -89,13 +114,18 @@ export class AIResolverService {
       };
 
       let response;
-      // Attempt 1: prefer max_completion_tokens for modern models
+      // Attempt 1: prefer multimodal if available
       try {
-        response = await this.openai.chat.completions.create({ ...basePayload, max_completion_tokens: 2000 } as any);
+        if (multimodalPayload) {
+          response = await this.openai.chat.completions.create({ ...multimodalPayload, max_completion_tokens: 2000 } as any);
+        } else {
+          response = await this.openai.chat.completions.create({ ...basePayload, max_completion_tokens: 2000 } as any);
+        }
       } catch (e1: any) {
         if (isUnsupportedTemp(e1)) {
           // Retry without temperature, keep max_completion_tokens
-          const { temperature, ...noTemp } = basePayload;
+          const initial = multimodalPayload || basePayload;
+          const { temperature, ...noTemp } = initial;
           try {
             response = await this.openai.chat.completions.create({ ...noTemp, max_completion_tokens: 2000 } as any);
           } catch (e1b: any) {
@@ -109,14 +139,23 @@ export class AIResolverService {
         } else if (isUnsupportedTokens(e1)) {
           // Legacy fallback: try max_tokens (may still have temperature)
           try {
-            response = await this.openai.chat.completions.create({ ...basePayload, max_tokens: 2000 } as any);
+            const initial = multimodalPayload || basePayload;
+            response = await this.openai.chat.completions.create({ ...initial, max_tokens: 2000 } as any);
           } catch (e2: any) {
             if (isUnsupportedTemp(e2)) {
-              const { temperature, ...noTemp } = basePayload;
+              const initial = multimodalPayload || basePayload;
+              const { temperature, ...noTemp } = initial as any;
               response = await this.openai.chat.completions.create({ ...noTemp, max_tokens: 2000 } as any);
             } else {
               throw e2;
             }
+          }
+        } else if (multimodalPayload) {
+          // If multimodal failed for other reasons, try text-only as final attempt
+          try {
+            response = await this.openai.chat.completions.create({ ...basePayload, max_completion_tokens: 2000 } as any);
+          } catch (eText: any) {
+            throw eText;
           }
         } else {
           throw e1;

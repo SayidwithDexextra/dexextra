@@ -61,7 +61,7 @@ async function pollSaveStatus(
   originalUrl: string,
   headers?: Record<string, string>
 ): Promise<{ waybackUrl?: string; timestamp?: string } | null> {
-  const maxPolls = 20;
+  const maxPolls = 30;
   const delayMs = 2000;
   for (let i = 0; i < maxPolls; i++) {
     try {
@@ -179,7 +179,7 @@ async function pollAvailableUrl(
   originalUrl: string,
   headers?: Record<string, string>
 ): Promise<{ waybackUrl?: string; timestamp?: string } | null> {
-  const maxPolls = 15;
+  const maxPolls = 30;
   const delayMs = 2000;
   for (let i = 0; i < maxPolls; i++) {
     try {
@@ -237,7 +237,7 @@ export async function archivePage(
     skip_first_archive: options.skipIfRecentlyArchived ?? false,
   };
 
-  const maxAttempts = 3; // 1s -> 2s -> 4s
+  const maxAttempts = 5; // 1s -> 2s -> 4s -> 8s -> 16s
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {

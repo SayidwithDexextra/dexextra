@@ -5,6 +5,10 @@ import { TextProcessingService } from './TextProcessingService';
 import { MetricOracleDatabase } from './MetricOracleDatabase';
 import { ScrapedSource, ProcessedChunk } from './types';
 import { launchBrowser, isServerlessEnvironment, type Browser } from './puppeteerLauncher';
+import archivePage from '@/lib/archivePage';
+import { ScreenshotStorageService } from './ScreenshotStorageService';
+import * as os from 'os';
+import * as path from 'path';
 
 interface CacheEntry {
   content: string;
@@ -57,23 +61,24 @@ export class PerformanceOptimizedMetricOracle {
 
     try {
       // Step 1: Check cache first (fastest path)
-      const cachedResult = await this.checkCache(input);
-      if (cachedResult) {
-        console.log(`⚡ CACHE HIT: Returned in ${Date.now() - startTime}ms`);
-        return cachedResult;
-      }
+      // const cachedResult = await this.checkCache(input);
+      // if (cachedResult) {
+      //   console.log(`⚡ CACHE HIT: Returned in ${Date.now() - startTime}ms`);
+      //   return cachedResult;
+      // }
 
-      // Step 2: Parallel scraping with browser pool + streaming uploads
-      console.log('🚄 FAST: Parallel scraping with browser pool...');
+      // Step 2: Start scraping ORIGINAL sources immediately (do not block on Wayback)
+      console.log('🚄 FAST: Parallel scraping original sources...');
       const scrapingPromise = this.parallelScrapeWithPool(input.urls, input.metric);
-      
-      // Step 3: Start AI pre-processing while scraping (pipeline optimization)
+
+      // Step 3: Kick off Wayback archiving in the background (non-blocking)
+      const archivePromise = this.archiveInputUrls(input.urls);
       const aiReadyPromise = this.prepareAIContext(input.metric);
-      
-      // Step 4: Wait for scraping to complete
+
+      // Step 4: Wait for original scraping to complete
       const scrapedSources = await scrapingPromise;
       const aiContext = await aiReadyPromise;
-      
+
       // Step 5: Fast content processing (pre-filtered)
       console.log('⚡ FAST: Speed-optimized content processing...');
       const processedChunks = await this.fastProcessContent(scrapedSources, input.metric);
@@ -601,6 +606,162 @@ export class PerformanceOptimizedMetricOracle {
     }
     
     this.browserPool = validBrowsers;
+  }
+
+  /**
+   * Archive all input URLs via SavePageNow and return the Wayback URLs (fallback to original on failure).
+   */
+  private async archiveInputUrls(urls: string[], perUrlTimeoutMs: number = 15000): Promise<string[]> {
+    const access = process.env.WAYBACK_API_ACCESS_KEY;
+    const secret = process.env.WAYBACK_API_SECRET;
+    const appUrl = process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
+    const headers = ((access && secret) || appUrl)
+      ? ({
+          ...(access && secret ? { Authorization: `LOW ${access}:${secret}` } : {}),
+          ...(appUrl ? { 'User-Agent': `Dexextra/1.0 (+${appUrl})` } : { 'User-Agent': 'Dexextra/1.0' })
+        } as Record<string, string>)
+      : undefined;
+
+    // Use archivePage's own polling/backoff; avoid short client-side timeouts
+
+    const tasks = urls.map(async (u) => {
+      try {
+        const res = await archivePage(u, {
+          captureScreenshot: false,
+          skipIfRecentlyArchived: true,
+          headers,
+        });
+        if (res && (res as any).success && (res as any).waybackUrl) {
+          return (res as any).waybackUrl as string;
+        }
+      } catch (e) {
+        console.warn(`Archive failed for ${u}:`, e instanceof Error ? e.message : String(e));
+      }
+      // Fallback
+      return u;
+    });
+
+    const results = await Promise.all(tasks);
+    // Prefer only successful archived URLs if most succeeded; otherwise allow mixed
+    return results;
+  }
+
+  /**
+   * Attempt to archive each source URL via Wayback and attach a screenshot of the archived page.
+   * Best-effort with per-URL timeout; continues even if some archives fail.
+   */
+  private async attachWaybackScreenshots(sources: ScrapedSource[], metricName: string): Promise<ScrapedSource[]> {
+    const enhanced = await Promise.all(
+      sources.map(async (src) => {
+        if (!src || !src.url || src.error) return src;
+        try {
+          const result = await this.saveWaybackAndScreenshot(src.url, metricName, 60000);
+          if (result && (result.archivedUrl || result.archivedContent || result.screenshotUrl)) {
+            return {
+              ...src,
+              url: result.archivedUrl || src.url,
+              content: result.archivedContent || src.content,
+              screenshot_url: result.screenshotUrl || src.screenshot_url
+            } as ScrapedSource;
+          }
+        } catch (e) {
+          // Non-fatal
+          console.warn(`Wayback attach failed for ${src.url}:`, e instanceof Error ? e.message : String(e));
+        }
+        return src;
+      })
+    );
+    return enhanced;
+  }
+
+  /**
+   * Create a Wayback snapshot and screenshot the archived page; upload to storage and return public URL.
+   */
+  private async saveWaybackAndScreenshot(url: string, metricName: string, timeoutMs: number): Promise<{ archivedUrl?: string; archivedContent?: string; screenshotUrl?: string } | null> {
+    const access = process.env.WAYBACK_API_ACCESS_KEY;
+    const secret = process.env.WAYBACK_API_SECRET;
+    const appUrl = process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
+    const headers = ((access && secret) || appUrl)
+      ? ({
+          ...(access && secret ? { Authorization: `LOW ${access}:${secret}` } : {}),
+          ...(appUrl ? { 'User-Agent': `Dexextra/1.0 (+${appUrl})` } : { 'User-Agent': 'Dexextra/1.0' })
+        } as Record<string, string>)
+      : undefined;
+
+    // Rely on archivePage's internal polling; avoid short wrapper timeouts
+
+    // Step 1: Request archive (best-effort, short timeout)
+    let waybackUrl: string | undefined;
+    try {
+      const res = await archivePage(url, {
+        captureScreenshot: true,
+        skipIfRecentlyArchived: true,
+        headers,
+      });
+      if (res && (res as any).success && (res as any).waybackUrl) {
+        waybackUrl = (res as any).waybackUrl as string;
+      }
+    } catch (e) {
+      // If archive fails or times out, try to proceed without it
+      console.warn(`Wayback archive request failed for ${url}:`, e instanceof Error ? e.message : String(e));
+    }
+
+    if (!waybackUrl) return null;
+
+    // Step 2: Screenshot the archived page using existing browser pool
+    const browser = await this.getBrowserFromPool();
+    try {
+      const page = await browser.newPage();
+      try {
+        page.setDefaultTimeout(15000);
+        page.setDefaultNavigationTimeout(15000);
+        await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+        await page.goto(waybackUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        const tmpFile = path.join(
+          os.tmpdir(),
+          `wayback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`
+        );
+        await page.screenshot({ path: tmpFile as `${string}.png`, fullPage: true });
+
+        // Extract cleaned text content from archived page (old text-first method)
+        const archivedPageData = await page.evaluate(() => {
+          try {
+            // Remove IA toolbar and non-content chrome
+            const iaBar = document.getElementById('wm-ipp');
+            if (iaBar && iaBar.parentNode) iaBar.parentNode.removeChild(iaBar);
+            const selectors = ['main','[role="main"]','.content','.main-content','article','.article','body'];
+            let el: Element | null = null;
+            for (const s of selectors) { el = document.querySelector(s); if (el) break; }
+            if (!el) el = document.body;
+            const text = (el?.textContent || '').trim();
+            return { text };
+          } catch (e) {
+            return { text: '' };
+          }
+        });
+
+        // Upload screenshot to storage (optional, for audit trail)
+        let publicUrl: string | undefined;
+        try {
+          const storage = new ScreenshotStorageService();
+          const storagePath = storage.generateStoragePath(`wayback-${metricName.replace(/[^a-z0-9_-]+/gi, '-')}`);
+          publicUrl = await storage.uploadScreenshot(tmpFile, storagePath);
+        } catch {}
+
+        return { archivedUrl: waybackUrl, archivedContent: (archivedPageData?.text || '').slice(0, 15000), screenshotUrl: publicUrl };
+      } finally {
+        if (!page.isClosed()) {
+          await page.close();
+        }
+      }
+    } catch (e) {
+      console.warn(`Wayback screenshot failed for ${url}:`, e instanceof Error ? e.message : String(e));
+      return { archivedUrl: waybackUrl };
+    } finally {
+      this.returnBrowserToPool(browser);
+    }
   }
 
   /**
