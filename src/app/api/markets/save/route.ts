@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
 import path from 'path';
+import { archivePage } from '@/lib/archivePage';
 import {
   OBAdminFacetABI,
   OBPricingFacetABI,
@@ -217,6 +218,40 @@ export async function POST(req: Request) {
       aiSourceLocator,
     } = body || {};
 
+    // Attempt to create or resolve a Wayback snapshot for the metric URL (server-side, robust)
+    let archivedWaybackUrl: string | null = null;
+    let archivedWaybackTs: string | null = null;
+    try {
+      const metricUrl: string | null = (initialOrder && (initialOrder as any).metricUrl) ? String((initialOrder as any).metricUrl) : null;
+      if (metricUrl) {
+        const access = process.env.WAYBACK_API_ACCESS_KEY as string | undefined;
+        const secret = process.env.WAYBACK_API_SECRET as string | undefined;
+        const appUrl = (process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)) as string | undefined;
+        const authHeader = access && secret ? `LOW ${access}:${secret}` : undefined;
+        const res = await archivePage(metricUrl, {
+          captureOutlinks: false,
+          captureScreenshot: true,
+          skipIfRecentlyArchived: true,
+          headers: {
+            ...(authHeader ? { Authorization: authHeader } : {}),
+            ...(appUrl ? { 'User-Agent': `Dexextra/1.0 (+${appUrl})` } : { 'User-Agent': 'Dexextra/1.0' }),
+          },
+          debug: true,
+        });
+        if (res?.success && res.waybackUrl) {
+          archivedWaybackUrl = String(res.waybackUrl);
+          archivedWaybackTs = res.timestamp ? String(res.timestamp) : null;
+          logStep('wayback_snapshot', 'success', { waybackUrl: archivedWaybackUrl, timestamp: archivedWaybackTs });
+        } else {
+          logStep('wayback_snapshot', 'error', { reason: res?.error || 'unknown', metricUrl });
+        }
+      } else {
+        logStep('wayback_snapshot', 'error', { reason: 'missing_metric_url' });
+      }
+    } catch (e: any) {
+      logStep('wayback_snapshot', 'error', { error: e?.message || String(e) });
+    }
+
     let effectiveIdentifier = String(marketIdentifier || symbol || '').toUpperCase();
     if (!effectiveIdentifier) {
       logStep('validate_identifier', 'error', { reason: 'missing_identifier' });
@@ -292,8 +327,13 @@ export async function POST(req: Request) {
         data_request_window_seconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
         auto_settle: autoSettle ?? true,
         oracle_provider: oracleProvider || null,
-        initial_order: initialOrder || null,
-        market_config: marketConfig,
+        initial_order: initialOrder
+          ? { ...initialOrder, waybackUrl: archivedWaybackUrl, waybackTimestamp: archivedWaybackTs }
+          : (archivedWaybackUrl ? { waybackUrl: archivedWaybackUrl, waybackTimestamp: archivedWaybackTs } : null),
+        market_config: {
+          ...(marketConfig || {}),
+          ...(archivedWaybackUrl ? { wayback_snapshot: { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: (initialOrder as any)?.metricUrl || null } } : {}),
+        },
         metric_resolution_id: resolutionId,
         chain_id: chainId,
         network: networkName,
@@ -342,7 +382,10 @@ export async function POST(req: Request) {
         deployment_status: 'DEPLOYED',
         market_status: 'ACTIVE',
         deployed_at: new Date().toISOString(),
-        market_config: marketConfig,
+        market_config: {
+          ...(marketConfig || {}),
+          ...(archivedWaybackUrl ? { wayback_snapshot: { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: (initialOrder as any)?.metricUrl || null } } : {}),
+        },
         metric_resolution_id: resolutionId,
       };
       const { error: updErr } = await supabase.from('markets').update(updatePayload).eq('id', marketIdUuid);
