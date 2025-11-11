@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import path from 'path';
-import {
-  OBAdminFacetABI,
-  OBPricingFacetABI,
-  OBOrderPlacementFacetABI,
-  OBTradeExecutionFacetABI,
-  OBLiquidationFacetABI,
-  OBViewFacetABI,
-  OBSettlementFacetABI,
-} from '@/lib/contracts';
+// Use statically shipped full ABIs to avoid dynamic filesystem requires
+// These JSON files are bundled with the app
+// Note: If you update facet contracts, regenerate these JSONs
+import OBAdminFacetArtifact from '@/lib/abis/facets/OBAdminFacet.json';
+import OBPricingFacetArtifact from '@/lib/abis/facets/OBPricingFacet.json';
+import OBOrderPlacementFacetArtifact from '@/lib/abis/facets/OBOrderPlacementFacet.json';
+import OBTradeExecutionFacetArtifact from '@/lib/abis/facets/OBTradeExecutionFacet.json';
+import OBLiquidationFacetArtifact from '@/lib/abis/facets/OBLiquidationFacet.json';
+import OBViewFacetArtifact from '@/lib/abis/facets/OBViewFacet.json';
+import OBSettlementFacetArtifact from '@/lib/abis/facets/OBSettlementFacet.json';
 
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
@@ -46,23 +47,17 @@ function selectorsFromAbi(abi: any[]): string[] {
   }
 }
 
-function loadFacetAbi(contractName: string, fallbackAbi: any[]): any[] {
-  try {
-    const artifactPath = path.join(
-      process.cwd(),
-      'Dexetrav5',
-      'artifacts',
-      'src',
-      'diamond',
-      'facets',
-      `${contractName}.sol`,
-      `${contractName}.json`
-    );
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const artifact = require(artifactPath);
-    if (artifact && Array.isArray(artifact.abi)) return artifact.abi;
-  } catch {}
-  return fallbackAbi;
+function loadFacetAbi(contractName: string): any[] {
+  switch (contractName) {
+    case 'OBAdminFacet': return (OBAdminFacetArtifact as any)?.abi || [];
+    case 'OBPricingFacet': return (OBPricingFacetArtifact as any)?.abi || [];
+    case 'OBOrderPlacementFacet': return (OBOrderPlacementFacetArtifact as any)?.abi || [];
+    case 'OBTradeExecutionFacet': return (OBTradeExecutionFacetArtifact as any)?.abi || [];
+    case 'OBLiquidationFacet': return (OBLiquidationFacetArtifact as any)?.abi || [];
+    case 'OBViewFacet': return (OBViewFacetArtifact as any)?.abi || [];
+    case 'OBSettlementFacet': return (OBSettlementFacetArtifact as any)?.abi || [];
+    default: return [];
+  }
 }
 
 export async function GET() {
@@ -98,14 +93,14 @@ export async function GET() {
     }
     logStep('validate_env', 'success');
 
-    // Load ABIs from artifacts when available to avoid selector drift/duplication
-    const adminAbi = loadFacetAbi('OBAdminFacet', OBAdminFacetABI as any[]);
-    const pricingAbi = loadFacetAbi('OBPricingFacet', OBPricingFacetABI as any[]);
-    const placementAbi = loadFacetAbi('OBOrderPlacementFacet', OBOrderPlacementFacetABI as any[]);
-    const execAbi = loadFacetAbi('OBTradeExecutionFacet', OBTradeExecutionFacetABI as any[]);
-    const liqAbi = loadFacetAbi('OBLiquidationFacet', OBLiquidationFacetABI as any[]);
-    const viewAbi = loadFacetAbi('OBViewFacet', OBViewFacetABI as any[]);
-    const settleAbi = loadFacetAbi('OBSettlementFacet', OBSettlementFacetABI as any[]);
+    // Load ABIs from statically shipped JSON to avoid selector drift/duplication
+    const adminAbi = loadFacetAbi('OBAdminFacet');
+    const pricingAbi = loadFacetAbi('OBPricingFacet');
+    const placementAbi = loadFacetAbi('OBOrderPlacementFacet');
+    const execAbi = loadFacetAbi('OBTradeExecutionFacet');
+    const liqAbi = loadFacetAbi('OBLiquidationFacet');
+    const viewAbi = loadFacetAbi('OBViewFacet');
+    const settleAbi = loadFacetAbi('OBSettlementFacet');
 
     const cut = [
       { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(adminAbi) },

@@ -1,0 +1,12 @@
+{
+  "abi": [
+    { "type": "function", "name": "setConfigLiquidationScanOnTrade", "stateMutability": "nonpayable", "inputs": [
+      { "name": "enable", "type": "bool" }
+    ], "outputs": [] },
+    { "type": "function", "name": "setConfigLiquidationDebug", "stateMutability": "nonpayable", "inputs": [
+      { "name": "enable", "type": "bool" }
+    ], "outputs": [] },
+    { "type": "function", "name": "pokeLiquidations", "stateMutability": "nonpayable", "inputs": [], "outputs": [] }
+  ]
+}
+

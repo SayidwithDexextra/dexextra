@@ -1,0 +1,169 @@
+{
+  "abi": [
+    { "anonymous": false, "inputs": [
+      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "buyerFee", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "seller", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "sellerFee", "type": "uint256" }
+    ], "name": "FeesDeducted", "type": "event" },
+    { "anonymous": false, "inputs": [
+      { "indexed": false, "internalType": "bool", "name": "isLiquidationTrade", "type": "bool" },
+      { "indexed": false, "internalType": "address", "name": "liquidationTarget", "type": "address" },
+      { "indexed": false, "internalType": "bool", "name": "liquidationClosesShort", "type": "bool" }
+    ], "name": "LiquidationTradeDetected", "type": "event" },
+    { "anonymous": false, "inputs": [], "name": "MarginUpdatesCompleted", "type": "event" },
+    { "anonymous": false, "inputs": [{ "indexed": false, "internalType": "bool", "name": "isLiquidationTrade", "type": "bool" }], "name": "MarginUpdatesStarted", "type": "event" },
+    { "anonymous": false, "inputs": [
+      { "indexed": false, "internalType": "uint256", "name": "lastTradePrice", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "currentMarkPrice", "type": "uint256" }
+    ], "name": "PriceUpdated", "type": "event" },
+    { "anonymous": false, "inputs": [
+      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
+      { "indexed": true, "internalType": "address", "name": "seller", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "price", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" }
+    ], "name": "TradeExecutionCompleted", "type": "event" },
+    { "anonymous": false, "inputs": [
+      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
+      { "indexed": true, "internalType": "address", "name": "seller", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "price", "type": "uint256" },
+      { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" },
+      { "indexed": false, "internalType": "bool", "name": "buyerMargin", "type": "bool" },
+      { "indexed": false, "internalType": "bool", "name": "sellerMargin", "type": "bool" }
+    ], "name": "TradeExecutionStarted", "type": "event" },
+    { "inputs": [
+      { "internalType": "uint256", "name": "offset", "type": "uint256" },
+      { "internalType": "uint256", "name": "limit", "type": "uint256" }
+    ], "name": "getAllTrades", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "tradeId", "type": "uint256" },
+        { "internalType": "address", "name": "buyer", "type": "address" },
+        { "internalType": "address", "name": "seller", "type": "address" },
+        { "internalType": "uint256", "name": "price", "type": "uint256" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "buyerIsMargin", "type": "bool" },
+        { "internalType": "bool", "name": "sellerIsMargin", "type": "bool" },
+        { "internalType": "uint256", "name": "tradeValue", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyerFee", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellerFee", "type": "uint256" }
+      ], "internalType": "struct OrderBookStorage.Trade[]", "name": "tradeData", "type": "tuple[]" },
+      { "internalType": "bool", "name": "hasMore", "type": "bool" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getLastTwentyTrades", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "tradeId", "type": "uint256" },
+        { "internalType": "address", "name": "buyer", "type": "address" },
+        { "internalType": "address", "name": "seller", "type": "address" },
+        { "internalType": "uint256", "name": "price", "type": "uint256" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "buyerIsMargin", "type": "bool" },
+        { "internalType": "bool", "name": "sellerIsMargin", "type": "bool" },
+        { "internalType": "uint256", "name": "tradeValue", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyerFee", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellerFee", "type": "uint256" }
+      ], "internalType": "struct OrderBookStorage.Trade[]", "name": "tradeData", "type": "tuple[]" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "uint256", "name": "count", "type": "uint256" }], "name": "getRecentTrades", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "tradeId", "type": "uint256" },
+        { "internalType": "address", "name": "buyer", "type": "address" },
+        { "internalType": "address", "name": "seller", "type": "address" },
+        { "internalType": "uint256", "name": "price", "type": "uint256" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "buyerIsMargin", "type": "bool" },
+        { "internalType": "bool", "name": "sellerIsMargin", "type": "bool" },
+        { "internalType": "uint256", "name": "tradeValue", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyerFee", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellerFee", "type": "uint256" }
+      ], "internalType": "struct OrderBookStorage.Trade[]", "name": "tradeData", "type": "tuple[]" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "uint256", "name": "tradeId", "type": "uint256" }], "name": "getTradeById", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "tradeId", "type": "uint256" },
+        { "internalType": "address", "name": "buyer", "type": "address" },
+        { "internalType": "address", "name": "seller", "type": "address" },
+        { "internalType": "uint256", "name": "price", "type": "uint256" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "buyerIsMargin", "type": "bool" },
+        { "internalType": "bool", "name": "sellerIsMargin", "type": "bool" },
+        { "internalType": "uint256", "name": "tradeValue", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyerFee", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellerFee", "type": "uint256" }
+      ], "internalType": "struct OrderBookStorage.Trade", "name": "trade", "type": "tuple" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getTradeStatistics", "outputs": [
+      { "internalType": "uint256", "name": "totalTrades", "type": "uint256" },
+      { "internalType": "uint256", "name": "totalVolume", "type": "uint256" },
+      { "internalType": "uint256", "name": "totalFees", "type": "uint256" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [
+      { "internalType": "uint256", "name": "startTime", "type": "uint256" },
+      { "internalType": "uint256", "name": "endTime", "type": "uint256" },
+      { "internalType": "uint256", "name": "offset", "type": "uint256" },
+      { "internalType": "uint256", "name": "limit", "type": "uint256" }
+    ], "name": "getTradesByTimeRange", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "tradeId", "type": "uint256" },
+        { "internalType": "address", "name": "buyer", "type": "address" },
+        { "internalType": "address", "name": "seller", "type": "address" },
+        { "internalType": "uint256", "name": "price", "type": "uint256" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "buyerIsMargin", "type": "bool" },
+        { "internalType": "bool", "name": "sellerIsMargin", "type": "bool" },
+        { "internalType": "uint256", "name": "tradeValue", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyerFee", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellerFee", "type": "uint256" }
+      ], "internalType": "struct OrderBookStorage.Trade[]", "name": "tradeData", "type": "tuple[]" },
+      { "internalType": "bool", "name": "hasMore", "type": "bool" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "address", "name": "user", "type": "address" }], "name": "getUserTradeCount", "outputs": [
+      { "internalType": "uint256", "name": "", "type": "uint256" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [
+      { "internalType": "address", "name": "user", "type": "address" },
+      { "internalType": "uint256", "name": "offset", "type": "uint256" },
+      { "internalType": "uint256", "name": "limit", "type": "uint256" }
+    ], "name": "getUserTrades", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "tradeId", "type": "uint256" },
+        { "internalType": "address", "name": "buyer", "type": "address" },
+        { "internalType": "address", "name": "seller", "type": "address" },
+        { "internalType": "uint256", "name": "price", "type": "uint256" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "buyerIsMargin", "type": "bool" },
+        { "internalType": "bool", "name": "sellerIsMargin", "type": "bool" },
+        { "internalType": "uint256", "name": "tradeValue", "type": "uint256" },
+        { "internalType": "uint256", "name": "buyerFee", "type": "uint256" },
+        { "internalType": "uint256", "name": "sellerFee", "type": "uint256" }
+      ], "internalType": "struct OrderBookStorage.Trade[]", "name": "tradeData", "type": "tuple[]" },
+      { "internalType": "bool", "name": "hasMore", "type": "bool" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [
+      { "internalType": "address", "name": "buyer", "type": "address" },
+      { "internalType": "address", "name": "seller", "type": "address" },
+      { "internalType": "uint256", "name": "price", "type": "uint256" },
+      { "internalType": "uint256", "name": "amount", "type": "uint256" },
+      { "internalType": "bool", "name": "buyerMargin", "type": "bool" },
+      { "internalType": "bool", "name": "sellerMargin", "type": "bool" }
+    ], "name": "obExecuteTrade", "outputs": [], "stateMutability": "nonpayable", "type": "function" }
+  ]
+}
+

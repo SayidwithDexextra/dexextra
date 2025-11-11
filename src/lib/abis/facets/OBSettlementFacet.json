@@ -1,0 +1,7 @@
+{
+  "abi": [
+    { "type": "function", "name": "isSettled", "stateMutability": "view", "inputs": [], "outputs": [{ "name": "", "type": "bool" }] },
+    { "type": "function", "name": "settleMarket", "stateMutability": "nonpayable", "inputs": [{ "name": "finalPrice", "type": "uint256" }], "outputs": [] }
+  ]
+}
+

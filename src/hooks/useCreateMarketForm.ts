@@ -24,6 +24,8 @@ export interface MarketFormData {
     html_snippet?: string;
     js_extractor?: string;
   };
+  // Debug/ops flags
+  skipArchive?: boolean;
 }
 
 const DEFAULT_MARGIN_BPS = 10000; // 100%

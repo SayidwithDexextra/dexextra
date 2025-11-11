@@ -1,0 +1,70 @@
+{
+  "abi": [
+    { "inputs": [], "name": "bestAsk", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "bestBid", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "uint256", "name": "price", "type": "uint256" }], "name": "buyLevels", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "totalAmount", "type": "uint256" },
+        { "internalType": "uint256", "name": "firstOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "lastOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "exists", "type": "bool" }
+      ], "internalType": "struct OrderBookStorage.PriceLevel", "name": "level", "type": "tuple" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getActiveOrdersCount", "outputs": [
+      { "internalType": "uint256", "name": "buyCount", "type": "uint256" },
+      { "internalType": "uint256", "name": "sellCount", "type": "uint256" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "uint256", "name": "orderId", "type": "uint256" }], "name": "getFilledAmount", "outputs": [
+      { "internalType": "uint256", "name": "", "type": "uint256" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getLeverageInfo", "outputs": [
+      { "internalType": "bool", "name": "enabled", "type": "bool" },
+      { "internalType": "uint256", "name": "maxLev", "type": "uint256" },
+      { "internalType": "uint256", "name": "marginReq", "type": "uint256" },
+      { "internalType": "address", "name": "controller", "type": "address" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getMaxSlippageBps", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "uint256", "name": "orderId", "type": "uint256" }], "name": "getOrder", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "orderId", "type": "uint256" },
+        { "internalType": "address", "name": "trader", "type": "address" },
+        { "internalType": "uint256", "name": "price", "type": "uint256" },
+        { "internalType": "uint256", "name": "amount", "type": "uint256" },
+        { "internalType": "bool", "name": "isBuy", "type": "bool" },
+        { "internalType": "uint256", "name": "timestamp", "type": "uint256" },
+        { "internalType": "uint256", "name": "nextOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "marginRequired", "type": "uint256" },
+        { "internalType": "bool", "name": "isMarginOrder", "type": "bool" }
+      ], "internalType": "struct OrderBookStorage.Order", "name": "order", "type": "tuple" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "getTradingParameters", "outputs": [
+      { "internalType": "uint256", "name": "marginRequirement", "type": "uint256" },
+      { "internalType": "uint256", "name": "fee", "type": "uint256" },
+      { "internalType": "address", "name": "recipient", "type": "address" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "address", "name": "user", "type": "address" }], "name": "getUserOrders", "outputs": [
+      { "internalType": "uint256[]", "name": "orderIds", "type": "uint256[]" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "address", "name": "user", "type": "address" }], "name": "getUserPosition", "outputs": [
+      { "internalType": "int256", "name": "", "type": "int256" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "lastTradePrice", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "marketStatic", "outputs": [
+      { "internalType": "address", "name": "vault", "type": "address" },
+      { "internalType": "bytes32", "name": "marketId", "type": "bytes32" },
+      { "internalType": "bool", "name": "useVWAP", "type": "bool" },
+      { "internalType": "uint256", "name": "vwapWindow", "type": "uint256" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "maxSlippageBps", "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }], "stateMutability": "view", "type": "function" },
+    { "inputs": [{ "internalType": "uint256", "name": "price", "type": "uint256" }], "name": "sellLevels", "outputs": [
+      { "components": [
+        { "internalType": "uint256", "name": "totalAmount", "type": "uint256" },
+        { "internalType": "uint256", "name": "firstOrderId", "type": "uint256" },
+        { "internalType": "uint256", "name": "lastOrderId", "type": "uint256" },
+        { "internalType": "bool", "name": "exists", "type": "bool" }
+      ], "internalType": "struct OrderBookStorage.PriceLevel", "name": "level", "type": "tuple" }
+    ], "stateMutability": "view", "type": "function" },
+    { "inputs": [], "name": "totalMarginLockedInMarket", "outputs": [{ "internalType": "uint256", "name": "totalLocked6", "type": "uint256" }], "stateMutability": "view", "type": "function" }
+  ]
+}
+

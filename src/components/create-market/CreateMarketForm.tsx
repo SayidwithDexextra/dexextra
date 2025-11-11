@@ -330,7 +330,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
         </button>
 
         {/* Debug Bypass: Skip AI Validation and Create Immediately */}
-        {/* <div className="pt-1">
+        <div className="pt-1">
           <button
             type="button"
             disabled={isLoading}
@@ -347,8 +347,9 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
                   dataSource: formData.dataSource || 'Debug',
                   startPrice: formData.startPrice || '1',
                   tags: Array.isArray(formData.tags) ? formData.tags : [],
-                } as any;
-                try { console.log('[create-market][debug] Bypass enabled → skipping AI metric validation'); } catch {}
+                  skipArchive: true,
+                };
+                try { console.log('[create-market][debug] Bypass enabled → skipping AI metric validation + Wayback archive'); } catch {}
                 await onSubmit(debugData);
               } catch (err) {
                 setError(err instanceof Error ? err.message : 'Failed to start debug create');
@@ -362,7 +363,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
           >
             {isLoading ? 'Please wait…' : 'Debug: Skip Validation and Create Now'}
           </button>
-        </div> */}
+        </div>
       </form>
     </div>
   );

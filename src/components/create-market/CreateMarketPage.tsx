@@ -8,6 +8,9 @@ import { useRouter } from 'next/navigation';
 import { DeploymentProgressPanel, type ProgressStep, type StepStatus } from './DeploymentProgressPanel';
 import { ErrorModal } from '@/components/StatusModals';
 // Archive snapshot is executed via server proxy to avoid browser CORS
+import { createMarketOnChain } from '@/lib/createMarketOnChain';
+import { ethers } from 'ethers';
+import { ProgressOverlay } from './ProgressOverlay';
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -22,6 +25,7 @@ export const CreateMarketPage = () => {
 
   const [steps, setSteps] = useState<ProgressStep[]>(initialSteps);
   const [showProgress, setShowProgress] = useState(false);
+  const [isFadingOut, setIsFadingOut] = useState(false);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title: string; message: string }>({ isOpen: false, title: '', message: '' });
 
   const resetSteps = () => setSteps(initialSteps.map(s => ({ ...s, status: 'pending' })));
@@ -35,9 +39,28 @@ export const CreateMarketPage = () => {
 
   const isUserRejected = (_e: any): boolean => false;
 
+  // Vertical carousel configuration mapped to deployment pipeline
+  const carouselMessages = ['Deploying contract...', 'Setting up market...', 'Registering oracle feed...'];
+  const trackedOrder: string[] = ['tx', 'roles', 'save']; // map steps to carousel sequence
+  const completedTrackedCount = steps.filter(s => trackedOrder.includes(s.id) && s.status === 'done').length;
+  const activeTrackedIndex = steps.findIndex(s => trackedOrder.includes(s.id) && s.status === 'active' && trackedOrder.includes(s.id));
+  const activeCarouselIndex = activeTrackedIndex >= 0 ? trackedOrder.indexOf(steps[activeTrackedIndex].id) : Math.min(completedTrackedCount, carouselMessages.length - 1);
+  const percentComplete = Math.min(
+    100,
+    Math.round(((completedTrackedCount + (activeTrackedIndex >= 0 ? 0.35 : 0)) / Math.max(carouselMessages.length, 1)) * 100)
+  );
+
+  const beginFadeOutToToken = (targetSymbol: string) => {
+    setIsFadingOut(true);
+    setTimeout(() => {
+      router.push(`/token/${encodeURIComponent(targetSymbol)}`);
+    }, 450);
+  };
+
   const handleCreateMarket = async (marketData: MarketFormData) => {
     setIsLoading(true);
     setShowProgress(true);
+    setIsFadingOut(false);
     resetSteps();
     try {
       // Params
@@ -47,73 +70,128 @@ export const CreateMarketPage = () => {
       const tags = marketData.tags || [];
       const sourceLocator = (marketData as any).sourceLocator || null;
 
-      // Best-effort Wayback Machine snapshot of the metric/source URL.
-      // This runs in the background and never blocks market creation.
-      const metricUrlToArchive = typeof metricUrl === 'string' ? metricUrl.trim() : '';
-      if (metricUrlToArchive) {
-        void fetch('/api/archives/save', {
+      // Optional Wayback Machine snapshot (skip when debug flag is set)
+      const skipArchive = Boolean((marketData as any).skipArchive);
+      if (!skipArchive) {
+        const metricUrlToArchive = typeof metricUrl === 'string' ? metricUrl.trim() : '';
+        if (metricUrlToArchive) {
+          void fetch('/api/archives/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: metricUrlToArchive,
+              captureOutlinks: false,
+              captureScreenshot: true,
+              skipIfRecentlyArchived: true,
+            }),
+          })
+            .then(async (r) => {
+              const data = await r.json().catch(() => null);
+              if (r.ok && data?.success) {
+                console.info('Wayback snapshot created', {
+                  url: metricUrlToArchive,
+                  waybackUrl: data?.waybackUrl,
+                  timestamp: data?.timestamp,
+                });
+              } else {
+                console.warn('Wayback snapshot failed', {
+                  url: metricUrlToArchive,
+                  status: r.status,
+                  error: data?.error,
+                });
+              }
+            })
+            .catch(err => {
+              console.warn('Wayback snapshot error', {
+                url: metricUrlToArchive,
+                error: (err as any)?.message || String(err),
+              });
+            });
+        }
+      } else {
+        console.info('[create-market] Skipping Wayback snapshot due to debug flag');
+      }
+
+      // Create market on chain using connected wallet (mimics new-create-market.js)
+      markActive('tx');
+      const { orderBook, marketId, chainId, transactionHash } = await createMarketOnChain({
+        symbol,
+        metricUrl,
+        startPrice: String(marketData.startPrice || '1'),
+        dataSource,
+        tags,
+      });
+      markDone('tx');
+
+      // Confirm step completed as part of the awaited tx above
+      markDone('confirm');
+
+      // Grant roles on CoreVault via server-admin endpoint (user is not necessarily admin)
+      markActive('roles');
+      {
+        const grant = await fetch('/api/markets/grant-roles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderBook }),
+        });
+        if (!grant.ok) {
+          const gErr = await grant.json().catch(() => ({} as any));
+          throw new Error(gErr?.error || 'Role grant failed');
+        }
+        markDone('roles');
+      }
+
+      // Persist market metadata via API (Supabase upsert, verification)
+      markActive('save');
+      {
+        const networkName =
+          (process.env as any).NEXT_PUBLIC_NETWORK_NAME ||
+          (globalThis as any).process?.env?.NEXT_PUBLIC_NETWORK_NAME ||
+          'hyperliquid';
+        const saveRes = await fetch('/api/markets/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            url: metricUrlToArchive,
-            captureOutlinks: false,
-            captureScreenshot: true,
-            skipIfRecentlyArchived: true,
+            marketIdentifier: symbol,
+            symbol,
+            name: `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`,
+            description: `OrderBook market for ${symbol}`,
+            category: Array.isArray(tags) && tags.length ? tags[0] : 'CUSTOM',
+            decimals: 6,
+            minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
+            settlementDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+            tradingEndDate: null,
+            dataRequestWindowSeconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
+            autoSettle: true,
+            oracleProvider: null,
+            initialOrder: {
+              metricUrl,
+              startPrice: String(marketData.startPrice || '1'),
+              dataSource,
+              tags,
+            },
+            chainId,
+            networkName,
+            creatorWalletAddress: undefined,
+            marketAddress: orderBook,
+            marketIdBytes32: marketId,
+            transactionHash,
+            blockNumber: null,
+            gasUsed: null,
+            aiSourceLocator: sourceLocator,
+            iconImageUrl: (marketData as any).iconUrl ? String((marketData as any).iconUrl).trim() : null,
           }),
-        })
-          .then(async (r) => {
-            const data = await r.json().catch(() => null);
-            if (r.ok && data?.success) {
-              console.info('Wayback snapshot created', {
-                url: metricUrlToArchive,
-                waybackUrl: data?.waybackUrl,
-                timestamp: data?.timestamp,
-              });
-            } else {
-              console.warn('Wayback snapshot failed', {
-                url: metricUrlToArchive,
-                status: r.status,
-                error: data?.error,
-              });
-            }
-          })
-          .catch(err => {
-            console.warn('Wayback snapshot error', {
-              url: metricUrlToArchive,
-              error: (err as any)?.message || String(err),
-            });
-          });
+        });
+        if (!saveRes.ok) {
+          const sErr = await saveRes.json().catch(() => ({} as any));
+          throw new Error(sErr?.error || 'Save failed');
+        }
+        markDone('save');
       }
 
-      // Send to server for fully automated deploy from Deployer
-      markActive('tx');
-      const resp = await fetch('/api/markets/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol,
-          metricUrl,
-          startPrice: String(marketData.startPrice || '1'),
-          dataSource,
-          tags,
-          aiSourceLocator: sourceLocator,
-          iconImageUrl: (marketData as any).iconUrl ? String((marketData as any).iconUrl).trim() : null,
-        }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({} as any));
-        throw new Error(err?.error || 'Server create failed');
-      }
-      const { orderBook, marketId } = await resp.json();
-      markDone('tx');
-
-      // Server performs confirmation, roles, and saving. Reflect in UI.
-      markDone('confirm');
-      markDone('roles');
-      markDone('save');
-
+      // Fade out progress overlay gracefully before navigating
       const targetSymbol = String(symbol || '').toUpperCase();
-      router.push(`/token/${encodeURIComponent(targetSymbol)}`);
+      beginFadeOutToToken(targetSymbol);
     } catch (error) {
       console.error('Error creating market:', error);
       // Mark the first active step as error for visual feedback
@@ -160,12 +238,17 @@ export const CreateMarketPage = () => {
           </>
         )}
 
+        {/* High-end progress overlay */}
         {showProgress && (
-          <div className="flex items-center justify-center">
-            <div className="w-full max-w-2xl">
-              <DeploymentProgressPanel visible={true} steps={steps} />
-            </div>
-          </div>
+          <ProgressOverlay
+            visible={true}
+            isFadingOut={isFadingOut}
+            messages={carouselMessages}
+            activeIndex={activeCarouselIndex}
+            percentComplete={percentComplete}
+            title="Deployment Pipeline"
+            subtitle="Initializing market and registering oracle"
+          />
         )}
       </div>
     </div>

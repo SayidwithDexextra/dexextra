@@ -1,0 +1,24 @@
+{
+  "abi": [
+    { "type": "function", "name": "updateTradingParameters", "stateMutability": "nonpayable", "inputs": [
+      { "name": "_marginRequirementBps", "type": "uint256" },
+      { "name": "_tradingFee", "type": "uint256" },
+      { "name": "_feeRecipient", "type": "address" }
+    ], "outputs": [] },
+    { "type": "function", "name": "enableLeverage", "stateMutability": "nonpayable", "inputs": [
+      { "name": "_maxLeverage", "type": "uint256" },
+      { "name": "_marginRequirementBps", "type": "uint256" }
+    ], "outputs": [] },
+    { "type": "function", "name": "disableLeverage", "stateMutability": "nonpayable", "inputs": [], "outputs": [] },
+    { "type": "function", "name": "setMarginRequirement", "stateMutability": "nonpayable", "inputs": [
+      { "name": "_marginRequirementBps", "type": "uint256" }
+    ], "outputs": [] },
+    { "type": "function", "name": "setLeverageController", "stateMutability": "nonpayable", "inputs": [
+      { "name": "_newController", "type": "address" }
+    ], "outputs": [] },
+    { "type": "function", "name": "updateMaxSlippage", "stateMutability": "nonpayable", "inputs": [
+      { "name": "_maxSlippageBps", "type": "uint256" }
+    ], "outputs": [] }
+  ]
+}
+
