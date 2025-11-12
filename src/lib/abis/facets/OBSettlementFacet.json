@@ -1,7 +1,49 @@
 {
   "abi": [
-    { "type": "function", "name": "isSettled", "stateMutability": "view", "inputs": [], "outputs": [{ "name": "", "type": "bool" }] },
-    { "type": "function", "name": "settleMarket", "stateMutability": "nonpayable", "inputs": [{ "name": "finalPrice", "type": "uint256" }], "outputs": [] }
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "orderId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "trader",
+          "type": "address"
+        }
+      ],
+      "name": "OrderCancelled",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "isSettled",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "finalPrice",
+          "type": "uint256"
+        }
+      ],
+      "name": "settleMarket",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
   ]
 }
-

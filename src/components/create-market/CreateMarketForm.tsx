@@ -30,6 +30,13 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
   const [autoSubmitOnResolution, setAutoSubmitOnResolution] = useState(false);
   const [highlightStartPrice, setHighlightStartPrice] = useState(false);
 
+  // Localhost-only debug helpers
+  const isLocalhost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.endsWith('.local'));
+
   const handleIconPick = () => iconInputRef.current?.click();
   const handleIconChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
@@ -57,6 +64,30 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
     });
   };
 
+  const isUserRejected = (e: any): boolean => {
+    if (!e) return false;
+    const code = (e as any)?.code ?? (e as any)?.error?.code ?? (e as any)?.cause?.code;
+    const name = (e as any)?.name ?? (e as any)?.cause?.name ?? (e as any)?.error?.name;
+    const rawMessage =
+      (e as any)?.shortMessage ||
+      (e as any)?.message ||
+      (e as any)?.error?.message ||
+      (e as any)?.cause?.message ||
+      '';
+    const msg = String(rawMessage || '').toLowerCase();
+    return (
+      code === 4001 ||
+      code === 'ACTION_REJECTED' ||
+      name === 'UserRejectedRequestError' ||
+      msg.includes('user rejected') ||
+      msg.includes('user denied') ||
+      msg.includes('rejected the request') ||
+      msg.includes('transaction was rejected') ||
+      msg.includes('request rejected') ||
+      msg.includes('action rejected')
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -65,6 +96,10 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
       validateForm();
       await onSubmit(formData);
     } catch (err) {
+      if (isUserRejected(err)) {
+        setError('Transaction cancelled by user.');
+        return;
+      }
       const message = err instanceof Error ? err.message : (typeof err === 'string' ? err : 'An error occurred');
       // If missing AI-resolved fields, trigger AI flow instead of showing error
       if (message.includes('Metric URL is required') || message.includes('Data source is required')) {
@@ -330,40 +365,42 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
         </button>
 
         {/* Debug Bypass: Skip AI Validation and Create Immediately */}
-        {/* <div className="pt-1">
-          <button
-            type="button"
-            disabled={isLoading}
-            onClick={async () => {
-              setError(null);
-              try {
-                if (!formData.symbol || !String(formData.symbol).trim()) {
-                  handleRequireInputs();
-                  throw new Error('Symbol is required');
+        {isLocalhost && (
+          <div className="pt-1">
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={async () => {
+                setError(null);
+                try {
+                  if (!formData.symbol || !String(formData.symbol).trim()) {
+                    handleRequireInputs();
+                    throw new Error('Symbol is required');
+                  }
+                  const debugData: MarketFormData = {
+                    ...formData,
+                    metricUrl: formData.metricUrl || 'https://example.com',
+                    dataSource: formData.dataSource || 'Debug',
+                    startPrice: formData.startPrice || '1',
+                    tags: Array.isArray(formData.tags) ? formData.tags : [],
+                    skipArchive: true,
+                  };
+                  try { console.log('[create-market][debug] Bypass enabled → skipping AI metric validation + Wayback archive'); } catch {}
+                  await onSubmit(debugData);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Failed to start debug create');
                 }
-                const debugData: MarketFormData = {
-                  ...formData,
-                  metricUrl: formData.metricUrl || 'https://example.com',
-                  dataSource: formData.dataSource || 'Debug',
-                  startPrice: formData.startPrice || '1',
-                  tags: Array.isArray(formData.tags) ? formData.tags : [],
-                  skipArchive: true,
-                };
-                try { console.log('[create-market][debug] Bypass enabled → skipping AI metric validation + Wayback archive'); } catch {}
-                await onSubmit(debugData);
-              } catch (err) {
-                setError(err instanceof Error ? err.message : 'Failed to start debug create');
-              }
-            }}
-            className={`w-full py-2.5 px-4 rounded-md text-[11px] font-medium transition-all duration-200 border ${
-              isLoading
-                ? 'bg-[#0F0F0F] text-[#606060] border-[#222222] cursor-not-allowed'
-                : 'bg-[#0F0F0F] text-red-300 border-red-600/50 hover:border-red-500 hover:text-red-200'
-            }`}
-          >
-            {isLoading ? 'Please wait…' : 'Debug: Skip Validation and Create Now'}
-          </button>
-        </div> */}
+              }}
+              className={`w-full py-2.5 px-4 rounded-md text-[11px] font-medium transition-all duration-200 border ${
+                isLoading
+                  ? 'bg-[#0F0F0F] text-[#606060] border-[#222222] cursor-not-allowed'
+                  : 'bg-[#0F0F0F] text-red-300 border-red-600/50 hover:border-red-500 hover:text-red-200'
+              }`}
+            >
+              {isLoading ? 'Please wait…' : 'Debug: Skip Validation and Create Now'}
+            </button>
+          </div>
+        )}
       </form>
     </div>
   );

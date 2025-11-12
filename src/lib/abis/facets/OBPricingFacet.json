@@ -3,9 +3,24 @@
     {
       "anonymous": false,
       "inputs": [
-        { "indexed": false, "internalType": "uint256", "name": "timeWindow", "type": "uint256" },
-        { "indexed": false, "internalType": "uint256", "name": "minVolume", "type": "uint256" },
-        { "indexed": false, "internalType": "bool", "name": "useVWAP", "type": "bool" }
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "timeWindow",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "minVolume",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "useVWAP",
+          "type": "bool"
+        }
       ],
       "name": "VWAPConfigUpdated",
       "type": "event"
@@ -13,15 +28,33 @@
     {
       "inputs": [],
       "name": "calculateMarkPrice",
-      "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
       "stateMutability": "view",
       "type": "function"
     },
     {
       "inputs": [
-        { "internalType": "uint256", "name": "_timeWindow", "type": "uint256" },
-        { "internalType": "uint256", "name": "_minVolume", "type": "uint256" },
-        { "internalType": "bool", "name": "_useVWAP", "type": "bool" }
+        {
+          "internalType": "uint256",
+          "name": "_timeWindow",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_minVolume",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "_useVWAP",
+          "type": "bool"
+        }
       ],
       "name": "configureVWAP",
       "outputs": [],
@@ -32,8 +65,16 @@
       "inputs": [],
       "name": "getBestPrices",
       "outputs": [
-        { "internalType": "uint256", "name": "bidPrice", "type": "uint256" },
-        { "internalType": "uint256", "name": "askPrice", "type": "uint256" }
+        {
+          "internalType": "uint256",
+          "name": "bidPrice",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "askPrice",
+          "type": "uint256"
+        }
       ],
       "stateMutability": "view",
       "type": "function"
@@ -42,38 +83,114 @@
       "inputs": [],
       "name": "getMarketPriceData",
       "outputs": [
-        { "internalType": "uint256", "name": "midPrice", "type": "uint256" },
-        { "internalType": "uint256", "name": "bestBidPrice", "type": "uint256" },
-        { "internalType": "uint256", "name": "bestAskPrice", "type": "uint256" },
-        { "internalType": "uint256", "name": "lastTradePriceReturn", "type": "uint256" },
-        { "internalType": "uint256", "name": "markPrice", "type": "uint256" },
-        { "internalType": "uint256", "name": "spread", "type": "uint256" },
-        { "internalType": "uint256", "name": "spreadBps", "type": "uint256" },
-        { "internalType": "bool", "name": "isValid", "type": "bool" }
+        {
+          "internalType": "uint256",
+          "name": "midPrice",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "bestBidPrice",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "bestAskPrice",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "lastTradePriceReturn",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "markPrice",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "spread",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "spreadBps",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "isValid",
+          "type": "bool"
+        }
       ],
       "stateMutability": "view",
       "type": "function"
     },
     {
-      "inputs": [{ "internalType": "uint256", "name": "levels", "type": "uint256" }],
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "levels",
+          "type": "uint256"
+        }
+      ],
       "name": "getOrderBookDepth",
       "outputs": [
-        { "internalType": "uint256[]", "name": "bidPrices", "type": "uint256[]" },
-        { "internalType": "uint256[]", "name": "bidAmounts", "type": "uint256[]" },
-        { "internalType": "uint256[]", "name": "askPrices", "type": "uint256[]" },
-        { "internalType": "uint256[]", "name": "askAmounts", "type": "uint256[]" }
+        {
+          "internalType": "uint256[]",
+          "name": "bidPrices",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "bidAmounts",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "askPrices",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "askAmounts",
+          "type": "uint256[]"
+        }
       ],
       "stateMutability": "view",
       "type": "function"
     },
     {
-      "inputs": [{ "internalType": "uint256", "name": "levels", "type": "uint256" }],
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "levels",
+          "type": "uint256"
+        }
+      ],
       "name": "getOrderBookDepthFromPointers",
       "outputs": [
-        { "internalType": "uint256[]", "name": "bidPrices", "type": "uint256[]" },
-        { "internalType": "uint256[]", "name": "bidAmounts", "type": "uint256[]" },
-        { "internalType": "uint256[]", "name": "askPrices", "type": "uint256[]" },
-        { "internalType": "uint256[]", "name": "askAmounts", "type": "uint256[]" }
+        {
+          "internalType": "uint256[]",
+          "name": "bidPrices",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "bidAmounts",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "askPrices",
+          "type": "uint256[]"
+        },
+        {
+          "internalType": "uint256[]",
+          "name": "askAmounts",
+          "type": "uint256[]"
+        }
       ],
       "stateMutability": "view",
       "type": "function"
@@ -81,17 +198,28 @@
     {
       "inputs": [],
       "name": "getSpread",
-      "outputs": [{ "internalType": "uint256", "name": "spread", "type": "uint256" }],
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "spread",
+          "type": "uint256"
+        }
+      ],
       "stateMutability": "view",
       "type": "function"
     },
     {
       "inputs": [],
       "name": "isBookCrossed",
-      "outputs": [{ "internalType": "bool", "name": "crossed", "type": "bool" }],
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "crossed",
+          "type": "bool"
+        }
+      ],
       "stateMutability": "view",
       "type": "function"
     }
   ]
 }
-

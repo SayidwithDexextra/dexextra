@@ -37,7 +37,30 @@ export const CreateMarketPage = () => {
 
   
 
-  const isUserRejected = (_e: any): boolean => false;
+  const isUserRejected = (e: any): boolean => {
+    if (!e) return false;
+    // Common shapes across EIP-1193, ethers v5/v6, wagmi/viem
+    const code = (e as any)?.code ?? (e as any)?.error?.code ?? (e as any)?.cause?.code;
+    const name = (e as any)?.name ?? (e as any)?.cause?.name ?? (e as any)?.error?.name;
+    const rawMessage =
+      (e as any)?.shortMessage ||
+      (e as any)?.message ||
+      (e as any)?.error?.message ||
+      (e as any)?.cause?.message ||
+      '';
+    const msg = String(rawMessage || '').toLowerCase();
+    return (
+      code === 4001 || // EIP-1193 user rejected
+      code === 'ACTION_REJECTED' || // ethers v6
+      name === 'UserRejectedRequestError' || // wagmi/viem
+      msg.includes('user rejected') ||
+      msg.includes('user denied') ||
+      msg.includes('rejected the request') ||
+      msg.includes('transaction was rejected') ||
+      msg.includes('request rejected') ||
+      msg.includes('action rejected')
+    );
+  };
 
   // Vertical carousel configuration mapped to deployment pipeline
   const carouselMessages = ['Deploying contract...', 'Setting up market...', 'Registering oracle feed...'];
@@ -197,6 +220,16 @@ export const CreateMarketPage = () => {
       // Mark the first active step as error for visual feedback
       const active = steps.find(s => s.status === 'active');
       if (active) markError(active.id);
+      // Handle user-cancelled transaction gracefully
+      if (isUserRejected(error)) {
+        setErrorModal({
+          isOpen: true,
+          title: 'Transaction Cancelled',
+          message: 'You cancelled the transaction in your wallet. No changes were made. You can retry when ready.',
+        });
+        setShowProgress(false);
+        return;
+      }
       throw error;
     } finally {
       setIsLoading(false);

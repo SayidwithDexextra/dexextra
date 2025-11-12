@@ -1,24 +1,192 @@
 {
   "abi": [
-    { "type": "function", "name": "updateTradingParameters", "stateMutability": "nonpayable", "inputs": [
-      { "name": "_marginRequirementBps", "type": "uint256" },
-      { "name": "_tradingFee", "type": "uint256" },
-      { "name": "_feeRecipient", "type": "address" }
-    ], "outputs": [] },
-    { "type": "function", "name": "enableLeverage", "stateMutability": "nonpayable", "inputs": [
-      { "name": "_maxLeverage", "type": "uint256" },
-      { "name": "_marginRequirementBps", "type": "uint256" }
-    ], "outputs": [] },
-    { "type": "function", "name": "disableLeverage", "stateMutability": "nonpayable", "inputs": [], "outputs": [] },
-    { "type": "function", "name": "setMarginRequirement", "stateMutability": "nonpayable", "inputs": [
-      { "name": "_marginRequirementBps", "type": "uint256" }
-    ], "outputs": [] },
-    { "type": "function", "name": "setLeverageController", "stateMutability": "nonpayable", "inputs": [
-      { "name": "_newController", "type": "address" }
-    ], "outputs": [] },
-    { "type": "function", "name": "updateMaxSlippage", "stateMutability": "nonpayable", "inputs": [
-      { "name": "_maxSlippageBps", "type": "uint256" }
-    ], "outputs": [] }
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "oldController",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "newController",
+          "type": "address"
+        }
+      ],
+      "name": "LeverageControllerUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "controller",
+          "type": "address"
+        }
+      ],
+      "name": "LeverageDisabled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "controller",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "maxLeverage",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "newMarginRequirement",
+          "type": "uint256"
+        }
+      ],
+      "name": "LeverageEnabled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "oldSlippage",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "newSlippage",
+          "type": "uint256"
+        }
+      ],
+      "name": "MaxSlippageUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "marginRequirement",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "tradingFee",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "feeRecipient",
+          "type": "address"
+        }
+      ],
+      "name": "TradingParametersUpdated",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "disableLeverage",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_maxLeverage",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_marginRequirementBps",
+          "type": "uint256"
+        }
+      ],
+      "name": "enableLeverage",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_newController",
+          "type": "address"
+        }
+      ],
+      "name": "setLeverageController",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_marginRequirementBps",
+          "type": "uint256"
+        }
+      ],
+      "name": "setMarginRequirement",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_maxSlippageBps",
+          "type": "uint256"
+        }
+      ],
+      "name": "updateMaxSlippage",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_marginRequirementBps",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_tradingFee",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "_feeRecipient",
+          "type": "address"
+        }
+      ],
+      "name": "updateTradingParameters",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
   ]
 }
-
