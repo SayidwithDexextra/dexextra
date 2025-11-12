@@ -11,10 +11,12 @@ import { ErrorModal } from '@/components/StatusModals';
 import { createMarketOnChain } from '@/lib/createMarketOnChain';
 import { ethers } from 'ethers';
 import { ProgressOverlay } from './ProgressOverlay';
+import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+  const deploymentOverlay = useDeploymentOverlay();
 
   const initialSteps: ProgressStep[] = [
     { id: 'tx', title: 'Send Transaction', description: 'Creating market on-chain (server)', status: 'pending' },
@@ -82,16 +84,33 @@ export const CreateMarketPage = () => {
 
   const handleCreateMarket = async (marketData: MarketFormData) => {
     setIsLoading(true);
-    setShowProgress(true);
+    // Use global overlay instead of local page overlay
+    setShowProgress(false);
     setIsFadingOut(false);
     resetSteps();
     try {
+      const INITIAL_SPLASH_MS = 1200;
       // Params
       const symbol = marketData.symbol;
       const metricUrl = marketData.metricUrl;
       const dataSource = marketData.dataSource || 'User Provided';
       const tags = marketData.tags || [];
       const sourceLocator = (marketData as any).sourceLocator || null;
+
+      // Open global deployment overlay and navigate to token page immediately
+      const carouselMessages = ['Deploying contract...', 'Setting up market...', 'Registering oracle feed...'];
+      deploymentOverlay.open({
+        title: 'Deployment Pipeline',
+        subtitle: 'Initializing market and registering oracle',
+        messages: carouselMessages,
+        splashMs: INITIAL_SPLASH_MS,
+      });
+      // Brief splash for aesthetic purposes, then navigate behind the modal
+      await new Promise(resolve => setTimeout(resolve, INITIAL_SPLASH_MS));
+      {
+        const targetSymbol = String(symbol || '').toUpperCase();
+        router.replace(`/token/${encodeURIComponent(targetSymbol)}?deploying=1`);
+      }
 
       // Optional Wayback Machine snapshot (skip when debug flag is set)
       const skipArchive = Boolean((marketData as any).skipArchive);
@@ -137,6 +156,7 @@ export const CreateMarketPage = () => {
 
       // Create market on chain using connected wallet (mimics new-create-market.js)
       markActive('tx');
+      deploymentOverlay.update({ activeIndex: 0, percentComplete: 10 });
       const { orderBook, marketId, chainId, transactionHash } = await createMarketOnChain({
         symbol,
         metricUrl,
@@ -145,6 +165,7 @@ export const CreateMarketPage = () => {
         tags,
       });
       markDone('tx');
+      deploymentOverlay.update({ activeIndex: 1, percentComplete: 45 });
 
       // Confirm step completed as part of the awaited tx above
       markDone('confirm');
@@ -162,6 +183,7 @@ export const CreateMarketPage = () => {
           throw new Error(gErr?.error || 'Role grant failed');
         }
         markDone('roles');
+        deploymentOverlay.update({ activeIndex: 2, percentComplete: 75 });
       }
 
       // Persist market metadata via API (Supabase upsert, verification)
@@ -210,11 +232,11 @@ export const CreateMarketPage = () => {
           throw new Error(sErr?.error || 'Save failed');
         }
         markDone('save');
+        deploymentOverlay.update({ percentComplete: 100 });
       }
 
-      // Fade out progress overlay gracefully before navigating
-      const targetSymbol = String(symbol || '').toUpperCase();
-      beginFadeOutToToken(targetSymbol);
+      // Fade out global overlay gracefully (we're already on the token page)
+      deploymentOverlay.fadeOutAndClose(500);
     } catch (error) {
       console.error('Error creating market:', error);
       // Mark the first active step as error for visual feedback
@@ -222,14 +244,13 @@ export const CreateMarketPage = () => {
       if (active) markError(active.id);
       // Handle user-cancelled transaction gracefully
       if (isUserRejected(error)) {
-        setErrorModal({
-          isOpen: true,
-          title: 'Transaction Cancelled',
-          message: 'You cancelled the transaction in your wallet. No changes were made. You can retry when ready.',
-        });
-        setShowProgress(false);
+        // Close overlay if it was open
+        deploymentOverlay.close();
+        // Navigate back to Create Market form
+        router.replace('/markets/create');
         return;
       }
+      deploymentOverlay.close();
       throw error;
     } finally {
       setIsLoading(false);
@@ -271,18 +292,7 @@ export const CreateMarketPage = () => {
           </>
         )}
 
-        {/* High-end progress overlay */}
-        {showProgress && (
-          <ProgressOverlay
-            visible={true}
-            isFadingOut={isFadingOut}
-            messages={carouselMessages}
-            activeIndex={activeCarouselIndex}
-            percentComplete={percentComplete}
-            title="Deployment Pipeline"
-            subtitle="Initializing market and registering oracle"
-          />
-        )}
+        {/* Progress overlay is now managed globally via DeploymentOverlayProvider */}
       </div>
     </div>
   );

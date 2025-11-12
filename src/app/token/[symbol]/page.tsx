@@ -53,6 +53,8 @@ export default function TokenPage({ params }: TokenPageProps) {
 
 function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: string; tradingAction: 'long' | 'short' | null; onSwitchNetwork: () => void; }) {
   const md = useMarketData();
+  const sp = useSearchParams();
+  const isDeploying = sp.get('deploying') === '1';
 
   const tokenData = md.tokenData;
   // Prevent flicker: once we have initial data, keep rendering content even if background polling toggles isLoading
@@ -75,13 +77,17 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   ));
 
   const shouldShowLoading = useMemo(() => {
+    // If we're navigating here during deployment, skip the full-screen loader.
+    if (isDeploying) return false;
+    // If there's an error, don't show loader; show the error UI below.
+    if (md.error) return false;
     // Only show the loading screen before the first successful data load
     if (!hasLoadedOnce) {
       if (md.isLoading) return true;
       if (!tokenData) return true;
     }
     return false;
-  }, [hasLoadedOnce, md.isLoading, tokenData]);
+  }, [hasLoadedOnce, md.isLoading, tokenData, md.error, isDeploying]);
 
   const loadingMessage = "Loading Trading Interface...";
   const loadingSubtitle = `Fetching ${symbol} market data, mark price, and available margin`;
@@ -95,7 +101,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     );
   }
 
-  if (md.error || !tokenData) {
+  if (!isDeploying && (md.error || !tokenData)) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4">
         <div className="flex flex-col items-center gap-6 text-center max-w-2xl w-full">
@@ -150,19 +156,25 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             <MarketActivityTabs symbol={symbol} />
           </div>
           <div className="w-full">
-            <TradingPanel 
-              tokenData={tokenData} 
-              initialAction={tradingAction}
-              marketData={{
-                markPrice: Number(markPrice || 0),
-                fundingRate: Number(fundingRate || 0),
-                currentPrice: Number(currentPrice || 0),
-                priceChange24h: Number(priceChange24h || 0),
-                priceChangePercent24h: Number(priceChangePercent24h || 0),
-                dataSource: 'contract',
-                lastUpdated: String(lastUpdated || '')
-              }}
-            />
+            {tokenData ? (
+              <TradingPanel 
+                tokenData={tokenData} 
+                initialAction={tradingAction}
+                marketData={{
+                  markPrice: Number(markPrice || 0),
+                  fundingRate: Number(fundingRate || 0),
+                  currentPrice: Number(currentPrice || 0),
+                  priceChange24h: Number(priceChange24h || 0),
+                  priceChangePercent24h: Number(priceChangePercent24h || 0),
+                  dataSource: 'contract',
+                  lastUpdated: String(lastUpdated || '')
+                }}
+              />
+            ) : (
+              <div className="w-full h-64 rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                {isDeploying ? 'Setting up market…' : 'Loading data…'}
+              </div>
+            )}
           </div>
         </div>
 
@@ -217,19 +229,25 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               <TokenHeader symbol={symbol} />
             </div>
             <div className="flex-1 min-h-0 overflow-hidden">
-              <TradingPanel 
-                tokenData={tokenData} 
-                initialAction={tradingAction}
-                marketData={{
-                  markPrice: Number(markPrice || 0),
-                  fundingRate: Number(fundingRate || 0),
-                  currentPrice: Number(currentPrice || 0),
-                  priceChange24h: Number(priceChange24h || 0),
-                  priceChangePercent24h: Number(priceChangePercent24h || 0),
-                  dataSource: 'contract',
-                  lastUpdated: String(lastUpdated || '')
-                }}
-              />
+              {tokenData ? (
+                <TradingPanel 
+                  tokenData={tokenData} 
+                  initialAction={tradingAction}
+                  marketData={{
+                    markPrice: Number(markPrice || 0),
+                    fundingRate: Number(fundingRate || 0),
+                    currentPrice: Number(currentPrice || 0),
+                    priceChange24h: Number(priceChange24h || 0),
+                    priceChangePercent24h: Number(priceChangePercent24h || 0),
+                    dataSource: 'contract',
+                    lastUpdated: String(lastUpdated || '')
+                  }}
+                />
+              ) : (
+                <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                  {isDeploying ? 'Setting up market…' : 'Loading data…'}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ type ProgressOverlayProps = {
   percentComplete?: number; // 0..100
   visible: boolean;
   isFadingOut?: boolean;
+  showSplash?: boolean;
   title?: string;
   subtitle?: string;
 };
@@ -18,6 +19,7 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
   percentComplete = 0,
   visible,
   isFadingOut = false,
+  showSplash = false,
   title = 'System Initialization',
   subtitle = 'Smart contract deployment pipeline',
 }) => {
@@ -41,10 +43,19 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
   return (
     <div className={`fixed inset-0 z-50 transition-opacity duration-300 ${isFadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-[#0F0F0F]" />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+      {/* Splash cross-fade */}
+      <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-500 ${showSplash ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+          <div className="text-[11px] text-[#9CA3AF] uppercase tracking-wide">{title}</div>
+          <div className="text-[10px] text-[#808080]">{subtitle}</div>
+        </div>
+      </div>
 
       {/* Centered Card */}
-      <div className="relative w-full h-full flex items-center justify-center px-4">
+      <div className={`relative w-full h-full flex items-center justify-center px-4 transition-opacity duration-500 ${showSplash ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 w-full max-w-md">
           {/* Header */}
           <div className="flex items-center justify-between p-4">
