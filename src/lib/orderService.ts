@@ -533,12 +533,13 @@ export class OrderService {
       isBuy,
       timestamp,
       /* nextOrderId */ ,
-      /* marginRequired */ ,
-      /* isMarginOrder */
+      marginRequired,
+      isMarginOrder
     ] = orderArray;
 
     const quantity = amount ? parseFloat(formatUnits(BigInt(amount), 6)) : 0;
     const priceFormatted = price ? parseFloat(formatUnits(BigInt(price), 6)) : 0;
+    const marginRequiredNum = marginRequired ? parseFloat(formatUnits(BigInt(marginRequired), 6)) : 0;
 
     return {
       id: orderId.toString(),
@@ -556,6 +557,9 @@ export class OrderService {
       stopPrice: null,
       icebergQty: null,
       postOnly: false,
+      marginRequired: marginRequiredNum,
+      marginReserved: marginRequiredNum,
+      isMarginOrder: Boolean(isMarginOrder),
     };
   }
 
@@ -586,6 +590,7 @@ export class OrderService {
     const trader = contractOrder.user || contractOrder.trader || '0x0000000000000000000000000000000000000000';
     const price = contractOrder.price || 0n;
     const timestamp = contractOrder.timestamp || 0n;
+    const marginReservedRaw = contractOrder.marginReserved || 0n;
 
     const orderType = this.getOrderTypeString(contractOrder.orderType);
     const side = contractOrder.side === OrderSide.BUY ? 'buy' : 'sell';
@@ -598,6 +603,7 @@ export class OrderService {
     const quantity = size ? parseFloat(formatUnits(size, 6)) : 0;
     const priceFormatted = price ? parseFloat(formatUnits(price, 6)) : 0;
     const filledQuantity = filled ? parseFloat(formatUnits(filled, 6)) : 0;
+    const marginReservedNum = marginReservedRaw ? parseFloat(formatUnits(marginReservedRaw, 6)) : 0;
 
     return {
       id: contractOrder.orderId.toString(),
@@ -615,6 +621,9 @@ export class OrderService {
       stopPrice: null, // Not provided by contract
       icebergQty: null, // Not provided by contract
       postOnly: false, // Not provided by contract
+      marginReserved: marginReservedNum,
+      marginRequired: marginReservedNum,
+      isMarginOrder: true,
     };
   }
 

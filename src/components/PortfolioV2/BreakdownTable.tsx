@@ -15,6 +15,8 @@ type Row = {
 	value: string
 	allocation: string
 	price: string
+	marginLocked?: string
+	marginUsed?: string
 	primary?: boolean
 }
 
@@ -76,6 +78,8 @@ export default function BreakdownTable() {
 			const mark = p.markPrice || p.entryPrice || 0
 			const value = amount * mark
 			const allocation = totalNotional > 0 ? (value / totalNotional) * 100 : 0
+			const marginLocked = Number.isFinite(p.margin) ? p.margin : 0
+			const marginUsed = marginLocked // For positions, used == locked in current model
 			return {
 				token,
 				symbol,
@@ -83,6 +87,8 @@ export default function BreakdownTable() {
 				value: formatUsd(value),
 				allocation: `${formatNum(allocation, 2)}%`,
 				price: formatUsd(mark),
+				marginLocked: formatUsd(marginLocked),
+				marginUsed: formatUsd(marginUsed),
 				primary: false
 			}
 		})
@@ -123,7 +129,7 @@ export default function BreakdownTable() {
 
 	// Flatten bucketed orders for rendering with cancel actions
 	const flatOrders = useMemo(() => {
-		const rows: Array<{ token: string; symbol: string; id: string; metric: string; side: 'BUY' | 'SELL'; price: number; size: number }> = []
+		const rows: Array<{ token: string; symbol: string; id: string; metric: string; side: 'BUY' | 'SELL'; price: number; size: number; margin?: number }> = []
 		orderBuckets.forEach((bucket) => {
 			const symbol = (bucket.symbol || 'UNKNOWN').toString().toUpperCase()
 			const token = bucket.token || symbol
@@ -134,7 +140,8 @@ export default function BreakdownTable() {
 				const priceNum = Number(o?.price || 0)
 				const idStr = String(o?.id || '')
 				const metric = String(o?.metricId || symbol)
-				rows.push({ token, symbol, id: idStr, metric, side, price: priceNum, size: qty })
+				const margin = Number(o?.marginRequired ?? o?.marginReserved ?? 0)
+				rows.push({ token, symbol, id: idStr, metric, side, price: priceNum, size: qty, margin })
 			})
 		})
 		return rows
@@ -171,13 +178,14 @@ export default function BreakdownTable() {
 							<th className="px-5 py-3.5 font-medium">Value</th>
 							<th className="px-5 py-3.5 font-medium">Allocation</th>
 							<th className="px-5 py-3.5 font-medium">Price</th>
+							<th className="px-5 py-3.5 font-medium">Margin Used</th>
 							<th className="px-5 py-3.5"></th>
 						</tr>
 					</thead>
 					<tbody>
 						{computedRows.length === 0 ? (
 							<tr className="border-t" style={{ borderColor: '#1A1A1A' }}>
-								<td className="px-5 py-6 text-sm" colSpan={6} style={{ color: '#9CA3AF' }}>
+								<td className="px-5 py-6 text-sm" colSpan={7} style={{ color: '#9CA3AF' }}>
 									{positionsLoading ? 'Loading positions…' : 'No open positions'}
 								</td>
 							</tr>
@@ -214,6 +222,9 @@ export default function BreakdownTable() {
 								<td className="px-5 py-4">
 									<span className="text-sm font-medium" style={{ color: '#9CA3AF' }}>{row.price}</span>
 								</td>
+								<td className="px-5 py-4">
+									<span className="text-sm font-medium" style={{ color: '#E5E7EB' }}>{row.marginUsed}</span>
+								</td>
 								<td className="px-5 py-4 text-right">
 									<button className="text-xs" style={{ color: '#9CA3AF' }}>→</button>
 								</td>
@@ -246,13 +257,13 @@ export default function BreakdownTable() {
 				<div className="px-5 pb-4">
 					<div
 						className="grid items-center text-xs font-medium"
-						style={{ color: '#9CA3AF', gridTemplateColumns: '2fr 1fr 1fr 1fr 2fr 1fr' }}
+						style={{ color: '#9CA3AF', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr' }}
 					>
 						<div className="py-2">Token</div>
 						<div className="py-2">Side</div>
 						<div className="py-2">Price</div>
 						<div className="py-2">Size</div>
-						<div className="py-2">Order ID</div>
+						<div className="py-2">Margin Locked</div>
 						<div className="py-2 text-right pr-2">Action</div>
 					</div>
 					<div className="divide-y" style={{ borderColor: '#1A1A1A' }}>
@@ -267,7 +278,7 @@ export default function BreakdownTable() {
 								<div
 									key={`ord-grid-${row.symbol}-${row.id}-${idx}`}
 									className="grid items-center"
-									style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 2fr 1fr', borderTop: '1px solid #1A1A1A' }}
+									style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', borderTop: '1px solid #1A1A1A' }}
 								>
 									<div className="py-3 pr-4">
 										<div className="flex items-center gap-3">
@@ -282,13 +293,13 @@ export default function BreakdownTable() {
 										<span className={`text-sm font-medium ${row.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{row.side}</span>
 									</div>
 									<div className="py-3">
-										<span className="text-sm font-medium" style={{ color: '#E5E7EB' }}>${row.price.toFixed(4)}</span>
+										<span className="text-sm font-medium" style={{ color: '#E5E7EB' }}>${row.price.toFixed(2)}</span>
 									</div>
 									<div className="py-3">
-										<span className="text-sm font-medium" style={{ color: '#E5E7EB' }}>{row.size.toFixed(4)}</span>
+										<span className="text-sm font-medium" style={{ color: '#E5E7EB' }}>{row.size.toFixed(2)}</span>
 									</div>
 									<div className="py-3">
-										<span className="text-sm font-medium" style={{ color: '#9CA3AF' }}>{row.id}</span>
+										<span className="text-sm font-medium" style={{ color: '#E5E7EB' }}>{formatUsd(row.margin || 0)}</span>
 									</div>
 									<div className="py-3 text-right pr-2">
 										<button

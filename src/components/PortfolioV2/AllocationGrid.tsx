@@ -152,7 +152,9 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 			const notional = Math.abs(p.size) * (p.markPrice || p.entryPrice || 0)
 			if (!group[symbol]) group[symbol] = { name, symbol, value: 0, net: 0 }
 			group[symbol].value += isFinite(notional) ? notional : 0
-			group[symbol].net += isFinite(p.size) ? p.size : 0
+			// Use signed size based on position side to determine LONG/SHORT net
+			const signedSize = (isFinite(p.size) ? p.size : 0) * (p.side === 'SHORT' ? -1 : 1)
+			group[symbol].net += signedSize
 		}
 		const total = Object.values(group).reduce((a, v) => a + v.value, 0)
 		if (total <= 0) return []

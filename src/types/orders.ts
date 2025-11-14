@@ -65,6 +65,10 @@ export interface Order {
   postOnly: boolean;
   fees?: number;
   pnl?: number;
+  // Optional margin metadata where available from OrderBook
+  marginRequired?: number;   // USD (6 decimals), initial requirement
+  marginReserved?: number;   // USD (6 decimals), reserved on vault
+  isMarginOrder?: boolean;
 }
 
 // Order book entry for market depth
