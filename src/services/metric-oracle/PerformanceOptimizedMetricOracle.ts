@@ -180,15 +180,43 @@ export class PerformanceOptimizedMetricOracle {
           const page = await browser.newPage();
           
           try {
-            // Set more reasonable timeouts for data loading
-            page.setDefaultTimeout(20000); // 20s max
-            page.setDefaultNavigationTimeout(20000);
+            // Set more tolerant timeouts and realistic UA; block heavy assets
+            page.setDefaultTimeout(30000);
+            page.setDefaultNavigationTimeout(30000);
+            await page.setUserAgent(
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            );
+            try {
+              await page.setRequestInterception(true);
+              page.on('request', (req: any) => {
+                const resourceType = req.resourceType();
+                if (resourceType === 'image' || resourceType === 'media' || resourceType === 'font') {
+                  req.abort();
+                } else {
+                  req.continue();
+                }
+              });
+            } catch (_e) {
+              // ignore if interception not supported in env
+            }
             
-            // Navigate and wait for content to load properly
-            await page.goto(url, { 
-              waitUntil: 'networkidle2', // Wait for network activity to settle
-              timeout: 20000 
-            });
+            // Navigate and wait for DOM readiness (networkidle can hang on noisy pages)
+            try {
+              await page.goto(url, {
+                waitUntil: 'domcontentloaded',
+                timeout: 25000
+              });
+            } catch (navErr) {
+              // Retry once with 'load' event as a fallback
+              try {
+                await page.goto(url, {
+                  waitUntil: 'load',
+                  timeout: 25000
+                });
+              } catch {
+                throw navErr;
+              }
+            }
             
             // Additional wait for dynamic content to load
             await new Promise(resolve => setTimeout(resolve, 3000));

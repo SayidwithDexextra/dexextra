@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+export const maxDuration = 60;
 import { z } from 'zod';
 import { PerformanceOptimizedMetricOracle } from '@/services/metric-oracle/PerformanceOptimizedMetricOracle';
 import type { MetricResolution } from '@/services/metric-oracle/types';
