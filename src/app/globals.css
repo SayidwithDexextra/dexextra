@@ -146,4 +146,13 @@ header [onClick] {
   z-index: 1;
 }
 
+/* Hide scrollbars in custom scroll areas */
+.scrollbar-none {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none; /* Chrome, Safari */
+}
+
 

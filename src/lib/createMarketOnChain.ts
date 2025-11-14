@@ -8,6 +8,13 @@ import {
   OBViewFacetABI,
   OBSettlementFacetABI,
 } from '@/lib/contracts';
+import FuturesMarketFactoryGenerated from '@/lib/abis/FuturesMarketFactory.json';
+
+type ProgressEvent = {
+  step: string;
+  status?: 'start' | 'success' | 'error' | 'sent' | 'mined' | 'ok' | 'missing';
+  data?: Record<string, any>;
+};
 
 function selectorsFromAbi(abi: any[]): string[] {
   try {
@@ -27,18 +34,20 @@ export async function createMarketOnChain(params: {
   dataSource?: string;
   tags?: string[];
   feeRecipient?: string; // optional override; defaults to connected wallet
+  onProgress?: (event: ProgressEvent) => void;
 }) {
   if (typeof window === 'undefined' || !(window as any).ethereum) {
     throw new Error('No injected wallet found. Please install MetaMask or a compatible wallet.');
   }
 
-  const { symbol, metricUrl, startPrice, dataSource = 'User Provided', tags = [], feeRecipient } = params;
+  const { symbol, metricUrl, startPrice, dataSource = 'User Provided', tags = [], feeRecipient, onProgress } = params;
   if (!symbol || !metricUrl) throw new Error('Symbol and metricUrl are required');
 
   // Build cutArg and initFacet from server (source of truth, compiled artifacts)
   let initFacet: string | null = null;
   let cutArg: Array<[string, number, string[]]> = [];
   try {
+    onProgress?.({ step: 'cut_fetch', status: 'start' });
     const res = await fetch('/api/orderbook/cut', { method: 'GET' });
     if (!res.ok) throw new Error(`cut API ${res.status}`);
     const data = await res.json();
@@ -49,10 +58,12 @@ export async function createMarketOnChain(params: {
     console.log('%c🧬 Using server-provided cutArg from compiled artifacts', 'color:#22c55e; font-weight:700;', {
       initFacet, facets: cut.map((c: any) => ({ facet: c.facetAddress, selectors: (c.functionSelectors || []).length })),
     });
+    onProgress?.({ step: 'cut_fetch', status: 'success', data: { facets: cutArg.length } });
   } catch (e: any) {
     // Fallback: compute from local ABIs + env addresses if API unavailable
     // eslint-disable-next-line no-console
     console.warn('[createMarketOnChain] cut API unavailable; falling back to local ABIs + env addresses:', e?.message || e);
+    onProgress?.({ step: 'cut_fetch', status: 'error', data: { fallback: true, error: e?.message || String(e) } });
     const adminAddr = (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET;
     const pricingAddr = (process.env as any).NEXT_PUBLIC_OB_PRICING_FACET;
     const placementAddr = (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
@@ -77,6 +88,7 @@ export async function createMarketOnChain(params: {
       [viewAddr, 0, viewSelectors],
       [settleAddr, 0, settleSelectors],
     ].filter(([addr]) => typeof addr === 'string' && ethers.isAddress(String(addr))) as any;
+    onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
   }
   // 🔎 High-visibility diagnostics for cutArg (full + summary)
   try {
@@ -114,12 +126,9 @@ export async function createMarketOnChain(params: {
   if (!factoryAddress || !ethers.isAddress(factoryAddress)) {
     throw new Error('NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS not configured');
   }
-  const factoryArtifact = await import('@/lib/abis/FuturesMarketFactory.json');
   const factoryAbi =
-    (factoryArtifact as any)?.default?.abi ||
-    (factoryArtifact as any)?.abi ||
-    (factoryArtifact as any)?.default ||
-    (factoryArtifact as any);
+    (FuturesMarketFactoryGenerated as any)?.abi ||
+    (FuturesMarketFactoryGenerated as any);
   const factory = new ethers.Contract(factoryAddress, factoryAbi, signer);
 
   // Params
@@ -129,6 +138,7 @@ export async function createMarketOnChain(params: {
 
   // Preflight static call (non-fatal)
   try {
+    onProgress?.({ step: 'static_call', status: 'start' });
     await factory.getFunction('createFuturesMarketDiamond').staticCall(
       symbol,
       metricUrl,
@@ -141,9 +151,13 @@ export async function createMarketOnChain(params: {
       initFacet,
       '0x'
     );
-  } catch (_) {}
+    onProgress?.({ step: 'static_call', status: 'success' });
+  } catch (_) {
+    onProgress?.({ step: 'static_call', status: 'error' });
+  }
 
   // Send tx
+  onProgress?.({ step: 'send_tx', status: 'start' });
   const tx = await factory.getFunction('createFuturesMarketDiamond')(
     symbol,
     metricUrl,
@@ -157,8 +171,11 @@ export async function createMarketOnChain(params: {
     '0x'
   );
   console.info('[createMarketOnChain] sent tx:', tx.hash);
+  onProgress?.({ step: 'send_tx', status: 'sent', data: { hash: tx.hash } });
+  onProgress?.({ step: 'confirm', status: 'start' });
   const receipt = await tx.wait();
   console.info('[createMarketOnChain] mined tx:', { hash: receipt?.hash || tx.hash, blockNumber: (receipt as any)?.blockNumber });
+  onProgress?.({ step: 'confirm', status: 'mined', data: { hash: receipt?.hash || tx.hash, blockNumber: (receipt as any)?.blockNumber } });
 
   // Parse event
   const iface = new ethers.Interface(factoryAbi);
@@ -177,6 +194,7 @@ export async function createMarketOnChain(params: {
   if (!orderBook || !marketId) {
     throw new Error('Failed to parse FuturesMarketCreated event');
   }
+  onProgress?.({ step: 'parse_event', status: 'success', data: { orderBook, marketId } });
 
   // Ensure required placement selectors exist (mirror server-side defensive step)
   try {
@@ -240,12 +258,19 @@ export async function createMarketOnChain(params: {
       }
     }
     console.info('[createMarketOnChain] selector check', { placementFacetAddr, missingCount: missing.length });
+    onProgress?.({
+      step: 'verify_selectors',
+      status: missing.length > 0 ? 'missing' : 'ok',
+      data: { missingCount: missing.length },
+    });
     if (missing.length > 0 && placementFacetAddr && ethers.isAddress(placementFacetAddr)) {
       const cutArg = [{ facetAddress: placementFacetAddr, action: 0, functionSelectors: missing }];
       const txCut = await diamondCut.diamondCut(cutArg as any, ethers.ZeroAddress, '0x');
       console.info('[createMarketOnChain] diamondCut sent to add missing selectors', { tx: txCut.hash, facet: placementFacetAddr, missing });
+      onProgress?.({ step: 'diamond_cut', status: 'sent', data: { hash: txCut.hash, facet: placementFacetAddr, missing } });
       await txCut.wait();
       console.info('[createMarketOnChain] diamondCut mined for missing selectors');
+      onProgress?.({ step: 'diamond_cut', status: 'mined' });
     } else if (missing.length > 0) {
       console.warn('[createMarketOnChain] missing selectors but no placement facet address available to patch', { missing });
     } else {

@@ -1,0 +1,348 @@
+{
+  "meta": {
+    "name": "portfolioDashboard",
+    "description": "Design tokens and component specs extracted from a portfolio/asset dashboard image. Purely abstract properties; no brand content.",
+    "source": "image-extraction",
+    "created": "2025-11-13",
+    "version": 1
+  },
+  "foundations": {
+    "colorPalette": {
+      "primaryColor": "#00D5FF",
+      "secondaryColor": "#111827",
+      "accentColor": "#111827",
+      "pageBackground": "#F5F7FA",
+      "surface": "#FFFFFF",
+      "surfaceMuted": "#F1F5F9",
+      "surfaceSelected": "#E6F7FF",
+      "borderSubtle": "#E5E7EB",
+      "borderStrong": "#CBD5E1",
+      "textPrimary": "#0F0F0F",
+      "textSecondary": "#6B7280",
+      "textMuted": "#9CA3AF",
+      "textOnPrimary": "#0C0C0C",
+      "textOnInverse": "#FFFFFF",
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444",
+      "info": "#0284C7",
+      "positiveBadgeBg": "#E9FBF3",
+      "positiveBadgeText": "#047857",
+      "neutralBadgeBg": "#EEF2F7",
+      "neutralBadgeText": "#374151",
+      "chartLinePrimary": "#111827",
+      "chartAreaFillFrom": "rgba(17,24,39,0.08)",
+      "chartAreaFillTo": "rgba(17,24,39,0.00)",
+      "chartGrid": "rgba(107,114,128,0.30)",
+      "focusRing": "rgba(0,213,255,0.40)",
+      "shadowColor": "rgba(16,24,40,0.12)"
+    },
+    "typography": {
+      "fontFamilyBase": "Inter, 'SF Pro Text', system-ui, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif",
+      "fontFamilyNumeric": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+      "scale": {
+        "display": { "size": 56, "lineHeight": 64, "weight": 700, "tracking": -0.5 },
+        "h1": { "size": 40, "lineHeight": 48, "weight": 700, "tracking": -0.2 },
+        "h2": { "size": 32, "lineHeight": 40, "weight": 700, "tracking": -0.2 },
+        "h3": { "size": 24, "lineHeight": 32, "weight": 600, "tracking": -0.1 },
+        "h4": { "size": 20, "lineHeight": 28, "weight": 600, "tracking": 0 },
+        "bodyLg": { "size": 18, "lineHeight": 28, "weight": 400, "tracking": 0 },
+        "body": { "size": 16, "lineHeight": 24, "weight": 400, "tracking": 0 },
+        "bodySm": { "size": 14, "lineHeight": 20, "weight": 400, "tracking": 0 },
+        "caption": { "size": 12, "lineHeight": 16, "weight": 400, "tracking": 0 },
+        "micro": { "size": 10, "lineHeight": 14, "weight": 600, "tracking": 0.2 }
+      },
+      "numericStyles": {
+        "emphasized": { "weight": 700, "family": "inherit" },
+        "quiet": { "weight": 600, "family": "inherit" }
+      }
+    },
+    "spacing": {
+      "unit": 8,
+      "scale": {
+        "0": 0,
+        "0.5": 4,
+        "1": 8,
+        "1.5": 12,
+        "2": 16,
+        "3": 24,
+        "4": 32,
+        "5": 40,
+        "6": 48,
+        "8": 64,
+        "10": 80
+      }
+    },
+    "radii": {
+      "xs": 6,
+      "sm": 8,
+      "md": 12,
+      "lg": 16,
+      "xl": 20,
+      "pill": 9999
+    },
+    "borders": {
+      "hairline": { "width": 1, "color": "#E5E7EB" },
+      "strong": { "width": 2, "color": "#CBD5E1" }
+    },
+    "shadows": {
+      "xs": "0 1px 2px rgba(16,24,40,0.05)",
+      "sm": "0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.08)",
+      "md": "0 2px 8px rgba(16,24,40,0.10)",
+      "lg": "0 4px 16px rgba(16,24,40,0.12)"
+    }
+  },
+  "layout": {
+    "container": {
+      "maxWidth": 1280,
+      "paddingX": 24,
+      "paddingY": 24,
+      "background": "pageBackground"
+    },
+    "grid": {
+      "columns": 12,
+      "gutter": 24,
+      "rowGap": 24
+    },
+    "twoColumnHero": {
+      "leftColumns": 8,
+      "rightColumns": 4,
+      "gap": 24,
+      "stackBreakpoint": 1024
+    },
+    "sectionSpacing": {
+      "before": 24,
+      "after": 24
+    }
+  },
+  "components": {
+    "pageHeader": {
+      "title": {
+        "typography": "display",
+        "color": "textPrimary",
+        "marginBottom": 16
+      }
+    },
+    "metricHeader": {
+      "title": {
+        "typography": "h3",
+        "color": "textPrimary",
+        "marginBottom": 12
+      },
+      "filters": {
+        "layout": { "gap": 12 },
+        "dropdown": {
+          "height": 36,
+          "paddingX": 12,
+          "bg": "surface",
+          "border": "hairline",
+          "radius": "pill",
+          "text": { "size": 14, "color": "textSecondary", "weight": 600 },
+          "iconColor": "textSecondary",
+          "hoverBg": "surfaceMuted",
+          "focusRing": "focusRing"
+        }
+      },
+      "badges": {
+        "success": {
+          "bg": "positiveBadgeBg",
+          "text": "positiveBadgeText",
+          "radius": "pill",
+          "paddingX": 10,
+          "height": 24,
+          "typography": { "size": 12, "weight": 600 }
+        },
+        "neutral": {
+          "bg": "neutralBadgeBg",
+          "text": "neutralBadgeText",
+          "radius": "pill",
+          "paddingX": 10,
+          "height": 24,
+          "typography": { "size": 12, "weight": 600 }
+        }
+      }
+    },
+    "kpiNumber": {
+      "value": {
+        "typography": { "size": 40, "lineHeight": 48, "weight": 700 },
+        "color": "textPrimary",
+        "fontFamily": "fontFamilyNumeric",
+        "tracking": -0.2
+      },
+      "subValue": {
+        "typography": "body",
+        "color": "textSecondary"
+      }
+    },
+    "card": {
+      "background": "surface",
+      "radius": "lg",
+      "border": "hairline",
+      "shadow": "sm",
+      "padding": 24,
+      "gap": 16
+    },
+    "chartCard": {
+      "extends": "card",
+      "headerSpacing": 12,
+      "chart": {
+        "height": 240,
+        "lineColor": "chartLinePrimary",
+        "areaGradientFrom": "chartAreaFillFrom",
+        "areaGradientTo": "chartAreaFillTo",
+        "gridColor": "chartGrid",
+        "axisColor": "textMuted",
+        "markerColor": "primaryColor"
+      },
+      "scrubber": {
+        "trackHeight": 6,
+        "trackBg": "surfaceMuted",
+        "thumbSize": 8,
+        "thumbColor": "borderStrong"
+      },
+      "kpiRow": {
+        "columns": 3,
+        "gap": 24
+      }
+    },
+    "allocationGrid": {
+      "gridGap": 16,
+      "tile": {
+        "radius": 16,
+        "background": "surfaceMuted",
+        "border": "hairline",
+        "padding": 16,
+        "title": { "size": 14, "weight": 700, "color": "textPrimary" },
+        "subtitle": { "size": 12, "weight": 600, "color": "textMuted" },
+        "value": { "size": 12, "weight": 600, "color": "textSecondary" },
+        "warningIconColor": "warning",
+        "primaryHighlightBg": "#0FF0FF"
+      },
+      "heroTile": {
+        "background": "#00E6FF",
+        "textColor": "#0A0A0A",
+        "radius": 16,
+        "padding": 16
+      }
+    },
+    "table": {
+      "header": {
+        "background": "surface",
+        "text": { "size": 12, "weight": 600, "color": "textSecondary", "transform": "none" },
+        "paddingY": 12,
+        "paddingX": 16,
+        "borderBottom": "hairline"
+      },
+      "row": {
+        "paddingY": 14,
+        "paddingX": 16,
+        "borderBottom": "hairline",
+        "hoverBg": "surfaceMuted",
+        "text": { "size": 14, "color": "textPrimary" },
+        "numeric": { "family": "fontFamilyNumeric", "weight": 600 }
+      },
+      "columns": [
+        "token",
+        "amount",
+        "value",
+        "allocation",
+        "price"
+      ]
+    },
+    "button": {
+      "primary": {
+        "height": 40,
+        "paddingX": 16,
+        "bg": "primaryColor",
+        "textColor": "textOnPrimary",
+        "radius": "pill",
+        "shadow": "xs",
+        "hoverBg": "#00C2EA",
+        "activeBg": "#00B5DC",
+        "focusRing": "focusRing",
+        "disabledBg": "#CFEFF6",
+        "disabledText": "#8AA7AF"
+      },
+      "ghost": {
+        "height": 36,
+        "paddingX": 12,
+        "bg": "transparent",
+        "textColor": "textSecondary",
+        "radius": "pill",
+        "hoverBg": "surfaceMuted",
+        "activeBg": "#E3E8EF",
+        "focusRing": "focusRing"
+      }
+    },
+    "badge": {
+      "success": {
+        "bg": "positiveBadgeBg",
+        "text": "positiveBadgeText",
+        "radius": "pill",
+        "height": 24,
+        "paddingX": 10,
+        "iconColor": "success"
+      },
+      "neutral": {
+        "bg": "neutralBadgeBg",
+        "text": "neutralBadgeText",
+        "radius": "pill",
+        "height": 24,
+        "paddingX": 10,
+        "iconColor": "textSecondary"
+      }
+    },
+    "segmentedControl": {
+      "height": 32,
+      "radius": "pill",
+      "bg": "surfaceMuted",
+      "thumbBg": "surface",
+      "thumbShadow": "xs",
+      "text": { "size": 12, "weight": 600, "color": "textSecondary" },
+      "selectedTextColor": "textPrimary",
+      "padding": 4
+    }
+  },
+  "states": {
+    "hover": { "elevation": "sm", "bgDelta": 0.02 },
+    "active": { "elevation": "xs", "bgDelta": 0.04 },
+    "disabled": { "opacity": 0.5, "cursor": "not-allowed" },
+    "focus": { "ring": { "color": "focusRing", "width": 3 } }
+  },
+  "accessibility": {
+    "contrastTargets": {
+      "textOnSurface": 4.5,
+      "textOnMutedSurface": 4.5,
+      "textOnPrimary": 4.5
+    },
+    "hitArea": {
+      "minSize": 44
+    }
+  },
+  "exampleCompositions": {
+    "headerRow": {
+      "title": "pageHeader.title",
+      "rightControls": ["metricHeader.filters.dropdown", "badge.success", "badge.neutral"]
+    },
+    "heroSection": {
+      "layout": "twoColumnHero",
+      "left": "chartCard",
+      "right": "allocationGrid"
+    },
+    "breakdownTable": {
+      "component": "table",
+      "rowsPerPage": 10
+    }
+  },
+  "assumptions": [
+    "Typeface inferred as Inter/system sans; adjust to brand stack if needed.",
+    "Cyan highlight approximated; calibrate to brand primary if available.",
+    "Container widths derived visually; refine with real layout specs.",
+    "Badge colors use accessible tints to match perceived screenshot values.",
+    "Chart grid/area opacities are estimates; tune with the charting library."
+  ]
+}
+
+
+
+

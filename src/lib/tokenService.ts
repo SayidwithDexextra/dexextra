@@ -11,6 +11,7 @@ const MIN_TOKEN_VALUE_USD = 0.01
 // Enhanced token icons mapping
 const TOKEN_ICONS: Record<string, string> = {
   ETH: '💎',
+  HYPE: '⚡',
   USDC: '💵',
   USDT: '💴',
   DAI: '💰',
@@ -321,6 +322,10 @@ export async function fetchWalletPortfolio(
   walletAddress: string
 ): Promise<WalletPortfolio> {
   try {
+    const isHyperliquid = Number(env.CHAIN_ID) === 999
+    const nativeSymbol = isHyperliquid ? 'HYPE' : 'ETH'
+    const nativeName = isHyperliquid ? 'Hyperliquid (HYPE)' : 'Ethereum'
+    const nativeIcon = TOKEN_ICONS[nativeSymbol] || '🪙'
     // Validate wallet address format
     if (!isValidEthereumAddress(walletAddress)) {
       throw new Error('Invalid Ethereum address format')
@@ -350,28 +355,29 @@ export async function fetchWalletPortfolio(
         
         // Get symbols for price fetching
         const tokenSymbols = Object.values(tokenMetadata).map(meta => meta.symbol)
-        tokenSymbols.push('ETH') // Add ETH for price fetching
+        // Only fetch ETH price on non-Hyperliquid networks
+        if (!isHyperliquid) tokenSymbols.push('ETH')
         
         // Fetch prices
         const priceData = await fetchTokenPrices(tokenSymbols)
         
-        // Add ETH first (always include regardless of value)
-        const ethPrice = priceData['ETH']?.price || 0
+        // Add native first (always include regardless of value)
+        const ethPrice = isHyperliquid ? 0 : (priceData['ETH']?.price || 0)
         const ethValue = parseFloat(ethBalance) * ethPrice
         totalValue += ethValue
         
         tokens.push({
-          symbol: 'ETH',
-          name: 'Ethereum',
+          symbol: nativeSymbol,
+          name: nativeName,
           balance: ethBalance,
           decimals: 18,
           address: '0x0',
           price: ethPrice,
           value: ethValue,
-          changePercent24h: priceData['ETH']?.price_change_percentage_24h || 0,
+          changePercent24h: isHyperliquid ? 0 : (priceData['ETH']?.price_change_percentage_24h || 0),
           balanceFormatted: formatTokenBalance(ethBalance, 18),
           valueFormatted: formatTokenValue(ethValue),
-          icon: TOKEN_ICONS['ETH'] || '💎',
+          icon: nativeIcon,
         })
         
         // Process other tokens and filter by minimum USD value
@@ -409,54 +415,54 @@ export async function fetchWalletPortfolio(
         })
 
       } else {
-        // If no tokens found via Alchemy, add just ETH (always include regardless of value)
-        const priceData = await fetchTokenPrices(['ETH'])
-        const ethPrice = priceData['ETH']?.price || 0
+        // If no tokens found via Alchemy, add just native (always include regardless of value)
+        const priceData = isHyperliquid ? {} : await fetchTokenPrices(['ETH'])
+        const ethPrice = isHyperliquid ? 0 : (priceData['ETH']?.price || 0)
         const ethValue = parseFloat(ethBalance) * ethPrice
         totalValue += ethValue
         
         tokens.push({
-          symbol: 'ETH',
-          name: 'Ethereum',
+          symbol: nativeSymbol,
+          name: nativeName,
           balance: ethBalance,
           decimals: 18,
           address: '0x0',
           price: ethPrice,
           value: ethValue,
-          changePercent24h: priceData['ETH']?.price_change_percentage_24h || 0,
+          changePercent24h: isHyperliquid ? 0 : (priceData['ETH']?.price_change_percentage_24h || 0),
           balanceFormatted: formatTokenBalance(ethBalance, 18),
           valueFormatted: formatTokenValue(ethValue),
-          icon: TOKEN_ICONS['ETH'] || '💎',
+          icon: nativeIcon,
         })
       }
           } catch (alchemyError) {
         console.error('Alchemy API failed, no fallback available for all tokens:', alchemyError)
         
-                // When Alchemy fails, just add ETH as we can't get all user tokens without it
-        const priceData = await fetchTokenPrices(['ETH'])
-        const ethPrice = priceData['ETH']?.price || 0
+                // When Alchemy fails, just add native as we can't get all user tokens without it
+        const priceData = isHyperliquid ? {} : await fetchTokenPrices(['ETH'])
+        const ethPrice = isHyperliquid ? 0 : (priceData['ETH']?.price || 0)
         const ethValue = parseFloat(ethBalance) * ethPrice
         totalValue += ethValue
         
         tokens.push({
-          symbol: 'ETH',
-          name: 'Ethereum',
+          symbol: nativeSymbol,
+          name: nativeName,
           balance: ethBalance,
           decimals: 18,
           address: '0x0',
           price: ethPrice,
           value: ethValue,
-          changePercent24h: priceData['ETH']?.price_change_percentage_24h || 0,
+          changePercent24h: isHyperliquid ? 0 : (priceData['ETH']?.price_change_percentage_24h || 0),
           balanceFormatted: formatTokenBalance(ethBalance, 18),
           valueFormatted: formatTokenValue(ethValue),
-          icon: TOKEN_ICONS['ETH'] || '💎',
+          icon: nativeIcon,
         })
     }
     
     // Sort tokens by value (descending)
     tokens.sort((a, b) => (b.value || 0) - (a.value || 0))
     
-    const ethPrice = tokens.find(t => t.symbol === 'ETH')?.price || 0
+    const ethPrice = isHyperliquid ? 0 : (tokens.find(t => t.symbol === 'ETH')?.price || 0)
     const ethValue = parseFloat(ethBalance) * ethPrice
     
     return {

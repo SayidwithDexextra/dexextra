@@ -21,6 +21,9 @@ import { MarketDataProvider, useMarketData } from '@/contexts/MarketDataContext'
 // Removed contractDeployment import
 // Removed useVAMMSettlement hook
 import { MetricLivePrice } from '@/components';
+import { useWallet } from '@/hooks/useWallet';
+import SeriesMarketToggle from '@/components/Series/SeriesMarketToggle';
+import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRouting';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -53,6 +56,7 @@ export default function TokenPage({ params }: TokenPageProps) {
 
 function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: string; tradingAction: 'long' | 'short' | null; onSwitchNetwork: () => void; }) {
   const md = useMarketData();
+  const { walletData } = useWallet();
   const sp = useSearchParams();
   const isDeploying = sp.get('deploying') === '1';
 
@@ -91,6 +95,51 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
   const loadingMessage = "Loading Trading Interface...";
   const loadingSubtitle = `Fetching ${symbol} market data, mark price, and available margin`;
+
+  const windowActive = useMemo(() => {
+    const m: any = md.market;
+    if (!m || !m.proposed_settlement_value || !m.settlement_window_expires_at) return false;
+    try {
+      return new Date(m.settlement_window_expires_at).getTime() > Date.now();
+    } catch {
+      return false;
+    }
+  }, [md.market && (md.market as any).proposed_settlement_value, md.market && (md.market as any).settlement_window_expires_at]);
+
+  const [altPrice, setAltPrice] = useState('');
+  const [isSubmittingAlt, setIsSubmittingAlt] = useState(false);
+
+  // Series / Rollover UI hooks must be called unconditionally (before any early returns)
+  const currentMarketId = (md.market as any)?.id as string | undefined;
+  const currentSymbol = symbol;
+  const { pair } = useActivePairByMarketId(currentMarketId);
+  const { markets: seriesMkts } = useSeriesMarkets(pair?.seriesId);
+
+  const submitAlternative = async () => {
+    try {
+      if (!windowActive || !md.market) return;
+      const p = (altPrice || '').trim();
+      if (!p || Number(p) <= 0 || !Number.isFinite(Number(p))) return;
+      setIsSubmittingAlt(true);
+      const resp = await fetch('/api/settlements/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          market_id: (md.market as any).id,
+          price: Number(p),
+          proposer_wallet: walletData?.address || null
+        })
+      });
+      if (!resp.ok) {
+        // swallow UI error here; banner is informational
+      } else {
+        await md.refetchMarket();
+        setAltPrice('');
+      }
+    } finally {
+      setIsSubmittingAlt(false);
+    }
+  };
 
   if (shouldShowLoading) {
     return (
@@ -144,6 +193,52 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     <div className="min-h-screen bg-black text-white">
       <CryptoMarketTicker className="border-b border-gray-800" />
       <div className="px-1 pb-8 pt-2">
+        {/* Rollover toggle (if active pair exists) */}
+        {pair && seriesMkts && seriesMkts.length >= 2 && (
+          <div className="mb-1">
+            <SeriesMarketToggle
+              seriesSlug={pair.seriesSlug}
+              markets={seriesMkts
+                .filter(m => m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId)
+                .map(m => ({
+                  marketId: m.marketId,
+                  symbol: m.symbol,
+                  isActive: m.symbol === currentSymbol,
+                  isPrimary: m.isPrimary,
+                  role: m.marketId === pair.fromMarketId ? 'front' : 'next'
+                }))}
+            />
+          </div>
+        )}
+        {windowActive && (
+          <div className="w-full mb-2 rounded-md border border-yellow-600/40 bg-yellow-900/10 px-3 py-2">
+            <div className="text-xs text-yellow-300 font-medium">
+              Settlement window active
+            </div>
+            <div className="text-[11px] text-gray-300 mt-0.5">
+              Proposed price: <span className="text-white font-mono">${Number((md.market as any).proposed_settlement_value || 0).toFixed(4)}</span>
+              {(md.market as any)?.settlement_window_expires_at ? (
+                <> • Expires {new Date(String((md.market as any).settlement_window_expires_at)).toLocaleString()}</>
+              ) : null}
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                value={altPrice}
+                onChange={(e) => setAltPrice(e.target.value)}
+                placeholder="Propose alternative price"
+                inputMode="decimal"
+                className="bg-black text-white text-[11px] border border-yellow-700/50 rounded px-2 py-1 outline-none focus:border-yellow-500 min-w-[180px]"
+              />
+              <button
+                onClick={submitAlternative}
+                disabled={isSubmittingAlt}
+                className="text-[11px] text-yellow-300 hover:text-yellow-200 disabled:text-yellow-700"
+              >
+                {isSubmittingAlt ? 'Submitting…' : 'Submit Alternative'}
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex md:hidden flex-col gap-1">
           <div className="w-full mt-1">
             <LightweightChart 

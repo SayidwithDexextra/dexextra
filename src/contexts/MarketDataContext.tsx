@@ -14,6 +14,7 @@ interface MarketDataContextValue {
   market: Market | null;
   isLoading: boolean;
   error: Error | string | null;
+  refetchMarket: () => Promise<void>;
 
   // OrderBook live data (read-only)
   orderBookAddress?: string | null;
@@ -56,7 +57,7 @@ interface ProviderProps {
 }
 
 export function MarketDataProvider({ symbol, children }: ProviderProps) {
-  const { market, isLoading: isLoadingMarket, error: marketError } = useMarket(symbol);
+  const { market, isLoading: isLoadingMarket, error: marketError, refetch } = useMarket(symbol);
   const { data: dbTicker } = useMarketTicker({ identifier: symbol, refreshInterval: 10000 });
 
   // Shared OrderBook read-only live data (one instance)
@@ -139,6 +140,17 @@ export function MarketDataProvider({ symbol, children }: ProviderProps) {
     market,
     isLoading,
     error,
+    refetchMarket: async () => {
+      try {
+        await refetch();
+        // Also refresh order book live data and orders where applicable
+        try {
+          await orderBookActions.refreshOrders();
+        } catch {}
+      } catch (e) {
+        // swallow to avoid breaking callers
+      }
+    },
 
     orderBookAddress: (obLive as any)?.orderBookAddress ?? null,
     bestBid: obLive?.bestBid ?? null,
@@ -161,6 +173,28 @@ export function MarketDataProvider({ symbol, children }: ProviderProps) {
     enablePositions: () => setPositionsEnabled(true),
     disablePositions: () => setPositionsEnabled(false)
   };
+
+  // Listen for cross-route deployment completion to force-refresh this market
+  useEffect(() => {
+    const onMarketDeployed = (e: any) => {
+      try {
+        const deployedSymbol = String(e?.detail?.symbol || '').toUpperCase();
+        if (!deployedSymbol) return;
+        if (String(symbol || '').toUpperCase() !== deployedSymbol) return;
+        // Refetch market + orderbook
+        contextValue.refetchMarket().catch(() => {});
+      } catch {}
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('marketDeployed', onMarketDeployed as EventListener);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('marketDeployed', onMarketDeployed as EventListener);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
 
   return (
     <MarketDataContext.Provider value={contextValue}>

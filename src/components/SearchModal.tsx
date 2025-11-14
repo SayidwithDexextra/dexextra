@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import searchModalDesign from '../../design/searchModal.json'
+import { getSupabaseClient } from '@/lib/supabase-browser'
+import MarketPairBadge from './Series/MarketPairBadge'
 
 interface SearchModalProps {
   isOpen: boolean
@@ -54,6 +56,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     isLoading: false,
     error: null
   })
+  const [pairMap, setPairMap] = useState<Record<string, { otherId: string; seriesSlug: string }>>({})
+  const [idToMarket, setIdToMarket] = useState<Record<string, Market>>({})
   const [recentSearches, setRecentSearches] = useState<string[]>([])
   const modalRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -139,10 +143,77 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
       markets = Array.from(marketMap.values())
 
+      // Series-aware enrichment: if any of these markets are in an active rollover pair,
+      // fetch the paired market so the UI can present both choices.
+      let computedPairMap: Record<string, { otherId: string; seriesSlug: string }> = {}
+      if (markets.length > 0) {
+        const supabase = getSupabaseClient();
+        const ids = markets.map(m => m.id);
+        // Find active pairs where any of these ids are either from or to
+        const [{ data: pairsFrom, error: eFrom }, { data: pairsTo, error: eTo }] = await Promise.all([
+          supabase
+            .from('v_active_rollover_pairs')
+            .select('series_id, series_slug, from_market_id, to_market_id')
+            .in('from_market_id', ids),
+          supabase
+            .from('v_active_rollover_pairs')
+            .select('series_id, series_slug, from_market_id, to_market_id')
+            .in('to_market_id', ids)
+        ]);
+        if (eFrom) console.warn('pairsFrom error', eFrom.message);
+        if (eTo) console.warn('pairsTo error', eTo.message);
+        const pairs = [...(pairsFrom || []), ...(pairsTo || [])] as any[];
+        if (pairs.length > 0) {
+          // Build set of paired market ids we might be missing
+          const pairedIds = new Set<string>();
+          pairs.forEach(p => {
+            if (!marketMap.has(p.from_market_id)) pairedIds.add(p.from_market_id);
+            if (!marketMap.has(p.to_market_id)) pairedIds.add(p.to_market_id);
+            computedPairMap[p.from_market_id] = { otherId: p.to_market_id, seriesSlug: p.series_slug };
+            computedPairMap[p.to_market_id] = { otherId: p.from_market_id, seriesSlug: p.series_slug };
+          });
+          if (pairedIds.size > 0) {
+            // Fetch minimal info for paired markets not already in results
+            const { data: extraMkts, error: eMkts } = await supabase
+              .from('markets')
+              .select('id, symbol, description, icon_image_url, deployment_status, decimals, minimum_order_size, tick_size, category')
+              .in('id', Array.from(pairedIds));
+            if (!eMkts && extraMkts) {
+              extraMkts.forEach((m: any) => {
+                // Coerce into our SearchModal Market type shape where possible
+                marketMap.set(m.id, {
+                  id: m.id,
+                  symbol: m.symbol,
+                  description: m.description || '',
+                  category: Array.isArray(m.category) ? m.category : (m.category ? [m.category] : []),
+                  oracle_address: '', // not used in search UI
+                  initial_price: 0,
+                  price_decimals: Number(m.decimals || 6),
+                  banner_image_url: undefined,
+                  icon_image_url: m.icon_image_url || undefined,
+                  supporting_photo_urls: [],
+                  deployment_fee: 0,
+                  is_active: true,
+                  market_id: m.id,
+                  deployment_status: (m.deployment_status || '').toLowerCase(),
+                  created_at: '',
+                  user_address: undefined
+                } as Market);
+              });
+            }
+          }
+          markets = Array.from(marketMap.values());
+          setPairMap(computedPairMap);
+        }
+      }
+
       if (usersData.success && usersData.data) {
         users = usersData.data
       }
 
+      const mapById: Record<string, Market> = {};
+      markets.forEach((m: Market) => { mapById[m.id] = m; });
+      setIdToMarket(mapById);
       setSearchResults({
         markets,
         users,
@@ -392,14 +463,11 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                 {searchResults.markets.map((market) => (
                   <div
                     key={market.id}
-                    onClick={() => handleMarketSelect(market)}
-                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
+                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
                   >
                     <div className="flex items-center justify-between p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                          market.deployment_status === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'
-                        }`} />
+                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${market.deployment_status === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
                           {market.icon_image_url ? (
                             <div 
@@ -414,9 +482,9 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                             </div>
                           )}
                           <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-medium text-white">
+                            <button onClick={() => handleMarketSelect(market)} className="text-left text-[11px] font-medium text-white hover:underline">
                               {market.symbol}
-                            </div>
+                            </button>
                             <div className="text-[10px] text-[#606060] truncate max-w-[200px]">
                               {market.description}
                             </div>
@@ -468,6 +536,26 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                                 </>
                               );
                             })()}
+                            {/* Inline series toggle if in active rollover */}
+                            {pairMap[market.id] && idToMarket[pairMap[market.id].otherId] && (
+                              <div className="flex items-center gap-2 mt-1 w-full">
+                                <MarketPairBadge text={pairMap[market.id].seriesSlug} />
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleMarketSelect(market)}
+                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-white bg-[#1A1A1A] border border-[#333333]"
+                                  >
+                                    {market.symbol}
+                                  </button>
+                                  <button
+                                    onClick={() => handleMarketSelect(idToMarket[pairMap[market.id].otherId])}
+                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-[#808080] bg-[#0F0F0F] border border-[#222222] hover:text-white hover:bg-[#1A1A1A] hover:border-[#333333]"
+                                  >
+                                    {idToMarket[pairMap[market.id].otherId].symbol}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

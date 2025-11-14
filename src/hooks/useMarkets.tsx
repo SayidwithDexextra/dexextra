@@ -23,6 +23,16 @@ export interface Market {
   open_interest_long: number;
   open_interest_short: number;
   last_trade_price: number | null;
+  settlement_value?: number | null;
+  settlement_timestamp?: string | null;
+  proposed_settlement_value?: number | null;
+  proposed_settlement_at?: string | null;
+  settlement_window_expires_at?: string | null;
+  proposed_settlement_by?: string | null;
+  alternative_settlement_value?: number | null;
+  alternative_settlement_at?: string | null;
+  alternative_settlement_by?: string | null;
+  settlement_disputed?: boolean | null;
   market_status: string;
   creator_wallet_address: string;
   banner_image_url: string | null;

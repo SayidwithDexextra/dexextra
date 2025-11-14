@@ -3,7 +3,7 @@ import { useWallet } from './useWallet';
 import { usePositions } from './usePositions';
 import { initializeContracts } from '@/lib/contracts';
 import { useMarket } from '@/hooks/useMarket';
-import { CONTRACT_ADDRESSES, CHAIN_CONFIG } from '@/lib/contractConfig';
+import { CONTRACT_ADDRESSES, CHAIN_CONFIG, populateMarketInfoClient } from '@/lib/contractConfig';
 import { getReadProvider, ensureHyperliquidWallet } from '@/lib/network';
 import { orderService } from '@/lib/orderService';
 import { formatUnits, parseEther, parseUnits } from 'viem';
@@ -1249,4 +1249,83 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
   };
 
   return [state, actions];
+}
+
+// Utility function (not a hook) to fetch active orders across all markets for a user
+// Returns an array of market buckets with symbol, token name, and the list of active orders
+export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Array<{ symbol: string; token: string; orders: any[] }>> {
+  if (!trader) return [];
+  // Lightweight cache to prevent repeated RPCs and flapping results
+  const now = Date.now();
+  const TTL_MS = 30000; // 30s
+  const key = String(trader).toLowerCase();
+  // @ts-ignore
+  const g: any = globalThis as any;
+  if (!g.__ordersAllMktsCache) g.__ordersAllMktsCache = new Map<string, { ts: number; data: any[] }>();
+  if (!g.__ordersAllMktsPopulateOnce) g.__ordersAllMktsPopulateOnce = { populated: false, inFlight: null as null | Promise<any> };
+  const cached = g.__ordersAllMktsCache.get(key);
+  if (cached && now - cached.ts < TTL_MS) {
+    return cached.data;
+  }
+  try {
+    // Populate market info at most once if empty
+    const initial = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
+    if (!initial.length && !g.__ordersAllMktsPopulateOnce.populated) {
+      g.__ordersAllMktsPopulateOnce.inFlight = g.__ordersAllMktsPopulateOnce.inFlight || populateMarketInfoClient();
+      try { await g.__ordersAllMktsPopulateOnce.inFlight; } catch {}
+      g.__ordersAllMktsPopulateOnce.populated = true;
+    }
+    const entries: any[] = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {});
+    if (!entries.length) {
+      return cached?.data || [];
+    }
+    // Fetch sequentially to avoid bursty RPC and transient "empty" reads
+    const buckets: Array<{ symbol: string; token: string; orders: any[] }> = [];
+    for (const m of entries) {
+      const metric = m?.marketIdentifier || m?.symbol || '';
+      if (!metric) continue;
+      const orders = await orderService.getUserActiveOrders(trader as any, metric);
+      if (Array.isArray(orders) && orders.length > 0) {
+        const symbol = String(m?.symbol || '').toUpperCase();
+        const token = m?.name || symbol;
+        console.log('[useOrderBook] getUserActiveOrdersAllMarkets orders', orders);
+        buckets.push({ symbol, token, orders });
+      }
+    }
+    g.__ordersAllMktsCache.set(key, { ts: Date.now(), data: buckets });
+    return buckets;
+  } catch {
+    return cached?.data || [];
+  }
+}
+
+// Cancel a single order on a given market identifier (symbol/metricId)
+export async function cancelOrderForMarket(orderId: string | number | bigint, marketIdentifier: string): Promise<boolean> {
+  try {
+    if (!orderId || !marketIdentifier) return false;
+    // Resolve signer from injected wallet first
+    let signer: ethers.Signer | null = null;
+    try {
+      signer = await ensureHyperliquidWallet();
+    } catch {
+      signer = null;
+    }
+    if (!signer) return false;
+    // Initialize contracts for the specific market context
+    const contracts = await initializeContracts({
+      providerOrSigner: signer,
+      marketIdentifier
+    });
+    if (!contracts?.obOrderPlacement) return false;
+    // Normalize order id to bigint
+    let idBig: bigint = 0n;
+    try { idBig = typeof orderId === 'bigint' ? orderId : BigInt(orderId as any); } catch { idBig = 0n; }
+    if (idBig === 0n) return false;
+    const tx = await contracts.obOrderPlacement.cancelOrder(idBig);
+    await tx.wait();
+    return true;
+  } catch (e) {
+    console.error('[cancelOrderForMarket] failed', e);
+    return false;
+  }
 }

@@ -18,6 +18,36 @@ export const CreateMarketPage = () => {
   const router = useRouter();
   const deploymentOverlay = useDeploymentOverlay();
 
+  // Detailed pipeline messages reflecting backend-oriented steps
+  const pipelineMessages: string[] = [
+    'Fetch facet cut configuration',
+    'Build initializer and selectors',
+    'Preflight validation (static call)',
+    'Submit create transaction',
+    'Wait for confirmation',
+    'Parse FuturesMarketCreated event',
+    'Verify required selectors',
+    'Patch missing selectors if needed',
+    'Grant admin roles on CoreVault',
+    'Save market metadata',
+    'Finalize deployment',
+  ];
+  const stepIndexMap: Record<string, number> = {
+    cut_fetch: 0,
+    cut_build: 1,
+    static_call: 2,
+    send_tx: 3,
+    confirm: 4,
+    parse_event: 5,
+    verify_selectors: 6,
+    diamond_cut: 7,
+  };
+  const updateOverlayIndex = (idx: number) => {
+    const clamped = Math.max(0, Math.min(idx, pipelineMessages.length - 1));
+    const percent = Math.min(100, Math.round(((clamped + 1) / Math.max(pipelineMessages.length, 1)) * 100));
+    deploymentOverlay.update({ activeIndex: clamped, percentComplete: percent });
+  };
+
   const initialSteps: ProgressStep[] = [
     { id: 'tx', title: 'Send Transaction', description: 'Creating market on-chain (server)', status: 'pending' },
     { id: 'confirm', title: 'Confirm & Parse', description: 'Waiting for confirmations (server)', status: 'pending' },
@@ -64,17 +94,6 @@ export const CreateMarketPage = () => {
     );
   };
 
-  // Vertical carousel configuration mapped to deployment pipeline
-  const carouselMessages = ['Deploying contract...', 'Setting up market...', 'Registering oracle feed...'];
-  const trackedOrder: string[] = ['tx', 'roles', 'save']; // map steps to carousel sequence
-  const completedTrackedCount = steps.filter(s => trackedOrder.includes(s.id) && s.status === 'done').length;
-  const activeTrackedIndex = steps.findIndex(s => trackedOrder.includes(s.id) && s.status === 'active' && trackedOrder.includes(s.id));
-  const activeCarouselIndex = activeTrackedIndex >= 0 ? trackedOrder.indexOf(steps[activeTrackedIndex].id) : Math.min(completedTrackedCount, carouselMessages.length - 1);
-  const percentComplete = Math.min(
-    100,
-    Math.round(((completedTrackedCount + (activeTrackedIndex >= 0 ? 0.35 : 0)) / Math.max(carouselMessages.length, 1)) * 100)
-  );
-
   const beginFadeOutToToken = (targetSymbol: string) => {
     setIsFadingOut(true);
     setTimeout(() => {
@@ -98,11 +117,10 @@ export const CreateMarketPage = () => {
       const sourceLocator = (marketData as any).sourceLocator || null;
 
       // Open global deployment overlay and navigate to token page immediately
-      const carouselMessages = ['Deploying contract...', 'Setting up market...', 'Registering oracle feed...'];
       deploymentOverlay.open({
         title: 'Deployment Pipeline',
         subtitle: 'Initializing market and registering oracle',
-        messages: carouselMessages,
+        messages: pipelineMessages,
         splashMs: INITIAL_SPLASH_MS,
       });
       // Brief splash for aesthetic purposes, then navigate behind the modal
@@ -156,16 +174,20 @@ export const CreateMarketPage = () => {
 
       // Create market on chain using connected wallet (mimics new-create-market.js)
       markActive('tx');
-      deploymentOverlay.update({ activeIndex: 0, percentComplete: 10 });
       const { orderBook, marketId, chainId, transactionHash } = await createMarketOnChain({
         symbol,
         metricUrl,
         startPrice: String(marketData.startPrice || '1'),
         dataSource,
         tags,
+        onProgress: ({ step }) => {
+          const idx = stepIndexMap[step];
+          if (typeof idx === 'number') updateOverlayIndex(idx);
+        },
       });
       markDone('tx');
-      deploymentOverlay.update({ activeIndex: 1, percentComplete: 45 });
+      // Move overlay to "Wait for confirmation" or past if already covered by progress events
+      updateOverlayIndex(5);
 
       // Confirm step completed as part of the awaited tx above
       markDone('confirm');
@@ -173,6 +195,7 @@ export const CreateMarketPage = () => {
       // Grant roles on CoreVault via server-admin endpoint (user is not necessarily admin)
       markActive('roles');
       {
+        updateOverlayIndex(8);
         const grant = await fetch('/api/markets/grant-roles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -183,12 +206,13 @@ export const CreateMarketPage = () => {
           throw new Error(gErr?.error || 'Role grant failed');
         }
         markDone('roles');
-        deploymentOverlay.update({ activeIndex: 2, percentComplete: 75 });
+        updateOverlayIndex(9);
       }
 
       // Persist market metadata via API (Supabase upsert, verification)
       markActive('save');
       {
+        updateOverlayIndex(9);
         const networkName =
           (process.env as any).NEXT_PUBLIC_NETWORK_NAME ||
           (globalThis as any).process?.env?.NEXT_PUBLIC_NETWORK_NAME ||
@@ -232,10 +256,19 @@ export const CreateMarketPage = () => {
           throw new Error(sErr?.error || 'Save failed');
         }
         markDone('save');
-        deploymentOverlay.update({ percentComplete: 100 });
+        updateOverlayIndex(10);
       }
 
-      // Fade out global overlay gracefully (we're already on the token page)
+      // Notify token page to refetch its market data and drop the deploying flag
+      {
+        const targetSymbol = String(marketData.symbol || '').toUpperCase();
+        try {
+          window.dispatchEvent(new CustomEvent('marketDeployed', { detail: { symbol: targetSymbol } }));
+        } catch {}
+        // Replace URL to remove ?deploying=1 and ensure fresh view
+        router.replace(`/token/${encodeURIComponent(targetSymbol)}`);
+      }
+      // Fade out global overlay gracefully
       deploymentOverlay.fadeOutAndClose(500);
     } catch (error) {
       console.error('Error creating market:', error);

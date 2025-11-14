@@ -75,7 +75,7 @@ export function transformOverviewToCards(rows: MarketOverviewRow[]): MarketTicke
     const price = raw > 0 ? raw / 1_000_000 : (row.tick_size || 0);
     const title = row.name || row.symbol || row.market_identifier || '';
     const categories = [row.category];
-    const imageUrl = row.icon_image_url || row.banner_image_url || '/placeholder-market.svg';
+  const imageUrl = row.icon_image_url || row.banner_image_url || 'https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExaWN2ZTV1YnZreHV3dDl4eTlrMGFtYjd6NWY1MHBtOXM4dmdianh2ZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/j5rZvWi198VASs4Bpu/giphy.gif';
     const imageAlt = `${row.symbol || row.market_identifier} market icon`;
     return {
       id: row.market_id,

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import useWallet from '@/hooks/useWallet'
 import { TokenBalance } from '@/types/wallet'
 import TokenList from './TokenList'
@@ -21,7 +22,10 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
 
   const tokens = useMemo(() => portfolio.tokens || [], [portfolio.tokens])
   const totalValue = parseFloat(portfolio.totalValue) || tokens.reduce((sum: number, token: TokenBalance) => sum + (token.value || 0), 0)
-  const ethBalance = portfolio.ethBalanceFormatted || '0.013'
+  // Hyperliquid native token labeling
+  const nativeSymbol = walletData.chainId === 999 ? 'HYPE' : 'ETH'
+  const nativeBalance = portfolio.ethBalanceFormatted || '0.00'
+  const networkLabel = walletData.chainId === 999 ? 'Hyperliquid' : 'Connected'
 
   // Debug logging
   useEffect(() => {
@@ -115,7 +119,18 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
                   boxShadow: '0 8px 32px rgba(74, 222, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
                 }}
               >
-                {walletData.avatar || '👤'}
+                {walletData.userProfile?.profile_image_url ? (
+                  <Image
+                    src={walletData.userProfile.profile_image_url}
+                    alt="Profile"
+                    width={48}
+                    height={48}
+                    className="w-full h-full object-cover rounded-xl"
+                    unoptimized={walletData.userProfile.profile_image_url.startsWith('data:') || walletData.userProfile.profile_image_url.startsWith('blob:')}
+                  />
+                ) : (
+                  <span>{walletData.avatar || '👤'}</span>
+                )}
               </div>
               {/* Subtle Ring Effect */}
               <div className="absolute inset-0 rounded-xl border border-white/10 group-hover:border-white/20 transition-colors duration-200" />
@@ -128,7 +143,7 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
                   Wallet
                 </span>
                 <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                  Connected
+                  {networkLabel}
                 </div>
               </div>
               <div className="flex items-center gap-2 mt-1">
@@ -201,10 +216,10 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
             <div className="flex items-center justify-center gap-3 mb-2">
               <div className="flex items-baseline gap-1">
                 <span className="text-3xl font-bold text-white font-mono tracking-tight">
-                  {ethBalance}
+                  {nativeBalance}
                 </span>
                 <span className="text-sm font-medium text-[#9CA3AF] uppercase tracking-wider">
-                  ETH
+                  {nativeSymbol}
                 </span>
               </div>
               <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
@@ -322,14 +337,21 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
           {activeTab === 'crypto' ? (
             <div className="space-y-3">
               {/* Content Header */}
-              <div className="flex items-center justify-between mb-4">
+              <div className="group flex items-center justify-between mb-2">
                 <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                   Token Holdings
                 </h4>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
                     {tokens.length} tokens
                   </div>
+                  {portfolio.isLoading ? (
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  ) : tokens.length > 0 ? (
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                  ) : (
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+                  )}
                   <button 
                     onClick={refreshPortfolio}
                     className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-blue-500/10 rounded text-blue-400 hover:text-blue-300"

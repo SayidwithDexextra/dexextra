@@ -1,10 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ethers } from 'ethers';
 import { useMarkets } from '@/hooks/useMarkets';
-import { initializeContracts } from '@/lib/contracts';
-import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 
 type SettleState = {
@@ -47,6 +44,16 @@ export default function SettlementPage() {
     return Date.now() >= ts;
   };
 
+  const isWindowActive = (m?: any) => {
+    if (!m) return false;
+    if (!m.proposed_settlement_value || !m.settlement_window_expires_at) return false;
+    try {
+      return new Date(m.settlement_window_expires_at).getTime() > Date.now();
+    } catch {
+      return false;
+    }
+  };
+
   const handleOpenSettle = (marketId: string) => {
     setState(prev => ({ ...prev, marketId, priceInput: '', confirming: false, txHash: null }));
   };
@@ -57,11 +64,6 @@ export default function SettlementPage() {
 
   const handleSettle = async () => {
     if (!selectedMarket) return;
-    if (!selectedMarket.market_address) {
-      setState(prev => ({ ...prev, error: 'Missing market address for this market.' }));
-      return;
-    }
-
     const price = (state.priceInput || '').trim();
     if (!price || Number(price) <= 0 || !Number.isFinite(Number(price))) {
       setState(prev => ({ ...prev, error: 'Enter a valid positive settlement price.' }));
@@ -71,28 +73,21 @@ export default function SettlementPage() {
     try {
       setState(prev => ({ ...prev, isSubmitting: true, error: null, success: null, txHash: null }));
 
-      const signer = await ensureHyperliquidWallet();
-      const net = await signer.provider!.getNetwork();
-      const connectedChainId = Number(net.chainId);
-
-      if (selectedMarket.chain_id && connectedChainId !== Number(selectedMarket.chain_id)) {
-        throw new Error(`Wrong network. Connect to chainId ${selectedMarket.chain_id}.`);
-      }
-
-      const contracts = await initializeContracts({
-        providerOrSigner: signer,
-        orderBookAddressOverride: selectedMarket.market_address,
-        chainId: selectedMarket.chain_id,
-        marketIdBytes32: (selectedMarket as any)?.market_id_bytes32 || undefined,
-        marketIdentifier: selectedMarket.market_identifier,
-        marketSymbol: selectedMarket.symbol,
+      // Start the 24h settlement window via API (no on-chain tx)
+      const resp = await fetch('/api/settlements/propose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          market_id: selectedMarket.id,
+          price: Number(price)
+        })
       });
-
-      const finalPrice6 = ethers.parseUnits(String(price), 6);
-      const tx = await contracts.obSettlement.settleMarket(finalPrice6);
-      const receipt = await tx.wait();
-
-      setState(prev => ({ ...prev, txHash: tx.hash }));
+      if (!resp.ok) {
+        const j = await resp.json().catch(() => ({} as any));
+        throw new Error(j?.error || 'Failed to start settlement window');
+      }
+      const j = await resp.json();
+      const updated = j?.market || null;
 
       // Best-effort: archive primary metric source via Wayback and capture URL
       let waybackUrl: string | null = null;
@@ -118,29 +113,25 @@ export default function SettlementPage() {
         }
       } catch {}
 
+      // Optionally persist the archive URL into market_config (without changing status)
       try {
-        // Merge market_config with settlement Wayback URL if available
-        const mergedConfig = waybackUrl
-          ? { ...((selectedMarket as any)?.market_config || {}), settlement_wayback_url: waybackUrl, settlement_wayback_timestamp: waybackTs }
-          : undefined;
-        await fetch('/api/markets', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: selectedMarket.id,
-            market_status: 'SETTLED',
-            settlement_value: Number(price),
-            settlement_timestamp: new Date().toISOString(),
-            is_active: false,
-            ...(mergedConfig ? { market_config: mergedConfig } : {})
-          }),
-        });
+        if (waybackUrl) {
+          const mergedConfig = { ...((selectedMarket as any)?.market_config || {}), settlement_wayback_url: waybackUrl, settlement_wayback_timestamp: waybackTs };
+          await fetch('/api/markets', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: selectedMarket.id,
+              market_config: mergedConfig
+            }),
+          });
+        }
         await refetch();
       } catch {}
 
       setState(prev => ({
         ...prev,
-        success: `Settlement executed. Tx: ${tx.hash.substring(0, 10)}…${waybackUrl ? `\nArchived snapshot: ${waybackUrl}` : ''}` ,
+        success: `Settlement window started. ${updated?.settlement_window_expires_at ? `Expires ${new Date(updated.settlement_window_expires_at).toLocaleString()}` : ''}${waybackUrl ? `\nArchived snapshot: ${waybackUrl}` : ''}`,
         isSubmitting: false,
         confirming: false,
       }));
@@ -149,7 +140,7 @@ export default function SettlementPage() {
       setState(prev => ({
         ...prev,
         isSubmitting: false,
-        error: e?.message || 'Settlement failed. Please try again.',
+        error: e?.message || 'Failed to start settlement window. Please try again.',
       }));
     }
   };
@@ -228,6 +219,7 @@ export default function SettlementPage() {
 
   const MarketRow = (m: any) => {
     const ready = isReady(m.settlement_date);
+    const windowActive = isWindowActive(m);
     const dateStr = m.settlement_date ? new Date(m.settlement_date).toLocaleString() : '—';
     return (
       <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
@@ -244,13 +236,18 @@ export default function SettlementPage() {
             <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded" title="Settlement Date">
               {dateStr}
             </div>
+            {windowActive && (
+              <div className="text-[10px] text-yellow-400 bg-[#1A1A1A] px-1.5 py-0.5 rounded" title="Settlement window active">
+                Window Active
+              </div>
+            )}
             <button
               onClick={() => handleOpenSettle(m.id)}
-              disabled={!m.market_address || state.isSubmitting}
+              disabled={!m.market_address || state.isSubmitting || windowActive}
               className="text-xs text-red-400 hover:text-red-300 disabled:text-[#404040]"
-              title={!m.market_address ? 'Missing market address' : 'Settle'}
+              title={!m.market_address ? 'Missing market address' : (windowActive ? 'Window active' : 'Start 24h Window')}
             >
-              Settle
+              {windowActive ? 'Window Active' : 'Start Window'}
             </button>
           </div>
         </div>
@@ -276,6 +273,14 @@ export default function SettlementPage() {
                 <span className="text-[10px] text-white font-mono ml-1">—</span>
               )}
             </div>
+            {windowActive && m.settlement_window_expires_at && (
+              <div className="text-[9px] pt-1.5">
+                <span className="text-[#606060]">Window Expires:</span>
+                <span className="text-[10px] text-white font-mono ml-1">
+                  {new Date(m.settlement_window_expires_at).toLocaleString()}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -391,7 +396,7 @@ export default function SettlementPage() {
                 disabled={!state.confirming || state.isSubmitting}
                 className="text-xs text-red-400 hover:text-red-300 disabled:text-[#404040]"
               >
-                {state.isSubmitting ? 'Settling…' : 'Execute Settlement'}
+                {state.isSubmitting ? 'Starting…' : 'Start 24h Window'}
               </button>
             </div>
             <div className="mt-2 text-[9px] text-[#606060]">
@@ -412,12 +417,20 @@ export default function SettlementPage() {
                 <span className="text-white">—</span>
               )}
             </div>
+            {isWindowActive(selectedMarket) && selectedMarket.settlement_window_expires_at && (
+              <div className="mt-1 text-[9px] text-[#606060]">
+                Window Expires:{' '}
+                <span className="text-white">
+                  {new Date(selectedMarket.settlement_window_expires_at as string).toLocaleString()}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      <ErrorModal isOpen={!!state.error} onClose={closeModals} title="Settlement Failed" message={state.error || ''} />
-      <SuccessModal isOpen={!!state.success} onClose={closeModals} title="Settlement Complete" message={state.success || ''} />
+      <ErrorModal isOpen={!!state.error} onClose={closeModals} title="Action Failed" message={state.error || ''} />
+      <SuccessModal isOpen={!!state.success} onClose={closeModals} title="Window Started" message={state.success || ''} />
     </div>
   );
 }

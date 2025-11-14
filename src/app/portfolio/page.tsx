@@ -1,5 +1,5 @@
 import { Metadata } from 'next'
-import { PortfolioOverview } from '@/components/Portfolio'
+import { PortfolioDashboard } from '@/components/PortfolioV2'
 
 export const metadata: Metadata = {
   title: 'Portfolio | DexEtera',
@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function PortfolioPage() {
   return (
     <main>
-      <PortfolioOverview />
+      <PortfolioDashboard />
     </main>
   )
 }
