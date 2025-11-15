@@ -152,10 +152,10 @@ export default function EvaluationCard() {
 		<Card>
 			<div className="flex items-start justify-between mb-1">
 				<div>
-					<p className="text-base font-medium mb-2" style={{ color: '#E5E7EB' }}>
+					<p className="text-base font-medium mb-2 uppercase tracking-wide" style={{ color: '#9CA3AF' }}>
 						Evaluation
 					</p>
-					<p className="text-xs mb-3" style={{ color: '#9CA3AF' }}>
+					<p className="text-xs mb-3" style={{ color: '#808080' }}>
 						Total assets
 					</p>
 					<div className="flex items-center gap-3 mb-2">
@@ -182,30 +182,9 @@ export default function EvaluationCard() {
 							</span>
 						)}
 					</div>
-					{/* <div
-						className="inline-flex items-center gap-1.5 mt-1 px-3 py-1 rounded-full text-xs font-medium border transition-all hover:border-[#333333]"
-						style={{ background: '#1A1A1A', color: '#D1D5DB', borderColor: '#222222' }}
-					>
-						<span>{isLoading ? 'Loading…' : isHealthy ? 'Margin healthy' : 'Attention needed'}</span>
-						<span>{isHealthy ? '✅' : '⚠️'}</span>
-					</div> */}
 				</div>
 				<div>
-					<div
-						className="rounded-full transition-all duration-500"
-						style={{
-							background: 'linear-gradient(to right, rgba(255,255,255,0.10), rgba(255,255,255,0.00))',
-							padding: '1px',
-							display: 'inline-block',
-						}}
-					>
-					<button
-						className="text-sm font-medium rounded-full px-4 py-1.5 transition-all hover:bg-[#222222] border"
-							style={{ background: '#0B0B0B'/**/, color: '#D1D5DB', borderColor: '#1F1F1F' }}
-					>
-						Last 30 days ▼
-					</button>
-					</div>
+					
 				</div>
 			</div>
 
@@ -216,13 +195,13 @@ export default function EvaluationCard() {
 			<div className="grid grid-cols-3 gap-10 mt-6 pt-6" style={{ borderTop: '1px solid #1A1A1A' }}>
 				{kpis.map((kpi) => (
 					<div key={kpi.label} className="min-w-0">
-						<p className="text-xs font-medium mb-1.5" style={{ color: '#9CA3AF' }}>
+						<p className="text-xs font-medium mb-1.5" style={{ color: '#808080' }}>
 							{kpi.label}
 						</p>
 						<div className="flex items-baseline gap-2">
 							<p className="text-xl font-bold" style={{ color: '#FFFFFF' }}>{kpi.value}</p>
 							{kpi.sub ? (
-								<span className="text-xs font-medium" style={{ color: '#6B7280' }}>
+								<span className="text-xs font-medium" style={{ color: '#606060' }}>
 									{kpi.sub}
 								</span>
 							) : null}
@@ -242,14 +221,14 @@ export default function EvaluationCard() {
 						<span className="text-lg font-bold" style={{ color: '#8BC34A' }}>B</span>
 					</div>
 					<div>
-						<p className="text-xs font-medium mb-1" style={{ color: '#9CA3AF' }}>
+						<p className="text-xs font-medium mb-1" style={{ color: '#808080' }}>
 							Portfolio score
 						</p>
 						<p className="text-base font-bold leading-tight">
 							<span style={{ color: '#FFFFFF' }}>69</span>
-							<span style={{ color: '#6B7280' }}> /100</span>
+							<span style={{ color: '#606060' }}> /100</span>
 						</p>
-						<p className="text-xs font-medium mt-0.5" style={{ color: '#9CA3AF' }}>
+						<p className="text-xs font-medium mt-0.5" style={{ color: '#808080' }}>
 							Good
 						</p>
 					</div>
@@ -257,28 +236,28 @@ export default function EvaluationCard() {
 
 				{/* AIRA */}
 				<div>
-					<p className="text-xs font-medium mb-1.5" style={{ color: '#9CA3AF' }}>
-					Active Orders:
+					<p className="text-xs font-medium mb-1.5" style={{ color: '#808080' }}>
+					Active Orders
 					</p>
 					<div className="flex items-center gap-2 mb-1">
 						<p className="text-base font-bold" style={{ color: '#FFFFFF' }}>{activeOrdersCount}</p>
-						<span className="w-1.5 h-1.5 rounded-full" style={{ background: '#10B981' }} />
+						<span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#10B981' }} />
 					</div>
-					<p className="text-xs font-medium" style={{ color: '#9CA3AF' }}>
+					<p className="text-xs font-medium" style={{ color: '#606060' }}>
 						Across all markets
 					</p>
 				</div>
 
 				{/* PRI */}
 				<div>
-					<p className="text-xs font-medium mb-1.5" style={{ color: '#9CA3AF' }}>
+					<p className="text-xs font-medium mb-1.5" style={{ color: '#808080' }}>
 					Open Positions:
 					</p>
 					<div className="flex items-center gap-1.5 mb-1">
 						<p className="text-base font-bold" style={{ color: '#FFFFFF' }}>{positions?.length || 0}</p>
 						<span className="text-xs" style={{ color: '#6B7280' }}>ⓘ</span>
 					</div>
-					<p className="text-xs font-medium" style={{ color: '#9CA3AF' }}>
+					<p className="text-xs font-medium" style={{ color: '#606060' }}>
 						Across all markets
 					</p>
 				</div>

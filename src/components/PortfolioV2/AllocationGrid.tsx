@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Card from './Card'
 import { usePositions } from '@/hooks/usePositions'
 import { useMarkets } from '@/hooks/useMarkets'
+import { useRouter } from 'next/navigation'
 
 type AllocationDatum = {
 	name: string
@@ -109,6 +110,8 @@ interface AllocationGridProps {
 export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) {
 	const containerRef = useRef<HTMLDivElement>(null)
 	const [size, setSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
+	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+	const router = useRouter()
 
 	const formatUsd = (n: number) =>
 		new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -254,12 +257,45 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 		if (size.width <= 0 || size.height <= 0) return [] as Rect[]
 		if (!topItems || topItems.length === 0) return [] as Rect[]
 		// Compute treemap layout within full container
+		// When hovering a tile, bias its weight up slightly and shrink others.
+		const interactiveWeights = (() => {
+			const w = smoothedWeights.slice()
+			if (hoveredIndex === null || hoveredIndex < 0 || hoveredIndex >= w.length) return w
+			// Size-aware boost: smaller base weights expand more than large ones.
+			// Large tiles should expand only slightly.
+			const MIN_BOOST = 1.04
+			const MAX_BOOST = 3.2
+			const LARGE_THRESHOLD = 0.22  // tiles >= 22% of area considered large
+			const LARGE_SOFT_CAP = 1.08   // very small bump for large tiles
+			const maxShare = 0.86
+			// Ensure hovered tile meets a minimum readable area
+			const requiredMinWidth = 160
+			const requiredMinHeight = 120
+			const containerArea = Math.max(1, size.width * size.height)
+			const minHoverShare = Math.min(0.6, (requiredMinWidth * requiredMinHeight) / containerArea + 0.01)
+
+			const total = w.reduce((a, b) => a + b, 0) || 1
+			const normalized = w.map((x) => x / total)
+			const wi = normalized[hoveredIndex]
+			// Map smaller wi -> closer to MAX_BOOST, larger wi -> closer to MIN_BOOST
+			const sizeT = Math.sqrt(Math.min(1, Math.max(0, wi)))
+			const hoverFactor = MIN_BOOST + (1 - sizeT) * (MAX_BOOST - MIN_BOOST)
+			let boostedCandidate = Math.min(maxShare, wi * hoverFactor)
+			// Further limit expansion for already-large tiles
+			if (wi >= LARGE_THRESHOLD) {
+				boostedCandidate = Math.min(boostedCandidate, wi * LARGE_SOFT_CAP)
+			}
+			const boosted = Math.max(minHoverShare, boostedCandidate)
+			const othersScale = (1 - boosted) / Math.max(1e-9, 1 - wi)
+			const adjusted = normalized.map((x, i) => (i === hoveredIndex ? boosted : x * othersScale))
+			return adjusted
+		})()
 		return layoutTreemap(
-			smoothedWeights.map((weight) => ({ weight })) as any,
+			interactiveWeights.map((weight) => ({ weight })) as any,
 			{ x: 0, y: 0, width: size.width, height: size.height }
 		)
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [size.width, size.height, topItems, smoothedWeights])
+	}, [size.width, size.height, topItems, smoothedWeights, hoveredIndex])
 
 	// Simple color tints per token for subtle differentiation (keeps text legible)
 	const colorMap: Record<string, { tint: string; hero?: boolean }> = {
@@ -337,6 +373,11 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 					const h = Math.max(0, r.height - gap)
 					// Minimal sizing thresholds for content
 					const tiny = w < 150 || h < 110
+					const micro = w < 100 || h < 85
+					const isHovered = hoveredIndex === idx
+					// On hover, always show full dataset regardless of size
+					const tinyView = isHovered ? false : tiny
+					const microView = isHovered ? false : micro
 					// Only the top two allocations should use the cyan hero background
 					const isHero = idx < 2
 					const palette = colorMap[item.symbol] || { tint: 'linear-gradient(180deg, rgba(255,255,255,0.00), rgba(255,255,255,0.00))' }
@@ -345,7 +386,7 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 					return (
 						<div
 							key={`${item.name}-${idx}`}
-							className="absolute rounded-2xl overflow-hidden flex flex-col transition-all duration-200 border hover:border-[#333333]"
+							className="absolute rounded-2xl overflow-hidden flex flex-col transition-all duration-200 border hover:border-[#333333] cursor-pointer"
 							style={{
 								left,
 								top,
@@ -354,13 +395,29 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 								background: bgStyle as any,
 								border: '1px solid #222222',
 								color: '#E5E7EB',
+								zIndex: hoveredIndex === idx ? 2 : 1,
 							}}
+							onMouseEnter={() => setHoveredIndex(idx)}
+							onMouseLeave={() => setHoveredIndex((prev) => (prev === idx ? null : prev))}
+							onClick={() => {
+								const sym = String(item.symbol || '').toUpperCase()
+								if (sym) router.push(`/token/${encodeURIComponent(sym)}`)
+							}}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault()
+									const sym = String(item.symbol || '').toUpperCase()
+									if (sym) router.push(`/token/${encodeURIComponent(sym)}`)
+								}
+							}}
+							role="button"
+							aria-label={`Open ${item.name} market`}
 						>
-							<div className={tiny ? 'flex items-start justify-between p-3' : 'flex items-start justify-between p-4'}>
+							<div className={tinyView ? 'flex items-start justify-between p-3' : 'flex items-start justify-between p-4'}>
 								<div className="min-w-0 flex-1">
 									<div className="flex items-center gap-2.5">
 										<div
-											className="w-6 h-6 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0"
+											className={tinyView ? 'w-6 h-6 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0' : 'w-6 h-6 rounded-full overflow-hidden flex items-center justify-center flex-shrink-0'}
 											style={{ background: '#0F0F0F', color: '#FFFFFF' }}
 										>
 											{(item as any).icon ? (
@@ -376,22 +433,24 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 												</span>
 											)}
 										</div>
-										<div className="min-w-0">
-											<p
-												className="text-sm font-bold leading-tight truncate"
-												style={{ color: isHero ? '#0A0A0A' : '#E5E7EB' }}
-												title={item.name}
-											>
-												{item.name}
-											</p>
-											<p
-												className="text-[11px] font-semibold mt-0.5 truncate"
-												style={{ color: isHero ? 'rgba(10,10,10,0.60)' : '#9CA3AF' }}
-												title={item.symbol}
-											>
-												{item.symbol}
-											</p>
-										</div>
+										{!microView ? (
+											<div className="min-w-0">
+												<p
+													className={tinyView ? 'text-xs font-bold leading-snug line-clamp-2' : (isHovered ? 'text-sm font-bold leading-tight line-clamp-2' : 'text-sm font-bold leading-tight truncate')}
+													style={{ color: isHero ? '#0A0A0A' : '#E5E7EB' }}
+													title={item.name}
+												>
+													{item.name}
+												</p>
+												<p
+													className={tinyView ? 'text-[10px] font-semibold mt-0.5 leading-snug line-clamp-2' : 'text-[11px] font-semibold mt-0.5 truncate'}
+													style={{ color: isHero ? 'rgba(10,10,10,0.60)' : '#9CA3AF' }}
+													title={item.symbol}
+												>
+													{item.symbol}
+												</p>
+											</div>
+										) : null}
 									</div>
 								</div>
 								<div className="flex items-center gap-1.5">
@@ -407,22 +466,28 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 									) : null}
 								</div>
 							</div>
-							<div className={tiny ? 'mt-auto px-3 pb-3' : 'mt-auto px-4 pb-4'}>
-								<div className="flex items-start justify-between">
-									<div className="min-w-0">
-										<div className="flex items-center gap-1.5">
-											<p className={tiny ? 'text-xs font-semibold' : 'text-sm font-bold'} style={{ color: isHero ? '#0A0A0A' : '#E5E7EB' }}>
-												{item.percent.toFixed(2)}%
-											</p>
-											<TrendIcon direction={(item as any).direction} tiny={tiny} hero={isHero} />
-										</div>
-										{typeof (item as any).value === 'number' ? (
-											<p className={tiny ? 'text-[10px] font-medium mt-0.5' : 'text-xs font-medium mt-0.5'} style={{ color: isHero ? 'rgba(10,10,10,0.60)' : '#9CA3AF' }}>
-												{formatUsd((item as any).value as number)}
-											</p>
-										) : null}
+							<div className={tinyView ? 'mt-auto px-3 pb-3' : 'mt-auto px-4 pb-4'}>
+								{microView ? (
+									<div className="flex items-center justify-end">
+										<TrendIcon direction={(item as any).direction} tiny={true} hero={isHero} />
 									</div>
-								</div>
+								) : (
+									<div className="flex items-start justify-between">
+										<div className="min-w-0">
+											<div className="flex items-center gap-1.5">
+												<p className={tinyView ? 'text-xs font-semibold' : 'text-sm font-bold'} style={{ color: isHero ? '#0A0A0A' : '#E5E7EB' }}>
+													{item.percent.toFixed(2)}%
+												</p>
+												<TrendIcon direction={(item as any).direction} tiny={tinyView} hero={isHero} />
+											</div>
+											{typeof (item as any).value === 'number' ? (
+												<p className={tinyView ? 'text-[10px] font-medium mt-0.5' : 'text-xs font-medium mt-0.5'} style={{ color: isHero ? 'rgba(10,10,10,0.60)' : '#9CA3AF' }}>
+													{formatUsd((item as any).value as number)}
+												</p>
+											) : null}
+										</div>
+									</div>
+								)}
 							</div>
 						</div>
 					)
