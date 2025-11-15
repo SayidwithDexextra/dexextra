@@ -86,13 +86,13 @@ interface NavItem {
 
 const navigationItems: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: OverviewIcon, route: '/' },
-  { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
+  // { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
   { id: 'rewards', label: 'Rewards', icon: RewardsIcon, route: '/rewards' },
-  { id: 'favorites', label: 'Favorites', icon: FavoritesIcon, route: '/favorites' },
-  { id: 'send', label: 'Send', icon: SendIcon, route: '/send' },
-  { id: 'swap', label: 'Swap', icon: SwapIcon, route: '/swap' },
-  { id: 'earn', label: 'Earn', icon: EarnIcon, route: '/earn' },
-  { id: 'bridge', label: 'Bridge', icon: BridgeIcon, route: '/bridge' },
+  // { id: 'favorites', label: 'Favorites', icon: FavoritesIcon, route: '/favorites' },
+  // { id: 'send', label: 'Send', icon: SendIcon, route: '/send' },
+  // { id: 'swap', label: 'Swap', icon: SwapIcon, route: '/swap' },
+  // { id: 'earn', label: 'Earn', icon: EarnIcon, route: '/earn' },
+  // { id: 'bridge', label: 'Bridge', icon: BridgeIcon, route: '/bridge' },
   { id: 'settings', label: 'Settings', icon: SettingsIcon, route: '/settings' },
 ]
 
