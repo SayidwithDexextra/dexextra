@@ -197,17 +197,69 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 		[topItems]
 	)
 	const total = sum(weights) || 1
+	// Smooth and constrain weights so the largest items are still larger,
+	// but smaller items have enough area to render details.
+	// - Power transform compresses differences while preserving order
+	// - Uniform mix guarantees a baseline share for all
+	// - Max cap avoids a single tile dominating the grid
+	const smoothedWeights = useMemo(() => {
+		const raw = topItems.map((i) => Math.max(i.percent, 0))
+		const n = raw.length
+		if (n === 0) return [] as number[]
+		if (n === 1) return [1]
+		// Tunables
+		const EXPONENT = 0.72 // 0.5-0.85 range recommended
+		const UNIFORM_MIX = 0.22 // 0-0.35; higher = more even
+		const MAX_SHARE = 0.6 // prevent one tile from taking entire space
+		// Step 1: power transform
+		const powered = raw.map((v) => Math.pow(v, EXPONENT))
+		const powSum = sum(powered) || 1
+		let w = powered.map((v) => v / powSum)
+		// Step 2: add a uniform baseline share
+		w = w.map((v) => (1 - UNIFORM_MIX) * v + UNIFORM_MIX * (1 / n))
+		// Step 3: cap extreme dominance and redistribute overflow
+		function capAndRedistributeMax(values: number[], cap: number): number[] {
+			let arr = values.slice()
+			for (let _iter = 0; _iter < 5; _iter++) {
+				let overflow = 0
+				let poolSum = 0
+				const capped = new Array(arr.length)
+				for (let i = 0; i < arr.length; i++) {
+					if (arr[i] > cap) {
+						overflow += arr[i] - cap
+						capped[i] = cap
+					} else {
+						capped[i] = arr[i]
+						poolSum += arr[i]
+					}
+				}
+				if (overflow <= 1e-9 || poolSum <= 1e-9) {
+					arr = capped
+					break
+				}
+				// Redistribute proportionally to non-capped items
+				const redistributed = capped.map((v) => (v < cap ? v + (v / poolSum) * overflow : v))
+				// If redistribution created new violations, loop again
+				arr = redistributed
+				if (arr.every((v) => v <= cap + 1e-9)) break
+			}
+			// Normalize for any rounding drift
+			const s = sum(arr) || 1
+			return arr.map((v) => v / s)
+		}
+		return capAndRedistributeMax(w, MAX_SHARE)
+	}, [topItems])
 
 	const rects = useMemo(() => {
 		if (size.width <= 0 || size.height <= 0) return [] as Rect[]
 		if (!topItems || topItems.length === 0) return [] as Rect[]
 		// Compute treemap layout within full container
 		return layoutTreemap(
-			topItems.map((i) => ({ weight: Math.max(i.percent, 0) })) as any,
+			smoothedWeights.map((weight) => ({ weight })) as any,
 			{ x: 0, y: 0, width: size.width, height: size.height }
 		)
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [size.width, size.height, topItems])
+	}, [size.width, size.height, topItems, smoothedWeights])
 
 	// Simple color tints per token for subtle differentiation (keeps text legible)
 	const colorMap: Record<string, { tint: string; hero?: boolean }> = {
@@ -219,6 +271,42 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 		POWR: { tint: 'linear-gradient(180deg, rgba(239,68,68,0.12), rgba(239,68,68,0.00))' },
 		SLR: { tint: 'linear-gradient(180deg, rgba(244,63,94,0.12), rgba(244,63,94,0.00))' },
 		LINK: { tint: 'linear-gradient(180deg, rgba(99,102,241,0.12), rgba(99,102,241,0.00))' },
+	}
+
+	// Small animated sparkline-style trend icon
+	const TrendIcon: React.FC<{ direction?: 'LONG' | 'SHORT'; tiny?: boolean; hero?: boolean }> = ({ direction, tiny, hero }) => {
+		if (!direction) return null
+		const color = direction === 'LONG' ? '#10B981' : '#EF4444'
+		// Slightly dim icon on hero tiles for contrast
+		const stroke = hero ? (direction === 'LONG' ? 'rgba(8,120,87,0.9)' : 'rgba(127,29,29,0.9)') : color
+		const w = tiny ? 14 : 18
+		const h = tiny ? 9 : 11
+		const vbW = 16
+		const vbH = 12
+		const up = '1,11 5,8 8,9.5 11,6 15,4'       // rising line
+		const down = '1,4 5,7 8,5.5 11,9 15,11'   // falling line
+		return (
+			<svg
+				width={w}
+				height={h}
+				viewBox={`0 0 ${vbW} ${vbH}`}
+				aria-hidden="true"
+				style={{ display: 'block', flexShrink: 0 }}
+			>
+				<polyline
+					points={direction === 'LONG' ? up : down}
+					fill="none"
+					stroke={stroke}
+					strokeWidth={1.8}
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					strokeDasharray={40}
+					strokeDashoffset={40}
+				>
+					<animate attributeName="stroke-dashoffset" values="40;0" dur="1.6s" repeatCount="indefinite" />
+				</polyline>
+			</svg>
+		)
 	}
 
 	return (
@@ -248,7 +336,7 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 					const w = Math.max(0, r.width - gap)
 					const h = Math.max(0, r.height - gap)
 					// Minimal sizing thresholds for content
-					const tiny = w < 110 || h < 80
+					const tiny = w < 150 || h < 110
 					// Only the top two allocations should use the cyan hero background
 					const isHero = idx < 2
 					const palette = colorMap[item.symbol] || { tint: 'linear-gradient(180deg, rgba(255,255,255,0.00), rgba(255,255,255,0.00))' }
@@ -307,21 +395,6 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 									</div>
 								</div>
 								<div className="flex items-center gap-1.5">
-									{(item as any).direction === 'LONG' ? (
-										<div
-											className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-											style={{ background: 'rgba(16,185,129,0.15)' }}
-										>
-											<span className="text-[10px] font-bold" style={{ color: '#10B981' }}>▲</span>
-										</div>
-									) : (item as any).direction === 'SHORT' ? (
-										<div
-											className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-											style={{ background: 'rgba(239,68,68,0.15)' }}
-										>
-											<span className="text-[10px] font-bold" style={{ color: '#EF4444' }}>▼</span>
-										</div>
-									) : null}
 									{item.warning ? (
 										<div
 											className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
@@ -335,14 +408,21 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 								</div>
 							</div>
 							<div className={tiny ? 'mt-auto px-3 pb-3' : 'mt-auto px-4 pb-4'}>
-								<p className={tiny ? 'text-xs font-semibold' : 'text-sm font-bold'} style={{ color: isHero ? '#0A0A0A' : '#E5E7EB' }}>
-									{item.percent.toFixed(2)}%
-								</p>
-								{typeof (item as any).value === 'number' ? (
-									<p className={tiny ? 'text-[10px] font-medium mt-0.5' : 'text-xs font-medium mt-0.5'} style={{ color: isHero ? 'rgba(10,10,10,0.60)' : '#9CA3AF' }}>
-										{formatUsd((item as any).value as number)}
-									</p>
-								) : null}
+								<div className="flex items-start justify-between">
+									<div className="min-w-0">
+										<div className="flex items-center gap-1.5">
+											<p className={tiny ? 'text-xs font-semibold' : 'text-sm font-bold'} style={{ color: isHero ? '#0A0A0A' : '#E5E7EB' }}>
+												{item.percent.toFixed(2)}%
+											</p>
+											<TrendIcon direction={(item as any).direction} tiny={tiny} hero={isHero} />
+										</div>
+										{typeof (item as any).value === 'number' ? (
+											<p className={tiny ? 'text-[10px] font-medium mt-0.5' : 'text-xs font-medium mt-0.5'} style={{ color: isHero ? 'rgba(10,10,10,0.60)' : '#9CA3AF' }}>
+												{formatUsd((item as any).value as number)}
+											</p>
+										) : null}
+									</div>
+								</div>
 							</div>
 						</div>
 					)

@@ -266,7 +266,7 @@ OUTPUT FORMAT (JSON):
   "unit": "unit of measurement (e.g., 'people', 'USD', 'percentage')",
   "as_of": "current date/time when value is valid (ISO format, prefer TODAY)",
   "confidence": 0.95,
-  "asset_price_suggestion": "Set equal to the numeric metric value as a string",
+  "asset_price_suggestion": "Numeric string computed per ASSET PRICE RULES below; must contain ONLY digits, an optional decimal point, and optional thousands separators (commas). No units or other characters.",
   "reasoning": "detailed explanation emphasizing why this is the CURRENT value and when it was last updated",
   "source_quotes": [
     {
@@ -286,6 +286,21 @@ CONFIDENCE SCORING (heavily weighted for recency):
 - 0.5-0.7: Limited current sources or data from last few months
 - 0.3-0.5: Only historical data available or conflicting current information
 - 0.0-0.3: No current data found, only outdated historical information
+
+ASSET PRICE RULES (for asset_price_suggestion):
+You are an expert in market design and contract specification. Your job is to determine the correct numeric "price per unit" for a market, based on the value shown at a specific settlement URL. You MUST follow these rules when deriving "asset_price_suggestion":
+
+1) Identify the main numeric value on the settlement page.
+
+2) If the value uses a globally recognized financial trading unit (e.g., USD per troy ounce, USD per barrel, USD per ton, USD per BTC), use the price exactly as shown with no scaling.
+
+3) If the value represents a non-financial metric (e.g., population, GDP, emissions, macro indicators, real estate metrics):
+   - If the number is below one million, use the value exactly as shown.
+   - If the number is one million or larger, rescale it to the natural human unit normally used to discuss that metric (e.g., Population → billions; GDP → trillions; Emissions → billions of tons; Followers → millions). After rescaling, compute the new numeric price.
+
+4) Never invent arbitrary scales. The rescaling must reflect the way people normally describe the metric (millions, billions, trillions).
+
+5) asset_price_suggestion MUST contain ONLY the final numeric value (rescaled or unmodified), with no units and no commentary. Use only digits, an optional decimal point, and optional thousands separators (commas). Emit it as a JSON string.
 
 ADDITIONAL RULES FOR LOCATORS & EXTRACTOR:
 - The first entry in source_quotes MUST be the best/primary source you used.
@@ -309,18 +324,25 @@ REJECT: Historical trends, past data points, outdated statistics, or archived in
       prompt += `\nDESCRIPTION: ${description}`;
     }
     
-    prompt += `\n\nSOURCE DATA:\n`;
-    
-    // Add the most relevant chunks from each source
+    // Determine primary settlement URL for price computation context
     const sourceMap = new Map<string, ProcessedChunk[]>();
-    
-    // Group chunks by source URL
     sources.forEach(chunk => {
       if (!sourceMap.has(chunk.source_url)) {
         sourceMap.set(chunk.source_url, []);
       }
       sourceMap.get(chunk.source_url)!.push(chunk);
     });
+    const primaryUrl = (scrapedSources && scrapedSources[0]?.url) || Array.from(sourceMap.keys())[0] || '';
+
+    // Asset price determination context (for start price suggestion)
+    if (primaryUrl) {
+      prompt += `\n\nASSET PRICE DETERMINATION CONTEXT:\nYou are an expert in market design and contract specification. Your job is to determine the correct numeric "price per unit" for this market, based on the value shown at a specific URL.\n\nMARKET: ${metric}\nSETTLEMENT URL: ${primaryUrl}\n\nIMPORTANT FOR asset_price_suggestion:\n- Output ONLY the final numeric price (as a string in JSON).\n- Do NOT include units.\n- Do NOT include any words, explanations, or symbols other than digits, an optional decimal point, and optional thousands separators (commas).\n- Single-line numeric value only.\n\nFollow the ASSET PRICE RULES in the system prompt to compute this value.`;
+    }
+    
+    prompt += `\n\nSOURCE DATA:\n`;
+    
+    // Add the most relevant chunks from each source
+    // (sourceMap already built above)
     
     let sourceIndex = 1;
     for (const [url, chunks] of sourceMap) {

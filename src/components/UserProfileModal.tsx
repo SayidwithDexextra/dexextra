@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
 import { supabase } from '@/lib/supabase'
@@ -232,7 +233,8 @@ export default function UserProfileModal({
           </button>
 
           {/* Profile */}
-          <button 
+          <Link 
+            href="/settings"
             className="w-full flex items-center gap-3 px-4 py-3 transition-all duration-200"
             style={{ 
               backgroundColor: 'transparent',
@@ -240,15 +242,12 @@ export default function UserProfileModal({
               textAlign: 'left'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
+              (e.currentTarget as HTMLAnchorElement).style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent'
+              (e.currentTarget as HTMLAnchorElement).style.backgroundColor = 'transparent'
             }}
-            onClick={() => {
-              router.push('/settings')
-              onClose()
-            }}
+            onClick={onClose}
           >
             <div style={{ color: '#ffffff' }}>
               <ProfileIcon />
@@ -262,7 +261,7 @@ export default function UserProfileModal({
             >
               Profile
             </span>
-          </button>
+          </Link>
 
           {/* Logout */}
           <button 

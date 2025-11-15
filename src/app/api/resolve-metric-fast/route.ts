@@ -6,7 +6,6 @@ import type { MetricResolution } from '@/services/metric-oracle/types';
 import { getMockResolution } from './mock';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
 
 // Shared instance for connection pooling and caching
 let optimizedOracle: PerformanceOptimizedMetricOracle | null = null;

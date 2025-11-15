@@ -7,6 +7,7 @@ import { useMarkets } from '@/hooks/useMarkets'
 import { useWallet } from '@/hooks/useWallet'
 import { getUserActiveOrdersAllMarkets, cancelOrderForMarket } from '@/hooks/useOrderBook'
 import React, { useEffect, useRef, useState } from 'react'
+import ClosedPositionModal from './ClosedPositionModal'
 
 type Row = {
 	token: string
@@ -18,6 +19,9 @@ type Row = {
 	marginLocked?: string
 	marginUsed?: string
 	primary?: boolean
+	positionId: string
+	amountNum: number
+	marketIdentifier: string
 }
 
 type OrderRow = {
@@ -50,6 +54,12 @@ export default function BreakdownTable() {
 	const [ordersRefreshTick, setOrdersRefreshTick] = useState(0)
 	const [orderBuckets, setOrderBuckets] = useState<OrderBucket[]>([])
 	const [cancellingId, setCancellingId] = useState<string | null>(null)
+	const [closeModal, setCloseModal] = useState<{ open: boolean; positionId: string | null; symbol: string; maxSize: number }>({
+		open: false,
+		positionId: null,
+		symbol: '',
+		maxSize: 0
+	})
 
 	const marketIdMap = useMemo(() => {
 		const map = new Map<string, { symbol: string; name: string }>()
@@ -89,7 +99,10 @@ export default function BreakdownTable() {
 				price: formatUsd(mark),
 				marginLocked: formatUsd(marginLocked),
 				marginUsed: formatUsd(marginUsed),
-				primary: false
+				primary: false,
+				positionId: String(p.marketId || ''),
+				amountNum: amount,
+				marketIdentifier: symbol
 			}
 		})
 		// Mark the largest allocation as primary
@@ -102,6 +115,27 @@ export default function BreakdownTable() {
 		if (maxIdx >= 0) rows[maxIdx].primary = true
 		return rows.sort((a, b) => parseFloat(b.allocation) - parseFloat(a.allocation))
 	}, [positions, marketIdMap])
+
+	// Simple button that opens the unified close position modal
+	function PositionCloseButton({ positionId, size, symbol }: { positionId: string; size: number; symbol: string }) {
+		return (
+			<button
+				onClick={() => {
+					setCloseModal({
+						open: true,
+						positionId,
+						symbol,
+						maxSize: size
+					})
+				}}
+				disabled={size <= 0}
+				className="text-xs p-1 rounded border text-red-400 disabled:opacity-50"
+				style={{ borderColor: '#333333' }}
+			>
+				Close
+			</button>
+		)
+	}
 
 	// Aggregate open orders across all markets for the connected wallet
 	useEffect(() => {
@@ -226,7 +260,7 @@ export default function BreakdownTable() {
 									<span className="text-sm font-medium" style={{ color: '#E5E7EB' }}>{row.marginUsed}</span>
 								</td>
 								<td className="px-5 py-4 text-right">
-									<button className="text-xs" style={{ color: '#9CA3AF' }}>→</button>
+									<PositionCloseButton positionId={row.positionId} size={row.amountNum} symbol={row.marketIdentifier} />
 								</td>
 							</tr>
 						))}
@@ -328,6 +362,14 @@ export default function BreakdownTable() {
 					</div>
 				</div>
 			</div>
+			<ClosedPositionModal
+				isOpen={closeModal.open}
+				onClose={() => setCloseModal({ open: false, positionId: null, symbol: '', maxSize: 0 })}
+				positionId={closeModal.positionId}
+				symbol={closeModal.symbol}
+				maxSize={closeModal.maxSize}
+				defaultSize={closeModal.maxSize}
+			/>
 		</div>
 	)
 }
