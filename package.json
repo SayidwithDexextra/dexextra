@@ -12,13 +12,11 @@
     "test": "jest",
     "setup:clickhouse": "node scripts/setup-clickhouse.js",
     "test:connections": "node scripts/test-connections.js",
+    "test:clickhouse-env": "node scripts/test-clickhouse-env.js",
     "seed:data": "node scripts/seed-sample-data.js",
     "setup:tables": "node scripts/setup-clickhouse-tables.js",
     "test:redis": "npx ts-node scripts/test-redis-connection.ts",
-    "test:upstash": "npx ts-node scripts/test-upstash-rest.ts",
-    "test:hybrid-demo": "npx ts-node scripts/test-hybrid-system-demo.ts",
-    "test:hybrid-matching": "npx ts-node scripts/test-hybrid-matching.ts",
-    "hybrid-pnl-trading": "npx ts-node scripts/hybrid-pnl-trading.ts"
+    "test:upstash": "npx ts-node scripts/test-upstash-rest.ts"
   },
   "dependencies": {
     "@clickhouse/client": "^1.11.2",

@@ -2,10 +2,10 @@
 
 import Card from './Card'
 import { useMemo } from 'react'
-import { usePositions } from '@/hooks/usePositions'
+import { usePortfolioData } from '@/hooks/usePortfolioData'
 import { useMarkets } from '@/hooks/useMarkets'
 import { useWallet } from '@/hooks/useWallet'
-import { getUserActiveOrdersAllMarkets, cancelOrderForMarket } from '@/hooks/useOrderBook'
+import { cancelOrderForMarket } from '@/hooks/useOrderBook'
 import React, { useEffect, useRef, useState } from 'react'
 import ClosedPositionModal from './ClosedPositionModal'
 
@@ -24,16 +24,6 @@ type Row = {
 	marketIdentifier: string
 }
 
-type OrderRow = {
-	token: string
-	symbol: string
-	orders: number
-	totalSize: string
-	totalValue: string
-	avgPrice: string
-}
-
-type OrderBucket = { symbol: string; token: string; orders: any[] }
 
 function formatUsd(n: number): string {
 	if (!Number.isFinite(n)) return '$0.00'
@@ -46,13 +36,10 @@ function formatNum(n: number, decimals = 4): string {
 }
 
 export default function BreakdownTable() {
-	const { positions, isLoading: positionsLoading } = usePositions(undefined, { enabled: true })
-	const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 })
+	const { positions, ordersBuckets, isLoading: isLoadingPortfolio, hasLoadedOnce: portfolioHasLoaded, refreshOrders } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
+	const { markets, isLoading: marketsLoading } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 })
 	const { walletData } = useWallet() as any
-	const [orderRows, setOrderRows] = useState<OrderRow[]>([])
-	const fetchedForRef = useRef<string | null>(null)
-	const [ordersRefreshTick, setOrdersRefreshTick] = useState(0)
-	const [orderBuckets, setOrderBuckets] = useState<OrderBucket[]>([])
+	const walletAddress = walletData?.address
 	const [cancellingId, setCancellingId] = useState<string | null>(null)
 	const [closeModal, setCloseModal] = useState<{ open: boolean; positionId: string | null; symbol: string; maxSize: number }>({
 		open: false,
@@ -60,6 +47,16 @@ export default function BreakdownTable() {
 		symbol: '',
 		maxSize: 0
 	})
+	const prevNonEmptyRowsRef = useRef<Row[] | null>(null)
+	const [initialHold, setInitialHold] = useState(true)
+	useEffect(() => {
+		const id = setTimeout(() => setInitialHold(false), 800)
+		return () => clearTimeout(id)
+	}, [])
+	// Keep loading until portfolio data has loaded AND markets have loaded AND initial hold is done
+	const isInitialLoading = !portfolioHasLoaded || marketsLoading || initialHold || !walletAddress || isLoadingPortfolio
+		const [didAnimatePositionsIn, setDidAnimatePositionsIn] = useState(false)
+		const [didAnimateOrdersIn, setDidAnimateOrdersIn] = useState(false)
 
 	const marketIdMap = useMemo(() => {
 		const map = new Map<string, { symbol: string; name: string }>()
@@ -116,6 +113,40 @@ export default function BreakdownTable() {
 		return rows.sort((a, b) => parseFloat(b.allocation) - parseFloat(a.allocation))
 	}, [positions, marketIdMap])
 
+	// hasLoadedOnce is now provided by usePortfolioData hook
+
+	// Remember last non-empty set of rows to avoid thrash on intermediate refreshes
+	useEffect(() => {
+		if (computedRows && computedRows.length > 0) {
+			prevNonEmptyRowsRef.current = computedRows
+		}
+	}, [computedRows])
+
+	const rowsToRender: Row[] = useMemo(() => {
+		// During initial loading, return empty to show skeleton
+		if (isInitialLoading) return []
+		// Once loaded, show computed rows (empty array if no positions)
+		// Use previous non-empty rows during updates to prevent flicker
+		if (computedRows.length > 0) {
+			return computedRows
+		}
+		// After initial load, if no positions but we had some before, keep showing previous
+		if (prevNonEmptyRowsRef.current && prevNonEmptyRowsRef.current.length > 0) {
+			return prevNonEmptyRowsRef.current
+		}
+		// After initial load, if no positions, show empty state
+		return []
+	}, [computedRows, isInitialLoading])
+
+	// Trigger one-time animate-in for positions table rows
+	useEffect(() => {
+		if (!isInitialLoading && rowsToRender.length > 0 && !didAnimatePositionsIn) {
+			setDidAnimatePositionsIn(true)
+		}
+	}, [isInitialLoading, rowsToRender.length, didAnimatePositionsIn])
+
+	// Trigger one-time animate-in for orders grid rows
+
 	// Simple button that opens the unified close position modal
 	function PositionCloseButton({ positionId, size, symbol }: { positionId: string; size: number; symbol: string }) {
 		return (
@@ -137,34 +168,44 @@ export default function BreakdownTable() {
 		)
 	}
 
-	// Aggregate open orders across all markets for the connected wallet
+	// Orders are now provided by usePortfolioData hook
+	// ordersRefreshTick is still used to trigger manual refresh via the button
+
+	// Remember last non-empty orders to prevent flicker during polling
+	const prevNonEmptyOrdersRef = useRef<Array<{ token: string; symbol: string; id: string; metric: string; side: 'BUY' | 'SELL'; price: number; size: number; margin?: number }>>([])
+	
 	useEffect(() => {
-		let cancelled = false
-		const run = async () => {
-			try {
-				const addr = walletData?.address
-				if (!addr) {
-					// Keep prior rows to avoid flicker; will refresh when address becomes available
-					fetchedForRef.current = null
-					return
-				}
-				// Prevent multiple fetches for the same wallet (no polling)
-				if (fetchedForRef.current === addr) return
-				fetchedForRef.current = addr
-				const buckets = await getUserActiveOrdersAllMarkets(addr)
-				console.log('[BreakdownTable] getUserActiveOrdersAllMarkets buckets', buckets);
-				setOrderBuckets(buckets as OrderBucket[])
-				if (cancelled) return
-			} catch {}
+		if (ordersBuckets && ordersBuckets.length > 0) {
+			const totalOrders = ordersBuckets.reduce((sum, b) => sum + (b?.orders?.length || 0), 0)
+			if (totalOrders > 0) {
+				// Only update if we have actual orders
+				const flat: Array<{ token: string; symbol: string; id: string; metric: string; side: 'BUY' | 'SELL'; price: number; size: number; margin?: number }> = []
+				ordersBuckets.forEach((bucket) => {
+					const symbol = (bucket.symbol || 'UNKNOWN').toString().toUpperCase()
+					const token = bucket.token || symbol
+					;(bucket.orders || []).forEach((o: any) => {
+						const side = (o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toString().toUpperCase() as 'BUY' | 'SELL'
+						let qty = Number(o?.quantity || 0)
+						if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000
+						const priceNum = Number(o?.price || o?.limitPrice || 0)
+						const idStr = String(o?.id || o?.orderId || `${symbol}-${side}-${priceNum}`)
+						const metric = String(o?.metricId || symbol)
+						const margin = Number(o?.marginRequired ?? o?.marginReserved ?? 0)
+						flat.push({ token, symbol, id: idStr, metric, side, price: priceNum, size: qty, margin })
+					})
+				})
+				prevNonEmptyOrdersRef.current = flat
+			}
 		}
-		run()
-		return () => { cancelled = true }
-	}, [walletData?.address, ordersRefreshTick])
+	}, [ordersBuckets])
 
 	// Flatten bucketed orders for rendering with cancel actions
 	const flatOrders = useMemo(() => {
+		// During initial loading, return empty
+		if (isInitialLoading) return []
+		
 		const rows: Array<{ token: string; symbol: string; id: string; metric: string; side: 'BUY' | 'SELL'; price: number; size: number; margin?: number }> = []
-		orderBuckets.forEach((bucket) => {
+		ordersBuckets.forEach((bucket) => {
 			const symbol = (bucket.symbol || 'UNKNOWN').toString().toUpperCase()
 			const token = bucket.token || symbol
 			;(bucket.orders || []).forEach((o: any) => {
@@ -178,8 +219,24 @@ export default function BreakdownTable() {
 				rows.push({ token, symbol, id: idStr, metric, side, price: priceNum, size: qty, margin })
 			})
 		})
-		return rows
-	}, [orderBuckets])
+		
+		// If we have orders, return them
+		if (rows.length > 0) return rows
+		
+		// If no orders but we had some before (during polling refresh), keep showing previous
+		if (prevNonEmptyOrdersRef.current.length > 0 && !isInitialLoading) {
+			return prevNonEmptyOrdersRef.current
+		}
+		
+		// Otherwise return empty
+		return []
+	}, [ordersBuckets, isInitialLoading])
+	// Trigger one-time animate-in for orders grid rows
+	useEffect(() => {
+		if ((flatOrders.length > 0) && !didAnimateOrdersIn) {
+			setDidAnimateOrdersIn(true)
+		}
+	}, [flatOrders.length, didAnimateOrdersIn])
 	return (
 		<div
 			className="bg-[#1A1A1A] rounded-md border border-[#222222]"
@@ -188,6 +245,24 @@ export default function BreakdownTable() {
 				paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 240px)',
 			}}
 		>
+			<style jsx global>{`
+				@keyframes matSlideRtl {
+					0% {
+						opacity: 0;
+						transform: translateX(12px);
+					}
+					100% {
+						opacity: 1;
+						transform: translateX(0);
+					}
+				}
+				.mat-slide-rtl {
+					opacity: 0;
+					transform: translateX(12px);
+					animation: matSlideRtl 300ms ease-out forwards;
+					will-change: transform, opacity;
+				}
+			`}</style>
 			<div className="flex items-center justify-between p-4 border-b border-[#1A1A1A]">
 				<div className="flex items-center gap-2">
 					<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#10B981]" />
@@ -197,7 +272,7 @@ export default function BreakdownTable() {
 					</div>
 				</div>
 				<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-					{positions.length} positions · {orderBuckets.length} markets
+					{positions.length} positions · {ordersBuckets.length} markets
 				</div>
 			</div>
 			<div className="overflow-hidden rounded-lg">
@@ -217,17 +292,28 @@ export default function BreakdownTable() {
 						</tr>
 					</thead>
 					<tbody>
-						{computedRows.length === 0 ? (
+						{isInitialLoading ? (
+							[...Array(5)].map((_, i) => (
+								<tr key={`skeleton-${i}`} className="border-t" style={{ borderColor: '#1A1A1A' }}>
+									<td className="px-5 py-4" colSpan={7}>
+										<div className="w-full flex items-center gap-4 animate-pulse">
+											<div className="w-6 h-6 rounded-full bg-[#1F1F1F]" />
+											<div className="flex-1 h-3 rounded bg-[#1F1F1F]" />
+										</div>
+									</td>
+								</tr>
+							))
+						) : rowsToRender.length === 0 ? (
 							<tr className="border-t" style={{ borderColor: '#1A1A1A' }}>
 								<td className="px-5 py-6 text-sm" colSpan={7} style={{ color: '#9CA3AF' }}>
-									{positionsLoading ? 'Loading positions…' : 'No open positions'}
+									No open positions
 								</td>
 							</tr>
-						) : computedRows.map((row, idx) => (
+						) : rowsToRender.map((row, idx) => (
 							<tr
-								key={idx}
-								className="border-t"
-								style={{ borderColor: '#1A1A1A' }}
+								key={`${row.positionId}-${idx}`}
+								className={`border-t ${didAnimatePositionsIn ? 'mat-slide-rtl' : ''}`}
+								style={{ borderColor: '#1A1A1A', animationDelay: didAnimatePositionsIn ? `${idx * 50}ms` : undefined }}
 							>
 								<td className="px-5 py-4">
 									<div className="flex items-center gap-3">
@@ -272,13 +358,10 @@ export default function BreakdownTable() {
 					<p className="text-xs font-medium" style={{ color: '#9CA3AF' }}>Open Orders</p>
 					<button
 						onClick={() => {
-							// Manual refresh: allow re-fetch even if same address
+							// Manual refresh: trigger refresh function
 							try {
-								fetchedForRef.current = null
-								// Trigger re-run by forcing address dependency pass-through
-								// If walletData.address hasn't changed, this no-op will be picked up by effect after ref nulling
-								console.log('[BreakdownTable] manual refresh requested')
-								setOrdersRefreshTick((x) => x + 1)
+								console.log('[ALTKN][BreakdownTable] manual refresh requested')
+								refreshOrders()
 							} catch {}
 						}}
 						className="text-[11px] px-2 py-1 rounded border"
@@ -301,18 +384,26 @@ export default function BreakdownTable() {
 						<div className="py-2 text-right pr-2">Action</div>
 					</div>
 					<div className="divide-y" style={{ borderColor: '#1A1A1A' }}>
-						{(() => { console.log('[BreakdownTable][render-grid] flatOrders length:', flatOrders.length, flatOrders); return null })()}
-						{flatOrders.length === 0 ? (
+						{(() => { console.log('[ALTKN][BreakdownTable][render-grid] flatOrders length:', flatOrders.length, flatOrders); return null })()}
+						{isInitialLoading ? (
+							<div className="py-6 text-sm animate-pulse" style={{ color: '#9CA3AF' }}>
+								Loading orders...
+							</div>
+						) : flatOrders.length === 0 ? (
 							<div className="py-6 text-sm" style={{ color: '#9CA3AF' }}>
 								No open orders
 							</div>
 						) : flatOrders.map((row, idx) => {
-							console.log('[BreakdownTable][render-grid] order row', idx, row)
+							console.log('[ALTKN][BreakdownTable][render-grid] order row', idx, row)
 							return (
 								<div
 									key={`ord-grid-${row.symbol}-${row.id}-${idx}`}
-									className="grid items-center"
-									style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr', borderTop: '1px solid #1A1A1A' }}
+									className={`grid items-center ${didAnimateOrdersIn ? 'mat-slide-rtl' : ''}`}
+									style={{
+										gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1fr',
+										borderTop: '1px solid #1A1A1A',
+										animationDelay: didAnimateOrdersIn ? `${idx * 50}ms` : undefined
+									}}
 								>
 									<div className="py-3 pr-4">
 										<div className="flex items-center gap-3">
@@ -342,8 +433,8 @@ export default function BreakdownTable() {
 													setCancellingId(row.id)
 													const ok = await cancelOrderForMarket(row.id, row.metric)
 													if (ok) {
-														fetchedForRef.current = null
-														setOrdersRefreshTick((x) => x + 1)
+														// Refresh orders after successful cancellation
+														refreshOrders()
 													}
 												} finally {
 													setCancellingId((prev) => (prev === row.id ? null : prev))

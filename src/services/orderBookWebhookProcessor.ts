@@ -796,18 +796,6 @@ export class OrderBookWebhookProcessor {
       if (orderStatus === 'FILLED' || orderEvent.eventType === 'executed') {
         console.log(`📊 [DEBUG] Order is filled, updating position...`);
         await this.updatePosition(orderEvent, marketId, quantity, price ?? 1);
-        
-        // CRITICAL: For market orders, trigger unit decrementing in order book
-        if (orderType === 'MARKET') {
-          console.log(`🔄 [MARKET_ORDER] Triggering unit decrement for market order execution...`);
-          await this.processMarketOrderUnitDecrement({
-            orderId: orderEvent.orderId,
-            marketId: marketId,
-            side: orderEvent.side === 0 ? 'BUY' : 'SELL',
-            size: quantity,
-            orderType: 'MARKET'
-          });
-        }
       }
       
       return true;
@@ -1583,76 +1571,6 @@ export class OrderBookWebhookProcessor {
     } catch (e) {
       console.error('❌ Error recording cancellation:', e);
       return false;
-    }
-  }
-
-  /**
-   * 🔄 Process market order unit decrementing via edge function
-   */
-  private async processMarketOrderUnitDecrement(orderData: {
-    orderId: string;
-    marketId: string;
-    side: string;
-    size: number;
-    orderType: string;
-  }): Promise<void> {
-    try {
-      console.log(`🔄 [MARKET_ORDER] Processing unit decrement for order ${orderData.orderId}`);
-      
-      // Call the market-order-processor edge function
-      const supabaseUrl = env.NEXT_PUBLIC_SUPABASE_URL;
-      const response = await fetch(`${supabaseUrl}/functions/v1/market-order-processor`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-        body: JSON.stringify({
-          action: 'process',
-          orderData: {
-            orderId: orderData.orderId,
-            marketId: orderData.marketId,
-            side: orderData.side,
-            size: orderData.size.toString(),
-            orderType: orderData.orderType
-          }
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const result = await response.json() as any;
-      
-      if (result.success) {
-        console.log(`✅ [MARKET_ORDER] Unit decrement completed:`, {
-          orderId: orderData.orderId,
-          unitsMatched: result.execution?.unitsMatched,
-          averagePrice: result.execution?.averagePrice,
-          priceImpact: result.execution?.priceImpact
-        });
-        
-        // Log order book impact for monitoring
-        if (result.orderBook) {
-          console.log(`📊 [ORDER_BOOK] Updated availability:`, {
-            marketId: orderData.marketId,
-            bestBidBefore: result.orderBook.before?.bestBid,
-            bestAskBefore: result.orderBook.before?.bestAsk,
-            bestBidAfter: result.orderBook.after?.bestBid,
-            bestAskAfter: result.orderBook.after?.bestAsk,
-            totalBidsAfter: result.orderBook.after?.totalBidVolume,
-            totalAsksAfter: result.orderBook.after?.totalAskVolume
-          });
-        }
-      } else {
-        console.error(`❌ [MARKET_ORDER] Unit decrement failed:`, result.error);
-      }
-
-    } catch (error) {
-      console.error(`❌ [MARKET_ORDER] Error processing unit decrement:`, error);
-      // Don't throw - this is a supplementary process that shouldn't break the main workflow
     }
   }
 

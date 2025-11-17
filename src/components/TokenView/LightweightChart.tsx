@@ -55,7 +55,7 @@ export default function LightweightChart({
   defaultPrice = 100
 }: LightweightChartProps) {
   // Temporary flag to disable all backend interactions (API + Pusher)
-  const CHART_BACKEND_ENABLED = false;
+  const CHART_BACKEND_ENABLED = process.env.NEXT_PUBLIC_CHART_BACKEND_ENABLED !== 'false';
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const areaSeriesRef = useRef<any>(null);
@@ -72,7 +72,6 @@ export default function LightweightChart({
   const [hasData, setHasData] = useState(false);
   const [isPusherConnected, setIsPusherConnected] = useState(false);
   const [dataSource, setDataSource] = useState<'pusher' | 'polling' | 'cached'>('polling');
-  const [isTransitioning, setIsTransitioning] = useState(false);
   const [legendData, setLegendData] = useState<{
     price: number;
     change: number;
@@ -543,8 +542,8 @@ export default function LightweightChart({
     };
   }, [symbol, applyLiveTick]);
 
-  // Fetch and update chart data with animation
-  const fetchChartData = async (timeframe: string, animate: boolean = false) => {
+  // Fetch and update chart data without animations
+  const fetchChartData = async (timeframe: string) => {
     if (!CHART_BACKEND_ENABLED) {
       setIsLoading(false);
       setError(null);
@@ -563,11 +562,6 @@ export default function LightweightChart({
     setIsLoading(true);
     setError(null);
     
-    // Start transition animation if requested
-    if (animate && areaSeriesRef.current && hasData) {
-      setIsTransitioning(true);
-    }
-
     try {
        console.log(`📊 Fetching ${symbol} area chart data for ${timeframe} timeframe...`);
       
@@ -642,7 +636,7 @@ export default function LightweightChart({
         }
       }
 
-      // Update chart series with animation
+      // Update chart series without animation
       if (areaSeriesRef.current) {
         // Double-check for Pusher updates that came in during the fetch
         const finalTimeSinceLastPusherUpdate = Date.now() - lastPusherUpdateRef.current;
@@ -651,121 +645,11 @@ export default function LightweightChart({
           setIsLoading(false);
           return;
         }
-        
-        console.log('📊 Setting chart data via API with animation');
-        
-        // For initial load or timeframe transitions, animate the data
-        if ((!hasData || animate) && chartReady) {
-          // If transitioning, first fade out current data
-          if (animate && hasData) {
-            // Create fade out effect by gradually reducing opacity
-            const currentData = areaDataRef.current;
-            const fadeSteps = 10;
-            let fadeStep = 0;
-            
-            const fadeOut = () => {
-              fadeStep++;
-              const opacity = 1 - (fadeStep / fadeSteps);
-              
-              // Update series with faded data
-              const fadedData = currentData.map((point: { time: number; value: number }) => ({
-                time: point.time as Time,
-                value: point.value * opacity
-              }));
-              
-              areaSeriesRef.current.setData(fadedData);
-              
-              if (fadeStep < fadeSteps) {
-                if (typeof globalThis !== 'undefined' && 'requestAnimationFrame' in globalThis) {
-                  (globalThis as any).requestAnimationFrame(fadeOut);
-                } else {
-                  setTimeout(fadeOut, 16);
-                }
-              } else {
-                // After fade out, start the new data animation
-                animateNewData();
-              }
-            };
-            
-            // Start fade out
-            setTimeout(fadeOut, 50);
-          } else {
-            // No previous data, just animate in
-            animateNewData();
-          }
-          
-          function animateNewData() {
-            // Animate each point sequentially for smooth reveal with expansion
-            const chartData = areaData.map((point: { time: number; value: number }) => ({
-              time: point.time as Time,
-              value: point.value
-            }));
-            
-            // Set initial empty data
-            areaSeriesRef.current.setData([]);
-            
-            // Animate points with expansion effect
-            const totalPoints = chartData.length;
-            const batchSize = Math.max(1, Math.floor(totalPoints / 20)); // Dynamic batch size
-            let currentIndex = 0;
-            
-            const animateData = () => {
-              const endIndex = Math.min(currentIndex + batchSize, totalPoints);
-              const progress = endIndex / totalPoints;
-              
-              // Create expansion effect by scaling values during animation
-              const expansionFactor = 1 + (0.05 * Math.sin(progress * Math.PI)); // Subtle expansion
-              
-              const batch = chartData.slice(0, endIndex).map((point: { time: Time; value: number }, index: number) => {
-                const slideProgress = index / endIndex;
-                const slideScale = 0.95 + (0.05 * slideProgress); // Slide in from slightly below
-                
-                return {
-                  time: point.time,
-                  value: point.value * slideScale * expansionFactor
-                };
-              });
-              
-              areaSeriesRef.current.setData(batch);
-              
-              if (endIndex < totalPoints) {
-                currentIndex = endIndex;
-                if (typeof globalThis !== 'undefined' && 'requestAnimationFrame' in globalThis) {
-                  (globalThis as any).requestAnimationFrame(animateData);
-                } else {
-                  setTimeout(animateData, 16); // Fallback for SSR
-                }
-              } else {
-                // Final pass to ensure exact values
-                areaSeriesRef.current.setData(chartData);
-                
-                // Final fit after animation
-                if (chartRef.current) {
-                  chartRef.current.timeScale().fitContent();
-                  // Ensure viewport stays locked
-                  chartRef.current.timeScale().setVisibleLogicalRange({
-                    from: 0,
-                    to: chartData.length - 1,
-                  });
-                }
-                
-                // End transition
-                setTimeout(() => setIsTransitioning(false), 100);
-              }
-            };
-            
-            // Start animation after a brief delay
-            setTimeout(animateData, 100);
-          }
-        } else {
-          // For updates, just set the data normally
-          const chartData = areaData.map((point: { time: number; value: number }) => ({
-            time: point.time as Time,
-            value: point.value
-          }));
-          
-          areaSeriesRef.current.setData(chartData);
-        }
+        const chartData = areaData.map((point: { time: number; value: number }) => ({
+          time: point.time as Time,
+          value: point.value
+        }));
+        areaSeriesRef.current.setData(chartData);
         
         areaDataRef.current = areaData; // Store in memory for Pusher updates
         
@@ -826,14 +710,14 @@ export default function LightweightChart({
     
     if (!isPusherConnected) {
        console.log('🔄 Loading initial data immediately (no Pusher connection)');
-      fetchChartData(selectedTimeframe, true); // Animate on timeframe change
+      fetchChartData(selectedTimeframe);
     } else {
        console.log('⏳ Waiting for Pusher data before fallback loading...');
       // Wait 5 seconds for Pusher data before falling back to API
       const fallbackTimer = setTimeout(() => {
         if (lastPusherUpdateRef.current === 0) {
            console.log('🔄 No Pusher data received, loading via API');
-          fetchChartData(selectedTimeframe, true); // Animate on timeframe change
+          fetchChartData(selectedTimeframe);
         } else {
            console.log('✅ Pusher data already received, skipping API load');
         }
@@ -976,8 +860,6 @@ export default function LightweightChart({
           height: typeof height === 'number' ? height : 350,
           opacity: chartReady ? 1 : 0,
           transition: 'opacity 0.5s ease-out',
-          transform: isTransitioning ? 'scale(1.01)' : 'scale(1)',
-          filter: isTransitioning ? 'brightness(1.05)' : 'brightness(1)',
         }}
       >
         <div 

@@ -15,6 +15,19 @@ export interface MarketTick {
   contract_address: string;
 }
 
+export interface OrderbookTrade {
+  symbol: string;
+  ts: Date;
+  price: number;
+  size: number;
+  side: 'buy' | 'sell';
+  maker?: boolean;
+  trade_id?: string;
+  order_id?: string;
+  market_id?: number;
+  contract_address?: string;
+}
+
 export interface OHLCVCandle {
   symbol: string;
   time: number; // Unix timestamp in seconds
@@ -27,7 +40,7 @@ export interface OHLCVCandle {
 }
 
 export interface HealthStats {
-  tickCount: number;
+  tickCount: number; // legacy vAMM ticks or trades fallback
   symbolCount: number;
   ohlcv1mCount: number;
   oldestTick?: Date;
@@ -55,15 +68,16 @@ export class ClickHouseDataPipeline {
   private client: ClickHouseClient;
   private database: string;
   private tickBuffer: MarketTick[] = [];
+  private tradeBuffer: OrderbookTrade[] = [];
   private flushInterval: NodeJS.Timeout | null = null;
   private readonly BUFFER_SIZE = 100;
   private readonly FLUSH_INTERVAL_MS = 5000; // 5 seconds
 
   constructor() {
-    this.database = process.env.CLICKHOUSE_DATABASE || 'market_analytics';
-    
+    this.database = process.env.CLICKHOUSE_DATABASE || 'default';
+    const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
     this.client = createClient({
-      url: process.env.CLICKHOUSE_HOST,
+      url,
       username: process.env.CLICKHOUSE_USER || 'default',
       password: process.env.CLICKHOUSE_PASSWORD,
       database: this.database,
@@ -74,10 +88,76 @@ export class ClickHouseDataPipeline {
     this.startBufferFlushing();
   }
 
+  /**
+   * Insert trade immediately (serverless-safe). Accepts single or array.
+   */
+  async insertTradeImmediate(tradeOrTrades: OrderbookTrade | OrderbookTrade[]): Promise<void> {
+    const values = Array.isArray(tradeOrTrades) ? tradeOrTrades : [tradeOrTrades];
+    if (values.length === 0) return;
+    await this.client.insert({
+      table: 'trades',
+      values,
+      format: 'JSONEachRow'
+    });
+  }
+
+  /**
+   * Insert tick immediately (serverless-safe). Accepts single or array.
+   */
+  async insertTickImmediate(tickOrTicks: MarketTick | MarketTick[]): Promise<void> {
+    const values = Array.isArray(tickOrTicks) ? tickOrTicks : [tickOrTicks];
+    if (values.length === 0) return;
+    await this.client.insert({
+      table: 'market_ticks',
+      values,
+      format: 'JSONEachRow'
+    });
+  }
+
+  /**
+   * Fetch the most recent 1m candle for a symbol.
+   */
+  async fetchLatestOhlcv1m(symbol: string): Promise<OHLCVCandle | null> {
+    const result = await this.client.query({
+      query: `
+        SELECT
+          symbol,
+          toUnixTimestamp(ts) AS time,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          trades
+        FROM ohlcv_1m
+        WHERE symbol = '${symbol}'
+        ORDER BY ts DESC
+        LIMIT 1
+      `,
+      format: 'JSONEachRow'
+    });
+    const rows = (await result.json()) as any[];
+    if (!rows || rows.length === 0) return null;
+    const row = rows[0];
+    return {
+      symbol: String(row.symbol),
+      time: Number(row.time),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: Number(row.volume),
+      trades: Number(row.trades)
+    };
+  }
+
   private startBufferFlushing() {
     this.flushInterval = setInterval(() => {
       if (this.tickBuffer.length > 0) {
         this.flushTicks().catch(console.error);
+      }
+      if (this.tradeBuffer.length > 0) {
+        this.flushTrades().catch(console.error);
       }
     }, this.FLUSH_INTERVAL_MS);
   }
@@ -115,6 +195,7 @@ export class ClickHouseDataPipeline {
 
     try {
       await this.client.insert({
+        // Legacy vAMM raw events table (kept for backward compatibility)
         table: 'market_ticks',
         values: ticksToFlush,
         format: 'JSONEachRow'
@@ -125,6 +206,50 @@ export class ClickHouseDataPipeline {
       console.error('❌ Failed to flush ticks to ClickHouse:', error);
       // Re-add failed ticks to buffer for retry
       this.tickBuffer.unshift(...ticksToFlush);
+      throw error;
+    }
+  }
+
+  /**
+   * Insert a single order-book trade into the buffer
+   */
+  async insertTrade(trade: OrderbookTrade): Promise<void> {
+    this.tradeBuffer.push(trade);
+    if (this.tradeBuffer.length >= this.BUFFER_SIZE) {
+      await this.flushTrades();
+    }
+  }
+
+  /**
+   * Insert multiple trades at once
+   */
+  async insertTrades(trades: OrderbookTrade[]): Promise<void> {
+    this.tradeBuffer.push(...trades);
+    if (this.tradeBuffer.length >= this.BUFFER_SIZE) {
+      await this.flushTrades();
+    }
+  }
+
+  /**
+   * Flush buffered trades to ClickHouse
+   */
+  private async flushTrades(): Promise<void> {
+    if (this.tradeBuffer.length === 0) return;
+
+    const tradesToFlush = [...this.tradeBuffer];
+    this.tradeBuffer = [];
+
+    try {
+      await this.client.insert({
+        table: 'trades',
+        values: tradesToFlush,
+        format: 'JSONEachRow'
+      });
+      console.log(`✅ Flushed ${tradesToFlush.length} trades to ClickHouse`);
+    } catch (error) {
+      console.error('❌ Failed to flush trades to ClickHouse:', error);
+      // Re-add failed trades to buffer for retry
+      this.tradeBuffer.unshift(...tradesToFlush);
       throw error;
     }
   }
@@ -191,6 +316,42 @@ export class ClickHouseDataPipeline {
     ];
 
     await this.insertTicks(ticks);
+  }
+
+  /**
+   * Convert an order-book trade-like event into a ClickHouse trade row and insert
+   */
+  async processTradeEvent(data: {
+    symbol: string;
+    price: number;
+    size: number;
+    side: 'buy' | 'sell';
+    timestamp: number | Date;
+    tradeId?: string;
+    orderId?: string;
+    marketId?: number;
+    contractAddress?: string;
+    maker?: boolean;
+  }): Promise<void> {
+    const ts =
+      typeof data.timestamp === 'number'
+        ? new Date(data.timestamp)
+        : data.timestamp;
+
+    const trade: OrderbookTrade = {
+      symbol: data.symbol,
+      ts,
+      price: data.price,
+      size: data.size,
+      side: data.side,
+      trade_id: data.tradeId,
+      order_id: data.orderId,
+      market_id: data.marketId,
+      contract_address: data.contractAddress,
+      maker: data.maker,
+    };
+
+    await this.insertTrade(trade);
   }
 
   /**
@@ -352,20 +513,52 @@ export class ClickHouseDataPipeline {
    */
   async getHealthStats(): Promise<HealthStats> {
     try {
-      // Get tick stats
-      const tickStatsResult = await this.client.query({
-        query: `
-          SELECT
-            count() AS tickCount,
-            uniq(symbol) AS symbolCount,
-            min(ts) AS oldestTick,
-            max(ts) AS newestTick
-          FROM market_ticks
-        `,
-        format: 'JSONEachRow'
-      });
-
-      const tickStats = (await tickStatsResult.json()) as any[];
+      // Prefer order-book trades as primary source of truth
+      let tickStats: any[] = [];
+      try {
+        const tradesStatsResult = await this.client.query({
+          query: `
+            SELECT
+              count() AS tickCount,
+              uniq(symbol) AS symbolCount,
+              min(ts) AS oldestTick,
+              max(ts) AS newestTick
+            FROM trades
+          `,
+          format: 'JSONEachRow'
+        });
+        tickStats = (await tradesStatsResult.json()) as any[];
+      } catch {
+        // Fallback to legacy tables if trades doesn't exist
+        try {
+          const legacyStatsResult = await this.client.query({
+            query: `
+              SELECT
+                count() AS tickCount,
+                uniq(symbol) AS symbolCount,
+                min(ts) AS oldestTick,
+                max(ts) AS newestTick
+              FROM market_ticks
+            `,
+            format: 'JSONEachRow'
+          });
+          tickStats = (await legacyStatsResult.json()) as any[];
+        } catch {
+          // Last resort: vamm_ticks if present
+          const vammStatsResult = await this.client.query({
+            query: `
+              SELECT
+                count() AS tickCount,
+                uniq(symbol) AS symbolCount,
+                min(ts) AS oldestTick,
+                max(ts) AS newestTick
+              FROM vamm_ticks
+            `,
+            format: 'JSONEachRow'
+          });
+          tickStats = (await vammStatsResult.json()) as any[];
+        }
+      }
 
       // Get candle stats
       const candleStatsResult = await this.client.query({
@@ -409,9 +602,9 @@ export class ClickHouseDataPipeline {
    */
   async ensureTables(): Promise<void> {
     try {
-      // Verify base tables exist
+      // Verify order-book trades table exists (new architecture)
       await this.client.query({
-        query: 'SELECT 1 FROM market_ticks LIMIT 1',
+        query: 'SELECT 1 FROM trades LIMIT 1',
         format: 'JSONEachRow'
       });
 
@@ -420,11 +613,11 @@ export class ClickHouseDataPipeline {
         format: 'JSONEachRow'
       });
 
-      console.log('✅ ClickHouse tables verified');
+      console.log('✅ ClickHouse tables verified (trades, ohlcv_1m)');
     } catch (error) {
       console.error('❌ ClickHouse table verification failed:', error);
       throw new Error(
-        'Required ClickHouse tables not found. Please run: node scripts/optimize-clickhouse-schema.js'
+        'Required ClickHouse tables not found. Please run: node scripts/setup-orderbook-clickhouse.js'
       );
     }
   }
@@ -498,12 +691,18 @@ export class ClickHouseDataPipeline {
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
     }
-    
-    // Flush any remaining ticks
-    await this.flushTicks();
-    
+    // Flush any remaining buffers
+    await this.flushAll();
     await this.client.close();
     console.log('✅ ClickHouse client closed');
+  }
+
+  /**
+   * Explicitly flush both buffers (serverless-safe).
+   */
+  async flushAll(): Promise<void> {
+    await this.flushTicks();
+    await this.flushTrades();
   }
 }
 
@@ -525,3 +724,10 @@ export async function initializeClickHouse(): Promise<void> {
 
 // Backward compatibility - export the ClickHouse client constructor
 export { createClient } from '@clickhouse/client'; 
+
+function ensureUrl(value?: string): string {
+  const raw = (value || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+  return `https://${raw}:8443`;
+}

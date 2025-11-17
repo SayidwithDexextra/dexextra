@@ -229,7 +229,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
 
         {/* Navigation Items */}
         <nav className="flex-1 flex flex-col justify-between">
-          <div className="flex flex-col justify-evenly flex-1 space-y-2">
+          <div className="flex flex-col justify-start space-y-1">
             {navigationItems.map((item) => {
               const Icon = item.icon
               const isActive = getActiveItem() === item.id

@@ -2,9 +2,10 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Card from './Card'
-import { usePositions } from '@/hooks/usePositions'
-import { useMarkets } from '@/hooks/useMarkets'
+import { usePortfolioData } from '@/hooks/usePortfolioData'
+	import { useMarkets } from '@/hooks/useMarkets'
 import { useRouter } from 'next/navigation'
+import { useWallet } from '@/hooks/useWallet'
 
 type AllocationDatum = {
 	name: string
@@ -112,6 +113,10 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 	const [size, setSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 	const router = useRouter()
+		const prevNonEmptyItemsRef = useRef<AllocationDatum[] | null>(null)
+		const [didAnimateIn, setDidAnimateIn] = useState(false)
+		const [initialHold, setInitialHold] = useState(true)
+		const { walletData } = useWallet() as any
 
 	const formatUsd = (n: number) =>
 		new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -127,8 +132,8 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 	}, [])
 
 	// Live data: compute allocation per market from open positions
-	const { positions, isLoading: isLoadingPositions, error: positionsError } = usePositions(undefined, { enabled: true })
-	const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 })
+	const { positions, isLoading: isLoadingPositions, hasLoadedOnce: portfolioHasLoaded } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
+	const { markets, isLoading: isLoadingMarkets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 })
 
 	const marketIdMap = useMemo(() => {
 		const map = new Map<string, { symbol: string; name: string; icon?: string }>()
@@ -146,21 +151,42 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 
 	const liveItems: AllocationDatum[] = useMemo(() => {
 		if (!positions || positions.length === 0) return []
-		const group: Record<string, { name: string; symbol: string; value: number; net: number }> = {}
+		const group: Record<string, { name: string; symbol: string; value: number; net: number; absSize: number }> = {}
 		for (const p of positions) {
 			const keyHex = String(p.marketId || '').toLowerCase()
 			const meta = marketIdMap.get(keyHex)
 			const symbol = (meta?.symbol || p.symbol || keyHex.slice(2, 6)).toUpperCase()
 			const name = meta?.name || symbol
 			const notional = Math.abs(p.size) * (p.markPrice || p.entryPrice || 0)
-			if (!group[symbol]) group[symbol] = { name, symbol, value: 0, net: 0 }
+			const absSize = Math.abs(isFinite(p.size) ? p.size : 0)
+			if (!group[symbol]) group[symbol] = { name, symbol, value: 0, net: 0, absSize: 0 }
 			group[symbol].value += isFinite(notional) ? notional : 0
 			// Use signed size based on position side to determine LONG/SHORT net
 			const signedSize = (isFinite(p.size) ? p.size : 0) * (p.side === 'SHORT' ? -1 : 1)
 			group[symbol].net += signedSize
+			group[symbol].absSize += absSize
 		}
 		const total = Object.values(group).reduce((a, v) => a + v.value, 0)
-		if (total <= 0) return []
+		// If we cannot compute notional yet (e.g., mark/entry price not ready), fallback to size-based allocation
+		if (total <= 0) {
+			const sizeTotal = Object.values(group).reduce((a, v) => a + v.absSize, 0)
+			if (sizeTotal <= 0) return []
+			return Object.values(group)
+				.map(g => {
+					let iconUrl: string | undefined
+					try {
+						for (const [, meta] of marketIdMap) {
+							if ((meta.symbol || '').toUpperCase() === g.symbol.toUpperCase()) {
+								iconUrl = meta.icon
+								break
+							}
+						}
+					} catch {}
+					const direction: 'LONG' | 'SHORT' | 'FLAT' = g.net > 0 ? 'LONG' : g.net < 0 ? 'SHORT' : 'FLAT'
+					return { name: g.name, symbol: g.symbol, percent: (g.absSize / sizeTotal) * 100, value: undefined, icon: iconUrl, direction }
+				})
+				.sort((a, b) => b.percent - a.percent)
+		}
 		return Object.values(group)
 			.map(g => {
 				let iconUrl: string | undefined
@@ -178,14 +204,43 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 			.sort((a, b) => b.percent - a.percent)
 	}, [positions, marketIdMap])
 
+	// Consider allocation "loading" until both positions and markets are ready AND portfolio has loaded
+	const isLoadingAllocation = isLoadingPositions || isLoadingMarkets || !portfolioHasLoaded
+	// Apply a brief initial hold and require wallet address before dropping skeleton to avoid empty flash
+	useEffect(() => {
+		const id = setTimeout(() => setInitialHold(false), 800)
+		return () => clearTimeout(id)
+	}, [])
+	const walletAddress = walletData?.address
+	// Only show the large loading skeleton during the initial load
+	const isInitialLoading = !portfolioHasLoaded || isLoadingAllocation || initialHold || !walletAddress
+
+	// hasLoadedOnce is now provided by usePortfolioData hook
+
+	// Hold on to last non-empty items to avoid flicker during polling/refreshes
+	useEffect(() => {
+		if (liveItems && liveItems.length > 0) {
+			prevNonEmptyItemsRef.current = liveItems
+		}
+	}, [liveItems])
+
 	const items = useMemo(() => {
-		if (data && data.length) return data
-		if (liveItems && liveItems.length) return liveItems
-		// If positions are loading, avoid flashing empty state
-		if (isLoadingPositions) return []
-		// No live positions -> show empty grid rather than sample data
+		// During initial loading, return empty to show skeleton
+		if (isInitialLoading) return []
+		// Priority: explicit data prop, then freshly computed live items
+		const base =
+			(data && data.length ? data : (liveItems && liveItems.length ? liveItems : []))
+		if (base.length > 0) return base
+		// After initial load, if no positions, show empty state
 		return []
-	}, [data, liveItems, isLoadingPositions])
+	}, [data, liveItems, isInitialLoading])
+
+	// Trigger one-time animate-in after initial load when items are present
+	useEffect(() => {
+		if (!isInitialLoading && items.length > 0 && !didAnimateIn) {
+			setDidAnimateIn(true)
+		}
+	}, [isInitialLoading, items.length, didAnimateIn])
 	// Show only the top 8 by percent; stable sort desc
 	const topItems = useMemo(
 		() =>
@@ -297,6 +352,16 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [size.width, size.height, topItems, smoothedWeights, hoveredIndex])
 
+	// Placeholder rectangles for loading state (stable weights for consistent layout)
+	const loadingRects = useMemo(() => {
+		if (size.width <= 0 || size.height <= 0) return [] as Rect[]
+		const weights = [24, 18, 14, 12, 10, 8] // descending to mimic realistic distribution
+		return layoutTreemap(
+			weights.map((w) => ({ weight: w })) as any,
+			{ x: 0, y: 0, width: size.width, height: size.height }
+		)
+	}, [size.width, size.height])
+
 	// Simple color tints per token for subtle differentiation (keeps text legible)
 	const colorMap: Record<string, { tint: string; hero?: boolean }> = {
 		BTC: { tint: 'linear-gradient(180deg, rgba(16,185,129,0.00), rgba(16,185,129,0.00))', hero: true },
@@ -348,6 +413,23 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 	return (
 		// Remove Card title to avoid double headers and start content higher
 		<Card className="h-full flex flex-col" contentClassName="flex-1 flex flex-col">
+			<style jsx global>{`
+				@keyframes allocCardIn {
+					0% {
+						opacity: 0;
+						transform: translateY(8px) scale(0.985);
+					}
+					100% {
+						opacity: 1;
+						transform: translateY(0) scale(1);
+					}
+				}
+				.alloc-card-in {
+					opacity: 0;
+					animation: allocCardIn 360ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+					will-change: transform, opacity;
+				}
+			`}</style>
 			<p className="text-sm font-medium mb-3" style={{ color: '#9CA3AF' }}>
 				Allocation
 			</p>
@@ -360,9 +442,37 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 					background: 'transparent',
 				}}
 			>
-				{items.length === 0 ? (
+				{isInitialLoading ? (
+					<div className="absolute inset-0">
+						{loadingRects.length === 0 ? (
+							<div className="w-full h-full flex items-center justify-center text-sm" style={{ color: '#9CA3AF' }}>
+								Loading positions…
+							</div>
+						) : loadingRects.map((r, idx) => {
+							const left = r.x + gap / 2
+							const top = r.y + gap / 2
+							const w = Math.max(0, r.width - gap)
+							const h = Math.max(0, r.height - gap)
+							return (
+								<div
+									key={`loading-${idx}`}
+									className="absolute rounded-2xl overflow-hidden animate-pulse"
+									style={{
+										left,
+										top,
+										width: w,
+										height: h,
+										background: '#1A1A1A',
+										border: '1px solid #222222',
+									}}
+									aria-hidden="true"
+								/>
+							)
+						})}
+					</div>
+				) : items.length === 0 ? (
 					<div className="absolute inset-0 flex items-center justify-center text-sm" style={{ color: '#9CA3AF' }}>
-						No open positions
+						{(positions?.length || 0) === 0 ? 'No open positions' : 'Loading positions…'}
 					</div>
 				) : rects.map((r, idx) => {
 					const item = topItems[idx]
@@ -385,8 +495,8 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 					const bgStyle = isHero ? baseBg : `${palette.tint}, ${baseBg}`
 					return (
 						<div
-							key={`${item.name}-${idx}`}
-							className="absolute rounded-2xl overflow-hidden flex flex-col transition-all duration-200 border hover:border-[#333333] cursor-pointer"
+							key={item.symbol}
+							className={`absolute rounded-2xl overflow-hidden flex flex-col transition-all duration-200 border hover:border-[#333333] cursor-pointer ${didAnimateIn ? 'alloc-card-in' : ''}`}
 							style={{
 								left,
 								top,
@@ -396,6 +506,7 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 								border: '1px solid #222222',
 								color: '#E5E7EB',
 								zIndex: hoveredIndex === idx ? 2 : 1,
+								animationDelay: didAnimateIn ? `${idx * 70}ms` : undefined,
 							}}
 							onMouseEnter={() => setHoveredIndex(idx)}
 							onMouseLeave={() => setHoveredIndex((prev) => (prev === idx ? null : prev))}

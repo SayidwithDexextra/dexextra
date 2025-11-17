@@ -169,7 +169,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         }
 
         if (!match && marketRow) {
-          console.warn(`[useOrderBook] No market found for ${marketId} on chain ${currentChain}`);
+          console.warn(`[ALTKN][useOrderBook] No market found for ${marketId} on chain ${currentChain}`);
           setState(prev => ({ 
             ...prev, 
             error: `Market ${marketId} not available on current network (chain ${currentChain})`,
@@ -181,7 +181,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         // Prefer DB-sourced OrderBook address when available, fallback to static mapping
         const orderBookAddressOverride = (marketRow as any)?.market_address || match.orderBook;
         if (!orderBookAddressOverride) {
-          console.warn(`[useOrderBook] No OrderBook address for ${marketId} on chain ${currentChain}`);
+          console.warn(`[ALTKN][useOrderBook] No OrderBook address for ${marketId} on chain ${currentChain}`);
           setState(prev => ({ 
             ...prev, 
             error: `Market ${marketId} contract not deployed on current network`,
@@ -201,7 +201,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
               const net = await (injectedSigner.provider as any)?.getNetwork?.();
               const required = BigInt(CHAIN_CONFIG.chainId);
               if (!net || net.chainId !== required) {
-                console.warn('[useOrderBook] Wrong network detected', { connected: net?.chainId?.toString?.(), required: required.toString() });
+                console.warn('[ALTKN][useOrderBook] Wrong network detected', { connected: net?.chainId?.toString?.(), required: required.toString() });
                 setState(prev => ({ ...prev, error: `Wrong network. Using read-only data for chainId ${CHAIN_CONFIG.chainId}.` }));
                 runner = getReadProvider();
               } else {
@@ -234,11 +234,11 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           orderBookAddressOverride,
           marketIdBytes32: marketBytes32
         });
-        console.log('[useOrderBook] Initialized contracts for marketId', marketId, 'address', orderBookAddressOverride);
+        console.log('[ALTKN][useOrderBook] Initialized contracts for marketId', marketId, 'address', orderBookAddressOverride);
         
         // Ensure we have the trade execution facet
         if (!contractInstances.obTradeExecution) {
-          console.warn('[useOrderBook] Trade execution facet not initialized');
+          console.warn('[ALTKN][useOrderBook] Trade execution facet not initialized');
         }
         
         setContracts(contractInstances);
@@ -249,17 +249,17 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         try {
           const resolved = await contractInstances.vault.marketToOrderBook(marketBytes32);
           if (resolved && resolved.toLowerCase() !== orderBookAddressOverride.toLowerCase()) {
-            console.warn(`[useOrderBook] CoreVault mapping mismatch for ${marketId}:`,
+            console.warn(`[ALTKN][useOrderBook] CoreVault mapping mismatch for ${marketId}:`,
               `\nExpected: ${orderBookAddressOverride}`,
               `\nResolved: ${resolved}`
             );
           }
         } catch (e) {
-          console.warn('[useOrderBook] CoreVault mapping check failed:', e);
+          console.warn('[ALTKN][useOrderBook] CoreVault mapping check failed:', e);
         }
       }
       } catch (error: any) {
-        console.error('Failed to initialize contracts:', error);
+        console.error('[ALTKN] Failed to initialize contracts:', error);
         setState(prev => ({ ...prev, error: 'Failed to initialize contracts', isLoading: false }));
       }
     };
@@ -276,7 +276,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
 
     const fetchMarketData = async () => {
       try {
-        console.log(`📡 [RPC] Starting OrderBook market data fetch for ${marketId}`);
+        console.log(`[ALTKN] 📡 [RPC] Starting OrderBook market data fetch for ${marketId}`);
         // Fetch orders first (only when walletAddress is available)
         let hydrated: OrderBookOrder[] = [];
         if (walletAddress) {
@@ -287,27 +287,27 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
               const obAddr = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
               const code = provider && obAddr ? await provider.getCode(obAddr) : '0x';
               if (!code || code === '0x') {
-                console.warn('[useOrderBook] OrderBook contract code not found on current network. Skipping on-chain order fetch.');
+                console.warn('[ALTKN][useOrderBook] OrderBook contract code not found on current network. Skipping on-chain order fetch.');
                 setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network', isLoading: false }));
                 return;
               }
             } catch (codeErr) {
               // Proceed; any decode errors will be caught below
             }
-            console.log(`📡 [RPC] Fetching user orders via getUserOrders for ${walletAddress}`);
+            console.log(`[ALTKN] 📡 [RPC] Fetching user orders via getUserOrders for ${walletAddress}`);
             const startTimeOrders = Date.now();
             const orderIds: bigint[] = await contracts.obView.getUserOrders(walletAddress);
             const durationOrders = Date.now() - startTimeOrders;
-            console.log(`✅ [RPC] User orders fetched in ${durationOrders}ms`, { orderCount: orderIds.length });
-            console.log('[useOrderBook] getUserOrders count =', orderIds.length);
+            console.log(`[ALTKN] ✅ [RPC] User orders fetched in ${durationOrders}ms`, { orderCount: orderIds.length });
+            console.log('[ALTKN][useOrderBook] getUserOrders count =', orderIds.length);
             for (const id of orderIds) {
               try {
-                console.log(`📡 [RPC] Fetching order details for order ID ${id}`);
+                console.log(`[ALTKN] 📡 [RPC] Fetching order details for order ID ${id}`);
                 const startTimeOrder = Date.now();
                 const order = await contracts.obView.getOrder(id);
                 const filled = await contracts.obView.getFilledAmount(id);
                 const durationOrder = Date.now() - startTimeOrder;
-                console.log(`✅ [RPC] Order ${id} details fetched in ${durationOrder}ms`);
+                console.log(`[ALTKN] ✅ [RPC] Order ${id} details fetched in ${durationOrder}ms`);
 
                 const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
                 const orderIdRaw = getField(order, 'orderId', 0) as bigint;
@@ -334,7 +334,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
                   expiryTime: undefined
                 });
               } catch (e) {
-                console.warn(`⚠️ [RPC] Failed to hydrate order ${id}:`, e);
+                console.warn(`[ALTKN] ⚠️ [RPC] Failed to hydrate order ${id}:`, e);
               }
             }
             // Fallback via orderService if contract returned empty but we expect orders
@@ -357,11 +357,11 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
                   expiryTime: o.expiryTime || undefined,
                 })) as OrderBookOrder[];
                 if (mapped.length > 0) {
-                  console.log('[useOrderBook] Fallback orderService returned', mapped.length, 'orders');
+                  console.log('[ALTKN][useOrderBook] Fallback orderService returned', mapped.length, 'orders');
                   hydrated = mapped;
                 }
               } catch (svcErr) {
-                console.warn('[useOrderBook] orderService fallback failed', svcErr);
+                console.warn('[ALTKN][useOrderBook] orderService fallback failed', svcErr);
               }
             }
             // No cross-market fallbacks - each market uses its own OrderBook only
@@ -370,10 +370,10 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
             const code = e?.code || '';
             const isMissingSelector = msg.includes('missing revert data') || code === 'CALL_EXCEPTION';
             if (isMissingSelector) {
-              console.warn('[useOrderBook] getUserOrders not available on this OrderBook (facet missing). Falling back.', e);
+              console.warn('[ALTKN][useOrderBook] getUserOrders not available on this OrderBook (facet missing). Falling back.', e);
               // Proceed to fallbacks below without setting a hard error
             } else {
-              console.error('[useOrderBook] Failed to fetch user order IDs', e);
+              console.error('[ALTKN][useOrderBook] Failed to fetch user order IDs', e);
               setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
             }
           }
@@ -386,7 +386,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         let indexPriceNum = 0;
         let fundingRateNum = 0;
         try {
-          console.log(`📡 [RPC] Fetching best prices via pricing facet`);
+          console.log(`[ALTKN] 📡 [RPC] Fetching best prices via pricing facet`);
           const startTimePrices = Date.now();
           let bestBid: bigint = 0n;
           let bestAsk: bigint = 0n;
@@ -395,12 +395,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           const durationPrices = Date.now() - startTimePrices;
           bestBidNum = Number(formatUnits(bestBid, 6));
           bestAskNum = Number(formatUnits(bestAsk, 6));
-          console.log(`✅ [RPC] Best prices fetched in ${durationPrices}ms`, { bestBid: bestBidNum, bestAsk: bestAskNum });
+          console.log(`[ALTKN] ✅ [RPC] Best prices fetched in ${durationPrices}ms`, { bestBid: bestBidNum, bestAsk: bestAskNum });
         } catch (e) {
-          console.warn(`⚠️ [RPC] Best prices unavailable:`, e);
+          console.warn(`[ALTKN] ⚠️ [RPC] Best prices unavailable:`, e);
         }
         try {
-          console.log(`📡 [RPC] Fetching market price data via getMarketPriceData`);
+          console.log(`[ALTKN] 📡 [RPC] Fetching market price data via getMarketPriceData`);
           const startTimeMarket = Date.now();
           const mp = await contracts.obPricing.getMarketPriceData();
           const durationMarket = Date.now() - startTimeMarket;
@@ -412,16 +412,16 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           indexPriceNum = Number(formatUnits(mpIndex, 6));
           // funding could be signed; handle via Number() fallback
           try { fundingRateNum = Number(formatUnits(mpFunding, 6)); } catch { fundingRateNum = Number(mpFunding) / 1e6; }
-          console.log(`✅ [RPC] Market price data fetched in ${durationMarket}ms`, {
+          console.log(`[ALTKN] ✅ [RPC] Market price data fetched in ${durationMarket}ms`, {
             markPrice: markPriceNum,
             indexPrice: indexPriceNum,
             fundingRate: fundingRateNum
           });
         } catch (e) {
-          console.warn(`⚠️ [RPC] Market price data unavailable:`, e);
+          console.warn(`[ALTKN] ⚠️ [RPC] Market price data unavailable:`, e);
         }
 
-        console.log(`📊 [RPC] OrderBook market data fetch complete for ${marketId}`, {
+        console.log(`[ALTKN] 📊 [RPC] OrderBook market data fetch complete for ${marketId}`, {
           bestBid: bestBidNum,
           bestAsk: bestAskNum,
           markPrice: markPriceNum,
@@ -443,7 +443,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           error: hydrated.length === 0 && walletAddress && prev.error ? 'No orders found after multiple attempts. Please try again later.' : null
         }));
       } catch (error: any) {
-        console.error(`❌ [RPC] OrderBook market data fetch failed for ${marketId}:`, error);
+        console.error(`[ALTKN] ❌ [RPC] OrderBook market data fetch failed for ${marketId}:`, error);
         setState(prev => ({ ...prev, error: 'Failed to fetch market data. Please try again.', isLoading: false }));
       }
     };
@@ -505,28 +505,28 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     }
 
     try {
-      console.log(`🚀 [RPC] Placing market order for ${marketId}`, { size, isBuy, maxSlippageBps });
+      console.log(`[ALTKN] 🚀 [RPC] Placing market order for ${marketId}`, { size, isBuy, maxSlippageBps });
       // Settlement guard: prevent orders if market is settled
       try {
-        console.log(`📡 [RPC] Checking settlement status via isSettled`);
+        console.log(`[ALTKN] 📡 [RPC] Checking settlement status via isSettled`);
         const startTimeSettlement = Date.now();
         const settled = await (contracts.obSettlement?.isSettled?.() as Promise<boolean>);
         const durationSettlement = Date.now() - startTimeSettlement;
-        console.log(`✅ [RPC] Settlement check completed in ${durationSettlement}ms`, { settled });
+        console.log(`[ALTKN] ✅ [RPC] Settlement check completed in ${durationSettlement}ms`, { settled });
 
         if (settled) {
           setState(prev => ({ ...prev, error: 'Market has been settled. New orders are disabled.' }));
           return false;
         }
       } catch (error) {
-        console.warn(`⚠️ [RPC] Settlement check failed:`, error);
+        console.warn(`[ALTKN] ⚠️ [RPC] Settlement check failed:`, error);
         // ignore if facet not present
       }
 
       const sizeWei = parseEther(size.toString());
       // Preflight static call to surface revert reasons early
       try {
-        console.log(`📡 [RPC] Running preflight static call for market order`);
+        console.log(`[ALTKN] 📡 [RPC] Running preflight static call for market order`);
         const startTimePreflight = Date.now();
         await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.staticCall(
           sizeWei,
@@ -534,10 +534,10 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           maxSlippageBps
         );
         const durationPreflight = Date.now() - startTimePreflight;
-        console.log(`✅ [RPC] Preflight check passed in ${durationPreflight}ms`);
+        console.log(`[ALTKN] ✅ [RPC] Preflight check passed in ${durationPreflight}ms`);
       } catch (preflightErr: any) {
         const msg = preflightErr?.shortMessage || preflightErr?.message || String(preflightErr);
-        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+        console.error(`[ALTKN] ❌ [RPC] Preflight check failed:`, preflightErr);
         setState(prev => ({ ...prev, error: msg || 'Market order preflight failed' }));
         return false;
       }
@@ -558,9 +558,9 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           }
         }
       } catch (balErr: any) {
-        console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
+        console.warn('[ALTKN] ⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
       }
-      console.log(`📡 [RPC] Submitting market order transaction`);
+      console.log(`[ALTKN] 📡 [RPC] Submitting market order transaction`);
       let startTimeTx = Date.now();
       let tx;
       tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
@@ -570,16 +570,16 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         mktOverrides
       );
       const durationTx = Date.now() - startTimeTx;
-      console.log(`✅ [RPC] Market order transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
-      console.log('[Order TX][market] submitted:', tx.hash);
+      console.log(`[ALTKN] ✅ [RPC] Market order transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
+      console.log('[ALTKN][Order TX][market] submitted:', tx.hash);
       const receipt = await tx.wait();
-      console.log('[Order TX][market] confirmed:', tx.hash);
+      console.log('[ALTKN][Order TX][market] confirmed:', tx.hash);
       
       // Refresh orders after successful placement
       await refreshOrders();
       return true;
     } catch (error: any) {
-      console.error('Failed to place market order:', error);
+      console.error('[ALTKN] Failed to place market order:', error);
       setState(prev => ({ ...prev, error: 'Failed to place market order' }));
       return false;
     }
@@ -597,25 +597,25 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     }
 
     try {
-      console.log(`📋 [RPC] Placing limit order for ${marketId}`, { price, size, isBuy });
+      console.log(`[ALTKN] 📋 [RPC] Placing limit order for ${marketId}`, { price, size, isBuy });
       // Settlement guard
       try {
-        console.log(`📡 [RPC] Checking settlement status for limit order`);
+        console.log(`[ALTKN] 📡 [RPC] Checking settlement status for limit order`);
         const startTimeSettlement = Date.now();
         const settled = await (contracts.obSettlement?.isSettled?.() as Promise<boolean>);
         const durationSettlement = Date.now() - startTimeSettlement;
-        console.log(`✅ [RPC] Settlement check completed in ${durationSettlement}ms`, { settled });
+        console.log(`[ALTKN] ✅ [RPC] Settlement check completed in ${durationSettlement}ms`, { settled });
 
         if (settled) {
           setState(prev => ({ ...prev, error: 'Market has been settled. New orders are disabled.' }));
           return false;
         }
       } catch (error) {
-        console.warn(`⚠️ [RPC] Settlement check failed for limit order:`, error);
+        console.warn(`[ALTKN] ⚠️ [RPC] Settlement check failed for limit order:`, error);
         // ignore if facet not present
       }
 
-      console.log('[DBG][placeLimitOrder] start', { marketId, walletAddress, price, size, isBuy });
+      console.log('[ALTKN][DBG][placeLimitOrder] start', { marketId, walletAddress, price, size, isBuy });
       // Encode price with USDC decimals (6) and size with token decimals (18)
       const priceWei = parseUnits(price.toString(), 6);
       const sizeWei = parseEther(size.toString());
@@ -650,7 +650,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           } catch {}
           let code = '0x';
           try { if (obAddr && provider) { code = await provider.getCode(obAddr); } } catch {}
-          console.error('[DIAG][useOrderBook][limit-preflight] address and network diagnostics', {
+          console.error('[ALTKN][DIAG][useOrderBook][limit-preflight] address and network diagnostics', {
             orderBookAddressOverride: (marketRow as any)?.market_address,
             obOrderPlacement: obAddr,
             obView: obViewAddr,
@@ -660,9 +660,9 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
             obCodeLength: (code || '').length
           });
         } catch (diagErr) {
-          console.warn('[DIAG][useOrderBook][limit-preflight] logging failed', diagErr);
+          console.warn('[ALTKN][DIAG][useOrderBook][limit-preflight] logging failed', diagErr);
         }
-        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+        console.error(`[ALTKN] ❌ [RPC] Preflight check failed:`, preflightErr);
         setState(prev => ({ ...prev, error: msg || 'Limit order preflight failed' }));
         return false;
       }
@@ -686,10 +686,10 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           }
         }
       } catch (balErr: any) {
-        console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
+        console.warn('[ALTKN] ⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
       }
 
-      console.log(`📡 [RPC] Submitting limit order transaction`);
+      console.log(`[ALTKN] 📡 [RPC] Submitting limit order transaction`);
       let startTimeTx = Date.now();
       let tx;
       tx = await contracts.obOrderPlacement.placeMarginLimitOrder(
@@ -699,20 +699,20 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         limOverrides
       );
       const durationTx = Date.now() - startTimeTx;
-      console.log(`✅ [RPC] Limit order transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
-      console.log('[DBG][placeLimitOrder] tx sent', { hash: tx.hash });
-      console.log('[Order TX][limit] submitted:', tx.hash);
+      console.log(`[ALTKN] ✅ [RPC] Limit order transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
+      console.log('[ALTKN][DBG][placeLimitOrder] tx sent', { hash: tx.hash });
+      console.log('[ALTKN][Order TX][limit] submitted:', tx.hash);
       const receipt = await tx.wait();
-      console.log('[DBG][placeLimitOrder] tx confirmed, awaiting refresh');
-      console.log('[Order TX][limit] confirmed:', tx.hash);
+      console.log('[ALTKN][DBG][placeLimitOrder] tx confirmed, awaiting refresh');
+      console.log('[ALTKN][Order TX][limit] confirmed:', tx.hash);
       
       // Refresh orders after successful placement
-      console.log('[Dispatch] 🔄 [UI][useOrderBook] Calling refreshOrders after placeLimitOrder');
+      console.log('[ALTKN][Dispatch] 🔄 [UI][useOrderBook] Calling refreshOrders after placeLimitOrder');
       await refreshOrders();
-      console.log('[Dispatch] ✅ [UI][useOrderBook] refreshOrders complete');
+      console.log('[ALTKN][Dispatch] ✅ [UI][useOrderBook] refreshOrders complete');
       return true;
     } catch (error: any) {
-      console.error('Failed to place limit order:', error);
+      console.error('[ALTKN] Failed to place limit order:', error);
       setState(prev => ({ ...prev, error: 'Failed to place limit order' }));
       return false;
     }
@@ -723,23 +723,23 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     if (!contracts || !walletAddress) return;
 
     try {
-      console.log('[Dispatch] 🔄 [RPC] Refreshing orders for', marketId, `(wallet: ${walletAddress.slice(0, 6)}...)`);
+      console.log('[ALTKN][Dispatch] 🔄 [RPC] Refreshing orders for', marketId, `(wallet: ${walletAddress.slice(0, 6)}...)`);
       // Guard against calling into non-existent code which yields BAD_DATA decode errors
       try {
         const provider: any = (contracts.obView as any)?.runner?.provider || (contracts.obView as any)?.provider;
         const obAddr = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
         const code = provider && obAddr ? await provider.getCode(obAddr) : '0x';
         if (!code || code === '0x') {
-          console.warn('[useOrderBook] OrderBook contract code not found on current network. Skipping refresh.');
+          console.warn('[ALTKN][useOrderBook] OrderBook contract code not found on current network. Skipping refresh.');
           setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network' }));
           return;
         }
       } catch {}
-      console.log('[Dispatch] 📡 [RPC] Fetching user orders for refresh');
+      console.log('[ALTKN][Dispatch] 📡 [RPC] Fetching user orders for refresh');
       const startTimeRefresh = Date.now();
       const orderIds: bigint[] = await contracts.obView.getUserOrders(walletAddress);
       const durationRefresh = Date.now() - startTimeRefresh;
-      console.log('[Dispatch] ✅ [RPC] Orders refresh fetched in', durationRefresh, 'ms', { orderCount: orderIds.length });
+      console.log('[ALTKN][Dispatch] ✅ [RPC] Orders refresh fetched in', durationRefresh, 'ms', { orderCount: orderIds.length });
       const hydrated: OrderBookOrder[] = [];
       for (const id of orderIds) {
         try {
@@ -793,12 +793,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
             expiryTime: o.expiryTime || undefined,
           })) as OrderBookOrder[];
           if (mapped.length > 0) {
-            console.log('[Dispatch] 🔁 [UI][useOrderBook] Updating activeOrders (fallback)', { count: mapped.length });
+            console.log('[ALTKN][Dispatch] 🔁 [UI][useOrderBook] Updating activeOrders (fallback)', { count: mapped.length });
             setState(prev => ({ ...prev, activeOrders: mapped, error: null }));
             try {
               if (typeof window !== 'undefined') {
                 const detail = { marketId, count: mapped.length, source: 'fallback', ts: Date.now() };
-                console.log('[Dispatch] 📣 [EVT][useOrderBook] Dispatch ordersUpdated', detail);
+                console.log('[ALTKN][Dispatch] 📣 [EVT][useOrderBook] Dispatch ordersUpdated', detail);
                 window.dispatchEvent(new CustomEvent('ordersUpdated', { detail }));
               }
             } catch {}
@@ -807,7 +807,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         } catch {}
       }
 
-      console.log('[Dispatch] 🔁 [UI][useOrderBook] Updating activeOrders', { count: hydrated.length });
+      console.log('[ALTKN][Dispatch] 🔁 [UI][useOrderBook] Updating activeOrders', { count: hydrated.length });
       setState(prev => ({
         ...prev,
         activeOrders: hydrated,
@@ -816,12 +816,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       try {
         if (typeof window !== 'undefined') {
           const detail = { marketId, count: hydrated.length, source: 'onchain', ts: Date.now() };
-          console.log('[Dispatch] 📣 [EVT][useOrderBook] Dispatch ordersUpdated', detail);
+          console.log('[ALTKN][Dispatch] 📣 [EVT][useOrderBook] Dispatch ordersUpdated', detail);
           window.dispatchEvent(new CustomEvent('ordersUpdated', { detail }));
         }
       } catch {}
     } catch (error: any) {
-      console.error('Failed to refresh orders:', error);
+      console.error('[ALTKN] Failed to refresh orders:', error);
       setState(prev => ({ ...prev, error: 'Failed to refresh orders' }));
     }
   }, [contracts, walletAddress]);
@@ -861,7 +861,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       await refreshOrders();
       return true;
     } catch (error: any) {
-      console.error('Failed to cancel order:', error);
+      console.error('[ALTKN] Failed to cancel order:', error);
       setState(prev => ({ ...prev, error: error?.message || 'Failed to cancel order' }));
       return false;
     }
@@ -979,7 +979,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         );
       } catch (preflightErr: any) {
         const msg = preflightErr?.shortMessage || preflightErr?.message || String(preflightErr);
-        console.error('❌ [RPC] Close position preflight failed:', preflightErr);
+        console.error('[ALTKN] ❌ [RPC] Close position preflight failed:', preflightErr);
         setState(prev => ({ ...prev, error: msg || 'Close position preflight failed' }));
         return false;
       }
@@ -1017,7 +1017,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         const msg = sendErr?.message || '';
         const isInternal = msg.includes('-32603') || msg.includes('Internal JSON-RPC error') || (sendErr?.code === 'UNKNOWN_ERROR');
         if (isInternal) {
-          console.warn('⚠️ [RPC] Close send failed (-32603). Retrying with no gas override...');
+          console.warn('[ALTKN] ⚠️ [RPC] Close send failed (-32603). Retrying with no gas override...');
           tx = await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage(
             sizeWei,
             isBuy,
@@ -1034,7 +1034,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       await refreshOrders();
       return true;
     } catch (error: any) {
-      console.error('Failed to close position:', error);
+      console.error('[ALTKN] Failed to close position:', error);
       setState(prev => ({ ...prev, error: 'Failed to close position' }));
       return false;
     }
@@ -1104,7 +1104,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           hasMore = Boolean(res?.[1] ?? false);
         }
       } catch (e: any) {
-        console.warn('[useOrderBook] Facet trade history unavailable, falling back to read-only recent trades', e);
+        console.warn('[ALTKN][useOrderBook] Facet trade history unavailable, falling back to read-only recent trades', e);
       }
 
       // Step 2: fallback via viem recent trades if facet path failed or empty
@@ -1163,7 +1163,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           hasMore = userTrades.length > offset + limit;
           userTradeCount = BigInt(userTrades.length);
         } catch (fallbackErr) {
-          console.warn('[useOrderBook] Recent trades fallback failed', fallbackErr);
+          console.warn('[ALTKN][useOrderBook] Recent trades fallback failed', fallbackErr);
           trades = [];
           hasMore = false;
           userTradeCount = 0n;
@@ -1200,7 +1200,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       lastTradeHistoryRef.current = { trades: mappedTrades, hasMore };
       return { trades: mappedTrades, hasMore };
     } catch (error: any) {
-      console.error('Failed to fetch trade history:', error);
+      console.error('[ALTKN] Failed to fetch trade history:', error);
       // Graceful degrade: return cached or empty instead of throwing
       if (lastTradeHistoryRef.current) return lastTradeHistoryRef.current;
       return { trades: [], hasMore: false };
@@ -1230,7 +1230,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     try {
       await getUserTradeHistory(0, 10); // Refresh first page by default
     } catch (error: any) {
-      console.error('Failed to refresh trade history:', error);
+      console.error('[ALTKN] Failed to refresh trade history:', error);
       setState(prev => ({ ...prev, error: 'Failed to refresh trade history' }));
     }
   }, [contracts, walletAddress, getUserTradeHistory]);
@@ -1258,13 +1258,18 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
   // Lightweight cache to prevent repeated RPCs and flapping results
   const now = Date.now();
   const TTL_MS = 30000; // 30s
-  const key = String(trader).toLowerCase();
+  const DEBUG_PORTFOLIO_LOGS = process.env.NEXT_PUBLIC_DEBUG_PORTFOLIO === 'true' || process.env.NODE_ENV !== 'production';
+  const dlog = (...args: any[]) => { if (DEBUG_PORTFOLIO_LOGS) console.log('[ALTKN][Portfolio][OrdersAllMkts]', ...args); };
+  const dwarn = (...args: any[]) => { if (DEBUG_PORTFOLIO_LOGS) console.warn('[ALTKN][Portfolio][OrdersAllMkts]', ...args); };
+  dlog('Start fetching active orders across markets', { trader: String(trader), chainId: CHAIN_CONFIG.chainId });
+  const key = `${String(trader).toLowerCase()}::${String(CHAIN_CONFIG.chainId)}`;
   // @ts-ignore
   const g: any = globalThis as any;
   if (!g.__ordersAllMktsCache) g.__ordersAllMktsCache = new Map<string, { ts: number; data: any[] }>();
   if (!g.__ordersAllMktsPopulateOnce) g.__ordersAllMktsPopulateOnce = { populated: false, inFlight: null as null | Promise<any> };
   const cached = g.__ordersAllMktsCache.get(key);
   if (cached && now - cached.ts < TTL_MS) {
+    dlog('Cache hit', { ageMs: now - cached.ts, bucketCount: cached.data.length, markets: (cached.data || []).map((b: any) => b.symbol) });
     return cached.data;
   }
   try {
@@ -1277,24 +1282,32 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
     }
     const entries: any[] = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {});
     if (!entries.length) {
+      dwarn('No market entries available; returning cached or empty');
       return cached?.data || [];
     }
+    dlog('Market entries resolved', { markets: entries.length });
     // Fetch sequentially to avoid bursty RPC and transient "empty" reads
     const buckets: Array<{ symbol: string; token: string; orders: any[] }> = [];
     for (const m of entries) {
       const metric = m?.marketIdentifier || m?.symbol || '';
       if (!metric) continue;
+      dlog('Fetching active orders for market', { metric, symbol: m?.symbol });
       const orders = await orderService.getUserActiveOrders(trader as any, metric);
       if (Array.isArray(orders) && orders.length > 0) {
         const symbol = String(m?.symbol || '').toUpperCase();
         const token = m?.name || symbol;
-        console.log('[useOrderBook] getUserActiveOrdersAllMarkets orders', orders);
+        dlog('Active orders fetched', { metric, count: orders.length });
         buckets.push({ symbol, token, orders });
       }
     }
+    try {
+      const totalOrders = (buckets || []).reduce((sum, b) => sum + ((b?.orders || []).length), 0);
+      dlog('Done fetching active orders across markets', { bucketCount: buckets.length, totalOrders });
+    } catch {}
     g.__ordersAllMktsCache.set(key, { ts: Date.now(), data: buckets });
     return buckets;
   } catch {
+    dwarn('Error fetching active orders; returning cached or empty');
     return cached?.data || [];
   }
 }
@@ -1325,7 +1338,7 @@ export async function cancelOrderForMarket(orderId: string | number | bigint, ma
     await tx.wait();
     return true;
   } catch (e) {
-    console.error('[cancelOrderForMarket] failed', e);
+    console.error('[ALTKN][cancelOrderForMarket] failed', e);
     return false;
   }
 }

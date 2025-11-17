@@ -111,7 +111,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
     return map;
   }, [markets]);
-
+  
   // Throttle and in-flight guards for order history
   const isFetchingHistoryRef = useRef(false);
   const lastHistoryFetchTsRef = useRef(0);
@@ -409,7 +409,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
             if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
             flat.push({
               id: String(o?.id || ''),
-              symbol: symbolUpper,
+        symbol: symbolUpper,
               side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
               type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
               price: Number(o?.price || 0),
@@ -587,15 +587,15 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
   const renderPositionsTable = () => {
     if (positions.length === 0) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <div className="flex items-center gap-2">
+  return (
+                  <div className="flex items-center justify-center p-8">
+                    <div className="flex items-center gap-2">
             <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${positionsIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
-            <span className="text-[11px] font-medium text-[#808080]">
+                      <span className="text-[11px] font-medium text-[#808080]">
               {positionsIsLoading ? 'Loading open positions…' : 'No open positions'}
-            </span>
-          </div>
-        </div>
+                      </span>
+                    </div>
+                  </div>
       );
     }
 
@@ -603,13 +603,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
+                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -622,8 +622,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               } ${
                 index !== positions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
               }`} style={{ animationDelay: `${index * 50}ms` }}>
-                          <td className="px-2 py-1.5">
-                            <div className="flex items-center gap-1.5">
+                          <td className="pl-2 pr-1 py-1.5">
+                              <div className="flex items-center gap-1">
                               <div className="relative w-5 h-5">
                                 <img
                                   src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
@@ -636,11 +636,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-0"
                                 />
                               </div>
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-medium text-white">
+                              <div className="flex items-center gap-0.5">
+                                <span className="text-[11px] font-medium text-white">
                                   {marketSymbolMap.get(position.symbol)?.name || position.symbol}
                                 </span>
-                                <span className="text-[9px] text-[#606060]">{position.symbol}</span>
+                                <span className="text-[10px] text-[#606060]">{position.symbol}</span>
                                 {position.isUnderLiquidation && (
                                   <div className="px-1 py-0.5 bg-yellow-400/10 rounded">
                                     <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
@@ -649,23 +649,23 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               </div>
                             </div>
                           </td>
-                          <td className="px-2 py-1.5">
-                            <span className={`text-[10px] font-medium ${
+                          <td className="pl-1 pr-2 py-1.5">
+                            <span className={`text-[11px] font-medium ${
                               position.side === 'LONG' ? 'text-green-400' : 'text-red-400'
                             }`}>
                               {position.side}
                             </span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
-                            <span className="text-[10px] text-white font-mono">{position.size.toFixed(2)}</span>
+                            <span className="text-[11px] text-white font-mono">{position.size.toFixed(2)}</span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
-                            <span className="text-[10px] text-white font-mono">${position.markPrice.toFixed(2)}</span>
+                            <span className="text-[11px] text-white font-mono">${position.markPrice.toFixed(2)}</span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
                             <div className="flex justify-end">
                               <span className="relative inline-block pr-4">
-                                <span className={`text-[10px] font-medium font-mono ${
+                                <span className={`text-[11px] font-medium font-mono ${
                                   position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
                                 }`}>
                                   {position.pnl >= 0 ? '+' : ''}{position.pnl.toFixed(2)}
@@ -692,7 +692,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     </svg>
                                   </>
                                 )}
-                                <span className={`text-[10px] font-mono ${
+                                <span className={`text-[11px] font-mono ${
                                   position.isUnderLiquidation 
                                     ? 'text-yellow-400 font-bold'
                                     : 'text-white'
@@ -813,22 +813,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
-                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
                     <tbody>
                       {openOrders.map((order, index) => (
                         <React.Fragment key={`${order.id}-${index}`}>
                           <tr className={`mat-slide-rtl hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== openOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
-                            <td className="px-2 py-1.5">
-                              <div className="flex items-center gap-1.5">
+                            <td className="pl-2 pr-1 py-1.5">
+                              <div className="flex items-center gap-1">
                                 <div className="relative w-5 h-5">
                                   <img
                                     src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
@@ -841,31 +841,31 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-0"
                                   />
                                 </div>
-                                <div className="flex items-center gap-1">
-                                  <span className="text-[10px] font-medium text-white">
+                                <div className="flex items-center gap-0.5">
+                                  <span className="text-[11px] font-medium text-white">
                                     {marketSymbolMap.get(order.symbol)?.name || order.symbol}
                                   </span>
-                                  <span className="text-[9px] text-[#606060]">{order.symbol}</span>
+                                  <span className="text-[10px] text-[#606060]">{order.symbol}</span>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-2 py-1.5">
-                              <span className={`text-[10px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
+                            <td className="pl-1 pr-2 py-1.5">
+                              <span className={`text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                             </td>
                             <td className="px-2 py-1.5">
-                              <span className="text-[10px] text-white">{order.type}</span>
+                              <span className="text-[11px] text-white">{order.type}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <span className="text-[10px] text-white font-mono">${order.price.toFixed(2)}</span>
+                              <span className="text-[11px] text-white font-mono">${order.price.toFixed(2)}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <span className="text-[10px] text-white font-mono">{order.size.toFixed(4)}</span>
+                              <span className="text-[11px] text-white font-mono">{order.size.toFixed(4)}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <span className="text-[10px] text-white font-mono">{order.filled.toFixed(4)}</span>
+                              <span className="text-[11px] text-white font-mono">{order.filled.toFixed(4)}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <span className="text-[10px] text-[#9CA3AF]">{order.status}</span>
+                              <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
                               <button

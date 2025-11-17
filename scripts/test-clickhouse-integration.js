@@ -8,11 +8,12 @@ const { createClient } = require("@clickhouse/client");
 async function testClickHouseIntegration() {
   console.log("🧪 Testing ClickHouse integration...");
 
+  const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
   const clickhouse = createClient({
-    url: process.env.CLICKHOUSE_HOST,
+    url,
     username: process.env.CLICKHOUSE_USER || "default",
     password: process.env.CLICKHOUSE_PASSWORD,
-    database: process.env.CLICKHOUSE_DATABASE || "vamm_analytics",
+    database: process.env.CLICKHOUSE_DATABASE || "default",
     request_timeout: 60000,
   });
 
@@ -248,3 +249,10 @@ if (require.main === module) {
 }
 
 module.exports = { testClickHouseIntegration };
+
+function ensureUrl(value) {
+  if (!value) return "";
+  const trimmed = String(value).trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+  return `https://${trimmed}:8443`;
+}

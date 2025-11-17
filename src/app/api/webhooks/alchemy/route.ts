@@ -7,6 +7,7 @@ import { AlchemyNotifyService, getAlchemyNotifyService } from '@/services/alchem
 import { SmartContractEvent } from '@/types/events'
 import { env } from '@/lib/env'
 import { getClickHouseDataPipeline } from '@/lib/clickhouse-client'
+import { getPusherServer } from '@/lib/pusher-server'
 import { CONTRACTS } from '@/lib/contracts'
 
 // Ensure Node.js runtime on Vercel (uses Node crypto, ethers, ClickHouse client)
@@ -24,9 +25,90 @@ const FACTORY_ADDRESS = CONTRACTS.MetricsMarketFactory.address
 
 // ClickHouse pipeline for tick generation
 const clickhousePipeline = getClickHouseDataPipeline();
+const pusherServer = getPusherServer();
 
 // In-memory set to track processed events (to prevent duplicates during the session)
 const processedEvents = new Set<string>();
+
+/**
+ * Generate trade data from Order Book style events for ClickHouse
+ */
+async function generateTradeFromOrderbookEvent(event: SmartContractEvent): Promise<void> {
+  try {
+    // Common order book trade event names
+    const tradeEventNames = ['TradeExecuted', 'OrderMatched', 'OrderFilled'];
+    if (!tradeEventNames.includes((event as any).eventType)) {
+      return;
+    }
+
+    // Best-effort extraction of fields from known patterns
+    const params = event as any;
+    const symbol =
+      params.symbol || params.marketSymbol || extractSymbolFromContract(event.contractAddress);
+    const price = parseFloat(params.price || params.executionPrice || params.matchPrice || '0');
+    const size = parseFloat(params.size || params.amount || params.quantity || '0');
+    const isBuy =
+      params.isBuy === true ||
+      params.side === 'buy' ||
+      params.makerSide === 'buy' ||
+      params.takerSide === 'buy';
+
+    if (!symbol || price <= 0 || size <= 0) {
+      // Insufficient data to store a trade
+      return;
+    }
+
+    // Insert immediately for serverless safety
+    const tradePayload = {
+      symbol: String(symbol).toUpperCase(),
+      price,
+      size,
+      side: isBuy ? 'buy' : 'sell',
+      timestamp: event.timestamp,
+      tradeId: params.tradeId?.toString?.() || undefined,
+      orderId: params.orderId?.toString?.() || undefined,
+      marketId: params.marketId ? Number(params.marketId) : undefined,
+      contractAddress: event.contractAddress,
+      maker: params.maker === true || params.isMaker === true,
+    };
+
+    if ((clickhousePipeline as any).insertTradeImmediate) {
+      await (clickhousePipeline as any).insertTradeImmediate({
+        symbol: tradePayload.symbol,
+        ts: new Date(tradePayload.timestamp),
+        price: tradePayload.price,
+        size: tradePayload.size,
+        side: tradePayload.side,
+        maker: tradePayload.maker ? 1 : 0,
+        trade_id: tradePayload.tradeId,
+        order_id: tradePayload.orderId,
+        market_id: tradePayload.marketId,
+        contract_address: tradePayload.contractAddress,
+      });
+    } else {
+      await (clickhousePipeline as any).insertTrade(tradePayload);
+    }
+
+    // Broadcast latest 1m candle to lightweight chart
+    const latest = await clickhousePipeline.fetchLatestOhlcv1m(String(symbol).toUpperCase());
+    if (latest) {
+      await pusherServer.broadcastChartData({
+        symbol: latest.symbol,
+        timeframe: '1m',
+        open: latest.open,
+        high: latest.high,
+        low: latest.low,
+        close: latest.close,
+        volume: latest.volume,
+        timestamp: (latest.time || Math.floor(Date.now() / 1000)) * 1000,
+      });
+    }
+
+     console.log(`📊 Generated trade: ${symbol} ${isBuy ? 'BUY' : 'SELL'} ${size} @ $${price}`);
+  } catch (error) {
+    console.error('❌ Failed to generate trade from order-book event:', error);
+  }
+}
 
 /**
  * Webhook signature verification
@@ -102,8 +184,27 @@ async function generateTickFromVAMMEvent(event: SmartContractEvent): Promise<voi
       contract_address: event.contractAddress,
     };
 
-    // Insert tick into ClickHouse
-    await clickhousePipeline.insertTick(tick);
+    // Insert tick immediately for serverless safety
+    if ((clickhousePipeline as any).insertTickImmediate) {
+      await (clickhousePipeline as any).insertTickImmediate(tick);
+    } else {
+      await (clickhousePipeline as any).insertTick(tick);
+    }
+
+    // Broadcast latest 1m candle to lightweight chart
+    const latest = await clickhousePipeline.fetchLatestOhlcv1m(symbol.toUpperCase());
+    if (latest) {
+      await pusherServer.broadcastChartData({
+        symbol: latest.symbol,
+        timeframe: '1m',
+        open: latest.open,
+        high: latest.high,
+        low: latest.low,
+        close: latest.close,
+        volume: latest.volume,
+        timestamp: (latest.time || Math.floor(Date.now() / 1000)) * 1000,
+      });
+    }
     console.log(`📊 Generated tick: ${symbol} @ $${price} (${event.eventType})`);
 
   } catch (error) {
@@ -323,6 +424,8 @@ async function processAddressActivityWebhook(webhookData: any): Promise<number> 
         
         // Generate tick for ClickHouse if it's a VAMM trading event
         await generateTickFromVAMMEvent(parsedEvent);
+        // Generate trade for ClickHouse if it's an Order Book trading event
+        await generateTradeFromOrderbookEvent(parsedEvent);
         
         processedEvents.add(eventId);
         processedCount++;
@@ -387,6 +490,8 @@ async function processMinedTransactionWebhook(webhookData: any): Promise<number>
         
         // Generate tick for ClickHouse if it's a VAMM trading event
         await generateTickFromVAMMEvent(event);
+        // Generate trade for ClickHouse if it's an Order Book trading event
+        await generateTradeFromOrderbookEvent(event);
         
         processedEvents.add(eventId);
         processedCount++;
@@ -471,6 +576,8 @@ async function processCustomWebhook(webhookData: any): Promise<number> {
         
         // Generate tick for ClickHouse if it's a VAMM trading event
         await generateTickFromVAMMEvent(parsedEvent);
+        // Generate trade for ClickHouse if it's an Order Book trading event
+        await generateTradeFromOrderbookEvent(parsedEvent);
         
         processedEvents.add(eventId);
         processedCount++;
@@ -609,6 +716,45 @@ function formatEventSpecificFields(
   
   try {
     switch (parsedLog.name) {
+      case 'TradeExecuted':
+        return {
+          ...baseEvent,
+          symbol: (parsedLog.args.symbol as any) || undefined,
+          price: parsedLog.args.price?.toString(),
+          size: parsedLog.args.size?.toString(),
+          isBuy:
+            parsedLog.args.isBuy === true ||
+            (typeof parsedLog.args.side === 'string' && parsedLog.args.side.toLowerCase() === 'buy'),
+          maker: parsedLog.args.maker === true || parsedLog.args.isMaker === true,
+          tradeId: parsedLog.args.tradeId?.toString(),
+          orderId: parsedLog.args.orderId?.toString(),
+          marketId: parsedLog.args.marketId,
+        };
+
+      case 'OrderMatched':
+        return {
+          ...baseEvent,
+          symbol: (parsedLog.args.symbol as any) || undefined,
+          matchPrice: parsedLog.args.matchPrice?.toString() || parsedLog.args.price?.toString(),
+          amount: parsedLog.args.amount?.toString() || parsedLog.args.size?.toString(),
+          takerSide: parsedLog.args.takerSide,
+          makerSide: parsedLog.args.makerSide,
+          buyOrderId: parsedLog.args.buyOrderId?.toString(),
+          sellOrderId: parsedLog.args.sellOrderId?.toString(),
+        };
+
+      case 'OrderFilled':
+        return {
+          ...baseEvent,
+          symbol: (parsedLog.args.symbol as any) || undefined,
+          price: parsedLog.args.price?.toString(),
+          size: parsedLog.args.filledSize?.toString() || parsedLog.args.size?.toString(),
+          isBuy:
+            parsedLog.args.isBuy === true ||
+            (typeof parsedLog.args.side === 'string' && parsedLog.args.side.toLowerCase() === 'buy'),
+          orderId: parsedLog.args.orderId?.toString(),
+        };
+
       case 'PositionOpened':
         return {
           ...baseEvent,

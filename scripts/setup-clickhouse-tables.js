@@ -4,11 +4,12 @@ const { createClient } = require("@clickhouse/client");
 async function setupClickHouseTables() {
   console.log("🗄️  Setting up ClickHouse tables for chart data...");
 
+  const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
   const clickhouse = createClient({
-    url: process.env.CLICKHOUSE_HOST,
+    url,
     username: process.env.CLICKHOUSE_USER || "default",
     password: process.env.CLICKHOUSE_PASSWORD,
-    database: process.env.CLICKHOUSE_DATABASE || "vamm_analytics",
+    database: process.env.CLICKHOUSE_DATABASE || "default",
     request_timeout: 60000, // 60 seconds timeout
     compression: {
       response: false,
@@ -99,6 +100,13 @@ async function setupClickHouseTables() {
     console.error("❌ Failed to create ClickHouse tables:", error);
     throw error;
   }
+}
+
+function ensureUrl(value) {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
+  return `https://${trimmed}:8443`;
 }
 
 if (require.main === module) {

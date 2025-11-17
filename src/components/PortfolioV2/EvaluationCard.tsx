@@ -2,12 +2,10 @@
 
 import Card from './Card'
 import { getPortfolioTheme } from './theme'
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useMemo } from 'react'
 import { useCoreVault } from '@/hooks/useCoreVault'
-import { usePositions } from '@/hooks/usePositions'
+import { usePortfolioData } from '@/hooks/usePortfolioData'
 import { useWallet } from '@/hooks/useWallet'
-import { CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/lib/contractConfig'
-import { orderService } from '@/lib/orderService'
 
 type KPI = {
 	label: string
@@ -54,43 +52,7 @@ export default function EvaluationCard() {
 		isLoading,
 		isHealthy,
 	} = useCoreVault()
-	const { positions } = usePositions(undefined, { enabled: true })
-	const [activeOrdersCount, setActiveOrdersCount] = useState<number>(0)
-
-	// Fetch total active orders across all markets directly from OrderBook contracts
-	useEffect(() => {
-		let cancelled = false
-		const fetchActiveOrders = async () => {
-			try {
-				const addr = walletData?.address
-				if (!addr) {
-					if (!cancelled) setActiveOrdersCount(0)
-					return
-				}
-				// Populate market info on client to resolve OrderBook addresses
-				try { await populateMarketInfoClient() } catch {}
-				const markets: any[] = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {})
-				if (!markets.length) {
-					if (!cancelled) setActiveOrdersCount(0)
-					return
-				}
-				// Query each market's OrderBook for user's active orders
-				const results = await Promise.allSettled(
-					markets.map((m) => orderService.getUserActiveOrders(addr, m?.marketIdentifier || m?.symbol || ''))
-				)
-				let total = 0
-				for (const r of results) {
-					if (r.status === 'fulfilled' && Array.isArray(r.value)) total += r.value.length
-				}
-				if (!cancelled) setActiveOrdersCount(total)
-			} catch {
-				if (!cancelled) setActiveOrdersCount(0)
-			}
-		}
-		fetchActiveOrders()
-		const id = setInterval(fetchActiveOrders, 15000)
-		return () => { cancelled = true; clearInterval(id) }
-	}, [walletData?.address])
+	const { positions, activeOrdersCount, hasLoadedOnce: portfolioHasLoaded, isLoading: isLoadingPortfolio } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
 
 	// Parse numeric values safely
 	const nums = useMemo(() => {
@@ -240,8 +202,14 @@ export default function EvaluationCard() {
 					Active Orders
 					</p>
 					<div className="flex items-center gap-2 mb-1">
-						<p className="text-base font-bold" style={{ color: '#FFFFFF' }}>{activeOrdersCount}</p>
-						<span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#10B981' }} />
+						{!portfolioHasLoaded || isLoadingPortfolio ? (
+							<div className="w-8 h-4 bg-[#1A1A1A] rounded animate-pulse" />
+						) : (
+							<>
+								<p className="text-base font-bold" style={{ color: '#FFFFFF' }}>{activeOrdersCount}</p>
+								<span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#10B981' }} />
+							</>
+						)}
 					</div>
 					<p className="text-xs font-medium" style={{ color: '#606060' }}>
 						Across all markets
@@ -254,8 +222,14 @@ export default function EvaluationCard() {
 					Open Positions:
 					</p>
 					<div className="flex items-center gap-1.5 mb-1">
-						<p className="text-base font-bold" style={{ color: '#FFFFFF' }}>{positions?.length || 0}</p>
-						<span className="text-xs" style={{ color: '#6B7280' }}>ⓘ</span>
+						{!portfolioHasLoaded || isLoadingPortfolio ? (
+							<div className="w-8 h-4 bg-[#1A1A1A] rounded animate-pulse" />
+						) : (
+							<>
+								<p className="text-base font-bold" style={{ color: '#FFFFFF' }}>{positions?.length || 0}</p>
+								<span className="text-xs" style={{ color: '#6B7280' }}>ⓘ</span>
+							</>
+						)}
 					</div>
 					<p className="text-xs font-medium" style={{ color: '#606060' }}>
 						Across all markets
