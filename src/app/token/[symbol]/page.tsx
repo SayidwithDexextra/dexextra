@@ -286,7 +286,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               <MarketActivityTabs symbol={symbol} className="h-full" />
             </div>
           </div>
-          <div className="w-80 h-full">
+          <div className="w-77 h-full">
             <TransactionTable 
               marketId={(md.market as any)?.id}
               marketIdentifier={(md.market as any)?.market_identifier || symbol}

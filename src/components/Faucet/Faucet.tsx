@@ -151,6 +151,43 @@ export default function Faucet({ className }: FaucetProps) {
     return !isNaN(num) && num > 0 && num <= 1000000 // Max 1M tokens
   }
 
+  const formatFriendlyError = (e: any): string => {
+    try {
+      const code = e?.code ?? e?.error?.code ?? e?.cause?.code
+      const name = e?.name ?? e?.error?.name ?? e?.cause?.name
+      const rawMessage =
+        e?.shortMessage ||
+        e?.message ||
+        e?.error?.message ||
+        e?.cause?.message ||
+        ''
+      const msg = String(rawMessage || '').toLowerCase()
+      // User rejected across common providers/libs
+      if (
+        code === 4001 ||
+        code === 'ACTION_REJECTED' ||
+        name === 'UserRejectedRequestError' ||
+        msg.includes('user denied') ||
+        msg.includes('user rejected') ||
+        msg.includes('rejected the request') ||
+        msg.includes('transaction was rejected') ||
+        msg.includes('request rejected') ||
+        msg.includes('action rejected') ||
+        msg.includes('denied transaction')
+      ) {
+        return 'Transaction cancelled by user.'
+      }
+      // Common revert/gas errors
+      if (e?.code === 'CALL_EXCEPTION' || msg.includes('revert') || msg.includes('gas')) {
+        return 'Transaction could not be submitted. Please check amount and try again.'
+      }
+      if (msg.includes('insufficient funds')) {
+        return 'Insufficient funds to pay for gas.'
+      }
+    } catch {}
+    return e?.message || 'Failed to claim tokens. Please try again.'
+  }
+
   const handleAmountChange = (value: string) => {
     // Allow only numbers and decimal point
     const cleanedValue = value.replace(/[^0-9.]/g, '')
@@ -226,7 +263,7 @@ export default function Faucet({ className }: FaucetProps) {
       console.error('Claim failed:', error)
       setState(prev => ({ 
         ...prev, 
-        error: error.message || 'Failed to claim tokens. Please try again.' 
+        error: formatFriendlyError(error) 
       }))
     } finally {
       setState(prev => ({ ...prev, isClaiming: false }))

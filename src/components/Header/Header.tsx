@@ -132,12 +132,23 @@ export default function Header() {
     return showSign && num > 0 ? `+${formatted}` : formatted
   }
 
-  // Calculate portfolio value from VaultRouter
+  // Calculate portfolio value from VaultRouter, re-animating only when 2-decimal display changes
+  const roundedPortfolioCents = useMemo(() => {
+    return Math.round((vaultPortfolioValue || 0) * 100)
+  }, [vaultPortfolioValue])
   const totalPortfolioValue = useMemo(() => {
-    const portfolioVal = vaultPortfolioValue || 0
+    const portfolioVal = roundedPortfolioCents / 100
     console.log('[Dispatch] 🔁 [UI][Header] Recompute totalPortfolioValue', { portfolioVal })
     return formatCurrency(portfolioVal.toString())
-  }, [vaultPortfolioValue])
+  }, [roundedPortfolioCents])
+  
+  // Calculate available cash display, re-animating only when 2-decimal display changes
+  const roundedCashCents = useMemo(() => {
+    return Math.round((vaultAvailableCollateral || 0) * 100)
+  }, [vaultAvailableCollateral])
+  const cashValueDisplay = useMemo(() => {
+    return formatCurrency(String(roundedCashCents / 100))
+  }, [roundedCashCents])
 
   // Trace derived values that trigger UI rendering
   useEffect(() => {
@@ -158,7 +169,7 @@ export default function Header() {
         
   const displayCashValue = !walletData.isConnected 
     ? '$0.00'
-    : formatCurrency(String(vaultAvailableCollateral))
+    : cashValueDisplay
 
   // Helper function to get display name
   const getDisplayName = () => {

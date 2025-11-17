@@ -1,13 +1,20 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { initializeContracts } from '@/lib/contracts';
 import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
+import { usePositions as useAllPositions } from '@/hooks/usePositions';
+import { useMarkets } from '@/hooks/useMarkets';
+import { getUserActiveOrdersAllMarkets, cancelOrderForMarket } from '@/hooks/useOrderBook';
+import type { Address } from 'viem';
 
+// Public USDC icon (fallback to Circle's official)
+const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
+const FALLBACK_TOKEN_ICON = '/Dexicon/LOGO-Dexetera-01.svg';
 interface Position {
   id: string;
   symbol: string;
@@ -34,6 +41,7 @@ interface Order {
   filled: number;
   status: 'PENDING' | 'PARTIAL' | 'FILLED' | 'CANCELLED';
   timestamp: number;
+  metricId?: string;
 }
 
 interface Trade {
@@ -76,21 +84,70 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const md = useMarketData();
   const orderBookState = md.orderBookState;
   const orderBookActions = md.orderBookActions;
-  const positionsState = md.positionsState;
-  console.log('positionsState MarketActivityTabs', positionsState);
   // Removed ordersUpdated -> refreshOrders recursion guard; UI re-renders from state updates
-  
+
+  // Reuse portfolio logic: fetch ALL positions and markets map
+  const { positions: allPositions, isLoading: positionsIsLoading } = useAllPositions(undefined, { enabled: activeTab === 'positions' });
+  const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 });
+  const marketIdMap = useMemo(() => {
+    const map = new Map<string, { symbol: string; name: string }>();
+    for (const m of markets || []) {
+      const key = (m?.market_id_bytes32 || '').toLowerCase();
+      if (key) {
+        map.set(key, {
+          symbol: (m?.symbol || '').toUpperCase(),
+          name: m?.name || (m?.symbol || '')
+        });
+      }
+    }
+    return map;
+  }, [markets]);
+  const marketSymbolMap = useMemo(() => {
+    const map = new Map<string, { symbol: string; name: string; icon?: string }>();
+    for (const m of markets || []) {
+      const sym = (m?.symbol || '').toUpperCase();
+      if (!sym) continue;
+      map.set(sym, { symbol: sym, name: m?.name || sym, icon: (m as any)?.icon_image_url || undefined });
+    }
+    return map;
+  }, [markets]);
+
   // Throttle and in-flight guards for order history
   const isFetchingHistoryRef = useRef(false);
   const lastHistoryFetchTsRef = useRef(0);
 
-  // Enable positions polling only when Positions tab is active
+  // Positions: show ALL user positions across markets (reuse portfolio hook)
   useEffect(() => {
+    if (!walletAddress) {
+      setPositions([]);
+      return;
+    }
     try {
-      if (activeTab === 'positions') md.enablePositions();
-      else md.disablePositions();
-    } catch {}
-  }, [activeTab, md]);
+      const mapped = (allPositions || []).map((p: any) => {
+        const keyHex = String(p?.marketId || '').toLowerCase();
+        const meta = marketIdMap.get(keyHex);
+        const symbolDisplay = (meta?.symbol || p?.symbol || 'UNKNOWN').toUpperCase();
+        return {
+          id: String(p?.id || p?.marketId || keyHex),
+          symbol: symbolDisplay,
+          side: (p?.side || 'LONG') as 'LONG' | 'SHORT',
+          size: Number(p?.size || 0),
+          entryPrice: Number(p?.entryPrice || 0),
+          markPrice: Number(p?.markPrice || p?.entryPrice || 0),
+          pnl: Number(p?.pnl || 0),
+          pnlPercent: Number(p?.pnlPercent || 0),
+          liquidationPrice: Number(p?.liquidationPrice || 0),
+          margin: Number(p?.margin || 0),
+          leverage: Number(p?.leverage || 1),
+          timestamp: Number(p?.timestamp || Date.now()),
+          isUnderLiquidation: Boolean(p?.isUnderLiquidation || false)
+        } as Position;
+      });
+      setPositions(mapped);
+    } catch (e) {
+      setPositions([]);
+    }
+  }, [walletAddress, allPositions, marketIdMap]);
 
   // Add success/error modal state
   const [successModal, setSuccessModal] = useState<{
@@ -256,56 +313,181 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   };
 
-  // Removed ordersUpdated listener to prevent infinite refresh loop; state updates propagate via hooks
-  
+  // Open Orders: aggregate across ALL markets for the user (reuse portfolio logic)
+  const [ordersRefreshTick, setOrdersRefreshTick] = useState(0);
+  const [openOrdersIsLoading, setOpenOrdersIsLoading] = useState(false);
+  useEffect(() => {
+    if (activeTab !== 'orders') {
+      setOpenOrdersIsLoading(false);
+      return;
+    }
+    if (!walletAddress) {
+      setOpenOrders([]);
+      setOpenOrdersIsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        if (!cancelled) setOpenOrdersIsLoading(true);
+        const buckets = await getUserActiveOrdersAllMarkets(walletAddress);
+        const flat: Order[] = [];
+        (buckets || []).forEach((bucket: any) => {
+          const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
+          (bucket?.orders || []).forEach((o: any) => {
+            const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
+            const typeStr = String(o?.type || 'limit').toUpperCase();
+            const statusLc = String(o?.status || 'pending').toLowerCase();
+            const status: Order['status'] = statusLc === 'pending'
+              ? 'PENDING'
+              : statusLc === 'partially_filled'
+                ? 'PARTIAL'
+                : statusLc === 'filled'
+                  ? 'FILLED'
+                  : statusLc === 'cancelled'
+                    ? 'CANCELLED'
+                    : 'PENDING';
+            let qty = Number(o?.quantity || 0);
+            if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
+            flat.push({
+              id: String(o?.id || ''),
+              symbol: symbolUpper,
+              side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
+              type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
+              price: Number(o?.price || 0),
+              size: qty,
+              filled: Number(o?.filledQuantity || 0),
+              status,
+              timestamp: Number(o?.timestamp || Date.now()),
+              metricId: String(o?.metricId || symbolUpper)
+            });
+          });
+        });
+        if (!cancelled) {
+          setOpenOrders(flat);
+        }
+      } catch {
+        if (!cancelled) {
+          setOpenOrders([]);
+        }
+      } finally {
+        if (!cancelled) setOpenOrdersIsLoading(false);
+      }
+    };
+    load();
+    const interval = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [walletAddress, activeTab, ordersRefreshTick]);
 
-  // Keep positions and open orders in sync with state
+  // One-off fetch for open orders to populate the tab ticker immediately on mount and when wallet changes
   useEffect(() => {
     if (!walletAddress) {
-      setPositions([]);
       setOpenOrders([]);
       return;
     }
-
-    try {
-      console.log('[Dispatch] 🔁 [UI][MarketActivityTabs] Sync positions from positionsState', {
-        count: positionsState.positions.length,
-        metricId
-      });
-      // Update positions
-      setPositions(positionsState.positions);
-
-      // Update orders with real-time data
-      const activeOrders = orderBookState.activeOrders;
-      const symbolUpper = metricId.toUpperCase();
-
-      const mappedOrders: Order[] = activeOrders.map(order => ({
-        id: order.id,
-        symbol: symbolUpper,
-        side: order.isBuy ? 'BUY' : 'SELL',
-        type: order.price > 0 ? 'LIMIT' : 'MARKET',
-        price: order.price,
-        size: order.quantity,
-        filled: order.filledQuantity,
-        status: order.status === 'pending' ? 'PENDING' : 
-                order.status === 'partially_filled' ? 'PARTIAL' : 'FILLED',
-        timestamp: order.timestamp || Date.now()
-      }));
-
-      // Update always on change of orderBookState reference to avoid missing shallow-equal arrays
-      if (orderBookState && Array.isArray(activeOrders)) {
-        console.log('[Dispatch] 🔁 [UI][MarketActivityTabs] Update openOrders from orderBookState', { 
-          newCount: mappedOrders.length, 
-          oldCount: openOrders.length,
-          metricId
+    let cancelled = false;
+    const loadOnce = async () => {
+      try {
+        const buckets = await getUserActiveOrdersAllMarkets(walletAddress);
+        const flat: Order[] = [];
+        (buckets || []).forEach((bucket: any) => {
+          const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
+          (bucket?.orders || []).forEach((o: any) => {
+            const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
+            const typeStr = String(o?.type || 'limit').toUpperCase();
+            const statusLc = String(o?.status || 'pending').toLowerCase();
+            const status: Order['status'] = statusLc === 'pending'
+              ? 'PENDING'
+              : statusLc === 'partially_filled'
+                ? 'PARTIAL'
+                : statusLc === 'filled'
+                  ? 'FILLED'
+                  : statusLc === 'cancelled'
+                    ? 'CANCELLED'
+                    : 'PENDING';
+            let qty = Number(o?.quantity || 0);
+            if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
+            flat.push({
+              id: String(o?.id || ''),
+              symbol: symbolUpper,
+              side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
+              type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
+              price: Number(o?.price || 0),
+              size: qty,
+              filled: Number(o?.filledQuantity || 0),
+              status,
+              timestamp: Number(o?.timestamp || Date.now()),
+              metricId: String(o?.metricId || symbolUpper)
+            });
+          });
         });
-        setOpenOrders(mappedOrders);
+        if (!cancelled) {
+          setOpenOrders(flat);
+        }
+      } catch {
+        if (!cancelled) setOpenOrders([]);
       }
-    } catch (error) {
-      console.error('Error syncing order data:', error);
-    }
-  }, [walletAddress, metricId, orderBookState, positionsState.positions]);
+    };
+    // Run immediately to populate the tab ticker
+    loadOnce();
+    return () => { cancelled = true; };
+  }, [walletAddress]);
 
+  // Listen for global order update events (emitted by useOrderBook.refreshOrders after place/cancel)
+  // Immediately refresh open orders to keep the tab ticker accurate even when not on the Orders tab
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress) return;
+    let disposed = false;
+    const onOrdersUpdated = async (_evt: Event) => {
+      if (disposed) return;
+      try {
+        const buckets = await getUserActiveOrdersAllMarkets(walletAddress);
+        const flat: Order[] = [];
+        (buckets || []).forEach((bucket: any) => {
+          const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
+          (bucket?.orders || []).forEach((o: any) => {
+            const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
+            const typeStr = String(o?.type || 'limit').toUpperCase();
+            const statusLc = String(o?.status || 'pending').toLowerCase();
+            const status: Order['status'] = statusLc === 'pending'
+              ? 'PENDING'
+              : statusLc === 'partially_filled'
+                ? 'PARTIAL'
+                : statusLc === 'filled'
+                  ? 'FILLED'
+                  : statusLc === 'cancelled'
+                    ? 'CANCELLED'
+                    : 'PENDING';
+            let qty = Number(o?.quantity || 0);
+            if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
+            flat.push({
+              id: String(o?.id || ''),
+              symbol: symbolUpper,
+              side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
+              type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
+              price: Number(o?.price || 0),
+              size: qty,
+              filled: Number(o?.filledQuantity || 0),
+              status,
+              timestamp: Number(o?.timestamp || Date.now()),
+              metricId: String(o?.metricId || symbolUpper)
+            });
+          });
+        });
+        if (!disposed) {
+          setOpenOrders(flat);
+        }
+      } catch {
+        if (!disposed) setOpenOrders([]);
+      }
+    };
+    window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+    return () => {
+      disposed = true;
+      window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+    };
+  }, [walletAddress]);
   // Fetch order history ONLY when History tab is active, throttle and skip when hidden
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -405,15 +587,15 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
   const renderPositionsTable = () => {
     if (positions.length === 0) {
-  return (
-                  <div className="flex items-center justify-center p-8">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#808080]">
-                        No open positions
-                      </span>
-                    </div>
-                  </div>
+      return (
+        <div className="flex items-center justify-center p-8">
+          <div className="flex items-center gap-2">
+            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${positionsIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
+            <span className="text-[11px] font-medium text-[#808080]">
+              {positionsIsLoading ? 'Loading open positions…' : 'No open positions'}
+            </span>
+          </div>
+        </div>
       );
     }
 
@@ -421,70 +603,74 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Entry</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
+                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {positions.map((position, index) => (
             <React.Fragment key={`${position.id}-${index}`}>
-              <tr className={`group/row transition-colors duration-200 ${
+              <tr className={`mat-slide-rtl group/row transition-colors duration-200 ${
                 position.isUnderLiquidation 
                   ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
                   : 'hover:bg-[#1A1A1A]'
               } ${
                 index !== positions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
-              }`}>
-                          <td className="px-2.5 py-2.5">
+              }`} style={{ animationDelay: `${index * 50}ms` }}>
+                          <td className="px-2 py-1.5">
                             <div className="flex items-center gap-1.5">
-                              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                                position.isUnderLiquidation 
-                                  ? 'bg-yellow-400 animate-pulse'
-                                  : position.side === 'LONG' 
-                                    ? 'bg-green-400' 
-                                    : 'bg-red-400'
-                              }`} />
+                              <div className="relative w-5 h-5">
+                                <img
+                                  src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
+                                  alt={`${position.symbol} icon`}
+                                  className="absolute top-0 left-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-10"
+                                />
+                                <img
+                                  src={USDC_ICON_URL}
+                                  alt="USDC icon"
+                                  className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-0"
+                                />
+                              </div>
                               <div className="flex items-center gap-1">
-                                <span className="text-[11px] font-medium text-white">{position.symbol}</span>
+                                <span className="text-[10px] font-medium text-white">
+                                  {marketSymbolMap.get(position.symbol)?.name || position.symbol}
+                                </span>
+                                <span className="text-[9px] text-[#606060]">{position.symbol}</span>
                                 {position.isUnderLiquidation && (
-                                  <div className="px-1.5 py-0.5 bg-yellow-400/10 rounded">
-                                    <span className="text-[9px] font-medium text-yellow-400">LIQUIDATING</span>
+                                  <div className="px-1 py-0.5 bg-yellow-400/10 rounded">
+                                    <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
                                   </div>
                                 )}
                               </div>
                             </div>
                           </td>
-                          <td className="px-2.5 py-2.5">
-                            <span className={`text-[11px] font-medium ${
+                          <td className="px-2 py-1.5">
+                            <span className={`text-[10px] font-medium ${
                               position.side === 'LONG' ? 'text-green-400' : 'text-red-400'
                             }`}>
                               {position.side}
                             </span>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">{position.size.toFixed(4)}</span>
+                          <td className="px-2 py-1.5 text-right">
+                            <span className="text-[10px] text-white font-mono">{position.size.toFixed(2)}</span>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">${position.entryPrice.toFixed(2)}</span>
+                          <td className="px-2 py-1.5 text-right">
+                            <span className="text-[10px] text-white font-mono">${position.markPrice.toFixed(2)}</span>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">${position.markPrice.toFixed(2)}</span>
-                          </td>
-                          <td className="px-2.5 py-2.5 text-right">
+                          <td className="px-2 py-1.5 text-right">
                             <div className="flex justify-end">
                               <span className="relative inline-block pr-4">
-                                <span className={`text-[11px] font-medium font-mono ${
+                                <span className={`text-[10px] font-medium font-mono ${
                                   position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
                                 }`}>
                                   {position.pnl >= 0 ? '+' : ''}{position.pnl.toFixed(2)}
                                 </span>
-                                <span className={`absolute -top-2 -right-0 text-[10px] font-mono ${
+                                <span className={`absolute -top-2 -right-0 text-[9px] font-mono ${
                                   position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
                                 }`}>
                                   {position.pnlPercent >= 0 ? '+' : ''}{position.pnlPercent.toFixed(2)}%
@@ -492,7 +678,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               </span>
                             </div>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
+                          <td className="px-2 py-1.5 text-right">
                             <div className="flex flex-col items-end gap-0.5">
                               <div className={`flex items-center justify-end gap-1.5 ${
                                 position.isUnderLiquidation 
@@ -501,12 +687,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               }`}>
                                 {position.isUnderLiquidation && (
                                   <>
-                                    <svg className="w-3 h-3 text-yellow-400 animate-pulse" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <svg className="w-2.5 h-2.5 text-yellow-400 animate-pulse" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                       <path d="M12 9V14M12 19C8.13401 19 5 15.866 5 12C5 8.13401 8.13401 5 12 5C15.866 5 19 8.13401 19 12C19 15.866 15.866 19 12 19ZM12 16V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                                     </svg>
                                   </>
                                 )}
-                                <span className={`text-[11px] font-mono ${
+                                <span className={`text-[10px] font-mono ${
                                   position.isUnderLiquidation 
                                     ? 'text-yellow-400 font-bold'
                                     : 'text-white'
@@ -515,16 +701,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 </span>
                               </div>
                               {position.isUnderLiquidation && (
-                                <span className="text-[9px] font-medium text-yellow-400 animate-pulse">
+                                <span className="text-[8px] font-medium text-yellow-400 animate-pulse">
                                   UNDER LIQUIDATION
                                 </span>
                               )}
                             </div>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
+                          <td className="px-2 py-1.5 text-right">
                   <button 
                     onClick={() => setExpandedPositionId(expandedPositionId === position.id ? null : position.id)}
-                    className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-2 py-1 text-[10px] text-[#808080] hover:text-white hover:bg-[#2A2A2A] rounded"
+                    className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#808080] hover:text-white hover:bg-[#2A2A2A] rounded"
                   >
                     {expandedPositionId === position.id ? 'Hide' : 'Manage'}
                             </button>
@@ -532,22 +718,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         </tr>
               {expandedPositionId === position.id && (
                 <tr className="bg-[#1A1A1A]">
-                  <td colSpan={8} className="px-0">
-                    <div className="px-2.5 py-2 border-t border-[#222222]">
+                  <td colSpan={7} className="px-0">
+                    <div className="px-2 py-1.5 border-t border-[#222222]">
                       <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
                             <div className="flex items-center gap-3">
                               <div className="flex flex-col gap-1">
-                                <span className="text-[10px] text-[#606060]">Current Margin</span>
-                                <span className={`text-[11px] font-medium font-mono ${
+                                <span className="text-[9px] text-[#606060]">Current Margin</span>
+                                <span className={`text-[10px] font-medium font-mono ${
                                   position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
                                 }`}>
                                   ${position.margin.toFixed(2)}
                                 </span>
                               </div>
                               <div className="flex flex-col gap-1">
-                                <span className="text-[10px] text-[#606060]">Leverage</span>
-                                <span className={`text-[11px] font-medium font-mono ${
+                                <span className="text-[9px] text-[#606060]">Leverage</span>
+                                <span className={`text-[10px] font-medium font-mono ${
                                   position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
                                 }`}>
                                   {position.leverage}x
@@ -555,21 +741,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               </div>
                               {position.isUnderLiquidation && (
                                 <div className="flex flex-col gap-1">
-                                  <div className="bg-yellow-400/10 border border-yellow-400/20 rounded-md px-3 py-2">
+                                  <div className="bg-yellow-400/10 border border-yellow-400/20 rounded-md px-2.5 py-1.5">
                                     <div className="flex items-center gap-2 mb-1">
-                                      <svg className="w-3 h-3 text-yellow-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                      <svg className="w-2.5 h-2.5 text-yellow-400" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <path d="M12 9V14M12 19C8.13401 19 5 15.866 5 12C5 8.13401 8.13401 5 12 5C15.866 5 19 8.13401 19 12C19 15.866 15.866 19 12 19ZM12 16V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                                       </svg>
-                                      <span className="text-[10px] font-medium text-yellow-400 uppercase tracking-wide">Position Under Liquidation</span>
+                                      <span className="text-[9px] font-medium text-yellow-400 uppercase tracking-wide">Position Under Liquidation</span>
                                     </div>
                                     <div className="flex items-center gap-3">
                                       <div className="flex flex-col gap-0.5">
-                                        <span className="text-[9px] text-yellow-400/60">Time Remaining</span>
-                                        <span className="text-[11px] font-medium text-yellow-400 font-mono animate-pulse">00:30:00</span>
+                                        <span className="text-[8px] text-yellow-400/60">Time Remaining</span>
+                                        <span className="text-[10px] font-medium text-yellow-400 font-mono animate-pulse">00:30:00</span>
                                       </div>
                                       <div className="flex flex-col gap-0.5">
-                                        <span className="text-[9px] text-yellow-400/60">Required Margin</span>
-                                        <span className="text-[11px] font-medium text-yellow-400 font-mono">+$500.00</span>
+                                        <span className="text-[8px] text-yellow-400/60">Required Margin</span>
+                                        <span className="text-[10px] font-medium text-yellow-400 font-mono">+$500.00</span>
                                       </div>
                                     </div>
                                   </div>
@@ -579,7 +765,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => handleTopUp(position.id, position.symbol, position.margin)}
-                              className="px-3 py-1.5 text-[11px] font-medium text-green-400 hover:text-green-300 bg-green-400/5 hover:bg-green-400/10 rounded transition-colors duration-200"
+                              className="px-2.5 py-1 text-[10px] font-medium text-green-400 hover:text-green-300 bg-green-400/5 hover:bg-green-400/10 rounded transition-colors duration-200"
                             >
                               Top Up Position
                             </button>
@@ -591,7 +777,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 setCloseSize(position.size.toString());
                                 setShowCloseModal(true);
                               }}
-                              className="px-3 py-1.5 text-[11px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200"
+                              className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200"
                             >
                               Close Position
                             </button>
@@ -614,9 +800,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       return (
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${openOrdersIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
                       <span className="text-[11px] font-medium text-[#808080]">
-                        No open orders
+                        {openOrdersIsLoading ? 'Loading open orders…' : 'No open orders'}
                       </span>
                     </div>
                   </div>
@@ -627,44 +813,64 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="text-left px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
+                        <th className="text-right px-2 py-1.5 text-[9px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
                     <tbody>
                       {openOrders.map((order, index) => (
                         <React.Fragment key={`${order.id}-${index}`}>
-                          <tr className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== openOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
-                            <td className="px-2.5 py-2.5">
-                              <span className={`text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
+                          <tr className={`mat-slide-rtl hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== openOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
+                            <td className="px-2 py-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <div className="relative w-5 h-5">
+                                  <img
+                                    src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
+                                    alt={`${order.symbol} icon`}
+                                    className="absolute top-0 left-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-10"
+                                  />
+                                  <img
+                                    src={USDC_ICON_URL}
+                                    alt="USDC icon"
+                                    className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-0"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[10px] font-medium text-white">
+                                    {marketSymbolMap.get(order.symbol)?.name || order.symbol}
+                                  </span>
+                                  <span className="text-[9px] text-[#606060]">{order.symbol}</span>
+                                </div>
+                              </div>
                             </td>
-                            <td className="px-2.5 py-2.5">
-                              <span className="text-[11px] text-white">{order.type}</span>
+                            <td className="px-2 py-1.5">
+                              <span className={`text-[10px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-right">
-                              <span className="text-[11px] text-white font-mono">${order.price.toFixed(2)}</span>
+                            <td className="px-2 py-1.5">
+                              <span className="text-[10px] text-white">{order.type}</span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-right">
-                              <span className="text-[11px] text-white font-mono">{order.size.toFixed(4)}</span>
+                            <td className="px-2 py-1.5 text-right">
+                              <span className="text-[10px] text-white font-mono">${order.price.toFixed(2)}</span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-right">
-                              <span className="text-[11px] text-white font-mono">{order.filled.toFixed(4)}</span>
+                            <td className="px-2 py-1.5 text-right">
+                              <span className="text-[10px] text-white font-mono">{order.size.toFixed(4)}</span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-right">
-                              <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
+                            <td className="px-2 py-1.5 text-right">
+                              <span className="text-[10px] text-white font-mono">{order.filled.toFixed(4)}</span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-right">
-                              <span className="text-[11px] text-[#9CA3AF]">{formatTime(order.timestamp)}</span>
+                            <td className="px-2 py-1.5 text-right">
+                              <span className="text-[10px] text-[#9CA3AF]">{order.status}</span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-right">
+                            <td className="px-2 py-1.5 text-right">
                               <button
                                 onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 px-2 py-1 text-[10px] text-[#808080] hover:text-white hover:bg-[#2A2A2A] rounded"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#808080] hover:text-white hover:bg-[#2A2A2A] rounded"
                               >
                                 {expandedOrderId === order.id ? 'Hide' : 'Manage'}
                               </button>
@@ -673,19 +879,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           {expandedOrderId === order.id && (
                             <tr className="bg-[#1A1A1A]">
                               <td colSpan={8} className="px-0">
-                                <div className="px-2.5 py-2 border-t border-[#222222]">
+                                <div className="px-2 py-1.5 border-t border-[#222222]">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-4">
                                       <div className="flex items-center gap-3">
                                         <div className="flex flex-col gap-1">
-                                          <span className="text-[10px] text-[#606060]">Order Value</span>
-                                          <span className="text-[11px] font-medium text-white font-mono">
+                                          <span className="text-[9px] text-[#606060]">Order Value</span>
+                                          <span className="text-[10px] font-medium text-white font-mono">
                                             ${(order.price * order.size).toFixed(2)}
                                           </span>
                                         </div>
                                         <div className="flex flex-col gap-1">
-                                          <span className="text-[10px] text-[#606060]">Fill Progress</span>
-                                          <span className="text-[11px] font-medium text-white font-mono">
+                                          <span className="text-[9px] text-[#606060]">Fill Progress</span>
+                                          <span className="text-[10px] font-medium text-white font-mono">
                                             {((order.filled / order.size) * 100).toFixed(1)}%
                                           </span>
                                         </div>
@@ -695,12 +901,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                           onClick={async () => {
                                             try {
                                               setIsCancelingOrder(true);
-                                              const ok = await orderBookActions.cancelOrder(order.id);
+                                              const ok = await cancelOrderForMarket(order.id, String(order.metricId || order.symbol));
                                               if (!ok) {
                                                 showError('Failed to cancel order. Please try again.');
                                               } else {
                                                 showSuccess('Order cancelled successfully');
-                                                await orderBookActions.refreshOrders();
+                                                setOrdersRefreshTick((x) => x + 1);
                                               }
                                             } catch (e) {
                                               showError('Cancellation failed. Please try again.');
@@ -709,7 +915,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                             }
                                           }}
                                           disabled={isCancelingOrder}
-                                          className="px-3 py-1.5 text-[11px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                          className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                           {isCancelingOrder ? 'Canceling...' : 'Cancel Order'}
                                         </button>
@@ -1057,6 +1263,23 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           height: 0 !important;
           background: transparent !important;
         }
+        /* Cascading slide-in from right to left */
+        @keyframes matSlideRtl {
+          0% {
+            opacity: 0;
+            transform: translateX(12px);
+          }
+          100% {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+        .mat-slide-rtl {
+          opacity: 0;
+          transform: translateX(12px);
+          animation: matSlideRtl 300ms ease-out forwards;
+          will-change: transform, opacity;
+        }
       `}</style>
       <ErrorModal
         isOpen={errorModal.isOpen}
@@ -1168,7 +1391,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded">
                 <span className="text-[10px] text-[#808080]">Position Size</span>
                 <span className="text-[11px] font-medium text-white font-mono">
-                  {maxSize.toFixed(4)}
+                  {maxSize.toFixed(2)}
                 </span>
               </div>
               

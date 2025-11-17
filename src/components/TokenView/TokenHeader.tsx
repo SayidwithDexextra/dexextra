@@ -143,6 +143,50 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     return formatNumberWithCommas(isMarketMode ? Number(num.toFixed(2)) : num);
   };
   
+  // Build dynamic tab items; hide Haircut/Socialized Loss when value is zero (or not positive)
+  const socializedLossNum = Number(vaultData?.socializedLoss ?? 0);
+  const tabItems = useMemo(() => {
+    return [
+      {
+        id: 'marginUsed',
+        label: 'Margin Used',
+        labelShort: 'Margin Used:',
+        value: displayVaultValue(vaultData?.marginUsed),
+        emphasis: false
+      },
+      {
+        id: 'reserved',
+        label: 'Reserved',
+        labelShort: 'Reserved Margin:',
+        value: displayVaultValue(vaultData?.marginReserved),
+        emphasis: false
+      },
+      {
+        id: 'available',
+        label: 'Available',
+        labelShort: 'Available Margin:',
+        value: displayVaultValue(vaultData?.availableBalance),
+        emphasis: false
+      },
+      ...(socializedLossNum > 0
+        ? [{
+            id: 'haircut',
+            label: 'Haircut',
+            labelShort: 'Socialized Loss:',
+            value: displayVaultValue(vaultData?.socializedLoss),
+            emphasis: true
+          }] as const
+        : [])
+    ];
+  }, [vaultData?.marginUsed, vaultData?.marginReserved, vaultData?.availableBalance, vaultData?.socializedLoss]);
+  
+  // Clamp active tab when the list changes (e.g., when Haircut is hidden)
+  useEffect(() => {
+    if (activeTab >= tabItems.length) {
+      setActiveTab(Math.max(0, tabItems.length - 1));
+    }
+  }, [tabItems.length, activeTab]);
+  
   // Listen for changes in limit tab status from TradingPanel
   useEffect(() => {
     const handleLimitTabChange: EventListener = (event: Event) => {
@@ -515,7 +559,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                   {enhancedTokenData.name}
                 </h1>
                 <div className="flex items-center gap-1 flex-wrap">
-                  {['Margin Used', 'Reserved', 'Available', 'Haircut'].map((tab, index) => (
+                  {tabItems.map((tab, index) => (
                     <button
                       key={index}
                       onClick={() => setActiveTab(index)}
@@ -525,7 +569,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                           : 'text-[#606060] bg-[#1A1A1A] hover:bg-[#222222]'
                       } px-2 py-0.5 rounded transition-colors duration-200`}
                     >
-                      {tab}
+                      {tab.label}
                     </button>
                   ))}
                   {!enhancedTokenData.isDeployed && (
@@ -579,19 +623,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                   </div>
                 </div>
                 {/* Display Unrealized PNL when contracted */}
-                {isLimitTabActive && (
+                {isLimitTabActive && tabItems[activeTab] && (
                   <div className="mt-1 text-[10px] flex justify-between">
-                    <span className="text-[#606060]">
-                      {activeTab === 0 && 'Margin Used:'}
-                      {activeTab === 1 && 'Reserved Margin:'}
-                      {activeTab === 2 && 'Available Margin:'}
-                      {activeTab === 3 && 'Socialized Loss:'}
-                    </span>
-                    <span className="text-white font-mono">
-                      {activeTab === 0 && (vaultData?.marginUsed || '0')}
-                      {activeTab === 1 && (vaultData?.marginReserved || '0')}
-                      {activeTab === 2 && Number(vaultData?.availableBalance ?? 0).toFixed(2)}
-                      {activeTab === 3 && Number(vaultData?.socializedLoss ?? 0).toFixed(2)}
+                    <span className="text-[#606060]">{tabItems[activeTab].labelShort}</span>
+                    <span className={`${tabItems[activeTab].id === 'haircut' && socializedLossNum > 0 ? 'text-red-400' : 'text-white'} font-mono`}>
+                      {tabItems[activeTab].value}
                     </span>
                   </div>
                 )}
@@ -668,22 +704,15 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           {/* Price Details */}
           <div className="mt-1.5 space-y-1 text-[9px]">
             <div className="flex justify-between">
-              <span className="text-[#606060]">
-                {activeTab === 0 && 'Margin Used:'}
-                {activeTab === 1 && 'Reserved Margin:'}
-                {activeTab === 2 && 'Available Margin:'}
-                {activeTab === 3 && 'Socialized Loss:'}
-              </span>
+              {tabItems[activeTab] && (
+                <span className="text-[#606060]">{tabItems[activeTab].labelShort}</span>
+              )}
               <div className="flex items-center gap-1">
-                <span className={`font-mono ${activeTab === 3 && parseFloat(vaultData?.socializedLoss||'0') > 0 ? 'text-red-400' : 'text-white'}`}>{
-                  activeTab === 0 && displayVaultValue(vaultData?.marginUsed)
-                }{
-                  activeTab === 1 && displayVaultValue(vaultData?.marginReserved)
-                }{
-                  activeTab === 2 && displayVaultValue(vaultData?.availableBalance)
-                }{
-                  activeTab === 3 && displayVaultValue(vaultData?.socializedLoss)
-                }</span>
+                {tabItems[activeTab] && (
+                  <span className={`font-mono ${tabItems[activeTab].id === 'haircut' && socializedLossNum > 0 ? 'text-red-400' : 'text-white'}`}>
+                    {tabItems[activeTab].value}
+                  </span>
+                )}
                 {vaultData?.isLoading && <span className="text-blue-400 animate-spin">⟳</span>}
                 {!vaultData?.isLoading && isConnected && (
                   <span className="text-green-400" title="Real-time vault data">●</span>
