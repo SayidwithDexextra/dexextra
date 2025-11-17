@@ -23,8 +23,15 @@ const FACTORY_ADDRESS = CONTRACTS.MetricsMarketFactory.address
 // Database instance - commented out for now
 // const eventDatabase = new EventDatabase();
 
-// ClickHouse pipeline for tick generation
-const clickhousePipeline = getClickHouseDataPipeline();
+// ClickHouse pipeline - lazy initialization (not at module load to avoid build errors)
+let clickhousePipeline: ReturnType<typeof getClickHouseDataPipeline> | null = null;
+function getClickHousePipeline() {
+  if (!clickhousePipeline) {
+    clickhousePipeline = getClickHouseDataPipeline();
+  }
+  return clickhousePipeline;
+}
+
 const pusherServer = getPusherServer();
 
 // In-memory set to track processed events (to prevent duplicates during the session)
@@ -72,8 +79,13 @@ async function generateTradeFromOrderbookEvent(event: SmartContractEvent): Promi
       maker: params.maker === true || params.isMaker === true,
     };
 
-    if ((clickhousePipeline as any).insertTradeImmediate) {
-      await (clickhousePipeline as any).insertTradeImmediate({
+    const pipeline = getClickHousePipeline();
+    if (!pipeline.isConfigured()) {
+      console.warn('⚠️ ClickHouse not configured, skipping trade generation');
+      return;
+    }
+    if ((pipeline as any).insertTradeImmediate) {
+      await (pipeline as any).insertTradeImmediate({
         symbol: tradePayload.symbol,
         ts: new Date(tradePayload.timestamp),
         price: tradePayload.price,
@@ -86,11 +98,11 @@ async function generateTradeFromOrderbookEvent(event: SmartContractEvent): Promi
         contract_address: tradePayload.contractAddress,
       });
     } else {
-      await (clickhousePipeline as any).insertTrade(tradePayload);
+      await (pipeline as any).insertTrade(tradePayload);
     }
 
     // Broadcast latest 1m candle to lightweight chart
-    const latest = await clickhousePipeline.fetchLatestOhlcv1m(String(symbol).toUpperCase());
+    const latest = await pipeline.fetchLatestOhlcv1m(String(symbol).toUpperCase());
     if (latest) {
       await pusherServer.broadcastChartData({
         symbol: latest.symbol,
@@ -185,14 +197,19 @@ async function generateTickFromVAMMEvent(event: SmartContractEvent): Promise<voi
     };
 
     // Insert tick immediately for serverless safety
-    if ((clickhousePipeline as any).insertTickImmediate) {
-      await (clickhousePipeline as any).insertTickImmediate(tick);
+    const pipeline = getClickHousePipeline();
+    if (!pipeline.isConfigured()) {
+      console.warn('⚠️ ClickHouse not configured, skipping tick generation');
+      return;
+    }
+    if ((pipeline as any).insertTickImmediate) {
+      await (pipeline as any).insertTickImmediate(tick);
     } else {
-      await (clickhousePipeline as any).insertTick(tick);
+      await (pipeline as any).insertTick(tick);
     }
 
     // Broadcast latest 1m candle to lightweight chart
-    const latest = await clickhousePipeline.fetchLatestOhlcv1m(symbol.toUpperCase());
+    const latest = await pipeline.fetchLatestOhlcv1m(symbol.toUpperCase());
     if (latest) {
       await pusherServer.broadcastChartData({
         symbol: latest.symbol,

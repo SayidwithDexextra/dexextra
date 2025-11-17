@@ -65,17 +65,37 @@ const TIMEFRAME_MAP: Record<string, TimeframeConfig> = {
 };
 
 export class ClickHouseDataPipeline {
-  private client: ClickHouseClient;
+  private client: ClickHouseClient | null = null;
   private database: string;
   private tickBuffer: MarketTick[] = [];
   private tradeBuffer: OrderbookTrade[] = [];
   private flushInterval: NodeJS.Timeout | null = null;
   private readonly BUFFER_SIZE = 100;
   private readonly FLUSH_INTERVAL_MS = 5000; // 5 seconds
+  private initialized: boolean = false;
 
   constructor() {
     this.database = process.env.CLICKHOUSE_DATABASE || 'default';
+    // Don't initialize client at construction time - do it lazily when needed
+  }
+
+  /**
+   * Lazy initialization of ClickHouse client
+   * Only creates the client when actually needed (not during build)
+   */
+  private ensureClient(): ClickHouseClient {
+    if (this.client) {
+      return this.client;
+    }
+
     const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
+    
+    if (!url) {
+      throw new Error(
+        'ClickHouse URL not configured. Please set CLICKHOUSE_URL or CLICKHOUSE_HOST environment variable.'
+      );
+    }
+
     this.client = createClient({
       url,
       username: process.env.CLICKHOUSE_USER || 'default',
@@ -84,17 +104,34 @@ export class ClickHouseDataPipeline {
       request_timeout: 30000,
     });
 
-    // Start buffer flushing
-    this.startBufferFlushing();
+    // Start buffer flushing only after client is initialized
+    if (!this.initialized) {
+      this.startBufferFlushing();
+      this.initialized = true;
+    }
+
+    return this.client;
+  }
+
+  /**
+   * Check if ClickHouse is configured
+   */
+  isConfigured(): boolean {
+    const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
+    return !!url;
   }
 
   /**
    * Insert trade immediately (serverless-safe). Accepts single or array.
    */
   async insertTradeImmediate(tradeOrTrades: OrderbookTrade | OrderbookTrade[]): Promise<void> {
+    if (!this.isConfigured()) {
+      console.warn('⚠️ ClickHouse not configured, skipping trade insert');
+      return;
+    }
     const values = Array.isArray(tradeOrTrades) ? tradeOrTrades : [tradeOrTrades];
     if (values.length === 0) return;
-    await this.client.insert({
+    await this.ensureClient().insert({
       table: 'trades',
       values,
       format: 'JSONEachRow'
@@ -105,9 +142,13 @@ export class ClickHouseDataPipeline {
    * Insert tick immediately (serverless-safe). Accepts single or array.
    */
   async insertTickImmediate(tickOrTicks: MarketTick | MarketTick[]): Promise<void> {
+    if (!this.isConfigured()) {
+      console.warn('⚠️ ClickHouse not configured, skipping tick insert');
+      return;
+    }
     const values = Array.isArray(tickOrTicks) ? tickOrTicks : [tickOrTicks];
     if (values.length === 0) return;
-    await this.client.insert({
+    await this.ensureClient().insert({
       table: 'market_ticks',
       values,
       format: 'JSONEachRow'
@@ -118,7 +159,10 @@ export class ClickHouseDataPipeline {
    * Fetch the most recent 1m candle for a symbol.
    */
   async fetchLatestOhlcv1m(symbol: string): Promise<OHLCVCandle | null> {
-    const result = await this.client.query({
+    if (!this.isConfigured()) {
+      return null;
+    }
+    const result = await this.ensureClient().query({
       query: `
         SELECT
           symbol,
@@ -189,12 +233,17 @@ export class ClickHouseDataPipeline {
    */
   private async flushTicks(): Promise<void> {
     if (this.tickBuffer.length === 0) return;
+    if (!this.isConfigured()) {
+      console.warn('⚠️ ClickHouse not configured, clearing tick buffer');
+      this.tickBuffer = [];
+      return;
+    }
 
     const ticksToFlush = [...this.tickBuffer];
     this.tickBuffer = [];
 
     try {
-      await this.client.insert({
+      await this.ensureClient().insert({
         // Legacy vAMM raw events table (kept for backward compatibility)
         table: 'market_ticks',
         values: ticksToFlush,
@@ -235,12 +284,17 @@ export class ClickHouseDataPipeline {
    */
   private async flushTrades(): Promise<void> {
     if (this.tradeBuffer.length === 0) return;
+    if (!this.isConfigured()) {
+      console.warn('⚠️ ClickHouse not configured, clearing trade buffer');
+      this.tradeBuffer = [];
+      return;
+    }
 
     const tradesToFlush = [...this.tradeBuffer];
     this.tradeBuffer = [];
 
     try {
-      await this.client.insert({
+      await this.ensureClient().insert({
         table: 'trades',
         values: tradesToFlush,
         format: 'JSONEachRow'
@@ -437,8 +491,12 @@ export class ClickHouseDataPipeline {
       `;
     }
 
+    if (!this.isConfigured()) {
+      return [];
+    }
+
     try {
-      const result = await this.client.query({
+      const result = await this.ensureClient().query({
         query,
         format: 'JSONEachRow'
       });
@@ -466,8 +524,11 @@ export class ClickHouseDataPipeline {
    * Get the latest price for a symbol
    */
   async getLatestPrice(symbol: string): Promise<number | null> {
+    if (!this.isConfigured()) {
+      return null;
+    }
     try {
-      const result = await this.client.query({
+      const result = await this.ensureClient().query({
         query: `
           SELECT close
           FROM ohlcv_1m
@@ -490,8 +551,11 @@ export class ClickHouseDataPipeline {
    * Get all available symbols
    */
   async getAvailableSymbols(): Promise<string[]> {
+    if (!this.isConfigured()) {
+      return [];
+    }
     try {
-      const result = await this.client.query({
+      const result = await this.ensureClient().query({
         query: `
           SELECT DISTINCT symbol
           FROM ohlcv_1m
@@ -512,11 +576,18 @@ export class ClickHouseDataPipeline {
    * Get health statistics for monitoring
    */
   async getHealthStats(): Promise<HealthStats> {
+    if (!this.isConfigured()) {
+      return {
+        tickCount: 0,
+        symbolCount: 0,
+        ohlcv1mCount: 0,
+      };
+    }
     try {
       // Prefer order-book trades as primary source of truth
       let tickStats: any[] = [];
       try {
-        const tradesStatsResult = await this.client.query({
+        const tradesStatsResult = await this.ensureClient().query({
           query: `
             SELECT
               count() AS tickCount,
@@ -531,7 +602,7 @@ export class ClickHouseDataPipeline {
       } catch {
         // Fallback to legacy tables if trades doesn't exist
         try {
-          const legacyStatsResult = await this.client.query({
+          const legacyStatsResult = await this.ensureClient().query({
             query: `
               SELECT
                 count() AS tickCount,
@@ -545,7 +616,7 @@ export class ClickHouseDataPipeline {
           tickStats = (await legacyStatsResult.json()) as any[];
         } catch {
           // Last resort: vamm_ticks if present
-          const vammStatsResult = await this.client.query({
+          const vammStatsResult = await this.ensureClient().query({
             query: `
               SELECT
                 count() AS tickCount,
@@ -561,7 +632,7 @@ export class ClickHouseDataPipeline {
       }
 
       // Get candle stats
-      const candleStatsResult = await this.client.query({
+      const candleStatsResult = await this.ensureClient().query({
         query: `
           SELECT
             count() AS ohlcv1mCount,
@@ -601,14 +672,17 @@ export class ClickHouseDataPipeline {
    * In the optimized architecture, this is minimal since the schema script handles setup
    */
   async ensureTables(): Promise<void> {
+    if (!this.isConfigured()) {
+      throw new Error('ClickHouse not configured');
+    }
     try {
       // Verify order-book trades table exists (new architecture)
-      await this.client.query({
+      await this.ensureClient().query({
         query: 'SELECT 1 FROM trades LIMIT 1',
         format: 'JSONEachRow'
       });
 
-      await this.client.query({
+      await this.ensureClient().query({
         query: 'SELECT 1 FROM ohlcv_1m LIMIT 1',
         format: 'JSONEachRow'
       });
@@ -641,7 +715,11 @@ export class ClickHouseDataPipeline {
       const endTime = new Date();
       const startTime = new Date(endTime.getTime() - hours * 60 * 60 * 1000);
 
-      const result = await this.client.query({
+      if (!this.isConfigured()) {
+        return null;
+      }
+
+      const result = await this.ensureClient().query({
         query: `
           SELECT
             sum(volume) AS totalVolume,
@@ -693,8 +771,10 @@ export class ClickHouseDataPipeline {
     }
     // Flush any remaining buffers
     await this.flushAll();
-    await this.client.close();
-    console.log('✅ ClickHouse client closed');
+    if (this.client) {
+      await this.client.close();
+      console.log('✅ ClickHouse client closed');
+    }
   }
 
   /**
