@@ -457,6 +457,20 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       observer.disconnect();
     };
   }, [enhancedTokenData]); // Re-run when token data changes
+  
+  // Settlement compact row state (moved above early returns to keep Hooks order stable)
+  const proposedSettlementValue = Number((marketData as any)?.proposed_settlement_value ?? 0);
+  const settlementExpiresAtStr = (marketData as any)?.settlement_window_expires_at ? String((marketData as any).settlement_window_expires_at) : '';
+  const settlementExpiresMs = settlementExpiresAtStr ? new Date(settlementExpiresAtStr).getTime() : 0;
+  const [nowTs, setNowTs] = useState<number>(Date.now());
+  const settlementActiveCompact = enhancedTokenData?.marketStatus === 'SETTLEMENT_REQUESTED' && proposedSettlementValue > 0 && settlementExpiresMs > nowTs;
+  
+  useEffect(() => {
+    if (!settlementActiveCompact) return;
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [settlementActiveCompact]);
+  
   // Loading state - only show loading if market data is loading
   const shouldShowHeaderLoading = !hasLoadedHeaderOnce && (isLoadingMarket || !marketData);
 
@@ -488,8 +502,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     );
   }
 
-  // Handle case where market exists but contracts aren't deployed yet
-  if (!enhancedTokenData.isDeployed || enhancedTokenData.marketStatus !== 'ACTIVE') {
+  // Handle case where market exists but contracts aren't deployed yet.
+  // Allow normal header rendering during settlement window (SETTLEMENT_REQUESTED).
+  if (!enhancedTokenData.isDeployed || (enhancedTokenData.marketStatus !== 'ACTIVE' && enhancedTokenData.marketStatus !== 'SETTLEMENT_REQUESTED')) {
     const statusText = {
       'PENDING': 'Market Creation Pending',
       'DEPLOYING': 'Contracts Deploying',
@@ -518,6 +533,17 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
               This market has been settled. Final settlement date: {new Date(enhancedTokenData.settlementDate).toLocaleDateString()}
             </div>
           )}
+          {enhancedTokenData.marketStatus === 'SETTLEMENT_REQUESTED' && (
+            <div className="text-xs text-gray-300 mt-1">
+              Proposed: <span className="text-white font-mono">
+                ${Number((marketData as any)?.proposed_settlement_value ?? 0).toFixed(4)}
+              </span>
+              {(marketData as any)?.settlement_window_expires_at ? (
+                <> • Expires {new Date(String((marketData as any).settlement_window_expires_at)).toLocaleString()}</>
+              ) : null}
+              
+            </div>
+          )}
         </div>
       </div>
     );
@@ -525,6 +551,27 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
   const isPositive = enhancedTokenData.priceChangePercent24h >= 0;
   const { change5m, change1h, change6h } = enhancedTokenData.timeBasedChanges;
+
+  const formatCompactMoney = (value: number): string => {
+    if (!Number.isFinite(value)) return '—';
+    const abs = Math.abs(value);
+    const decimals = abs >= 100 ? 2 : abs >= 1 ? 3 : 6;
+    let s = value.toFixed(decimals);
+    if (s.includes('.')) s = s.replace(/\.?0+$/, '');
+    return `$${s}`;
+  };
+
+  const formatTimeRemaining = (ms: number) => {
+    if (ms <= 0) return '';
+    const totalSec = Math.floor(ms / 1000);
+    const days = Math.floor(totalSec / 86400);
+    const hours = Math.floor((totalSec % 86400) / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  };
+  const remainingText = settlementExpiresMs > 0 ? formatTimeRemaining(settlementExpiresMs - nowTs) : '';
   
   // Check for valid real-time price for UI indicators (simplified since hooks removed)
   const showLiveIndicator = enhancedTokenData?.isDeployed && 
@@ -700,6 +747,26 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
               </button>
             )}
           </div>
+          
+          {/* Settlement inline info below current price */}
+          {settlementActiveCompact && (
+            <div className="mt-1 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-1 h-1 rounded-full bg-yellow-400" />
+                <span className="text-[10px] text-[#808080]">Settlement</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-white font-mono">
+                  {formatCompactMoney(proposedSettlementValue)}
+                </span>
+                {remainingText && (
+                  <span className="text-[10px] text-[#606060]">
+                    {remainingText} left
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           
           {/* Price Details */}
           <div className="mt-1.5 space-y-1 text-[9px]">

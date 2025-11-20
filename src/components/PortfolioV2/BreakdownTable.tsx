@@ -35,6 +35,10 @@ function formatNum(n: number, decimals = 4): string {
 	return n.toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: Math.min(2, decimals) })
 }
 
+const logGoddBreakdown = (step: number, message: string, data?: any) => {
+	console.log(`[GODD][STEP${step}] ${message}`, data ?? '')
+}
+
 export default function BreakdownTable() {
 	const { positions, ordersBuckets, isLoading: isLoadingPortfolio, hasLoadedOnce: portfolioHasLoaded, refreshOrders } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
 	const { markets, isLoading: marketsLoading } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 })
@@ -178,6 +182,7 @@ export default function BreakdownTable() {
 		if (ordersBuckets && ordersBuckets.length > 0) {
 			const totalOrders = ordersBuckets.reduce((sum, b) => sum + (b?.orders?.length || 0), 0)
 			if (totalOrders > 0) {
+				logGoddBreakdown(24, 'BreakdownTable processed new ordersBuckets snapshot', { bucketCount: ordersBuckets.length, totalOrders })
 				// Only update if we have actual orders
 				const flat: Array<{ token: string; symbol: string; id: string; metric: string; side: 'BUY' | 'SELL'; price: number; size: number; margin?: number }> = []
 				ordersBuckets.forEach((bucket) => {
@@ -219,7 +224,7 @@ export default function BreakdownTable() {
 				rows.push({ token, symbol, id: idStr, metric, side, price: priceNum, size: qty, margin })
 			})
 		})
-		
+		logGoddBreakdown(25, 'BreakdownTable flattened orders for render', { rowCount: rows.length, isInitialLoading })
 		// If we have orders, return them
 		if (rows.length > 0) return rows
 		

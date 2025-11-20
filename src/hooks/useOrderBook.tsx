@@ -1253,8 +1253,13 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
 
 // Utility function (not a hook) to fetch active orders across all markets for a user
 // Returns an array of market buckets with symbol, token name, and the list of active orders
+const logGoddOrders = (step: number, message: string, data?: any) => {
+  console.log(`[GODD][STEP${step}] ${message}`, data ?? '');
+};
+
 export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Array<{ symbol: string; token: string; orders: any[] }>> {
   if (!trader) return [];
+  logGoddOrders(12, 'Starting all-market orders fetch', { trader });
   // Lightweight cache to prevent repeated RPCs and flapping results
   const now = Date.now();
   const TTL_MS = 30000; // 30s
@@ -1263,6 +1268,7 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
   const dwarn = (...args: any[]) => { if (DEBUG_PORTFOLIO_LOGS) console.warn('[ALTKN][Portfolio][OrdersAllMkts]', ...args); };
   dlog('Start fetching active orders across markets', { trader: String(trader), chainId: CHAIN_CONFIG.chainId });
   const key = `${String(trader).toLowerCase()}::${String(CHAIN_CONFIG.chainId)}`;
+  logGoddOrders(13, 'Checking global cache for trader+chain combination', { key });
   // @ts-ignore
   const g: any = globalThis as any;
   if (!g.__ordersAllMktsCache) g.__ordersAllMktsCache = new Map<string, { ts: number; data: any[] }>();
@@ -1270,9 +1276,11 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
   const cached = g.__ordersAllMktsCache.get(key);
   if (cached && now - cached.ts < TTL_MS) {
     dlog('Cache hit', { ageMs: now - cached.ts, bucketCount: cached.data.length, markets: (cached.data || []).map((b: any) => b.symbol) });
+    logGoddOrders(14, 'Cache hit for all-market orders', { bucketCount: cached.data.length });
     return cached.data;
   }
   try {
+    logGoddOrders(15, 'Ensuring market info populated before RPC sweep');
     // Populate market info at most once if empty
     const initial = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
     if (!initial.length && !g.__ordersAllMktsPopulateOnce.populated) {
@@ -1285,6 +1293,7 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
       dwarn('No market entries available; returning cached or empty');
       return cached?.data || [];
     }
+    logGoddOrders(16, 'Resolved market entries for sweep', { marketCount: entries.length });
     dlog('Market entries resolved', { markets: entries.length });
     // Fetch sequentially to avoid bursty RPC and transient "empty" reads
     const buckets: Array<{ symbol: string; token: string; orders: any[] }> = [];
@@ -1292,11 +1301,13 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
       const metric = m?.marketIdentifier || m?.symbol || '';
       if (!metric) continue;
       dlog('Fetching active orders for market', { metric, symbol: m?.symbol });
+      logGoddOrders(17, 'Fetching orders for market', { metric, symbol: m?.symbol });
       const orders = await orderService.getUserActiveOrders(trader as any, metric);
       if (Array.isArray(orders) && orders.length > 0) {
         const symbol = String(m?.symbol || '').toUpperCase();
         const token = m?.name || symbol;
         dlog('Active orders fetched', { metric, count: orders.length });
+        logGoddOrders(18, 'Orders found for market', { symbol, count: orders.length });
         buckets.push({ symbol, token, orders });
       }
     }
@@ -1304,10 +1315,12 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
       const totalOrders = (buckets || []).reduce((sum, b) => sum + ((b?.orders || []).length), 0);
       dlog('Done fetching active orders across markets', { bucketCount: buckets.length, totalOrders });
     } catch {}
+    logGoddOrders(19, 'All-market fetch complete; caching result', { bucketCount: buckets.length });
     g.__ordersAllMktsCache.set(key, { ts: Date.now(), data: buckets });
     return buckets;
-  } catch {
+  } catch (error: any) {
     dwarn('Error fetching active orders; returning cached or empty');
+    logGoddOrders(20, 'Error during all-market fetch; returning fallback', { error: error?.message });
     return cached?.data || [];
   }
 }

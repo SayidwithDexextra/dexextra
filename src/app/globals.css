@@ -155,4 +155,25 @@ header [onClick] {
   display: none; /* Chrome, Safari */
 }
 
+/* Hide all scrollbars within token page scope without affecting layout */
+.token-page,
+.token-page * {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.token-page::-webkit-scrollbar,
+.token-page *::-webkit-scrollbar {
+  display: none; /* Chrome, Safari */
+}
+
+/* Hide the main page scrollbar when token page is present, without disabling scroll */
+body:has(.token-page),
+html:has(.token-page) {
+  scrollbar-width: none; /* Firefox */
+}
+body:has(.token-page)::-webkit-scrollbar,
+html:has(.token-page)::-webkit-scrollbar {
+  display: none; /* Chrome, Safari */
+}
+
 

@@ -36,7 +36,7 @@ export function useMarketOverview({
   realtimeDebounce = 1000 // Add debounce for realtime updates
 }: {
   limit?: number;
-  status?: string;
+  status?: string | string[];
   category?: string;
   search?: string;
   autoRefresh?: boolean;
@@ -53,7 +53,14 @@ export function useMarketOverview({
       setIsLoading(true);
       const params = new URLSearchParams();
       params.set('limit', String(limit));
-      if (status) params.set('status', status);
+      if (status) {
+        if (Array.isArray(status)) {
+          const combined = status.filter(Boolean).join(',');
+          if (combined) params.set('status', combined);
+        } else {
+          params.set('status', status);
+        }
+      }
       if (category) params.set('category', category);
       if (search) params.set('search', search);
 

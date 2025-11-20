@@ -21,6 +21,8 @@ interface LightweightChartProps {
   height?: string | number;
   className?: string;
   defaultPrice?: number;
+  seriesType?: 'area' | 'candlestick';
+  defaultTimeframe?: '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d';
 }
 
 const timeframes = [
@@ -52,20 +54,26 @@ export default function LightweightChart({
   width = '100%', 
   height = 350, // Increased by 25% for optimal visibility
   className = '',
-  defaultPrice = 100
+  defaultPrice = 100,
+  seriesType = 'area',
+  defaultTimeframe = '1h'
 }: LightweightChartProps) {
   // Temporary flag to disable all backend interactions (API + Pusher)
   const CHART_BACKEND_ENABLED = process.env.NEXT_PUBLIC_CHART_BACKEND_ENABLED !== 'false';
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const areaSeriesRef = useRef<any>(null);
+  const candlestickSeriesRef = useRef<any>(null);
   const areaDataRef = useRef<Array<{ time: number; value: number }>>([]); // Keep full data in memory
+  const ohlcvDataRef = useRef<Array<{ time: number; open: number; high: number; low: number; close: number }>>([]);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const lastPusherUpdateRef = useRef<number>(0);
   const isMountedRef = useRef(true);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [chartReady, setChartReady] = useState(true); // TEMPORARILY SET TO TRUE TO SKIP LOADING
+  const isNumberHeight = typeof height === 'number';
   
-  const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
+  const [selectedTimeframe, setSelectedTimeframe] = useState(defaultTimeframe);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -96,49 +104,81 @@ export default function LightweightChart({
   // Helper: push a live tick from TokenHeader event into the area series
   const applyLiveTick = useCallback((tickPrice: number, tickTimestamp: number) => {
     try {
-      if (!areaSeriesRef.current) return;
+      if (seriesType === 'area' && !areaSeriesRef.current) return;
+      if (seriesType === 'candlestick' && !candlestickSeriesRef.current) return;
       const timeframeSeconds = getTimeframeSeconds(selectedTimeframe);
       const alignedTime = Math.floor(Math.floor(tickTimestamp / 1000) / timeframeSeconds) * timeframeSeconds;
 
-      const newPoint = { time: alignedTime, value: Math.max(0, Number(tickPrice) || 0) };
-      const lastPoint = areaDataRef.current[areaDataRef.current.length - 1];
+      if (seriesType === 'area') {
+        const newPoint = { time: alignedTime, value: Math.max(0, Number(tickPrice) || 0) };
+        const lastPoint = areaDataRef.current[areaDataRef.current.length - 1];
 
-      if (!lastPoint) {
-        areaDataRef.current = [newPoint];
-        areaSeriesRef.current.setData([{ time: newPoint.time as Time, value: newPoint.value }]);
-      } else {
-        if (newPoint.time === lastPoint.time) {
-          areaDataRef.current[areaDataRef.current.length - 1] = newPoint;
-          areaSeriesRef.current.update({ time: newPoint.time as Time, value: newPoint.value });
-        } else if (newPoint.time > lastPoint.time) {
-          areaDataRef.current.push(newPoint);
-          areaSeriesRef.current.update({ time: newPoint.time as Time, value: newPoint.value });
+        if (!lastPoint) {
+          areaDataRef.current = [newPoint];
+          areaSeriesRef.current.setData([{ time: newPoint.time as Time, value: newPoint.value }]);
         } else {
-          // stale tick, ignore
+          if (newPoint.time === lastPoint.time) {
+            areaDataRef.current[areaDataRef.current.length - 1] = newPoint;
+            areaSeriesRef.current.update({ time: newPoint.time as Time, value: newPoint.value });
+          } else if (newPoint.time > lastPoint.time) {
+            areaDataRef.current.push(newPoint);
+            areaSeriesRef.current.update({ time: newPoint.time as Time, value: newPoint.value });
+          } else {
+            return;
+          }
+        }
+
+        const firstValue = areaDataRef.current[0]?.value || 0;
+        const changeValue = newPoint.value - firstValue;
+        const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
+
+        const isPositive = changeValue >= 0;
+        areaSeriesRef.current.applyOptions({
+          lineColor: isPositive ? positiveColor : negativeColor,
+          topColor: isPositive ? positiveTopColor : negativeTopColor,
+          bottomColor: isPositive ? positiveBottomColor : negativeBottomColor,
+          crosshairMarkerBorderColor: isPositive ? positiveColor : negativeColor,
+          crosshairMarkerBackgroundColor: isPositive ? positiveColor : negativeColor,
+        });
+
+        setLegendData({
+          price: newPoint.value,
+          change: changeValue,
+          changePercent: isFinite(changePercent) ? changePercent : 0,
+          time: new Date(newPoint.time * 1000).toLocaleTimeString(),
+        });
+      } else {
+        // candlestick
+        const price = Math.max(0, Number(tickPrice) || 0);
+        const lastBar = ohlcvDataRef.current[ohlcvDataRef.current.length - 1];
+        if (!lastBar) {
+          const bar = { time: alignedTime, open: price, high: price, low: price, close: price };
+          ohlcvDataRef.current = [bar];
+          candlestickSeriesRef.current.setData([{ ...bar, time: bar.time as Time } as any]);
+        } else if (alignedTime === lastBar.time) {
+          lastBar.close = price;
+          lastBar.high = Math.max(lastBar.high, price);
+          lastBar.low = Math.min(lastBar.low, price);
+          candlestickSeriesRef.current.update({ ...lastBar, time: lastBar.time as Time } as any);
+        } else if (alignedTime > lastBar.time) {
+          const bar = { time: alignedTime, open: lastBar.close, high: Math.max(lastBar.close, price), low: Math.min(lastBar.close, price), close: price };
+          ohlcvDataRef.current.push(bar);
+          candlestickSeriesRef.current.update({ ...bar, time: bar.time as Time } as any);
+        } else {
           return;
         }
+
+        const firstClose = ohlcvDataRef.current[0]?.close || 0;
+        const changeValue = price - firstClose;
+        const changePercent = firstClose !== 0 ? (changeValue / firstClose) * 100 : 0;
+
+        setLegendData({
+          price,
+          change: changeValue,
+          changePercent: isFinite(changePercent) ? changePercent : 0,
+          time: new Date(alignedTime * 1000).toLocaleTimeString(),
+        });
       }
-
-      // Update legend based on first vs current
-      const firstValue = areaDataRef.current[0]?.value || 0;
-      const changeValue = newPoint.value - firstValue;
-      const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
-
-      const isPositive = changeValue >= 0;
-      areaSeriesRef.current.applyOptions({
-        lineColor: isPositive ? positiveColor : negativeColor,
-        topColor: isPositive ? positiveTopColor : negativeTopColor,
-        bottomColor: isPositive ? positiveBottomColor : negativeBottomColor,
-        crosshairMarkerBorderColor: isPositive ? positiveColor : negativeColor,
-        crosshairMarkerBackgroundColor: isPositive ? positiveColor : negativeColor,
-      });
-
-      setLegendData({
-        price: newPoint.value,
-        change: changeValue,
-        changePercent: isFinite(changePercent) ? changePercent : 0,
-        time: new Date(newPoint.time * 1000).toLocaleTimeString(),
-      });
 
       if (chartRef.current) {
         chartRef.current.timeScale().fitContent();
@@ -166,14 +206,57 @@ export default function LightweightChart({
      console.log('areaSeriesRef.current:', areaSeriesRef.current);
      console.log('hasData before update:', hasData);
 
-    if (!isMountedRef.current || !areaSeriesRef.current) {
-       console.log('❌ Early return - component unmounted or series not ready');
-      return;
-    }
+    if (!isMountedRef.current) return;
 
      console.log(`📈 Chart update received via Pusher for ${data.symbol} (${data.timeframe}):`, data);
 
     try {
+      if (seriesType === 'candlestick') {
+        const timeframeSeconds = getTimeframeSeconds(selectedTimeframe);
+        const alignedTime = Math.floor(Math.floor(data.timestamp / 1000) / timeframeSeconds) * timeframeSeconds;
+        const price = data.close;
+        const lastBar = ohlcvDataRef.current[ohlcvDataRef.current.length - 1];
+
+        if (!candlestickSeriesRef.current) return;
+
+        if (!lastBar) {
+          const bar = { time: alignedTime, open: price, high: price, low: price, close: price };
+          ohlcvDataRef.current = [bar];
+          candlestickSeriesRef.current.setData([{ ...bar, time: bar.time as Time } as any]);
+        } else if (alignedTime === lastBar.time) {
+          lastBar.close = price;
+          lastBar.high = Math.max(lastBar.high, price);
+          lastBar.low = Math.min(lastBar.low, price);
+          candlestickSeriesRef.current.update({ ...lastBar, time: lastBar.time as Time } as any);
+        } else if (alignedTime > lastBar.time) {
+          const bar = { time: alignedTime, open: lastBar.close, high: Math.max(lastBar.close, price), low: Math.min(lastBar.close, price), close: price };
+          ohlcvDataRef.current.push(bar);
+          candlestickSeriesRef.current.update({ ...bar, time: bar.time as Time } as any);
+        } else {
+          return;
+        }
+
+        const firstClose = ohlcvDataRef.current[0]?.close || 0;
+        const changeValue = price - firstClose;
+        const changePercent = firstClose !== 0 ? (changeValue / firstClose) * 100 : 0;
+
+        setLegendData({
+          price,
+          change: changeValue,
+          changePercent: isFinite(changePercent) ? changePercent : 0,
+          time: new Date(alignedTime * 1000).toLocaleTimeString(),
+        });
+
+        if (chartRef.current) {
+          chartRef.current.timeScale().fitContent();
+        }
+        lastPusherUpdateRef.current = Date.now();
+        setLastUpdate(new Date());
+        setDataSource('pusher');
+        setError(null);
+        return;
+      }
+
       // Create the new data point with proper time alignment
       const timeframeSeconds = getTimeframeSeconds(selectedTimeframe);
       const alignedTime = Math.floor(Math.floor(data.timestamp / 1000) / timeframeSeconds) * timeframeSeconds;
@@ -321,7 +404,9 @@ export default function LightweightChart({
           textColor: 'rgba(255, 255, 255, 0.5)',
         },
         width: (chartContainerRef.current as any).offsetWidth,
-        height: typeof height === 'number' ? height : 350,
+        height: isNumberHeight 
+          ? (typeof height === 'number' ? height : 350)
+          : ((chartContainerRef.current as any).offsetHeight || 350),
         grid: {
           vertLines: { color: 'rgb(22, 21, 26, 0.0)' },
           horzLines: { color: 'rgb(22, 21, 26, 0.0)' },
@@ -378,38 +463,53 @@ export default function LightweightChart({
       });
 
 
-      // Create area series with modern gradient
-      const areaSeries = chart.addAreaSeries({
-        lineColor: positiveColor,
-        topColor: positiveTopColor,
-        bottomColor: positiveBottomColor,
-        lineWidth: 3,
-        priceFormat: {
-          type: 'price',
-          precision: 2,
-        },
-        crosshairMarkerVisible: true,
-        crosshairMarkerRadius: 4,
-        crosshairMarkerBorderColor: positiveColor,
-        crosshairMarkerBackgroundColor: positiveColor,
-      });
+      // Create series
+      if (seriesType === 'candlestick') {
+        const cSeries = chart.addCandlestickSeries({
+          upColor: '#75bb75',
+          downColor: '#fb5c60',
+          borderVisible: false,
+          wickUpColor: '#75bb75',
+          wickDownColor: '#fb5c60',
+        });
+        candlestickSeriesRef.current = cSeries;
+      } else {
+        const areaSeries = chart.addAreaSeries({
+          lineColor: positiveColor,
+          topColor: positiveTopColor,
+          bottomColor: positiveBottomColor,
+          lineWidth: 3,
+          priceFormat: {
+            type: 'price',
+            precision: 2,
+          },
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: 4,
+          crosshairMarkerBorderColor: positiveColor,
+          crosshairMarkerBackgroundColor: positiveColor,
+        });
+        areaSeriesRef.current = areaSeries;
+      }
 
       chartRef.current = chart;
-      areaSeriesRef.current = areaSeries;
       
             // Add crosshair move handler for legend updates
       chart.subscribeCrosshairMove((param: any) => {
-        if (!param || !param.time || !param.seriesData || !areaSeriesRef.current) {
+        const targetSeries = seriesType === 'candlestick' ? candlestickSeriesRef.current : areaSeriesRef.current;
+        if (!param || !param.time || !param.seriesData || !targetSeries) {
           // Reset to latest data when crosshair is removed
-          if (areaDataRef.current.length > 0) {
-            const latestPoint = areaDataRef.current[areaDataRef.current.length - 1];
-            const firstPoint = areaDataRef.current[0];
-            const firstValue = firstPoint?.value || 0;
-            const changeValue = latestPoint.value - firstValue;
+          const hasArea = areaDataRef.current.length > 0;
+          const hasCandle = ohlcvDataRef.current.length > 0;
+          if (hasArea || hasCandle) {
+            const latestPoint = hasArea 
+              ? { price: areaDataRef.current[areaDataRef.current.length - 1].value, time: areaDataRef.current[areaDataRef.current.length - 1].time }
+              : { price: ohlcvDataRef.current[ohlcvDataRef.current.length - 1].close, time: ohlcvDataRef.current[ohlcvDataRef.current.length - 1].time };
+            const firstValue = hasArea ? (areaDataRef.current[0]?.value || 0) : (ohlcvDataRef.current[0]?.close || 0);
+            const changeValue = latestPoint.price - firstValue;
             const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
             
             setLegendData({
-              price: latestPoint.value,
+              price: latestPoint.price,
               change: changeValue,
               changePercent: isFinite(changePercent) ? changePercent : 0,
               time: new Date(latestPoint.time * 1000).toLocaleTimeString(),
@@ -419,15 +519,15 @@ export default function LightweightChart({
         }
         
         try {
-          const data = param.seriesData.get(areaSeriesRef.current);
+          const targetSeries = seriesType === 'candlestick' ? candlestickSeriesRef.current : areaSeriesRef.current;
+          const data = param.seriesData.get(targetSeries);
           if (!data || typeof data !== 'object' || !('value' in data)) {
             return;
           }
           
           // Get the first data point for change calculation
-          const firstPoint = areaDataRef.current[0];
+          const firstValue = seriesType === 'candlestick' ? (ohlcvDataRef.current[0]?.close || 0) : (areaDataRef.current[0]?.value || 0);
           const currentValue = (data as any).value as number;
-          const firstValue = firstPoint?.value || 0;
           const changeValue = currentValue - firstValue;
           const changePercent = firstValue !== 0 ? (changeValue / firstValue) * 100 : 0;
           
@@ -454,10 +554,27 @@ export default function LightweightChart({
         if (chartContainerRef.current && chart) {
           chart.applyOptions({ 
             width: (chartContainerRef.current as any).offsetWidth,
-            height: typeof height === 'number' ? height : 350
+            height: isNumberHeight
+              ? (typeof height === 'number' ? height : 350)
+              : ((chartContainerRef.current as any).offsetHeight || 350)
           });
         }
       };
+
+      // Ensure correct size on first paint
+      if (typeof globalThis !== 'undefined' && 'requestAnimationFrame' in globalThis) {
+        (globalThis as any).requestAnimationFrame(() => handleResize());
+      } else {
+        setTimeout(() => handleResize(), 0);
+      }
+
+      // Observe container resizes
+      if (typeof globalThis !== 'undefined' && 'ResizeObserver' in globalThis && chartContainerRef.current) {
+        resizeObserverRef.current = new (globalThis as any).ResizeObserver(() => {
+          handleResize();
+        });
+        resizeObserverRef.current.observe(chartContainerRef.current);
+      }
 
       if (typeof globalThis !== 'undefined' && 'window' in globalThis) {
         (globalThis as any).window.addEventListener('resize', handleResize);
@@ -467,13 +584,17 @@ export default function LightweightChart({
         if (typeof globalThis !== 'undefined' && 'window' in globalThis) {
           (globalThis as any).window.removeEventListener('resize', handleResize);
         }
+        if (resizeObserverRef.current && chartContainerRef.current) {
+          resizeObserverRef.current.disconnect();
+          resizeObserverRef.current = null;
+        }
         chart.remove();
       };
     } catch (err) {
       console.error('Error initializing chart:', err);
       setError('Failed to initialize chart');
     }
-  }, [height]);
+  }, [height, seriesType]);
 
   // Set up Pusher subscription for real-time chart updates
   useEffect(() => {
@@ -577,6 +698,7 @@ export default function LightweightChart({
       const result: any = await response.json();
       
       let areaData: Array<{ time: number; value: number }>;
+      let ohlcvData: Array<{ time: number; open: number; high: number; low: number; close: number }>;
       let hasRealData = false;
 
       if (!result.success || !result.data || result.data.length === 0) {
@@ -602,6 +724,11 @@ export default function LightweightChart({
             value: 0
           }
         ];
+        ohlcvData = [
+          { time: alignedNow - timeframeSeconds * 2, open: 0, high: 0, low: 0, close: 0 },
+          { time: alignedNow - timeframeSeconds, open: 0, high: 0, low: 0, close: 0 },
+          { time: alignedNow, open: 0, high: 0, low: 0, close: 0 },
+        ];
         
         hasRealData = false;
       } else {
@@ -609,7 +736,7 @@ export default function LightweightChart({
          
         // Transform optimized OHLCV data for area chart
         // The new backend already provides properly aligned timestamps
-        const processedData = result.data
+        const processedArea = result.data
           .map((item: OHLCVData) => ({
             time: item.time, // Already aligned by dynamic aggregation
             value: item.close, // Use close price for area chart
@@ -626,8 +753,28 @@ export default function LightweightChart({
             return acc;
           }, [])
           .sort((a: any, b: any) => a.time - b.time); // Ensure chronological order
+        const processedOhlcv = result.data
+          .map((item: OHLCVData) => ({
+            time: item.time,
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+          }))
+          .filter((item: any) => item.close > 0 && !isNaN(item.close))
+          .reduce((acc: any[], current: any) => {
+            const existingIndex = acc.findIndex(item => item.time === current.time);
+            if (existingIndex >= 0) {
+              acc[existingIndex] = current;
+            } else {
+              acc.push(current);
+            }
+            return acc;
+          }, [])
+          .sort((a: any, b: any) => a.time - b.time);
         
-        areaData = processedData;
+        areaData = processedArea;
+        ohlcvData = processedOhlcv;
         hasRealData = true;
         
         // Log architecture benefits
@@ -637,7 +784,40 @@ export default function LightweightChart({
       }
 
       // Update chart series without animation
-      if (areaSeriesRef.current) {
+      if (seriesType === 'candlestick' && candlestickSeriesRef.current) {
+        const finalTimeSinceLastPusherUpdate = Date.now() - lastPusherUpdateRef.current;
+        if (lastPusherUpdateRef.current > 0 && finalTimeSinceLastPusherUpdate < 10000) {
+           console.log(`🛑 Aborting setData - very recent Pusher update (${Math.round(finalTimeSinceLastPusherUpdate/1000)}s ago)`);
+          setIsLoading(false);
+          return;
+        }
+        const chartData = ohlcvData.map((bar) => ({
+          time: bar.time as Time,
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close
+        })) as any;
+        candlestickSeriesRef.current.setData(chartData);
+        ohlcvDataRef.current = ohlcvData;
+
+        if (chartRef.current) {
+          chartRef.current.timeScale().fitContent();
+        }
+
+        if (ohlcvData.length > 0) {
+          const latest = ohlcvData[ohlcvData.length - 1];
+          const first = ohlcvData[0];
+          const changeValue = latest.close - first.close;
+          const changePercent = first.close !== 0 ? (changeValue / first.close) * 100 : 0;
+          setLegendData({
+            price: latest.close,
+            change: changeValue,
+            changePercent: isFinite(changePercent) ? changePercent : 0,
+            time: new Date(latest.time * 1000).toLocaleTimeString(),
+          });
+        }
+      } else if (areaSeriesRef.current) {
         // Double-check for Pusher updates that came in during the fetch
         const finalTimeSinceLastPusherUpdate = Date.now() - lastPusherUpdateRef.current;
         if (lastPusherUpdateRef.current > 0 && finalTimeSinceLastPusherUpdate < 10000) {
@@ -751,13 +931,13 @@ export default function LightweightChart({
 
   return (
     <div 
-      className={`group relative bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 overflow-hidden ${className}`}
+      className={`group relative bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 overflow-hidden h-full flex flex-col ${className}`}
     >
       
       {/* Chart Legend - Design System Typography */}
       <div className="absolute top-3 left-4 pointer-events-none select-none z-20">
         {/* Section Header Pattern */}
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-3">
           <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
             {(symbol).toUpperCase()}/USDC
           </h4>
@@ -855,9 +1035,9 @@ export default function LightweightChart({
 
       {/* Chart Container */}
       <div 
-        className="relative w-full"
+        className={`relative w-full ${isNumberHeight ? '' : 'flex-1 min-h-0'}`}
         style={{ 
-          height: typeof height === 'number' ? height : 350,
+          ...(isNumberHeight ? { height: height as number } : {}),
           opacity: chartReady ? 1 : 0,
           transition: 'opacity 0.5s ease-out',
         }}

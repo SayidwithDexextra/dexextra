@@ -266,7 +266,7 @@ OUTPUT FORMAT (JSON):
   "unit": "unit of measurement (e.g., 'people', 'USD', 'percentage')",
   "as_of": "current date/time when value is valid (ISO format, prefer TODAY)",
   "confidence": 0.95,
-  "asset_price_suggestion": "Numeric string computed per ASSET PRICE RULES below; must contain ONLY digits, an optional decimal point, and optional thousands separators (commas). No units or other characters.",
+  "asset_price_suggestion": "Numeric string computed per ASSET PRICE RULES below; MUST be formatted with up to 5 significant figures using standard rounding (no unnecessary trailing zeros). You may include an optional decimal point (up to 4 places) and optional thousands separators (commas). MUST contain no units or other characters.",
   "reasoning": "detailed explanation emphasizing why this is the CURRENT value and when it was last updated",
   "source_quotes": [
     {
@@ -300,7 +300,14 @@ You are an expert in market design and contract specification. Your job is to de
 
 4) Never invent arbitrary scales. The rescaling must reflect the way people normally describe the metric (millions, billions, trillions).
 
-5) asset_price_suggestion MUST contain ONLY the final numeric value (rescaled or unmodified), with no units and no commentary. Use only digits, an optional decimal point, and optional thousands separators (commas). Emit it as a JSON string.
+5) After selecting the base price (unscaled or rescaled), ROUND/FORMAT the final value to up to 5 significant figures (using standard rounding). Do NOT pad with trailing zeros beyond what is natural. If decimals are required, use at most 4 decimal places.
+   Examples:
+   - 466        → 466
+   - 8243.729   → 8243.7
+   - 8.240437918→ 8.2404
+   - 0.01234567 → 0.012346
+
+6) asset_price_suggestion MUST contain ONLY the final numeric value (rescaled or unmodified) with up to 5 significant figures; no units and no commentary. Use only digits, an optional decimal point, and optional thousands separators (commas). Emit it as a JSON string.
 
 ADDITIONAL RULES FOR LOCATORS & EXTRACTOR:
 - The first entry in source_quotes MUST be the best/primary source you used.
@@ -336,7 +343,7 @@ REJECT: Historical trends, past data points, outdated statistics, or archived in
 
     // Asset price determination context (for start price suggestion)
     if (primaryUrl) {
-      prompt += `\n\nASSET PRICE DETERMINATION CONTEXT:\nYou are an expert in market design and contract specification. Your job is to determine the correct numeric "price per unit" for this market, based on the value shown at a specific URL.\n\nMARKET: ${metric}\nSETTLEMENT URL: ${primaryUrl}\n\nIMPORTANT FOR asset_price_suggestion:\n- Output ONLY the final numeric price (as a string in JSON).\n- Do NOT include units.\n- Do NOT include any words, explanations, or symbols other than digits, an optional decimal point, and optional thousands separators (commas).\n- Single-line numeric value only.\n\nFollow the ASSET PRICE RULES in the system prompt to compute this value.`;
+      prompt += `\n\nASSET PRICE DETERMINATION CONTEXT:\nYou are an expert in market design and contract specification. Your job is to determine the correct numeric "price per unit" for a market, based on the value shown at a specific URL.\n\nThe market is:\n${metric}\n\nThe settlement URL is:\n${primaryUrl}\n\nIMPORTANT FOR asset_price_suggestion:\n• You must output ONLY the final numeric price.\n• The final numeric price MUST have up to 5 significant figures (use standard rounding). Do not pad with trailing zeros. If decimals are required, use at most 4 decimal places.\n• You may use digits, an optional decimal point, and optional thousands separators (commas).\n• Do NOT output units.\n• Do NOT output any words, explanations, or symbols other than digits, an optional decimal point, and optional thousands separators (commas).\n• Output a single line only (as a JSON string for asset_price_suggestion).\n\nRULES YOU MUST FOLLOW (summarized; see system prompt for details):\n1) Identify the main numeric value on the settlement page.\n2) If value uses a recognized trading unit (e.g., USD per BTC/oz/barrel/ton), do NOT rescale.\n3) For non-financial metrics: if < 1,000,000 use as-is; if ≥ 1,000,000 rescale to the natural human unit (millions/billions/trillions) people use to discuss that metric, then use the rescaled value.\n4) Never invent arbitrary scales; only natural, commonly used scales.\n5) After selecting the base value, format to up to 5 significant figures.\n\nReturn your full JSON with asset_price_suggestion conforming to the above.`;
     }
     
     prompt += `\n\nSOURCE DATA:\n`;

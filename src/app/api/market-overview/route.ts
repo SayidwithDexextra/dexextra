@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
 
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
-    const status = searchParams.get('status');
+      const status = searchParams.get('status');
     const category = searchParams.get('category');
     const search = searchParams.get('search');
 
@@ -23,7 +23,15 @@ export async function GET(request: NextRequest) {
       .select('*', { count: 'exact' })
       .order('symbol', { ascending: true });
 
-    if (status) query = query.eq('market_status', status);
+      // Support multiple statuses via comma-separated list, e.g. status=ACTIVE,SETTLEMENT_REQUESTED
+      if (status) {
+        const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+        if (statuses.length > 1) {
+          query = query.in('market_status', statuses);
+        } else if (statuses.length === 1) {
+          query = query.eq('market_status', statuses[0]);
+        }
+      }
     if (category) query = query.eq('category', category);
     if (search) {
       query = query.or(

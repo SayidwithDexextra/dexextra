@@ -118,6 +118,29 @@ export const OBSettlementFacetABI = [
   "function adminCancelAllRestingOrders() external"
 ];
 
+// MarketLifecycleFacet - lifecycle windows, lineage, and testing controls
+export const MarketLifecycleFacetABI = [
+  // Actions
+  "function initializeLifecycle(uint256 settlementTimestamp, address parent) external",
+  "function startRolloverWindow() external",
+  "function startSettlementChallengeWindow() external",
+  "function linkRolloverChild(address childMarket, uint256 childSettlementTimestamp) external",
+  "function setParent(address parentMarket) external",
+  // Views
+  "function getSettlementTimestamp() external view returns (uint256)",
+  "function getRolloverWindowStart() external view returns (uint256)",
+  "function getChallengeWindowStart() external view returns (uint256)",
+  "function isInRolloverWindow() external view returns (bool)",
+  "function isInSettlementChallengeWindow() external view returns (bool)",
+  "function getMarketLineage() external view returns (address parent, address child)",
+  // Testing controls
+  "function enableTestingMode(bool enabled) external",
+  "function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external",
+  "function setSettlementTimestamp(uint256 newSettlementTimestamp) external",
+  "function forceStartRolloverWindow() external",
+  "function forceStartSettlementChallengeWindow() external"
+];
+
 // OBTradeExecutionFacet - trade execution functions
 export const OBTradeExecutionFacetABI = [
   "function executeMarketOrder(address user, bool isBuy, uint256 quantity) external returns (uint256)",

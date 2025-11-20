@@ -7,6 +7,7 @@ import {
   OBLiquidationFacetABI,
   OBViewFacetABI,
   OBSettlementFacetABI,
+  MarketLifecycleFacetABI,
 } from '@/lib/contracts';
 import FuturesMarketFactoryGenerated from '@/lib/abis/FuturesMarketFactory.json';
 
@@ -79,6 +80,8 @@ export async function createMarketOnChain(params: {
     const liqSelectors = selectorsFromAbi(OBLiquidationFacetABI as any[]);
     const viewSelectors = selectorsFromAbi(OBViewFacetABI as any[]);
     const settleSelectors = selectorsFromAbi(OBSettlementFacetABI as any[]);
+    const lifecycleAddr = (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
+    const lifecycleSelectors = selectorsFromAbi(MarketLifecycleFacetABI as any[]);
     cutArg = [
       [adminAddr, 0, adminSelectors],
       [pricingAddr, 0, pricingSelectors],
@@ -87,6 +90,7 @@ export async function createMarketOnChain(params: {
       [liqAddr, 0, liqSelectors],
       [viewAddr, 0, viewSelectors],
       [settleAddr, 0, settleSelectors],
+      [lifecycleAddr, 0, lifecycleSelectors],
     ].filter(([addr]) => typeof addr === 'string' && ethers.isAddress(String(addr))) as any;
     onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
   }

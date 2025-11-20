@@ -11,6 +11,7 @@ import OBTradeExecutionFacetArtifact from '@/lib/abis/facets/OBTradeExecutionFac
 import OBLiquidationFacetArtifact from '@/lib/abis/facets/OBLiquidationFacet.json';
 import OBViewFacetArtifact from '@/lib/abis/facets/OBViewFacet.json';
 import OBSettlementFacetArtifact from '@/lib/abis/facets/OBSettlementFacet.json';
+import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
 
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
@@ -56,6 +57,7 @@ function loadFacetAbi(contractName: string): any[] {
     case 'OBLiquidationFacet': return (OBLiquidationFacetArtifact as any)?.abi || [];
     case 'OBViewFacet': return (OBViewFacetArtifact as any)?.abi || [];
     case 'OBSettlementFacet': return (OBSettlementFacetArtifact as any)?.abi || [];
+    case 'MarketLifecycleFacet': return (MarketLifecycleFacetArtifact as any)?.abi || [];
     default: return [];
   }
 }
@@ -75,8 +77,9 @@ export async function GET() {
     const liqFacet = process.env.OB_LIQUIDATION_FACET || process.env.NEXT_PUBLIC_OB_LIQUIDATION_FACET;
     const viewFacet = process.env.OB_VIEW_FACET || process.env.NEXT_PUBLIC_OB_VIEW_FACET;
     const settleFacet = process.env.OB_SETTLEMENT_FACET || process.env.NEXT_PUBLIC_OB_SETTLEMENT_FACET;
+    const lifecycleFacet = process.env.MARKET_LIFECYCLE_FACET || process.env.NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
 
-    if (!initFacet || !adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet) {
+    if (!initFacet || !adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !lifecycleFacet) {
       logStep('validate_env', 'error', {
         missing: {
           initFacet: !initFacet,
@@ -87,6 +90,7 @@ export async function GET() {
           liqFacet: !liqFacet,
           viewFacet: !viewFacet,
           settleFacet: !settleFacet,
+          lifecycleFacet: !lifecycleFacet,
         }
       });
       return NextResponse.json({ error: 'Missing one or more facet addresses in env' }, { status: 400 });
@@ -101,6 +105,7 @@ export async function GET() {
     const liqAbi = loadFacetAbi('OBLiquidationFacet');
     const viewAbi = loadFacetAbi('OBViewFacet');
     const settleAbi = loadFacetAbi('OBSettlementFacet');
+    const lifecycleAbi = loadFacetAbi('MarketLifecycleFacet');
 
     const cut = [
       { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(adminAbi) },
@@ -110,6 +115,7 @@ export async function GET() {
       { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(liqAbi) },
       { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(viewAbi) },
       { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(settleAbi) },
+      { facetAddress: lifecycleFacet, action: 0, functionSelectors: selectorsFromAbi(lifecycleAbi) },
     ];
 
     // Fail fast if any facet has zero selectors to avoid creating an unusable Diamond

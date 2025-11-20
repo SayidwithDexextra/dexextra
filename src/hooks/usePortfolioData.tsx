@@ -29,6 +29,9 @@ const DEBUG_PORTFOLIO_LOGS = process.env.NEXT_PUBLIC_DEBUG_PORTFOLIO === 'true' 
 const pfLog = (...args: any[]) => { if (DEBUG_PORTFOLIO_LOGS) console.log('[ALTKN][PortfolioData]', ...args); }
 const pfWarn = (...args: any[]) => { if (DEBUG_PORTFOLIO_LOGS) console.warn('[ALTKN][PortfolioData]', ...args); }
 const pfError = (...args: any[]) => { if (DEBUG_PORTFOLIO_LOGS) console.error('[ALTKN][PortfolioData]', ...args); }
+const goddLog = (step: number, message: string, data?: any) => {
+	console.log(`[GODD][STEP${step}] ${message}`, data ?? '')
+}
 
 // Global state to coordinate fetching across all hook instances
 const globalState = {
@@ -40,7 +43,6 @@ const globalState = {
 }
 
 const ORDERS_CACHE_TTL = 10000 // 10 seconds cache
-const ORDERS_POLL_INTERVAL = 15000 // 15 seconds polling
 const MAX_RETRIES = 3
 const RETRY_DELAY_BASE = 1000 // 1 second base delay
 
@@ -52,7 +54,6 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 	const { walletData } = useWallet() as any
 	const walletAddress = walletData?.address
 	const enabled = options?.enabled !== false
-	const refreshInterval = options?.refreshInterval ?? ORDERS_POLL_INTERVAL
 
 	// Use the existing usePositions hook for positions
 	const positionsState = usePositions(undefined, { enabled })
@@ -68,7 +69,6 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 	// Refs to prevent race conditions
 	const mountedRef = useRef(true)
 	const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 	const retryCountRef = useRef(0)
 
 	// Ensure market info is populated before fetching orders
@@ -105,11 +105,13 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 
 	// Fetch orders with retry logic
 	const fetchOrders = useCallback(async (address: string, retryAttempt = 0): Promise<PortfolioOrdersBucket[]> => {
+		goddLog(1, 'fetchOrders invoked', { address, retryAttempt })
 		const cacheKey = `${address.toLowerCase()}::${Date.now() - (Date.now() % ORDERS_CACHE_TTL)}`
 		const cached = globalState.ordersCache.get(address.toLowerCase())
 		
 		// Check cache first
 		if (cached && (Date.now() - cached.ts) < ORDERS_CACHE_TTL) {
+			goddLog(2, 'Returning cached orders snapshot', { bucketCount: cached.data.length, ageMs: Date.now() - cached.ts })
 			pfLog('Using cached orders', { ageMs: Date.now() - cached.ts, bucketCount: cached.data.length })
 			return cached.data
 		}
@@ -117,12 +119,14 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 		// Check if already fetching for this address
 		const inFlight = globalState.ordersFetching.get(address.toLowerCase())
 		if (inFlight) {
+			goddLog(3, 'Awaiting in-flight orders fetch', { address })
 			pfLog('Orders fetch already in progress, waiting...')
 			return await inFlight
 		}
 
 		// Ensure market info is populated before fetching
 		try {
+			goddLog(4, 'Ensuring market info populated before fetch')
 			await ensureMarketInfoPopulated()
 		} catch (error: any) {
 			pfWarn('Market info population failed, proceeding anyway:', error)
@@ -130,12 +134,18 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 
 		const fetchPromise = (async (): Promise<PortfolioOrdersBucket[]> => {
 			try {
+				goddLog(5, 'Dispatching getUserActiveOrdersAllMarkets call', { address, attempt: retryAttempt + 1 })
 				pfLog('Fetching orders', { address: address.slice(0, 6) + '...', attempt: retryAttempt + 1 })
 				const startTime = Date.now()
 				
 				const buckets = await getUserActiveOrdersAllMarkets(address)
 				const duration = Date.now() - startTime
 				
+				goddLog(6, 'Received buckets from all markets', {
+					bucketCount: buckets.length,
+					totalOrders: buckets.reduce((sum, b) => sum + (b?.orders?.length || 0), 0),
+					durationMs: duration
+				})
 				pfLog('Orders fetched successfully', { 
 					bucketCount: buckets.length, 
 					totalOrders: buckets.reduce((sum, b) => sum + (b?.orders?.length || 0), 0),
@@ -143,12 +153,14 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 				})
 
 				// Cache the result
+				goddLog(7, 'Caching fresh orders snapshot', { address, bucketCount: buckets.length })
 				globalState.ordersCache.set(address.toLowerCase(), { data: buckets, ts: Date.now() })
 				globalState.lastOrdersFetch.set(address.toLowerCase(), Date.now())
 				retryCountRef.current = 0 // Reset retry count on success
 
 				return buckets
 			} catch (error: any) {
+				goddLog(8, 'Orders fetch failure', { address, error: error?.message })
 				pfError('Failed to fetch orders', { error, attempt: retryAttempt + 1 })
 				
 				// Retry logic
@@ -172,6 +184,7 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 	// Refresh function exposed to components
 	const refreshOrders = useCallback(async () => {
 		if (!walletAddress || !enabled) return
+		goddLog(9, 'refreshOrders invoked', { address: walletAddress })
 		
 		// Clear cache to force fresh fetch
 		globalState.ordersCache.delete(walletAddress.toLowerCase())
@@ -186,6 +199,7 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 			if (!mountedRef.current) return
 			
 			setOrdersBuckets(buckets)
+			goddLog(10, 'refreshOrders applied new buckets', { bucketCount: buckets.length })
 			setLastUpdated(Date.now())
 			setIsLoadingOrders(false)
 			setHasLoadedOrdersOnce(true)
@@ -193,6 +207,7 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 			if (!mountedRef.current) return
 			
 			pfError('Manual refresh failed:', error)
+			goddLog(11, 'refreshOrders failed', { error: error?.message })
 			setOrdersError(error?.message || 'Failed to refresh orders')
 			setIsLoadingOrders(false)
 			setHasLoadedOrdersOnce(true)
@@ -256,33 +271,18 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 		// Initial fetch
 		doFetch(true)
 
-		// Set up polling (only refresh data, don't change loading states)
-		if (refreshInterval > 0) {
-			pollIntervalRef.current = setInterval(() => {
-				if (!cancelled && mountedRef.current && walletAddress && hasLoadedOrdersOnce) {
-					doFetch(false) // Polling refresh, not initial load
-				}
-			}, refreshInterval)
-		}
-
 		return () => {
 			cancelled = true
-			if (pollIntervalRef.current) {
-				clearInterval(pollIntervalRef.current)
-				pollIntervalRef.current = null
-			}
 		}
-	}, [walletAddress, enabled, refreshInterval, fetchOrders, hasLoadedOrdersOnce])
+	}, [walletAddress, enabled, fetchOrders, hasLoadedOrdersOnce])
 
-	// Cleanup on unmount
+	// Track mount/unmount (strict-mode safe)
 	useEffect(() => {
+		mountedRef.current = true
 		return () => {
 			mountedRef.current = false
 			if (fetchTimeoutRef.current) {
 				clearTimeout(fetchTimeoutRef.current)
-			}
-			if (pollIntervalRef.current) {
-				clearInterval(pollIntervalRef.current)
 			}
 		}
 	}, [])

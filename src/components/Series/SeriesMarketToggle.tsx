@@ -58,7 +58,7 @@ export default function SeriesMarketToggle({ seriesSlug, markets, className }: S
               )}
               {m.role && (
                 <span className="ml-1 text-[9px] text-[#606060] bg-[#1A1A1A] px-1 py-[0.50625px] rounded">
-                  {m.role === 'front' ? 'Front Month' : 'Next Month'}
+                  {m.role === 'front' ? 'Front Year' : 'Next Year'}
                 </span>
               )}
             </button>

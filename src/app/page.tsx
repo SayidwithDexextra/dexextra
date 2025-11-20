@@ -24,10 +24,9 @@ export default function Home() {
     error: marketsError,
     refetch: refetchMarkets
   } = useMarketOverview({
-    status: 'ACTIVE',
+    status: ['ACTIVE', 'SETTLEMENT_REQUESTED'],
     limit: 20,
-    autoRefresh: true,
-    refreshInterval: 5000,
+    autoRefresh: false,
     realtimeDebounce: 1000 // Add 1 second debounce for realtime updates
   });
 

@@ -145,8 +145,10 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
     const numericValue = parseFloat(value.replace(/,/g, ''));
     
     if (!isNaN(numericValue)) {
-      // Format number with commas
-      return numericValue.toLocaleString('en-US');
+      // Format number with commas and allow up to 4 decimal places (avoid default 3-cap)
+      return new Intl.NumberFormat('en-US', {
+        maximumFractionDigits: 4
+      }).format(numericValue);
     }
     
     // If not a number, return as-is

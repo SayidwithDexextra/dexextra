@@ -3,6 +3,11 @@
 import React from 'react';
 import { useMetricLivePrice } from '../../hooks/useMetricLivePrice';
 import { getSupabaseClient } from '../../lib/supabase-browser';
+import { useRouter } from 'next/navigation';
+import { ethers } from 'ethers';
+import { getReadProvider } from '@/lib/network';
+import { MarketLifecycleFacetABI } from '@/lib/contracts';
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 
 export interface MetricLivePriceProps {
   marketId?: string;
@@ -15,6 +20,14 @@ export interface MetricLivePriceProps {
   isLive?: boolean;          // legacy flag for UI badge
   compact?: boolean;         // compact spacing
   value?: number | string;   // initial fallback value to display
+  isSettlementWindow?: boolean; // optional override: when true, show settlement UI
+  onOpenSettlement?: () => void; // optional callback to trigger settlement slide-in
+  url?: string;              // optional metric source url (legacy props for compatibility)
+  cssSelector?: string;
+  xpath?: string;
+  jsExtractor?: string;
+  htmlSnippet?: string;
+  pollIntervalMs?: number;
 }
 
 export function MetricLivePrice(props: MetricLivePriceProps) {
@@ -29,11 +42,28 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     isLive = true,
     compact = true,
     value: initialValue,
+    isSettlementWindow,
+    onOpenSettlement,
   } = props;
 
+  const router = useRouter();
   const supabase = getSupabaseClient();
   const [resolvedId, setResolvedId] = React.useState<string | null>(marketId || null);
   const [sourceUrl, setSourceUrl] = React.useState<string | null>(null);
+  const [settlementExpiresAt, setSettlementExpiresAt] = React.useState<string | null>(null);
+  // On-chain status (null = unknown)
+  const [isSettlementActiveOnChain, setIsSettlementActiveOnChain] = React.useState<boolean | null>(null);
+  // DB-derived fallback (for legacy behavior)
+  const [isSettlementActiveDb, setIsSettlementActiveDb] = React.useState<boolean>(false);
+  // Market (diamond) address to call lifecycle facet on
+  const [marketAddress, setMarketAddress] = React.useState<string | null>(null);
+  const handleOpenSettlement = React.useCallback(() => {
+    if (onOpenSettlement) {
+      onOpenSettlement();
+      return;
+    }
+    router.push('/settlement');
+  }, [onOpenSettlement, router]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -93,7 +123,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
       try {
         const { data, error } = await supabase
           .from('markets')
-          .select('market_config')
+          .select('market_config, proposed_settlement_value, settlement_window_expires_at, market_address, chain_id')
           .eq('id', resolvedId)
           .maybeSingle();
         if (cancelled) return;
@@ -101,13 +131,93 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
         const loc = (data as any)?.market_config?.ai_source_locator || null;
         const url = loc?.url || loc?.primary_source_url || null;
         setSourceUrl(url || null);
+
+        // Store market address for on-chain reads (preferred source of truth)
+        const addr = (data as any)?.market_address as string | undefined;
+        if (addr && typeof addr === 'string' && addr.startsWith('0x') && addr.length === 42) {
+          setMarketAddress(addr);
+        } else {
+          // Fallback to in-memory contract config mapping if available by symbol
+          const t = (token || marketIdentifier || '').toString().toUpperCase();
+          if (t && (CONTRACT_ADDRESSES as any).MARKET_INFO && (CONTRACT_ADDRESSES as any).MARKET_INFO[t]?.orderBook) {
+            const ob = (CONTRACT_ADDRESSES as any).MARKET_INFO[t].orderBook as string;
+            if (ob && ob.startsWith('0x') && ob.length === 42) setMarketAddress(ob);
+          } else {
+            setMarketAddress(null);
+          }
+        }
+
+        // Legacy DB-derived settlement window (used as a fallback if chain read fails)
+        const proposed = (data as any)?.proposed_settlement_value;
+        const expiresAt = (data as any)?.settlement_window_expires_at || null;
+        setSettlementExpiresAt(expiresAt);
+        if (proposed != null && expiresAt) {
+          try {
+            const active = new Date(expiresAt).getTime() > Date.now();
+            setIsSettlementActiveDb(Boolean(active));
+          } catch {
+            setIsSettlementActiveDb(false);
+          }
+        } else {
+          setIsSettlementActiveDb(false);
+        }
       } catch { setSourceUrl(null); }
     };
     load();
     return () => { cancelled = true; };
   }, [supabase, resolvedId]);
 
+  // On-chain lifecycle facet read (preferred)
+  React.useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const run = async () => {
+      if (!marketAddress) {
+        setIsSettlementActiveOnChain(null);
+        return;
+      }
+      try {
+        const provider = getReadProvider();
+        const lifecycle = new ethers.Contract(marketAddress, MarketLifecycleFacetABI, provider);
+        const [inChallenge, settlementTs] = await Promise.all([
+          lifecycle.isInSettlementChallengeWindow(),
+          lifecycle.getSettlementTimestamp(),
+        ]);
+        if (cancelled) return;
+        const active = Boolean(inChallenge);
+        setIsSettlementActiveOnChain(active);
+        // settlementTs is bigint (seconds)
+        if (typeof settlementTs === 'bigint' && settlementTs > 0n) {
+          const asMs = Number(settlementTs) * 1000;
+          if (Number.isFinite(asMs)) {
+            setSettlementExpiresAt(new Date(asMs).toISOString());
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          // If chain read fails, keep previous value; do not crash UI
+          setIsSettlementActiveOnChain(null);
+        }
+      }
+    };
+    void run();
+    // Re-check periodically to keep UI accurate near window boundaries
+    timer = setInterval(run, 30000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [marketAddress]);
+
   if (error) return <div className={className}>Error</div>;
+
+  // Compute conditional rendering precedence:
+  // 1) Explicit prop override (if provided)
+  // 2) On-chain facet read (authoritative)
+  // 3) DB-derived fallback (legacy)
+  const settlementUIActive = (typeof isSettlementWindow === 'boolean')
+    ? isSettlementWindow
+    : (isSettlementActiveOnChain ?? isSettlementActiveDb);
 
   return (
     <div
@@ -116,11 +226,32 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     >
       <div className={`flex items-center justify-between ${compact ? 'p-2' : 'p-2.5'}`}>
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isLoading ? 'bg-blue-400 animate-pulse' : (isLive ? 'bg-green-400' : 'bg-[#404040]')}`} />
+          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+            isLoading
+              ? 'bg-blue-400 animate-pulse'
+              : settlementUIActive
+                ? 'bg-yellow-400'
+                : (isLive ? 'bg-green-400' : 'bg-[#404040]')
+          }`} />
           <span className="text-[11px] font-medium text-[#808080] leading-none">{label}</span>
         </div>
-        <div className="flex items-center gap-2">
-          {displayValue != null ? (
+        <div className="flex items-center gap-2 h-5">
+          {settlementUIActive ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-yellow-300 leading-none">
+                Settlement window active
+              </span>
+              <button
+                onClick={handleOpenSettlement}
+                className="h-5 w-5 box-border flex items-center justify-center rounded-md hover:bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 hover:text-yellow-200 transition-all"
+                title={settlementExpiresAt ? `Go to settlement (window ends ${new Date(settlementExpiresAt).toLocaleString()})` : 'Go to settlement'}
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          ) : displayValue != null ? (
             <span className="text-[10px] text-white font-mono leading-none">{valueText}</span>
           ) : (
             <span className="text-[9px] text-[#8a8a8a] leading-none truncate max-w-[180px]">
@@ -131,7 +262,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
               ) : '—'}
             </span>
           )}
-          {isLoading && (
+          {isLoading && !settlementUIActive && (
             <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
               <div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
             </div>

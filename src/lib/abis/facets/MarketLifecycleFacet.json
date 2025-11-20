@@ -1,0 +1,207 @@
+{
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        { "indexed": true, "internalType": "address", "name": "market", "type": "address" },
+        { "indexed": false, "internalType": "uint256", "name": "rolloverWindowStart", "type": "uint256" },
+        { "indexed": false, "internalType": "uint256", "name": "rolloverWindowEnd", "type": "uint256" }
+      ],
+      "name": "RolloverWindowStarted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        { "indexed": true, "internalType": "address", "name": "market", "type": "address" },
+        { "indexed": false, "internalType": "uint256", "name": "challengeWindowStart", "type": "uint256" },
+        { "indexed": false, "internalType": "uint256", "name": "challengeWindowEnd", "type": "uint256" }
+      ],
+      "name": "SettlementChallengeWindowStarted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        { "indexed": true, "internalType": "address", "name": "parentMarket", "type": "address" },
+        { "indexed": true, "internalType": "address", "name": "childMarket", "type": "address" },
+        { "indexed": false, "internalType": "uint256", "name": "childSettlementTimestamp", "type": "uint256" }
+      ],
+      "name": "RolloverCreated",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        { "internalType": "uint256", "name": "settlementTimestamp", "type": "uint256" },
+        { "internalType": "address", "name": "parent", "type": "address" }
+      ],
+      "name": "initializeLifecycle",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "startRolloverWindow",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "startSettlementChallengeWindow",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "childMarket", "type": "address" },
+        { "internalType": "uint256", "name": "childSettlementTimestamp", "type": "uint256" }
+      ],
+      "name": "linkRolloverChild",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "parentMarket", "type": "address" }
+      ],
+      "name": "setParent",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getSettlementTimestamp",
+      "outputs": [
+        { "internalType": "uint256", "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getRolloverWindowStart",
+      "outputs": [
+        { "internalType": "uint256", "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getChallengeWindowStart",
+      "outputs": [
+        { "internalType": "uint256", "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "isInRolloverWindow",
+      "outputs": [
+        { "internalType": "bool", "name": "", "type": "bool" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "isInSettlementChallengeWindow",
+      "outputs": [
+        { "internalType": "bool", "name": "", "type": "bool" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getMarketLineage",
+      "outputs": [
+        { "internalType": "address", "name": "parent", "type": "address" },
+        { "internalType": "address", "name": "child", "type": "address" }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "bool", "name": "enabled", "type": "bool" }
+      ],
+      "name": "enableTestingMode",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "uint256", "name": "rolloverLeadSeconds", "type": "uint256" },
+        { "internalType": "uint256", "name": "challengeLeadSeconds", "type": "uint256" }
+      ],
+      "name": "setLeadTimes",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "uint256", "name": "newSettlementTimestamp", "type": "uint256" }
+      ],
+      "name": "setSettlementTimestamp",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "forceStartRolloverWindow",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "forceStartSettlementChallengeWindow",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "market", "type": "address" },
+        { "internalType": "uint256", "name": "rolloverWindowStart", "type": "uint256" }
+      ],
+      "name": "debugEmitRolloverWindowStarted",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "market", "type": "address" },
+        { "internalType": "uint256", "name": "challengeWindowStart", "type": "uint256" }
+      ],
+      "name": "debugEmitSettlementChallengeWindowStarted",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        { "internalType": "address", "name": "parentMarket", "type": "address" },
+        { "internalType": "address", "name": "childMarket", "type": "address" },
+        { "internalType": "uint256", "name": "childSettlementTimestamp", "type": "uint256" }
+      ],
+      "name": "debugEmitRolloverCreated",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ]
+}
+
+

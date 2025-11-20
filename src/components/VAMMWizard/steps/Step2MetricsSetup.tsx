@@ -524,7 +524,7 @@ ${metricData.sources.map((source: any, index: number) =>
 📊 Value: ${metricData.value} ${metricData.unit}
 📅 As of: ${new Date(metricData.as_of).toLocaleDateString()}
 🎯 Confidence: ${Math.round(metricData.confidence * 100)}%
-💰 Suggested Asset Price: $${metricData.asset_price_suggestion}
+💰 : $${metricData.asset_price_suggestion}
 
 🔍 Analysis Reasoning:
 ${metricData.reasoning}

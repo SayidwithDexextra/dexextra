@@ -21,9 +21,9 @@ import { MarketDataProvider, useMarketData } from '@/contexts/MarketDataContext'
 // Removed contractDeployment import
 // Removed useVAMMSettlement hook
 import { MetricLivePrice } from '@/components';
-import { useWallet } from '@/hooks/useWallet';
 import SeriesMarketToggle from '@/components/Series/SeriesMarketToggle';
 import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRouting';
+import { SettlementInterface } from '@/components/SettlementInterface';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -56,9 +56,9 @@ export default function TokenPage({ params }: TokenPageProps) {
 
 function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: string; tradingAction: 'long' | 'short' | null; onSwitchNetwork: () => void; }) {
   const md = useMarketData();
-  const { walletData } = useWallet();
   const sp = useSearchParams();
   const isDeploying = sp.get('deploying') === '1';
+  const [isSettlementView, setIsSettlementView] = useState(false);
 
   const tokenData = md.tokenData;
   // Prevent flicker: once we have initial data, keep rendering content even if background polling toggles isLoading
@@ -96,50 +96,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const loadingMessage = "Loading Trading Interface...";
   const loadingSubtitle = `Fetching ${symbol} market data, mark price, and available margin`;
 
-  const windowActive = useMemo(() => {
-    const m: any = md.market;
-    if (!m || !m.proposed_settlement_value || !m.settlement_window_expires_at) return false;
-    try {
-      return new Date(m.settlement_window_expires_at).getTime() > Date.now();
-    } catch {
-      return false;
-    }
-  }, [md.market && (md.market as any).proposed_settlement_value, md.market && (md.market as any).settlement_window_expires_at]);
-
-  const [altPrice, setAltPrice] = useState('');
-  const [isSubmittingAlt, setIsSubmittingAlt] = useState(false);
-
   // Series / Rollover UI hooks must be called unconditionally (before any early returns)
   const currentMarketId = (md.market as any)?.id as string | undefined;
   const currentSymbol = symbol;
   const { pair } = useActivePairByMarketId(currentMarketId);
   const { markets: seriesMkts } = useSeriesMarkets(pair?.seriesId);
-
-  const submitAlternative = async () => {
-    try {
-      if (!windowActive || !md.market) return;
-      const p = (altPrice || '').trim();
-      if (!p || Number(p) <= 0 || !Number.isFinite(Number(p))) return;
-      setIsSubmittingAlt(true);
-      const resp = await fetch('/api/settlements/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          market_id: (md.market as any).id,
-          price: Number(p),
-          proposer_wallet: walletData?.address || null
-        })
-      });
-      if (!resp.ok) {
-        // swallow UI error here; banner is informational
-      } else {
-        await md.refetchMarket();
-        setAltPrice('');
-      }
-    } finally {
-      setIsSubmittingAlt(false);
-    }
-  };
 
   if (shouldShowLoading) {
     return (
@@ -190,159 +151,179 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="token-page min-h-screen bg-black text-white">
       <CryptoMarketTicker className="border-b border-gray-800" />
       <div className="px-1 pb-8 pt-2">
-        {/* Rollover toggle (if active pair exists) */}
-        {pair && seriesMkts && seriesMkts.length >= 2 && (
-          <div className="mb-1">
-            <SeriesMarketToggle
-              seriesSlug={pair.seriesSlug}
-              markets={seriesMkts
-                .filter(m => m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId)
-                .map(m => ({
-                  marketId: m.marketId,
-                  symbol: m.symbol,
-                  isActive: m.symbol === currentSymbol,
-                  isPrimary: m.isPrimary,
-                  role: m.marketId === pair.fromMarketId ? 'front' : 'next'
-                }))}
-            />
-          </div>
-        )}
-        {windowActive && (
-          <div className="w-full mb-2 rounded-md border border-yellow-600/40 bg-yellow-900/10 px-3 py-2">
-            <div className="text-xs text-yellow-300 font-medium">
-              Settlement window active
-            </div>
-            <div className="text-[11px] text-gray-300 mt-0.5">
-              Proposed price: <span className="text-white font-mono">${Number((md.market as any).proposed_settlement_value || 0).toFixed(4)}</span>
-              {(md.market as any)?.settlement_window_expires_at ? (
-                <> • Expires {new Date(String((md.market as any).settlement_window_expires_at)).toLocaleString()}</>
-              ) : null}
-            </div>
-            <div className="mt-1 flex items-center gap-2">
-              <input
-                value={altPrice}
-                onChange={(e) => setAltPrice(e.target.value)}
-                placeholder="Propose alternative price"
-                inputMode="decimal"
-                className="bg-black text-white text-[11px] border border-yellow-700/50 rounded px-2 py-1 outline-none focus:border-yellow-500 min-w-[180px]"
-              />
-              <button
-                onClick={submitAlternative}
-                disabled={isSubmittingAlt}
-                className="text-[11px] text-yellow-300 hover:text-yellow-200 disabled:text-yellow-700"
-              >
-                {isSubmittingAlt ? 'Submitting…' : 'Submit Alternative'}
-              </button>
-            </div>
-          </div>
-        )}
-        <div className="flex md:hidden flex-col gap-1">
-          <div className="w-full mt-1">
-            <LightweightChart 
-              symbol={symbol}
-              height={399}
-              defaultPrice={tokenData?.price || currentPrice || 100}
-            />
-          </div>
-          <div className="w-full">
-            <MarketActivityTabs symbol={symbol} />
-          </div>
-          <div className="w-full">
-            {tokenData ? (
-              <TradingPanel 
-                tokenData={tokenData} 
-                initialAction={tradingAction}
-                marketData={{
-                  markPrice: Number(markPrice || 0),
-                  fundingRate: Number(fundingRate || 0),
-                  currentPrice: Number(currentPrice || 0),
-                  priceChange24h: Number(priceChange24h || 0),
-                  priceChangePercent24h: Number(priceChangePercent24h || 0),
-                  dataSource: 'contract',
-                  lastUpdated: String(lastUpdated || '')
-                }}
-              />
-            ) : (
-              <div className="w-full h-64 rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
-                {isDeploying ? 'Setting up market…' : 'Loading data…'}
+        <div className="relative overflow-x-hidden overflow-y-visible">
+          {/* Main trading content (unchanged layout) */}
+          <div className={`transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
+            {/* Rollover toggle (if active pair exists) */}
+            {pair && seriesMkts && seriesMkts.length >= 2 && (
+              <div className="mb-1">
+                <SeriesMarketToggle
+                  seriesSlug={pair.seriesSlug}
+                  markets={seriesMkts
+                    .filter(m => m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId)
+                    .map(m => ({
+                      marketId: m.marketId,
+                      symbol: m.symbol,
+                      isActive: m.symbol === currentSymbol,
+                      isPrimary: m.isPrimary,
+                      role: m.marketId === pair.fromMarketId ? 'front' : 'next'
+                    }))}
+                />
               </div>
             )}
-          </div>
-        </div>
-
-        <div className="hidden md:flex gap-1 mt-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem)' }}>
-          <div className="flex-1 flex flex-col gap-0.5 h-full overflow-hidden">
-            <div className="flex-shrink-0" style={{ height: '60%' }}>
-              <LightweightChart 
-                symbol={symbol}
-                height="100%"
-                defaultPrice={tokenData?.price || currentPrice || 100}
-              />
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <MarketActivityTabs symbol={symbol} className="h-full" />
-            </div>
-          </div>
-          <div className="w-77 h-full">
-            <TransactionTable 
-              marketId={(md.market as any)?.id}
-              marketIdentifier={(md.market as any)?.market_identifier || symbol}
-              orderBookAddress={(md as any)?.orderBookAddress || (md.market as any)?.market_address || undefined}
-              height="100%"
-            />
-          </div>
-          <div className="w-80 flex flex-col gap-1 h-full">
-            <div className="flex-shrink-0">
-              {(() => {
-                const locator = ((md.market as any)?.market_config?.ai_source_locator) || null;
-                const url = locator?.url || locator?.primary_source_url || null;
-                const cssSel = locator?.css_selector || null;
-                const xpath = locator?.xpath || null;
-                const jsx = locator?.js_extractor || null;
-                const htmlSnippet = locator?.html_snippet || null;
-                return (
-                  <MetricLivePrice
-                    value={Number(markPrice || currentPrice || 0)}
-                    prefix="$"
-                    isLive={Boolean(((md.market as any)?.market_status === 'ACTIVE') && Number(markPrice || currentPrice) > 0)}
-                    className="w-full"
-                    marketIdentifier={symbol}
-                    url={url || undefined}
-                    cssSelector={cssSel || undefined}
-                    xpath={xpath || undefined}
-                    jsExtractor={jsx || undefined}
-                    htmlSnippet={htmlSnippet || undefined}
-                    pollIntervalMs={10000}
-                  />
-                );
-              })()}
-            </div>
-            <div className="flex-shrink-0 max-h-80 overflow-hidden">
-              <TokenHeader symbol={symbol} />
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {tokenData ? (
-                <TradingPanel 
-                  tokenData={tokenData} 
-                  initialAction={tradingAction}
-                  marketData={{
-                    markPrice: Number(markPrice || 0),
-                    fundingRate: Number(fundingRate || 0),
-                    currentPrice: Number(currentPrice || 0),
-                    priceChange24h: Number(priceChange24h || 0),
-                    priceChangePercent24h: Number(priceChangePercent24h || 0),
-                    dataSource: 'contract',
-                    lastUpdated: String(lastUpdated || '')
-                  }}
+            <div className="flex md:hidden flex-col gap-1">
+              <div className="w-full mt-1">
+                <LightweightChart 
+                  symbol={symbol}
+                  height={399}
+                  defaultPrice={tokenData?.price || currentPrice || 100}
                 />
-              ) : (
-                <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
-                  {isDeploying ? 'Setting up market…' : 'Loading data…'}
+              </div>
+              <div className="w-full">
+                <MarketActivityTabs symbol={symbol} />
+              </div>
+              <div className="w-full">
+                {tokenData ? (
+                  <TradingPanel 
+                    tokenData={tokenData} 
+                    initialAction={tradingAction}
+                    marketData={{
+                      markPrice: Number(markPrice || 0),
+                      fundingRate: Number(fundingRate || 0),
+                      currentPrice: Number(currentPrice || 0),
+                      priceChange24h: Number(priceChange24h || 0),
+                      priceChangePercent24h: Number(priceChangePercent24h || 0),
+                      dataSource: 'contract',
+                      lastUpdated: String(lastUpdated || '')
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-64 rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                    {isDeploying ? 'Setting up market…' : 'Loading data…'}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="hidden md:flex gap-1 mt-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem + 23px)' }}>
+              <div className="flex-1 flex flex-col gap-0.5 h-full overflow-hidden">
+                <div className="flex-shrink-0 overflow-hidden" style={{ height: '60%' }}>
+                  <div className="flex flex-col h-full">
+                    <div className="flex-1 min-h-0">
+                      <LightweightChart 
+                        symbol={symbol}
+                        height="100%"
+                        defaultTimeframe="5m"
+                        defaultPrice={tokenData?.price || currentPrice || 100}
+                      />
+                    </div>
+                    <div className="flex-1 min-h-0">
+                      <LightweightChart 
+                        symbol={symbol}
+                        height="100%"
+                        seriesType="candlestick"
+                        defaultTimeframe="5m"
+                        defaultPrice={tokenData?.price || currentPrice || 100}
+                      />
+                    </div>
+                  </div>
                 </div>
-              )}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <MarketActivityTabs symbol={symbol} className="h-full" />
+                </div>
+              </div>
+              <div className="w-77 h-full">
+                <TransactionTable 
+                  marketId={(md.market as any)?.id}
+                  marketIdentifier={(md.market as any)?.market_identifier || symbol}
+                  orderBookAddress={(md as any)?.orderBookAddress || (md.market as any)?.market_address || undefined}
+                  height="100%"
+                />
+              </div>
+              <div className="w-80 flex flex-col gap-1 h-full">
+                <div className="flex-shrink-0">
+                  {(() => {
+                    const locator = ((md.market as any)?.market_config?.ai_source_locator) || null;
+                    const url = locator?.url || locator?.primary_source_url || null;
+                    const cssSel = locator?.css_selector || null;
+                    const xpath = locator?.xpath || null;
+                    const jsx = locator?.js_extractor || null;
+                    const htmlSnippet = locator?.html_snippet || null;
+                    return (
+                      <MetricLivePrice
+                        value={Number(markPrice || currentPrice || 0)}
+                        prefix="$"
+                        isLive={Boolean(((md.market as any)?.market_status === 'ACTIVE') && Number(markPrice || currentPrice) > 0)}
+                        className="w-full"
+                        marketIdentifier={symbol}
+                        url={url || undefined}
+                        cssSelector={cssSel || undefined}
+                        xpath={xpath || undefined}
+                        jsExtractor={jsx || undefined}
+                        htmlSnippet={htmlSnippet || undefined}
+                        pollIntervalMs={10000}
+                        onOpenSettlement={() => setIsSettlementView(true)}
+                      />
+                    );
+                  })()}
+                </div>
+                <div className="flex-shrink-0 max-h-80 overflow-hidden">
+                  <TokenHeader symbol={symbol} />
+                </div>
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  {tokenData ? (
+                    <TradingPanel 
+                      tokenData={tokenData} 
+                      initialAction={tradingAction}
+                      marketData={{
+                        markPrice: Number(markPrice || 0),
+                        fundingRate: Number(fundingRate || 0),
+                        currentPrice: Number(currentPrice || 0),
+                        priceChange24h: Number(priceChange24h || 0),
+                        priceChangePercent24h: Number(priceChangePercent24h || 0),
+                        dataSource: 'contract',
+                        lastUpdated: String(lastUpdated || '')
+                      }}
+                    />
+                  ) : (
+                    <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                      {isDeploying ? 'Setting up market…' : 'Loading data…'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Settlement overlay (no layout shift) */}
+          <div
+            className={`token-page absolute inset-0 z-20 bg-black/95 backdrop-blur transition-transform duration-500 ease-in-out ${isSettlementView ? 'translate-x-0' : 'translate-x-full'}`}
+          >
+            <div className="h-full overflow-y-auto scrollbar-none px-1 pt-1">
+              <div className="mx-auto max-w-5xl">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Settlement Window</h4>
+                  <button
+                    onClick={() => setIsSettlementView(false)}
+                    className="text-xs text-[#9CA3AF] hover:text-white border border-[#222222] hover:border-[#333333] rounded px-2 py-1 transition-all duration-200"
+                    title="Back to trading"
+                  >
+                    Back
+                  </button>
+                </div>
+                <div className="space-y-1 pb-4">
+                  <SettlementInterface
+                    market={md.market as any}
+                    onChallengeSaved={async () => {
+                      if (typeof md.refetchMarket === 'function') {
+                        await md.refetchMarket();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </div>

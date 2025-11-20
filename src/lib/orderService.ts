@@ -19,6 +19,8 @@ export class OrderService {
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
   private inFlightGetUserOrders = new Map<string, Promise<Order[]>>();
   private lastGetUserOrdersTs = new Map<string, number>();
+  // Cache last successful results per (trader, metricId) to avoid UI flapping to zero
+  private lastOrdersByKey = new Map<string, Order[]>();
   private backoffMs = 0;
   private readonly ORDERBOOK_ABI = parseAbi([
     // Minimal VIEM-compatible ABI subset required by this service
@@ -157,11 +159,17 @@ export class OrderService {
    */
   async getUserOrdersFromOrderBook(trader: Address, metricId?: string): Promise<Order[]> {
     try {
-      // Visibility guard
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return [];
-
-      // Deduplicate requests (per trader+metricId)
+      // Build cache key early so we can serve cached data when hidden
       const key = `${trader.toLowerCase()}::${metricId || 'ALL'}`;
+
+      // If tab is hidden, return last known good result instead of empty to avoid UI flapping
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        const cached = this.lastOrdersByKey.get(key);
+        if (cached) return cached;
+        // If no cache yet, proceed to fetch once to seed cache (do not early return empty)
+      }
+
+      // Deduplicate requests (per trader+metricId) with light throttling
       const now = Date.now();
       const lastTs = this.lastGetUserOrdersTs.get(key) || 0;
       // Throttle to at most once per 5s per key
@@ -231,6 +239,8 @@ export class OrderService {
           orderSummary: orders.map(o => ({ id: o.id, metricId: o.metricId, status: o.status })),
           expectedMetricId: metricId
         });
+        // Persist last successful result to serve while hidden or on transient failures
+        this.lastOrdersByKey.set(key, orders);
         return orders;
       })());
 
@@ -246,10 +256,16 @@ export class OrderService {
       // Handle common decode/call errors gracefully to avoid UI crashes
       if (msg.includes('could not decode result data') || msg.includes('ContractFunctionExecutionError')) {
         console.warn('⚠️ OrderService: getUserOrders call failed (likely wrong network or facet missing). Returning empty list.');
-        return [];
+        // Prefer last known result if available to prevent UI flicker to zero
+        const key = `${trader.toLowerCase()}::${metricId || 'ALL'}`;
+        const cached = this.lastOrdersByKey.get(key);
+        return cached || [];
       }
       console.error('❌ OrderService: Unexpected error fetching user orders from OrderBook:', error);
-      return [];
+      // Prefer last known result if available
+      const key = `${trader.toLowerCase()}::${metricId || 'ALL'}`;
+      const cached = this.lastOrdersByKey.get(key);
+      return cached || [];
     }
   }
 

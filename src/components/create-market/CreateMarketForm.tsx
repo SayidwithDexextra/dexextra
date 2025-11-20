@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { useCreateMarketForm, MarketFormData } from '@/hooks/useCreateMarketForm';
 import { MarketAIAssistant, MarketAIAssistantHandle } from './MarketAIAssistant';
+import supabase from '@/lib/supabase-browser';
 
 interface CreateMarketFormProps {
   onSubmit: (marketData: MarketFormData) => Promise<void>;
@@ -29,6 +30,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
   const assistantRef = useRef<MarketAIAssistantHandle | null>(null);
   const [autoSubmitOnResolution, setAutoSubmitOnResolution] = useState(false);
   const [highlightStartPrice, setHighlightStartPrice] = useState(false);
+  const [fetchingStartPrice, setFetchingStartPrice] = useState(false);
 
   // Localhost-only debug helpers
   const isLocalhost =
@@ -141,6 +143,50 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
     }
   };
 
+  const handleFetchStartPrice = async () => {
+    setError(null);
+    try {
+      if (!formData.metricUrl) {
+        setError('Metric URL is required (use AI assistant)');
+        return;
+      }
+      setFetchingStartPrice(true);
+      const metric = formData.metric || formData.symbol;
+      const payload = {
+        action: 'resolve_start_price',
+        metric,
+        metricUrl: formData.metricUrl,
+        urls: [formData.metricUrl],
+        symbol: formData.symbol,
+      };
+      const { data, error } = await supabase.functions.invoke('price-assistant', {
+        body: payload,
+      });
+      if (error) throw error;
+      if (!data || typeof (data as any).start_price !== 'number') {
+        throw new Error('Failed to resolve start price');
+      }
+      const startPrice = String((data as any).start_price);
+      const dataSource = String((data as any).data_source || '');
+      const updated = {
+        ...formData,
+        startPrice,
+        dataSource: dataSource || formData.dataSource,
+      };
+      setFormData(updated);
+      // Highlight the start price when it becomes available
+      setHighlightStartPrice(false);
+      requestAnimationFrame(() => {
+        setHighlightStartPrice(true);
+        setTimeout(() => setHighlightStartPrice(false), 1400);
+      });
+    } catch (e: any) {
+      setError(e?.message || 'Could not fetch start price');
+    } finally {
+      setFetchingStartPrice(false);
+    }
+  };
+
   return (
     <div className="w-full max-w-4xl mx-auto">
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -233,14 +279,25 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
                     <label className="block text-[11px] font-medium text-[#808080] mb-2">
                       Start Price (USD)
                     </label>
-                    <input
-                      type="text"
-                      name="startPrice"
-                      value={formData.startPrice}
-                      onChange={handleInputChange}
-                      placeholder="1.00"
-                      className={`w-full bg-[#1A1A1A] border ${highlightStartPrice ? 'border-blue-400 ring-2 ring-blue-400/50' : 'border-[#222222]'} rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors`}
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        name="startPrice"
+                        value={formData.startPrice}
+                        onChange={handleInputChange}
+                        placeholder="1.00"
+                        className={`flex-1 bg-[#1A1A1A] border ${highlightStartPrice ? 'border-blue-400 ring-2 ring-blue-400/50' : 'border-[#222222]'} rounded px-3 py-2 text-[11px] text-white placeholder-[#404040] focus:border-[#333333] focus:outline-none transition-colors`}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleFetchStartPrice}
+                        disabled={fetchingStartPrice}
+                        className={`px-2.5 py-2 rounded text-[11px] border ${fetchingStartPrice ? 'bg-[#1A1A1A] text-[#606060] border-[#222222] cursor-not-allowed' : 'bg-[#1A1A1A] text-[#C0C0C0] border-[#222222] hover:border-[#333333]'}`}
+                        title="Fetch start price using Edge Function"
+                      >
+                        {fetchingStartPrice ? 'Fetching…' : 'Get Price'}
+                      </button>
+                    </div>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-[#808080]">
                     <span className="truncate">Resolved Source</span>

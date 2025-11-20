@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
@@ -9,12 +9,16 @@ import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { usePositions as useAllPositions } from '@/hooks/usePositions';
 import { useMarkets } from '@/hooks/useMarkets';
-import { getUserActiveOrdersAllMarkets, cancelOrderForMarket } from '@/hooks/useOrderBook';
+import { cancelOrderForMarket } from '@/hooks/useOrderBook';
+import { usePortfolioData } from '@/hooks/usePortfolioData';
 import type { Address } from 'viem';
 
 // Public USDC icon (fallback to Circle's official)
 const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
 const FALLBACK_TOKEN_ICON = '/Dexicon/LOGO-Dexetera-01.svg';
+const logGoddMat = (step: number, message: string, data?: any) => {
+  console.log(`[GODD][STEP${step}] ${message}`, data ?? '');
+};
 interface Position {
   id: string;
   symbol: string;
@@ -68,9 +72,14 @@ interface MarketActivityTabsProps {
 export default function MarketActivityTabs({ symbol, className = '' }: MarketActivityTabsProps) {
   const [activeTab, setActiveTab] = useState<TabType>('positions');
   const [positions, setPositions] = useState<Position[]>([]);
-  const [openOrders, setOpenOrders] = useState<Order[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [orderHistory, setOrderHistory] = useState<Order[]>([]);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const [isLoading, setIsLoading] = useState(false);
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -89,6 +98,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Reuse portfolio logic: fetch ALL positions and markets map
   const { positions: allPositions, isLoading: positionsIsLoading } = useAllPositions(undefined, { enabled: activeTab === 'positions' });
   const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 });
+  const { ordersBuckets, isLoadingOrders, refreshOrders: refreshPortfolioOrders } = usePortfolioData({
+    enabled: !!walletAddress,
+    refreshInterval: 15000
+  });
   const marketIdMap = useMemo(() => {
     const map = new Map<string, { symbol: string; name: string }>();
     for (const m of markets || []) {
@@ -313,181 +326,74 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   };
 
-  // Open Orders: aggregate across ALL markets for the user (reuse portfolio logic)
-  const [ordersRefreshTick, setOrdersRefreshTick] = useState(0);
-  const [openOrdersIsLoading, setOpenOrdersIsLoading] = useState(false);
-  useEffect(() => {
-    if (activeTab !== 'orders') {
-      setOpenOrdersIsLoading(false);
-      return;
-    }
-    if (!walletAddress) {
-      setOpenOrders([]);
-      setOpenOrdersIsLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        if (!cancelled) setOpenOrdersIsLoading(true);
-        const buckets = await getUserActiveOrdersAllMarkets(walletAddress);
-        const flat: Order[] = [];
-        (buckets || []).forEach((bucket: any) => {
-          const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
-          (bucket?.orders || []).forEach((o: any) => {
-            const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
-            const typeStr = String(o?.type || 'limit').toUpperCase();
-            const statusLc = String(o?.status || 'pending').toLowerCase();
-            const status: Order['status'] = statusLc === 'pending'
-              ? 'PENDING'
-              : statusLc === 'partially_filled'
-                ? 'PARTIAL'
-                : statusLc === 'filled'
-                  ? 'FILLED'
-                  : statusLc === 'cancelled'
-                    ? 'CANCELLED'
-                    : 'PENDING';
-            let qty = Number(o?.quantity || 0);
-            if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
-            flat.push({
-              id: String(o?.id || ''),
-              symbol: symbolUpper,
-              side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
-              type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
-              price: Number(o?.price || 0),
-              size: qty,
-              filled: Number(o?.filledQuantity || 0),
-              status,
-              timestamp: Number(o?.timestamp || Date.now()),
-              metricId: String(o?.metricId || symbolUpper)
-            });
-          });
+  // Open Orders sourced from portfolio data hook (aggregates across all markets)
+  const flattenOrderBuckets = useCallback((buckets: any[] = []): Order[] => {
+    const flat: Order[] = [];
+    (buckets || []).forEach((bucket: any) => {
+      const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
+      (bucket?.orders || []).forEach((o: any) => {
+        const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
+        const typeStr = String(o?.type || 'limit').toUpperCase();
+        const statusLc = String(o?.status || 'pending').toLowerCase();
+        const status: Order['status'] = statusLc === 'pending'
+          ? 'PENDING'
+          : statusLc === 'partially_filled'
+            ? 'PARTIAL'
+            : statusLc === 'filled'
+              ? 'FILLED'
+              : statusLc === 'cancelled'
+                ? 'CANCELLED'
+                : 'PENDING';
+        let qty = Number(o?.quantity || 0);
+        if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
+        flat.push({
+          id: String(o?.id || ''),
+          symbol: symbolUpper,
+          side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
+          type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
+          price: Number(o?.price || 0),
+          size: qty,
+          filled: Number(o?.filledQuantity || 0),
+          status,
+          timestamp: Number(o?.timestamp || Date.now()),
+          metricId: String(o?.metricId || symbolUpper)
         });
-        if (!cancelled) {
-          setOpenOrders(flat);
-        }
-      } catch {
-        if (!cancelled) {
-          setOpenOrders([]);
-        }
-      } finally {
-        if (!cancelled) setOpenOrdersIsLoading(false);
-      }
-    };
-    load();
-    const interval = setInterval(load, 15000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [walletAddress, activeTab, ordersRefreshTick]);
+      });
+    });
+    return flat;
+  }, []);
 
-  // One-off fetch for open orders to populate the tab ticker immediately on mount and when wallet changes
+  const openOrders = useMemo(() => flattenOrderBuckets(ordersBuckets), [ordersBuckets, flattenOrderBuckets]);
+  const openOrdersIsLoading = Boolean(isLoadingOrders && activeTab === 'orders');
+
   useEffect(() => {
-    if (!walletAddress) {
-      setOpenOrders([]);
-      return;
-    }
-    let cancelled = false;
-    const loadOnce = async () => {
-      try {
-        const buckets = await getUserActiveOrdersAllMarkets(walletAddress);
-        const flat: Order[] = [];
-        (buckets || []).forEach((bucket: any) => {
-          const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
-          (bucket?.orders || []).forEach((o: any) => {
-            const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
-            const typeStr = String(o?.type || 'limit').toUpperCase();
-            const statusLc = String(o?.status || 'pending').toLowerCase();
-            const status: Order['status'] = statusLc === 'pending'
-              ? 'PENDING'
-              : statusLc === 'partially_filled'
-                ? 'PARTIAL'
-                : statusLc === 'filled'
-                  ? 'FILLED'
-                  : statusLc === 'cancelled'
-                    ? 'CANCELLED'
-                    : 'PENDING';
-            let qty = Number(o?.quantity || 0);
-            if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
-            flat.push({
-              id: String(o?.id || ''),
-        symbol: symbolUpper,
-              side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
-              type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
-              price: Number(o?.price || 0),
-              size: qty,
-              filled: Number(o?.filledQuantity || 0),
-              status,
-              timestamp: Number(o?.timestamp || Date.now()),
-              metricId: String(o?.metricId || symbolUpper)
-            });
-          });
-        });
-        if (!cancelled) {
-          setOpenOrders(flat);
-        }
-      } catch {
-        if (!cancelled) setOpenOrders([]);
-      }
-    };
-    // Run immediately to populate the tab ticker
-    loadOnce();
-    return () => { cancelled = true; };
-  }, [walletAddress]);
+    if (!walletAddress) return;
+    logGoddMat(27, 'Wallet detected; triggering initial open orders refresh', { walletAddress });
+    void refreshPortfolioOrders();
+  }, [walletAddress, refreshPortfolioOrders]);
 
-  // Listen for global order update events (emitted by useOrderBook.refreshOrders after place/cancel)
-  // Immediately refresh open orders to keep the tab ticker accurate even when not on the Orders tab
+  useEffect(() => {
+    if (!walletAddress) return;
+    logGoddMat(21, 'MarketActivityTabs updated openOrders derived state', {
+      bucketCount: ordersBuckets.length,
+      flattenedOrderCount: openOrders.length,
+      activeTab
+    });
+  }, [walletAddress, ordersBuckets, openOrders.length, activeTab]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!walletAddress) return;
-    let disposed = false;
-    const onOrdersUpdated = async (_evt: Event) => {
-      if (disposed) return;
-      try {
-        const buckets = await getUserActiveOrdersAllMarkets(walletAddress);
-        const flat: Order[] = [];
-        (buckets || []).forEach((bucket: any) => {
-          const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
-          (bucket?.orders || []).forEach((o: any) => {
-            const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
-            const typeStr = String(o?.type || 'limit').toUpperCase();
-            const statusLc = String(o?.status || 'pending').toLowerCase();
-            const status: Order['status'] = statusLc === 'pending'
-              ? 'PENDING'
-              : statusLc === 'partially_filled'
-                ? 'PARTIAL'
-                : statusLc === 'filled'
-                  ? 'FILLED'
-                  : statusLc === 'cancelled'
-                    ? 'CANCELLED'
-                    : 'PENDING';
-            let qty = Number(o?.quantity || 0);
-            if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
-            flat.push({
-              id: String(o?.id || ''),
-              symbol: symbolUpper,
-              side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
-              type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
-              price: Number(o?.price || 0),
-              size: qty,
-              filled: Number(o?.filledQuantity || 0),
-              status,
-              timestamp: Number(o?.timestamp || Date.now()),
-              metricId: String(o?.metricId || symbolUpper)
-            });
-          });
-        });
-        if (!disposed) {
-          setOpenOrders(flat);
-        }
-      } catch {
-        if (!disposed) setOpenOrders([]);
-      }
+    logGoddMat(22, 'Subscribing to global ordersUpdated listener from MarketActivityTabs', { walletAddress });
+    const onOrdersUpdated = () => {
+      logGoddMat(23, 'ordersUpdated event captured; triggering refreshPortfolioOrders', { walletAddress });
+      void refreshPortfolioOrders();
     };
     window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
     return () => {
-      disposed = true;
       window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
     };
-  }, [walletAddress]);
+  }, [walletAddress, refreshPortfolioOrders]);
   // Fetch order history ONLY when History tab is active, throttle and skip when hidden
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -906,7 +812,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 showError('Failed to cancel order. Please try again.');
                                               } else {
                                                 showSuccess('Order cancelled successfully');
-                                                setOrdersRefreshTick((x) => x + 1);
+                                                fetchOpenOrders({ showSpinner: activeTab === 'orders' });
                                               }
                                             } catch (e) {
                                               showError('Cancellation failed. Please try again.');
@@ -1300,7 +1206,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                if (tab.id === 'orders') {
+                  logGoddMat(26, 'Orders tab clicked; triggering refreshPortfolioOrders');
+                  void refreshPortfolioOrders();
+                }
+              }}
               className={`px-2.5 py-1.5 text-[11px] font-medium rounded transition-all duration-200 flex items-center gap-1.5 ${
                 activeTab === tab.id
                   ? 'text-white bg-[#1A1A1A] border border-[#333333]'
