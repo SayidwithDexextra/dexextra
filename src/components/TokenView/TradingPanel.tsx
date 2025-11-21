@@ -12,6 +12,7 @@ import { initializeContracts } from '@/lib/contracts';
 // Removed gas override utilities to rely on provider estimation
 import { ensureHyperliquidWallet } from '@/lib/network';
 import type { Address } from 'viem';
+import { signAndSubmitGasless } from '@/lib/gasless';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -880,6 +881,44 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         throw e;
       }
 
+      // [GASLESS] toggle and OB address log
+      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      let obAddrForGasless: string | undefined;
+      try {
+        obAddrForGasless = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
+          ? await (contracts.obOrderPlacement as any).getAddress()
+          : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
+      } catch {}
+      console.log('[GASLESS] Env:', { NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED });
+      console.log('[GASLESS] OB address:', obAddrForGasless || (marketRow as any)?.market_address);
+
+      // Gasless first (uses contract slippage config); if enabled, do NOT fall back to on-chain
+      if (GASLESS_ENABLED && obAddrForGasless && address) {
+        try {
+          const res = await signAndSubmitGasless({
+            method: 'metaPlaceMarginMarket',
+            orderBook: obAddrForGasless,
+            trader: address as string,
+            amountWei: sizeWei as unknown as bigint,
+            isBuy,
+            deadlineSec: Math.floor(Date.now() / 1000) + 300,
+          });
+          if (!res.success) throw new Error(res.error || 'gasless failed');
+          showSuccess(
+            `Market ${selectedOption} order placed successfully!`,
+            'Order Placed'
+          );
+          console.log('[Dispatch] ✅ [GASLESS] Market order relayed', { txHash: res.txHash });
+          await orderBookActions.refreshOrders();
+          setAmount(0);
+          return;
+        } catch (gerr: any) {
+          console.warn('[GASLESS] Market order gasless path failed:', gerr?.message || gerr);
+          showError(gerr?.message || 'Gasless market order failed', 'Gasless Error');
+          return;
+        }
+      }
+
       console.log(`📡 [RPC] Submitting market order transaction`);
       let startTimeTx = Date.now();
       let tx;
@@ -1137,6 +1176,47 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
       }
 
+      // [GASLESS] toggle and OB address log
+      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      let obAddrForGasless: string | undefined;
+      try {
+        obAddrForGasless = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
+          ? await (contracts.obOrderPlacement as any).getAddress()
+          : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
+      } catch {}
+      console.log('[GASLESS] Env:', { NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED });
+      console.log('[GASLESS] OB address:', obAddrForGasless || (marketRow as any)?.market_address);
+
+      // Gasless first; if enabled, do NOT fall back to on-chain
+      if (GASLESS_ENABLED && obAddrForGasless && address) {
+        try {
+          const res = await signAndSubmitGasless({
+            method: 'metaPlaceMarginLimit',
+            orderBook: obAddrForGasless,
+            trader: address as string,
+            priceWei: priceWei as unknown as bigint,
+            amountWei: sizeWei as unknown as bigint,
+            isBuy,
+            deadlineSec: Math.floor(Date.now() / 1000) + 300,
+          });
+          if (!res.success) throw new Error(res.error || 'gasless failed');
+          showSuccess(
+            `Limit ${selectedOption} order placed successfully!`,
+            'Order Placed'
+          );
+          console.log('[Dispatch] ✅ [GASLESS] Limit order relayed', { txHash: res.txHash });
+          await orderBookActions.refreshOrders();
+          setAmount(0);
+          setTriggerPrice(0);
+          setTriggerPriceInput("");
+          return;
+        } catch (gerr: any) {
+          console.warn('[GASLESS] Limit order gasless path failed:', gerr?.message || gerr);
+          showError(gerr?.message || 'Gasless limit order failed', 'Gasless Error');
+          return;
+        }
+      }
+
       console.log(`📡 [RPC] Submitting limit order transaction`);
       let startTimeTx = Date.now();
       let tx;
@@ -1215,6 +1295,32 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }
     
     try {
+      // [GASLESS] try gasless cancel first
+      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      const obAddrForGasless = (marketRow as any)?.market_address as string | undefined;
+      console.log('[GASLESS] Env:', { NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED });
+      console.log('[GASLESS] OB address:', obAddrForGasless);
+      if (GASLESS_ENABLED && obAddrForGasless && address) {
+        try {
+          const res = await signAndSubmitGasless({
+            method: 'metaCancelOrder',
+            orderBook: obAddrForGasless,
+            trader: address as string,
+            orderId: BigInt(orderId),
+            deadlineSec: Math.floor(Date.now() / 1000) + 300,
+          });
+          if (!res.success) throw new Error(res.error || 'gasless cancel failed');
+          console.log('[Dispatch] ✅ [GASLESS] Cancel relayed', { txHash: res.txHash });
+          await orderBookActions.refreshOrders();
+          showSuccess('Order cancelled successfully', 'Order Cancelled');
+          return true;
+        } catch (gerr: any) {
+          console.warn('[GASLESS] Cancel gasless path failed:', gerr?.message || gerr);
+          showError(gerr?.message || 'Gasless cancel failed', 'Gasless Error');
+          return false;
+        }
+      }
+
       const success = await orderBookActions.cancelOrder(orderId);
       
       if (success) {

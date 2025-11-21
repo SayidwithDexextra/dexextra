@@ -515,10 +515,26 @@ export function usePositions(marketSymbol?: string, options?: { enabled?: boolea
 
     fetchPositions();
 
+    // Real-time listeners: trigger immediate refresh on portfolio/order events
+    const onPositionsRefresh = () => { fetchPositions(); };
+    const onOrdersUpdated = () => { fetchPositions(); };
+    try {
+      if (typeof window !== 'undefined') {
+        window.addEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
+        window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+      }
+    } catch {}
+
     const interval = setInterval(fetchPositions, 5000);
 
     return () => {
       clearInterval(interval);
+      try {
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
+          window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+        }
+      } catch {}
     };
   }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32, options?.enabled]);
 

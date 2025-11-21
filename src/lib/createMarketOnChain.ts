@@ -10,6 +10,7 @@ import {
   MarketLifecycleFacetABI,
 } from '@/lib/contracts';
 import FuturesMarketFactoryGenerated from '@/lib/abis/FuturesMarketFactory.json';
+import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 
 type ProgressEvent = {
   step: string;
@@ -72,6 +73,7 @@ export async function createMarketOnChain(params: {
     const liqAddr = (process.env as any).NEXT_PUBLIC_OB_LIQUIDATION_FACET;
     const viewAddr = (process.env as any).NEXT_PUBLIC_OB_VIEW_FACET;
     const settleAddr = (process.env as any).NEXT_PUBLIC_OB_SETTLEMENT_FACET;
+    const metaAddr = (process.env as any).NEXT_PUBLIC_META_TRADE_FACET;
     initFacet = (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET || null;
     const adminSelectors = selectorsFromAbi(OBAdminFacetABI as any[]);
     const pricingSelectors = selectorsFromAbi(OBPricingFacetABI as any[]);
@@ -82,6 +84,7 @@ export async function createMarketOnChain(params: {
     const settleSelectors = selectorsFromAbi(OBSettlementFacetABI as any[]);
     const lifecycleAddr = (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
     const lifecycleSelectors = selectorsFromAbi(MarketLifecycleFacetABI as any[]);
+    const metaSelectors = selectorsFromAbi(((MetaTradeFacetArtifact as any)?.abi || []) as any[]);
     cutArg = [
       [adminAddr, 0, adminSelectors],
       [pricingAddr, 0, pricingSelectors],
@@ -91,6 +94,7 @@ export async function createMarketOnChain(params: {
       [viewAddr, 0, viewSelectors],
       [settleAddr, 0, settleSelectors],
       [lifecycleAddr, 0, lifecycleSelectors],
+      [metaAddr, 0, metaSelectors],
     ].filter(([addr]) => typeof addr === 'string' && ethers.isAddress(String(addr))) as any;
     onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
   }

@@ -12,6 +12,9 @@ import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
 import { usePortfolioData } from '@/hooks/usePortfolioData';
 import type { Address } from 'viem';
+import { signAndSubmitGasless } from '@/lib/gasless';
+import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
+import { parseUnits } from 'viem';
 
 // Public USDC icon (fallback to Circle's official)
 const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
@@ -84,8 +87,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
+  const [optimisticallyRemovedOrderIds, setOptimisticallyRemovedOrderIds] = useState<Set<string>>(new Set());
   const wallet = useWallet() as any;
   const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
+  const GASLESS = typeof process !== 'undefined' && (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
   // Ensure we consistently use metricId (aligned with TradingPanel)
   console.log('symbol MarketActivityTabs', symbol);
   const metricId = symbol;
@@ -124,6 +129,31 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
     return map;
   }, [markets]);
+  
+  // Resolve per-market OrderBook address from symbol/metricId using populated CONTRACT_ADDRESSES.MARKET_INFO
+  const resolveOrderBookAddress = useCallback((symbolOrMetricId?: string | null): string | null => {
+    try {
+      if (!symbolOrMetricId) return null;
+      const entries: any[] = Object.values((CONTRACT_ADDRESSES as any)?.MARKET_INFO || {});
+      // Try direct base-symbol key first (e.g. 'ALU' from 'ALU-USD')
+      const baseKey = String(symbolOrMetricId).split('-')[0].toUpperCase();
+      const direct = (CONTRACT_ADDRESSES as any)?.MARKET_INFO?.[baseKey];
+      if (direct?.orderBook) return direct.orderBook as string;
+      // Fallback: scan by marketIdentifier / full symbol / name
+      const lower = String(symbolOrMetricId).toLowerCase();
+      const match = entries.find((m: any) => {
+        const candidates = [
+          m?.marketIdentifier?.toLowerCase?.(),
+          m?.symbol?.toLowerCase?.(),
+          m?.name?.toLowerCase?.()
+        ].filter(Boolean);
+        return candidates.includes(lower);
+      });
+      return match?.orderBook || null;
+    } catch {
+      return null;
+    }
+  }, []);
   
   // Throttle and in-flight guards for order history
   const isFetchingHistoryRef = useRef(false);
@@ -309,9 +339,41 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     
     try {
       const closeAmount = parseFloat(closeSize);
-      const success = await orderBookActions.closePosition(closePositionId, closeAmount);
-      if (!success) {
-        throw new Error('Failed to close position');
+      // Prefer gasless close via market order of opposite side
+      if (GASLESS && walletAddress) {
+        const pos = positions.find(p => p.id === closePositionId);
+        const isBuy = pos?.side === 'SHORT';
+        const obAddress = resolveOrderBookAddress(closeSymbol || pos?.symbol);
+        if (!obAddress) throw new Error('OrderBook not found for market');
+        const amountWei = parseUnits(closeSize, 18);
+        const res = await signAndSubmitGasless({
+          method: 'metaPlaceMarginMarket',
+          orderBook: obAddress,
+          trader: walletAddress as string,
+          amountWei: amountWei as unknown as bigint,
+          isBuy,
+          deadlineSec: Math.floor(Date.now() / 1000) + 300,
+        });
+        if (!res.success) {
+          throw new Error(res.error || 'Gasless close failed');
+        }
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('ordersUpdated'));
+            window.dispatchEvent(new Event('positionsRefreshRequested'));
+          }
+        } catch {}
+      } else {
+        const success = await orderBookActions.closePosition(closePositionId, closeAmount);
+        if (!success) {
+          throw new Error('Failed to close position');
+        }
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('ordersUpdated'));
+            window.dispatchEvent(new Event('positionsRefreshRequested'));
+          }
+        } catch {}
       }
 
       setCloseSize('');
@@ -363,7 +425,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return flat;
   }, []);
 
-  const openOrders = useMemo(() => flattenOrderBuckets(ordersBuckets), [ordersBuckets, flattenOrderBuckets]);
+  const openOrders = useMemo(() => {
+    const flat = flattenOrderBuckets(ordersBuckets);
+    return flat.filter(o => o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(String(o.id)));
+  }, [ordersBuckets, flattenOrderBuckets, optimisticallyRemovedOrderIds]);
   const openOrdersIsLoading = Boolean(isLoadingOrders && activeTab === 'orders');
 
   useEffect(() => {
@@ -807,12 +872,68 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                           onClick={async () => {
                                             try {
                                               setIsCancelingOrder(true);
-                                              const ok = await cancelOrderForMarket(order.id, String(order.metricId || order.symbol));
-                                              if (!ok) {
-                                                showError('Failed to cancel order. Please try again.');
-                                              } else {
+                                              const metric = String(order.metricId || order.symbol);
+                                              const obAddress = resolveOrderBookAddress(metric || order.symbol);
+                                              if (GASLESS && walletAddress && obAddress) {
+                                                let oid: bigint;
+                                                try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
+                                                if (oid === 0n) throw new Error('Invalid order id');
+                                                const res = await signAndSubmitGasless({
+                                                  method: 'metaCancelOrder',
+                                                  orderBook: obAddress,
+                                                  trader: walletAddress as string,
+                                                  orderId: oid,
+                                                  deadlineSec: Math.floor(Date.now() / 1000) + 300,
+                                                });
+                                                if (!res.success) {
+                                                  throw new Error(res.error || 'Gasless cancel failed');
+                                                }
                                                 showSuccess('Order cancelled successfully');
-                                                fetchOpenOrders({ showSpinner: activeTab === 'orders' });
+                                                setOptimisticallyRemovedOrderIds(prev => {
+                                                  const next = new Set(prev);
+                                                  next.add(String(order.id));
+                                                  return next;
+                                                });
+                                                // keep original refresh hook if available
+                                                try {
+                                                  // @ts-ignore
+                                                  if (typeof fetchOpenOrders !== 'undefined') {
+                                                    // @ts-ignore
+                                                    fetchOpenOrders({ showSpinner: activeTab === 'orders' });
+                                                  }
+                                                } catch {}
+                                                // ensure portfolio-wide refresh fires to update counts immediately
+                                                try { await refreshPortfolioOrders(); } catch {}
+                                                try {
+                                                  if (typeof window !== 'undefined') {
+                                                    window.dispatchEvent(new Event('ordersUpdated'));
+                                                  }
+                                                } catch {}
+                                              } else {
+                                                const ok = await cancelOrderForMarket(order.id, metric);
+                                                if (!ok) {
+                                                  showError('Failed to cancel order. Please try again.');
+                                                } else {
+                                                  showSuccess('Order cancelled successfully');
+                                                  setOptimisticallyRemovedOrderIds(prev => {
+                                                    const next = new Set(prev);
+                                                    next.add(String(order.id));
+                                                    return next;
+                                                  });
+                                                  try {
+                                                    // @ts-ignore
+                                                    if (typeof fetchOpenOrders !== 'undefined') {
+                                                      // @ts-ignore
+                                                      fetchOpenOrders({ showSpinner: activeTab === 'orders' });
+                                                    }
+                                                  } catch {}
+                                                  try { await refreshPortfolioOrders(); } catch {}
+                                                  try {
+                                                    if (typeof window !== 'undefined') {
+                                                      window.dispatchEvent(new Event('ordersUpdated'));
+                                                    }
+                                                  } catch {}
+                                                }
                                               }
                                             } catch (e) {
                                               showError('Cancellation failed. Please try again.');

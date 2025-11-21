@@ -216,6 +216,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                       <LightweightChart 
                         symbol={symbol}
                         height="100%"
+                        seriesType="candlestick"
                         defaultTimeframe="5m"
                         defaultPrice={tokenData?.price || currentPrice || 100}
                       />
@@ -224,7 +225,6 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                       <LightweightChart 
                         symbol={symbol}
                         height="100%"
-                        seriesType="candlestick"
                         defaultTimeframe="5m"
                         defaultPrice={tokenData?.price || currentPrice || 100}
                       />

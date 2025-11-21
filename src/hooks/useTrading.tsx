@@ -3,6 +3,8 @@
 import { useState, useCallback } from 'react';
 import { parseUnits, Address } from 'viem';
 import { useWallet } from './useWallet';
+import { signAndSubmitGasless } from '@/lib/gasless';
+import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { useAluminumOrderBook, useCoreVault, useMockUSDC } from './useContract';
 
 // Order types
@@ -30,6 +32,22 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
   // Get wallet and contracts
   const { walletData } = useWallet();
   const { contract: orderBookContract } = useAluminumOrderBook();
+  const orderBookAddress = (orderBookContract as any)?.address as Address | undefined;
+  const GASLESS = typeof process !== 'undefined' && (process as any).env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+  // [GASLESS] Log env flag(s) to confirm feature toggle
+  console.log(
+    '[GASLESS] Env flags',
+    {
+      NEXT_PUBLIC_GASLESS_ENABLED: (process as any).env?.NEXT_PUBLIC_GASLESS_ENABLED,
+    }
+  );
+  // [GASLESS] Log the resolved OrderBook address used by the hook
+  console.log('[GASLESS] orderBookAddress:', orderBookAddress);
+  // [GASLESS] Log chain settings expected by client
+  console.log('[GASLESS] CHAIN_CONFIG', {
+    chainId: (CHAIN_CONFIG as any)?.chainId,
+    rpcUrl: (CHAIN_CONFIG as any)?.rpcUrl,
+  });
   const { contract: coreVaultContract } = useCoreVault();
   const { contract: mockUsdcContract } = useMockUSDC();
 
@@ -152,24 +170,40 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
       const priceWei = parseUnits(params.price, 6); // USDC has 6 decimals
       const sizeWei = parseUnits(params.size, 18); // Size in standard 18 decimals
 
-      // Place limit order
-      const tx = await orderBookContract.write.placeMarginLimitOrder([
-        priceWei,
-        sizeWei,
-        params.isBuy
-      ]);
-      console.log('[Order TX][limit] submitted:', tx.hash);
-      const receipt = await tx.wait();
-      console.log('[Order TX][limit] confirmed:', tx.hash);
+      if (GASLESS && orderBookAddress && walletData.address) {
+        const res = await signAndSubmitGasless({
+          method: 'metaPlaceMarginLimit',
+          orderBook: orderBookAddress,
+          trader: walletData.address as string,
+          priceWei: priceWei as unknown as bigint,
+          amountWei: sizeWei as unknown as bigint,
+          isBuy: params.isBuy,
+          deadlineSec: Math.floor(Date.now() / 1000) + 300,
+        });
+        setIsLoading(false);
+        if (!res.success) return { success: false, error: res.error || 'gasless failed' };
+        setLastTransaction(res.txHash || null);
+        return { success: true, transactionHash: res.txHash };
+      } else {
+        // Place limit order (on-chain)
+        const tx = await orderBookContract.write.placeMarginLimitOrder([
+          priceWei,
+          sizeWei,
+          params.isBuy
+        ]);
+        console.log('[Order TX][limit] submitted:', tx.hash);
+        const receipt = await tx.wait();
+        console.log('[Order TX][limit] confirmed:', tx.hash);
 
-      setLastTransaction(tx.hash);
-      setIsLoading(false);
-      
-      return {
-        success: true,
-        transactionHash: tx.hash,
-        orderId: tx.hash // Use transaction hash as order ID for now
-      };
+        setLastTransaction(tx.hash);
+        setIsLoading(false);
+        
+        return {
+          success: true,
+          transactionHash: tx.hash,
+          orderId: tx.hash
+        };
+      }
     } catch (err) {
       console.error('Error placing limit order:', err);
       setError(err instanceof Error ? err : new Error('Failed to place limit order'));
@@ -226,23 +260,38 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
       // Convert size to contract format
       const sizeWei = parseUnits(params.size, 18); // Size in standard 18 decimals
 
-      // Place market order
-      const tx = await orderBookContract.write.placeMarginMarketOrder([
-        sizeWei,
-        params.isBuy
-      ]);
-      console.log('[Order TX][market] submitted:', tx.hash);
-      const receipt = await tx.wait();
-      console.log('[Order TX][market] confirmed:', tx.hash);
+      if (GASLESS && orderBookAddress && walletData.address) {
+        const res = await signAndSubmitGasless({
+          method: 'metaPlaceMarginMarket',
+          orderBook: orderBookAddress,
+          trader: walletData.address as string,
+          amountWei: sizeWei as unknown as bigint,
+          isBuy: params.isBuy,
+          deadlineSec: Math.floor(Date.now() / 1000) + 300,
+        });
+        setIsLoading(false);
+        if (!res.success) return { success: false, error: res.error || 'gasless failed' };
+        setLastTransaction(res.txHash || null);
+        return { success: true, transactionHash: res.txHash };
+      } else {
+        // Place market order (on-chain)
+        const tx = await orderBookContract.write.placeMarginMarketOrder([
+          sizeWei,
+          params.isBuy
+        ]);
+        console.log('[Order TX][market] submitted:', tx.hash);
+        const receipt = await tx.wait();
+        console.log('[Order TX][market] confirmed:', tx.hash);
 
-      setLastTransaction(tx.hash);
-      setIsLoading(false);
-      
-      return {
-        success: true,
-        transactionHash: tx.hash,
-        orderId: tx.hash // Use transaction hash as order ID for now
-      };
+        setLastTransaction(tx.hash);
+        setIsLoading(false);
+        
+        return {
+          success: true,
+          transactionHash: tx.hash,
+          orderId: tx.hash
+        };
+      }
     } catch (err) {
       console.error('Error placing market order:', err);
       setError(err instanceof Error ? err : new Error('Failed to place market order'));
@@ -269,17 +318,33 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
     setError(null);
 
     try {
-      // Cancel order
-      const tx = await orderBookContract.write.cancelOrder([orderId as `0x${string}`]);
-      await tx.wait();
+      // Try gasless cancel if enabled
+      if (GASLESS && orderBookAddress && walletData.address) {
+        let oid: bigint;
+        try { oid = BigInt(orderId); } catch { oid = BigInt(orderId as any); }
+        const res = await signAndSubmitGasless({
+          method: 'metaCancelOrder',
+          orderBook: orderBookAddress,
+          trader: walletData.address as string,
+          orderId: oid,
+          deadlineSec: Math.floor(Date.now() / 1000) + 300,
+        });
+        setIsLoading(false);
+        if (!res.success) return { success: false, error: res.error || 'gasless failed' };
+        setLastTransaction(res.txHash || null);
+        return { success: true, transactionHash: res.txHash };
+      } else {
+        const tx = await orderBookContract.write.cancelOrder([orderId as `0x${string}`]);
+        await tx.wait();
 
-      setLastTransaction(tx.hash);
-      setIsLoading(false);
-      
-      return {
-        success: true,
-        transactionHash: tx.hash
-      };
+        setLastTransaction(tx.hash);
+        setIsLoading(false);
+        
+        return {
+          success: true,
+          transactionHash: tx.hash
+        };
+      }
     } catch (err) {
       console.error('Error cancelling order:', err);
       setError(err instanceof Error ? err : new Error('Failed to cancel order'));

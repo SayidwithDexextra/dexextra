@@ -737,6 +737,18 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
             onLogs: (logs: any) => {
               console.log(`[OrderBook] ${String(eventName)} detected (${hasWs ? 'ws' : 'poll'}). logs:`, logs);
               fetchNowRef.current?.();
+              try {
+                if (typeof window !== 'undefined') {
+                  // Trigger portfolio open-orders refresh on order lifecycle events
+                  if (eventName === 'OrderPlaced' || eventName === 'OrderCancelled' || eventName === 'OrderModified') {
+                    window.dispatchEvent(new Event('ordersUpdated'));
+                  }
+                  // Trigger positions refresh on executed trades
+                  if (eventName === 'TradeExecutionCompleted') {
+                    window.dispatchEvent(new Event('positionsRefreshRequested'));
+                  }
+                }
+              } catch {}
             },
             onError: (err: unknown) => {
               console.error(`[OrderBook] Error on ${String(eventName)} (${hasWs ? 'WebSocket' : 'polling'}) subscription:`, err);
@@ -753,6 +765,16 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
                     onLogs: (logs2: any) => {
                       console.log(`[OrderBook] ${String(eventName)} detected (poll fallback). logs:`, logs2);
                       fetchNowRef.current?.();
+                      try {
+                        if (typeof window !== 'undefined') {
+                          if (eventName === 'OrderPlaced' || eventName === 'OrderCancelled' || eventName === 'OrderModified') {
+                            window.dispatchEvent(new Event('ordersUpdated'));
+                          }
+                          if (eventName === 'TradeExecutionCompleted') {
+                            window.dispatchEvent(new Event('positionsRefreshRequested'));
+                          }
+                        }
+                      } catch {}
                     },
                     onError: (err2: unknown) => {
                       console.error(`[OrderBook] Error on ${String(eventName)} (poll fallback) subscription:`, err2);
@@ -780,6 +802,16 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
               onLogs: (logs3: any) => {
                 console.log(`[OrderBook] ${String(eventName)} detected (direct poll). logs:`, logs3);
                 fetchNowRef.current?.();
+                try {
+                  if (typeof window !== 'undefined') {
+                    if (eventName === 'OrderPlaced' || eventName === 'OrderCancelled' || eventName === 'OrderModified') {
+                      window.dispatchEvent(new Event('ordersUpdated'));
+                    }
+                    if (eventName === 'TradeExecutionCompleted') {
+                      window.dispatchEvent(new Event('positionsRefreshRequested'));
+                    }
+                  }
+                } catch {}
               },
               onError: (err3: unknown) => {
                 console.error(`[OrderBook] Error on ${String(eventName)} (direct poll) subscription:`, err3);
@@ -831,10 +863,21 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
       'order-update': () => {
         console.log(`[OrderBook] Pusher event order-update received for ${metricId}, triggering UI refresh`);
         fetchNowRef.current?.();
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('ordersUpdated'));
+          }
+        } catch {}
       },
       'trading-event': () => {
         console.log(`[OrderBook] Pusher event trading-event received for ${metricId}, triggering UI refresh`);
         fetchNowRef.current?.();
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('positionsRefreshRequested'));
+            window.dispatchEvent(new Event('ordersUpdated'));
+          }
+        } catch {}
       },
       'price-update': () => {
         console.log(`[OrderBook] Pusher event price-update received for ${metricId}, triggering UI refresh`);
