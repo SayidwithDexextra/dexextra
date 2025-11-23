@@ -66,7 +66,12 @@ const nextConfig: NextConfig = {
   },
   
   // Webpack optimizations
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev }) => {
+    // Suppress noisy webpack PackFileCacheStrategy restore warnings in dev by avoiding FS cache
+    if (dev) {
+      // Use in-memory cache to prevent corrupt pack cache reads causing spammy warnings
+      (config as any).cache = { type: 'memory' };
+    }
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,

@@ -53,6 +53,9 @@ export { DepositModal } from './DepositModal';
 export { MarketWizard } from './MarketWizard';
 // export { default as TradingPanel } from './TradingPanel';
 
+// Trading Enablement
+export { EnableTradingModal } from './EnableTrading';
+
 // // Token Components
 // export { default as TokenChart } from './TokenChart';
 // export { default as TokenHeader } from './TokenHeader';

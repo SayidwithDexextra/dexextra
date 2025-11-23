@@ -14,8 +14,65 @@ import OBSettlementFacetArtifact from '@/lib/abis/facets/OBSettlementFacet.json'
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 
+function shortAddr(a: any) {
+  const s = String(a || '');
+  return (s.startsWith('0x') && s.length === 42) ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+}
+
+function trunc(s: any, n = 120) {
+  const t = String(s ?? '');
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+function friendly(step: string) {
+  const map: Record<string, string> = {
+    build_cut: 'Build Diamond Cut',
+    validate_env: 'Validate Env',
+    respond: 'Respond',
+  };
+  return map[step] || step;
+}
+
+function summarizeData(data?: Record<string, any>) {
+  if (!data || typeof data !== 'object') return '';
+  const parts: string[] = [];
+  if (Array.isArray((data as any).perFacet)) parts.push(`facets=${(data as any).perFacet.length}`);
+  if ((data as any).totalSelectors != null) parts.push(`selectors=${(data as any).totalSelectors}`);
+  if ((data as any).reason) parts.push(`reason=${trunc((data as any).reason, 40)}`);
+  if ((data as any).duplicatesCount != null) parts.push(`dupes=${(data as any).duplicatesCount}`);
+  if ((data as any).emptyFacets && Array.isArray((data as any).emptyFacets)) {
+    const list = (data as any).emptyFacets.slice(0, 3).map((a: string) => shortAddr(a)).join(',');
+    parts.push(`empty=[${list}${(data as any).emptyFacets.length > 3 ? ',…' : ''}]`);
+  }
+  if ((data as any).missing) parts.push(`missingKeys=${Object.keys((data as any).missing).filter(k => (data as any).missing[k]).length}`);
+  if ((data as any).error) parts.push(`error=${trunc((data as any).error, 100)}`);
+  return parts.length ? ` — ${parts.join(' ')}` : '';
+}
+
+const COLORS = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  green: '\x1b[32m',
+  red: '\x1b[31m',
+  cyan: '\x1b[36m',
+  yellow: '\x1b[33m',
+};
+
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
+    const ts = new Date().toISOString();
+    const tag = `${COLORS.bold}${COLORS.cyan}[OrderBookCut]${COLORS.reset}`;
+    const name = friendly(step);
+    const emoji = status === 'start' ? '🟦' : status === 'success' ? '✅' : '❌';
+    const color =
+      status === 'start' ? COLORS.yellow :
+      status === 'success' ? COLORS.green :
+      COLORS.red;
+    const human = `${tag} ${emoji} ${color}${name}${COLORS.reset}${summarizeData(data)}  ${COLORS.dim}${ts}${COLORS.reset}`;
+    // Human-friendly line
+    console.log(human);
+    // Structured JSON (machine-readable)
     console.log(JSON.stringify({
       area: 'market_creation',
       context: 'orderbook_cut',

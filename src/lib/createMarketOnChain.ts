@@ -37,12 +37,13 @@ export async function createMarketOnChain(params: {
   tags?: string[];
   feeRecipient?: string; // optional override; defaults to connected wallet
   onProgress?: (event: ProgressEvent) => void;
+  pipelineId?: string; // optional: used for server push progress via Pusher
 }) {
   if (typeof window === 'undefined' || !(window as any).ethereum) {
     throw new Error('No injected wallet found. Please install MetaMask or a compatible wallet.');
   }
 
-  const { symbol, metricUrl, startPrice, dataSource = 'User Provided', tags = [], feeRecipient, onProgress } = params;
+  const { symbol, metricUrl, startPrice, dataSource = 'User Provided', tags = [], feeRecipient, onProgress, pipelineId } = params;
   if (!symbol || !metricUrl) throw new Error('Symbol and metricUrl are required');
 
   // Build cutArg and initFacet from server (source of truth, compiled artifacts)
@@ -61,6 +62,8 @@ export async function createMarketOnChain(params: {
       initFacet, facets: cut.map((c: any) => ({ facet: c.facetAddress, selectors: (c.functionSelectors || []).length })),
     });
     onProgress?.({ step: 'cut_fetch', status: 'success', data: { facets: cutArg.length } });
+    // Nudge UI to next step consistently even when server provides the cut
+    onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
   } catch (e: any) {
     // Fallback: compute from local ABIs + env addresses if API unavailable
     // eslint-disable-next-line no-console
@@ -137,17 +140,166 @@ export async function createMarketOnChain(params: {
   const factoryAbi =
     (FuturesMarketFactoryGenerated as any)?.abi ||
     (FuturesMarketFactoryGenerated as any);
-  const factory = new ethers.Contract(factoryAddress, factoryAbi, signer);
+  const gaslessEnabled = String((process.env as any).NEXT_PUBLIC_GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
+  const metaAbi = [
+    'function metaCreateNonce(address) view returns (uint256)',
+  ];
+  const mergedAbi = Array.isArray(factoryAbi) ? [...factoryAbi, ...(gaslessEnabled ? metaAbi : [])] : (gaslessEnabled ? metaAbi : factoryAbi);
+  const factory = new ethers.Contract(factoryAddress, mergedAbi, signer);
 
   // Params
   const startPrice6 = ethers.parseUnits(String(startPrice ?? '1'), 6);
   const settlementTs = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
   const owner = feeRecipient && ethers.isAddress(feeRecipient) ? feeRecipient : signerAddress;
 
-  // Preflight static call (non-fatal)
-  try {
-    onProgress?.({ step: 'static_call', status: 'start' });
-    await factory.getFunction('createFuturesMarketDiamond').staticCall(
+  if (gaslessEnabled) {
+    // Gasless path: sign typed data and submit via backend relayer
+    onProgress?.({ step: 'meta_prepare', status: 'start' });
+    // helpers to hash arrays consistent with contract
+    const tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
+    const perCutHashes: string[] = [];
+    for (const entry of cutArg) {
+      const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((entry?.[2] || []).length).fill('bytes4'), entry?.[2] || []));
+      const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [entry?.[0], entry?.[1], selectorsHash]);
+      perCutHashes.push(ethers.keccak256(enc));
+    }
+    const cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+    // fetch meta nonce
+    let nonceBn: bigint = 0n;
+    try {
+      nonceBn = await factory.metaCreateNonce(signerAddress);
+    } catch {}
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 15 * 60); // 15 minutes
+    const domain = {
+      name: String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_NAME || 'DexetraFactory'),
+      version: String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_VERSION || '1'),
+      chainId: Number(network.chainId),
+      verifyingContract: factoryAddress,
+    } as const;
+    // Diamond owner must match what the server will pass to metaCreate (admin wallet by default)
+    const envDiamondOwner =
+      (process.env as any).NEXT_PUBLIC_FACTORY_DIAMOND_OWNER ||
+      (globalThis as any).process?.env?.NEXT_PUBLIC_FACTORY_DIAMOND_OWNER;
+    const diamondOwner =
+      (typeof envDiamondOwner === 'string' && ethers.isAddress(envDiamondOwner))
+        ? envDiamondOwner
+        : owner;
+    const types = {
+      MetaCreate: [
+        { name: 'marketSymbol', type: 'string' },
+        { name: 'metricUrl', type: 'string' },
+        { name: 'settlementDate', type: 'uint256' },
+        { name: 'startPrice', type: 'uint256' },
+        { name: 'dataSource', type: 'string' },
+        { name: 'tagsHash', type: 'bytes32' },
+        { name: 'diamondOwner', type: 'address' },
+        { name: 'cutHash', type: 'bytes32' },
+        { name: 'initFacet', type: 'address' },
+        { name: 'creator', type: 'address' },
+        { name: 'nonce', type: 'uint256' },
+        { name: 'deadline', type: 'uint256' },
+      ],
+    } as const;
+    const message = {
+      marketSymbol: symbol,
+      metricUrl,
+      settlementDate: settlementTs,
+      startPrice: startPrice6.toString(),
+      dataSource,
+      tagsHash,
+      diamondOwner,
+      cutHash,
+      initFacet,
+      creator: signerAddress,
+      nonce: nonceBn.toString(),
+      deadline: deadline.toString(),
+    };
+    // Debug: ensure signer === creator and domain/message are aligned
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] signer', signerAddress);
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] creator', message.creator, 'equal?', String(message.creator).toLowerCase() === String(signerAddress).toLowerCase());
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] factory', factoryAddress);
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] chainId', Number(network.chainId));
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] domain', domain);
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] hashes', { tagsHash, cutHash });
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] diamondOwner', diamondOwner);
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] message', message);
+    } catch {}
+    const signature = await (signer as any).signTypedData(domain as any, types as any, message as any);
+    try {
+      const recovered = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
+      // eslint-disable-next-line no-console
+      console.log('[SIGNCHECK][client] recovered', recovered);
+    } catch {}
+    onProgress?.({ step: 'meta_signature', status: 'success' });
+
+    // Submit to backend
+    onProgress?.({ step: 'relayer_submit', status: 'start' });
+    const res = await fetch('/api/markets/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol,
+        metricUrl,
+        startPrice: String(startPrice),
+        dataSource,
+        tags,
+        creatorWalletAddress: signerAddress,
+        settlementDate: settlementTs,
+        signature,
+        nonce: message.nonce,
+        deadline: message.deadline,
+        cutArg, // pass client-side cut order to match server hashing
+        pipelineId: pipelineId || null,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`relayer http ${res.status}: ${text}`);
+    }
+    const json = await res.json();
+    onProgress?.({ step: 'relayer_submit', status: 'success', data: { hash: json?.transactionHash, orderBook: json?.orderBook, marketId: json?.marketId } });
+    return {
+      orderBook: json?.orderBook,
+      marketId: json?.marketId,
+      transactionHash: json?.transactionHash,
+      chainId: Number(network.chainId),
+      receipt: undefined,
+    };
+  }
+  // Legacy direct on-chain tx
+  {
+    // Preflight static call (non-fatal)
+    try {
+      onProgress?.({ step: 'static_call', status: 'start' });
+      await factory.getFunction('createFuturesMarketDiamond').staticCall(
+        symbol,
+        metricUrl,
+        settlementTs,
+        startPrice6,
+        dataSource,
+        tags,
+        owner,
+        cutArg,
+        initFacet,
+        '0x'
+      );
+      onProgress?.({ step: 'static_call', status: 'success' });
+    } catch (_) {
+      onProgress?.({ step: 'static_call', status: 'error' });
+    }
+
+    // Send tx
+    onProgress?.({ step: 'send_tx', status: 'start' });
+    const tx = await factory.getFunction('createFuturesMarketDiamond')(
       symbol,
       metricUrl,
       settlementTs,
@@ -159,50 +311,148 @@ export async function createMarketOnChain(params: {
       initFacet,
       '0x'
     );
-    onProgress?.({ step: 'static_call', status: 'success' });
-  } catch (_) {
-    onProgress?.({ step: 'static_call', status: 'error' });
-  }
+    console.info('[createMarketOnChain] sent tx:', tx.hash);
+    onProgress?.({ step: 'send_tx', status: 'sent', data: { hash: tx.hash } });
+    onProgress?.({ step: 'confirm', status: 'start' });
+    const receipt = await tx.wait();
+    console.info('[createMarketOnChain] mined tx:', { hash: receipt?.hash || tx.hash, blockNumber: (receipt as any)?.blockNumber });
+    onProgress?.({ step: 'confirm', status: 'mined', data: { hash: receipt?.hash || tx.hash, blockNumber: (receipt as any)?.blockNumber } });
 
-  // Send tx
-  onProgress?.({ step: 'send_tx', status: 'start' });
-  const tx = await factory.getFunction('createFuturesMarketDiamond')(
-    symbol,
-    metricUrl,
-    settlementTs,
-    startPrice6,
-    dataSource,
-    tags,
-    owner,
-    cutArg,
-    initFacet,
-    '0x'
-  );
-  console.info('[createMarketOnChain] sent tx:', tx.hash);
-  onProgress?.({ step: 'send_tx', status: 'sent', data: { hash: tx.hash } });
-  onProgress?.({ step: 'confirm', status: 'start' });
-  const receipt = await tx.wait();
-  console.info('[createMarketOnChain] mined tx:', { hash: receipt?.hash || tx.hash, blockNumber: (receipt as any)?.blockNumber });
-  onProgress?.({ step: 'confirm', status: 'mined', data: { hash: receipt?.hash || tx.hash, blockNumber: (receipt as any)?.blockNumber } });
-
-  // Parse event
-  const iface = new ethers.Interface(factoryAbi);
-  let orderBook: string | null = null;
-  let marketId: string | null = null;
-  for (const log of (receipt as any).logs || []) {
+    // Parse event
+    const iface = new ethers.Interface(factoryAbi);
+    let orderBook: string | null = null;
+    let marketId: string | null = null;
+    for (const log of (receipt as any).logs || []) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed?.name === 'FuturesMarketCreated') {
+          orderBook = parsed.args?.orderBook as string;
+          marketId = parsed.args?.marketId as string;
+          break;
+        }
+      } catch {}
+    }
+    if (!orderBook || !marketId) {
+      throw new Error('Failed to parse FuturesMarketCreated event');
+    }
+    onProgress?.({ step: 'parse_event', status: 'success', data: { orderBook, marketId } });
+    // Ensure required placement selectors exist (mirror server-side defensive step)
     try {
-      const parsed = iface.parseLog(log);
-      if (parsed?.name === 'FuturesMarketCreated') {
-        orderBook = parsed.args?.orderBook as string;
-        marketId = parsed.args?.marketId as string;
-        break;
+      const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
+      const CutABI = [
+        'function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)',
+      ];
+      const loupe = new ethers.Contract(orderBook, LoupeABI, signer);
+      const diamondCut = new ethers.Contract(orderBook, CutABI, signer);
+      // Identify placement facet address from cut (match any known placement selector); fallback to env
+      const placementSelectorsKnown = [
+        'placeLimitOrder(uint256,uint256,bool)',
+        'placeMarginLimitOrder(uint256,uint256,bool)',
+        'placeMarketOrder(uint256,bool)',
+        'placeMarginMarketOrder(uint256,bool)',
+        'placeMarketOrderWithSlippage(uint256,bool,uint256)',
+        'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
+        'cancelOrder(uint256)',
+      ];
+      const knownSelectorSet = new Set(placementSelectorsKnown.map((s) => ethers.id(s).slice(0, 10)));
+      let placementFacetAddr: string | undefined;
+      for (const entry of cutArg) {
+        const facetAddr = entry?.[0] as string;
+        const selectors = entry?.[2] as string[] | undefined;
+        if (Array.isArray(selectors) && selectors.some((sel: string) => knownSelectorSet.has(sel))) {
+          placementFacetAddr = facetAddr;
+          break;
+        }
       }
-    } catch {}
+      if (!placementFacetAddr) {
+        const envPlacement =
+          (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET ||
+          (globalThis as any).process?.env?.NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
+        if (envPlacement && ethers.isAddress(envPlacement)) {
+          placementFacetAddr = envPlacement;
+        }
+      }
+      // Explicit list of required placement selectors
+      const placementSigs = [
+        'placeLimitOrder(uint256,uint256,bool)',
+        'placeMarginLimitOrder(uint256,uint256,bool)',
+        'placeMarketOrder(uint256,bool)',
+        'placeMarginMarketOrder(uint256,bool)',
+        'placeMarketOrderWithSlippage(uint256,bool,uint256)',
+        'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
+        'cancelOrder(uint256)',
+      ];
+      const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
+      const missing: string[] = [];
+      for (const sel of requiredSelectors) {
+        try {
+          const addr: string = await loupe.facetAddress(sel);
+          if (!addr || addr.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+            missing.push(sel);
+          }
+        } catch {
+          missing.push(sel);
+        }
+      }
+      console.info('[createMarketOnChain] selector check', { placementFacetAddr, missingCount: missing.length });
+      onProgress?.({
+        step: 'verify_selectors',
+        status: missing.length > 0 ? 'missing' : 'ok',
+        data: { missingCount: missing.length },
+      });
+      if (missing.length > 0 && placementFacetAddr && ethers.isAddress(placementFacetAddr)) {
+        const cutArg = [{ facetAddress: placementFacetAddr, action: 0, functionSelectors: missing }];
+        const txCut = await diamondCut.diamondCut(cutArg as any, ethers.ZeroAddress, '0x');
+        console.info('[createMarketOnChain] diamondCut sent to add missing selectors', { tx: txCut.hash, facet: placementFacetAddr, missing });
+        onProgress?.({ step: 'diamond_cut', status: 'sent', data: { hash: txCut.hash, facet: placementFacetAddr, missing } });
+        await txCut.wait();
+        console.info('[createMarketOnChain] diamondCut mined for missing selectors');
+        onProgress?.({ step: 'diamond_cut', status: 'mined' });
+      } else if (missing.length > 0) {
+        console.warn('[createMarketOnChain] missing selectors but no placement facet address available to patch', { missing });
+      } else {
+        console.info('[createMarketOnChain] all required placement selectors present');
+      }
+    } catch (_) {
+      // Non-fatal safety step
+    }
+
+    // Attach GlobalSessionRegistry on MetaTradeFacet so gasless sessions work out of the box
+    try {
+      const registry =
+        (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS ||
+        (globalThis as any).process?.env?.NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS ||
+        '';
+      if (registry && ethers.isAddress(registry)) {
+        const meta = new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, signer);
+        let current: string | null = null;
+        try {
+          current = await meta.sessionRegistry();
+        } catch {}
+        if (!current || String(current).toLowerCase() !== String(registry).toLowerCase()) {
+          onProgress?.({ step: 'attach_session_registry', status: 'start' });
+          const txSet = await meta.setSessionRegistry(registry);
+          onProgress?.({ step: 'attach_session_registry', status: 'sent', data: { hash: txSet.hash } });
+          await txSet.wait();
+          onProgress?.({ step: 'attach_session_registry', status: 'mined' });
+        } else {
+          onProgress?.({ step: 'attach_session_registry', status: 'ok', data: { message: 'already_set' } });
+        }
+      } else {
+        onProgress?.({ step: 'attach_session_registry', status: 'error', data: { error: 'Missing NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS' } });
+      }
+    } catch (e: any) {
+      onProgress?.({ step: 'attach_session_registry', status: 'error', data: { error: e?.message || String(e) } });
+    }
+
+    return {
+      orderBook,
+      marketId,
+      transactionHash: (receipt as any)?.hash || tx.hash,
+      chainId: Number(network.chainId),
+      receipt,
+    };
   }
-  if (!orderBook || !marketId) {
-    throw new Error('Failed to parse FuturesMarketCreated event');
-  }
-  onProgress?.({ step: 'parse_event', status: 'success', data: { orderBook, marketId } });
 
   // Ensure required placement selectors exist (mirror server-side defensive step)
   try {

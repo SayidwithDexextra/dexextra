@@ -12,7 +12,7 @@ import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
 import { usePortfolioData } from '@/hooks/usePortfolioData';
 import type { Address } from 'viem';
-import { signAndSubmitGasless } from '@/lib/gasless';
+import { signAndSubmitGasless, createGaslessSession, submitSessionTrade } from '@/lib/gasless';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { parseUnits } from 'viem';
 
@@ -339,24 +339,41 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     
     try {
       const closeAmount = parseFloat(closeSize);
-      // Prefer gasless close via market order of opposite side
+      // Prefer gasless close via market order of opposite side (session-based)
       if (GASLESS && walletAddress) {
         const pos = positions.find(p => p.id === closePositionId);
         const isBuy = pos?.side === 'SHORT';
         const obAddress = resolveOrderBookAddress(closeSymbol || pos?.symbol);
         if (!obAddress) throw new Error('OrderBook not found for market');
         const amountWei = parseUnits(closeSize, 18);
-        const res = await signAndSubmitGasless({
-          method: 'metaPlaceMarginMarket',
-          orderBook: obAddress,
-          trader: walletAddress as string,
-          amountWei: amountWei as unknown as bigint,
-          isBuy,
-          deadlineSec: Math.floor(Date.now() / 1000) + 300,
-        });
-        if (!res.success) {
-          throw new Error(res.error || 'Gasless close failed');
+        // session flow
+        const sessionKey = `gasless:session:${walletAddress}`;
+        let sessionId = (typeof window !== 'undefined') ? window.localStorage.getItem(sessionKey) || '' : '';
+        const trySessionOnce = async (): Promise<string | null> => {
+          if (!sessionId) return null;
+          const r = await submitSessionTrade({
+            method: 'sessionPlaceMarginMarket',
+            orderBook: obAddress,
+            sessionId,
+            trader: walletAddress as string,
+            amountWei: amountWei as unknown as bigint,
+            isBuy,
+          });
+          if (!r.success) return null;
+          return r.txHash || null;
+        };
+        let txHash = await trySessionOnce();
+        if (!txHash) {
+          const created = await createGaslessSession({
+            trader: walletAddress as string,
+          });
+          if (created.success && created.sessionId) {
+            sessionId = created.sessionId;
+            if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
+            txHash = await trySessionOnce();
+          }
         }
+        if (!txHash) throw new Error('Gasless close failed');
         try {
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new Event('ordersUpdated'));
@@ -878,16 +895,33 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 let oid: bigint;
                                                 try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
                                                 if (oid === 0n) throw new Error('Invalid order id');
-                                                const res = await signAndSubmitGasless({
-                                                  method: 'metaCancelOrder',
-                                                  orderBook: obAddress,
-                                                  trader: walletAddress as string,
-                                                  orderId: oid,
-                                                  deadlineSec: Math.floor(Date.now() / 1000) + 300,
-                                                });
-                                                if (!res.success) {
-                                                  throw new Error(res.error || 'Gasless cancel failed');
+                                                // session-based cancel
+                                                const sessionKey = `gasless:session:${walletAddress}`;
+                                                let sessionId = (typeof window !== 'undefined') ? window.localStorage.getItem(sessionKey) || '' : '';
+                                                const trySessionCancel = async (): Promise<string | null> => {
+                                                  if (!sessionId) return null;
+                                                  const r = await submitSessionTrade({
+                                                    method: 'sessionCancelOrder',
+                                                    orderBook: obAddress,
+                                                    sessionId,
+                                                    trader: walletAddress as string,
+                                                    orderId: oid as unknown as bigint,
+                                                  });
+                                                  if (!r.success) return null;
+                                                  return r.txHash || null;
+                                                };
+                                                let txHash = await trySessionCancel();
+                                                if (!txHash) {
+                                                  const created = await createGaslessSession({
+                                                    trader: walletAddress as string,
+                                                  });
+                                                  if (created.success && created.sessionId) {
+                                                    sessionId = created.sessionId;
+                                                    if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
+                                                    txHash = await trySessionCancel();
+                                                  }
                                                 }
+                                                if (!txHash) throw new Error('Gasless cancel failed');
                                                 showSuccess('Order cancelled successfully');
                                                 setOptimisticallyRemovedOrderIds(prev => {
                                                   const next = new Set(prev);

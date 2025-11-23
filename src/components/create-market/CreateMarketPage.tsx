@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 const CreateMarketFormClient = dynamic(() => import('./CreateMarketForm').then(m => m.CreateMarketForm), { ssr: false });
 import type { MarketFormData } from '@/hooks/useCreateMarketForm';
@@ -12,35 +12,109 @@ import { createMarketOnChain } from '@/lib/createMarketOnChain';
 import { ethers } from 'ethers';
 import { ProgressOverlay } from './ProgressOverlay';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
+import { usePusher } from '@/lib/pusher-client';
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const deploymentOverlay = useDeploymentOverlay();
+  const pusher = usePusher();
+  const [timerStart, setTimerStart] = useState<number | null>(null);
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
+  const [showTimer, setShowTimer] = useState<boolean>(false);
+  const intervalRef = useRef<number | null>(null);
+
+  // Only show timer on localhost
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      setShowTimer(host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost'));
+    }
+  }, []);
+
+  const formatElapsed = (ms: number) => {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(total / 60).toString().padStart(2, '0');
+    const s = (total % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  const gaslessEnabled = String(
+    (process.env as any).NEXT_PUBLIC_GASLESS_CREATE_ENABLED ||
+    (globalThis as any)?.process?.env?.NEXT_PUBLIC_GASLESS_CREATE_ENABLED ||
+    ''
+  ).toLowerCase() === 'true';
 
   // Detailed pipeline messages reflecting backend-oriented steps
-  const pipelineMessages: string[] = [
-    'Fetch facet cut configuration',
-    'Build initializer and selectors',
-    'Preflight validation (static call)',
-    'Submit create transaction',
-    'Wait for confirmation',
-    'Parse FuturesMarketCreated event',
-    'Verify required selectors',
-    'Patch missing selectors if needed',
-    'Grant admin roles on CoreVault',
-    'Save market metadata',
-    'Finalize deployment',
-  ];
+  const pipelineMessages: string[] = gaslessEnabled
+    ? [
+        'Fetch facet cut configuration',      // 0
+        'Build initializer and selectors',    // 1
+        'Prepare meta-create',                // 2 (meta_prepare / factory_static_call_meta)
+        'Sign meta request',                  // 3 (meta_signature)
+        'Submit to relayer',                  // 4 (relayer_submit / factory_send_tx_meta)
+        'Wait for confirmation',              // 5 (factory_confirm_meta*)
+        'Parse FuturesMarketCreated event',   // 6 (parse_event)
+        'Verify required selectors',          // 7 (ensure_selectors)
+        'Patch missing selectors if needed',  // 8 (ensure_selectors_missing/diamond_cut)
+        'Attach session registry',            // 9 (attach_session_registry)
+        'Grant admin roles on CoreVault',     // 10 (grant_roles)
+        'Save market metadata',               // 11 (save_market)
+        'Finalize deployment',                // 12
+      ]
+    : [
+        'Fetch facet cut configuration',      // 0
+        'Build initializer and selectors',    // 1
+        'Preflight validation (static call)', // 2
+        'Submit create transaction',          // 3
+        'Wait for confirmation',              // 4
+        'Parse FuturesMarketCreated event',   // 5
+        'Verify required selectors',          // 6
+        'Patch missing selectors if needed',  // 7
+        'Grant admin roles on CoreVault',     // 8
+        'Save market metadata',               // 9
+        'Finalize deployment',                // 10
+      ];
   const stepIndexMap: Record<string, number> = {
+    // Common client steps
     cut_fetch: 0,
     cut_build: 1,
+    // Legacy
     static_call: 2,
     send_tx: 3,
-    confirm: 4,
-    parse_event: 5,
-    verify_selectors: 6,
-    diamond_cut: 7,
+    confirm: gaslessEnabled ? 5 : 4,
+    parse_event: gaslessEnabled ? 6 : 5,
+    verify_selectors: gaslessEnabled ? 7 : 6,
+    diamond_cut: gaslessEnabled ? 8 : 7,
+    // Gasless/client-only
+    meta_prepare: 2,
+    meta_signature: 3,
+    relayer_submit: 4,
+    // Server (gasless) mapped steps
+    facet_cut_built: 1,
+    factory_static_call_meta: 2,
+    factory_static_call: 2,
+    factory_send_tx_meta: 4,
+    factory_send_tx: 3,
+    factory_send_tx_meta_sent: 4,
+    factory_send_tx_sent: 3,
+    factory_confirm_meta: 5,
+    factory_confirm_meta_mined: 5,
+    factory_confirm: gaslessEnabled ? 5 : 4,
+    factory_confirm_mined: gaslessEnabled ? 5 : 4,
+    ensure_selectors: 7,
+    ensure_selectors_missing: 8,
+    ensure_selectors_diamondCut_sent: 8,
+    ensure_selectors_diamondCut_mined: 8,
+    attach_session_registry: 9,
+    attach_session_registry_sent: 9,
+    attach_session_registry_mined: 9,
+    grant_roles: 10,
+    grant_ORDERBOOK_ROLE_sent: 10,
+    grant_ORDERBOOK_ROLE_mined: 10,
+    grant_SETTLEMENT_ROLE_sent: 10,
+    grant_SETTLEMENT_ROLE_mined: 10,
+    save_market: 11,
   };
   const updateOverlayIndex = (idx: number) => {
     const clamped = Math.max(0, Math.min(idx, pipelineMessages.length - 1));
@@ -107,7 +181,19 @@ export const CreateMarketPage = () => {
     setShowProgress(false);
     setIsFadingOut(false);
     resetSteps();
+    let unsubscribePusher: (() => void) | null = null;
     try {
+      // Start local timer
+      setTimerStart(Date.now());
+      setElapsedMs(0);
+      if (intervalRef.current) window.clearInterval(intervalRef.current);
+      intervalRef.current = window.setInterval(() => {
+        setElapsedMs(prev => {
+          if (timerStart == null) return 0;
+          return Date.now() - timerStart;
+        });
+      }, 250);
+
       const INITIAL_SPLASH_MS = 1200;
       // Params
       const symbol = marketData.symbol;
@@ -115,6 +201,40 @@ export const CreateMarketPage = () => {
       const dataSource = marketData.dataSource || 'User Provided';
       const tags = marketData.tags || [];
       const sourceLocator = (marketData as any).sourceLocator || null;
+      // Correlate frontend with backend progress (gasless)
+      const pipelineId =
+        (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
+          ? (crypto as any).randomUUID()
+          : `cm-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      // Subscribe to Pusher progress (always; safe no-op if server doesn't emit)
+      if (pusher) {
+        try {
+          unsubscribePusher = pusher.subscribeToChannel(`deploy-${pipelineId}`, {
+            progress: (evt: any) => {
+              const s = evt?.step;
+              if (typeof s === 'string') {
+                const idx = stepIndexMap[s];
+                if (typeof idx === 'number') updateOverlayIndex(idx);
+                // Mirror server steps into panel status when possible
+                if (s === 'factory_confirm_meta_mined' || s === 'factory_confirm_mined' || s === 'confirm') {
+                  markDone('confirm');
+                }
+                if (s === 'grant_roles' || s === 'grant_ORDERBOOK_ROLE_mined' || s === 'grant_SETTLEMENT_ROLE_mined') {
+                  markDone('roles');
+                }
+                if (s === 'save_market') {
+                  const st = String(evt?.status || '').toLowerCase();
+                  if (st === 'success') {
+                    markDone('save');
+                    // Close overlay shortly after final step
+                    setTimeout(() => deploymentOverlay.fadeOutAndClose(300), 200);
+                  }
+                }
+              }
+            },
+          });
+        } catch {}
+      }
 
       // Open global deployment overlay and navigate to token page immediately
       deploymentOverlay.open({
@@ -180,83 +300,88 @@ export const CreateMarketPage = () => {
         startPrice: String(marketData.startPrice || '1'),
         dataSource,
         tags,
+        pipelineId,
         onProgress: ({ step }) => {
           const idx = stepIndexMap[step];
           if (typeof idx === 'number') updateOverlayIndex(idx);
         },
       });
       markDone('tx');
-      // Move overlay to "Wait for confirmation" or past if already covered by progress events
-      updateOverlayIndex(5);
-
-      // Confirm step completed as part of the awaited tx above
-      markDone('confirm');
-
-      // Grant roles on CoreVault via server-admin endpoint (user is not necessarily admin)
-      markActive('roles');
-      {
-        updateOverlayIndex(8);
-        const grant = await fetch('/api/markets/grant-roles', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orderBook }),
-        });
-        if (!grant.ok) {
-          const gErr = await grant.json().catch(() => ({} as any));
-          throw new Error(gErr?.error || 'Role grant failed');
+      if (!gaslessEnabled) {
+        // Legacy: local confirm UI
+        updateOverlayIndex(5);
+        // Confirm step completed as part of the awaited tx above
+        markDone('confirm');
+        // Grant roles on CoreVault via server-admin endpoint (user is not necessarily admin)
+        markActive('roles');
+        {
+          updateOverlayIndex(8);
+          const grant = await fetch('/api/markets/grant-roles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderBook }),
+          });
+          if (!grant.ok) {
+            const gErr = await grant.json().catch(() => ({} as any));
+            throw new Error(gErr?.error || 'Role grant failed');
+          }
+          markDone('roles');
+          updateOverlayIndex(9);
         }
+        // Persist market metadata via API (Supabase upsert, verification)
+        markActive('save');
+        {
+          updateOverlayIndex(9);
+          const networkName =
+            (process.env as any).NEXT_PUBLIC_NETWORK_NAME ||
+            (globalThis as any).process?.env?.NEXT_PUBLIC_NETWORK_NAME ||
+            'hyperliquid';
+          const saveRes = await fetch('/api/markets/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              marketIdentifier: symbol,
+              symbol,
+              name: `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`,
+              description: `OrderBook market for ${symbol}`,
+              category: Array.isArray(tags) && tags.length ? tags[0] : 'CUSTOM',
+              decimals: 6,
+              minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
+              settlementDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+              tradingEndDate: null,
+              dataRequestWindowSeconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
+              autoSettle: true,
+              oracleProvider: null,
+              initialOrder: {
+                metricUrl,
+                startPrice: String(marketData.startPrice || '1'),
+                dataSource,
+                tags,
+              },
+              chainId,
+              networkName,
+              creatorWalletAddress: undefined,
+              marketAddress: orderBook,
+              marketIdBytes32: marketId,
+              transactionHash,
+              blockNumber: null,
+              gasUsed: null,
+              aiSourceLocator: sourceLocator,
+              iconImageUrl: (marketData as any).iconUrl ? String((marketData as any).iconUrl).trim() : null,
+            }),
+          });
+          if (!saveRes.ok) {
+            const sErr = await saveRes.json().catch(() => ({} as any));
+            throw new Error(sErr?.error || 'Save failed');
+          }
+          markDone('save');
+          updateOverlayIndex(10);
+        }
+      } else {
+        // Gasless: server performed confirm/roles/save; reflect completion
+        markDone('confirm');
         markDone('roles');
-        updateOverlayIndex(9);
-      }
-
-      // Persist market metadata via API (Supabase upsert, verification)
-      markActive('save');
-      {
-        updateOverlayIndex(9);
-        const networkName =
-          (process.env as any).NEXT_PUBLIC_NETWORK_NAME ||
-          (globalThis as any).process?.env?.NEXT_PUBLIC_NETWORK_NAME ||
-          'hyperliquid';
-        const saveRes = await fetch('/api/markets/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            marketIdentifier: symbol,
-            symbol,
-            name: `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`,
-            description: `OrderBook market for ${symbol}`,
-            category: Array.isArray(tags) && tags.length ? tags[0] : 'CUSTOM',
-            decimals: 6,
-            minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
-            settlementDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
-            tradingEndDate: null,
-            dataRequestWindowSeconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
-            autoSettle: true,
-            oracleProvider: null,
-            initialOrder: {
-              metricUrl,
-              startPrice: String(marketData.startPrice || '1'),
-              dataSource,
-              tags,
-            },
-            chainId,
-            networkName,
-            creatorWalletAddress: undefined,
-            marketAddress: orderBook,
-            marketIdBytes32: marketId,
-            transactionHash,
-            blockNumber: null,
-            gasUsed: null,
-            aiSourceLocator: sourceLocator,
-            iconImageUrl: (marketData as any).iconUrl ? String((marketData as any).iconUrl).trim() : null,
-          }),
-        });
-        if (!saveRes.ok) {
-          const sErr = await saveRes.json().catch(() => ({} as any));
-          throw new Error(sErr?.error || 'Save failed');
-        }
         markDone('save');
-        updateOverlayIndex(10);
       }
 
       // Notify token page to refetch its market data and drop the deploying flag
@@ -287,12 +412,33 @@ export const CreateMarketPage = () => {
       throw error;
     } finally {
       setIsLoading(false);
+      // Clean up real-time subscription
+      try { /* eslint-disable no-empty */ } catch {}
+      // unsubscribe if set
+      // @ts-ignore: narrow type
+      if (typeof unsubscribePusher === 'function') {
+        try { unsubscribePusher(); } catch {}
+      }
+      // Stop timer
+      if (intervalRef.current) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     }
   };
 
   return (
     <div className="h-screen flex items-center bg-[#0F0F0F]">
       <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Local-only deploy timer (top-right) */}
+        {showTimer && timerStart != null && (
+          <div className="fixed top-3 right-3 z-[9999] rounded-md bg-[#0B0B0B] border border-[#222222] px-2.5 py-1.5 shadow-md">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[#808080]">Deploy</span>
+              <span className="text-[11px] text-white font-mono">{formatElapsed(elapsedMs)}</span>
+            </div>
+          </div>
+        )}
         {/* Cancel/Error modal */}
         <ErrorModal
           isOpen={errorModal.isOpen}

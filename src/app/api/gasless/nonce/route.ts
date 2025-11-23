@@ -8,6 +8,7 @@ export async function GET(req: Request) {
     const orderBook = searchParams.get('orderBook');
     const trader = searchParams.get('trader');
     console.log('[GASLESS][API][nonce] incoming', { orderBook, trader });
+    console.log('[UpGas][API][nonce] incoming', { orderBook, trader });
     if (!orderBook || !ethers.isAddress(orderBook)) {
       return NextResponse.json({ error: 'invalid orderBook' }, { status: 400 });
     }
@@ -19,6 +20,10 @@ export async function GET(req: Request) {
       rpcUrlUsed: rpcUrl ? (rpcUrl.includes('http') ? rpcUrl : 'set') : 'unset',
       chainIdEnv: process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || 'unset',
     });
+    console.log('[UpGas][API][nonce] env', {
+      rpcUrlSet: !!rpcUrl,
+      chainIdEnv: process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || 'unset',
+    });
     if (!rpcUrl) {
       return NextResponse.json({ error: 'missing RPC_URL' }, { status: 500 });
     }
@@ -26,12 +31,15 @@ export async function GET(req: Request) {
     try {
       const net = await provider.getNetwork();
       console.log('[GASLESS][API][nonce] provider network', { chainId: String(net.chainId) });
+      console.log('[UpGas][API][nonce] provider network', { chainId: String(net.chainId) });
     } catch {}
     const meta = new ethers.Contract(orderBook, (MetaTradeFacet as any).abi, provider);
     const nonce = await meta.metaNonce(trader);
+    console.log('[UpGas][API][nonce] response', { nonce: nonce?.toString?.() ?? '0' });
     return NextResponse.json({ nonce: nonce?.toString?.() ?? '0' });
   } catch (e: any) {
     console.error('[GASLESS][API][nonce] error', e?.message || e);
+    console.error('[UpGas][API][nonce] error', e?.stack || e?.message || String(e));
     return NextResponse.json({ error: e?.message || 'nonce failed' }, { status: 500 });
   }
 }

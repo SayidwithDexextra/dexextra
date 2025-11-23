@@ -13,9 +13,94 @@ import {
   OBSettlementFacetABI,
   CoreVaultABI,
 } from '@/lib/contracts';
+import { MarketLifecycleFacetABI } from '@/lib/contracts';
+import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
+import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
+import { getPusherServer } from '@/lib/pusher-server';
+
+function shortAddr(a: any) {
+  const s = String(a || '');
+  return (s.startsWith('0x') && s.length === 42) ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+}
+
+function trunc(s: any, n = 120) {
+  const t = String(s ?? '');
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+function friendly(step: string) {
+  const map: Record<string, string> = {
+    validate_input: 'Validate Input',
+    wallet_ready: 'Wallet Ready',
+    facet_cut_built: 'Build Diamond Cut',
+    factory_static_call: 'Factory Static Call',
+    factory_send_tx_prep: 'Prepare Tx',
+    factory_send_tx: 'Send Tx',
+    factory_send_tx_sent: 'Tx Sent',
+    factory_confirm: 'Confirm Tx',
+    factory_confirm_mined: 'Mined',
+    factory_static_call_meta: 'Factory Static Call (Meta)',
+    factory_send_tx_meta: 'Send Tx (Meta)',
+    factory_send_tx_meta_sent: 'Tx Sent (Meta)',
+    factory_confirm_meta: 'Confirm (Meta)',
+    factory_confirm_meta_mined: 'Mined (Meta)',
+    ensure_selectors: 'Ensure Placement Selectors',
+    ensure_selectors_missing: 'Patch Missing Selectors',
+    diamond_cut: 'Diamond Cut',
+    attach_session_registry: 'Attach Session Registry',
+    attach_session_registry_sent: 'Attach Session Registry (Sent)',
+    attach_session_registry_mined: 'Attach Session Registry (Mined)',
+    grant_roles: 'Grant CoreVault Roles',
+    grant_ORDERBOOK_ROLE_sent: 'Grant ORDERBOOK_ROLE (Sent)',
+    grant_ORDERBOOK_ROLE_mined: 'Grant ORDERBOOK_ROLE (Mined)',
+    grant_SETTLEMENT_ROLE_sent: 'Grant SETTLEMENT_ROLE (Sent)',
+    grant_SETTLEMENT_ROLE_mined: 'Grant SETTLEMENT_ROLE (Mined)',
+    // Removed: configure_market and immediate OB param updates to speed deploys
+    save_market: 'Save Market (DB)',
+    unhandled_error: 'Unhandled Error',
+  };
+  return map[step] || step;
+}
+
+function summarizeData(data?: Record<string, any>) {
+  if (!data || typeof data !== 'object') return '';
+  const parts: string[] = [];
+  if (data.orderBook) parts.push(`orderBook=${shortAddr(data.orderBook)}`);
+  if (data.marketId) parts.push(`marketId=${trunc(data.marketId, 12)}`);
+  if (data.hash) parts.push(`tx=${trunc(data.hash, 12)}`);
+  if (data.block != null || data.blockNumber != null) parts.push(`block=${data.block ?? data.blockNumber}`);
+  if (data.missingCount != null) parts.push(`missing=${data.missingCount}`);
+  if (data.nonce != null) parts.push(`nonce=${data.nonce}`);
+  if (Array.isArray((data as any).cutSummary)) parts.push(`facets=${(data as any).cutSummary.length}`);
+  if ((data as any).balanceEth != null) parts.push(`bal=${(data as any).balanceEth}`);
+  if (data.error) parts.push(`error=${trunc(data.error, 100)}`);
+  return parts.length ? ` — ${parts.join(' ')}` : '';
+}
+
+const COLORS = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  green: '\x1b[32m',
+  red: '\x1b[31m',
+  cyan: '\x1b[36m',
+  yellow: '\x1b[33m',
+};
 
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
+    const ts = new Date().toISOString();
+    const tag = `${COLORS.bold}${COLORS.cyan}[CreateMarket]${COLORS.reset}`;
+    const name = friendly(step);
+    const emoji = status === 'start' ? '🟦' : status === 'success' ? '✅' : '❌';
+    const color =
+      status === 'start' ? COLORS.yellow :
+      status === 'success' ? COLORS.green :
+      COLORS.red;
+    const human = `${tag} ${emoji} ${color}${name}${COLORS.reset}${summarizeData(data)}  ${COLORS.dim}${ts}${COLORS.reset}`;
+    // Human-friendly line
+    console.log(human);
+    // Structured line (machine-readable)
     console.log(JSON.stringify({
       area: 'market_creation',
       context: 'markets_create',
@@ -125,6 +210,22 @@ function extractError(e: any) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const pipelineId = typeof body?.pipelineId === 'string' ? String(body.pipelineId) : '';
+    const pusher = pipelineId ? getPusherServer() : null;
+    const pusherChannel = pipelineId ? `deploy-${pipelineId}` : '';
+    const logS = (step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) => {
+      logStep(step, status, data);
+      if (pusher && pusherChannel) {
+        try {
+          (pusher as any)['pusher'].trigger(pusherChannel, 'progress', {
+            step, status, data: data || {}, timestamp: new Date().toISOString(),
+          });
+        } catch (e: any) {
+          // eslint-disable-next-line no-console
+          console.warn('[create/route] pusher broadcast failed', e?.message || String(e));
+        }
+      }
+    };
     const rawSymbol = String(body?.symbol || '').trim();
     const symbol = rawSymbol.toUpperCase();
     const metricUrl = String(body?.metricUrl || '').trim();
@@ -132,20 +233,22 @@ export async function POST(req: Request) {
     const dataSource = String(body?.dataSource || 'User Provided');
     const tags = Array.isArray(body?.tags) ? body.tags.slice(0, 10).map((t: any) => String(t)) : [];
     const creatorWalletAddress = (body?.creatorWalletAddress && ethers.isAddress(body.creatorWalletAddress)) ? body.creatorWalletAddress : null;
+    const clientCutArg = Array.isArray(body?.cutArg) ? body.cutArg : (Array.isArray(body?.cut) ? body.cut : null);
     const iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
     const aiSourceLocator = body?.aiSourceLocator || null;
     const settlementTs = typeof body?.settlementDate === 'number' && body.settlementDate > 0
       ? Math.floor(body.settlementDate)
       : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
 
-    logStep('validate_input', 'start');
+    logS('validate_input', 'start');
     if (!symbol) return NextResponse.json({ error: 'Symbol is required' }, { status: 400 });
     if (!metricUrl) return NextResponse.json({ error: 'Metric URL is required' }, { status: 400 });
-    logStep('validate_input', 'success');
+    logS('validate_input', 'success');
 
     // Env configuration
     const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
-    const pk = process.env.DEPLOYER_PRIVATE_KEY || process.env.ADMIN_PRIVATE_KEY || process.env.ROLE_ADMIN_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    // Use ADMIN wallet specifically for factory creation (gasless or legacy)
+    const pk = process.env.ADMIN_PRIVATE_KEY || process.env.ROLE_ADMIN_PRIVATE_KEY || process.env.PRIVATE_KEY;
     const factoryAddress = process.env.FUTURES_MARKET_FACTORY_ADDRESS || (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS;
     const initFacet = process.env.ORDER_BOOK_INIT_FACET || (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET;
     const adminFacet = process.env.OB_ADMIN_FACET || (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET;
@@ -155,13 +258,15 @@ export async function POST(req: Request) {
     const liqFacet = process.env.OB_LIQUIDATION_FACET || (process.env as any).NEXT_PUBLIC_OB_LIQUIDATION_FACET;
     const viewFacet = process.env.OB_VIEW_FACET || (process.env as any).NEXT_PUBLIC_OB_VIEW_FACET;
     const settleFacet = process.env.OB_SETTLEMENT_FACET || (process.env as any).NEXT_PUBLIC_OB_SETTLEMENT_FACET;
+    const lifecycleFacet = process.env.MARKET_LIFECYCLE_FACET || (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
+    const metaTradeFacet = process.env.META_TRADE_FACET || (process.env as any).NEXT_PUBLIC_META_TRADE_FACET;
     const coreVaultAddress = process.env.CORE_VAULT_ADDRESS || (process.env as any).NEXT_PUBLIC_CORE_VAULT_ADDRESS;
 
     if (!rpcUrl) return NextResponse.json({ error: 'RPC_URL not configured' }, { status: 400 });
-    if (!pk) return NextResponse.json({ error: 'Deployer private key not configured' }, { status: 400 });
+    if (!pk) return NextResponse.json({ error: 'ADMIN_PRIVATE_KEY not configured' }, { status: 400 });
     if (!factoryAddress || !ethers.isAddress(factoryAddress)) return NextResponse.json({ error: 'Factory address not configured' }, { status: 400 });
     if (!initFacet || !ethers.isAddress(initFacet)) return NextResponse.json({ error: 'Init facet address not configured' }, { status: 400 });
-    if (!adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet) {
+    if (!adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !lifecycleFacet || !metaTradeFacet) {
       return NextResponse.json({ error: 'One or more facet addresses are missing' }, { status: 400 });
     }
     if (!coreVaultAddress || !ethers.isAddress(coreVaultAddress)) {
@@ -173,7 +278,16 @@ export async function POST(req: Request) {
     const wallet = new ethers.Wallet(pk, provider);
     const nonceMgr = await createNonceManager(wallet);
     const ownerAddress = await wallet.getAddress();
-    logStep('wallet_ready', 'success', { ownerAddress });
+    try {
+      const [net, bal] = await Promise.all([
+        provider.getNetwork(),
+        provider.getBalance(ownerAddress),
+      ]);
+      const balanceEth = ethers.formatEther(bal);
+      logS('wallet_ready', 'success', { ownerAddress, chainId: Number(net.chainId), balanceWei: bal.toString(), balanceEth });
+    } catch {
+      logS('wallet_ready', 'success', { ownerAddress });
+    }
 
     // Load ABIs (prefer compiled artifacts to prevent selector drift)
     const adminAbi = loadFacetAbi('OBAdminFacet', OBAdminFacetABI as any[]);
@@ -183,8 +297,10 @@ export async function POST(req: Request) {
     const liqAbi = loadFacetAbi('OBLiquidationFacet', OBLiquidationFacetABI as any[]);
     const viewAbi = loadFacetAbi('OBViewFacet', OBViewFacetABI as any[]);
     const settleAbi = loadFacetAbi('OBSettlementFacet', OBSettlementFacetABI as any[]);
+    const lifecycleAbi = loadFacetAbi('MarketLifecycleFacet', (MarketLifecycleFacetArtifact as any)?.abi || (MarketLifecycleFacetABI as any[]));
+    const metaFacetAbi = (MetaTradeFacetArtifact as any)?.abi || [];
 
-    const cut = [
+    let cut = [
       { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(adminAbi) },
       { facetAddress: pricingFacet, action: 0, functionSelectors: selectorsFromAbi(pricingAbi) },
       { facetAddress: placementFacet, action: 0, functionSelectors: selectorsFromAbi(placementAbi) },
@@ -192,20 +308,42 @@ export async function POST(req: Request) {
       { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(liqAbi) },
       { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(viewAbi) },
       { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(settleAbi) },
+      { facetAddress: lifecycleFacet, action: 0, functionSelectors: selectorsFromAbi(lifecycleAbi) },
+      { facetAddress: metaTradeFacet, action: 0, functionSelectors: selectorsFromAbi(metaFacetAbi) },
     ];
   try {
     const cutSummary = cut.map((c) => ({ facetAddress: c.facetAddress, selectorCount: (c.functionSelectors || []).length }));
-    logStep('facet_cut_built', 'success', { cutSummary, cut });
+    logS('facet_cut_built', 'success', { cutSummary, cut });
   } catch {}
     const emptyFacets = cut.filter(c => !c.functionSelectors?.length).map(c => c.facetAddress);
     if (emptyFacets.length) {
       return NextResponse.json({ error: 'Facet selectors could not be built', emptyFacets }, { status: 500 });
     }
-    const cutArg = cut.map((c) => [c.facetAddress, 0, c.functionSelectors]);
+    let cutArg = cut.map((c) => [c.facetAddress, 0, c.functionSelectors]);
+
+    // If client provided cutArg and gasless is enabled, prefer client order to ensure identical hashing/signature
+    if (String(process.env.GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true' && Array.isArray(clientCutArg)) {
+      try {
+        const normalized = (clientCutArg as any[]).map((e: any) => [e?.[0], Number(e?.[1] ?? 0), Array.isArray(e?.[2]) ? e[2] : []]);
+        // Basic validation: addresses and selectors look sane
+        const bad = normalized.find((e) => !e?.[0] || !ethers.isAddress(e[0]) || !Array.isArray(e[2]));
+        if (!bad) {
+          cutArg = normalized as any;
+          // eslint-disable-next-line no-console
+          console.log('[SIGNCHECK][server] usingClientCutArg', true, { entries: cutArg.length });
+        }
+      } catch {}
+    }
 
     // Resolve factory
     const factoryArtifact = await import('@/lib/abis/FuturesMarketFactory.json');
-    const factoryAbi = (factoryArtifact as any)?.default?.abi || (factoryArtifact as any)?.abi || (factoryArtifact as any)?.default || (factoryArtifact as any);
+    const baseFactoryAbi = (factoryArtifact as any)?.default?.abi || (factoryArtifact as any)?.abi || (factoryArtifact as any)?.default || (factoryArtifact as any);
+    const gaslessEnabled = String(process.env.GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
+    const metaAbi = [
+      'function metaCreateFuturesMarketDiamond(string,string,uint256,uint256,string,string[],address,(address,uint8,bytes4[])[],address,address,uint256,uint256,bytes) returns (address,bytes32)',
+      'function metaCreateNonce(address) view returns (uint256)',
+    ];
+    const factoryAbi = Array.isArray(baseFactoryAbi) ? [...baseFactoryAbi, ...(gaslessEnabled ? metaAbi : [])] : (gaslessEnabled ? metaAbi : baseFactoryAbi);
     const factory = new ethers.Contract(factoryAddress, factoryAbi, wallet);
 
     // Params
@@ -227,10 +365,140 @@ export async function POST(req: Request) {
       }
     } catch {}
 
-    // Static call for revert reasons
-    logStep('factory_static_call', 'start');
-    try {
-      await factory.getFunction('createFuturesMarketDiamond').staticCall(
+    let tx: ethers.TransactionResponse;
+    let receipt: ethers.TransactionReceipt | null;
+    if (gaslessEnabled) {
+      // Gasless via meta-create: require user signature
+      const creator = creatorWalletAddress;
+      if (!creator) {
+        return NextResponse.json({ error: 'creatorWalletAddress required for gasless create' }, { status: 400 });
+      }
+      const signature = typeof body?.signature === 'string' ? String(body.signature) : null;
+      const nonceStr = typeof body?.nonce !== 'undefined' ? String(body.nonce) : null;
+      const deadlineStr = typeof body?.deadline !== 'undefined' ? String(body.deadline) : null;
+      if (!signature || nonceStr == null || deadlineStr == null) {
+        return NextResponse.json({ error: 'signature, nonce, and deadline required when GASLESS_CREATE_ENABLED' }, { status: 400 });
+      }
+      const nonce = BigInt(nonceStr);
+      const deadline = BigInt(deadlineStr);
+
+      // Build typed data and verify off-chain
+      const net = await provider.getNetwork();
+      const domain = {
+        name: String(process.env.EIP712_FACTORY_DOMAIN_NAME || 'DexetraFactory'),
+        version: String(process.env.EIP712_FACTORY_DOMAIN_VERSION || '1'),
+        chainId: Number(net.chainId),
+        verifyingContract: factoryAddress,
+      } as const;
+      // hash tags
+      const tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
+      // hash cut
+      const perCutHashes: string[] = [];
+      for (const c of cutArg) {
+        const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((c?.[2] || []).length).fill('bytes4'), c?.[2] || []));
+        const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [c?.[0], c?.[1], selectorsHash]);
+        perCutHashes.push(ethers.keccak256(enc));
+      }
+      const cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+      const types = {
+        MetaCreate: [
+          { name: 'marketSymbol', type: 'string' },
+          { name: 'metricUrl', type: 'string' },
+          { name: 'settlementDate', type: 'uint256' },
+          { name: 'startPrice', type: 'uint256' },
+          { name: 'dataSource', type: 'string' },
+          { name: 'tagsHash', type: 'bytes32' },
+          { name: 'diamondOwner', type: 'address' },
+          { name: 'cutHash', type: 'bytes32' },
+          { name: 'initFacet', type: 'address' },
+          { name: 'creator', type: 'address' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      } as const;
+      const message = {
+        marketSymbol: symbol,
+        metricUrl,
+        settlementDate: settlementTs,
+        startPrice: startPrice6.toString(),
+        dataSource,
+        tagsHash,
+        diamondOwner: ownerAddress,
+        cutHash,
+        initFacet,
+        creator,
+        nonce: nonce.toString(),
+        deadline: deadline.toString(),
+      };
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[SIGNCHECK][server] creator', creator);
+        // eslint-disable-next-line no-console
+        console.log('[SIGNCHECK][server] factory', factoryAddress);
+        // eslint-disable-next-line no-console
+        console.log('[SIGNCHECK][server] chainId', Number(net.chainId));
+        // eslint-disable-next-line no-console
+        console.log('[SIGNCHECK][server] domain', domain);
+        // eslint-disable-next-line no-console
+        console.log('[SIGNCHECK][server] hashes', { tagsHash, cutHash });
+        // eslint-disable-next-line no-console
+        console.log('[SIGNCHECK][server] message', message);
+      } catch {}
+      try {
+        const recovered = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
+        try {
+          // eslint-disable-next-line no-console
+          console.log('[SIGNCHECK][server] recovered', recovered);
+        } catch {}
+        if (!recovered || recovered.toLowerCase() !== creator.toLowerCase()) {
+          return NextResponse.json({ error: 'bad_sig', recovered, expected: creator }, { status: 400 });
+        }
+      } catch (e: any) {
+        return NextResponse.json({ error: 'verify_failed', details: e?.message || String(e) }, { status: 400 });
+      }
+      try {
+        const onchainNonce = await factory.metaCreateNonce(creator);
+        try {
+          // eslint-disable-next-line no-console
+          console.log('[SIGNCHECK][server] nonce', { provided: String(nonce), onchain: String(onchainNonce) });
+        } catch {}
+        if (String(onchainNonce) !== String(nonce)) {
+          return NextResponse.json({ error: 'bad_nonce', expected: String(onchainNonce), got: String(nonce) }, { status: 400 });
+        }
+      } catch {}
+
+      // Static call for revert reasons
+      logS('factory_static_call_meta', 'start');
+      try {
+        await factory.getFunction('metaCreateFuturesMarketDiamond').staticCall(
+          symbol,
+          metricUrl,
+          settlementTs,
+          startPrice6,
+          dataSource,
+          tags,
+          ownerAddress,
+          cutArg,
+          initFacet,
+          creator,
+          nonce,
+          deadline,
+          signature
+        );
+        logS('factory_static_call_meta', 'success');
+      } catch (e: any) {
+        const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed (no reason)';
+        const hint = 'Possible causes: restricted creation for creator; insufficient Vault balance for the creator; invalid facets/addresses; or network mismatch.';
+        const msg = `${raw}`;
+        logS('factory_static_call_meta', 'error', { error: msg, code: e?.code, hint });
+        return NextResponse.json({ error: msg, hint }, { status: 400 });
+      }
+
+      // Send tx (relayer pays gas)
+      logS('factory_send_tx_meta', 'start');
+      const overrides = await nonceMgr.nextOverrides();
+      logS('factory_send_tx_meta_prep', 'success', { nonce: (overrides as any)?.nonce, ...('maxFeePerGas' in overrides ? { maxFeePerGas: (overrides as any).maxFeePerGas?.toString?.() } : {}), ...('maxPriorityFeePerGas' in overrides ? { maxPriorityFeePerGas: (overrides as any).maxPriorityFeePerGas?.toString?.() } : {}), ...('gasPrice' in overrides ? { gasPrice: (overrides as any).gasPrice?.toString?.() } : {}) });
+      tx = await factory.getFunction('metaCreateFuturesMarketDiamond')(
         symbol,
         metricUrl,
         settlementTs,
@@ -240,46 +508,72 @@ export async function POST(req: Request) {
         ownerAddress,
         cutArg,
         initFacet,
-        '0x'
+        creator,
+        nonce,
+        deadline,
+        signature,
+        overrides as any
       );
-      logStep('factory_static_call', 'success');
-    } catch (e: any) {
-      const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed (no reason)';
-      const hint = 'Possible causes: public creation disabled; creation fee required without sufficient CoreVault balance for the Deployer; invalid facet/addresses; or network mismatch.';
-      const msg = `${raw}`;
-      logStep('factory_static_call', 'error', { error: msg, code: e?.code, hint });
-      return NextResponse.json({ error: msg, hint }, { status: 400 });
+      logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash, nonce: (tx as any)?.nonce });
+      logS('factory_confirm_meta', 'start');
+      receipt = await tx.wait();
+      logS('factory_confirm_meta_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
+    } else {
+      // Legacy direct create (relayer submits and pays gas)
+      // Static call for revert reasons
+      logS('factory_static_call', 'start');
+      try {
+        await factory.getFunction('createFuturesMarketDiamond').staticCall(
+          symbol,
+          metricUrl,
+          settlementTs,
+          startPrice6,
+          dataSource,
+          tags,
+          ownerAddress,
+          cutArg,
+          initFacet,
+          '0x'
+        );
+        logS('factory_static_call', 'success');
+      } catch (e: any) {
+        const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed (no reason)';
+        const hint = 'Possible causes: public creation disabled; creation fee required without sufficient CoreVault balance for the Deployer; invalid facet/addresses; or network mismatch.';
+        const msg = `${raw}`;
+        logS('factory_static_call', 'error', { error: msg, code: e?.code, hint });
+        return NextResponse.json({ error: msg, hint }, { status: 400 });
+      }
+      // Send tx
+      logS('factory_send_tx', 'start');
+      const overrides = await nonceMgr.nextOverrides();
+      logS('factory_send_tx_prep', 'success', { nonce: (overrides as any)?.nonce, ...('maxFeePerGas' in overrides ? { maxFeePerGas: (overrides as any).maxFeePerGas?.toString?.() } : {}), ...('maxPriorityFeePerGas' in overrides ? { maxPriorityFeePerGas: (overrides as any).maxPriorityFeePerGas?.toString?.() } : {}), ...('gasPrice' in overrides ? { gasPrice: (overrides as any).gasPrice?.toString?.() } : {}) });
+      tx = await factory.getFunction('createFuturesMarketDiamond')(
+        symbol,
+        metricUrl,
+        settlementTs,
+        startPrice6,
+        dataSource,
+        tags,
+        ownerAddress,
+        cutArg,
+        initFacet,
+        '0x',
+        overrides as any
+      );
+      logS('factory_send_tx_sent', 'success', { hash: tx.hash, nonce: (tx as any)?.nonce });
+      // Confirm
+      logS('factory_confirm', 'start');
+      receipt = await tx.wait();
+      logS('factory_confirm_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
     }
 
-    // Send tx
-    logStep('factory_send_tx', 'start');
-    const overrides = await nonceMgr.nextOverrides();
-    logStep('factory_send_tx_prep', 'success', { nonce: (overrides as any)?.nonce, ...('maxFeePerGas' in overrides ? { maxFeePerGas: (overrides as any).maxFeePerGas?.toString?.() } : {}), ...('maxPriorityFeePerGas' in overrides ? { maxPriorityFeePerGas: (overrides as any).maxPriorityFeePerGas?.toString?.() } : {}), ...('gasPrice' in overrides ? { gasPrice: (overrides as any).gasPrice?.toString?.() } : {}) });
-    const tx = await factory.getFunction('createFuturesMarketDiamond')(
-      symbol,
-      metricUrl,
-      settlementTs,
-      startPrice6,
-      dataSource,
-      tags,
-      ownerAddress,
-      cutArg,
-      initFacet,
-      '0x',
-      overrides as any
-    );
-    logStep('factory_send_tx_sent', 'success', { hash: tx.hash, nonce: (tx as any)?.nonce });
-
     // Confirm
-    logStep('factory_confirm', 'start');
-    const receipt = await tx.wait();
-    logStep('factory_confirm_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
-
+    logS('factory_confirm', 'start');
     // Parse event
     const iface = new ethers.Interface(factoryAbi);
     let orderBook: string | null = null;
     let marketId: string | null = null;
-    for (const log of (receipt as any).logs || []) {
+    for (const log of (receipt as any)?.logs || []) {
       try {
         const parsed = iface.parseLog(log);
         if (parsed?.name === 'FuturesMarketCreated') {
@@ -293,7 +587,7 @@ export async function POST(req: Request) {
 
   // Ensure required placement selectors exist on the Diamond (defensive)
   try {
-    logStep('ensure_selectors', 'start', { orderBook });
+    logS('ensure_selectors', 'start', { orderBook });
     const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
     const CutABI = [
       'function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)',
@@ -322,66 +616,117 @@ export async function POST(req: Request) {
       }
     }
     if (missing.length > 0) {
-      logStep('ensure_selectors_missing', 'start', { missingCount: missing.length });
+      logS('ensure_selectors_missing', 'start', { missingCount: missing.length });
       const cut = [{ facetAddress: placementFacet, action: 0, functionSelectors: missing }];
       const ov = await nonceMgr.nextOverrides();
       const txCut = await diamondCut.diamondCut(cut as any, ethers.ZeroAddress, '0x', ov as any);
-      logStep('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
+      logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
       await txCut.wait();
-      logStep('ensure_selectors_diamondCut_mined', 'success');
+      logS('ensure_selectors_diamondCut_mined', 'success');
     } else {
-      logStep('ensure_selectors', 'success', { message: 'All placement selectors present' });
+      logS('ensure_selectors', 'success', { message: 'All placement selectors present' });
     }
   } catch (e: any) {
-    logStep('ensure_selectors', 'error', { error: e?.message || String(e) });
+    logS('ensure_selectors', 'error', { error: e?.message || String(e) });
   }
 
+    // Allow new OrderBook on GlobalSessionRegistry and attach session registry for gasless
+    try {
+      const registryAddress =
+        process.env.SESSION_REGISTRY_ADDRESS ||
+        (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS ||
+        '';
+      if (!registryAddress || !ethers.isAddress(registryAddress)) {
+        logS('attach_session_registry', 'error', { error: 'Missing SESSION_REGISTRY_ADDRESS' });
+      } else {
+        // Prefer a dedicated registry-owner signer if provided
+        const registryPk =
+          process.env.SESSION_REGISTRY_OWNER_PRIVATE_KEY ||
+          (process.env as any).REGISTRY_OWNER_PRIVATE_KEY ||
+          process.env.RELAYER_PRIVATE_KEY || // fallback (may not have permission)
+          (process.env as any).NEXT_PUBLIC_RELAYER_PRIVATE_KEY ||
+          (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_OWNER_PRIVATE_KEY ||
+          (process.env as any).NEXT_PUBLIC_REGISTRY_OWNER_PRIVATE_KEY ||
+          (process.env as any).REGISTRY_SIGNER_PRIVATE_KEY ||
+          (process.env as any).REGISTRY_SIGNER_PK ||
+          (process.env as any).SESSION_REGISTRY_SIGNER_PRIVATE_KEY ||
+          (process.env as any).SESSION_REGISTRY_SIGNER_PK ||
+          null;
+        const regWallet = registryPk ? new ethers.Wallet(registryPk, provider) : wallet;
+        const regNonceMgr = await createNonceManager(regWallet as any);
+        try { logS('attach_session_registry', 'start', { registrySigner: await (regWallet as any).getAddress?.() }); } catch {}
+
+        // 1) Ensure this OrderBook is allowed in the registry
+        try {
+          const regAbi = [
+            'function allowedOrderbook(address) view returns (bool)',
+            'function setAllowedOrderbook(address,bool) external',
+          ];
+          const registry = new ethers.Contract(registryAddress, regAbi, regWallet);
+          const allowed: boolean = await registry.allowedOrderbook(orderBook);
+          if (!allowed) {
+            const ovAllow = await regNonceMgr.nextOverrides();
+            const txAllow = await registry.setAllowedOrderbook(orderBook, true, ovAllow as any);
+            logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
+            await txAllow.wait();
+            logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook' });
+          } else {
+            logS('attach_session_registry', 'success', { message: 'OrderBook already allowed', action: 'allow_orderbook' });
+          }
+        } catch (e: any) {
+          logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'allow_orderbook' });
+        }
+
+        // 2) Attach session registry on MetaTradeFacet (if not set)
+        try {
+          logS('attach_session_registry', 'start', { orderBook, registry: registryAddress });
+          const meta = new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, wallet);
+          const current = await meta.sessionRegistry();
+          if (!current || String(current).toLowerCase() !== String(registryAddress).toLowerCase()) {
+            const ov = await nonceMgr.nextOverrides();
+            const txSet = await meta.setSessionRegistry(registryAddress, ov);
+            logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry' });
+            await txSet.wait();
+            logS('attach_session_registry_mined', 'success', { action: 'set_session_registry' });
+          } else {
+            logS('attach_session_registry', 'success', { message: 'Session registry already set', action: 'set_session_registry' });
+          }
+        } catch (e: any) {
+          logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'set_session_registry' });
+        }
+      }
+    } catch (e: any) {
+      logS('attach_session_registry', 'error', { error: e?.message || String(e) });
+    }
+
     // Grant roles on CoreVault
-    logStep('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
+    logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
     const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
     try {
       const ov1 = await nonceMgr.nextOverrides();
       const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
-      logStep('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash, nonce: (tx1 as any)?.nonce });
+      logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash, nonce: (tx1 as any)?.nonce });
       const r1 = await tx1.wait();
-      logStep('grant_ORDERBOOK_ROLE_mined', 'success', { tx: r1?.hash || tx1.hash, blockNumber: r1?.blockNumber });
+      logS('grant_ORDERBOOK_ROLE_mined', 'success', { tx: r1?.hash || tx1.hash, blockNumber: r1?.blockNumber });
       const ov2 = await nonceMgr.nextOverrides();
       const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
-      logStep('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash, nonce: (tx2 as any)?.nonce });
+      logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash, nonce: (tx2 as any)?.nonce });
       const r2 = await tx2.wait();
-      logStep('grant_SETTLEMENT_ROLE_mined', 'success', { tx: r2?.hash || tx2.hash, blockNumber: r2?.blockNumber });
-      logStep('grant_roles', 'success');
+      logS('grant_SETTLEMENT_ROLE_mined', 'success', { tx: r2?.hash || tx2.hash, blockNumber: r2?.blockNumber });
+      logS('grant_roles', 'success');
     } catch (e: any) {
-      logStep('grant_roles', 'error', { error: extractError(e) });
+      logS('grant_roles', 'error', { error: extractError(e) });
       return NextResponse.json({ error: 'Admin role grant failed', details: extractError(e) }, { status: 500 });
     }
 
-    // Configure trading parameters
-    logStep('configure_market', 'start');
-    try {
-      const obAdmin = new ethers.Contract(orderBook, OBAdminFacetABI as any, wallet);
-      const ovA = await nonceMgr.nextOverrides();
-      const txA = await obAdmin.updateTradingParameters(10000, 0, feeRecipient, ovA);
-      logStep('ob_updateTradingParameters_sent', 'success', { tx: txA.hash, nonce: (txA as any)?.nonce });
-      const rcA = await txA.wait();
-      logStep('ob_updateTradingParameters_mined', 'success', { tx: rcA?.hash || txA.hash, blockNumber: rcA?.blockNumber });
-      const ovB = await nonceMgr.nextOverrides();
-      const txB = await obAdmin.disableLeverage(ovB);
-      logStep('ob_disableLeverage_sent', 'success', { tx: txB.hash, nonce: (txB as any)?.nonce });
-      const rcB = await txB.wait();
-      logStep('ob_disableLeverage_mined', 'success', { tx: rcB?.hash || txB.hash, blockNumber: rcB?.blockNumber });
-      logStep('configure_market', 'success', { feeRecipient });
-    } catch (e: any) {
-      // Non-fatal; continue
-      logStep('configure_market', 'error', { error: extractError(e) });
-    }
+    // Removed: Immediate trading parameter updates to shorten deployment time
 
     // Save to Supabase
     let archivedWaybackUrl: string | null = null;
     let archivedWaybackTs: string | null = null;
-    logStep('save_market', 'start');
+    logS('save_market', 'start');
     try {
       const supabase = getSupabase();
       // Attempt to archive the metric URL via SavePageNow (server-side, authenticated if keys exist)
@@ -446,10 +791,10 @@ export async function POST(req: Request) {
         };
         await supabase.from('markets').insert(insertPayload).select('id').single();
       }
-      logStep('save_market', 'success');
+      logS('save_market', 'success');
     } catch (e: any) {
       // Non-fatal; continue
-      logStep('save_market', 'error', { error: e?.message || String(e) });
+      logS('save_market', 'error', { error: e?.message || String(e) });
     }
 
     // Respond

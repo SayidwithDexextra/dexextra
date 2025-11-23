@@ -12,7 +12,8 @@ import { initializeContracts } from '@/lib/contracts';
 // Removed gas override utilities to rely on provider estimation
 import { ensureHyperliquidWallet } from '@/lib/network';
 import type { Address } from 'viem';
-import { signAndSubmitGasless } from '@/lib/gasless';
+import { signAndSubmitGasless, createGaslessSession, submitSessionTrade } from '@/lib/gasless';
+import { useSession } from '@/contexts/SessionContext';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -38,6 +39,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   const metricId = tokenData.symbol;
   const md = useMarketData();
   const marketRow = md.market as any;
+  const { sessionActive: globalSessionActive, enableTrading: globalEnableTrading, refresh: refreshSession } = useSession();
+  // No per-component status fetch; rely on SessionProvider for session status
+
   
   // Initialize OrderBook hook
   console.log('metricId OrderBook hook', metricId);
@@ -613,6 +617,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     if (orderBookLoading) return 'Loading...';
     if (isSubmittingOrder) return 'Submitting Order...';
     if (isCancelingOrder) return 'Canceling Order...';
+    // Gasless session: prompt to enable trading when session is not active
+    const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+    if (GASLESS_ENABLED && address && globalSessionActive === false) return 'Enable Trading';
     if (!selectedOption) return 'Select Position Direction';
     if (orderType === 'limit' && triggerPrice <= 0) return 'Set Limit Price';
 
@@ -892,28 +899,54 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       console.log('[GASLESS] Env:', { NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED });
       console.log('[GASLESS] OB address:', obAddrForGasless || (marketRow as any)?.market_address);
 
-      // Gasless first (uses contract slippage config); if enabled, do NOT fall back to on-chain
+      // Gasless first (uses session-based sign-once). If enabled, do NOT fall back to on-chain
       if (GASLESS_ENABLED && obAddrForGasless && address) {
         try {
-          const res = await signAndSubmitGasless({
-            method: 'metaPlaceMarginMarket',
-            orderBook: obAddrForGasless,
-            trader: address as string,
-            amountWei: sizeWei as unknown as bigint,
-            isBuy,
-            deadlineSec: Math.floor(Date.now() / 1000) + 300,
-          });
-          if (!res.success) throw new Error(res.error || 'gasless failed');
+          const sessionKey = `gasless:session:${address}`;
+          let sessionId = (typeof window !== 'undefined') ? (window.localStorage.getItem(sessionKey) || '') : '';
+          console.log('[UpGas][UI] market submit: session candidate', { sessionKey, hasSessionId: !!sessionId });
+          const trySessionOnce = async (): Promise<string | null> => {
+            if (!sessionId) return null;
+            console.log('[UpGas][UI] market submit: try session trade', { sessionId });
+            const r = await submitSessionTrade({
+              method: 'sessionPlaceMarginMarket',
+              orderBook: obAddrForGasless!,
+              sessionId,
+              trader: address as string,
+              amountWei: sizeWei as unknown as bigint,
+              isBuy,
+            });
+            if (!r.success) return null;
+            return r.txHash || null;
+          };
+          let txHash = await trySessionOnce();
+          if (!txHash) {
+            console.log('[UpGas][UI] market submit: creating session...');
+            const created = await createGaslessSession({
+              trader: address as string,
+            });
+            console.log('[UpGas][UI] market submit: session init result', { success: created.success, sessionId: created.sessionId, txHash: created.txHash });
+            if (created.success && created.sessionId) {
+              sessionId = created.sessionId;
+              if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
+              txHash = await trySessionOnce();
+            }
+          }
+          if (!txHash) {
+            throw new Error('gasless session trade failed');
+          }
           showSuccess(
             `Market ${selectedOption} order placed successfully!`,
             'Order Placed'
           );
-          console.log('[Dispatch] ✅ [GASLESS] Market order relayed', { txHash: res.txHash });
+          console.log('[Dispatch] ✅ [GASLESS][SESSION] Market order relayed', { txHash });
+          console.log('[UpGas][UI] market submit: success', { txHash });
           await orderBookActions.refreshOrders();
           setAmount(0);
           return;
         } catch (gerr: any) {
           console.warn('[GASLESS] Market order gasless path failed:', gerr?.message || gerr);
+          console.warn('[UpGas][UI] market submit: error', gerr?.message || gerr);
           showError(gerr?.message || 'Gasless market order failed', 'Gasless Error');
           return;
         }
@@ -1187,24 +1220,49 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       console.log('[GASLESS] Env:', { NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED });
       console.log('[GASLESS] OB address:', obAddrForGasless || (marketRow as any)?.market_address);
 
-      // Gasless first; if enabled, do NOT fall back to on-chain
+      // Gasless first (session-based sign-once). If enabled, do NOT fall back to on-chain
       if (GASLESS_ENABLED && obAddrForGasless && address) {
         try {
-          const res = await signAndSubmitGasless({
-            method: 'metaPlaceMarginLimit',
-            orderBook: obAddrForGasless,
-            trader: address as string,
-            priceWei: priceWei as unknown as bigint,
-            amountWei: sizeWei as unknown as bigint,
-            isBuy,
-            deadlineSec: Math.floor(Date.now() / 1000) + 300,
-          });
-          if (!res.success) throw new Error(res.error || 'gasless failed');
+          const sessionKey = `gasless:session:${address}`;
+          let sessionId = (typeof window !== 'undefined') ? (window.localStorage.getItem(sessionKey) || '') : '';
+          console.log('[UpGas][UI] limit submit: session candidate', { sessionKey, hasSessionId: !!sessionId });
+          const trySessionOnce = async (): Promise<string | null> => {
+            if (!sessionId) return null;
+            console.log('[UpGas][UI] limit submit: try session trade', { sessionId });
+            const r = await submitSessionTrade({
+              method: 'sessionPlaceMarginLimit',
+              orderBook: obAddrForGasless!,
+              sessionId,
+              trader: address as string,
+              priceWei: priceWei as unknown as bigint,
+              amountWei: sizeWei as unknown as bigint,
+              isBuy,
+            });
+            if (!r.success) return null;
+            return r.txHash || null;
+          };
+          let txHash = await trySessionOnce();
+          if (!txHash) {
+            console.log('[UpGas][UI] limit submit: creating session...');
+            const created = await createGaslessSession({
+              trader: address as string,
+            });
+            console.log('[UpGas][UI] limit submit: session init result', { success: created.success, sessionId: created.sessionId, txHash: created.txHash });
+            if (created.success && created.sessionId) {
+              sessionId = created.sessionId;
+              if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
+              txHash = await trySessionOnce();
+            }
+          }
+          if (!txHash) {
+            throw new Error('gasless session trade failed');
+          }
           showSuccess(
             `Limit ${selectedOption} order placed successfully!`,
             'Order Placed'
           );
-          console.log('[Dispatch] ✅ [GASLESS] Limit order relayed', { txHash: res.txHash });
+          console.log('[Dispatch] ✅ [GASLESS][SESSION] Limit order relayed', { txHash });
+          console.log('[UpGas][UI] limit submit: success', { txHash });
           await orderBookActions.refreshOrders();
           setAmount(0);
           setTriggerPrice(0);
@@ -1212,6 +1270,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           return;
         } catch (gerr: any) {
           console.warn('[GASLESS] Limit order gasless path failed:', gerr?.message || gerr);
+          console.warn('[UpGas][UI] limit submit: error', gerr?.message || gerr);
           showError(gerr?.message || 'Gasless limit order failed', 'Gasless Error');
           return;
         }
@@ -1295,27 +1354,51 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }
     
     try {
-      // [GASLESS] try gasless cancel first
+      // [GASLESS] try session-based gasless cancel first
       const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       const obAddrForGasless = (marketRow as any)?.market_address as string | undefined;
       console.log('[GASLESS] Env:', { NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED });
       console.log('[GASLESS] OB address:', obAddrForGasless);
       if (GASLESS_ENABLED && obAddrForGasless && address) {
         try {
-          const res = await signAndSubmitGasless({
-            method: 'metaCancelOrder',
-            orderBook: obAddrForGasless,
-            trader: address as string,
-            orderId: BigInt(orderId),
-            deadlineSec: Math.floor(Date.now() / 1000) + 300,
-          });
-          if (!res.success) throw new Error(res.error || 'gasless cancel failed');
-          console.log('[Dispatch] ✅ [GASLESS] Cancel relayed', { txHash: res.txHash });
+          const sessionKey = `gasless:session:${address}`;
+          let sessionId = (typeof window !== 'undefined') ? (window.localStorage.getItem(sessionKey) || '') : '';
+          console.log('[UpGas][UI] cancel: session candidate', { sessionKey, hasSessionId: !!sessionId });
+          const trySessionOnce = async (): Promise<string | null> => {
+            if (!sessionId) return null;
+            console.log('[UpGas][UI] cancel: try session trade', { sessionId });
+            const r = await submitSessionTrade({
+              method: 'sessionCancelOrder',
+              orderBook: obAddrForGasless!,
+              sessionId,
+              trader: address as string,
+              orderId: BigInt(orderId) as unknown as bigint,
+            });
+            if (!r.success) return null;
+            return r.txHash || null;
+          };
+          let txHash = await trySessionOnce();
+          if (!txHash) {
+            console.log('[UpGas][UI] cancel: creating session...');
+            const created = await createGaslessSession({
+              trader: address as string,
+            });
+            console.log('[UpGas][UI] cancel: session init result', { success: created.success, sessionId: created.sessionId, txHash: created.txHash });
+            if (created.success && created.sessionId) {
+              sessionId = created.sessionId;
+              if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
+              txHash = await trySessionOnce();
+            }
+          }
+          if (!txHash) throw new Error('gasless session cancel failed');
+          console.log('[Dispatch] ✅ [GASLESS][SESSION] Cancel relayed', { txHash });
+          console.log('[UpGas][UI] cancel: success', { txHash });
           await orderBookActions.refreshOrders();
           showSuccess('Order cancelled successfully', 'Order Cancelled');
           return true;
         } catch (gerr: any) {
           console.warn('[GASLESS] Cancel gasless path failed:', gerr?.message || gerr);
+          console.warn('[UpGas][UI] cancel: error', gerr?.message || gerr);
           showError(gerr?.message || 'Gasless cancel failed', 'Gasless Error');
           return false;
         }
@@ -1355,6 +1438,25 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   const handleTradeClick = async () => {
     if (!isConnected) {
       await connect();
+      return;
+    }
+
+    // If gasless is enabled and no active session, create it first instead of trading
+    try {
+      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      if (GASLESS_ENABLED && address && globalSessionActive === false) {
+        const created = await globalEnableTrading();
+        if (created.success) {
+          showSuccess('Trading enabled for your account. You can place orders now.', 'Session Enabled');
+          try { await refreshSession(); } catch {}
+        } else {
+          showError(created.error || 'Failed to enable trading. Please try again.', 'Session Error');
+        }
+        return;
+      }
+    } catch (e: any) {
+      console.warn('[UpGas][UI] enable trading error', e?.message || e);
+      showError(e?.message || 'Failed to enable trading. Please try again.', 'Session Error');
       return;
     }
 
@@ -2242,15 +2344,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           ) : (
             <button 
               onClick={handleTradeClick}
-              disabled={!canExecuteTrade() || isSubmittingOrder || isCancelingOrder}
+              disabled={(isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())}
               className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md"
               style={{
                 padding: '10px',
                 fontSize: '16px',
                 fontWeight: '600',
-                backgroundColor: (!canExecuteTrade() || isSubmittingOrder || isCancelingOrder) ? '#1A1A1A' : '#3B82F6',
-                color: (!canExecuteTrade() || isSubmittingOrder || isCancelingOrder) ? '#6B7280' : '#FFFFFF',
-                cursor: (!canExecuteTrade() || isSubmittingOrder || isCancelingOrder) ? 'not-allowed' : 'pointer'
+                backgroundColor: ((isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? '#1A1A1A' : '#3B82F6',
+                color: ((isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? '#6B7280' : '#FFFFFF',
+                cursor: ((isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? 'not-allowed' : 'pointer'
               }}
             >
               {getTradeButtonText()}
