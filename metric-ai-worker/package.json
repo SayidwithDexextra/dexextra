@@ -1,0 +1,20 @@
+{
+  "name": "dexextra-metric-ai-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.56.0",
+    "next": "15.3.4",
+    "openai": "^5.10.2",
+    "zod": "^3.25.76",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
+
+
