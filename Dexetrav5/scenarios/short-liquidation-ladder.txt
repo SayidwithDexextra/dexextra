@@ -1,0 +1,18 @@
+STRICT ON
+U4 DEP 100 
+U5 DEP 100 
+U1 LB 1 1 10
+U2 MS 1 10 10
+
+U3 LS 2.1 1 100
+U4 LB 2.1 1 1
+
+
+U4 LS 3.2 1 10
+U5 LB 3.1 1 10
+
+
+
+
+
+

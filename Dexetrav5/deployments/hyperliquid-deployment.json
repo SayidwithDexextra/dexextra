@@ -1,0 +1,201 @@
+{
+  "network": "hyperliquid",
+  "chainId": 999,
+  "timestamp": "2025-11-26T06:26:01.634Z",
+  "contracts": {
+    "MOCK_USDC": "0x2343A6Ad12D0d1091C45b166901B25a281D3eD9D",
+    "VAULT_ANALYTICS": "0xEece3ce717958a39F5E1d257c75C213Dd83Ec7e9",
+    "POSITION_MANAGER": "0x95F53AF1dc4cDcA311C8f2999Ed9d9592B179064",
+    "CORE_VAULT": "0x41E33Ac4DE5d37d85bd3E1f1a99cbeb25Cc5c0c4",
+    "LIQUIDATION_MANAGER": "0x61983b92f2C511f16d133854Fc8D4dBb524beaec",
+    "FUTURES_MARKET_FACTORY": "0x7C0DB915706b6ab667f9886c2a0d313A7E63fB7a",
+    "ALUMINUM_ORDERBOOK": "0x58410B977c2BA93a0a9f50154CecEb4b1d501bb0",
+    "ALUMINUM_MARKET_ID": "0x65ac51cc822bb3024c67bac97a65782b37cd7387439a706774df6095a5c53579",
+    "GOLD_ORDERBOOK": "0xFdC268c4e7ff2a32558E004C94A1311E315eeB86",
+    "GOLD_MARKET_ID": "0xc0e300c3718338a3c390ad3e4bd370fe4e3d5430b38f03bbce0919eb19a3e3d0",
+    "ORDERBOOK": "0xd60a72e69690Ee2f8fD33d69E0cB4506575B1F2F",
+    "MARKET_ID": "0x807fb353529ee4a92fe1a6c0725583254aa2518c6a8828cd4d5aca4f45484423",
+    "SILVER_ORDERBOOK": "0xc81838e983981c099229a47A7D3D6418464ED5a5",
+    "SILVER_MARKET_ID": "0xabc874dda28efcc5493925a0593f9ac1f60b23794c52e847d14a0d5478b3d5f2",
+    "SILVER223_ORDERBOOK": "0xEF260fd6bf6CC9A3D740913909D043e3f38bAFF4",
+    "SILVER223_MARKET_ID": "0xd2a4ab0f58e96328c0b7dc80eeedd11d11cd336f787739ff51663bb1bbc4c09b",
+    "ALU_ORDERBOOK": "0x049c9a8494C8591aE9db09Cf9e0a92989A43Cef5",
+    "ALU_MARKET_ID": "0xdca7f594ee19778a69ac7c24c9785ae2e79d7030949cbc8438b4610380f68064",
+    "SILVER2233_ORDERBOOK": "0x6c94933c7f137Fc1E9785f55a731eC3A9Ce34337",
+    "SILVER2233_MARKET_ID": "0x19c17424e34ff60c90d9e6d2a4422d6accc8cc934945583b3b6241219cbff057",
+    "SILVER101_ORDERBOOK": "0x1000B0BFc02B4f158C896C1500215292C7C72198",
+    "SILVER101_MARKET_ID": "0x0b9982548126b8bdcb9f8fdf64619c32d36a7dc96de714f4248bfd78fd178240",
+    "SILVER102_ORDERBOOK": "0xd60a72e69690Ee2f8fD33d69E0cB4506575B1F2F",
+    "SILVER102_MARKET_ID": "0x807fb353529ee4a92fe1a6c0725583254aa2518c6a8828cd4d5aca4f45484423",
+    "JASMY_ORDERBOOK": "0xF91Da1Dd70728AAa20835E90E7946ADE7aECea3A",
+    "JASMY_MARKET_ID": "0xe85cb17c6fd8ed518d5bbacf6e1a3629eea374a9278dc60fa7ccd554d0861baa",
+    "COPPER_ORDERBOOK": "0x2Bd6A9573F2aD61Bc8b01A93e1C84fEE309ad82c",
+    "COPPER_MARKET_ID": "0xd51c9f359bc723312d125c8e7c4414377eedcd34cc2ac8215665027fc5ac48c9",
+    "MARKET_LIFECYCLE_FACET": "0x511f3744BFBb83Df221c316B6cAfc2C545100EB5"
+  },
+  "deployer": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7",
+  "allUsers": [
+    {
+      "index": 0,
+      "address": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7",
+      "role": "deployer"
+    },
+    {
+      "index": 1,
+      "address": "0xcB641417acE8281f4BC9c58775456Ea204979E9d",
+      "role": "user1"
+    },
+    {
+      "index": 2,
+      "address": "0x9517b46578f94b5498dfC442994968D718e628b3",
+      "role": "user2"
+    },
+    {
+      "index": 3,
+      "address": "0xddA468df398DDeEcC7d589Ef3195c828Df4812B4",
+      "role": "user3"
+    },
+    {
+      "index": 4,
+      "address": "0xfeDc3AE13DBfED752185410E688588675B393A75",
+      "role": "user4"
+    }
+  ],
+  "aluminumMarket": {
+    "symbol": "ALU-USD",
+    "marketId": "0x65ac51cc822bb3024c67bac97a65782b37cd7387439a706774df6095a5c53579",
+    "orderBook": "0x58410B977c2BA93a0a9f50154CecEb4b1d501bb0"
+  },
+  "markets": [
+    {
+      "symbol": "GOLD-USD",
+      "marketId": "0xc0e300c3718338a3c390ad3e4bd370fe4e3d5430b38f03bbce0919eb19a3e3d0",
+      "orderBook": "0xFdC268c4e7ff2a32558E004C94A1311E315eeB86",
+      "metricUrl": "https://example.com/gold",
+      "settlementDate": 1794006426,
+      "startPrice": "40000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "ALU-USD",
+      "marketId": "0x65ac51cc822bb3024c67bac97a65782b37cd7387439a706774df6095a5c53579",
+      "orderBook": "0x58410B977c2BA93a0a9f50154CecEb4b1d501bb0",
+      "metricUrl": "https://example.com",
+      "settlementDate": 1793902153,
+      "startPrice": "1000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "Silver-USD",
+      "marketId": "0x96d5d8d82b500e89da49d72215d1e58071d64718afea6b6f6a3ca169e75e41e9",
+      "orderBook": "0xdAfF4A35AA54107011d27C7475Fc70899113C50C",
+      "metricUrl": "https://example.com",
+      "settlementDate": 1793997065,
+      "startPrice": "40000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "Silver223-USD",
+      "marketId": "0xd2a4ab0f58e96328c0b7dc80eeedd11d11cd336f787739ff51663bb1bbc4c09b",
+      "orderBook": "0xEF260fd6bf6CC9A3D740913909D043e3f38bAFF4",
+      "metricUrl": "https://example.com",
+      "settlementDate": 1793993949,
+      "startPrice": "1000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "Silver2233-USD",
+      "marketId": "0x19c17424e34ff60c90d9e6d2a4422d6accc8cc934945583b3b6241219cbff057",
+      "orderBook": "0x6c94933c7f137Fc1E9785f55a731eC3A9Ce34337",
+      "metricUrl": "https://example.com",
+      "settlementDate": 1793995624,
+      "startPrice": "5000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "Silver101-USD",
+      "marketId": "0x0b9982548126b8bdcb9f8fdf64619c32d36a7dc96de714f4248bfd78fd178240",
+      "orderBook": "0x1000B0BFc02B4f158C896C1500215292C7C72198",
+      "metricUrl": "https://example.com",
+      "settlementDate": 1794001744,
+      "startPrice": "40000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "Silver102-USD",
+      "marketId": "0x807fb353529ee4a92fe1a6c0725583254aa2518c6a8828cd4d5aca4f45484423",
+      "orderBook": "0xd60a72e69690Ee2f8fD33d69E0cB4506575B1F2F",
+      "metricUrl": "https://example.com",
+      "settlementDate": 1794004270,
+      "startPrice": "40000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "Alu-USD",
+      "marketId": "0xdca7f594ee19778a69ac7c24c9785ae2e79d7030949cbc8438b4610380f68064",
+      "orderBook": "0x049c9a8494C8591aE9db09Cf9e0a92989A43Cef5",
+      "metricUrl": "https://coinmarketcap.com/currencies/xrp/",
+      "settlementDate": 1794026171,
+      "startPrice": "2150000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "Jasmy-USD",
+      "marketId": "0xe85cb17c6fd8ed518d5bbacf6e1a3629eea374a9278dc60fa7ccd554d0861baa",
+      "orderBook": "0xF91Da1Dd70728AAa20835E90E7946ADE7aECea3A",
+      "metricUrl": "https://coinmarketcap.com/currencies/xrp/",
+      "settlementDate": 1794238117,
+      "startPrice": "11110000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "COPPER-USD",
+      "marketId": "0xd51c9f359bc723312d125c8e7c4414377eedcd34cc2ac8215665027fc5ac48c9",
+      "orderBook": "0x2Bd6A9573F2aD61Bc8b01A93e1C84fEE309ad82c",
+      "metricUrl": "https://coinmarketcap.com/currencies/xrp/",
+      "settlementDate": 1794240785,
+      "startPrice": "5000000",
+      "dataSource": "User Provided",
+      "tags": []
+    },
+    {
+      "symbol": "SILVER-USD",
+      "marketId": "0xabc874dda28efcc5493925a0593f9ac1f60b23794c52e847d14a0d5478b3d5f2",
+      "orderBook": "0xc81838e983981c099229a47A7D3D6418464ED5a5",
+      "metricUrl": "https://coinmarketcap.com/currencies/xrp/",
+      "settlementDate": 1794241642,
+      "startPrice": "1000000",
+      "dataSource": "User Provided",
+      "tags": []
+    }
+  ],
+  "defaultMarket": {
+    "symbol": "Silver102-USD",
+    "marketId": "0x807fb353529ee4a92fe1a6c0725583254aa2518c6a8828cd4d5aca4f45484423",
+    "orderBook": "0xd60a72e69690Ee2f8fD33d69E0cB4506575B1F2F"
+  },
+  "notes": {
+    "coreVaultRedeploy": {
+      "previousCoreVault": "0xAdD81D5D46fd9Fb6235a142a5f4547a8EfE30F43",
+      "newCoreVault": "0x41E33Ac4DE5d37d85bd3E1f1a99cbeb25Cc5c0c4",
+      "by": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7"
+    },
+    "factoryRedeploy": {
+      "previousFactory": "0x0eE51D8F2d64954C468a2F524DdEE416C1Cbe917",
+      "newFactory": "0x7C0DB915706b6ab667f9886c2a0d313A7E63fB7a",
+      "coreVault": "0xAdD81D5D46fd9Fb6235a142a5f4547a8EfE30F43",
+      "admin": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7",
+      "feeRecipient": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7",
+      "by": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7"
+    }
+  }
+}

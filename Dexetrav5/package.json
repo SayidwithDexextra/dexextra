@@ -1,0 +1,53 @@
+{
+  "name": "hyperliquidv2-orderbook-protocol",
+  "version": "1.0.0",
+  "description": "Production-ready futures-style order book protocol for Hyper Liquid Blockchain v2",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js --network hyperliquid && node scripts/sync-facet-abis.js",
+    "deploy:localhost": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:hyperliquid": "hardhat run scripts/deploy.js --network hyperliquid && node scripts/sync-facet-abis.js",
+    "deploy:hyperliquid-testnet": "hardhat run scripts/deploy.js --network hyperliquid_testnet",
+    "deploy:polygon": "hardhat run scripts/deploy.js --network polygon && node scripts/sync-facet-abis.js",
+    "deploy:factory:localhost": "hardhat run scripts/deploy-factory-meta.js --network localhost && node scripts/sync-factory-abi.js",
+    "deploy:factory:hyperliquid": "hardhat run scripts/deploy-factory-meta.js --network hyperliquid && node scripts/sync-factory-abi.js",
+    "deploy:factory:hyperliquid-testnet": "hardhat run scripts/deploy-factory-meta.js --network hyperliquid_testnet && node scripts/sync-factory-abi.js",
+    "sync:factory-abi": "node scripts/sync-factory-abi.js",
+    "size:contracts": "node scripts/check-contract-sizes.js",
+    "new:create-market": "hardhat run scripts/new-create-market.js --network hyperliquid",
+    "trade": "hardhat run scripts/interactive-trader.js --network hyperliquid",
+    "trade:localhost": "hardhat run scripts/interactive-trader.js --network localhost",
+    "trade:hyperliquid": "hardhat run scripts/interactive-trader.js --network hyperliquid",
+    "trade:hyperliquid-testnet": "hardhat run scripts/interactive-trader.js --network hyperliquid_testnet",
+    "enable:scan-on-trade": "hardhat run scripts/enable-scan-on-trade.js --network hyperliquid",
+    "poke:liq": "hardhat run scripts/poke-liquidations.js --network hyperliquid",
+    "query:scan-on-trade": "hardhat run scripts/query-scan-on-trade.js --network hyperliquid",
+    "viewer": "hardhat run scripts/live-orderbook-viewer.js --network localhost",
+    "accounts": "hardhat accounts",
+    "accounts:hyperliquid": "hardhat accounts --network hyperliquid",
+    "launch": "node scripts/launch-macos.js --network hyperliquid",
+    "launch:localhost": "node scripts/launch-macos.js --network localhost",
+    "launch:hyperliquid": "node scripts/launch-macos.js --network hyperliquid",
+    "launch:hyperliquid-testnet": "node scripts/launch-macos.js --network hyperliquid_testnet",
+    "verify:all": "hardhat run scripts/verify-all.js --network hyperliquid",
+    "mark": "hardhat run scripts/mark-price-cli.js --network hyperliquid",
+    "mark:localhost": "hardhat run scripts/mark-price-cli.js --network localhost",
+    "mark:hyperliquid": "hardhat run scripts/mark-price-cli.js --network hyperliquid",
+    "mark:hyperliquid-testnet": "hardhat run scripts/mark-price-cli.js --network hyperliquid_testnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.1.1",
+    "@types/node": "^20.0.0",
+    "hardhat": "^2.26.0",
+    "hardhat-contract-sizer": "^2.10.1",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "@supabase/supabase-js": "^2.39.3",
+    "dotenv": "^16.4.1"
+  }
+}

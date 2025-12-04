@@ -1,0 +1,50 @@
+{
+  "network": "localhost",
+  "chainId": 31337,
+  "timestamp": "2025-12-04T18:27:34.914Z",
+  "contracts": {
+    "MOCK_USDC": "0xd9fEc8238711935D6c8d79Bef2B9546ef23FC046",
+    "VAULT_ANALYTICS": "0xd3FFD73C53F139cEBB80b6A524bE280955b3f4db",
+    "POSITION_MANAGER": "0x512F7469BcC83089497506b5df64c6E246B39925",
+    "CORE_VAULT": "0x9fD16eA9E31233279975D99D5e8Fc91dd214c7Da",
+    "LIQUIDATION_MANAGER": "0xCBBe2A5c3A22BE749D5DDF24e9534f98951983e2",
+    "FUTURES_MARKET_FACTORY": "0xb932C8342106776E73E39D695F3FFC3A9624eCE0",
+    "MARKET_LIFECYCLE_FACET": "0xCd7c00Ac6dc51e8dCc773971Ac9221cC582F3b1b",
+    "COLLATERAL_HUB": "0xf5c4a909455C00B99A90d93b48736F3196DB5621",
+    "ALUMINUM_ORDERBOOK": "0xfCfC0369f7dC527588faf237f074B436D10D9F96",
+    "ALUMINUM_MARKET_ID": "0x76cfa1dc1777500296b588e68bffa1af67729c962a122a0fd31708e7b00d8797"
+  },
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "allUsers": [
+    {
+      "index": 0,
+      "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "role": "deployer"
+    },
+    {
+      "index": 1,
+      "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "role": "user1"
+    },
+    {
+      "index": 2,
+      "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "role": "user2"
+    },
+    {
+      "index": 3,
+      "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "role": "user3"
+    },
+    {
+      "index": 4,
+      "address": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "role": "user4"
+    }
+  ],
+  "aluminumMarket": {
+    "marketId": "0x76cfa1dc1777500296b588e68bffa1af67729c962a122a0fd31708e7b00d8797",
+    "symbol": "ALU-USD",
+    "orderBook": "0xfCfC0369f7dC527588faf237f074B436D10D9F96"
+  }
+}
