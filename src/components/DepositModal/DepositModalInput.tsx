@@ -197,7 +197,9 @@ export default function DepositModalInput({
   animationDirection = 'forward',
   isDirectDeposit = false,
   onDirectDeposit,
-  isVaultConnected = false
+  isVaultConnected = false,
+  availableTokens = [],
+  onSelectToken
 }: DepositModalInputProps) {
   // Set intelligent default amount based on available balance
   const getDefaultAmount = () => {
@@ -210,6 +212,7 @@ export default function DepositModalInput({
   const [selectedPercentage, setSelectedPercentage] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
   const amountInputRef = useRef<HTMLInputElement>(null)
+  const [isTokenSelectorOpen, setIsTokenSelectorOpen] = useState(false)
 
   // Update amount when maxBalance changes
   useEffect(() => {
@@ -337,22 +340,22 @@ export default function DepositModalInput({
           flexDirection: 'column'
         }}
       >
-        {/* Sophisticated Header Section */}
+        {/* Header - aligned with WalletConnect and design system */}
         <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
-          {/* Back Button */}
+          {/* Back Button - solid control like WalletModal */}
           <button
             onClick={onBack}
-            className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-2 hover:bg-blue-500/10 rounded-lg text-[#808080] hover:text-blue-300"
+            className="group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200"
+            aria-label="Back"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+            <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" viewBox="0 0 24 24" fill="none">
               <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
 
+          {/* Title and Brand */}
           <div className="flex items-center gap-3 min-w-0 flex-1 justify-center">
-            {/* Amount Status Indicator */}
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-            
             <div className="relative group">
               <div 
                 className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 group-hover:scale-105"
@@ -362,38 +365,37 @@ export default function DepositModalInput({
                 }}
               >
                 <img 
-                  src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//LOGO-Dexetera-05@2x.png" 
+                  src="/Dexicon/LOGO-Dexetera-05.svg" 
                   alt="Dexetera" 
-                  className="w-5 h-5"
+                  className="w-5 h-5 opacity-90"
                 />
               </div>
             </div>
-            
-            {/* Amount Info */}
-            <div className="text-center">
+            <div className="min-w-0 text-center">
               <div className="flex items-center gap-2 justify-center">
-                <span className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
-                  {isDirectDeposit ? 'Vault Deposit' : 'Amount'}
-                </span>
+                <h2 className="text-sm font-medium text-white tracking-wide uppercase">
+                  Vault Deposit
+                </h2>
                 {isDirectDeposit && (
-                  <div className="text-[9px] text-green-400 bg-green-500/10 px-1 py-0.5 rounded">
+                  <div className="text-[10px] text-green-400 bg-green-500/10 px-2 py-0.5 rounded">
                     Direct
                   </div>
                 )}
               </div>
-              <div className="text-[10px] text-[#606060] mt-0.5">
+              <div className="text-[10px] text-[#606060]">
                 ${maxBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {selectedToken.symbol} Available
               </div>
             </div>
           </div>
 
-          {/* Close Button */}
+          {/* Close Button - red accent like Wallet modal destructive control */}
           <button
             onClick={onClose}
-            className="opacity-0 group-hover:opacity-100 transition-all duration-200 p-2 hover:bg-red-500/10 rounded-lg text-[#808080] hover:text-red-300"
+            className="group flex items-center justify-center w-8 h-8 rounded-md transition-all duration-200 border bg-red-500/10 border-red-500/20 hover:bg-red-500/15 hover:border-red-500/30"
+            aria-label="Close"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-              <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            <svg className="w-4 h-4 text-red-400 group-hover:text-red-300 transition-colors duration-200" viewBox="0 0 24 24" fill="none">
+              <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
           </button>
         </div>
@@ -409,6 +411,7 @@ export default function DepositModalInput({
               target: { ...e.target, value: e.target.value.replace('$', '') } 
             })}
             style={inputStyles.amountInput}
+            className="font-mono"
             placeholder="$0.00"
           />
 
@@ -416,24 +419,16 @@ export default function DepositModalInput({
           <div style={inputStyles.percentageButtons}>
             {percentageOptions.map(({ label, value }) => {
               const isDisabled = maxBalance <= 0
-              const buttonStyle = {
-                ...inputStyles.percentageButton,
-                backgroundColor: selectedPercentage === label ? '#00d4aa' : '#2a2a2a',
-                color: selectedPercentage === label ? '#000000' : '#ffffff',
-                border: '1px solid #333333',
-                ...(isDisabled ? { 
-                  opacity: 0.5, 
-                  cursor: 'not-allowed',
-                  backgroundColor: '#2a2a2a'
-                } : {})
-              }
-              
+              const isSelected = selectedPercentage === label
               return (
                 <button
                   key={label}
                   onClick={() => !isDisabled && handlePercentageClick(value, label)}
-                  style={buttonStyle}
-                  className={!isDisabled ? cssStyles.continueButtonHover : ''}
+                  className={[
+                    'px-4 py-2 rounded-xl border transition-all duration-200 text-[11px] font-medium',
+                    isSelected ? 'bg-[#2A2A2A] border-[#444444] text-white' : 'bg-[#1A1A1A] border-[#333333] text-white',
+                    !isDisabled ? 'hover:bg-[#2A2A2A] hover:border-[#444444]' : 'opacity-50 cursor-not-allowed'
+                  ].join(' ')}
                   disabled={isDisabled}
                   title={isDisabled ? 'No balance available' : `Set to ${label} of available balance ($${(maxBalance * value).toFixed(2)})`}
                 >
@@ -444,102 +439,148 @@ export default function DepositModalInput({
           </div>
         </div>
 
-        {/* Transaction Details Card - Always render, different content for direct deposit vs swap */}
-        <div style={{
-          ...inputStyles.tokenSwapCard,
-          backgroundColor: '#2a2a2a',
-          border: '1px solid #333333'
-        }}>
-          <div style={inputStyles.tokenInfo}>
-            <div style={inputStyles.tokenIcon}>
-              <img 
-                src={selectedToken.icon}
-                alt={selectedToken.symbol}
-                style={{ 
-                  width: '20px', 
-                  height: '20px',
-                  borderRadius: '50%'
-                }}
-                onError={(e) => {
-                  console.log('Failed to load token icon:', selectedToken.icon);
-                }}
-              />
-            </div>
-            <div style={inputStyles.tokenText}>
-              <div style={inputStyles.tokenLabel}>You send</div>
-              <div style={inputStyles.tokenSymbol}>{selectedToken.symbol}</div>
+        {/* Section Header - Route */}
+        <div className="px-6">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+              Route
+            </h4>
+            <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+              {isDirectDeposit ? 'Direct' : 'Swap'}
             </div>
           </div>
+        </div>
 
-          <div style={inputStyles.arrow}>
-            <ArrowRightIcon />
-          </div>
-
-          <div style={inputStyles.tokenInfo}>
-            <div style={inputStyles.tokenIcon}>
-              <img 
-                src={targetToken.icon}
-                alt={targetToken.symbol}
-                style={{ 
-                  width: '20px', 
-                  height: '20px',
-                  borderRadius: '50%'
-                }}
-                onError={(e) => {
-                  console.log('Failed to load token icon:', targetToken.icon);
-                }}
-              />
-            </div>
-            <div style={inputStyles.tokenText}>
-              <div style={inputStyles.tokenLabel}>
-                {isDirectDeposit ? 'Deposited to' : 'You receive'}
+        {/* Transaction Details Card - WalletModal design pattern */}
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-xl border border-[#222222] hover:border-[#333333] transition-all duration-200 mx-6">
+          <div className="flex items-center justify-between p-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-4 h-4 rounded-full overflow-hidden bg-[#0F0F0F] flex items-center justify-center">
+                <img
+                  src={selectedToken.icon}
+                  alt={selectedToken.symbol}
+                  className="w-4 h-4 rounded-full"
+                  onError={() => {}}
+                />
               </div>
-              <div style={inputStyles.tokenSymbol}>
-                {isDirectDeposit ? (targetToken.name || targetToken.symbol) : targetToken.symbol}
+              <div className="flex flex-col min-w-0">
+                <span className="text-[11px] font-medium text-[#808080]">You send</span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setIsTokenSelectorOpen(true) }}
+                className="text-[10px] text-white underline decoration-dotted underline-offset-2 hover:text-[#9CA3AF] transition-colors text-left"
+                title="Change token"
+              >
+                {selectedToken.symbol}
+              </button>
+              </div>
+            </div>
+
+            <svg className="w-4 h-4 text-[#606060]" viewBox="0 0 24 24" fill="none">
+              <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-4 h-4 rounded-full overflow-hidden bg-[#0F0F0F] flex items-center justify-center">
+                <img
+                  src={targetToken.icon}
+                  alt={targetToken.symbol}
+                  className="w-4 h-4 rounded-full"
+                  onError={() => {}}
+                />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[11px] font-medium text-[#808080]">
+                  {isDirectDeposit ? 'Deposited to' : 'You receive'}
+                </span>
+                <span className="text-[10px] text-white truncate">
+                  {isDirectDeposit ? (targetToken.name || targetToken.symbol) : targetToken.symbol}
+                </span>
+              </div>
+            </div>
+          </div>
+          {/* Expandable details on hover */}
+          <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+            <div className="px-3 pb-3 border-t border-[#1A1A1A]">
+              <div className="text-[9px] pt-2">
+                <span className="text-[#606060]">
+                  {isDirectDeposit
+                    ? 'Direct credit to CoreVault. No swap route.'
+                    : `Best route selected automatically for ${selectedToken.symbol} → ${targetToken.symbol}`}
+                </span>
               </div>
             </div>
           </div>
         </div>
 
+        {/* Token Selector Modal */}
+        {isTokenSelectorOpen && createPortal(
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={() => setIsTokenSelectorOpen(false)}>
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300" />
+            <div 
+              className="relative z-10 w-full max-w-sm bg-[#0F0F0F] rounded-xl border border-[#222222] shadow-2xl transform transition-all duration-300"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between p-4 border-b border-[#1A1A1A]">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                  <h3 className="text-xs font-medium text-white uppercase tracking-wide">Select Token</h3>
+                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                    {availableTokens?.length || 0}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsTokenSelectorOpen(false)}
+                  className="group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200"
+                  aria-label="Close"
+                >
+                  <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" viewBox="0 0 24 24" fill="none">
+                    <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              </div>
+
+              <div className="p-4 space-y-2">
+                {(availableTokens && availableTokens.length > 0 ? availableTokens : [selectedToken]).map((t) => {
+                  const isActive = t.symbol === selectedToken.symbol
+                  return (
+                    <button
+                      key={t.symbol}
+                      onClick={() => { onSelectToken && onSelectToken(t); setIsTokenSelectorOpen(false) }}
+                      className={[
+                        'w-full group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border transition-all duration-200 p-3 flex items-center justify-between',
+                        isActive ? 'border-[#333333]' : 'border-[#222222] hover:border-[#333333]'
+                      ].join(' ')}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-400' : 'bg-[#404040]'}`} />
+                        <div className="w-5 h-5 rounded-full overflow-hidden bg-[#0F0F0F] flex items-center justify-center">
+                          <img src={t.icon} alt={t.symbol} className="w-5 h-5 rounded-full" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-medium text-white">{t.symbol}</div>
+                          <div className="text-[10px] text-[#606060] truncate">{t.name || 'Stablecoin'}</div>
+                        </div>
+                      </div>
+                      <svg className="w-3 h-3 text-[#404040] group-hover:text-[#606060] transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
         {/* Additional information for direct deposits */}
         {isDirectDeposit && (
-          <div style={{
-            backgroundColor: '#1a2e1a',
-            border: '1px solid #2d5a2d',
-            borderRadius: '8px',
-            padding: '12px',
-            marginBottom: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <div style={{
-              width: '16px',
-              height: '16px',
-              backgroundColor: '#00d4aa',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '10px',
-              color: '#000'
-            }}>
-              ✓
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{
-                fontSize: '12px',
-                color: '#00d4aa',
-                fontWeight: 500,
-                marginBottom: '2px'
-              }}>
-                Direct CoreVault Deposit
-              </div>
-              <div style={{
-                fontSize: '11px',
-                color: '#b3b3b3',
-                lineHeight: 1.3
-              }}>
+          <div className="mx-6 mt-4 rounded-xl border border-green-500/30 bg-green-500/10 p-3 flex items-start gap-2">
+            <div className="w-4 h-4 rounded-full bg-green-400 text-black flex items-center justify-center text-[10px] mt-0.5">✓</div>
+            <div className="flex-1">
+              <div className="text-[12px] text-green-400 font-medium mb-0.5">Direct CoreVault Deposit</div>
+              <div className="text-[11px] text-[#b3b3b3] leading-snug">
                 Your {selectedToken.symbol} will be deposited directly to the Dexetera CoreVault as trading collateral.
               </div>
             </div>
@@ -548,43 +589,11 @@ export default function DepositModalInput({
 
         {/* Additional information for swaps */}
         {!isDirectDeposit && (
-          <div style={{
-            backgroundColor: '#1a1a2e',
-            border: '1px solid #2d2d5a',
-            borderRadius: '8px',
-            padding: '12px',
-            marginBottom: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <div style={{
-              width: '16px',
-              height: '16px',
-              backgroundColor: '#4a9eff',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '10px',
-              color: '#fff'
-            }}>
-              ⇄
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{
-                fontSize: '12px',
-                color: '#4a9eff',
-                fontWeight: 500,
-                marginBottom: '2px'
-              }}>
-                Token Swap Required
-              </div>
-              <div style={{
-                fontSize: '11px',
-                color: '#b3b3b3',
-                lineHeight: 1.3
-              }}>
+          <div className="mx-6 mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 flex items-start gap-2">
+            <div className="w-4 h-4 rounded-full bg-blue-400 text-white flex items-center justify-center text-[10px] mt-0.5">⇄</div>
+            <div className="flex-1">
+              <div className="text-[12px] text-blue-400 font-medium mb-0.5">Token Swap Required</div>
+              <div className="text-[11px] text-[#b3b3b3] leading-snug">
                 Your {selectedToken.symbol} will be swapped to {targetToken.symbol} before depositing to the vault.
               </div>
             </div>

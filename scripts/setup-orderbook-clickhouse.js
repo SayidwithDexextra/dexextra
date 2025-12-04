@@ -43,7 +43,8 @@ async function setupOrderbookClickHouse() {
         trade_id String DEFAULT '',
         order_id String DEFAULT '',
         market_id UInt32 DEFAULT 0,
-        contract_address LowCardinality(String) DEFAULT ''
+        contract_address LowCardinality(String) DEFAULT '',
+        market_uuid LowCardinality(String) DEFAULT ''    -- Supabase markets.id linkage
       )
       ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
@@ -68,7 +69,8 @@ async function setupOrderbookClickHouse() {
         event_type LowCardinality(String),
         is_long UInt8 DEFAULT 1,
         market_id UInt32 DEFAULT 0,
-        contract_address LowCardinality(String) DEFAULT ''
+        contract_address LowCardinality(String) DEFAULT '',
+        market_uuid LowCardinality(String) DEFAULT ''     -- Supabase markets.id linkage
       )
       ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
@@ -111,7 +113,8 @@ async function setupOrderbookClickHouse() {
         low Float64,
         close Float64,
         volume Float64,
-        trades UInt32
+        trades UInt32,
+        market_uuid LowCardinality(String) DEFAULT ''   -- Supabase markets.id linkage
       )
       ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
@@ -138,7 +141,8 @@ async function setupOrderbookClickHouse() {
         min(price) AS low,
         anyLast(price) AS close,
         sum(size) AS volume,
-        count() AS trades
+        count() AS trades,
+        anyLast(market_uuid) AS market_uuid
       FROM ${db}.trades
       GROUP BY symbol, ts`,
       `Created ${db}.mv_trades_to_1m (trades → ohlcv_1m)`

@@ -25,9 +25,25 @@ function getSupabase() {
 }
 
 function corsHeaders(origin?: string) {
-  const allow = process.env.ALLOW_ORIGIN || '*';
+  const allowRaw = process.env.ALLOW_ORIGIN || '*';
+  // Always vary on Origin so CDNs/CDN cache correctly
+  const varyHeader = { 'Vary': 'Origin' as const };
+  if (allowRaw === '*') {
+    return {
+      ...varyHeader,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST,GET,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Max-Age': '86400'
+    };
+  }
+  // Support comma-separated allow-list: e.g. "https://www.dexetera.xyz,http://localhost:3000"
+  const allowList = allowRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const isAllowed = origin && allowList.some(allowed => origin === allowed || (allowed && origin!.endsWith(allowed)));
+  const acao = isAllowed ? (origin as string) : (allowList[0] || '*');
   return {
-    'Access-Control-Allow-Origin': allow === '*' ? '*' : (origin && origin.endsWith(allow) ? origin : allow),
+    ...varyHeader,
+    'Access-Control-Allow-Origin': acao,
     'Access-Control-Allow-Methods': 'POST,GET,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400'

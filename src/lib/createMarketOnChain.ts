@@ -29,6 +29,28 @@ function selectorsFromAbi(abi: any[]): string[] {
   }
 }
 
+function shortAddr(a: unknown): string {
+  const s = String(a || '');
+  return s.startsWith('0x') && s.length === 42 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+}
+
+function logMarketIdentifiers(orderBook: string | null | undefined, marketId: string | null | undefined) {
+  try {
+    if (!orderBook || !marketId) return;
+    const header = 'background: linear-gradient(90deg,#22c55e,#06b6d4); color:#0b1220; padding:3px 8px; border-radius:6px; font-weight:900;';
+    const sub = 'color:#93c5fd; font-weight:700;';
+    const val = 'color:#e5e7eb; font-weight:700;';
+    // eslint-disable-next-line no-console
+    console.group('%c✅ MARKET CREATED', header);
+    // eslint-disable-next-line no-console
+    console.log('%cOrderBook%c %s  (%s)', sub, val, orderBook, shortAddr(orderBook));
+    // eslint-disable-next-line no-console
+    console.log('%cMarket ID%c   %s', sub, val, marketId);
+    // eslint-disable-next-line no-console
+    console.groupEnd();
+  } catch {}
+}
+
 export async function createMarketOnChain(params: {
   symbol: string;
   metricUrl: string;
@@ -267,6 +289,8 @@ export async function createMarketOnChain(params: {
     }
     const json = await res.json();
     onProgress?.({ step: 'relayer_submit', status: 'success', data: { hash: json?.transactionHash, orderBook: json?.orderBook, marketId: json?.marketId } });
+    // High‑visibility identifiers as soon as they are available (gasless path)
+    logMarketIdentifiers(json?.orderBook, json?.marketId);
     return {
       orderBook: json?.orderBook,
       marketId: json?.marketId,
@@ -336,6 +360,8 @@ export async function createMarketOnChain(params: {
       throw new Error('Failed to parse FuturesMarketCreated event');
     }
     onProgress?.({ step: 'parse_event', status: 'success', data: { orderBook, marketId } });
+    // High‑visibility identifiers as soon as they are available (direct tx path)
+    logMarketIdentifiers(orderBook, marketId);
     // Ensure required placement selectors exist (mirror server-side defensive step)
     try {
       const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
@@ -429,20 +455,84 @@ export async function createMarketOnChain(params: {
         try {
           current = await meta.sessionRegistry();
         } catch {}
+        // Styled diagnostics
+        const banner = 'background: #111827; color: #e5e7eb; padding: 2px 6px; border-radius: 4px; font-weight: 700;';
+        const kv = 'color:#93c5fd;';
+        const good = 'color:#22c55e; font-weight:700;';
+        const bad = 'color:#ef4444; font-weight:700;';
+        const meh = 'color:#f59e0b; font-weight:700;';
+        // Attempt to read diamond owner (if EIP-173 exposed)
+        let diamondOwner: string | null = null;
+        try {
+          const own = new ethers.Contract(orderBook, ['function owner() view returns (address)'], signer);
+          diamondOwner = await own.owner();
+        } catch {
+          diamondOwner = null;
+        }
+        // eslint-disable-next-line no-console
+        console.groupCollapsed('%c🔐 GASLESS SESSION REGISTRY — CLIENT', banner);
+        // eslint-disable-next-line no-console
+        console.log('%corderBook', kv, orderBook, `(${shortAddr(orderBook)})`);
+        // eslint-disable-next-line no-console
+        console.log('%cexpectedRegistry (env)', kv, registry, `(${shortAddr(registry)})`);
+        // eslint-disable-next-line no-console
+        console.log('%ccurrentRegistry (on-chain)', kv, current || '0x0000000000000000000000000000000000000000', `(${shortAddr(current)})`);
+        // eslint-disable-next-line no-console
+        console.log('%csigner', kv, await signer.getAddress(), `(${shortAddr(await signer.getAddress())})`);
+        // eslint-disable-next-line no-console
+        console.log('%cdiamondOwner()', kv, diamondOwner || 'unavailable', diamondOwner ? `(${shortAddr(diamondOwner)})` : '');
+        // Best-effort: registry allowlist status
+        try {
+          const reg = new ethers.Contract(registry, ['function allowedOrderbook(address) view returns (bool)'], signer);
+          const allowed = await reg.allowedOrderbook(orderBook);
+          // eslint-disable-next-line no-console
+          console.log(allowed ? '%c✅ registry.allowedOrderbook = true' : '%c⚠️ registry.allowedOrderbook = false', allowed ? good : meh);
+        } catch {
+          // eslint-disable-next-line no-console
+          console.log('%cℹ️ registry.allowedOrderbook check unavailable (ABI/RPC)', meh);
+        }
         if (!current || String(current).toLowerCase() !== String(registry).toLowerCase()) {
           onProgress?.({ step: 'attach_session_registry', status: 'start' });
+          if (!current || String(current).toLowerCase() === ethers.ZeroAddress.toLowerCase()) {
+            // eslint-disable-next-line no-console
+            console.warn('%c❌ meta.sessionRegistry.nonzero — sessionRegistryOnDiamond = 0x0000…0000', bad);
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('%c❌ meta.sessionRegistry.matches_env — expected %s', bad, shortAddr(registry));
+          }
+          // eslint-disable-next-line no-console
+          console.log('%cAttempting setSessionRegistry(registry)…', kv);
           const txSet = await meta.setSessionRegistry(registry);
           onProgress?.({ step: 'attach_session_registry', status: 'sent', data: { hash: txSet.hash } });
+          // eslint-disable-next-line no-console
+          console.log('%ctx sent', kv, { hash: txSet.hash });
           await txSet.wait();
+          // Post‑verify
+          try {
+            const after = await meta.sessionRegistry();
+            const ok = String(after).toLowerCase() === String(registry).toLowerCase();
+            // eslint-disable-next-line no-console
+            console.log(ok ? '%c✅ sessionRegistry updated' : '%c⚠️ sessionRegistry update not reflected', ok ? good : meh, { after, short: shortAddr(after) });
+          } catch {}
           onProgress?.({ step: 'attach_session_registry', status: 'mined' });
         } else {
           onProgress?.({ step: 'attach_session_registry', status: 'ok', data: { message: 'already_set' } });
+          // eslint-disable-next-line no-console
+          console.log('%c✅ meta.sessionRegistry ok — already set', good);
         }
+        // eslint-disable-next-line no-console
+        console.groupEnd();
       } else {
         onProgress?.({ step: 'attach_session_registry', status: 'error', data: { error: 'Missing NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS' } });
+        const bad = 'color:#ef4444; font-weight:700;';
+        // eslint-disable-next-line no-console
+        console.warn('%c⚠️ Missing NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS — cannot attach session registry', bad);
       }
     } catch (e: any) {
       onProgress?.({ step: 'attach_session_registry', status: 'error', data: { error: e?.message || String(e) } });
+      const bad = 'color:#ef4444; font-weight:700;';
+      // eslint-disable-next-line no-console
+      console.error('%c❌ attach_session_registry failed', bad, e?.shortMessage || e?.reason || e?.message || String(e));
     }
 
     return {
@@ -454,97 +544,7 @@ export async function createMarketOnChain(params: {
     };
   }
 
-  // Ensure required placement selectors exist (mirror server-side defensive step)
-  try {
-    const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
-    const CutABI = [
-      'function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)',
-    ];
-    const loupe = new ethers.Contract(orderBook, LoupeABI, signer);
-    const diamondCut = new ethers.Contract(orderBook, CutABI, signer);
-
-    // Identify placement facet address from cut (match any known placement selector); fallback to env
-    const placementSelectorsKnown = [
-      'placeLimitOrder(uint256,uint256,bool)',
-      'placeMarginLimitOrder(uint256,uint256,bool)',
-      'placeMarketOrder(uint256,bool)',
-      'placeMarginMarketOrder(uint256,bool)',
-      'placeMarketOrderWithSlippage(uint256,bool,uint256)',
-      'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
-      'cancelOrder(uint256)',
-    ];
-    const knownSelectorSet = new Set(placementSelectorsKnown.map((s) => ethers.id(s).slice(0, 10)));
-    let placementFacetAddr: string | undefined;
-    for (const entry of cutArg) {
-      const facetAddr = entry?.[0] as string;
-      const selectors = entry?.[2] as string[] | undefined;
-      if (Array.isArray(selectors) && selectors.some((sel: string) => knownSelectorSet.has(sel))) {
-        placementFacetAddr = facetAddr;
-        break;
-      }
-    }
-    if (!placementFacetAddr) {
-      const envPlacement =
-        (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET ||
-        (globalThis as any).process?.env?.NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
-      if (envPlacement && ethers.isAddress(envPlacement)) {
-        placementFacetAddr = envPlacement;
-      }
-    }
-
-    // Explicit list of required placement selectors
-    const placementSigs = [
-      'placeLimitOrder(uint256,uint256,bool)',
-      'placeMarginLimitOrder(uint256,uint256,bool)',
-      'placeMarketOrder(uint256,bool)',
-      'placeMarginMarketOrder(uint256,bool)',
-      'placeMarketOrderWithSlippage(uint256,bool,uint256)',
-      'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
-      'cancelOrder(uint256)',
-    ];
-    const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
-
-    const missing: string[] = [];
-    for (const sel of requiredSelectors) {
-      try {
-        const addr: string = await loupe.facetAddress(sel);
-        if (!addr || addr.toLowerCase() === '0x0000000000000000000000000000000000000000') {
-          missing.push(sel);
-        }
-      } catch {
-        missing.push(sel);
-      }
-    }
-    console.info('[createMarketOnChain] selector check', { placementFacetAddr, missingCount: missing.length });
-    onProgress?.({
-      step: 'verify_selectors',
-      status: missing.length > 0 ? 'missing' : 'ok',
-      data: { missingCount: missing.length },
-    });
-    if (missing.length > 0 && placementFacetAddr && ethers.isAddress(placementFacetAddr)) {
-      const cutArg = [{ facetAddress: placementFacetAddr, action: 0, functionSelectors: missing }];
-      const txCut = await diamondCut.diamondCut(cutArg as any, ethers.ZeroAddress, '0x');
-      console.info('[createMarketOnChain] diamondCut sent to add missing selectors', { tx: txCut.hash, facet: placementFacetAddr, missing });
-      onProgress?.({ step: 'diamond_cut', status: 'sent', data: { hash: txCut.hash, facet: placementFacetAddr, missing } });
-      await txCut.wait();
-      console.info('[createMarketOnChain] diamondCut mined for missing selectors');
-      onProgress?.({ step: 'diamond_cut', status: 'mined' });
-    } else if (missing.length > 0) {
-      console.warn('[createMarketOnChain] missing selectors but no placement facet address available to patch', { missing });
-    } else {
-      console.info('[createMarketOnChain] all required placement selectors present');
-    }
-  } catch (_) {
-    // Non-fatal safety step
-  }
-
-  return {
-    orderBook,
-    marketId,
-    transactionHash: (receipt as any)?.hash || tx.hash,
-    chainId: Number(network.chainId),
-    receipt,
-  };
+  // (legacy bottom block removed; selector verification and returns are handled in the code paths above)
 }
 
 

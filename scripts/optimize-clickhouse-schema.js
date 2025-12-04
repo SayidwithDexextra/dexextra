@@ -67,7 +67,8 @@ async function optimizeSchema() {
         event_type LowCardinality(String),
         is_long Bool,
         market_id UInt32,
-        contract_address LowCardinality(String)
+        contract_address LowCardinality(String),
+        market_uuid LowCardinality(String)              -- Supabase markets.id linkage
       ) ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
       ORDER BY (symbol, ts)
@@ -85,7 +86,8 @@ async function optimizeSchema() {
         low Float64,
         close Float64,
         volume Float64,
-        trades UInt32
+        trades UInt32,
+        market_uuid LowCardinality(String)            -- Supabase markets.id linkage
       ) ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
       ORDER BY (symbol, ts)
@@ -111,7 +113,8 @@ async function optimizeSchema() {
         min(price) AS low,
         anyLast(price) AS close,
         sum(size) AS volume,
-        count() AS trades
+        count() AS trades,
+        anyLast(market_uuid) AS market_uuid
       FROM ${db}.vamm_ticks
       GROUP BY symbol, ts`,
       "Created optimized mv_ticks_to_1m (vamm_ticks → ohlcv_1m)"

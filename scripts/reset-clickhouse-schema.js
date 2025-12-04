@@ -78,7 +78,8 @@ async function resetSchema() {
         event_type LowCardinality(String),
         is_long UInt8,
         market_id UInt64,
-        contract_address String
+        contract_address String,
+        market_uuid LowCardinality(String)            -- Supabase markets.id linkage
       )
       ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
@@ -96,7 +97,8 @@ async function resetSchema() {
         low  Float64,
         close Float64,
         volume Float64,
-        trades UInt32
+        trades UInt32,
+        market_uuid LowCardinality(String)          -- Supabase markets.id linkage
       )
       ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
@@ -117,7 +119,8 @@ async function resetSchema() {
         min(price)  AS low,
         anyLast(price) AS close,
         sum(size)   AS volume,
-        count()     AS trades
+        count()     AS trades,
+        anyLast(market_uuid) AS market_uuid
       FROM ${db}.vamm_ticks
       GROUP BY symbol, ts`,
       "Created MV ticks_to_1m"

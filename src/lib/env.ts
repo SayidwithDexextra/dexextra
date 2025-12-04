@@ -58,6 +58,12 @@ const envSchema = z.object({
   UMA_ORACLE_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid UMA oracle address').optional(),
   USDC_TOKEN_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid USDC token address').default('0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'),
 
+  // Spoke Vault Addresses (per chain) - used for external deposits
+  SPOKE_POLYGON_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Polygon spoke vault address').optional(),
+  SPOKE_ARBITRUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum spoke vault address').optional(),
+  SPOKE_ETHEREUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum spoke vault address').optional(),
+  SPOKE_HYPERLIQUID_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Hyperliquid spoke vault address').optional(),
+
   // Market Table Default Configuration
   DEFAULT_MARKET_DECIMALS: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(18)).default('8'),
   DEFAULT_TICK_SIZE: z.string().transform(val => parseFloat(val)).pipe(z.number().min(0.00000001).max(10)).default('0.01'),
@@ -207,6 +213,12 @@ const processEnv = {
   METRICS_MARKET_FACTORY_ADDRESS: process.env.METRICS_MARKET_FACTORY_ADDRESS,
   UMA_ORACLE_MANAGER_ADDRESS: process.env.UMA_ORACLE_MANAGER_ADDRESS,
   USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+
+  // Spoke Vault Addresses (allow NEXT_PUBLIC_ fallbacks on client)
+  SPOKE_POLYGON_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_POLYGON_VAULT_ADDRESS : process.env.SPOKE_POLYGON_VAULT_ADDRESS,
+  SPOKE_ARBITRUM_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ARBITRUM_VAULT_ADDRESS : process.env.SPOKE_ARBITRUM_VAULT_ADDRESS,
+  SPOKE_ETHEREUM_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ETHEREUM_VAULT_ADDRESS : process.env.SPOKE_ETHEREUM_VAULT_ADDRESS,
+  SPOKE_HYPERLIQUID_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_HYPERLIQUID_VAULT_ADDRESS : process.env.SPOKE_HYPERLIQUID_VAULT_ADDRESS,
   
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
   REDIS_TOKEN: process.env.REDIS_TOKEN,

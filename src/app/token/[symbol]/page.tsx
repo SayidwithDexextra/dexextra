@@ -11,6 +11,7 @@ import {
   MarketActivityTabs
 } from '@/components/TokenView';
 import LightweightChart from '@/components/TokenView/LightweightChart';
+import ScatterPlotChart from '@/components/TokenView/ScatterPlotChart';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
 import NetworkSelector from '@/components/NetworkSelector';
@@ -153,7 +154,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   return (
     <div className="token-page min-h-screen bg-black text-white">
       <CryptoMarketTicker className="border-b border-gray-800" />
-      <div className="px-1 pb-8 pt-2">
+      <div className="px-1 pb-8 pt-1">
         <div className="relative overflow-x-hidden overflow-y-visible">
           {/* Main trading content (unchanged layout) */}
           <div className={`transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
@@ -176,11 +177,18 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             )}
             <div className="flex md:hidden flex-col gap-1">
               <div className="w-full mt-1">
-                <LightweightChart 
-                  symbol={symbol}
-                  height={399}
-                  defaultPrice={tokenData?.price || currentPrice || 100}
-                />
+                {currentMarketId ? (
+                  <LightweightChart 
+                    symbol={symbol}
+                    marketId={currentMarketId}
+                    height={399}
+                    defaultPrice={tokenData?.price || currentPrice || 100}
+                  />
+                ) : (
+                  <div className="w-full h-[399px] rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                    Loading market…
+                  </div>
+                )}
               </div>
               <div className="w-full">
                 <MarketActivityTabs symbol={symbol} />
@@ -208,25 +216,30 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
             </div>
 
-            <div className="hidden md:flex gap-1 mt-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem + 23px)' }}>
+            <div className="hidden md:flex gap-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem + 27px)' }}>
               <div className="flex-1 flex flex-col gap-0.5 h-full overflow-hidden">
                 <div className="flex-shrink-0 overflow-hidden" style={{ height: '60%' }}>
                   <div className="flex flex-col h-full">
                     <div className="flex-1 min-h-0">
-                      <LightweightChart 
-                        symbol={symbol}
-                        height="100%"
-                        seriesType="candlestick"
-                        defaultTimeframe="5m"
-                        defaultPrice={tokenData?.price || currentPrice || 100}
-                      />
+                      {currentMarketId ? (
+                        <LightweightChart 
+                          symbol={symbol}
+                          marketId={currentMarketId}
+                          height="100%"
+                          seriesType="candlestick"
+                          defaultTimeframe="5m"
+                          defaultPrice={tokenData?.price || currentPrice || 100}
+                        />
+                      ) : (
+                        <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                          Loading market…
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1 min-h-0">
-                      <LightweightChart 
+                      <ScatterPlotChart 
                         symbol={symbol}
                         height="100%"
-                        defaultTimeframe="5m"
-                        defaultPrice={tokenData?.price || currentPrice || 100}
                       />
                     </div>
                   </div>

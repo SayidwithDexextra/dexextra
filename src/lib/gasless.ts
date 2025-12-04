@@ -283,7 +283,7 @@ export async function signAndSubmitGasless(params: {
   });
   if (!res.ok) {
     const text = await res.text();
-    try { console.error('[UpGas][client] relay http error', { status: res.status, text }); } catch {}
+    try { console.warn('[UpGas][client] relay http error', { status: res.status, text }); } catch {}
     return { success: false, error: `relay http ${res.status}: ${text}` };
   }
   const json = await res.json();
@@ -383,7 +383,7 @@ export async function createGaslessSession(params: {
   });
   if (!res.ok) {
     const text = await res.text();
-    try { console.error('[UpGas][client] session init http error', { status: res.status, text }); } catch {}
+    try { console.warn('[UpGas][client] session init http error', { status: res.status, text }); } catch {}
     return { success: false, error: `session http ${res.status}: ${text}` };
   }
   const json = await res.json();
@@ -427,7 +427,7 @@ export async function submitSessionTrade(params: {
   });
   if (!res.ok) {
     const text = await res.text();
-    try { console.error('[UpGas][client] session trade http error', { status: res.status, text }); } catch {}
+    try { console.warn('[UpGas][client] session trade http error', { status: res.status, text }); } catch {}
     return { success: false, error: `relay http ${res.status}: ${text}` };
   }
   const json = await res.json();

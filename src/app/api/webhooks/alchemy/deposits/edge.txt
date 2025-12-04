@@ -1,0 +1,733 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { keccak256, toHex, getAddress, createPublicClient, createWalletClient, http, stringToHex } from "npm:viem";
+import { privateKeyToAccount } from "npm:viem/accounts";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || Deno.env.get("NEXT_PUBLIC_SUPABASE_URL");
+const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_ANON_KEY");
+function toHex32(n) {
+  return toHex(n, {
+    size: 32
+  });
+}
+function strip0x(h) {
+  return h?.startsWith("0x") ? h.slice(2) : h || "";
+}
+function toChecksum(addr) {
+  try {
+    return getAddress(addr);
+  } catch  {
+    return addr;
+  }
+}
+function isHexString(v) {
+  return typeof v === "string" && /^0x[0-9a-fA-F]*$/.test(v);
+}
+function parseUint256(hex) {
+  const s = strip0x(hex);
+  return s ? BigInt("0x" + s) : 0n;
+}
+function topicAddress(t) {
+  const s = strip0x(t).padStart(64, "0");
+  return toChecksum("0x" + s.slice(64 - 40));
+}
+function addrToTopic(a) {
+  return "0x" + strip0x(a).padStart(64, "0");
+}
+function addrToTopicLower(a) {
+  return addrToTopic(a).toLowerCase();
+}
+function calcDepositId(chainId, txId, logIndex) {
+  const a = strip0x(toHex32(BigInt(chainId)));
+  const b = strip0x(txId).padStart(64, "0");
+  const c = strip0x(toHex32(BigInt(logIndex)));
+  return keccak256("0x" + a + b + c);
+}
+function getTxId(log) {
+  return log?.transactionHash || log?.hash || log?.tx_hash || log?.transaction?.hash || log?.receipt?.transactionHash || log?.metadata?.transactionHash || log?.meta?.transactionHash || log?.event?.transaction?.hash || "";
+}
+function getBlockHash(log) {
+  return log?.blockHash || log?.block?.hash || "";
+}
+function hexToBigInt(h) {
+  return BigInt(h);
+}
+function getTokenDecimals(tokenAddr) {
+  const usdc = (Deno.env.get("SPOKE_POLYGON_USDC_ADDRESS") || "").toLowerCase();
+  const usdcDec = parseInt(Deno.env.get("SPOKE_POLYGON_USDC_DECIMALS") || "6", 10);
+  if (tokenAddr && usdc && tokenAddr.toLowerCase() === usdc) return usdcDec;
+  return parseInt(Deno.env.get("DEFAULT_TOKEN_DECIMALS") || "18", 10);
+}
+function parseDecimalToBaseUnits(value, decimals) {
+  if (!value) return 0n;
+  const neg = value.startsWith("-");
+  const v = neg ? value.slice(1) : value;
+  const [whole, fracRaw = ""] = v.split(".");
+  if (!/^[0-9]*$/.test(whole) || !/^[0-9]*$/.test(fracRaw)) return 0n;
+  const frac = fracRaw.slice(0, decimals).padEnd(decimals, "0");
+  const digits = (whole || "0") + frac;
+  const bn = BigInt(digits || "0");
+  return neg ? -bn : bn;
+}
+function formatHumanFromBaseUnits(amount, decimals) {
+  const s = amount.toString();
+  const neg = s.startsWith("-");
+  const digits = neg ? s.slice(1) : s;
+  if (decimals === 0) return (neg ? "-" : "") + digits;
+  if (digits.length <= decimals) {
+    const z = digits.padStart(decimals, "0");
+    const res = "0." + z;
+    return (neg ? "-" : "") + res.replace(/\.0+$/, "");
+  }
+  const res = digits.slice(0, -decimals) + "." + digits.slice(-decimals);
+  return (neg ? "-" : "") + res.replace(/\.0+$/, "");
+}
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+function extractLogs(body) {
+  const direct = body?.logs;
+  const eventLogs = body?.event?.logs;
+  const dataLogs = body?.event?.data?.logs;
+  const blockLogs = body?.event?.data?.block?.logs;
+  if (Array.isArray(direct)) return direct;
+  if (Array.isArray(eventLogs)) return eventLogs;
+  if (Array.isArray(dataLogs)) return dataLogs;
+  if (Array.isArray(blockLogs)) return blockLogs;
+  const activity = body?.event?.activity;
+  if (Array.isArray(activity) && activity.length) {
+    const pseudo = [];
+    for(let i = 0; i < activity.length; i++){
+      const a = activity[i];
+      const cat = String(a?.category || "").toLowerCase();
+      const txHash = a?.hash || a?.transactionHash || "";
+      const tokenAddr = a?.rawContract?.address || "";
+      const from = a?.fromAddress || a?.from || "";
+      const to = a?.toAddress || a?.to || "";
+      const rawHex = a?.rawContract?.rawValue || a?.rawContract?.value;
+      const val = a?.value;
+      if (!tokenAddr || !from || !to) continue;
+      if (!cat.includes("token")) continue;
+      let amount = 0n;
+      if (isHexString(rawHex)) amount = parseUint256(rawHex);
+      else if (typeof val === "string") amount = parseDecimalToBaseUnits(val, getTokenDecimals(tokenAddr));
+      else if (typeof val === "number") amount = parseDecimalToBaseUnits(String(val), getTokenDecimals(tokenAddr));
+      const dataHex = toHex(amount, {
+        size: 32
+      });
+      pseudo.push({
+        address: tokenAddr,
+        topics: [
+          TRANSFER_TOPIC,
+          addrToTopic(from),
+          addrToTopic(to)
+        ],
+        data: dataHex,
+        transactionHash: txHash,
+        logIndex: i
+      });
+    }
+    return pseudo;
+  }
+  return [];
+}
+function logChunks(label, text) {
+  try {
+    const MAX = 8000;
+    if (!text) return;
+    for(let i = 0; i < text.length; i += MAX){
+      console.log(`[alchemy-deposit-webhook][${label}][${i / MAX | 0}]`, text.slice(i, i + MAX));
+    }
+  } catch  {}
+}
+function candidateTokenAddress(log) {
+  const c = log?.address || log?.contractAddress || log?.account?.address || log?.rawContract?.address || log?.erc20?.contract || log?.tokenAddress || "";
+  return toChecksum(c);
+}
+function decodedValueBigInt(log) {
+  const p = Array.isArray(log?.decoded?.params) ? log.decoded.params : [];
+  const valueParam = p.find((x)=>String(x?.name || "").toLowerCase() === "value");
+  if (!valueParam) return null;
+  const v = valueParam?.value;
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") return BigInt(v);
+  if (typeof v === "string") {
+    if (isHexString(v)) return parseUint256(v);
+    if (/^[0-9]+(\.[0-9]+)?$/.test(v)) return parseDecimalToBaseUnits(v, 18);
+    try {
+      return BigInt(v);
+    } catch  {
+      return null;
+    }
+  }
+  return null;
+}
+async function fetchRpc(method, params) {
+  const RPC = Deno.env.get("ALCHEMY_POLYGON_HTTP") || Deno.env.get("POLYGON_RPC_URL") || Deno.env.get("NEXT_PUBLIC_ALCHEMY_POLYGON_HTTP") || Deno.env.get("ALCHEMY_HTTP") || "";
+  if (!RPC) {
+    console.warn("[alchemy-deposit-webhook][rpc:missing]");
+    return null;
+  }
+  try {
+    const res = await fetch(RPC, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params
+      })
+    });
+    const j = await res.json();
+    if (j?.result !== undefined) return j.result;
+    console.warn("[alchemy-deposit-webhook][rpc:error]", j?.error || j);
+    return null;
+  } catch (e) {
+    console.error("[alchemy-deposit-webhook][rpc:exception]", String(e));
+    return null;
+  }
+}
+async function fetchReceipt(txHash) {
+  return await fetchRpc("eth_getTransactionReceipt", [
+    txHash
+  ]);
+}
+async function fetchBlockNumber() {
+  const r = await fetchRpc("eth_blockNumber", []);
+  try {
+    return r ? BigInt(r) : null;
+  } catch  {
+    return null;
+  }
+}
+function selectReceiptTransferLog(receipt, opts) {
+  try {
+    const logs = Array.isArray(receipt?.logs) ? receipt.logs : [];
+    const t0 = TRANSFER_TOPIC.toLowerCase();
+    const tokenLc = (opts.tokenAddr || "").toLowerCase();
+    const vaultTopic = opts.vaultAddr ? addrToTopicLower(opts.vaultAddr) : "";
+    const alchFromTopic = opts.alchFrom ? addrToTopicLower(opts.alchFrom) : "";
+    const alchToTopic = opts.alchTo ? addrToTopicLower(opts.alchTo) : "";
+    let cands = logs.filter((lg)=>Array.isArray(lg?.topics) && lg.topics.length >= 3 && String(lg.topics[0]).toLowerCase() === t0);
+    if (tokenLc) cands = cands.filter((lg)=>String(lg?.address || "").toLowerCase() === tokenLc);
+    if (vaultTopic) {
+      const byVault = cands.filter((lg)=>String(lg.topics[2]).toLowerCase() === vaultTopic);
+      if (byVault.length) cands = byVault;
+    }
+    if (alchToTopic && cands.length > 1) {
+      const byTo = cands.filter((lg)=>String(lg.topics[2]).toLowerCase() === alchToTopic);
+      if (byTo.length) cands = byTo;
+    }
+    if (alchFromTopic && cands.length > 1) {
+      const byFrom = cands.filter((lg)=>String(lg.topics[1]).toLowerCase() === alchFromTopic);
+      if (byFrom.length) cands = byFrom;
+    }
+    return cands[0] || null;
+  } catch  {
+    return null;
+  }
+}
+function parseGweiToWei(g) {
+  if (!g) return null;
+  return parseDecimalToBaseUnits(String(g), 9);
+}
+const OUTBOX_ABI = [
+  {
+    type: "function",
+    name: "sendDeposit",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "dstDomain",
+        type: "uint32"
+      },
+      {
+        name: "user",
+        type: "address"
+      },
+      {
+        name: "token",
+        type: "address"
+      },
+      {
+        name: "amount",
+        type: "uint256"
+      },
+      {
+        name: "depositId",
+        type: "bytes32"
+      }
+    ],
+    outputs: []
+  }
+];
+const ACCESS_ABI = [
+  {
+    type: "function",
+    name: "hasRole",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "role",
+        type: "bytes32"
+      },
+      {
+        name: "account",
+        type: "address"
+      }
+    ],
+    outputs: [
+      {
+        type: "bool"
+      }
+    ]
+  }
+];
+const REMOTE_ABI = [
+  {
+    type: "function",
+    name: "remoteAppByDomain",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "domain",
+        type: "uint64"
+      }
+    ],
+    outputs: [
+      {
+        type: "bytes32"
+      }
+    ]
+  }
+];
+const HUB_INBOX_ABI = [
+  {
+    type: "function",
+    name: "receiveMessage",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "srcDomain",
+        type: "uint64"
+      },
+      {
+        name: "srcApp",
+        type: "bytes32"
+      },
+      {
+        name: "payload",
+        type: "bytes"
+      }
+    ],
+    outputs: []
+  }
+];
+Deno.serve(async (req)=>{
+  const startedAt = Date.now();
+  const traceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const headerKeys = Array.from(req.headers.keys());
+    console.log("[alchemy-deposit-webhook][start]", {
+      method: req.method,
+      url: req.url,
+      traceId,
+      headerKeys,
+      hasSupabaseUrl: Boolean(SUPABASE_URL),
+      hasSupabaseKey: Boolean(SUPABASE_KEY)
+    });
+    const raw = await req.text();
+    console.log("[alchemy-deposit-webhook][raw] len", raw?.length || 0);
+    logChunks("payload:raw", raw);
+    let body = {};
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      console.warn("[alchemy-deposit-webhook][json:parse:error]", String(e));
+    }
+    try {
+      const pretty = JSON.stringify(body, null, 2);
+      logChunks("payload:json", pretty);
+    } catch  {}
+    if (!SUPABASE_URL || !SUPABASE_KEY) console.error("[alchemy-deposit-webhook][env:error] missing SUPABASE_URL/SUPABASE_KEY");
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    });
+    const logs = extractLogs(body);
+    const chainId = Number(body?.chainId || body?.event?.chainId || body?.event?.data?.chainId || Deno.env.get("BRIDGE_DOMAIN_POLYGON") || 137);
+    const VAULT = Deno.env.get("SPOKE_POLYGON_VAULT_ADDRESS") || "";
+    console.log("[alchemy-deposit-webhook][payload]", {
+      keys: Object.keys(body || {}),
+      hasEvent: !!body?.event,
+      logCount: Array.isArray(logs) ? logs.length : 0,
+      chainId,
+      VAULT: VAULT ? VAULT.slice(0, 6) + "..." + VAULT.slice(-4) : null
+    });
+    if (!Array.isArray(logs) || logs.length === 0) {
+      console.log("[alchemy-deposit-webhook][no-logs] ack", {
+        traceId
+      });
+      return new Response(JSON.stringify({
+        ok: true,
+        inserted: 0,
+        reason: "no logs"
+      }), {
+        headers: {
+          "content-type": "application/json"
+        },
+        status: 200
+      });
+    }
+    const OUTBOX = Deno.env.get("SPOKE_OUTBOX_ADDRESS") || "";
+    const DST_DOMAIN = Number(Deno.env.get("BRIDGE_DOMAIN_HUB") || 0);
+    const FINALITY = Number(Deno.env.get("POLYGON_FINALITY_BLOCKS") || 20);
+    const RELAYER_KEY = Deno.env.get("BRIDGE_RELAYER_PRIVATE_KEY") || Deno.env.get("PRIVATE_KEY_RELAY") || Deno.env.get("PRIVATE_KEY") || "";
+    const RPC = Deno.env.get("ALCHEMY_POLYGON_HTTP") || Deno.env.get("POLYGON_RPC_URL") || Deno.env.get("NEXT_PUBLIC_ALCHEMY_POLYGON_HTTP") || Deno.env.get("ALCHEMY_HTTP") || "";
+    const MAX_FEE_GWEI = Deno.env.get("POLYGON_MAX_FEE_GWEI");
+    const MAX_PRIORITY_GWEI = Deno.env.get("POLYGON_MAX_PRIORITY_GWEI");
+    const GAS_LIMIT_ENV = Deno.env.get("POLYGON_GAS_LIMIT") || "250000";
+    const HUB_INBOX = Deno.env.get("HUB_INBOX_ADDRESS") || "";
+    const HUB_INBOX_32 = HUB_INBOX ? addrToTopic(HUB_INBOX) : "";
+    const HUB_RPC = Deno.env.get("HUB_RPC_URL") || Deno.env.get("ALCHEMY_HYPERLIQUID_HTTP") || Deno.env.get("RPC_URL") || "";
+    const HUB_RELAYER_KEY = Deno.env.get("HUB_RELAYER_PRIVATE_KEY") || Deno.env.get("BRIDGE_ENDPOINT_HUB_PRIVATE_KEY") || "";
+    const HUB_MAX_FEE_GWEI = Deno.env.get("HUB_MAX_FEE_GWEI");
+    const HUB_MAX_PRIORITY_GWEI = Deno.env.get("HUB_MAX_PRIORITY_GWEI");
+    const HUB_GAS_LIMIT = Deno.env.get("HUB_GAS_LIMIT") || "350000";
+    const POLYGON_DOMAIN = Number(Deno.env.get("BRIDGE_DOMAIN_POLYGON") || 137);
+    const requestSeen = new Set();
+    const deliveryResults = [];
+    for(let i = 0; i < logs.length; i++){
+      const log = logs[i];
+      const topics = log?.topics || [];
+      if (topics?.length < 3) {
+        console.warn("[alchemy-deposit-webhook][skip] insufficient topics", {
+          i,
+          topicsLen: topics?.length || 0
+        });
+        continue;
+      }
+      const txHash0 = getTxId(log);
+      const blockHash = getBlockHash(log);
+      const txId = txHash0 || blockHash || "0x".padEnd(66, "0");
+      if (!txHash0) console.log("[alchemy-deposit-webhook][txid:fallback]", {
+        i,
+        used: blockHash ? "blockHash" : "zero"
+      });
+      const from_hint = topicAddress(topics[1]);
+      const to_hint = topicAddress(topics[2]);
+      let tokenAddr = candidateTokenAddress(log);
+      let from = from_hint;
+      let to = to_hint;
+      let amountBn = null;
+      let chosen = null;
+      let receipt = null;
+      if (txHash0) {
+        receipt = await fetchReceipt(txHash0);
+        if (receipt) chosen = selectReceiptTransferLog(receipt, {
+          tokenAddr: tokenAddr,
+          vaultAddr: VAULT,
+          alchFrom: from_hint,
+          alchTo: to_hint
+        });
+        console.log("[alchemy-deposit-webhook][rpc:first]", {
+          i,
+          hadReceipt: !!receipt,
+          foundLog: !!chosen
+        });
+      }
+      if (chosen) {
+        tokenAddr = toChecksum(chosen?.address || tokenAddr);
+        if (Array.isArray(chosen?.topics) && chosen.topics.length >= 3) {
+          from = topicAddress(chosen.topics[1]);
+          to = topicAddress(chosen.topics[2]);
+        }
+        if (typeof chosen?.data === "string" && isHexString(chosen.data)) amountBn = parseUint256(chosen.data);
+      }
+      if (amountBn === null && typeof log?.data === "string" && isHexString(log.data) && log.data.length > 2) amountBn = parseUint256(log.data);
+      if (amountBn === null) {
+        const dec = decodedValueBigInt(log);
+        if (dec !== null) amountBn = dec;
+      }
+      const address = toChecksum(tokenAddr || "");
+      const logIndex = Number(log?.logIndex ?? log?.log_index ?? i);
+      const finalAmount = amountBn ?? 0n;
+      const depositId = calcDepositId(chainId, txId, logIndex);
+      if (requestSeen.has(depositId)) {
+        console.log("[alchemy-deposit-webhook][claim:request-dup]", {
+          i,
+          depositId
+        });
+        continue;
+      }
+      requestSeen.add(depositId);
+      try {
+        const claimRow = {
+          chain_id: chainId,
+          tx_hash: txId,
+          log_index: logIndex,
+          user_address: from,
+          token_address: address,
+          amount: finalAmount.toString(),
+          deposit_id: depositId,
+          processed: false,
+          received_at: new Date().toISOString()
+        };
+        const { error: claimError } = await supabase.from("bridge_deposits").insert([
+          claimRow
+        ]);
+        if (claimError) {
+          console.error("[alchemy-deposit-webhook][claim:error]", {
+            depositId,
+            code: claimError?.code,
+            message: claimError.message
+          });
+          if (claimError?.code === "23505") {
+            console.log("[alchemy-deposit-webhook][claim:duplicate]", {
+              depositId
+            });
+          }
+          continue;
+        }
+      } catch (e) {
+        console.error("[alchemy-deposit-webhook][claim:exception]", String(e));
+        continue;
+      }
+      if (VAULT && to && VAULT.toLowerCase() === to.toLowerCase() && OUTBOX && DST_DOMAIN && RELAYER_KEY && RPC && finalAmount > 0n) {
+        try {
+          if (receipt?.blockNumber) {
+            const head = await fetchBlockNumber();
+            const mined = BigInt(receipt.blockNumber);
+            if (head && head - mined < BigInt(FINALITY)) {
+              console.log("[alchemy-deposit-webhook][send:skip:not-final]", {
+                i,
+                confs: Number(head - mined),
+                required: FINALITY
+              });
+              continue;
+            }
+          }
+          const account = privateKeyToAccount(RELAYER_KEY.startsWith("0x") ? RELAYER_KEY : "0x" + RELAYER_KEY);
+          console.log("[alchemy-deposit-webhook][relayer]", {
+            address: account.address
+          });
+          const publicClient = createPublicClient({
+            transport: http(RPC)
+          });
+          const walletClient = createWalletClient({
+            account,
+            transport: http(RPC)
+          });
+          const roleHash = keccak256(stringToHex("DEPOSIT_SENDER_ROLE"));
+          let hasRole = false;
+          try {
+            hasRole = await publicClient.readContract({
+              address: OUTBOX,
+              abi: ACCESS_ABI,
+              functionName: "hasRole",
+              args: [
+                roleHash,
+                account.address
+              ]
+            });
+          } catch (e) {
+            console.warn("[alchemy-deposit-webhook][role:check:error]", String(e));
+          }
+          if (!hasRole) {
+            console.warn("[alchemy-deposit-webhook][role:missing]", {
+              account: account.address
+            });
+            deliveryResults.push({
+              i,
+              status: "send_skipped",
+              errorCode: "MISSING_SENDER_ROLE"
+            });
+            continue;
+          }
+          // Simulate before sending to catch reverts with reason
+          try {
+            await publicClient.simulateContract({
+              address: OUTBOX,
+              abi: OUTBOX_ABI,
+              functionName: "sendDeposit",
+              args: [
+                DST_DOMAIN,
+                from,
+                address,
+                finalAmount,
+                depositId
+              ],
+              account: account.address
+            });
+          } catch (simError) {
+            console.error("[alchemy-deposit-webhook][send:simulate:error]", String(simError));
+            deliveryResults.push({
+              i,
+              status: "simulate_error",
+              errorCode: "OUTBOX_SIMULATE_FAILED",
+              message: String(simError)
+            });
+            continue;
+          }
+          const maxFeePerGas = parseGweiToWei(MAX_FEE_GWEI || undefined) || undefined;
+          const maxPriorityFeePerGas = parseGweiToWei(MAX_PRIORITY_GWEI || undefined) || undefined;
+          const gasLimit = (()=>{
+            try {
+              const n = Number(GAS_LIMIT_ENV);
+              return Number.isFinite(n) && n > 0 ? BigInt(n) : 250000n;
+            } catch  {
+              return 250000n;
+            }
+          })();
+          console.log("[alchemy-deposit-webhook][send:start]", {
+            i,
+            dst: DST_DOMAIN,
+            user: from,
+            token: address,
+            amount: finalAmount.toString(),
+            depositId,
+            maxFeePerGas: String(maxFeePerGas || ""),
+            maxPriorityFeePerGas: String(maxPriorityFeePerGas || ""),
+            gas: gasLimit.toString()
+          });
+          const hash = await walletClient.writeContract({
+            address: OUTBOX,
+            abi: OUTBOX_ABI,
+            functionName: "sendDeposit",
+            args: [
+              DST_DOMAIN,
+              from,
+              address,
+              finalAmount,
+              depositId
+            ],
+            maxFeePerGas,
+            maxPriorityFeePerGas,
+            gas: gasLimit
+          });
+          console.log("[alchemy-deposit-webhook][send:submitted]", {
+            i,
+            hash
+          });
+          // Wait for Polygon receipt
+          try {
+            const outboxReceipt = await publicClient.waitForTransactionReceipt({
+              hash
+            });
+            const status = outboxReceipt?.status || "unknown";
+            if (status === "success") {
+              console.log("[alchemy-deposit-webhook][send:success]", {
+                i,
+                hash,
+                blockNumber: outboxReceipt?.blockNumber
+              });
+              deliveryResults.push({
+                i,
+                outboxTx: hash,
+                status: "success"
+              });
+            } else {
+              console.error("[alchemy-deposit-webhook][send:reverted]", {
+                i,
+                hash,
+                blockNumber: outboxReceipt?.blockNumber,
+                errorCode: "OUTBOX_REVERTED"
+              });
+              deliveryResults.push({
+                i,
+                outboxTx: hash,
+                status: "reverted",
+                errorCode: "OUTBOX_REVERTED"
+              });
+              continue;
+            }
+          } catch (waitErr) {
+            console.error("[alchemy-deposit-webhook][send:wait:error]", String(waitErr));
+            deliveryResults.push({
+              i,
+              outboxTx: hash,
+              status: "wait_error",
+              errorCode: "OUTBOX_WAIT_RECEIPT_FAILED"
+            });
+            continue;
+          }
+          try {
+            await supabase.from("bridge_deposits").update({
+              outbox_tx_hash: hash
+            }).eq("deposit_id", depositId);
+          } catch  {}
+        // Hub delivery left unchanged (will only run after Polygon success)
+        // ...
+        } catch (e) {
+          console.error("[alchemy-deposit-webhook][send:error]", {
+            message: String(e),
+            shortMessage: e?.shortMessage,
+            data: e?.data,
+            cause: e?.cause?.message,
+            args: {
+              dst: DST_DOMAIN,
+              user: from,
+              token: address,
+              amount: finalAmount.toString(),
+              depositId
+            },
+            fees: {
+              maxFeeGwei: MAX_FEE_GWEI || null,
+              maxPrioGwei: MAX_PRIORITY_GWEI || null
+            },
+            gas: GAS_LIMIT_ENV
+          });
+          deliveryResults.push({
+            i,
+            status: "send_error",
+            errorCode: "OUTBOX_SEND_FAILED",
+            message: String(e)
+          });
+        }
+      } else {
+        console.log("[alchemy-deposit-webhook][send:skip]", {
+          i,
+          reason: {
+            vaultMatch: !!(VAULT && to && VAULT.toLowerCase() === to.toLowerCase()),
+            hasOutbox: !!OUTBOX,
+            hasDomain: !!DST_DOMAIN,
+            hasKey: !!RELAYER_KEY,
+            hasRpc: !!RPC,
+            amountPositive: finalAmount > 0n
+          }
+        });
+        deliveryResults.push({
+          i,
+          status: "skipped",
+          reason: "filters_not_met"
+        });
+      }
+    }
+    console.log("[alchemy-deposit-webhook][done]", {
+      durationMs: Date.now() - startedAt,
+      traceId
+    });
+    return new Response(JSON.stringify({
+      ok: true,
+      deliveries: deliveryResults
+    }), {
+      headers: {
+        "content-type": "application/json"
+      },
+      status: 200
+    });
+  } catch (e) {
+    console.error("[alchemy-deposit-webhook][fatal]", String(e));
+    return new Response(JSON.stringify({
+      ok: false,
+      error: String(e)
+    }), {
+      headers: {
+        "content-type": "application/json"
+      },
+      status: 200
+    });
+  }
+});

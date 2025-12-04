@@ -13,6 +13,7 @@ import { ethers } from 'ethers';
 import { ProgressOverlay } from './ProgressOverlay';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
+import { runMetricAIWithPolling } from '@/lib/metricAiWorker';
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -200,7 +201,39 @@ export const CreateMarketPage = () => {
       const metricUrl = marketData.metricUrl;
       const dataSource = marketData.dataSource || 'User Provided';
       const tags = marketData.tags || [];
-      const sourceLocator = (marketData as any).sourceLocator || null;
+      let sourceLocator = (marketData as any).sourceLocator || null;
+      // Attempt to prefill startPrice using background worker (non-blocking with timeout)
+      try {
+        const workerUrl =
+          (process.env as any).NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
+          (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
+          '';
+        if (workerUrl && typeof metricUrl === 'string' && metricUrl.trim()) {
+          const ai = await runMetricAIWithPolling(
+            {
+              metric: String(symbol || '').toUpperCase(),
+              urls: [metricUrl.trim()],
+              related_market_identifier: String(symbol || '').toUpperCase(),
+              context: 'create',
+            },
+            { intervalMs: 1500, timeoutMs: 12000 }
+          );
+          if (ai) {
+            const suggested = ai.asset_price_suggestion || ai.value;
+            if (suggested && !Number.isNaN(Number(suggested))) {
+              (marketData as any).startPrice = String(suggested);
+            }
+            if (!sourceLocator && Array.isArray(ai.sources) && ai.sources.length > 0) {
+              const primary = ai.sources[0];
+              if (primary && primary.url) {
+                sourceLocator = { url: primary.url };
+              }
+            }
+          }
+        }
+      } catch {
+        // Soft-fail; continue without AI prefill
+      }
       // Correlate frontend with backend progress (gasless)
       const pipelineId =
         (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
@@ -215,6 +248,47 @@ export const CreateMarketPage = () => {
               if (typeof s === 'string') {
                 const idx = stepIndexMap[s];
                 if (typeof idx === 'number') updateOverlayIndex(idx);
+                // High‑signal console diagnostics for session registry steps coming from server
+                const banner = 'background: #0b1220; color: #e5e7eb; padding: 2px 6px; border-radius: 4px; font-weight: 700;';
+                const kv = 'color:#93c5fd;';
+                const good = 'color:#22c55e; font-weight:700;';
+                const bad = 'color:#ef4444; font-weight:700;';
+                const meh = 'color:#f59e0b; font-weight:700;';
+                const shortAddr = (a: unknown) => {
+                  const t = String(a || '');
+                  return t.startsWith('0x') && t.length === 42 ? `${t.slice(0, 6)}…${t.slice(-4)}` : t;
+                };
+                if (s === 'attach_session_registry' || s === 'attach_session_registry_sent' || s === 'attach_session_registry_mined') {
+                  // eslint-disable-next-line no-console
+                  console.groupCollapsed('%c🔐 GASLESS SESSION REGISTRY — SERVER', banner);
+                  // eslint-disable-next-line no-console
+                  console.log('%cstep', kv, s, 'status:', (evt?.status || '').toUpperCase());
+                  if (evt?.data) {
+                    const d = evt.data;
+                    // eslint-disable-next-line no-console
+                    console.log('%corderBook', kv, d.orderBook || d?.data?.orderBook || '—', shortAddr(d.orderBook || d?.data?.orderBook || '—'));
+                    // eslint-disable-next-line no-console
+                    console.log('%cregistry', kv, d.registry || d?.data?.registry || '—', shortAddr(d.registry || d?.data?.registry || '—'));
+                    if (d.registrySigner) {
+                      // eslint-disable-next-line no-console
+                      console.log('%cregistrySigner', kv, d.registrySigner, shortAddr(d.registrySigner));
+                    }
+                    if (d.hash) {
+                      // eslint-disable-next-line no-console
+                      console.log('%ctx', kv, d.hash);
+                    }
+                    if (d.error) {
+                      // eslint-disable-next-line no-console
+                      console.warn('%cerror', bad, d.error);
+                    }
+                    if (d.message) {
+                      // eslint-disable-next-line no-console
+                      console.log('%cmessage', meh, d.message);
+                    }
+                  }
+                  // eslint-disable-next-line no-console
+                  console.groupEnd();
+                }
                 // Mirror server steps into panel status when possible
                 if (s === 'factory_confirm_meta_mined' || s === 'factory_confirm_mined' || s === 'confirm') {
                   markDone('confirm');
@@ -301,9 +375,24 @@ export const CreateMarketPage = () => {
         dataSource,
         tags,
         pipelineId,
-        onProgress: ({ step }) => {
+        onProgress: ({ step, data }) => {
           const idx = stepIndexMap[step];
           if (typeof idx === 'number') updateOverlayIndex(idx);
+          // Mirror client-side attach-session-registry steps to console for visibility
+          if (step === 'attach_session_registry' || step === 'attach_session_registry_sent' || step === 'attach_session_registry_mined' || step === 'attach_session_registry_client_probe') {
+            const banner = 'background: #0b1220; color: #e5e7eb; padding: 2px 6px; border-radius: 4px; font-weight: 700;';
+            const kv = 'color:#93c5fd;';
+            // eslint-disable-next-line no-console
+            console.groupCollapsed('%c🔐 GASLESS SESSION REGISTRY — CLIENT PROGRESS', banner);
+            // eslint-disable-next-line no-console
+            console.log('%cstep', kv, step);
+            if (data) {
+              // eslint-disable-next-line no-console
+              console.log('%cdata', kv, data);
+            }
+            // eslint-disable-next-line no-console
+            console.groupEnd();
+          }
         },
       });
       markDone('tx');

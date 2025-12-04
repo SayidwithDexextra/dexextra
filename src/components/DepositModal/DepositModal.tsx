@@ -1,17 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createPortal } from 'react-dom'
-import { DepositModalProps, PaymentMethod, Token } from './types'
-import cssStyles from './DepositModal.module.css'
+import { DepositModalProps, Token } from './types'
 import DepositModalInput from './DepositModalInput'
 import DepositModalReview from './DepositModalReview'
 import DepositModalStatus from './DepositModalStatus'
+import DepositTokenSelect from './DepositTokenSelect'
+import DepositExternalInput from './DepositExternalInput'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
-import { useWalletPortfolio } from '@/hooks/useWalletPortfolio'
-import { useCoreVault } from '@/hooks/useCoreVault'
-import { NetworkWarningBanner } from '@/components/NetworkStatus'
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
+import { useCoreVault } from '@/hooks/useCoreVault'
 
 // Close Icon Component
 const CloseIcon = () => (
@@ -24,37 +22,112 @@ export default function DepositModal({
   isOpen,
   onClose
 }: DepositModalProps) {
-  const [step, setStep] = useState<'input' | 'review' | 'processing' | 'success' | 'error'>('input')
+  const [step, setStep] = useState<'select' | 'input' | 'external' | 'review' | 'processing' | 'success' | 'error'>('select')
   const [depositAmount, setDepositAmount] = useState('')
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'success' | 'error'>('pending')
   const [error, setError] = useState<string | null>(null)
   const { walletAddress } = useWalletAddress()
   const coreVault = useCoreVault()
   
-  // Status indicator classes based on current state
-  const getStatusDotClass = (step: string) => {
-    switch (step) {
-      case 'processing':
-        return cssStyles.statusDotPending
-      case 'success':
-        return cssStyles.statusDotSuccess
-      case 'error':
-        return cssStyles.statusDotError
-      default:
-        return ''
-    }
-  }
-  const statusDotClass = getStatusDotClass(step)
-  
-  const mockUSDC: Token = {
+  // Stablecoins by chain
+  const polygonUSDC: Token = {
     symbol: 'USDC',
-    icon: '💵',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
     name: 'USD Coin',
-    amount: '0.00',
-    value: '0.00',
-    contractAddress: CONTRACT_ADDRESSES.MOCK_USDC,
-    decimals: 6
+    decimals: 6,
+    chain: 'Polygon',
+    contractAddress: CONTRACT_ADDRESSES.MOCK_USDC
   }
+  const polygonUSDT: Token = {
+    symbol: 'USDT',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/tether-usdt-logo.png',
+    name: 'Tether USD',
+    decimals: 6,
+    chain: 'Polygon'
+  }
+  const polygonDAI: Token = {
+    symbol: 'DAI',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/multi-collateral-dai-dai-logo.svg',
+    name: 'Dai Stablecoin',
+    decimals: 18,
+    chain: 'Polygon'
+  }
+  const arbitrumUSDC: Token = {
+    symbol: 'USDC',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
+    name: 'USD Coin',
+    decimals: 6,
+    chain: 'Arbitrum'
+  }
+  const arbitrumUSDT: Token = {
+    symbol: 'USDT',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/tether-usdt-logo.png',
+    name: 'Tether USD',
+    decimals: 6,
+    chain: 'Arbitrum'
+  }
+  const arbitrumDAI: Token = {
+    symbol: 'DAI',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/multi-collateral-dai-dai-logo.svg',
+    name: 'Dai Stablecoin',
+    decimals: 18,
+    chain: 'Arbitrum'
+  }
+
+  // Ethereum Mainnet
+  const ethereumUSDC: Token = {
+    symbol: 'USDC',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
+    name: 'USD Coin',
+    decimals: 6,
+    chain: 'Ethereum'
+  }
+  const ethereumUSDT: Token = {
+    symbol: 'USDT',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/tether-usdt-logo.png',
+    name: 'Tether USD',
+    decimals: 6,
+    chain: 'Ethereum'
+  }
+  const ethereumDAI: Token = {
+    symbol: 'DAI',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/multi-collateral-dai-dai-logo.svg',
+    name: 'Dai Stablecoin',
+    decimals: 18,
+    chain: 'Ethereum'
+  }
+
+  // Hyperliquid
+  const hyperliquidUSDC: Token = {
+    symbol: 'USDC',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/usd-coin-usdc-logo.png',
+    name: 'USD Coin',
+    decimals: 6,
+    chain: 'Hyperliquid'
+  }
+  const hyperliquidUSDT: Token = {
+    symbol: 'USDT',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/tether-usdt-logo.png',
+    name: 'Tether USD',
+    decimals: 6,
+    chain: 'Hyperliquid'
+  }
+  const hyperliquidDAI: Token = {
+    symbol: 'DAI',
+    icon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/multi-collateral-dai-dai-logo.svg',
+    name: 'Dai Stablecoin',
+    decimals: 18,
+    chain: 'Hyperliquid'
+  }
+
+  const availableTokens: Token[] = [
+    polygonUSDC, polygonUSDT, polygonDAI,
+    arbitrumUSDC, arbitrumUSDT, arbitrumDAI,
+    ethereumUSDC, ethereumUSDT, ethereumDAI,
+    hyperliquidUSDC, hyperliquidUSDT, hyperliquidDAI
+  ]
+
+  const [sourceToken, setSourceToken] = useState<Token>(polygonUSDC)
   
   const vaultToken: Token = {
     symbol: 'VAULT',
@@ -65,7 +138,7 @@ export default function DepositModal({
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setStep('input');
+      setStep('select');
       setDepositAmount('');
       setPaymentStatus('pending');
       setError(null);
@@ -117,72 +190,87 @@ export default function DepositModal({
   }
   
   if (!isOpen) return null
-  
-  return createPortal(
-    <div className={`${cssStyles.modalOverlay} ${isOpen ? cssStyles.visible : cssStyles.hidden}`}>
-      <div className={cssStyles.modalContainer}>
-        <div className={`${cssStyles.modal} ${isOpen ? cssStyles.visible : cssStyles.hidden}`}>
-          {/* Status Indicator */}
-          {step !== 'input' && (
-            <div className="flex items-center gap-2 absolute top-2 right-2">
-              <div className={statusDotClass} />
-              {step === 'processing' && (
-                <div className={cssStyles.statusProgress}>
-                  <div className={cssStyles.statusProgressBar} style={{ width: '60%' }} />
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Modal Content */}
-          {step === 'input' && (
-            <DepositModalInput
-              isOpen={isOpen}
-              onClose={handleClose}
-              onBack={handleClose}
-              onContinue={(amount) => {
-                setDepositAmount(amount);
-                setStep('review');
-              }}
-              maxBalance={1000}
-              selectedToken={mockUSDC}
-              targetToken={vaultToken}
-              isDirectDeposit={true}
-              isVaultConnected={true}
-            />
-          )}
-          
-          {step === 'review' && (
-            <DepositModalReview
-              isOpen={isOpen}
-              onClose={handleClose}
-              onBack={() => setStep('input')}
-              onConfirm={handleDeposit}
-              amount={depositAmount}
-              sourceToken={mockUSDC}
-              targetToken={vaultToken}
-              isDirectDeposit={true}
-            />
-          )}
-          
-          {(step === 'processing' || step === 'success' || step === 'error') && (
-            <DepositModalStatus
-              isOpen={isOpen}
-              onClose={handleClose}
-              onNewDeposit={() => {
-                setStep('input');
-                setDepositAmount('');
-              }}
-              status={paymentStatus}
-              amount={depositAmount}
-              sourceToken={mockUSDC}
-              targetToken={vaultToken}
-              isDirectDeposit={true}
-            />
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body
+
+  // Delegate rendering to sub-modals which already implement the Sophisticated Minimal Design System
+  if (step === 'select') {
+    return (
+      <DepositTokenSelect
+        isOpen={isOpen}
+        onClose={handleClose}
+        availableTokens={availableTokens}
+        selectedToken={sourceToken}
+        onSelectToken={(t) => setSourceToken(t)}
+        onContinue={() => {
+          if ((sourceToken?.chain || '').toLowerCase() === 'hyperliquid') {
+            setStep('input')
+          } else {
+            setStep('external')
+          }
+        }}
+      />
+    )
+  }
+
+  if (step === 'external') {
+    return (
+      <DepositExternalInput
+        isOpen={isOpen}
+        onClose={handleClose}
+        onBack={() => setStep('select')}
+        selectedToken={sourceToken}
+      />
+    )
+  }
+
+  if (step === 'input') {
+    return (
+      <DepositModalInput
+        isOpen={isOpen}
+        onClose={handleClose}
+        onBack={() => setStep('select')}
+        onContinue={(amount) => {
+          setDepositAmount(amount);
+          setStep('review');
+        }}
+        maxBalance={1000}
+        selectedToken={sourceToken}
+        targetToken={vaultToken}
+        isDirectDeposit={true}
+        isVaultConnected={true}
+        availableTokens={availableTokens}
+        onSelectToken={(t: Token) => setSourceToken(t)}
+      />
+    )
+  }
+
+  if (step === 'review') {
+    return (
+      <DepositModalReview
+        isOpen={isOpen}
+        onClose={handleClose}
+        onBack={() => setStep('input')}
+        onConfirm={handleDeposit}
+        amount={depositAmount}
+        sourceToken={sourceToken}
+        targetToken={vaultToken}
+        isDirectDeposit={true}
+      />
+    )
+  }
+
+  return (
+    <DepositModalStatus
+      isOpen={isOpen}
+      onClose={handleClose}
+      onNewDeposit={() => {
+        setStep('input');
+        setDepositAmount('');
+      }}
+      status={paymentStatus}
+      amount={depositAmount}
+      sourceToken={sourceToken}
+      targetToken={vaultToken}
+      isDirectDeposit={true}
+    />
   )
 } 

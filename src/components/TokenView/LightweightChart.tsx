@@ -17,6 +17,7 @@ interface OHLCVData {
 
 interface LightweightChartProps {
   symbol: string;
+  marketId: string;
   width?: string | number;
   height?: string | number;
   className?: string;
@@ -49,8 +50,201 @@ const getTimeframeSeconds = (timeframe: string): number => {
   return timeframeMap[timeframe] || 3600;
 };
 
+// "Large gap" threshold to break sessions (in seconds). Defaults to 48h.
+const DEFAULT_LARGE_GAP_SECONDS = 48 * 3600;
+const getLargeGapSeconds = (): number => {
+  const fromEnv = Number(process.env.NEXT_PUBLIC_CHART_LARGE_GAP_SECONDS);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv) : DEFAULT_LARGE_GAP_SECONDS;
+};
+
+// Compute the [from, to] of the most recent active session based on large gaps in raw trade times.
+// - rawTimes must be sorted ascending, in seconds.
+// - A "session" is the suffix of rawTimes after the last gap >= largeGapSec.
+// - If no such gap, the session spans the entire array.
+function computeActiveSessionRangeFromTimes(rawTimes: ReadonlyArray<number>, largeGapSec: number): { from: number; to: number } | null {
+  if (!Array.isArray(rawTimes) || rawTimes.length === 0) return null;
+  const to = rawTimes[rawTimes.length - 1]!;
+  let startIdx = 0;
+  for (let i = rawTimes.length - 1; i >= 1; i--) {
+    const gap = rawTimes[i] - rawTimes[i - 1];
+    if (gap >= largeGapSec) {
+      startIdx = i; // session starts after the last large gap
+      break;
+    }
+  }
+  const from = rawTimes[startIdx]!;
+  return { from, to };
+}
+
+// Focus chart to a time range with small padding on both sides
+function focusVisibleRange(chart: IChartApi | null, fromSec: number, toSec: number, padSec: number) {
+  if (!chart || !Number.isFinite(fromSec) || !Number.isFinite(toSec)) return;
+  if (toSec <= fromSec) {
+    // minimal non-zero window if degenerate
+    const epsilon = Math.max(60, Math.floor(padSec));
+    chart.timeScale().setVisibleRange({ from: Math.max(0, fromSec - epsilon) as Time, to: (toSec + epsilon) as Time });
+    return;
+  }
+  const from = Math.max(0, fromSec - padSec);
+  const to = toSec + padSec;
+  try {
+    chart.timeScale().setVisibleRange({ from: from as Time, to: to as Time });
+  } catch {
+    // Best effort; ignore if chart not ready
+  }
+}
+
+// Gap-fill OHLC candles over fixed-second resolution (time units: seconds)
+type GapCandle = { time: number; open: number; high: number; low: number; close: number; volume?: number };
+/**
+ * Aggregates 1m candles into a larger fixed-second resolution and returns a gap-filled series.
+ * - Buckets minute candles by resolutionSeconds using floor-alignment
+ * - Computes open (first), high (max), low (min), close (last), volume (sum)
+ * - Fills missing buckets between first and last using the previous close
+ */
+function aggregateFromMinutesToResolution(
+  minuteCandles: ReadonlyArray<GapCandle>,
+  resolutionSeconds: number
+): Array<Required<GapCandle>> {
+  if (!Array.isArray(minuteCandles) || minuteCandles.length === 0 || resolutionSeconds <= 0) {
+    return [];
+  }
+  const interval = Math.trunc(resolutionSeconds);
+  const alignDown = (t: number) => t - (t % interval);
+
+  // Ensure ascending order
+  const sorted = [...minuteCandles].sort((a, b) => a.time - b.time);
+
+  // Group minutes into buckets
+  const buckets = new Map<number, Required<GapCandle> & { __firstT: number; __lastT: number }>();
+  for (const c of sorted) {
+    if (!Number.isFinite(c.time)) continue;
+    const bucketStart = alignDown(Math.trunc(c.time));
+    const existing = buckets.get(bucketStart);
+    if (!existing) {
+      buckets.set(bucketStart, {
+        time: bucketStart,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: Number.isFinite(Number(c.volume)) ? Number(c.volume) : 0,
+        __firstT: c.time,
+        __lastT: c.time,
+      });
+    } else {
+      // Track open by earliest minute, close by latest minute
+      if (c.time < existing.__firstT) {
+        existing.open = c.open;
+        existing.__firstT = c.time;
+      }
+      if (c.time >= existing.__lastT) {
+        existing.close = c.close;
+        existing.__lastT = c.time;
+      }
+      if (c.high > existing.high) existing.high = c.high;
+      if (c.low < existing.low) existing.low = c.low;
+      existing.volume += Number.isFinite(Number(c.volume)) ? Number(c.volume) : 0;
+    }
+  }
+
+  // Materialize and sort aggregated buckets
+  const aggregated = Array.from(buckets.values())
+    .map(({ __firstT, __lastT, ...rest }) => rest)
+    .sort((a, b) => a.time - b.time);
+
+  if (aggregated.length === 0) {
+    return [];
+  }
+
+  // Attempt to provide a "previous close" candle just before the first bucket to enable intelligent leading gap-fill
+  const firstBucketTime = aggregated[0].time;
+  let prevClose: number | undefined;
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    if (sorted[i].time < firstBucketTime) {
+      prevClose = sorted[i].close;
+      break;
+    }
+  }
+  const seed = prevClose != null
+    ? [{ time: firstBucketTime - interval, open: prevClose, high: prevClose, low: prevClose, close: prevClose, volume: 0 as number }]
+    : [];
+
+  // Gap-fill across full bucket range
+  const start = firstBucketTime;
+  const end = aggregated[aggregated.length - 1].time;
+  const filled = generateGapFilledCandles([...seed, ...aggregated], interval, start, end);
+  return filled;
+}
+function generateGapFilledCandles(
+  rawCandles: ReadonlyArray<GapCandle>,
+  resolutionSeconds: number,
+  startTime: number,
+  endTime: number
+): Array<Required<GapCandle>> {
+  if (!Array.isArray(rawCandles) || !Number.isFinite(resolutionSeconds) || resolutionSeconds <= 0) {
+    return [];
+  }
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) {
+    return [];
+  }
+
+  const interval = Math.trunc(resolutionSeconds);
+  const alignDown = (t: number) => t - (t % interval);
+  const alignedStart = alignDown(Math.trunc(startTime));
+  const alignedEnd = alignDown(Math.trunc(endTime));
+
+  let i = 0;
+  const n = rawCandles.length;
+  while (i < n && rawCandles[i].time < alignedStart) i++;
+
+  const out: Array<Required<GapCandle>> = [];
+  let lastClose: number | undefined;
+
+  // adopt previous close if a candle exists exactly before the window
+  if (i > 0) {
+    const prev = rawCandles[i - 1];
+    if ((prev.time % interval) === 0 && prev.time < alignedStart) {
+      lastClose = prev.close;
+    }
+  }
+
+  for (let t = alignedStart; t <= alignedEnd; t += interval) {
+    while (i < n && rawCandles[i].time < t) i++;
+
+    if (i < n && rawCandles[i].time === t) {
+      const c = rawCandles[i];
+      out.push({
+        time: t,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: Number.isFinite(Number(c.volume)) ? Number(c.volume) : 0
+      });
+      lastClose = c.close;
+      i++;
+    } else {
+      if (lastClose == null) {
+        // skip leading gaps until we have a previous close
+        continue;
+      }
+      out.push({
+        time: t,
+        open: lastClose,
+        high: lastClose,
+        low: lastClose,
+        close: lastClose,
+        volume: 0
+      });
+    }
+  }
+  return out;
+}
+
 export default function LightweightChart({ 
-  symbol, 
+  symbol,
+  marketId,
   width = '100%', 
   height = 350, // Increased by 25% for optimal visibility
   className = '',
@@ -66,10 +260,16 @@ export default function LightweightChart({
   const candlestickSeriesRef = useRef<any>(null);
   const areaDataRef = useRef<Array<{ time: number; value: number }>>([]); // Keep full data in memory
   const ohlcvDataRef = useRef<Array<{ time: number; open: number; high: number; low: number; close: number }>>([]);
+  const activeSessionFromRef = useRef<number | null>(null);
+  const activeSessionToRef = useRef<number | null>(null);
+  const lastRealTimeRef = useRef<number | null>(null);
+  const nowLineRef = useRef<HTMLDivElement | null>(null);
+  const nowLabelRef = useRef<HTMLDivElement | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const lastPusherUpdateRef = useRef<number>(0);
   const isMountedRef = useRef(true);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const didInitialFitRef = useRef<boolean>(false);
   const [chartReady, setChartReady] = useState(true); // TEMPORARILY SET TO TRUE TO SKIP LOADING
   const isNumberHeight = typeof height === 'number';
   
@@ -101,6 +301,52 @@ export default function LightweightChart({
   // Initialize Pusher
   const pusher = usePusher({ enableLogging: false });
 
+  // Scroll viewport to the most recent data (Realtime)
+  const handleGoToRealtime = useCallback(() => {
+    try {
+      if (chartRef.current) {
+        chartRef.current.timeScale().scrollToRealTime();
+      }
+    } catch {}
+  }, []);
+
+  // Ensure the chart doesn't look overly zoomed when there are very few bars.
+  // Adds logical padding around the data and normalizes bar spacing.
+  const applyInitialViewportPadding = useCallback(() => {
+    const chart = chartRef.current as IChartApi | null;
+    if (!chart) return;
+    try {
+      const seriesLength =
+        seriesType === 'candlestick'
+          ? ohlcvDataRef.current.length
+          : areaDataRef.current.length;
+      if (seriesLength === 0) return;
+
+      // Prefer focusing the most recent active trading session if available
+      const tfSeconds = getTimeframeSeconds(selectedTimeframe);
+      const padSeconds = Math.max(2 * tfSeconds, 60);
+      if (activeSessionFromRef.current != null && activeSessionToRef.current != null) {
+        focusVisibleRange(chart, activeSessionFromRef.current, activeSessionToRef.current, padSeconds);
+      } else {
+        // Fallback: fit content and add some logical padding for small datasets
+        chart.timeScale().fitContent();
+        if (seriesLength < 120) {
+          const targetVisible = 120;
+          const pad = Math.max(30, Math.ceil((targetVisible - seriesLength) / 2));
+          chart.timeScale().setVisibleLogicalRange({
+            from: -pad,
+            to: seriesLength + pad,
+          });
+        }
+      }
+
+      // Normalize default bar spacing so a single bar isn't full-width
+      chart.applyOptions({ timeScale: { barSpacing: 3 } });
+    } catch {
+      // no-op
+    }
+  }, [seriesType, selectedTimeframe]);
+
   // Helper: push a live tick from TokenHeader event into the area series
   const applyLiveTick = useCallback((tickPrice: number, tickTimestamp: number) => {
     try {
@@ -116,6 +362,11 @@ export default function LightweightChart({
         if (!lastPoint) {
           areaDataRef.current = [newPoint];
           areaSeriesRef.current.setData([{ time: newPoint.time as Time, value: newPoint.value }]);
+          // initialize active session tracking
+          const largeGapSec = getLargeGapSeconds();
+          activeSessionFromRef.current = newPoint.time;
+          activeSessionToRef.current = newPoint.time;
+          lastRealTimeRef.current = newPoint.time;
         } else {
           if (newPoint.time === lastPoint.time) {
             areaDataRef.current[areaDataRef.current.length - 1] = newPoint;
@@ -123,6 +374,13 @@ export default function LightweightChart({
           } else if (newPoint.time > lastPoint.time) {
             areaDataRef.current.push(newPoint);
             areaSeriesRef.current.update({ time: newPoint.time as Time, value: newPoint.value });
+            // update active session tracking based on large gap
+            const largeGapSec = getLargeGapSeconds();
+            if ((newPoint.time - lastPoint.time) >= largeGapSec) {
+              activeSessionFromRef.current = newPoint.time;
+            }
+            activeSessionToRef.current = newPoint.time;
+            lastRealTimeRef.current = newPoint.time;
           } else {
             return;
           }
@@ -155,6 +413,10 @@ export default function LightweightChart({
           const bar = { time: alignedTime, open: price, high: price, low: price, close: price };
           ohlcvDataRef.current = [bar];
           candlestickSeriesRef.current.setData([{ ...bar, time: bar.time as Time } as any]);
+          // initialize active session tracking
+          activeSessionFromRef.current = bar.time;
+          activeSessionToRef.current = bar.time;
+          lastRealTimeRef.current = bar.time;
         } else if (alignedTime === lastBar.time) {
           lastBar.close = price;
           lastBar.high = Math.max(lastBar.high, price);
@@ -164,6 +426,13 @@ export default function LightweightChart({
           const bar = { time: alignedTime, open: lastBar.close, high: Math.max(lastBar.close, price), low: Math.min(lastBar.close, price), close: price };
           ohlcvDataRef.current.push(bar);
           candlestickSeriesRef.current.update({ ...bar, time: bar.time as Time } as any);
+          // update active session tracking based on large gap
+          const largeGapSec = getLargeGapSeconds();
+          if ((bar.time - lastBar.time) >= largeGapSec) {
+            activeSessionFromRef.current = bar.time;
+          }
+          activeSessionToRef.current = bar.time;
+          lastRealTimeRef.current = bar.time;
         } else {
           return;
         }
@@ -180,8 +449,9 @@ export default function LightweightChart({
         });
       }
 
-      if (chartRef.current) {
-        chartRef.current.timeScale().fitContent();
+      if (chartRef.current && !didInitialFitRef.current) {
+        applyInitialViewportPadding();
+        didInitialFitRef.current = true;
       }
       setHasData(true);
       setDataSource('pusher');
@@ -190,7 +460,7 @@ export default function LightweightChart({
     } catch (e) {
       // swallow errors to avoid UI spam
     }
-  }, [selectedTimeframe]);
+  }, [selectedTimeframe, applyInitialViewportPadding]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -223,6 +493,10 @@ export default function LightweightChart({
           const bar = { time: alignedTime, open: price, high: price, low: price, close: price };
           ohlcvDataRef.current = [bar];
           candlestickSeriesRef.current.setData([{ ...bar, time: bar.time as Time } as any]);
+          // initialize active session tracking
+          activeSessionFromRef.current = bar.time;
+          activeSessionToRef.current = bar.time;
+          lastRealTimeRef.current = bar.time;
         } else if (alignedTime === lastBar.time) {
           lastBar.close = price;
           lastBar.high = Math.max(lastBar.high, price);
@@ -232,6 +506,13 @@ export default function LightweightChart({
           const bar = { time: alignedTime, open: lastBar.close, high: Math.max(lastBar.close, price), low: Math.min(lastBar.close, price), close: price };
           ohlcvDataRef.current.push(bar);
           candlestickSeriesRef.current.update({ ...bar, time: bar.time as Time } as any);
+          // update active session tracking based on large gap
+          const largeGapSec = getLargeGapSeconds();
+          if ((bar.time - lastBar.time) >= largeGapSec) {
+            activeSessionFromRef.current = bar.time;
+          }
+          activeSessionToRef.current = bar.time;
+          lastRealTimeRef.current = bar.time;
         } else {
           return;
         }
@@ -247,8 +528,9 @@ export default function LightweightChart({
           time: new Date(alignedTime * 1000).toLocaleTimeString(),
         });
 
-        if (chartRef.current) {
-          chartRef.current.timeScale().fitContent();
+        if (chartRef.current && !didInitialFitRef.current) {
+          applyInitialViewportPadding();
+          didInitialFitRef.current = true;
         }
         lastPusherUpdateRef.current = Date.now();
         setLastUpdate(new Date());
@@ -299,11 +581,14 @@ export default function LightweightChart({
         // Just set this single point and let API data fill in the history
         areaDataRef.current = [newDataPoint];
         areaSeriesRef.current.setData([{ time: newDataPoint.time as Time, value: newDataPoint.value }]);
-        if (chartRef.current) {
-          chartRef.current.timeScale().fitContent();
-          // Don't scroll to real time since we're locking the viewport
-          // chartRef.current.timeScale().scrollToRealTime();
+        if (chartRef.current && !didInitialFitRef.current) {
+          applyInitialViewportPadding();
+          didInitialFitRef.current = true;
         }
+        // initialize active session tracking
+        activeSessionFromRef.current = newDataPoint.time;
+        activeSessionToRef.current = newDataPoint.time;
+        lastRealTimeRef.current = newDataPoint.time;
         setHasData(true);
       } else {
         // Append to in-memory data array (maintaining time order)
@@ -320,6 +605,16 @@ export default function LightweightChart({
         // Update area series and legend data
         console.log('📈 Updating area series with new data point...');
         areaSeriesRef.current.update({ time: newDataPoint.time as Time, value: newDataPoint.value });
+        // update active session tracking based on large gap to previous last point
+        const prev = areaDataRef.current.length > 1 ? areaDataRef.current[areaDataRef.current.length - 2] : undefined;
+        if (prev && prev.time < newDataPoint.time) {
+          const largeGapSec = getLargeGapSeconds();
+          if ((newDataPoint.time - prev.time) >= largeGapSec) {
+            activeSessionFromRef.current = newDataPoint.time;
+          }
+          activeSessionToRef.current = newDataPoint.time;
+          lastRealTimeRef.current = newDataPoint.time;
+        }
         
         // Update legend data when new data comes in
         const firstPoint = areaDataRef.current[0];
@@ -355,10 +650,9 @@ export default function LightweightChart({
       }
 
       // Ensure chart scrolls to latest
-      if (chartRef.current) {
-        // Don't scroll since we're locking the viewport
-        // chartRef.current.timeScale().scrollToRealTime();
-        chartRef.current.timeScale().fitContent();
+      if (chartRef.current && !didInitialFitRef.current) {
+        applyInitialViewportPadding();
+        didInitialFitRef.current = true;
       }
 
        console.log('✅ Area series updated successfully');
@@ -379,7 +673,7 @@ export default function LightweightChart({
         hasData
       });
     }
-  }, [hasData, selectedTimeframe]);
+  }, [hasData, selectedTimeframe, applyInitialViewportPadding]);
 
   // Handle Pusher connection state changes
   const handleConnectionStateChange = useCallback((state: string) => {
@@ -400,34 +694,35 @@ export default function LightweightChart({
     try {
       const chart = createChart(chartContainerRef.current, {
         layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: 'rgba(255, 255, 255, 0.5)',
+          background: { type: ColorType.Solid, color: '#0F0F10' },
+          textColor: 'rgba(255, 255, 255, 0.7)',
         },
         width: (chartContainerRef.current as any).offsetWidth,
         height: isNumberHeight 
           ? (typeof height === 'number' ? height : 350)
           : ((chartContainerRef.current as any).offsetHeight || 350),
         grid: {
-          vertLines: { color: 'rgb(22, 21, 26, 0.0)' },
-          horzLines: { color: 'rgb(22, 21, 26, 0.0)' },
+          vertLines: { color: 'rgba(255, 255, 255, 0.06)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.06)' },
         },
         crosshair: {
           mode: 1,
           vertLine: {
-            color: 'rgba(22, 21, 26, 0.0)',
+            color: 'rgba(255, 255, 255, 0.25)',
             width: 1,
             style: 3,
-            labelBackgroundColor: 'rgba(22, 21, 26, 0.0)',
+            labelBackgroundColor: '#1A1A1A',
           },
           horzLine: {
-            color: 'rgba(22, 21, 26, 0.0)',
+            color: 'rgba(255, 255, 255, 0.25)',
             width: 1,
             style: 3,
-            labelBackgroundColor: 'rgba(22, 21, 26, 0.0)',
+            labelBackgroundColor: '#1A1A1A',
           },
         },
         rightPriceScale: {
-          borderVisible: false,
+          borderVisible: true,
+          borderColor: '#2A2A2A',
           scaleMargins: {
             top: 0.1,
             bottom: 0.1,
@@ -437,28 +732,27 @@ export default function LightweightChart({
           borderVisible: false,
           timeVisible: true,
           secondsVisible: false,
-          // Lock horizontal scrolling
-          rightOffset: 5,
-          barSpacing: 12,
-          fixLeftEdge: true,
-          fixRightEdge: true,
-          lockVisibleTimeRangeOnResize: true,
+          rightOffset: 8,
+          barSpacing: 3,
+          // Allow panning on both edges
+          fixLeftEdge: false,
+          fixRightEdge: false,
+          lockVisibleTimeRangeOnResize: false,
         },
         handleScroll: {
-          // Disable horizontal scroll
-          mouseWheel: false,
-          pressedMouseMove: false,
-          horzTouchDrag: false,
+          // Enable horizontal panning
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
           vertTouchDrag: true,
         },
         handleScale: {
-          // Disable horizontal scaling
           axisPressedMouseMove: {
-            time: false,
+            time: true,
             price: true,
           },
-          mouseWheel: false,
-          pinch: false,
+          mouseWheel: true,
+          pinch: true,
         },
       });
 
@@ -558,6 +852,22 @@ export default function LightweightChart({
               ? (typeof height === 'number' ? height : 350)
               : ((chartContainerRef.current as any).offsetHeight || 350)
           });
+          // keep "now" marker in sync with canvas size changes
+          try {
+            if (chartRef.current && nowLineRef.current && nowLabelRef.current) {
+              const nowSec = Math.floor(Date.now() / 1000);
+              const x = chartRef.current.timeScale().timeToCoordinate(nowSec);
+              if (x == null || !isFinite(x)) {
+                nowLineRef.current.style.display = 'none';
+                nowLabelRef.current.style.display = 'none';
+              } else {
+                nowLineRef.current.style.display = 'block';
+                nowLineRef.current.style.left = `${x}px`;
+                nowLabelRef.current.style.display = 'block';
+                nowLabelRef.current.style.left = `${x}px`;
+              }
+            }
+          } catch {}
         }
       };
 
@@ -573,21 +883,63 @@ export default function LightweightChart({
         resizeObserverRef.current = new (globalThis as any).ResizeObserver(() => {
           handleResize();
         });
-        resizeObserverRef.current.observe(chartContainerRef.current);
+        resizeObserverRef.current?.observe(chartContainerRef.current);
       }
 
       if (typeof globalThis !== 'undefined' && 'window' in globalThis) {
         (globalThis as any).window.addEventListener('resize', handleResize);
       }
 
+      // Keep a live "Now" marker synced to current time
+      const updateNowMarker = () => {
+        try {
+          if (!chartRef.current || !chartContainerRef.current || !nowLineRef.current || !nowLabelRef.current) return;
+          const nowSec = Math.floor(Date.now() / 1000);
+          const x = chartRef.current.timeScale().timeToCoordinate(nowSec);
+          const label = nowLabelRef.current;
+          if (x == null || !isFinite(x)) {
+            nowLineRef.current.style.display = 'none';
+            label.style.display = 'none';
+            return;
+          }
+          nowLineRef.current.style.display = 'block';
+          nowLineRef.current.style.left = `${x}px`;
+          label.style.display = 'block';
+          label.style.left = `${x}px`;
+          // Update text occasionally
+          label.textContent = new Date(nowSec * 1000).toLocaleTimeString();
+        } catch {}
+      };
+
+      const ts = chart.timeScale();
+      const onRange = () => updateNowMarker();
+      ts.subscribeVisibleTimeRangeChange(onRange);
+      // @ts-ignore - not all versions expose this typing, guard at runtime
+      if (typeof (ts as any).subscribeVisibleLogicalRangeChange === 'function') {
+        // @ts-ignore
+        (ts as any).subscribeVisibleLogicalRangeChange(onRange);
+      }
+      const nowTimer = setInterval(updateNowMarker, 30000); // refresh every 30s
+      // initial paint
+      setTimeout(updateNowMarker, 0);
+
       return () => {
         if (typeof globalThis !== 'undefined' && 'window' in globalThis) {
           (globalThis as any).window.removeEventListener('resize', handleResize);
         }
-        if (resizeObserverRef.current && chartContainerRef.current) {
-          resizeObserverRef.current.disconnect();
+        if (chartContainerRef.current) {
+          resizeObserverRef.current?.disconnect();
           resizeObserverRef.current = null;
         }
+        try {
+          ts.unsubscribeVisibleTimeRangeChange(onRange);
+          // @ts-ignore
+          if (typeof (ts as any).unsubscribeVisibleLogicalRangeChange === 'function') {
+            // @ts-ignore
+            (ts as any).unsubscribeVisibleLogicalRangeChange(onRange);
+          }
+        } catch {}
+        clearInterval(nowTimer);
         chart.remove();
       };
     } catch (err) {
@@ -664,7 +1016,8 @@ export default function LightweightChart({
   }, [symbol, applyLiveTick]);
 
   // Fetch and update chart data without animations
-  const fetchChartData = async (timeframe: string) => {
+  const fetchChartData = async (timeframe: string, options?: { force?: boolean }) => {
+    const force = options?.force === true;
     if (!CHART_BACKEND_ENABLED) {
       setIsLoading(false);
       setError(null);
@@ -673,11 +1026,13 @@ export default function LightweightChart({
     }
     if (!symbol) return;
     
-    // Check if we've received recent Pusher updates
-    const timeSinceLastPusherUpdate = Date.now() - lastPusherUpdateRef.current;
-    if (lastPusherUpdateRef.current > 0 && timeSinceLastPusherUpdate < 60000) {
-       console.log(`🛑 Skipping fetchChartData - recent Pusher update (${Math.round(timeSinceLastPusherUpdate/1000)}s ago)`);
-      return;
+    // Check if we've received recent Pusher updates (skip this when forced, e.g. timeframe change)
+    if (!force) {
+      const timeSinceLastPusherUpdate = Date.now() - lastPusherUpdateRef.current;
+      if (lastPusherUpdateRef.current > 0 && timeSinceLastPusherUpdate < 60000) {
+         console.log(`🛑 Skipping fetchChartData - recent Pusher update (${Math.round(timeSinceLastPusherUpdate/1000)}s ago)`);
+        return;
+      }
     }
     
     setIsLoading(true);
@@ -686,10 +1041,21 @@ export default function LightweightChart({
     try {
        console.log(`📊 Fetching ${symbol} area chart data for ${timeframe} timeframe...`);
       
-      // Fetch OHLCV data from optimized backend with dynamic aggregation
-      const response = await fetch(
-        `/api/charts/ohlcv?symbol=${symbol}&timeframe=${timeframe}&limit=300`
-      );
+      // Always fetch 1m candles; aggregate on the client for higher timeframes
+      const params = new URLSearchParams();
+      params.set('timeframe', '1m');
+      // Determine how many minutes we need to build ~300 buckets at the selected timeframe
+      const tfSeconds = getTimeframeSeconds(timeframe);
+      const minutesPerBucket = Math.max(1, Math.ceil(tfSeconds / 60));
+      const targetBuckets = 300;
+      const headroomBuckets = 10; // allow some leading minutes for alignment and previous-close seed
+      let minuteLimit = (targetBuckets + headroomBuckets) * minutesPerBucket;
+      // Safety cap to avoid very large payloads on extreme ranges (e.g. 1d)
+      minuteLimit = Math.min(minuteLimit, 60000); // <= ~41 days of 1m data
+      params.set('limit', String(minuteLimit));
+      params.set('marketId', marketId);
+      console.log(marketId)
+      const response = await fetch(`/api/charts/ohlcv?${params.toString()}`);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch chart data: ${response.status}`);
@@ -729,39 +1095,25 @@ export default function LightweightChart({
           { time: alignedNow - timeframeSeconds, open: 0, high: 0, low: 0, close: 0 },
           { time: alignedNow, open: 0, high: 0, low: 0, close: 0 },
         ];
+        // Focus the minimal window we synthesized
+        activeSessionFromRef.current = alignedNow - timeframeSeconds * 2;
+        activeSessionToRef.current = alignedNow;
+        lastRealTimeRef.current = null;
         
         hasRealData = false;
       } else {
          console.log(`✅ Loaded ${result.data.length} ${timeframe} candles for ${symbol} area chart (${result.meta?.architecture || 'unknown'} architecture)`);
          
-        // Transform optimized OHLCV data for area chart
-        // The new backend already provides properly aligned timestamps
-        const processedArea = result.data
-          .map((item: OHLCVData) => ({
-            time: item.time, // Already aligned by dynamic aggregation
-            value: item.close, // Use close price for area chart
-          }))
-          .filter((item: any) => item.value > 0 && !isNaN(item.value)) // Remove invalid prices
-          .reduce((acc: any[], current: any) => {
-            // Remove duplicates (shouldn't happen with optimized backend, but safety check)
-            const existingIndex = acc.findIndex(item => item.time === current.time);
-            if (existingIndex >= 0) {
-              acc[existingIndex] = current; // Keep latest value
-            } else {
-              acc.push(current);
-            }
-            return acc;
-          }, [])
-          .sort((a: any, b: any) => a.time - b.time); // Ensure chronological order
+        // Transform optimized OHLCV data (seconds) and ensure chronological order
         const processedOhlcv = result.data
           .map((item: OHLCVData) => ({
             time: item.time,
             open: item.open,
             high: item.high,
             low: item.low,
-            close: item.close,
+            close: item.close
           }))
-          .filter((item: any) => item.close > 0 && !isNaN(item.close))
+          .filter((item: any) => Number.isFinite(item.close))
           .reduce((acc: any[], current: any) => {
             const existingIndex = acc.findIndex(item => item.time === current.time);
             if (existingIndex >= 0) {
@@ -772,24 +1124,84 @@ export default function LightweightChart({
             return acc;
           }, [])
           .sort((a: any, b: any) => a.time - b.time);
-        
-        areaData = processedArea;
-        ohlcvData = processedOhlcv;
+
+        // Compute active session range & last real candle time from raw (unfilled) data
+        const largeGapSec = getLargeGapSeconds();
+        const rawTimes = processedOhlcv.map((c: any) => c.time);
+        let lastRealSec: number | null = null;
+        let computedSession: { from: number; to: number } | null = null;
+        if (rawTimes.length > 0) {
+          lastRealSec = rawTimes[rawTimes.length - 1]!;
+          computedSession = computeActiveSessionRangeFromTimes(rawTimes, largeGapSec);
+          activeSessionFromRef.current = computedSession?.from ?? null;
+          activeSessionToRef.current = computedSession?.to ?? null;
+          lastRealTimeRef.current = lastRealSec;
+        } else {
+          activeSessionFromRef.current = null;
+          activeSessionToRef.current = null;
+          lastRealTimeRef.current = null;
+        }
+
+        // Aggregate from 1m data to the selected timeframe and gap-fill,
+        // but DO NOT extend to "now" if the inactivity gap since the last real trade is large.
+        if (processedOhlcv.length > 0) {
+          if (timeframe === '1m') {
+            const start = processedOhlcv[0].time;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const alignedNow = nowSec - (nowSec % 60);
+            const endForFill =
+              lastRealSec != null && (alignedNow - lastRealSec) >= largeGapSec
+                ? lastRealSec
+                : alignedNow;
+            const filled = generateGapFilledCandles(processedOhlcv as any, 60, start, endForFill);
+            ohlcvData = filled.map(c => ({
+              time: c.time,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close
+            }));
+            areaData = filled.map(c => ({ time: c.time, value: c.close }));
+          } else {
+            const tfSecondsLocal = getTimeframeSeconds(timeframe);
+            const aggregated = aggregateFromMinutesToResolution(processedOhlcv as any, tfSecondsLocal);
+            // Extend to current time boundary
+            const start = aggregated[0]?.time ?? processedOhlcv[0].time;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const alignedNow = nowSec - (nowSec % tfSecondsLocal);
+            const endForFill =
+              lastRealSec != null && (alignedNow - lastRealSec) >= largeGapSec
+                ? lastRealSec
+                : alignedNow;
+            const extended = generateGapFilledCandles(aggregated as any, tfSecondsLocal, start, endForFill);
+            ohlcvData = extended.map(c => ({
+              time: c.time,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close
+            }));
+            areaData = extended.map(c => ({ time: c.time, value: c.close }));
+          }
+        } else {
+          // Fallback (shouldn't occur in this branch)
+          ohlcvData = processedOhlcv;
+          areaData = processedOhlcv.map((c: any) => ({ time: c.time, value: c.close }));
+        }
         hasRealData = true;
         
-        // Log architecture benefits
-        if (result.meta?.architecture === 'dynamic_aggregation') {
-           console.log(`🎯 Using optimized dynamic aggregation - 85% storage reduction, perfect consistency`);
-        }
+        // Note: we intentionally aggregate client-side from 1m for consistent gap-filling across timeframes
       }
 
       // Update chart series without animation
       if (seriesType === 'candlestick' && candlestickSeriesRef.current) {
         const finalTimeSinceLastPusherUpdate = Date.now() - lastPusherUpdateRef.current;
-        if (lastPusherUpdateRef.current > 0 && finalTimeSinceLastPusherUpdate < 10000) {
-           console.log(`🛑 Aborting setData - very recent Pusher update (${Math.round(finalTimeSinceLastPusherUpdate/1000)}s ago)`);
-          setIsLoading(false);
-          return;
+        if (!force) {
+          if (lastPusherUpdateRef.current > 0 && finalTimeSinceLastPusherUpdate < 10000) {
+             console.log(`🛑 Aborting setData - very recent Pusher update (${Math.round(finalTimeSinceLastPusherUpdate/1000)}s ago)`);
+            setIsLoading(false);
+            return;
+          }
         }
         const chartData = ohlcvData.map((bar) => ({
           time: bar.time as Time,
@@ -801,8 +1213,9 @@ export default function LightweightChart({
         candlestickSeriesRef.current.setData(chartData);
         ohlcvDataRef.current = ohlcvData;
 
-        if (chartRef.current) {
-          chartRef.current.timeScale().fitContent();
+        if (chartRef.current && !didInitialFitRef.current) {
+          applyInitialViewportPadding();
+          didInitialFitRef.current = true;
         }
 
         if (ohlcvData.length > 0) {
@@ -818,12 +1231,14 @@ export default function LightweightChart({
           });
         }
       } else if (areaSeriesRef.current) {
-        // Double-check for Pusher updates that came in during the fetch
+        // Double-check for Pusher updates that came in during the fetch (skip when forced)
         const finalTimeSinceLastPusherUpdate = Date.now() - lastPusherUpdateRef.current;
-        if (lastPusherUpdateRef.current > 0 && finalTimeSinceLastPusherUpdate < 10000) {
-           console.log(`🛑 Aborting setData - very recent Pusher update (${Math.round(finalTimeSinceLastPusherUpdate/1000)}s ago)`);
-          setIsLoading(false);
-          return;
+        if (!force) {
+          if (lastPusherUpdateRef.current > 0 && finalTimeSinceLastPusherUpdate < 10000) {
+             console.log(`🛑 Aborting setData - very recent Pusher update (${Math.round(finalTimeSinceLastPusherUpdate/1000)}s ago)`);
+            setIsLoading(false);
+            return;
+          }
         }
         const chartData = areaData.map((point: { time: number; value: number }) => ({
           time: point.time as Time,
@@ -833,11 +1248,10 @@ export default function LightweightChart({
         
         areaDataRef.current = areaData; // Store in memory for Pusher updates
         
-        // Fit content and scroll to latest
-        if (chartRef.current) {
-          chartRef.current.timeScale().fitContent();
-          // Don't scroll to real time since we're locking the viewport
-          // chartRef.current.timeScale().scrollToRealTime();
+        // Fit content and scroll to latest with padding
+        if (chartRef.current && !didInitialFitRef.current) {
+          applyInitialViewportPadding();
+          didInitialFitRef.current = true;
         }
 
         // Update legend with latest data
@@ -884,27 +1298,14 @@ export default function LightweightChart({
     // Only load initial data if:
     // 1. Pusher is not available/connected, OR
     // 2. We wait a short time to see if Pusher provides data
+    didInitialFitRef.current = false; // re-apply viewport padding on timeframe change
     
      console.log(`🎯 Data loading trigger for ${symbol}-${selectedTimeframe}`);
      console.log('Pusher connected:', isPusherConnected);
     
-    if (!isPusherConnected) {
-       console.log('🔄 Loading initial data immediately (no Pusher connection)');
-      fetchChartData(selectedTimeframe);
-    } else {
-       console.log('⏳ Waiting for Pusher data before fallback loading...');
-      // Wait 5 seconds for Pusher data before falling back to API
-      const fallbackTimer = setTimeout(() => {
-        if (lastPusherUpdateRef.current === 0) {
-           console.log('🔄 No Pusher data received, loading via API');
-          fetchChartData(selectedTimeframe);
-        } else {
-           console.log('✅ Pusher data already received, skipping API load');
-        }
-      }, 5000);
-
-      return () => clearTimeout(fallbackTimer);
-    }
+    // Always fetch immediately on timeframe change and bypass Pusher gating for responsiveness
+    console.log('⚡ Immediate fetch on timeframe change');
+    fetchChartData(selectedTimeframe, { force: true });
   }, [symbol, selectedTimeframe, isPusherConnected]);
 
   // Intelligent auto-refresh with optimized dynamic aggregation
@@ -1019,7 +1420,7 @@ export default function LightweightChart({
           {timeframes.map((tf) => (
             <button
               key={tf.value}
-              onClick={() => setSelectedTimeframe(tf.value)}
+              onClick={() => setSelectedTimeframe(tf.value as any)}
               disabled={isLoading}
               className={`px-2 py-1 text-[10px] font-medium rounded transition-all duration-200 ${
                 selectedTimeframe === tf.value
@@ -1030,6 +1431,18 @@ export default function LightweightChart({
               {tf.label}
             </button>
           ))}
+          <button
+            onClick={handleGoToRealtime}
+            disabled={!chartReady}
+            className={`ml-2 px-2 py-1 text-[10px] font-medium rounded transition-all duration-200 ${
+              chartReady
+                ? 'text-[#808080] hover:text-white hover:bg-[#1A1A1A] border border-[#222222] hover:border-[#333333]'
+                : 'text-[#606060] border border-[#1A1A1A] opacity-50 cursor-not-allowed'
+            }`}
+            title="Go to realtime (scroll to latest)"
+          >
+            Go to realtime
+          </button>
         </div>
       </div>
 
@@ -1046,6 +1459,19 @@ export default function LightweightChart({
           ref={chartContainerRef}
           className="w-full h-full"
         />
+        {/* Current time marker (positioned via JS) */}
+        <div
+          ref={nowLineRef}
+          className="pointer-events-none absolute top-0 bottom-0 border-l border-blue-500/60"
+          style={{ display: 'none' }}
+        />
+        <div
+          ref={nowLabelRef}
+          className="pointer-events-none absolute bottom-0 translate-x-[-50%] bg-[#1A1A1A] text-[10px] text-[#9CA3AF] px-1 py-0.5 rounded border border-[#333333]"
+          style={{ display: 'none' }}
+        >
+          Now
+        </div>
         
         {/* Loading State - Modern - TEMPORARILY DISABLED */}
         {/* 

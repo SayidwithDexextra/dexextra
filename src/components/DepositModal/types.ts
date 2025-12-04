@@ -9,20 +9,15 @@ export interface DepositModalInputProps {
   onBack: () => void
   onContinue?: (amount: string) => void
   maxBalance?: number
-  selectedToken?: {
-    symbol: string
-    icon: string
-  }
-  targetToken?: {
-    symbol: string
-    icon: string
-    name?: string
-  }
+  selectedToken?: Token
+  targetToken?: Token
   isAnimating?: boolean
   animationDirection?: 'forward' | 'backward'
   isDirectDeposit?: boolean
   onDirectDeposit?: (amount: string) => Promise<void>
   isVaultConnected?: boolean
+  availableTokens?: Token[]
+  onSelectToken?: (token: Token) => void
 }
 
 export interface DepositModalReviewProps {
@@ -74,4 +69,5 @@ export interface Token {
   value?: string
   contractAddress?: string
   decimals?: number
+  chain?: string
 } 

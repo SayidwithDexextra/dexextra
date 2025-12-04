@@ -106,15 +106,18 @@ export async function POST(req: Request) {
 
     // Probe selector presence to avoid opaque "Function does not exist"
     try {
-      const sig = selectorFor(method);
-      if (sig) {
-        const sel = ethers.id(sig).slice(0, 10);
-        const loupe = new ethers.Contract(orderBook, ["function facetAddress(bytes4) view returns (address)"], provider);
-        const facetAddr = await loupe.facetAddress(sel as any);
-        console.log('[GASLESS][API][trade] selector probe', { method, signature: sig, selector: sel, facetAddr });
-        console.log('[UpGas][API][trade] selector probe', { method, signature: sig, selector: sel, facetAddr });
-        if (!facetAddr || facetAddr === ethers.ZeroAddress) {
-          return NextResponse.json({ error: `diamond_missing_selector:${method}`, selector: sel, signature: sig }, { status: 400 });
+      const enableProbe = String(process.env.GASLESS_PROBE_SELECTORS || 'false').toLowerCase() === 'true';
+      if (enableProbe) {
+        const sig = selectorFor(method);
+        if (sig) {
+          const sel = ethers.id(sig).slice(0, 10);
+          const loupe = new ethers.Contract(orderBook, ["function facetAddress(bytes4) view returns (address)"], provider);
+          const facetAddr = await loupe.facetAddress(sel as any);
+          console.log('[GASLESS][API][trade] selector probe', { method, signature: sig, selector: sel, facetAddr });
+          console.log('[UpGas][API][trade] selector probe', { method, signature: sig, selector: sel, facetAddr });
+          if (!facetAddr || facetAddr === ethers.ZeroAddress) {
+            return NextResponse.json({ error: `diamond_missing_selector:${method}`, selector: sel, signature: sig }, { status: 400 });
+          }
         }
       }
     } catch (_) {
@@ -205,10 +208,17 @@ export async function POST(req: Request) {
           break;
       }
     }
-    const rc = await tx.wait();
-    console.log('[GASLESS][API][trade] relayed', { txHash: tx.hash, blockNumber: rc?.blockNumber });
-    console.log('[UpGas][API][trade] relayed', { txHash: tx.hash, blockNumber: rc?.blockNumber });
-    return NextResponse.json({ txHash: tx.hash, blockNumber: rc?.blockNumber });
+    // Configurable wait policy to reduce perceived latency
+    const waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
+    if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
+      const rc = await (wallet.provider as ethers.Provider).waitForTransaction(tx.hash, waitConfirms);
+      console.log('[GASLESS][API][trade] relayed', { txHash: tx.hash, blockNumber: rc?.blockNumber });
+      console.log('[UpGas][API][trade] relayed', { txHash: tx.hash, blockNumber: rc?.blockNumber });
+      return NextResponse.json({ txHash: tx.hash, blockNumber: rc?.blockNumber });
+    }
+    console.log('[GASLESS][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
+    console.log('[UpGas][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
+    return NextResponse.json({ txHash: tx.hash });
   } catch (e: any) {
     console.error('[GASLESS][API][trade] error', e?.message || e);
     console.error('[UpGas][API][trade] error', e?.stack || e?.message || String(e));

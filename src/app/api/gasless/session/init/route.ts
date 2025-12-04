@@ -80,9 +80,14 @@ export async function POST(req: Request) {
     try {
       const tx = await registry.createSession(permit, signature);
       console.log('[UpGas][API][session/init] tx submitted', { txHash: tx.hash });
-      const rc = await tx.wait();
-      console.log('[UpGas][API][session/init] tx mined', { blockNumber: rc?.blockNumber });
-      return NextResponse.json({ sessionId, txHash: tx.hash, blockNumber: rc?.blockNumber });
+      const waitConfirms = Number(process.env.GASLESS_SESSION_WAIT_CONFIRMS ?? '1');
+      if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
+        const rc = await tx.wait(waitConfirms);
+        console.log('[UpGas][API][session/init] tx mined', { blockNumber: rc?.blockNumber });
+        return NextResponse.json({ sessionId, txHash: tx.hash, blockNumber: rc?.blockNumber });
+      }
+      console.log('[UpGas][API][session/init] broadcasted', { txHash: tx.hash, waitConfirms });
+      return NextResponse.json({ sessionId, txHash: tx.hash });
     } catch (e: any) {
       console.log('[UpGas][API][session/init] createSession failed, attempting raw send with gasLimit', e?.message || e);
       try {
@@ -94,9 +99,14 @@ export async function POST(req: Request) {
           gasLimit: 1500000n,
         });
         console.log('[UpGas][API][session/init] raw tx submitted', { txHash: tx2.hash });
-        const rc2 = await tx2.wait();
-        console.log('[UpGas][API][session/init] raw tx mined', { blockNumber: rc2?.blockNumber });
-        return NextResponse.json({ sessionId, txHash: tx2.hash, blockNumber: rc2?.blockNumber });
+        const waitConfirms = Number(process.env.GASLESS_SESSION_WAIT_CONFIRMS ?? '1');
+        if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
+          const rc2 = await tx2.wait(waitConfirms);
+          console.log('[UpGas][API][session/init] raw tx mined', { blockNumber: rc2?.blockNumber });
+          return NextResponse.json({ sessionId, txHash: tx2.hash, blockNumber: rc2?.blockNumber });
+        }
+        console.log('[UpGas][API][session/init] raw broadcasted', { txHash: tx2.hash, waitConfirms });
+        return NextResponse.json({ sessionId, txHash: tx2.hash });
       } catch (e2: any) {
         console.error('[UpGas][API][session/init] raw send failed', e2?.stack || e2?.message || String(e2));
         throw e2;

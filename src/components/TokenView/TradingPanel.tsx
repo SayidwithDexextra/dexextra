@@ -14,6 +14,7 @@ import { ensureHyperliquidWallet } from '@/lib/network';
 import type { Address } from 'viem';
 import { signAndSubmitGasless, createGaslessSession, submitSessionTrade } from '@/lib/gasless';
 import { useSession } from '@/contexts/SessionContext';
+import WalletModal from '@/components/WalletModal';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -93,6 +94,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('buy');
   const [selectedOption, setSelectedOption] = useState<'long' | 'short' | null>(initialAction || 'long');
   const [amount, setAmount] = useState(0);
+  const [amountInput, setAmountInput] = useState<string>(''); // raw input to preserve decimals while typing (e.g., "0.", ".5")
   const [isUsdMode, setIsUsdMode] = useState(true); // New state for toggling between USD and units
   const [slippage] = useState(0.5); // eslint-disable-line @typescript-eslint/no-unused-vars
   const [quoteState, setQuoteState] = useState<{
@@ -136,6 +138,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     message: ''
   });
 
+  // Note: We intentionally avoid syncing amount -> amountInput via effect to not
+  // overwrite partial decimal typing like "0." during user input.
+
   // Helper functions
   const formatNumber = (value: number | string | null | undefined) => {
     // Convert to number if it's a string
@@ -164,28 +169,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     return formatNumber(value);
   };
 
-  // Format number for input display with commas (no forced decimals)
-  const formatInputNumber = (num: number) => {
-    if (!num || num === 0) return '';
-    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  };
-
-  // Parse comma-formatted string back to number with enhanced USDC validation
-  const parseInputNumber = (value: string) => {
-    // Remove commas and any non-numeric characters except decimal point
-    const cleanValue = value.replace(/[^0-9.]/g, '');
-    
-    // Handle multiple decimal points by keeping only the first one
-    const parts = cleanValue.split('.');
-    const finalValue = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : cleanValue;
-    
-    const parsed = parseFloat(finalValue);
-    if (isNaN(parsed) || parsed < 0) return 0;
-    
-    // Limit to 6 decimal places for USDC precision
-    const limited = Math.floor(parsed * 1000000) / 1000000;
-    return limited;
-  };
+  // formatInputNumber / parseInputNumber removed in favor of raw input with sanitization
 
   // Helper to get input value safely
   const getInputValue = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>): string => {
@@ -239,12 +223,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
   const handleQuickAmount = (value: number) => {
     setAmount(prev => {
+      let next: number;
       if (isUsdMode) {
-        return prev + value;
+        next = prev + value;
       } else {
         const currentPrice = resolveCurrentPrice();
-        return prev + (value * currentPrice);
+        next = prev + (value * currentPrice);
       }
+      setAmountInput(String(next));
+      return next;
     });
   };
 
@@ -253,9 +240,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     const maxAmount = Math.max(marginSummary.availableCollateral, 50000); // $50K default or available collateral
     if (isUsdMode) {
       setAmount(maxAmount);
+      setAmountInput(String(maxAmount));
     } else {
       const currentPrice = resolveCurrentPrice();
-      setAmount(maxAmount / currentPrice);
+      const next = maxAmount / currentPrice;
+      setAmount(next);
+      setAmountInput(String(next));
     }
   };
 
@@ -943,6 +933,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           console.log('[UpGas][UI] market submit: success', { txHash });
           await orderBookActions.refreshOrders();
           setAmount(0);
+          setAmountInput('');
           return;
         } catch (gerr: any) {
           console.warn('[GASLESS] Market order gasless path failed:', gerr?.message || gerr);
@@ -977,6 +968,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       
       // Clear input fields after successful order
       setAmount(0);
+      setAmountInput('');
       
     } catch (error: any) {
       console.error('💥 Market order execution failed:', error);
@@ -1265,6 +1257,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           console.log('[UpGas][UI] limit submit: success', { txHash });
           await orderBookActions.refreshOrders();
           setAmount(0);
+          setAmountInput('');
           setTriggerPrice(0);
           setTriggerPriceInput("");
           return;
@@ -1310,6 +1303,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       
       // Clear input fields after successful order
       setAmount(0);
+      setAmountInput('');
       setTriggerPrice(0);
       setTriggerPriceInput("");
       
@@ -1488,6 +1482,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     window.dispatchEvent(event);
   }, [orderType]);
 
+  // Wallet modal state
+  const [showWalletModal, setShowWalletModal] = useState(false);
+
   return (
     <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 flex flex-col min-h-0 h-full">
       {/* Status Modals */}
@@ -1503,6 +1500,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         onClose={() => setSuccessModal({ isOpen: false, title: '', message: '' })}
         title={successModal.title}
         message={successModal.message}
+      />
+      
+      {/* Wallet Connection Modal */}
+      <WalletModal 
+        isOpen={showWalletModal} 
+        onClose={() => setShowWalletModal(false)} 
       />
       
       <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full overflow-y-hidden flex flex-col">
@@ -2160,8 +2163,18 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                 </div>
                 <input
                   type="text"
-                  value={formatInputNumber(amount)}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAmount(parseInputNumber(getInputValue(e)))}
+                  inputMode="decimal"
+                  pattern="[0-9]*[.,]?[0-9]*"
+                  value={amountInput}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const value = e.target.value;
+                    // Mirror Limit Price input behavior: allow only digits and a single decimal point
+                    if (/^\d*\.?\d*$/.test(value)) {
+                      setAmountInput(value);
+                      const parsed = parseFloat(value);
+                      setAmount(!isNaN(parsed) ? parsed : 0);
+                    }
+                  }}
                   placeholder={isUsdMode ? "1,000.00" : "100.00"}
                   className="w-full bg-transparent border-none px-3 py-2.5 pl-8 text-right text-2xl font-bold transition-all duration-150 focus:outline-none focus:ring-0"
                   style={{
@@ -2331,7 +2344,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         <div className="flex gap-2 mt-1.5">
           {!isConnected ? (
             <button 
-              onClick={() => connect()}
+              onClick={() => setShowWalletModal(true)}
               className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md bg-[#3B82F6] text-white"
               style={{
                 padding: '10px',

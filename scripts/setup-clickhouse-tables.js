@@ -18,84 +18,106 @@ async function setupClickHouseTables() {
   });
 
   try {
-    // Create OHLCV tables for different timeframes
-    const timeframes = [
-      { name: "1m", interval: "1 MINUTE" },
-      { name: "5m", interval: "5 MINUTE" },
-      { name: "15m", interval: "15 MINUTE" },
-      { name: "30m", interval: "30 MINUTE" },
-      { name: "1h", interval: "1 HOUR" },
-      { name: "4h", interval: "4 HOUR" },
-      { name: "1d", interval: "1 DAY" },
-    ];
+		// Remove deprecated VAMM tables
+		console.log("🧹 Dropping deprecated VAMM tables (if any)...");
+		const deprecatedTables = [
+			"vamm_ohlcv_1m",
+			"vamm_ohlcv_5m",
+			"vamm_ohlcv_15m",
+			"vamm_ohlcv_30m",
+			"vamm_ohlcv_1h",
+			"vamm_ohlcv_4h",
+			"vamm_ohlcv_1d",
+			"vamm_market_transactions",
+			"vamm_market_metadata",
+		];
+		for (const t of deprecatedTables) {
+			try {
+				await clickhouse.query({ query: `DROP TABLE IF EXISTS ${t}` });
+				console.log(`🗑️  Dropped ${t} (if existed)`);
+			} catch (e) {
+				console.warn(`⚠️  Failed to drop ${t}:`, e?.message || e);
+			}
+		}
 
-    for (const tf of timeframes) {
-      console.log(`📊 Creating table for ${tf.name} timeframe...`);
+		// ===============================
+		// Scatter Plot Storage (New)
+		// ===============================
+		console.log("📈 Creating scatter plot tables...");
+		const createScatterRaw = `
+			CREATE TABLE IF NOT EXISTS scatter_points_raw (
+				market_identifier LowCardinality(String),
+				market_id LowCardinality(String),
+				metric_name LowCardinality(String),
+				timeframe LowCardinality(String),         -- '1m' | '5m' | ... matches UI pills
+				ts DateTime64(3, 'UTC') DEFAULT now64(3), -- capture event time with ms
+				x Float64,                                 -- horizontal axis value or sequence
+				y Float64,                                 -- measured value
+				source LowCardinality(String) DEFAULT 'frontend',
+				point_uid UUID DEFAULT generateUUIDv4(),
+				point_key UInt64 MATERIALIZED cityHash64(
+					concat(coalesce(market_id, ''), '|', timeframe, '|', toString(ts), '|', toString(x))
+				),
+				version UInt32 DEFAULT 1
+			)
+			ENGINE = ReplacingMergeTree(version)
+			PARTITION BY toYYYYMM(ts)
+			ORDER BY (market_id, timeframe, ts, x, point_key)
+			SETTINGS index_granularity = 8192
+		`;
+		await clickhouse.query({ query: createScatterRaw });
+		console.log("✅ scatter_points_raw created");
 
-      const createTableQuery = `
-        CREATE TABLE IF NOT EXISTS vamm_ohlcv_${tf.name} (
-          market_symbol String,
-          timestamp DateTime,
-          open Float64,
-          high Float64,
-          low Float64,
-          close Float64,
-          volume Float64,
-          trades_count UInt32
-        )
-        ENGINE = MergeTree()
-        ORDER BY (market_symbol, timestamp)
-      `;
+		// A compact, deduplicated view for fast reads without FINAL
+		// Keeps the most recent y per unique (market_identifier, timeframe, ts, x)
+		// Ensure we can safely change schema on re-runs
+		await clickhouse.query({ query: `DROP VIEW IF EXISTS mv_scatter_points_to_dedup` });
+		await clickhouse.query({ query: `DROP TABLE IF EXISTS scatter_points_dedup` });
 
-      await clickhouse.query({ query: createTableQuery });
-      console.log(`✅ Table vamm_ohlcv_${tf.name} created`);
-    }
+		const createScatterAgg = `
+			CREATE TABLE scatter_points_dedup (
+				market_id LowCardinality(String),
+				timeframe LowCardinality(String),
+				ts DateTime64(3, 'UTC'),
+				x Float64,
+				latest_y AggregateFunction(argMax, Float64, UInt32)
+			)
+			ENGINE = AggregatingMergeTree()
+			PARTITION BY toYYYYMM(ts)
+			ORDER BY (market_id, timeframe, ts, x)
+			SETTINGS index_granularity = 8192
+		`;
+		await clickhouse.query({ query: createScatterAgg });
+		console.log("✅ scatter_points_dedup created");
 
-    // Create raw transactions table
-    console.log("📝 Creating raw transactions table...");
-    const transactionsTableQuery = `
-      CREATE TABLE IF NOT EXISTS vamm_market_transactions (
-        market_id UInt64,
-        market_symbol String,
-        contract_address String,
-        timestamp DateTime,
-        block_number UInt64,
-        transaction_hash String,
-        price Float64,
-        size Float64,
-        fee Float64,
-        user_address String,
-        is_long UInt8,
-        event_type String
-      )
-      ENGINE = MergeTree()
-      ORDER BY (market_id, timestamp)
-    `;
-
-    await clickhouse.query({ query: transactionsTableQuery });
-    console.log("✅ Raw transactions table created");
-
-    // Create market metadata table
-    console.log("📋 Creating market metadata table...");
-    const marketMetaQuery = `
-      CREATE TABLE IF NOT EXISTS vamm_market_metadata (
-        market_symbol String,
-        market_name String,
-        contract_address String,
-        base_currency String,
-        quote_currency String,
-        created_at DateTime,
-        is_active UInt8
-      )
-      ENGINE = MergeTree()
-      ORDER BY market_symbol
-    `;
-
-    await clickhouse.query({ query: marketMetaQuery });
-    console.log("✅ Market metadata table created");
+		// Materialized view to feed the dedup table
+		const createScatterMV = `
+			CREATE MATERIALIZED VIEW IF NOT EXISTS mv_scatter_points_to_dedup
+			TO scatter_points_dedup
+			AS
+			SELECT
+				assumeNotNull(market_id) AS market_id,
+				timeframe,
+				ts,
+				x,
+				argMaxState(y, version) AS latest_y
+			FROM scatter_points_raw
+			WHERE market_id IS NOT NULL AND market_id != ''
+			GROUP BY
+				market_id, timeframe, ts, x
+		`;
+		await clickhouse.query({ query: createScatterMV });
+		console.log("✅ mv_scatter_points_to_dedup created");
 
     console.log("\n🎉 All ClickHouse tables created successfully!");
     console.log("📝 Ready to insert sample data...");
+		console.log("ℹ️  Scatter insert hint:");
+		console.log(
+			"INSERT INTO scatter_points_raw (market_identifier, metric_name, timeframe, ts, x, y, source, version) VALUES ('E', 'Energy Index', '5m', now64(3), 123.0, 101.23, 'frontend', 1)"
+		);
+		console.log(
+			"Reads: SELECT market_identifier, timeframe, ts, x, argMaxMerge(latest_y) AS y FROM scatter_points_dedup GROUP BY ALL ORDER BY ts, x"
+		);
   } catch (error) {
     console.error("❌ Failed to create ClickHouse tables:", error);
     throw error;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export interface MarketOverviewRow {
@@ -48,19 +48,26 @@ export function useMarketOverview({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Create a stable, serialized representation of status to avoid effect loops
+  const serializedStatus = useMemo(() => {
+    if (!status) return '';
+    if (Array.isArray(status)) {
+      // Sort to ensure stability across equivalent arrays with different orders
+      return status
+        .filter(Boolean)
+        .slice()
+        .sort()
+        .join(',');
+    }
+    return status;
+  }, [Array.isArray(status) ? [...(status as string[])].sort().join(',') : status]);
+
   async function fetchOverview() {
     try {
       setIsLoading(true);
       const params = new URLSearchParams();
       params.set('limit', String(limit));
-      if (status) {
-        if (Array.isArray(status)) {
-          const combined = status.filter(Boolean).join(',');
-          if (combined) params.set('status', combined);
-        } else {
-          params.set('status', status);
-        }
-      }
+      if (serializedStatus) params.set('status', serializedStatus);
       if (category) params.set('category', category);
       if (search) params.set('search', search);
 
@@ -79,14 +86,14 @@ export function useMarketOverview({
   useEffect(() => {
     fetchOverview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, status, category, search]);
+  }, [limit, serializedStatus, category, search]);
 
   useEffect(() => {
     if (!autoRefresh) return;
     const id = setInterval(fetchOverview, refreshInterval);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, refreshInterval, limit, status, category, search]);
+  }, [autoRefresh, refreshInterval, limit, serializedStatus, category, search]);
 
   // Debounced state updates for realtime data
   const [pendingUpdates, setPendingUpdates] = useState<Record<string, any>>({});

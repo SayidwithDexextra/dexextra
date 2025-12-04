@@ -72,7 +72,8 @@ function summarizeData(data?: Record<string, any>) {
   if (data.missingCount != null) parts.push(`missing=${data.missingCount}`);
   if (data.nonce != null) parts.push(`nonce=${data.nonce}`);
   if (Array.isArray((data as any).cutSummary)) parts.push(`facets=${(data as any).cutSummary.length}`);
-  if ((data as any).balanceEth != null) parts.push(`bal=${(data as any).balanceEth}`);
+  if ((data as any).payer) parts.push(`payer=${shortAddr((data as any).payer)}`);
+  if ((data as any).spent) parts.push(`spent=${(data as any).spent} ${(data as any).nativeSymbol || getNativeTokenSymbol()}`);
   if (data.error) parts.push(`error=${trunc(data.error, 100)}`);
   return parts.length ? ` — ${parts.join(' ')}` : '';
 }
@@ -86,6 +87,33 @@ const COLORS = {
   cyan: '\x1b[36m',
   yellow: '\x1b[33m',
 };
+
+function getNativeTokenSymbol(): string {
+  return (
+    process.env.NATIVE_TOKEN_SYMBOL ||
+    (process.env as any).NEXT_PUBLIC_NATIVE_TOKEN_SYMBOL ||
+    'HYPE'
+  );
+}
+
+async function computeTxSpend(provider: any, payer: string, receipt: any): Promise<Record<string, any>> {
+  try {
+    const bnRaw = (receipt && (receipt.blockNumber as any)) ?? 0;
+    const bn = typeof bnRaw === 'bigint' ? Number(bnRaw) : Number(bnRaw || 0);
+    const before = await provider.getBalance(payer, bn > 0 ? bn - 1 : bn);
+    const after = await provider.getBalance(payer, bn);
+    const spent = (typeof before === 'bigint' && typeof after === 'bigint' && before > after) ? (before - after) : 0n;
+    return {
+      payer,
+      nativeSymbol: getNativeTokenSymbol(),
+      balanceBefore: ethers.formatEther(before),
+      balanceAfter: ethers.formatEther(after),
+      spent: ethers.formatEther(spent),
+    };
+  } catch {
+    return { payer, nativeSymbol: getNativeTokenSymbol() };
+  }
+}
 
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
@@ -187,6 +215,14 @@ async function createNonceManager(signer: ethers.Wallet) {
       const ov: any = { ...fee, nonce: next };
       next += 1;
       return ov;
+    },
+    async resync() {
+      // Resynchronize local nonce with provider pending nonce to recover from NONCE_EXPIRED
+      next = await signer.provider!.getTransactionCount(address, 'pending');
+      return next;
+    },
+    async peek() {
+      return next;
     }
   } as const;
 }
@@ -247,8 +283,8 @@ export async function POST(req: Request) {
 
     // Env configuration
     const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
-    // Use ADMIN wallet specifically for factory creation (gasless or legacy)
-    const pk = process.env.ADMIN_PRIVATE_KEY || process.env.ROLE_ADMIN_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    // Use a single required admin key for all on-chain actions in this route
+    const pk = process.env.ADMIN_PRIVATE_KEY;
     const factoryAddress = process.env.FUTURES_MARKET_FACTORY_ADDRESS || (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS;
     const initFacet = process.env.ORDER_BOOK_INIT_FACET || (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET;
     const adminFacet = process.env.OB_ADMIN_FACET || (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET;
@@ -517,7 +553,15 @@ export async function POST(req: Request) {
       logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash, nonce: (tx as any)?.nonce });
       logS('factory_confirm_meta', 'start');
       receipt = await tx.wait();
-      logS('factory_confirm_meta_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
+      {
+        const payer = (tx as any)?.from || (await (wallet as any).getAddress?.());
+        const spend = await computeTxSpend(provider, payer, receipt);
+        logS('factory_confirm_meta_mined', 'success', {
+        hash: receipt?.hash || tx.hash,
+        block: receipt?.blockNumber,
+          ...spend,
+        });
+      }
     } else {
       // Legacy direct create (relayer submits and pays gas)
       // Static call for revert reasons
@@ -564,7 +608,15 @@ export async function POST(req: Request) {
       // Confirm
       logS('factory_confirm', 'start');
       receipt = await tx.wait();
-      logS('factory_confirm_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
+      {
+        const payer = (tx as any)?.from || (await (wallet as any).getAddress?.());
+        const spend = await computeTxSpend(provider, payer, receipt);
+        logS('factory_confirm_mined', 'success', {
+        hash: receipt?.hash || tx.hash,
+        block: receipt?.blockNumber,
+          ...spend,
+        });
+      }
     }
 
     // Confirm
@@ -621,8 +673,14 @@ export async function POST(req: Request) {
       const ov = await nonceMgr.nextOverrides();
       const txCut = await diamondCut.diamondCut(cut as any, ethers.ZeroAddress, '0x', ov as any);
       logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
-      await txCut.wait();
-      logS('ensure_selectors_diamondCut_mined', 'success');
+      const rc = await txCut.wait();
+      {
+        const payer = (txCut as any)?.from || (await (wallet as any).getAddress?.());
+        const spend = await computeTxSpend(provider, payer, rc);
+        logS('ensure_selectors_diamondCut_mined', 'success', {
+          ...spend,
+        });
+      }
     } else {
       logS('ensure_selectors', 'success', { message: 'All placement selectors present' });
     }
@@ -639,18 +697,9 @@ export async function POST(req: Request) {
       if (!registryAddress || !ethers.isAddress(registryAddress)) {
         logS('attach_session_registry', 'error', { error: 'Missing SESSION_REGISTRY_ADDRESS' });
       } else {
-        // Prefer a dedicated registry-owner signer if provided
+        // Use the same ADMIN_PRIVATE_KEY for the registry allowlist step
         const registryPk =
-          process.env.SESSION_REGISTRY_OWNER_PRIVATE_KEY ||
-          (process.env as any).REGISTRY_OWNER_PRIVATE_KEY ||
-          process.env.RELAYER_PRIVATE_KEY || // fallback (may not have permission)
-          (process.env as any).NEXT_PUBLIC_RELAYER_PRIVATE_KEY ||
-          (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_OWNER_PRIVATE_KEY ||
-          (process.env as any).NEXT_PUBLIC_REGISTRY_OWNER_PRIVATE_KEY ||
-          (process.env as any).REGISTRY_SIGNER_PRIVATE_KEY ||
-          (process.env as any).REGISTRY_SIGNER_PK ||
-          (process.env as any).SESSION_REGISTRY_SIGNER_PRIVATE_KEY ||
-          (process.env as any).SESSION_REGISTRY_SIGNER_PK ||
+          process.env.ADMIN_PRIVATE_KEY ||
           null;
         const regWallet = registryPk ? new ethers.Wallet(registryPk, provider) : wallet;
         const regNonceMgr = await createNonceManager(regWallet as any);
@@ -665,11 +714,20 @@ export async function POST(req: Request) {
           const registry = new ethers.Contract(registryAddress, regAbi, regWallet);
           const allowed: boolean = await registry.allowedOrderbook(orderBook);
           if (!allowed) {
-            const ovAllow = await regNonceMgr.nextOverrides();
+            // Some RPCs require balance sufficient for block gas limit during estimateGas.
+            // Provide a conservative gasLimit to bypass over-aggressive balance checks.
+            const ovAllow = { ...(await regNonceMgr.nextOverrides()), gasLimit: 300000n };
             const txAllow = await registry.setAllowedOrderbook(orderBook, true, ovAllow as any);
             logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
-            await txAllow.wait();
-            logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook' });
+            const rAllow = await txAllow.wait();
+            {
+              const payer = (txAllow as any)?.from || (await (regWallet as any).getAddress?.());
+              const spend = await computeTxSpend(provider, payer, rAllow);
+              logS('attach_session_registry_mined', 'success', {
+                action: 'allow_orderbook',
+                ...spend,
+              });
+            }
           } else {
             logS('attach_session_registry', 'success', { message: 'OrderBook already allowed', action: 'allow_orderbook' });
           }
@@ -683,11 +741,37 @@ export async function POST(req: Request) {
           const meta = new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, wallet);
           const current = await meta.sessionRegistry();
           if (!current || String(current).toLowerCase() !== String(registryAddress).toLowerCase()) {
-            const ov = await nonceMgr.nextOverrides();
-            const txSet = await meta.setSessionRegistry(registryAddress, ov);
+            // Also provide explicit gasLimit here to avoid estimateGas balance gating on some RPCs.
+            const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
+            let txSet: ethers.TransactionResponse;
+            try {
+              txSet = await meta.setSessionRegistry(registryAddress, ov);
+            } catch (err: any) {
+              const raw = String(err?.info?.error?.message || err?.shortMessage || err?.message || '').toLowerCase();
+              const isNonceIssue =
+                err?.code === 'NONCE_EXPIRED' ||
+                raw.includes('nonce too low') ||
+                raw.includes('nonce has already been used');
+              if (isNonceIssue) {
+                // Re-sync nonce and retry once
+                const fresh = await nonceMgr.resync();
+                logS('attach_session_registry', 'start', { action: 'retry_resynced_nonce', freshNonce: fresh });
+                const ovRetry = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
+                txSet = await meta.setSessionRegistry(registryAddress, ovRetry);
+              } else {
+                throw err;
+              }
+            }
             logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry' });
-            await txSet.wait();
-            logS('attach_session_registry_mined', 'success', { action: 'set_session_registry' });
+            const rSet = await txSet.wait();
+            {
+              const payer = (txSet as any)?.from || (await (wallet as any).getAddress?.());
+              const spend = await computeTxSpend(provider, payer, rSet);
+              logS('attach_session_registry_mined', 'success', {
+                action: 'set_session_registry',
+                ...spend,
+              });
+            }
           } else {
             logS('attach_session_registry', 'success', { message: 'Session registry already set', action: 'set_session_registry' });
           }
@@ -709,12 +793,28 @@ export async function POST(req: Request) {
       const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
       logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash, nonce: (tx1 as any)?.nonce });
       const r1 = await tx1.wait();
-      logS('grant_ORDERBOOK_ROLE_mined', 'success', { tx: r1?.hash || tx1.hash, blockNumber: r1?.blockNumber });
+      {
+        const payer1 = (tx1 as any)?.from || (await (wallet as any).getAddress?.());
+        const spend1 = await computeTxSpend(provider, payer1, r1);
+        logS('grant_ORDERBOOK_ROLE_mined', 'success', {
+          tx: r1?.hash || tx1.hash,
+          blockNumber: r1?.blockNumber,
+          ...spend1,
+        });
+      }
       const ov2 = await nonceMgr.nextOverrides();
       const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
       logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash, nonce: (tx2 as any)?.nonce });
       const r2 = await tx2.wait();
-      logS('grant_SETTLEMENT_ROLE_mined', 'success', { tx: r2?.hash || tx2.hash, blockNumber: r2?.blockNumber });
+      {
+        const payer2 = (tx2 as any)?.from || (await (wallet as any).getAddress?.());
+        const spend2 = await computeTxSpend(provider, payer2, r2);
+        logS('grant_SETTLEMENT_ROLE_mined', 'success', {
+          tx: r2?.hash || tx2.hash,
+          blockNumber: r2?.blockNumber,
+          ...spend2,
+        });
+      }
       logS('grant_roles', 'success');
     } catch (e: any) {
       logS('grant_roles', 'error', { error: extractError(e) });
@@ -722,6 +822,37 @@ export async function POST(req: Request) {
     }
 
     // Removed: Immediate trading parameter updates to shorten deployment time
+
+    // Final verification: Inspect GASless readiness (session registry + allowlist + selectors + roles)
+    // Non-blocking per user requirement: continue save, but record status in Supabase
+    let inspectReport: any | null = null;
+    try {
+      logS('inspect_gasless', 'start', { orderBook });
+      const baseUrl = process.env.APP_URL || 'http://localhost:3000';
+      const resp = await fetch(`${baseUrl}/api/markets/inspect-gasless`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderBook, pipelineId }),
+        cache: 'no-store',
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        logS('inspect_gasless', 'error', { status: resp.status, error: err?.error || 'inspect failed' });
+      } else {
+        const report = await resp.json();
+        inspectReport = report;
+        const pass = Number(report?.summary?.pass || 0);
+        const total = Number(report?.summary?.total || 0);
+        const failed = Array.isArray(report?.checks) ? report.checks.filter((c: any) => !c?.pass).map((c: any) => c?.name) : [];
+        if (pass !== total) {
+          logS('inspect_gasless', 'error', { pass, total, failed });
+        } else {
+          logS('inspect_gasless', 'success', { pass, total });
+        }
+      }
+    } catch (e: any) {
+      logS('inspect_gasless', 'error', { error: e?.message || String(e) });
+    }
 
     // Save to Supabase
     let archivedWaybackUrl: string | null = null;

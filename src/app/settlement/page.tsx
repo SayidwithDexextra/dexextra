@@ -192,21 +192,53 @@ export default function SettlementPage() {
       } catch {}
 
       const metric = selectedMarket.market_identifier || selectedMarket.symbol;
-      const response = await fetch('/api/resolve-metric-fast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          metric,
-          description: `Propose final settlement price for ${selectedMarket.symbol}`,
-          urls
-        })
-      });
-      if (!response.ok) {
-        const j = await response.json().catch(() => ({} as any));
-        throw new Error(j?.error || 'AI analysis failed');
+      // Use external worker with polling to avoid blocking
+      const workerUrl =
+        (process.env as any).NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
+        (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
+        '';
+      let resolution: any = null;
+      if (workerUrl) {
+        try {
+          const resStart = await fetch(`${workerUrl}/api/metric-ai`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              metric,
+              description: `Propose final settlement price for ${selectedMarket.symbol}`,
+              urls,
+              related_market_id: selectedMarket.id,
+              context: 'settlement',
+            }),
+          });
+          if (resStart.status !== 202) {
+            const j = await resStart.json().catch(() => ({} as any));
+            throw new Error(j?.error || 'Worker start failed');
+          }
+          const startJson = await resStart.json().catch(() => ({} as any));
+          const jobId = String(startJson?.jobId || '');
+          const startTs = Date.now();
+          const timeoutMs = 15000;
+          while (Date.now() - startTs < timeoutMs) {
+            await new Promise(r => setTimeout(r, 1500));
+            const resStatus = await fetch(`${workerUrl}/api/metric-ai?jobId=${encodeURIComponent(jobId)}`, { cache: 'no-store' });
+            const st = await resStatus.json().catch(() => ({} as any));
+            if (st?.status === 'completed' && st?.result) {
+              resolution = st.result;
+              break;
+            }
+            if (st?.status === 'failed') {
+              break;
+            }
+          }
+        } catch (e: any) {
+          // fallback keeps resolution null
+          console.warn('[settlement] worker analysis failed', e?.message || String(e));
+        }
       }
-      const data = await response.json();
-      const resolution = data?.data || {};
+      if (!resolution) {
+        throw new Error('AI analysis did not return a result in time');
+      }
       const suggestion = resolution?.asset_price_suggestion || resolution?.value;
       if (!suggestion || isNaN(Number(suggestion))) {
         throw new Error('AI did not return a valid price suggestion');

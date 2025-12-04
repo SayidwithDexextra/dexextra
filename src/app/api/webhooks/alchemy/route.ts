@@ -9,6 +9,8 @@ import { env } from '@/lib/env'
 import { getClickHouseDataPipeline } from '@/lib/clickhouse-client'
 import { getPusherServer } from '@/lib/pusher-server'
 import { CONTRACTS } from '@/lib/contracts'
+import { ethers } from 'ethers'
+import { createClient as createSbClient } from '@supabase/supabase-js'
 
 // Ensure Node.js runtime on Vercel (uses Node crypto, ethers, ClickHouse client)
 export const runtime = 'nodejs'
@@ -36,6 +38,104 @@ const pusherServer = getPusherServer();
 
 // In-memory set to track processed events (to prevent duplicates during the session)
 const processedEvents = new Set<string>();
+
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !key) return null;
+  return createSbClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+/**
+ * Debug helper: log bridge config and on-chain checks for spoke outbox → hub inbox delivery.
+ * Focus: why sendDeposit may revert when called from edge.
+ */
+async function logBridgeConfigDebug() {
+  try {
+    const polygonRpcUrl =
+      process.env.POLYGON_RPC_URL ||
+      process.env.MUMBAI_RPC_URL ||
+      process.env.ALCHEMY_POLYGON_RPC_URL ||
+      process.env.RPC_URL; // last resort
+
+    const outbox = process.env.SPOKE_OUTBOX_ADDRESS;
+    const hubInbox = process.env.HUB_INBOX_ADDRESS;
+    const domainHub = process.env.BRIDGE_DOMAIN_HUB || '999';
+    const relayerPk = process.env.RELAYER_PRIVATE_KEY;
+    const dstDomainNum = Number(domainHub);
+
+    const account =
+      relayerPk && relayerPk.startsWith('0x') && relayerPk.length === 66
+        ? new ethers.Wallet(relayerPk)
+        : null;
+
+    const provider =
+      polygonRpcUrl && polygonRpcUrl.startsWith('http')
+        ? new ethers.JsonRpcProvider(polygonRpcUrl)
+        : null;
+
+    let chainId: number | null = null;
+    try {
+      if (provider) {
+        const net = await provider.getNetwork();
+        chainId = Number(net.chainId);
+      }
+    } catch (_) {}
+
+    // On-chain checks (optional)
+    let hasSenderRole: boolean | null = null;
+    let configuredRemoteApp: string | null = null;
+    try {
+      if (provider && outbox && ethers.isAddress(outbox) && account) {
+        const abi = [
+          'function hasRole(bytes32 role, address account) view returns (bool)',
+          'function remoteAppByDomain(uint64) view returns (bytes32)',
+        ];
+        const contract = new ethers.Contract(outbox, abi, provider);
+        const DEPOSIT_SENDER_ROLE = ethers.keccak256(
+          ethers.toUtf8Bytes('DEPOSIT_SENDER_ROLE')
+        );
+        hasSenderRole = await contract.hasRole(
+          DEPOSIT_SENDER_ROLE,
+          account.address
+        );
+        const remote = await contract.remoteAppByDomain(dstDomainNum);
+        configuredRemoteApp = String(remote);
+      }
+    } catch (e: any) {
+      // swallow to avoid breaking webhook path
+      configuredRemoteApp = `check_failed: ${e?.message || String(e)}`;
+    }
+
+    // Compute bytes32(hubInbox)
+    let hubInboxBytes32: string | null = null;
+    try {
+      if (hubInbox && ethers.isAddress(hubInbox)) {
+        const hex = hubInbox.toLowerCase().replace(/^0x/, '');
+        hubInboxBytes32 = '0x' + '0'.repeat(24) + hex;
+      }
+    } catch {}
+
+    console.log('[alchemy-deposit-webhook][debug][bridge-config]', {
+      polygonRpcUrlSet: !!polygonRpcUrl,
+      polygonRpcUrl,
+      outbox,
+      hubInbox,
+      hubInboxBytes32,
+      domainHub: dstDomainNum,
+      relayerPkSet: !!relayerPk,
+      relayerAddress: account?.address || null,
+      providerChainId: chainId,
+      hasSenderRole,
+      remoteAppByDomain999: configuredRemoteApp,
+    });
+  } catch (e) {
+    console.log(
+      '[alchemy-deposit-webhook][debug][bridge-config] error',
+      (e as any)?.message || String(e)
+    );
+  }
+}
 
 /**
  * Generate trade data from Order Book style events for ClickHouse
@@ -184,6 +284,36 @@ async function generateTickFromVAMMEvent(event: SmartContractEvent): Promise<voi
       return;
     }
 
+    // Resolve Supabase market UUID (and try to infer numeric on-chain market id if present)
+    let marketUuid: string | undefined;
+    let numericMarketId: number = 0;
+    try {
+      const sb = getSupabase();
+      if (sb) {
+        // Prefer matching by contract address
+        const { data: m1, error: e1 } = await sb
+          .from('markets')
+          .select('id, market_address')
+          .eq('market_address', String(event.contractAddress).toLowerCase())
+          .limit(1)
+          .maybeSingle();
+        if (!e1 && m1?.id) {
+          marketUuid = String(m1.id);
+        } else {
+          // Fallback to symbol match
+          const { data: m2 } = await sb
+            .from('markets')
+            .select('id')
+            .ilike('symbol', String(symbol).toUpperCase())
+            .limit(1)
+            .maybeSingle();
+          if (m2?.id) {
+            marketUuid = String(m2.id);
+          }
+        }
+      }
+    } catch {}
+
     // Generate tick for ClickHouse
     const tick: VammTick = {
       symbol: symbol.toUpperCase(),
@@ -192,8 +322,9 @@ async function generateTickFromVAMMEvent(event: SmartContractEvent): Promise<voi
       size,
       event_type: event.eventType,
       is_long: isLong,
-      market_id: 0, // TODO: implement proper market ID mapping
+      market_id: numericMarketId,
       contract_address: event.contractAddress,
+      market_uuid: marketUuid
     };
 
     // Insert tick immediately for serverless safety
@@ -258,6 +389,9 @@ export async function POST(request: NextRequest) {
     const signature = request.headers.get('x-alchemy-signature');
     
      console.log('📨 Received Alchemy webhook, processing...');
+
+    // Bridge debug snapshot (helps diagnose sendDeposit issues)
+    await logBridgeConfigDebug();
 
     // Verify webhook signature in production
     if (env.NODE_ENV === 'production' && process.env.ALCHEMY_WEBHOOK_SIGNING_KEY && signature) {

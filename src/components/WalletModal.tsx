@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import useWallet from '@/hooks/useWallet'
 import { debugWalletDetection } from '@/lib/wallet'
 
@@ -126,6 +127,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const [isRefreshing, setIsRefreshing] = useState(false)
 
   if (!isOpen) return null
+  if (typeof document === 'undefined') return null
 
   const handleConnect = async (providerName: string) => {
     setConnecting(providerName)
@@ -167,7 +169,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const notInstalledWallets = providers.filter(p => !p.isInstalled)
   const topWallets = [...installedWallets, ...notInstalledWallets].slice(0, 6)
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Sophisticated Backdrop with Subtle Gradient */}
       <div 
@@ -412,6 +414,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 } 
