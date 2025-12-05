@@ -731,8 +731,8 @@ contract OBOrderPlacementFacet {
     }
 
     function _onOrderBookLiquidityChanged() private {
-        // Use dedicated interface for poke; ignore failures
-        try IOBLiquidationFacet(address(this)).pokeLiquidations() { } catch { }
+        // Propagate any scan failures so they surface in logs
+        IOBLiquidationFacet(address(this)).pokeLiquidations();
     }
 }
 

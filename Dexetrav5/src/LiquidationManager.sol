@@ -54,6 +54,9 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     mapping(bytes32 => uint256) public marketMarkPrices;
     mapping(bytes32 => uint256) public marketBadDebt;
 
+    mapping(bytes32 => address[]) internal marketUsers;
+    mapping(bytes32 => mapping(address => uint256)) internal marketUserIndex;
+
     uint256 public baseMmrBps = 1000;
     uint256 public penaltyMmrBps = 1000;
     uint256 public maxMmrBps = 2000;
@@ -111,6 +114,12 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         bool isLong;
     }
 
+    struct WinnerCache {
+        uint256 notional6;
+        uint256 capacity6;
+    }
+
+
     struct PositionClosureResult {
         bool success;
         uint256 realizedProfit;
@@ -162,6 +171,10 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
             if (positions[i].marketId == marketId && positions[i].size != 0) {
                 if (isUnderLiquidationPosition[user][marketId]) { return true; }
                 uint256 trigger = positions[i].liquidationPrice;
+                if (positions[i].size < 0 && trigger == 0) {
+                    _recomputeAndStoreLiquidationPrice(user, marketId);
+                    trigger = positions[i].liquidationPrice;
+                }
                 if (trigger == 0) {
                     uint256 absSize = uint256(positions[i].size >= 0 ? positions[i].size : -positions[i].size);
                     if (markPrice == 0 || absSize == 0) { return false; }
@@ -193,6 +206,10 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         for (uint256 i = 0; i < positions.length; i++) {
             if (positions[i].marketId == marketId && positions[i].size != 0) {
                 uint256 trigger = positions[i].liquidationPrice;
+                if (positions[i].size < 0 && trigger == 0) {
+                    _recomputeAndStoreLiquidationPrice(user, marketId);
+                    trigger = positions[i].liquidationPrice;
+                }
                 uint256 oneTick = 1;
                 bool usedFallback = false;
                 uint256 notional6 = 0;
@@ -392,6 +409,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                 positions.pop();
 
                 _removeMarketIdFromUser(user, marketId);
+                isUnderLiquidationPosition[user][marketId] = false;
                 liquidationAnchorPrice[user][marketId] = 0;
                 liquidationAnchorTimestamp[user][marketId] = 0;
 
@@ -465,6 +483,9 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                 positions.pop();
 
                 _removeMarketIdFromUser(user, marketId);
+                isUnderLiquidationPosition[user][marketId] = false;
+                liquidationAnchorPrice[user][marketId] = 0;
+                liquidationAnchorTimestamp[user][marketId] = 0;
                 // Notify OrderBook removed to avoid external calls here; OB syncs via events/trade flow
                 
                 if (realizedPnL != 0) { userRealizedPnL[user] += realizedPnL; }
@@ -572,7 +593,6 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                     liquidationAnchorTimestamp[user][marketId] = 0;
                 } else {
                     isUnderLiquidationPosition[user][marketId] = true;
-                    positions[i].liquidationPrice = 0;
                 }
 
                 if (newSize != 0) {
@@ -580,6 +600,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                     uint256 lockedReduction = oldLocked > newLocked ? (oldLocked - newLocked) : 0;
                     positions[i].marginLocked = newLocked;
                     if (lockedReduction > 0 && lockedReduction <= totalMarginLocked) { totalMarginLocked -= lockedReduction; }
+                    _recomputeAndStoreLiquidationPrice(user, marketId);
                 }
 
                 int256 realizedPnL = 0;
@@ -680,143 +701,189 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         address liquidatedUser
     ) internal {
         require(lossAmount > 0, "Loss amount must be positive");
-        if (adlDebug) { emit SocializationStarted(marketId, lossAmount, liquidatedUser, block.timestamp); }
-        ProfitablePosition[] memory profitablePositions = _findProfitablePositions(marketId, liquidatedUser);
-        if (profitablePositions.length == 0) {
-            marketBadDebt[marketId] += lossAmount;
-            emit SocializationFailed(marketId, lossAmount, "No profitable positions found", liquidatedUser);
-            emit BadDebtRecorded(marketId, lossAmount, liquidatedUser);
-            emit SocializedLossApplied(marketId, 0, liquidatedUser);
+        if (adlDebug) emit SocializationStarted(marketId, lossAmount, liquidatedUser, block.timestamp);
+
+        ProfitablePosition[] memory winners = _findProfitablePositions(marketId, liquidatedUser);
+        if (winners.length == 0) {
+            _handleSocializationFailure(marketId, lossAmount, "No profitable positions found", liquidatedUser);
             return;
         }
-        if (profitablePositions.length > adlMaxCandidates) {
-            ProfitablePosition[] memory topK = _selectTopKByProfitScore(profitablePositions, adlMaxCandidates);
-            profitablePositions = topK;
-        }
+
         uint256 markPrice = getMarkPrice(marketId);
         if (markPrice == 0) {
-            marketBadDebt[marketId] += lossAmount;
-            emit SocializationFailed(marketId, lossAmount, "Zero mark price", liquidatedUser);
-            emit BadDebtRecorded(marketId, lossAmount, liquidatedUser);
-            emit SocializedLossApplied(marketId, 0, liquidatedUser);
+            _handleSocializationFailure(marketId, lossAmount, "Zero mark price", liquidatedUser);
             return;
         }
-        uint256 n = profitablePositions.length;
-        uint256[] memory notionals6 = new uint256[](n);
-        uint256 totalNotional6 = 0;
-        for (uint256 i = 0; i < n; i++) {
-            uint256 absSize = uint256(profitablePositions[i].positionSize >= 0 ? profitablePositions[i].positionSize : -profitablePositions[i].positionSize);
-            uint256 notional6 = (absSize * markPrice) / 1e18;
-            notionals6[i] = notional6;
-            totalNotional6 += notional6;
-        }
+
+        (WinnerCache[] memory cache, uint256 totalNotional6) = _buildWinnerCache(winners, marketId, markPrice);
         if (totalNotional6 == 0) {
-            marketBadDebt[marketId] += lossAmount;
-            emit SocializationFailed(marketId, lossAmount, "Zero total notional", liquidatedUser);
-            emit BadDebtRecorded(marketId, lossAmount, liquidatedUser);
-            emit SocializedLossApplied(marketId, 0, liquidatedUser);
+            _handleSocializationFailure(marketId, lossAmount, "Zero total notional", liquidatedUser);
             return;
         }
-        uint256[] memory targetAssign = new uint256[](n);
-        for (uint256 i2 = 0; i2 < n; i2++) { targetAssign[i2] = (lossAmount * notionals6[i2]) / totalNotional6; }
-        uint256 allocated = 0;
-        uint256[] memory remainingCap = new uint256[](n);
-        for (uint256 i3 = 0; i3 < n; i3++) {
-            address u = profitablePositions[i3].user;
-            PositionManager.Position[] storage positions2 = userPositions[u];
-            for (uint256 j = 0; j < positions2.length; j++) {
-                if (positions2[j].marketId == marketId && positions2[j].size != 0) {
-                    uint256 absSize2 = uint256(positions2[j].size >= 0 ? positions2[j].size : -positions2[j].size);
-                    uint256 notional62 = (absSize2 * markPrice) / 1e18;
-                    int256 pnl18 = (int256(markPrice) - int256(positions2[j].entryPrice)) * positions2[j].size / int256(TICK_PRECISION);
-                    int256 pnl6 = pnl18 / int256(DECIMAL_SCALE);
-                    int256 equity6 = int256(positions2[j].marginLocked) + pnl6;
-                    (uint256 mmrBps, ) = _computeEffectiveMMRBps(u, marketId, positions2[j].size);
-                    uint256 maintenance6 = (notional62 * mmrBps) / 10000;
-                    uint256 cap6 = 0;
-                    if (equity6 > int256(maintenance6)) {
-                        uint256 excess = uint256(equity6 - int256(maintenance6));
-                        cap6 = excess;
-                    }
-                    uint256 assign = targetAssign[i3] <= cap6 ? targetAssign[i3] : cap6;
-                    if (assign > 0) {
-                        positions2[j].socializedLossAccrued6 += assign;
-                        uint256 absSizeUnits18 = absSize2;
-                        if (markPrice > 0) {
-                            uint256 unitsTagged18 = (assign * (10**18)) / markPrice;
-                            uint256 currentTagged18 = positions2[j].haircutUnits18;
-                            uint256 untaggedCapacity18 = absSizeUnits18 > currentTagged18 ? (absSizeUnits18 - currentTagged18) : 0;
-                            if (unitsTagged18 > untaggedCapacity18) { unitsTagged18 = untaggedCapacity18; }
-                            if (unitsTagged18 > 0) { positions2[j].haircutUnits18 = currentTagged18 + unitsTagged18; }
-                        }
-                        userSocializedLoss[u] += assign;
-                        allocated += assign;
-                        emit HaircutApplied(u, marketId, assign, userCollateral[u]);
-                    }
-                    remainingCap[i3] = cap6 > assign ? (cap6 - assign) : 0;
-                    break;
-                }
-            }
-        }
-        uint256 remaining = lossAmount > allocated ? (lossAmount - allocated) : 0;
-        if (remaining > 0) {
-            for (uint256 i4 = 0; i4 < n && remaining > 0; i4++) {
-                if (remainingCap[i4] == 0) continue;
-                address u2 = profitablePositions[i4].user;
-                PositionManager.Position[] storage positions3 = userPositions[u2];
-                for (uint256 j2 = 0; j2 < positions3.length && remaining > 0; j2++) {
-                    if (positions3[j2].marketId == marketId && positions3[j2].size != 0) {
-                        uint256 addl = remaining <= remainingCap[i4] ? remaining : remainingCap[i4];
-                        if (addl > 0) {
-                            positions3[j2].socializedLossAccrued6 += addl;
-                            uint256 absSizeUnits18b = uint256(positions3[j2].size >= 0 ? positions3[j2].size : -positions3[j2].size);
-                            if (markPrice > 0) {
-                                uint256 unitsTagged18b = (addl * (10**18)) / markPrice;
-                                uint256 currentTagged18b = positions3[j2].haircutUnits18;
-                                uint256 untaggedCapacity18b = absSizeUnits18b > currentTagged18b ? (absSizeUnits18b - currentTagged18b) : 0;
-                                if (unitsTagged18b > untaggedCapacity18b) { unitsTagged18b = untaggedCapacity18b; }
-                                if (unitsTagged18b > 0) { positions3[j2].haircutUnits18 = currentTagged18b + unitsTagged18b; }
-                            }
-                            userSocializedLoss[u2] += addl;
-                            remaining -= addl;
-                            allocated += addl;
-                            emit HaircutApplied(u2, marketId, addl, userCollateral[u2]);
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        if (remaining > 0) {
+
+        uint256 allocated = _allocateHaircuts(marketId, markPrice, lossAmount, winners, cache, totalNotional6);
+
+        if (allocated < lossAmount) {
+            uint256 remaining = lossAmount - allocated;
             marketBadDebt[marketId] += remaining;
             emit BadDebtRecorded(marketId, remaining, liquidatedUser);
             emit SocializationFailed(marketId, remaining, "Insufficient winner capacity for haircut", liquidatedUser);
         }
-        if (adlDebug) { emit SocializationCompleted(marketId, allocated, remaining, n, liquidatedUser); }
+
+        if (adlDebug) emit SocializationCompleted(marketId, allocated, lossAmount > allocated ? lossAmount - allocated : 0, winners.length, liquidatedUser);
         emit SocializedLossApplied(marketId, allocated, liquidatedUser);
     }
 
-    function _getUsersWithPositionsInMarket(bytes32 marketId) internal view returns (address[] memory) {
-        address[] memory tempUsers = new address[](allKnownUsers.length);
-        uint256 count = 0;
-        for (uint256 i = 0; i < allKnownUsers.length; i++) {
-            address user = allKnownUsers[i];
-            PositionManager.Position[] storage positions = userPositions[user];
-            for (uint256 j = 0; j < positions.length; j++) {
-                if (positions[j].marketId == marketId && positions[j].size != 0) {
-                    tempUsers[count] = user;
-                    count++;
-                    break;
+    function _handleSocializationFailure(
+        bytes32 marketId,
+        uint256 lossAmount,
+        string memory reason,
+        address liquidatedUser
+    ) private {
+        marketBadDebt[marketId] += lossAmount;
+        emit SocializationFailed(marketId, lossAmount, reason, liquidatedUser);
+        emit BadDebtRecorded(marketId, lossAmount, liquidatedUser);
+        emit SocializedLossApplied(marketId, 0, liquidatedUser);
+    }
+
+    function _buildWinnerCache(
+        ProfitablePosition[] memory winners,
+        bytes32 marketId,
+        uint256 markPrice
+    ) private view returns (WinnerCache[] memory cache, uint256 totalNotional6) {
+        cache = new WinnerCache[](winners.length);
+        uint256 mmrBps = baseMmrBps + penaltyMmrBps;
+        if (mmrBps > maxMmrBps) mmrBps = maxMmrBps;
+
+        for (uint256 i = 0; i < winners.length; i++) {
+            uint256 absSize = uint256(winners[i].positionSize >= 0 ? winners[i].positionSize : -winners[i].positionSize);
+            uint256 notional6 = (absSize * markPrice) / 1e18;
+            cache[i].notional6 = notional6;
+            totalNotional6 += notional6;
+            cache[i].capacity6 = _computeWinnerCapacity(winners[i].user, marketId, markPrice, notional6, mmrBps);
+        }
+    }
+
+    function _computeWinnerCapacity(
+        address user,
+        bytes32 marketId,
+        uint256 markPrice,
+        uint256 notional6,
+        uint256 mmrBps
+    ) private view returns (uint256) {
+        PositionManager.Position[] storage positions = userPositions[user];
+        for (uint256 i = 0; i < positions.length; i++) {
+            if (positions[i].marketId == marketId && positions[i].size != 0) {
+                int256 pnl18 = (int256(markPrice) - int256(positions[i].entryPrice)) * positions[i].size / int256(TICK_PRECISION);
+                int256 pnl6 = pnl18 / int256(DECIMAL_SCALE);
+                int256 equity6 = int256(positions[i].marginLocked) + pnl6;
+                uint256 maintenance6 = (notional6 * mmrBps) / 10000;
+                if (equity6 > int256(maintenance6)) {
+                    return uint256(equity6 - int256(maintenance6));
                 }
+                break;
             }
         }
-        address[] memory usersWithPositions = new address[](count);
-        for (uint256 k = 0; k < count; k++) { usersWithPositions[k] = tempUsers[k]; }
-        return usersWithPositions;
+        return 0;
+    }
+
+    function _allocateHaircuts(
+        bytes32 marketId,
+        uint256 markPrice,
+        uint256 lossAmount,
+        ProfitablePosition[] memory winners,
+        WinnerCache[] memory cache,
+        uint256 totalNotional6
+    ) private returns (uint256 allocated) {
+        uint256 remaining = lossAmount;
+        uint256 len = winners.length;
+
+        for (uint256 i = 0; i < len && remaining > 0; i++) {
+            uint256 target = (lossAmount * cache[i].notional6) / totalNotional6;
+            uint256 assign = target <= cache[i].capacity6 ? target : cache[i].capacity6;
+            if (assign == 0) continue;
+            _applyHaircutToPosition(winners[i].user, marketId, assign, markPrice);
+            cache[i].capacity6 -= assign;
+            allocated += assign;
+            remaining = lossAmount > allocated ? (lossAmount - allocated) : 0;
+        }
+
+        if (remaining > 0) {
+            for (uint256 i = 0; i < len && remaining > 0; i++) {
+                uint256 cap = cache[i].capacity6;
+                if (cap == 0) continue;
+                uint256 addl = remaining <= cap ? remaining : cap;
+                _applyHaircutToPosition(winners[i].user, marketId, addl, markPrice);
+                cache[i].capacity6 -= addl;
+                allocated += addl;
+                remaining -= addl;
+            }
+        }
+
+        return allocated;
+    }
+
+    function _applyHaircutToPosition(
+        address user,
+        bytes32 marketId,
+        uint256 amount,
+        uint256 markPrice
+    ) private {
+        PositionManager.Position[] storage positions = userPositions[user];
+        for (uint256 i = 0; i < positions.length; i++) {
+            if (positions[i].marketId == marketId && positions[i].size != 0) {
+                positions[i].socializedLossAccrued6 += amount;
+                uint256 absSize = uint256(positions[i].size >= 0 ? positions[i].size : -positions[i].size);
+                if (markPrice > 0) {
+                    uint256 unitsTagged = (amount * 1e18) / markPrice;
+                    uint256 tagged = positions[i].haircutUnits18;
+                    uint256 capacity = absSize > tagged ? (absSize - tagged) : 0;
+                    if (unitsTagged > capacity) unitsTagged = capacity;
+                    if (unitsTagged > 0) positions[i].haircutUnits18 = tagged + unitsTagged;
+                }
+                userSocializedLoss[user] += amount;
+                emit HaircutApplied(user, marketId, amount, userCollateral[user]);
+                break;
+            }
+        }
+    }
+
+
+    function _getUsersWithPositionsInMarket(bytes32 marketId) internal view returns (address[] memory) {
+        return marketUsers[marketId];
     }
 
     function getUsersWithPositionsInMarket(bytes32 marketId) external view returns (address[] memory) {
-        return _getUsersWithPositionsInMarket(marketId);
+        return marketUsers[marketId];
+    }
+
+    function addUserToMarketIndex(address user, bytes32 marketId) external onlyRole(ORDERBOOK_ROLE) {
+        _addUserToMarketIndex(user, marketId);
+    }
+
+    function removeUserFromMarketIndex(address user, bytes32 marketId) external onlyRole(ORDERBOOK_ROLE) {
+        _removeUserFromMarketIndex(user, marketId);
+    }
+
+    function _addUserToMarketIndex(address user, bytes32 marketId) internal {
+        if (marketUserIndex[marketId][user] != 0) return;
+        marketUsers[marketId].push(user);
+        marketUserIndex[marketId][user] = marketUsers[marketId].length;
+    }
+
+    function _removeUserFromMarketIndex(address user, bytes32 marketId) internal {
+        uint256 idx = marketUserIndex[marketId][user];
+        if (idx == 0) return;
+        uint256 arrIdx = idx - 1;
+        address[] storage arr = marketUsers[marketId];
+        uint256 last = arr.length - 1;
+        if (arrIdx != last) {
+            address lastUser = arr[last];
+            arr[arrIdx] = lastUser;
+            marketUserIndex[marketId][lastUser] = idx;
+        }
+        arr.pop();
+        delete marketUserIndex[marketId][user];
     }
 
     function _findProfitablePositions(

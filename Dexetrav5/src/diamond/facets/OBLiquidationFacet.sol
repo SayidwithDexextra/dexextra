@@ -25,6 +25,16 @@ contract OBLiquidationFacet {
     event LiquidationResync(uint256 bestBidPrice, uint256 bestAskPrice);
     event LiquidationMarketOrderAttempt(address indexed trader, uint256 amount, bool isBuy, uint256 markPrice);
     event LiquidationMarketOrderResult(address indexed trader, bool success, string reason);
+    event LiquidationMarketOrderDiagnostics(
+        address indexed trader,
+        uint256 requestedAmount,
+        uint256 filledAmount,
+        uint256 remainingAmount,
+        uint256 averageExecutionPrice,
+        uint256 worstExecutionPrice,
+        uint256 totalExecutions,
+        bool success
+    );
     event LiquidationPositionRetrieved(address indexed trader, int256 size, uint256 marginLocked, int256 unrealizedPnL);
     event LiquidationConfigUpdated(bool scanOnTrade, bool debug);
     event LiquidationSocializedLossAttempt(address indexed trader, bool isLong, string method);
@@ -146,10 +156,16 @@ contract OBLiquidationFacet {
         // Must not suppress error; if position state change fails, revert
         isLiquidatable = s.vault.isLiquidatable(trader, s.marketId, markPrice);
         emit LiquidationLiquidatableCheck(trader, isLiquidatable, markPrice);
-        if (!isLiquidatable) return (false, 0, false);
+        if (!isLiquidatable) {
+            _releaseLiquidationFlag(s, trader);
+            return (false, 0, false);
+        }
         // Get the user's position size
         (int256 size, , ) = s.vault.getPositionSummary(trader, s.marketId);
-        if (size == 0) return (false, 0, false);
+        if (size == 0) {
+            _releaseLiquidationFlag(s, trader);
+            return (false, 0, false);
+        }
         positionSize = size;
         emit LiquidationPositionRetrieved(trader, size, 0, 0);
         // First, force market order, up to 5 attempts for partials
@@ -167,7 +183,10 @@ contract OBLiquidationFacet {
                 anyFilled = true;
                 _processEnhancedLiquidationWithGapProtection(trader, size, markPrice, res);
                 (int256 newSize, , ) = s.vault.getPositionSummary(trader, s.marketId);
-                if (newSize == 0) return (true, startSize, false); // Fully filled
+                if (newSize == 0) {
+                    _releaseLiquidationFlag(s, trader);
+                    return (true, startSize, false); // Fully filled
+                }
                 if (newSize == size) break; // No progress
                 size = newSize;
                 continue;
@@ -178,7 +197,10 @@ contract OBLiquidationFacet {
         }
         // if we made any progress, return success
         (int256 afterMarket, , ) = s.vault.getPositionSummary(trader, s.marketId);
-        if (afterMarket != positionSize) return (true, startSize, false);
+        if (afterMarket != positionSize) {
+            _releaseLiquidationFlag(s, trader);
+            return (true, startSize, false);
+        }
         // Fallback to direct vault-side liquidation (no suppression)
         bool vaultSuccess = false;
         uint256 execPrice = markPrice;
@@ -193,7 +215,13 @@ contract OBLiquidationFacet {
         }
         (int256 afterVault, , ) = s.vault.getPositionSummary(trader, s.marketId);
         bool directReduced = afterVault != positionSize;
+        _releaseLiquidationFlag(s, trader);
         return (directReduced, positionSize, true);
+    }
+
+    function _releaseLiquidationFlag(OrderBookStorage.State storage s, address trader) private {
+        if (trader == address(0)) return;
+        try s.vault.setUnderLiquidation(trader, s.marketId, false) { } catch { }
     }
 
     function _executeLiquidationMarketOrder(address trader, bool isBuy, uint256 amount, uint256 markPrice) internal returns (LiquidationExecutionResult memory result) {
@@ -243,6 +271,16 @@ contract OBLiquidationFacet {
             result.worstExecutionPrice = s.liquidationWorstPrice; result.totalExecutions = s.liquidationExecutionCount;
             result.success = result.filledAmount >= (amount * 50) / 100;
         }
+        emit LiquidationMarketOrderDiagnostics(
+            trader,
+            amount,
+            result.filledAmount,
+            result.remainingAmount,
+            result.averageExecutionPrice,
+            result.worstExecutionPrice,
+            result.totalExecutions,
+            result.success
+        );
         emit LiquidationResync(s.bestBid, s.bestAsk);
         emit LiquidationMarketOrderResult(trader, result.success, result.success ? "EXECUTED" : "PARTIAL_OR_NONE");
         return result;

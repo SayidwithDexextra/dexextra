@@ -333,6 +333,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     function creditExternal(address user, uint256 amount) external onlyRole(EXTERNAL_CREDITOR_ROLE) {
         require(user != address(0) && amount > 0, "invalid");
         userCrossChainCredit[user] += amount;
+        _ensureUserTracked(user);
         emit ExternalCreditAdded(user, amount);
     }
 
@@ -873,12 +874,18 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
             userCrossChainCredit[recipient] += creditPart;
         }
         userCollateral[recipient] += fromPnL + collateralPart;
+        if (recipient != address(0)) {
+            _ensureUserTracked(recipient);
+        }
     }
 
     function transferCollateral(address from, address to, uint256 amount) external onlyRole(ORDERBOOK_ROLE) {
         require(userCollateral[from] >= amount, "!balance");
         userCollateral[from] -= amount;
         userCollateral[to] += amount;
+        if (to != address(0)) {
+            _ensureUserTracked(to);
+        }
     }
 
     // Pay a liquidation maker reward from OrderBook's credited balance and emit event for offchain visibility.
@@ -903,6 +910,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         // Credit maker preserving backing type
         if (fromExt > 0) { userCrossChainCredit[maker] += fromExt; }
         if (remaining > 0) { userCollateral[maker] += remaining; }
+        _ensureUserTracked(maker);
         emit MakerLiquidationRewardPaid(maker, liquidatedUser, marketId, amount);
     }
 

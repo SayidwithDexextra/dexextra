@@ -60,6 +60,7 @@ const LIQUIDATION_EVENTS_ABI = [
   "event LiquidationResync(uint256 bestBidPrice,uint256 bestAskPrice)",
   "event LiquidationMarketOrderAttempt(address indexed trader,uint256 amount,bool isBuy,uint256 markPrice)",
   "event LiquidationMarketOrderResult(address indexed trader,bool success,string reason)",
+  "event LiquidationMarketOrderDiagnostics(address indexed trader,uint256 requestedAmount,uint256 filledAmount,uint256 remainingAmount,uint256 averageExecutionPrice,uint256 worstExecutionPrice,uint256 totalExecutions,bool success)",
   "event LiquidationPositionRetrieved(address indexed trader,int256 size,uint256 marginLocked,int256 unrealizedPnL)",
   "event LiquidationConfigUpdated(bool scanOnTrade,bool debug)",
   "event LiquidationSocializedLossAttempt(address indexed trader,bool isLong,string method)",
@@ -96,6 +97,7 @@ const eventColor = (name) => {
     LiquidationMarginConfiscated: colors.yellow,
     LiquidationMarketOrderAttempt: colors.magenta,
     LiquidationMarketOrderResult: colors.cyan,
+    LiquidationMarketOrderDiagnostics: colors.yellow,
     LiquidationResync: colors.blue,
     LiquidationCheckTriggered: colors.blue,
     LiquidationCheckStarted: colors.blue,
@@ -134,9 +136,12 @@ function formatValue(v) {
 }
 
 function logEvent(name, args, eventMeta) {
+  logEvent.counter = (logEvent.counter || 0) + 1;
+  const sequenceLabel = `${colors.bold}${colors.reset}${String(logEvent.counter).padStart(4, "0")}`;
   const accent = eventColor(name);
   const now = new Date().toISOString();
-  const header = `${colorize("┌", accent)} ${colorize(name, accent)} ${colors.dim}@ ${now}${colors.reset}`;
+  const separator = `${accent}════════════════════════════════════════════════════════${colors.reset}`;
+  const header = `${colorize("┌", accent)} ${colorize(name, accent)} ${colors.dim}@ ${now}${colors.reset} ${colors.bold}[#${String(logEvent.counter).padStart(4, "0")}]${colors.reset}`;
   const metaLine = `${colorize("│", accent)} tx ${shorten(eventMeta?.log?.transactionHash || eventMeta?.transactionHash || "")}  block ${eventMeta?.log?.blockNumber ?? eventMeta?.blockNumber ?? "?"}  idx ${eventMeta?.log?.logIndex ?? eventMeta?.logIndex ?? "?"}`;
   const body =
     args && Object.keys(args).length
@@ -148,7 +153,7 @@ function logEvent(name, args, eventMeta) {
           .join("\n")
       : `${colorize("│", accent)} (no args)`;
   const footer = `${colorize("└", accent)}────────────────────────────────────────────────────`;
-  console.log([header, metaLine, body, footer].join("\n"));
+  console.log([`\n${separator}`, header, metaLine, body, footer, separator].join("\n"));
 }
 
 async function resolveTargetAddress() {
