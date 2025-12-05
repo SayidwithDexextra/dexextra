@@ -14,6 +14,25 @@
 // 🚀 USAGE:
 //   npx hardhat run scripts/interactive-trader.js --network localhost
 //
+// Load environment variables, preferring .env.local
+try {
+  const path = require("path");
+  const fs = require("fs");
+  const dotenv = require("dotenv");
+  const candidates = [
+    path.resolve(process.cwd(), ".env.local"),
+    path.join(__dirname, "..", ".env.local"),
+    path.resolve(process.cwd(), ".env"),
+    path.join(__dirname, "..", ".env"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      dotenv.config({ path: p });
+      break;
+    }
+  }
+} catch (_) {}
+
 // Ensure we connect to the running Hardhat node (localhost) for all direct node runs
 if (!process.env.HARDHAT_NETWORK) {
   process.env.HARDHAT_NETWORK = "localhost";
@@ -5450,6 +5469,8 @@ ${colors.brightRed}└───────────────────�
       "PF",
       "DPA",
       "DMA",
+      "POKE_LIQ",
+      "POKE_VAULT",
     ]);
     if (requiresUserOps.has(op)) {
       if (!user) {
@@ -6088,11 +6109,17 @@ ${colors.brightRed}└───────────────────�
         }
 
         // Just poke immediately
-        await this.withRpcRetry(() =>
-          this.contracts.orderBook.pokeLiquidations()
+        const obWithSigner = this.contracts.orderBook.connect(
+          user || this.currentUser
         );
+        await this.withRpcRetry(() => obWithSigner.pokeLiquidations());
         console.log(colorText("📣 pokeLiquidations() sent", colors.cyan));
         return "POKE_LIQ";
+      }
+
+      case "POKE_VAULT": {
+        await this.vaultDirectLiquidationSweep();
+        return "POKE_VAULT_SWEEP";
       }
 
       case "LIQ_DEBUG": {
@@ -6307,6 +6334,12 @@ ${colors.brightRed}└───────────────────�
     console.log(
       colorText(
         "│ Misc:   SU @|n (switch user) | SLT (slippage test)         │",
+        colors.white
+      )
+    );
+    console.log(
+      colorText(
+        "│ Liq:    POKE_LIQ [ON|OFF] | POKE_VAULT (direct sweep)      │",
         colors.white
       )
     );
@@ -9042,6 +9075,18 @@ ${colors.brightRed}└───────────────────�
       )
     );
     console.log(
+      colorText(
+        "│ 18. 🚨 Poke Liquidations (OrderBook)     │",
+        colors.brightRed
+      )
+    );
+    console.log(
+      colorText(
+        "│ 19. 🏛️ Vault Direct Liquidation Sweep    │",
+        colors.brightYellow
+      )
+    );
+    console.log(
       colorText("│ T. 💼 Market Total Margin                │", colors.blue)
     );
     console.log(
@@ -9054,13 +9099,22 @@ ${colors.brightRed}└───────────────────�
       colorText("│ M. 🔀 Switch Market                      │", colors.white)
     );
     console.log(
-      colorText("│ W. 🚩 Force Settlement Challenge Window  │", colors.brightYellow)
+      colorText(
+        "│ W. 🚩 Force Settlement Challenge Window  │",
+        colors.brightYellow
+      )
     );
     console.log(
-      colorText("│ C. 🕒 Start Settlement Challenge Window  │", colors.brightYellow)
+      colorText(
+        "│ C. 🕒 Start Settlement Challenge Window  │",
+        colors.brightYellow
+      )
     );
     console.log(
-      colorText("│ I. 🧭 Initialize Lifecycle                │", colors.brightCyan)
+      colorText(
+        "│ I. 🧭 Initialize Lifecycle                │",
+        colors.brightCyan
+      )
     );
     console.log(
       colorText("│ E. 🧪 Enable Testing Mode                 │", colors.magenta)
@@ -9153,6 +9207,12 @@ ${colors.brightRed}└───────────────────�
       case "16":
         await this.reducePositionMarginFlow();
         break;
+    case "18":
+      await this.pokeLiquidationsFromOrderBook();
+      break;
+    case "19":
+      await this.vaultDirectLiquidationSweep();
+      break;
       case "t":
         await this.viewMarketTotalMargin();
         break;
@@ -9199,6 +9259,150 @@ ${colors.brightRed}└───────────────────�
         console.log(colorText("❌ Invalid choice", colors.red));
         await this.pause(1000);
     }
+  }
+
+  async getActiveMarketId() {
+    if (this.currentMarket?.marketId) return this.currentMarket.marketId;
+    // Try obView.marketStatic() first
+    try {
+      const staticInfo = await this.contracts.obView.marketStatic();
+      if (staticInfo && staticInfo.length >= 2 && staticInfo[1]) return staticInfo[1];
+    } catch (_) {}
+    // Try obPricing.getMarketPriceData()
+    try {
+      const marketData = await this.contracts.obPricing.getMarketPriceData();
+      if (marketData?.marketId) return marketData.marketId;
+    } catch (_) {}
+    return ethers.ZeroHash;
+  }
+
+  async pokeLiquidationsFromOrderBook() {
+    console.clear();
+    console.log(boxText("🚨 POKE LIQUIDATIONS (ORDERBOOK)", colors.brightRed));
+    try {
+      const obAddr = this.contracts.orderBookAddress;
+      const tx = await this.withRpcRetry(() =>
+        this.contracts.orderBook.connect(this.currentUser).pokeLiquidations()
+      );
+      const rcpt = await tx.wait();
+      console.log(
+        colorText(
+          `✅ pokeLiquidations() sent to ${obAddr || "orderbook"} | tx ${tx?.hash} | gas ${rcpt?.gasUsed}`,
+          colors.brightGreen
+        )
+      );
+    } catch (error) {
+      console.log(
+        colorText(
+          `❌ OrderBook poke failed: ${error?.reason || error?.message || error}`,
+          colors.red
+        )
+      );
+    }
+    await this.pause(1200);
+  }
+
+  async vaultDirectLiquidationSweep() {
+    console.clear();
+    console.log(boxText("🏛️ VAULT DIRECT LIQUIDATION SWEEP", colors.brightYellow));
+    try {
+      const marketId = await this.getActiveMarketId();
+      if (!marketId || marketId === ethers.ZeroHash) {
+        console.log(colorText("⚠️ Unable to resolve active marketId", colors.yellow));
+        await this.pause(1200);
+        return;
+      }
+
+      // Mark price from pricing facet; fall back to vault mark if needed
+      let markPrice = 0n;
+      try {
+        markPrice = BigInt(
+          (await this.withRpcRetry(() =>
+            this.contracts.obPricing.calculateMarkPrice()
+          ))?.toString?.() || "0"
+        );
+      } catch (_) {
+        try {
+          markPrice = BigInt(
+            (await this.withRpcRetry(() =>
+              this.contracts.vault.getMarkPrice(marketId)
+            ))?.toString?.() || "0"
+          );
+        } catch (_) {
+          markPrice = 0n;
+        }
+      }
+
+      const users = await this.withRpcRetry(() =>
+        this.contracts.vault.getUsersWithPositionsInMarket(marketId)
+      );
+      console.log(
+        colorText(
+          `📋 Candidates in market ${await safeDecodeMarketId(marketId, this.contracts)}: ${users.length}`,
+          colors.cyan
+        )
+      );
+
+      let triggered = 0;
+      const vaultWithSigner = this.contracts.vault.connect(this.currentUser);
+      const shortAddr = (addr) =>
+        addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "unknown";
+
+      for (const u of users) {
+        try {
+          const [size] = await this.withRpcRetry(() =>
+            this.contracts.vault.getPositionSummary(u, marketId)
+          );
+          const sizeBig = BigInt(size.toString());
+          if (sizeBig === 0n) continue;
+
+          const liquidatable = await this.withRpcRetry(() =>
+            this.contracts.vault.callStatic.isLiquidatable(u, marketId, markPrice)
+          ).catch(() => false);
+          if (!liquidatable) continue;
+
+          const isLong = sizeBig > 0n;
+          const tx = isLong
+            ? await vaultWithSigner.liquidateLong(
+                u,
+                marketId,
+                this.currentUser.address,
+                markPrice
+              )
+            : await vaultWithSigner.liquidateShort(
+                u,
+                marketId,
+                this.currentUser.address,
+                markPrice
+              );
+          const rcpt = await tx.wait();
+          triggered++;
+          console.log(
+            colorText(
+              `✅ Vault liquidation ${isLong ? "LONG" : "SHORT"} ${shortAddr(u)} | tx ${
+                tx?.hash
+              } | gas ${rcpt?.gasUsed}`,
+              colors.brightGreen
+            )
+          );
+        } catch (err) {
+          const msg = err?.reason || err?.error?.message || err?.message || String(err);
+          console.log(colorText(`⚠️ Skip ${shortAddr(u)}: ${msg}`, colors.yellow));
+        }
+      }
+
+      if (triggered === 0) {
+        console.log(colorText("ℹ️ No liquidatable users found for direct vault sweep.", colors.cyan));
+      }
+    } catch (error) {
+      console.log(
+        colorText(
+          `❌ Vault liquidation sweep failed: ${error?.reason || error?.message || error}`,
+          colors.red
+        )
+      );
+    }
+    await this.pause(1500);
   }
 
   async selectMarket() {
@@ -9598,7 +9802,9 @@ ${colors.brightRed}└───────────────────�
   async forceSettlementChallengeWindowFlow() {
     try {
       console.clear();
-      console.log(boxText("🚩 FORCE SETTLEMENT CHALLENGE WINDOW", colors.brightYellow));
+      console.log(
+        boxText("🚩 FORCE SETTLEMENT CHALLENGE WINDOW", colors.brightYellow)
+      );
       if (!this.contracts || !this.contracts.orderBookAddress) {
         console.log(colorText("❌ No market selected", colors.red));
         await this.pause(1500);
@@ -9610,7 +9816,12 @@ ${colors.brightRed}└───────────────────�
         this.contracts.orderBookAddress,
         signer
       );
-      console.log(colorText("⏳ Submitting forceStartSettlementChallengeWindow...", colors.yellow));
+      console.log(
+        colorText(
+          "⏳ Submitting forceStartSettlementChallengeWindow...",
+          colors.yellow
+        )
+      );
       try {
         const tx = await lifecycle.forceStartSettlementChallengeWindow();
         const rcpt = await tx.wait();
@@ -9649,7 +9860,10 @@ ${colors.brightRed}└───────────────────�
               return;
             } catch (e2) {
               console.log(
-                colorText(`❌ Failed after enabling testing mode: ${e2.message}`, colors.red)
+                colorText(
+                  `❌ Failed after enabling testing mode: ${e2.message}`,
+                  colors.red
+                )
               );
               await this.pause(2500);
               return;
@@ -9669,7 +9883,9 @@ ${colors.brightRed}└───────────────────�
   async startSettlementChallengeWindowFlow() {
     try {
       console.clear();
-      console.log(boxText("🕒 START SETTLEMENT CHALLENGE WINDOW", colors.brightYellow));
+      console.log(
+        boxText("🕒 START SETTLEMENT CHALLENGE WINDOW", colors.brightYellow)
+      );
       if (!this.contracts || !this.contracts.orderBookAddress) {
         console.log(colorText("❌ No market selected", colors.red));
         await this.pause(1500);
@@ -9681,7 +9897,12 @@ ${colors.brightRed}└───────────────────�
         this.contracts.orderBookAddress,
         signer
       );
-      console.log(colorText("⏳ Submitting startSettlementChallengeWindow...", colors.yellow));
+      console.log(
+        colorText(
+          "⏳ Submitting startSettlementChallengeWindow...",
+          colors.yellow
+        )
+      );
       const tx = await lifecycle.startSettlementChallengeWindow();
       const rcpt = await tx.wait();
       console.log(
@@ -9692,7 +9913,9 @@ ${colors.brightRed}└───────────────────�
       );
       await this.pause(2000);
     } catch (e) {
-      console.log(colorText(`❌ Start challenge window failed: ${e.message}`, colors.red));
+      console.log(
+        colorText(`❌ Start challenge window failed: ${e.message}`, colors.red)
+      );
       await this.pause(2500);
     }
   }
@@ -9723,7 +9946,9 @@ ${colors.brightRed}└───────────────────�
       }
       console.log(
         colorText(
-          `⏱️  Chain time: ${chainNowSec} (${new Date(chainNowSec * 1000).toISOString()})`,
+          `⏱️  Chain time: ${chainNowSec} (${new Date(
+            chainNowSec * 1000
+          ).toISOString()})`,
           colors.dim
         )
       );
@@ -9741,12 +9966,16 @@ ${colors.brightRed}└───────────────────�
         { key: "K", label: "6 months (~180d)", seconds: 180 * 24 * 60 * 60 },
         { key: "L", label: "1 year (365d)", seconds: 365 * 24 * 60 * 60 },
       ];
-      console.log(colorText("Preset settlement options (from now):", colors.cyan));
+      console.log(
+        colorText("Preset settlement options (from now):", colors.cyan)
+      );
       presets.forEach((p) => {
         const ts = chainNowSec + p.seconds;
         console.log(
           colorText(
-            `  [${p.key}] ${p.label} → ${ts} (${new Date(ts * 1000).toISOString()})`,
+            `  [${p.key}] ${p.label} → ${ts} (${new Date(
+              ts * 1000
+            ).toISOString()})`,
             colors.dim
           )
         );
@@ -9757,7 +9986,14 @@ ${colors.brightRed}└───────────────────�
           colors.dim
         )
       );
-      const choice = (await this.askQuestion(colorText("Choose preset (A-L) or enter UNIX seconds (Enter=1y): ", colors.brightMagenta))).trim();
+      const choice = (
+        await this.askQuestion(
+          colorText(
+            "Choose preset (A-L) or enter UNIX seconds (Enter=1y): ",
+            colors.brightMagenta
+          )
+        )
+      ).trim();
       let settlementTimestamp = 0;
       const upper = choice.toUpperCase();
       if (!choice) {
@@ -9769,8 +10005,13 @@ ${colors.brightRed}└───────────────────�
         else settlementTimestamp = chainNowSec + 365 * 24 * 60 * 60;
       }
       // Ensure strictly in the future vs chain time
-      if (!Number.isFinite(settlementTimestamp) || settlementTimestamp <= chainNowSec) {
-        console.log(colorText("❌ Invalid timestamp (must be in the future)", colors.red));
+      if (
+        !Number.isFinite(settlementTimestamp) ||
+        settlementTimestamp <= chainNowSec
+      ) {
+        console.log(
+          colorText("❌ Invalid timestamp (must be in the future)", colors.red)
+        );
         await this.pause(1500);
         return;
       }
@@ -9782,11 +10023,23 @@ ${colors.brightRed}└───────────────────�
           colors.cyan
         )
       );
-      const parentIn = (await this.askQuestion(colorText("Parent market address (0x... or blank for none): ", colors.brightMagenta))).trim();
+      const parentIn = (
+        await this.askQuestion(
+          colorText(
+            "Parent market address (0x... or blank for none): ",
+            colors.brightMagenta
+          )
+        )
+      ).trim();
       const parent =
-        parentIn && /^0x[a-fA-F0-9]{40}$/.test(parentIn) ? parentIn : ethers.ZeroAddress;
+        parentIn && /^0x[a-fA-F0-9]{40}$/.test(parentIn)
+          ? parentIn
+          : ethers.ZeroAddress;
       console.log(colorText("⏳ Initializing lifecycle...", colors.yellow));
-      const tx = await lifecycle.initializeLifecycle(settlementTimestamp, parent);
+      const tx = await lifecycle.initializeLifecycle(
+        settlementTimestamp,
+        parent
+      );
       const rcpt = await tx.wait();
       console.log(
         colorText(
@@ -9796,7 +10049,9 @@ ${colors.brightRed}└───────────────────�
       );
       await this.pause(2000);
     } catch (e) {
-      console.log(colorText(`❌ Initialize lifecycle failed: ${e.message}`, colors.red));
+      console.log(
+        colorText(`❌ Initialize lifecycle failed: ${e.message}`, colors.red)
+      );
       await this.pause(2500);
     }
   }
@@ -9827,7 +10082,9 @@ ${colors.brightRed}└───────────────────�
       );
       await this.pause(1500);
     } catch (e) {
-      console.log(colorText(`❌ Enable testing failed: ${e.message}`, colors.red));
+      console.log(
+        colorText(`❌ Enable testing failed: ${e.message}`, colors.red)
+      );
       await this.pause(2500);
     }
   }
@@ -9854,7 +10111,9 @@ ${colors.brightRed}└───────────────────�
       }
       console.log(
         colorText(
-          `⏱️  Chain time: ${chainNowSec} (${new Date(chainNowSec * 1000).toISOString()}), block ${blockNumber}`,
+          `⏱️  Chain time: ${chainNowSec} (${new Date(
+            chainNowSec * 1000
+          ).toISOString()}), block ${blockNumber}`,
           colors.dim
         )
       );
@@ -9872,13 +10131,13 @@ ${colors.brightRed}└───────────────────�
       const inChall = await lifecycle.isInSettlementChallengeWindow();
       const [parent, child] = await lifecycle.getMarketLineage();
       // Derived leads
-      const derivedRollLead = settlementTs > 0 && rollStart > 0 ? (settlementTs - rollStart) : 0;
-      const derivedChallLead = settlementTs > 0 && challStart > 0 ? (settlementTs - challStart) : 0;
+      const derivedRollLead =
+        settlementTs > 0 && rollStart > 0 ? settlementTs - rollStart : 0;
+      const derivedChallLead =
+        settlementTs > 0 && challStart > 0 ? settlementTs - challStart : 0;
       // Render
       const fmtTs = (ts) =>
-        ts && ts > 0
-          ? `${ts} (${new Date(ts * 1000).toISOString()})`
-          : "n/a";
+        ts && ts > 0 ? `${ts} (${new Date(ts * 1000).toISOString()})` : "n/a";
       const fmtDur = (s) => {
         if (!s || s <= 0) return "n/a";
         const d = Math.floor(s / 86400);
@@ -9894,16 +10153,56 @@ ${colors.brightRed}└───────────────────�
       };
       console.log(colorText("\nCore", colors.brightCyan));
       console.log(colorText("─".repeat(40), colors.dim));
-      console.log(colorText(`OrderBook: ${this.contracts.orderBookAddress}`, colors.white));
-      console.log(colorText(`Settlement Timestamp: ${fmtTs(settlementTs)}`, colors.white));
-      console.log(colorText(`Rollover Window Start: ${fmtTs(rollStart)} (lead ~ ${fmtDur(derivedRollLead)})`, colors.white));
-      console.log(colorText(`Challenge Window Start: ${fmtTs(challStart)} (lead ~ ${fmtDur(derivedChallLead)})`, colors.white));
-      console.log(colorText(`In Rollover Window: ${inRoll ? "YES" : "NO"}`, inRoll ? colors.green : colors.yellow));
-      console.log(colorText(`In Challenge Window: ${inChall ? "YES" : "NO"}`, inChall ? colors.green : colors.yellow));
+      console.log(
+        colorText(`OrderBook: ${this.contracts.orderBookAddress}`, colors.white)
+      );
+      console.log(
+        colorText(`Settlement Timestamp: ${fmtTs(settlementTs)}`, colors.white)
+      );
+      console.log(
+        colorText(
+          `Rollover Window Start: ${fmtTs(rollStart)} (lead ~ ${fmtDur(
+            derivedRollLead
+          )})`,
+          colors.white
+        )
+      );
+      console.log(
+        colorText(
+          `Challenge Window Start: ${fmtTs(challStart)} (lead ~ ${fmtDur(
+            derivedChallLead
+          )})`,
+          colors.white
+        )
+      );
+      console.log(
+        colorText(
+          `In Rollover Window: ${inRoll ? "YES" : "NO"}`,
+          inRoll ? colors.green : colors.yellow
+        )
+      );
+      console.log(
+        colorText(
+          `In Challenge Window: ${inChall ? "YES" : "NO"}`,
+          inChall ? colors.green : colors.yellow
+        )
+      );
       console.log(colorText("\nLineage", colors.brightCyan));
       console.log(colorText("─".repeat(40), colors.dim));
-      console.log(colorText(`Parent: ${parent && parent !== ethers.ZeroAddress ? parent : "none"}`, colors.white));
-      console.log(colorText(`Child: ${child && child !== ethers.ZeroAddress ? child : "none"}`, colors.white));
+      console.log(
+        colorText(
+          `Parent: ${
+            parent && parent !== ethers.ZeroAddress ? parent : "none"
+          }`,
+          colors.white
+        )
+      );
+      console.log(
+        colorText(
+          `Child: ${child && child !== ethers.ZeroAddress ? child : "none"}`,
+          colors.white
+        )
+      );
       // Testing status (best-effort: not exposed as a view in current ABI)
       console.log(colorText("\nTesting Mode", colors.brightCyan));
       console.log(colorText("─".repeat(40), colors.dim));
@@ -9913,10 +10212,17 @@ ${colors.brightRed}└───────────────────�
           colors.dim
         )
       );
-      console.log(colorText("\nPress any key to return to main menu...", colors.dim));
+      console.log(
+        colorText("\nPress any key to return to main menu...", colors.dim)
+      );
       await this.askQuestion("");
     } catch (e) {
-      console.log(colorText(`❌ Failed to fetch lifecycle status: ${e.message}`, colors.red));
+      console.log(
+        colorText(
+          `❌ Failed to fetch lifecycle status: ${e.message}`,
+          colors.red
+        )
+      );
       await this.pause(2500);
     }
   }
@@ -9925,7 +10231,12 @@ ${colors.brightRed}└───────────────────�
   async debugEmitChallengeStartedFlow() {
     try {
       console.clear();
-      console.log(boxText("🧪 DEBUG EMIT: SettlementChallengeWindowStarted", colors.magenta));
+      console.log(
+        boxText(
+          "🧪 DEBUG EMIT: SettlementChallengeWindowStarted",
+          colors.magenta
+        )
+      );
       if (!this.contracts || !this.contracts.orderBookAddress) {
         console.log(colorText("❌ No market selected", colors.red));
         await this.pause(1500);
@@ -9950,7 +10261,14 @@ ${colors.brightRed}└───────────────────�
       } catch {
         chainNowSec = Math.floor(Date.now() / 1000);
       }
-      console.log(colorText(`Chain time: ${chainNowSec} (${new Date(chainNowSec * 1000).toISOString()})`, colors.dim));
+      console.log(
+        colorText(
+          `Chain time: ${chainNowSec} (${new Date(
+            chainNowSec * 1000
+          ).toISOString()})`,
+          colors.dim
+        )
+      );
       // Presets: 5m..60m
       const presets = [
         { key: "A", label: "5 minutes", secs: 5 * 60 },
@@ -9960,13 +10278,31 @@ ${colors.brightRed}└───────────────────�
         { key: "E", label: "45 minutes", secs: 45 * 60 },
         { key: "F", label: "60 minutes", secs: 60 * 60 },
       ];
-      console.log(colorText("Preset start options (from chain time):", colors.cyan));
+      console.log(
+        colorText("Preset start options (from chain time):", colors.cyan)
+      );
       presets.forEach((p) => {
         const ts = chainNowSec + p.secs;
-        console.log(colorText(`  [${p.key}] ${p.label} → ${ts} (${new Date(ts * 1000).toISOString()})`, colors.dim));
+        console.log(
+          colorText(
+            `  [${p.key}] ${p.label} → ${ts} (${new Date(
+              ts * 1000
+            ).toISOString()})`,
+            colors.dim
+          )
+        );
       });
-      console.log(colorText("  [custom] Enter a UNIX timestamp (seconds)", colors.dim));
-      const choice = (await this.askQuestion(colorText("Choose preset (A-F) or enter UNIX seconds (Enter=5m): ", colors.brightMagenta))).trim();
+      console.log(
+        colorText("  [custom] Enter a UNIX timestamp (seconds)", colors.dim)
+      );
+      const choice = (
+        await this.askQuestion(
+          colorText(
+            "Choose preset (A-F) or enter UNIX seconds (Enter=5m): ",
+            colors.brightMagenta
+          )
+        )
+      ).trim();
       let startTs = 0;
       const upper = choice.toUpperCase();
       if (!choice) {
@@ -9978,16 +10314,36 @@ ${colors.brightRed}└───────────────────�
         else startTs = chainNowSec + 5 * 60;
       }
       if (startTs <= chainNowSec) {
-        console.log(colorText("❌ Start time must be in the future", colors.red));
+        console.log(
+          colorText("❌ Start time must be in the future", colors.red)
+        );
         await this.pause(1500);
         return;
       }
-      const mktIn = (await this.askQuestion(colorText(`Target market address (Enter=current OB): `, colors.brightMagenta))).trim();
-      const market = mktIn && /^0x[a-fA-F0-9]{40}$/.test(mktIn) ? mktIn : this.contracts.orderBookAddress;
+      const mktIn = (
+        await this.askQuestion(
+          colorText(
+            `Target market address (Enter=current OB): `,
+            colors.brightMagenta
+          )
+        )
+      ).trim();
+      const market =
+        mktIn && /^0x[a-fA-F0-9]{40}$/.test(mktIn)
+          ? mktIn
+          : this.contracts.orderBookAddress;
       console.log(colorText("⏳ Emitting event...", colors.yellow));
-      const tx = await lifecycle.debugEmitSettlementChallengeWindowStarted(market, startTs);
+      const tx = await lifecycle.debugEmitSettlementChallengeWindowStarted(
+        market,
+        startTs
+      );
       const rc = await tx.wait();
-      console.log(colorText(`✅ Emitted. Block: ${rc.blockNumber} Gas: ${rc.gasUsed}`, colors.green));
+      console.log(
+        colorText(
+          `✅ Emitted. Block: ${rc.blockNumber} Gas: ${rc.gasUsed}`,
+          colors.green
+        )
+      );
       await this.pause(1500);
     } catch (e) {
       console.log(colorText(`❌ Debug emit failed: ${e.message}`, colors.red));
@@ -9998,7 +10354,9 @@ ${colors.brightRed}└───────────────────�
   async debugEmitRolloverStartedFlow() {
     try {
       console.clear();
-      console.log(boxText("🧪 DEBUG EMIT: RolloverWindowStarted", colors.magenta));
+      console.log(
+        boxText("🧪 DEBUG EMIT: RolloverWindowStarted", colors.magenta)
+      );
       if (!this.contracts || !this.contracts.orderBookAddress) {
         console.log(colorText("❌ No market selected", colors.red));
         await this.pause(1500);
@@ -10010,7 +10368,9 @@ ${colors.brightRed}└───────────────────�
         this.contracts.orderBookAddress,
         signer
       );
-      try { await lifecycle.enableTestingMode(true); } catch (_) {}
+      try {
+        await lifecycle.enableTestingMode(true);
+      } catch (_) {}
       let chainNowSec;
       try {
         const latest = await ethers.provider.getBlock("latest");
@@ -10019,7 +10379,14 @@ ${colors.brightRed}└───────────────────�
       } catch {
         chainNowSec = Math.floor(Date.now() / 1000);
       }
-      console.log(colorText(`Chain time: ${chainNowSec} (${new Date(chainNowSec * 1000).toISOString()})`, colors.dim));
+      console.log(
+        colorText(
+          `Chain time: ${chainNowSec} (${new Date(
+            chainNowSec * 1000
+          ).toISOString()})`,
+          colors.dim
+        )
+      );
       const presets = [
         { key: "A", label: "5 minutes", secs: 5 * 60 },
         { key: "B", label: "10 minutes", secs: 10 * 60 },
@@ -10028,13 +10395,31 @@ ${colors.brightRed}└───────────────────�
         { key: "E", label: "45 minutes", secs: 45 * 60 },
         { key: "F", label: "60 minutes", secs: 60 * 60 },
       ];
-      console.log(colorText("Preset start options (from chain time):", colors.cyan));
+      console.log(
+        colorText("Preset start options (from chain time):", colors.cyan)
+      );
       presets.forEach((p) => {
         const ts = chainNowSec + p.secs;
-        console.log(colorText(`  [${p.key}] ${p.label} → ${ts} (${new Date(ts * 1000).toISOString()})`, colors.dim));
+        console.log(
+          colorText(
+            `  [${p.key}] ${p.label} → ${ts} (${new Date(
+              ts * 1000
+            ).toISOString()})`,
+            colors.dim
+          )
+        );
       });
-      console.log(colorText("  [custom] Enter a UNIX timestamp (seconds)", colors.dim));
-      const choice = (await this.askQuestion(colorText("Choose preset (A-F) or enter UNIX seconds (Enter=5m): ", colors.brightMagenta))).trim();
+      console.log(
+        colorText("  [custom] Enter a UNIX timestamp (seconds)", colors.dim)
+      );
+      const choice = (
+        await this.askQuestion(
+          colorText(
+            "Choose preset (A-F) or enter UNIX seconds (Enter=5m): ",
+            colors.brightMagenta
+          )
+        )
+      ).trim();
       let startTs = 0;
       const upper = choice.toUpperCase();
       if (!choice) {
@@ -10046,16 +10431,36 @@ ${colors.brightRed}└───────────────────�
         else startTs = chainNowSec + 5 * 60;
       }
       if (startTs <= chainNowSec) {
-        console.log(colorText("❌ Start time must be in the future", colors.red));
+        console.log(
+          colorText("❌ Start time must be in the future", colors.red)
+        );
         await this.pause(1500);
         return;
       }
-      const mktIn = (await this.askQuestion(colorText(`Target market address (Enter=current OB): `, colors.brightMagenta))).trim();
-      const market = mktIn && /^0x[a-fA-F0-9]{40}$/.test(mktIn) ? mktIn : this.contracts.orderBookAddress;
+      const mktIn = (
+        await this.askQuestion(
+          colorText(
+            `Target market address (Enter=current OB): `,
+            colors.brightMagenta
+          )
+        )
+      ).trim();
+      const market =
+        mktIn && /^0x[a-fA-F0-9]{40}$/.test(mktIn)
+          ? mktIn
+          : this.contracts.orderBookAddress;
       console.log(colorText("⏳ Emitting event...", colors.yellow));
-      const tx = await lifecycle.debugEmitRolloverWindowStarted(market, startTs);
+      const tx = await lifecycle.debugEmitRolloverWindowStarted(
+        market,
+        startTs
+      );
       const rc = await tx.wait();
-      console.log(colorText(`✅ Emitted. Block: ${rc.blockNumber} Gas: ${rc.gasUsed}`, colors.green));
+      console.log(
+        colorText(
+          `✅ Emitted. Block: ${rc.blockNumber} Gas: ${rc.gasUsed}`,
+          colors.green
+        )
+      );
       await this.pause(1500);
     } catch (e) {
       console.log(colorText(`❌ Debug emit failed: ${e.message}`, colors.red));
@@ -10078,10 +10483,26 @@ ${colors.brightRed}└───────────────────�
         this.contracts.orderBookAddress,
         signer
       );
-      try { await lifecycle.enableTestingMode(true); } catch (_) {}
-      const parentIn = (await this.askQuestion(colorText("Parent market address (0x... or Enter=current OB): ", colors.brightMagenta))).trim();
-      const parent = parentIn && /^0x[a-fA-F0-9]{40}$/.test(parentIn) ? parentIn : this.contracts.orderBookAddress;
-      const childIn = (await this.askQuestion(colorText("Child market address (0x...): ", colors.brightMagenta))).trim();
+      try {
+        await lifecycle.enableTestingMode(true);
+      } catch (_) {}
+      const parentIn = (
+        await this.askQuestion(
+          colorText(
+            "Parent market address (0x... or Enter=current OB): ",
+            colors.brightMagenta
+          )
+        )
+      ).trim();
+      const parent =
+        parentIn && /^0x[a-fA-F0-9]{40}$/.test(parentIn)
+          ? parentIn
+          : this.contracts.orderBookAddress;
+      const childIn = (
+        await this.askQuestion(
+          colorText("Child market address (0x...): ", colors.brightMagenta)
+        )
+      ).trim();
       if (!/^0x[a-fA-F0-9]{40}$/.test(childIn)) {
         console.log(colorText("❌ Invalid child address", colors.red));
         await this.pause(1500);
@@ -10096,12 +10517,28 @@ ${colors.brightRed}└───────────────────�
         chainNowSec = Math.floor(Date.now() / 1000);
       }
       const defTs = chainNowSec + 60;
-      const tsIn = (await this.askQuestion(colorText(`Child settlement UNIX seconds (Enter=${defTs}): `, colors.brightMagenta))).trim();
+      const tsIn = (
+        await this.askQuestion(
+          colorText(
+            `Child settlement UNIX seconds (Enter=${defTs}): `,
+            colors.brightMagenta
+          )
+        )
+      ).trim();
       const childTs = tsIn && /^\d+$/.test(tsIn) ? Number(tsIn) : defTs;
       console.log(colorText("⏳ Emitting event...", colors.yellow));
-      const tx = await lifecycle.debugEmitRolloverCreated(parent, childIn, childTs);
+      const tx = await lifecycle.debugEmitRolloverCreated(
+        parent,
+        childIn,
+        childTs
+      );
       const rc = await tx.wait();
-      console.log(colorText(`✅ Emitted. Block: ${rc.blockNumber} Gas: ${rc.gasUsed}`, colors.green));
+      console.log(
+        colorText(
+          `✅ Emitted. Block: ${rc.blockNumber} Gas: ${rc.gasUsed}`,
+          colors.green
+        )
+      );
       await this.pause(1500);
     } catch (e) {
       console.log(colorText(`❌ Debug emit failed: ${e.message}`, colors.red));

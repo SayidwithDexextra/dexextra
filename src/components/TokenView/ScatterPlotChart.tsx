@@ -57,14 +57,17 @@ export default function ScatterPlotChart({
   height = 350,
   className = '',
   data,
-  pointColor = 'rgba(255, 255, 255, 0.5)'
+  pointColor = 'rgba(0, 153, 255, 0.7)'
 }: ScatterPlotChartProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
   const [selectedTimeframe, setSelectedTimeframe] = useState<'1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d'>('5m');
+  const [compareEnabled, setCompareEnabled] = useState<boolean>(false);
+  const [secondaryTimeframe, setSecondaryTimeframe] = useState<'1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d'>('1h');
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const md = useMarketData();
   const [remoteData, setRemoteData] = useState<ScatterPoint[] | null>(null);
+  const [remoteDataSecondary, setRemoteDataSecondary] = useState<ScatterPoint[] | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -105,6 +108,12 @@ export default function ScatterPlotChart({
     if (data && data.length > 0) return data;
     return [];
   }, [remoteData, data]);
+
+  const displayDataSecondary = useMemo(() => {
+    if (!compareEnabled) return [];
+    if (remoteDataSecondary && remoteDataSecondary.length > 0) return remoteDataSecondary;
+    return [];
+  }, [compareEnabled, remoteDataSecondary]);
 
   const activePoint = useMemo(() => {
     if (!displayData || displayData.length === 0) return null;
@@ -274,6 +283,7 @@ export default function ScatterPlotChart({
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
 
+    const secondaryColor = 'rgba(0, 200, 255, 0.55)';
     chartRef.current = new Chart(ctx, {
       type: 'scatter',
       data: {
@@ -287,7 +297,19 @@ export default function ScatterPlotChart({
             pointBorderWidth: 0,
             pointBackgroundColor: pointColor,
             pointBorderColor: 'rgba(255,255,255,0.12)'
-          }
+          },
+          ...(compareEnabled
+            ? [{
+              label: `${displayName} Scatter (${secondaryTimeframe})`,
+              data: displayDataSecondary,
+              showLine: false,
+              pointRadius: 2,
+              pointHoverRadius: 3,
+              pointBorderWidth: 0,
+              pointBackgroundColor: secondaryColor,
+              pointBorderColor: 'rgba(0,200,255,0.18)'
+            }] as any[]
+            : [])
         ]
       },
       options: {
@@ -474,6 +496,40 @@ export default function ScatterPlotChart({
     return () => { aborted = true; };
   }, [symbol, selectedTimeframe]);
 
+  // Fetch secondary timeframe data (when compare is enabled)
+  useEffect(() => {
+    let aborted = false;
+    const marketId = (md?.market as any)?.id as string | undefined;
+    if (!compareEnabled) {
+      setRemoteDataSecondary(null);
+      return () => { aborted = true; };
+    }
+    if (!marketId) {
+      return () => { aborted = true; };
+    }
+    const tf = secondaryTimeframe;
+    const url = `/api/charts/scatter?marketId=${encodeURIComponent(marketId)}&timeframe=${encodeURIComponent(tf)}&limit=1200`;
+    fetch(url, { cache: 'no-store' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        const rows = Array.isArray(body?.data) ? body.data : [];
+        const pts: ScatterPoint[] = rows.map((r: any, i: number) => {
+          const t = parseClickhouseTs(r?.ts);
+          return {
+            x: Number.isFinite(t) ? t : Number(i),
+            y: Number(r?.y ?? 0),
+            ts: Number.isFinite(t) ? t : undefined
+          };
+        }).filter((p: ScatterPoint) => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (!aborted) setRemoteDataSecondary(pts);
+      })
+      .catch(() => {
+        if (!aborted) setRemoteDataSecondary(null);
+      });
+    return () => { aborted = true; };
+  }, [symbol, compareEnabled, secondaryTimeframe]);
+
   return (
     <div
       className={`group relative bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 w-full ${containerIsNumberHeight ? '' : 'h-full'} ${className} flex flex-col overflow-hidden`}
@@ -490,7 +546,7 @@ export default function ScatterPlotChart({
             {String(displayName || symbol).toUpperCase()}
           </h4>
           <span className="text-white text-sm font-medium">
-            {activePoint ? `$${activePoint.y.toFixed(2)}` : '—'}
+            {activePoint ? `$${activePoint.y.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -507,6 +563,36 @@ export default function ScatterPlotChart({
               {tf.label}
             </button>
           ))}
+          <div className="mx-1 w-px h-4 bg-[#222222]" />
+          <button
+            onClick={() => setCompareEnabled((v) => !v)}
+            className={`px-2 py-1 text-[10px] font-medium rounded transition-all duration-200 ${
+              compareEnabled
+                ? 'text-white bg-[#1A1A1A] border border-[#333333]'
+                : 'text-[#808080] hover:text-white hover:bg-[#1A1A1A] border border-[#222222] hover:border-[#333333]'
+            }`}
+            title="Enable secondary timeframe overlay"
+          >
+            Compare
+          </button>
+          {compareEnabled && (
+            <div className="flex items-center gap-1.5 pl-1">
+              {timeframes.map((tf) => (
+                <button
+                  key={`sec-${tf.value}`}
+                  onClick={() => setSecondaryTimeframe(tf.value as any)}
+                  className={`px-2 py-1 text-[10px] font-medium rounded transition-all duration-200 ${
+                    secondaryTimeframe === tf.value
+                      ? 'text-white bg-[#0E2230] border border-[#134453]'
+                      : 'text-[#64C9E8] hover:text-white hover:bg-[#112836] border border-[#0E2A33] hover:border-[#134453]'
+                  }`}
+                  title="Secondary timeframe"
+                >
+                  {tf.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

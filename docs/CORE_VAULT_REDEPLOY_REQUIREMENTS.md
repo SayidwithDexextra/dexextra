@@ -1,46 +1,10 @@
-### CoreVault Redeploy — Objectives, Refactor Plan, and Runbook
+### CoreVault Redeploy — Requirements and Runbook (Summary)
 
-This document summarizes what is required to safely upgrade or redeploy the CoreVault contract and bring the system back to an operational state. Redeploying CoreVault is a last‑resort action. Strongly prefer upgradeability (proxy) and/or small diamond‑facet changes plus configuration over wholesale redeploys.
-
-#### Objectives
-- Eliminate out‑of‑gas failure modes in OrderBook liquidations by paging user enumeration at the vault.
-- Make gasless (cross‑chain) deposits first‑class: users credited via `creditExternal` become visible to liquidation scanners and analytics without requiring a native hub deposit.
-- Minimize operational risk: avoid moving user balances where possible; keep OrderBook/Spoke logic unchanged except where strictly necessary to rewire addresses.
-
-#### Refactor plan
-1) Extend CoreVault with per‑market user indexing and paged views:
-   - Maintain `usersWithPositions[marketId]` and `userInMarket[user][marketId]` and update them whenever a user’s position in a market flips `0 ↔ non‑0` (inside `updatePositionWithMargin` and `updatePositionWithLiquidation`).
-   - Add `getUsersWithPositionsInMarketCount(marketId)` and `getUsersWithPositionsInMarketPage(marketId, offset, limit)` to support predictable, small‑page enumeration.
-   - Call `_ensureUserTracked(user)` from `creditExternal(...)` and from both position update paths so that gasless‑credited users are always tracked.
-2) Update `OBLiquidationFacet` to use paged vault reads:
-   - Replace ad‑hoc, in‑memory candidate assembly with: `count = getUsersWithPositionsInMarketCount`, then read a small page (e.g., 20–50 users) starting from `s.lastCheckedIndex`, process a bounded number (e.g., 3–5), and store the next index for subsequent pokes.
-   - Keep early‑exit when both `bestBid` and `bestAsk` are zero; wrap `updateMarkPrice` in `try/catch`.
-3) (If CoreVault address must change) add a tiny admin facet to OrderBook, e.g. `OBVaultAdminFacet::setVault(address newVault)` restricted to `onlyOwner`, to re‑point `OrderBookStorage.state().vault` without redeploying the diamond.
-
-#### Make Liquidations & ADL small‑block friendly
-To ensure liquidation and administrative deleveraging (ADL) fit within small block gas budgets:
-
-- **Vault‑paged enumeration (small, deterministic cost per tx)**  
-  Use `getUsersWithPositionsInMarketCount(marketId)` and `getUsersWithPositionsInMarketPage(marketId, offset, limit)` to fetch tiny pages (e.g., 20 users). In the order‑book facet, process at most 3–5 users per poke and advance `s.lastCheckedIndex` for the next tx.
-
-- **Early pruning**  
-  If both `bestBid` and `bestAsk` are zero, return immediately. For each paged user, first call `isLiquidatable(user, marketId, mark)` (via `try/catch`) and skip non‑liquidatable accounts to avoid touching the book unnecessarily.
-
-- **Bounded crossing & partial closes**  
-  In `_executeLiquidationMarketOrder`, cap the number of price levels (or cumulative notional) crossed per tx (e.g., 2–3 levels). If the entire position cannot be closed within the budget, close partially and return; the next poke resumes on the next page of users.
-
-- **Defer expensive maker‑reward distribution**  
-  On liquidation, compute `rewardPool` and emit a single `MakerRewardAccrued(liquidatedUser, rewardPool, totalScaled)` event; defer per‑maker payouts to a separate `settleMakerRewards(liquidatedUser, makers[], amounts[])` call (keeper‑driven) or switch to a claim‑based model so the hot path remains O(1).
-
-- **Optional single‑user liquidation entrypoint**  
-  Provide `liquidateUser(address user)` to allow keepers to submit tiny, targeted liquidations for known‑bad accounts discovered via off‑chain `callStatic` screening.
-
-- **Suggested defaults**  
-  `MAX_PAGE = 20`, `MAX_USERS_PER_TX = 3`, cap price‑levels per user (2–3), invoke multiple small pokes per minute rather than a single jumbo transaction.
+This document summarizes what is required to safely redeploy the CoreVault contract and bring the system back to an operational state. Redeploying CoreVault is a last‑resort action. Strongly prefer reconfiguration via addresses and environment variables over redeploys whenever possible.
 
 Key constraints
 - CoreVault holds user collateral (USDC, 6 decimals). A new deployment does not transfer funds from the old vault.
-- OrderBook diamonds store a reference to the vault at initialization and cannot change it without a diamond upgrade. Existing OrderBooks will continue to point at the old vault until updated/redeployed (or until an admin facet sets a new vault address).
+- OrderBook diamonds store a reference to the vault at initialization and cannot change it without a diamond upgrade. Existing OrderBooks will continue to point at the old vault until updated/redeployed.
 - The FuturesMarketFactory originally “points to” a vault; depending on version, this may be immutable or admin‑updatable.
 
 When a redeploy is justified
@@ -55,7 +19,7 @@ Pre‑deployment prerequisites
   - USDC collateral token address (must be 6 decimals).
   - Libraries: VaultAnalytics, PositionManager (reuse existing addresses).
   - LiquidationManager implementation address (if applicable).
-  - CollateralHub (if using cross‑chain credit); ensure it can be pointed to the new CoreVault via `setCoreVaultParams`.
+  - CollateralHub (if using cross‑chain credit).
   - FuturesMarketFactory (existing and/or new).
   - All OrderBook addresses and their marketIds.
 - Backend/frontend configuration prepared for the new addresses:
@@ -80,18 +44,12 @@ Contract deployment checklist
   - registerOrderBook(OB)
   - assignMarketToOrderBook(marketId, OB)
 
-3) CollateralHub alignment (Spokes remain unchanged)
-- Point the hub to the new vault and operator:
-  - `CollateralHub.setCoreVaultParams(newVault, operator)`
-- Ensure `CollateralHub` holds `EXTERNAL_CREDITOR_ROLE` on the new CoreVault.
-- Spoke bridge contracts (inboxes/outboxes) continue to interact with `CollateralHub`; they don’t need changes for a CoreVault swap.
-
-4) Factory alignment
+3) Factory alignment
 - If your factory supports it, update the factory to point to the new CoreVault for future markets. Otherwise, deploy a new FuturesMarketFactory targeting the new CoreVault and grant it required roles.
 
-5) OrderBook alignment (CRITICAL)
+4) OrderBook alignment (CRITICAL)
 - Existing OrderBooks reference the old vault via storage set in `OrderBookInit.obInitialize()`. There is no post‑init setter in the shipped facets, so you must do ONE of:
-  - Diamond upgrade path (preferred): add a small admin facet with an owner/admin‑only function to update `s.vault` and execute a diamond cut across all OrderBooks; or
+  - Diamond upgrade path: add a small admin facet with an owner/admin‑only function to update `s.vault` and execute a diamond cut across all OrderBooks; or
   - Redeploy each OrderBook and initialize it with the new vault; then re‑register and re‑assign market mappings on the new CoreVault.
 - Until this step is completed, legacy OrderBooks will continue to call the OLD vault.
 
@@ -111,10 +69,7 @@ Operational runbook (commands/scripts)
   - `Dexetrav5/scripts/regrant-corevault-roles.js`
 - Role and mapping verification:
   - `node scripts/check-corevault-roles.js --coreVault 0x... --orderBook 0x...`
-  - `node scripts/inspect-orderbook-liq.js` (verifies vault/market relations and orderbook liquidity signals).
-- Hub wiring:
-  - `CollateralHub.setCoreVaultParams(newVault, operator)`
-  - Verify `EXTERNAL_CREDITOR_ROLE` on the new CoreVault for the `CollateralHub` address.
+  - `node scripts/inspect-orderbook-liq.js` (verifies vault/market relations and signals).
 - Update deployments/config, then verify:
   - `Dexetrav5/deployments/{network}-deployment.json`
   - `Dexetrav5/config/contracts.js` → front‑end picks up new addresses.
@@ -126,9 +81,6 @@ Post‑deployment validation
   - OrderBooks effectively call the NEW vault (after diamond cut or redeploy).
 - Liquidation flows: run smoke tests that exercise `isLiquidatable`, `updatePositionWithLiquidation`, and reward payment paths.
 - Settlement: confirm `updateMarkPrice` and settlement operations via authorized callers.
-- Paged enumeration & gasless users:
-- `getUsersWithPositionsInMarketCount`/`getUsersWithPositionsInMarketPage` return expected values and include users credited via `creditExternal`.
-- `OBLiquidationFacet.pokeLiquidations()` processes a small, fixed batch per tx and completes without out‑of‑gas in small blocks.
 - App health:
   - UI loads new addresses from config.
   - API servers use the configured addresses from environment/config (no hardcoded addresses).
@@ -139,6 +91,6 @@ Production safety guardrails
 - Monitor on‑chain events (PositionUpdated, MarginLocked/Released, VaultMarketSettled) and backend logs for anomalies.
 
 Strong recommendation
-- Prefer **proxy upgrade** of CoreVault where possible; otherwise, add **targeted diamond‑facet updates** and update addresses/config to avoid moving funds. If you must redeploy CoreVault, plan for OrderBook vault‑pointer updates (admin facet), re‑grant all roles (including `EXTERNAL_CREDITOR_ROLE` to `CollateralHub`), and define a clear funds‑migration/dual‑vault strategy before going live.
+- Avoid redeploying core contracts. Prefer using configured addresses in deployment config and `.env.local` and adding small, targeted upgrades (diamond cuts) over wholesale redeploys. If you must redeploy CoreVault, plan for OrderBook rewiring and a clear funds migration strategy before making the change live.
 
 

@@ -63,7 +63,7 @@ error UseCreateMarketDiamond();
 
 /**
  * @title FuturesMarketFactory
- * @dev Factory contract for creating custom futures markets with dedicated OrderBooks (Diamond)
+ * @dev Factory contract for creating custom futures markets with dedicated OrderBooks
  * @notice Allows users to create and trade custom metric futures with margin support
  */
 contract FuturesMarketFactory {
@@ -102,8 +102,6 @@ contract FuturesMarketFactory {
     IPriceOracle internal defaultOracle;
     address internal oracleAdmin;
     uint256 internal defaultOracleReward = 10 * 10**6; // 10 USDC reward for UMA requests
-    // UMA currency used for requests (e.g., USDC); must be set explicitly since CoreVault doesn't expose the token
-    address internal umaCurrency;
     
     // removed: allOrderBooks tracking to reduce bytecode
     bytes32[] internal allMarkets;
@@ -204,7 +202,7 @@ contract FuturesMarketFactory {
      * @param diamondOwner Owner of the Diamond (admin)
      * @param cut Initial facet cut describing facets and selectors
      * @param initFacet Address to run initialization delegatecall (e.g., OrderBookInitFacet)
-     * @param initCalldata Calldata passed to initFacet
+     * @param initFacet Calldata param kept in docs for backwards compatibility (unused)
      */
     function createFuturesMarketDiamond(
         string memory marketSymbol,
@@ -216,10 +214,10 @@ contract FuturesMarketFactory {
         address diamondOwner,
         IDiamondCut.FacetCut[] memory cut,
         address initFacet,
-        bytes memory initCalldata
+        bytes memory /*initCalldata*/
     ) external 
-        canCreateMarket 
-        validMarketSymbol(marketSymbol) 
+        canCreateMarket
+        validMarketSymbol(marketSymbol)
         validMetricUrl(metricUrl)
         validSettlementDate(settlementDate)
         returns (address orderBook, bytes32 marketId) 
@@ -232,7 +230,7 @@ contract FuturesMarketFactory {
         if (marketCreationFee > 0 && msg.sender != admin) {
             vault.deductFees(msg.sender, marketCreationFee, feeRecipient);
         }
-        
+
         marketId = keccak256(abi.encodePacked(marketSymbol, metricUrl, msg.sender, block.timestamp, block.number));
         if (marketExists[marketId]) revert MarketIdCollision();
 
@@ -246,7 +244,7 @@ contract FuturesMarketFactory {
         // Register with vault and assign market
         vault.registerOrderBook(orderBook);
         vault.assignMarketToOrderBook(marketId, orderBook);
-        
+
         // Update tracking and metadata
         marketToOrderBook[marketId] = orderBook;
         orderBookToMarket[orderBook] = marketId;
@@ -259,7 +257,7 @@ contract FuturesMarketFactory {
         // metadata writes removed for bytecode reduction (startPrice, creationTs, dataSource, tags)
 
         vault.updateMarkPrice(marketId, startPrice);
-        
+
         emit FuturesMarketCreated(orderBook, marketId, marketSymbol, msg.sender, marketCreationFee, metricUrl, settlementDate, startPrice);
         return (orderBook, marketId);
     }
@@ -320,15 +318,6 @@ contract FuturesMarketFactory {
     }
     
     /**
-     * @dev Configure UMA reward currency (e.g., USDC) used in UMA requests
-     * @param _currency ERC20 token address accepted by UMA
-     */
-    function setUmaCurrency(address _currency) external onlyAdmin {
-        if (_currency == address(0)) revert ZeroAddress();
-        umaCurrency = _currency;
-    }
-    
-    /**
      * @dev Assign custom oracle to a market
      * @param marketId Market identifier
      * @param oracle Custom oracle address
@@ -350,7 +339,6 @@ contract FuturesMarketFactory {
         if (marketSettled[marketId]) revert MarketAlreadySettledErr();
         if (block.timestamp < marketSettlementDates[marketId]) revert SettlementNotReady();
         if (address(umaOracle) == address(0)) revert OracleNotConfigured();
-        if (umaCurrency == address(0)) revert OracleNotConfigured();
         
         // Create UMA request
         bytes memory ancillaryData = abi.encodePacked(
@@ -363,7 +351,7 @@ contract FuturesMarketFactory {
             marketId, // Use marketId as identifier
             marketSettlementDates[marketId],
             ancillaryData,
-            umaCurrency,
+            address(vault.collateralToken()),
             defaultOracleReward
         );
         
@@ -484,6 +472,12 @@ contract FuturesMarketFactory {
         // event omitted to reduce bytecode size
     }
     
+    /**
+     * @dev Set the OrderBook implementation used for EIP-1167 clones
+     * @param implementation Address of deployed OrderBook logic contract (template)
+     */
+    // Removed: EIP-1167 clone template management. Factory only supports Diamond-based markets now.
+    
     // ============ View Functions ============
     
     /**
@@ -495,6 +489,14 @@ contract FuturesMarketFactory {
         return marketToOrderBook[marketId];
     }
     
+    // Removed redundant reverse lookup getter to reduce bytecode size
+    
+    /**
+     * @dev Get all OrderBook addresses
+     * @return Array of OrderBook addresses
+     */
+    // Removed convenience getter to reduce bytecode size
+    
     /**
      * @dev Get all market IDs
      * @return Array of market IDs
@@ -502,6 +504,19 @@ contract FuturesMarketFactory {
     function getAllMarkets() external view returns (bytes32[] memory) {
         return allMarkets;
     }
+    
+    /**
+     * @dev Get total number of OrderBooks
+     * @return Number of OrderBooks
+     */
+    // Removed convenience getter to reduce bytecode size
+    
+    /**
+     * @dev Check if a market exists
+     * @param marketId Market identifier
+     * @return True if market exists
+     */
+    // Removed redundant getter: use public mapping `marketExists`
     
     /**
      * @dev Get default trading parameters
@@ -513,6 +528,13 @@ contract FuturesMarketFactory {
     }
     
     /**
+     * @dev Get market creator
+     * @param marketId Market identifier
+     * @return Creator address
+     */
+    // Removed redundant getter: use public mapping `marketCreators`
+    
+    /**
      * @dev Get market symbol
      * @param marketId Market identifier
      * @return Market symbol string
@@ -522,46 +544,162 @@ contract FuturesMarketFactory {
     }
     
     /**
-     * @dev Get current price from market's oracle
+     * @dev Get metric URL for a market (single source of truth)
      * @param marketId Market identifier
-     * @return price Current price
-     * @return timestamp Price timestamp
+     * @return Metric URL string
      */
-    function getCurrentOraclePrice(bytes32 marketId) external view returns (uint256 price, uint256 timestamp) {
-        if (!marketExists[marketId]) revert MarketNotFound();
-        
-        // Try custom oracle first
-        if (marketOracles[marketId] != address(0)) {
-            return IPriceOracle(marketOracles[marketId]).getPrice(marketId);
-        }
-        
-        // Fall back to default oracle
-        if (address(defaultOracle) != address(0)) {
-            return defaultOracle.getPrice(marketId);
-        }
-        
-        // Return vault mark price as fallback
-        return (vault.getMarkPrice(marketId), block.timestamp);
-    }
+    // Removed redundant getter: use public mapping `marketMetricUrls`
     
     /**
-     * @dev Get oracle configuration for a market
+     * @dev Get settlement date for a market
      * @param marketId Market identifier
-     * @return customOracle Custom oracle address (address(0) if none)
-     * @return umaRequestId UMA request ID (bytes32(0) if none)
-     * @return hasUmaRequest Whether market has pending UMA request
+     * @return Settlement date timestamp
      */
-    function getMarketOracleConfig(bytes32 marketId) external view returns (
-        address customOracle,
-        bytes32 umaRequestId,
-        bool hasUmaRequest
-    ) {
-        return (
-            marketOracles[marketId],
-            umaRequestIds[marketId],
-            umaRequestIds[marketId] != bytes32(0)
-        );
+    // Removed redundant getter: use public mapping `marketSettlementDates`
+    
+    /**
+     * @dev Get start price for a market
+     * @param marketId Market identifier
+     * @return Start price (6 USDC decimals)
+     */
+    // Removed redundant getter: use public mapping `marketStartPrices`
+    
+    /**
+     * @dev Get market creation timestamp
+     * @param marketId Market identifier
+     * @return Creation timestamp
+     */
+    // Removed redundant getter: use public mapping `marketCreationTimestamps`
+    
+    // Removed convenience settlement helpers to reduce bytecode size
+    
+    /**
+     * @dev Get data source for a market
+     * @param marketId Market identifier
+     * @return Data source string
+     */
+    // Removed redundant getter: use public mapping `marketDataSources`
+    
+    /**
+     * @dev Get tags for a market
+     * @param marketId Market identifier
+     * @return Array of tag strings
+     */
+    // Removed redundant getter
+    
+    /**
+     * @dev Get settlement status and final price
+     * @param marketId Market identifier
+     * @return settled Whether market is settled
+     * @return finalPrice Final settlement price (0 if not settled)
+     */
+    // Removed convenience view
+    
+    /**
+     * @dev Get markets created by a user
+     * @param creator Creator address
+     * @return Array of market IDs created by the user
+     */
+    // Removed convenience view
+    
+    // ============ Market Discovery Functions ============
+    
+    /**
+     * @dev Get all custom metric markets
+     * @return Array of custom metric market IDs
+     */
+    // Removed discovery helper
+    
+    /**
+     * @dev Get all standard markets
+     * @return Array of standard market IDs
+     */
+    // Removed discovery helper
+    
+    /**
+     * @dev Get markets by data source
+     * @param dataSource Data source to filter by
+     * @return Array of market IDs from the specified data source
+     */
+    // Removed discovery helper
+    
+    /**
+     * @dev Get markets containing a specific tag
+     * @param tag Tag to search for
+     * @return Array of market IDs containing the tag
+     */
+    // Removed discovery helper
+    
+    /**
+     * @dev Get markets settling within a time range
+     * @param fromTimestamp Start of time range
+     * @param toTimestamp End of time range
+     * @return Array of market IDs settling in the range
+     */
+    // Removed discovery helper
+    
+    /**
+     * @dev Get active (unsettled) markets
+     * @return Array of active market IDs
+     */
+    // Removed discovery helper
+    
+    /**
+     * @dev Get markets ready for settlement
+     * NOTE: Retained due to potential external usage
+     */
+    function getMarketsReadyForSettlement() external view returns (bytes32[] memory) {
+        uint256 mLen = allMarkets.length;
+        uint256 count = 0;
+        for (uint256 i = 0; i < mLen; ) {
+            bytes32 mid = allMarkets[i];
+            if (!marketSettled[mid] && block.timestamp >= marketSettlementDates[mid]) {
+                count++;
+            }
+            unchecked { ++i; }
+        }
+        
+        bytes32[] memory ready = new bytes32[](count);
+        uint256 index = 0;
+        
+        for (uint256 i = 0; i < mLen; ) {
+            bytes32 mid = allMarkets[i];
+            if (!marketSettled[mid] && block.timestamp >= marketSettlementDates[mid]) {
+                ready[index] = mid;
+                unchecked { ++index; }
+            }
+            unchecked { ++i; }
+        }
+        
+        return ready;
     }
+    
+    // Removed convenience getter for market creation settings to reduce bytecode size
+    
+    /**
+     * @dev Get comprehensive market details
+     * @param marketId Market identifier
+     * @return orderBook OrderBook address
+     * @return creator Market creator
+     * @return symbol Market symbol
+     * @return metricUrl Metric URL (source of truth)
+     * @return settlementDate Settlement timestamp
+     * @return startPrice Start price (6 USDC decimals)
+     * @return creationTimestamp When market was created
+     * @return exists Whether market exists
+     */
+    // Removed aggregated details view
+    
+    /**
+     * @dev Get market metadata only
+     * @param marketId Market identifier
+     * @return symbol Market symbol
+     * @return metricUrl Metric URL (source of truth)
+     * @return settlementDate Settlement timestamp
+     * @return startPrice Start price (6 USDC decimals)
+     * @return settled Whether market has settled
+     */
+    // Removed aggregated metadata view
     
     // ============ Robust Oracle Management Functions ============
     
@@ -595,6 +733,60 @@ contract FuturesMarketFactory {
     }
     
     /**
+     * @dev Get current price from market's oracle
+     * @param marketId Market identifier
+     * @return price Current price
+     * @return timestamp Price timestamp
+     */
+    function getCurrentOraclePrice(bytes32 marketId) external view returns (uint256 price, uint256 timestamp) {
+        if (!marketExists[marketId]) revert MarketNotFound();
+        
+        // Try custom oracle first
+        if (marketOracles[marketId] != address(0)) {
+            return IPriceOracle(marketOracles[marketId]).getPrice(marketId);
+        }
+        
+        // Fall back to default oracle
+        if (address(defaultOracle) != address(0)) {
+            return defaultOracle.getPrice(marketId);
+        }
+        
+        // Return vault mark price as fallback
+        return (vault.marketMarkPrices(marketId), block.timestamp);
+    }
+    
+    /**
+     * @dev Get oracle configuration for a market
+     * @param marketId Market identifier
+     * @return customOracle Custom oracle address (address(0) if none)
+     * @return umaRequestId UMA request ID (bytes32(0) if none)
+     * @return hasUmaRequest Whether market has pending UMA request
+     */
+    function getMarketOracleConfig(bytes32 marketId) external view returns (
+        address customOracle,
+        bytes32 umaRequestId,
+        bool hasUmaRequest
+    ) {
+        return (
+            marketOracles[marketId],
+            umaRequestIds[marketId],
+            umaRequestIds[marketId] != bytes32(0)
+        );
+    }
+    
+    /**
+     * @dev Get all oracle-related information for a market
+     * @param marketId Market identifier
+     * @return customOracle Custom oracle address
+     * @return defaultOracleAddr Default oracle address
+     * @return umaOracleAddr UMA oracle address
+     * @return currentPrice Current oracle price
+     * @return priceTimestamp Price timestamp
+     * @return isSettlementReady Whether market is ready for settlement
+     */
+    // Removed aggregated oracle info view to reduce bytecode size
+    
+    /**
      * @dev Update multiple market prices via oracle admin
      * @param marketIds Array of market identifiers
      * @param prices Array of new prices
@@ -614,6 +806,23 @@ contract FuturesMarketFactory {
     }
     
     /**
+     * @dev Get markets requiring oracle updates (price older than threshold)
+     * @param maxAge Maximum age in seconds for price to be considered fresh
+     * @return Array of market IDs needing price updates
+     */
+    // Removed oracle monitoring helper
+    
+    /**
+     * @dev Get oracle health status across all markets
+     * @return totalMarkets Total number of markets
+     * @return activeMarkets Number of active (unsettled) markets
+     * @return marketsWithCustomOracles Number of markets with custom oracles
+     * @return marketsWithUMARequests Number of markets with pending UMA requests
+     * @return settledMarkets Number of settled markets
+     */
+    // Removed oracle health view
+    
+    /**
      * @dev Emergency oracle intervention - update price directly
      * @param marketId Market identifier
      * @param emergencyPrice Emergency price to set
@@ -631,6 +840,32 @@ contract FuturesMarketFactory {
         vault.updateMarkPrice(marketId, emergencyPrice);
         // event omitted to reduce bytecode size
     }
+    
+    // ============ Internal Helper Functions ============
+    
+    /**
+     * @dev Get markets by custom metric type
+     * @param customType True for custom metrics, false for standard
+     * @return Array of market IDs of the specified type
+     */
+    // helper removed: _getMarketsByType (and related typology) to reduce bytecode size
+    
+    /**
+     * @dev Get markets by type (custom vs traditional)
+     * @param customOnly If true, return only custom markets; if false, return traditional markets
+     * @return marketIds Array of market IDs
+     */
+    // view removed: getMarketsByType to reduce bytecode size
+
+    // Removed convenience market info getter to reduce bytecode size
+
+    /**
+     * @dev Compare two strings for equality
+     * @param a First string
+     * @param b Second string
+     * @return True if strings are equal
+     */
+    // helper removed (unused) to reduce bytecode size
 
     // ============ Leverage Management Functions ============
 
@@ -724,4 +959,7 @@ contract FuturesMarketFactory {
         defaultLeverageEnabled = _defaultLeverageEnabled;
         // event omitted to reduce bytecode size
     }
+
+    // ============ Additional Events for Leverage Management ============
+    // removed to reduce bytecode size
 }

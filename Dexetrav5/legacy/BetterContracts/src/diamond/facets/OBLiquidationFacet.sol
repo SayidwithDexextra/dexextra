@@ -25,6 +25,7 @@ contract OBLiquidationFacet {
     event LiquidationResync(uint256 bestBidPrice, uint256 bestAskPrice);
     event LiquidationMarketOrderAttempt(address indexed trader, uint256 amount, bool isBuy, uint256 markPrice);
     event LiquidationMarketOrderResult(address indexed trader, bool success, string reason);
+    event LiquidationFallbackExecuted(address indexed trader, bool isShort, uint256 markPrice, bool success, string reason);
     event LiquidationPositionRetrieved(address indexed trader, int256 size, uint256 marginLocked, int256 unrealizedPnL);
     event LiquidationConfigUpdated(bool scanOnTrade, bool debug);
     event LiquidationSocializedLossAttempt(address indexed trader, bool isLong, string method);
@@ -37,7 +38,6 @@ contract OBLiquidationFacet {
     event DebugMakerRewardPayOutcome(address indexed liquidatedUser, address indexed maker, uint256 amount, bool success, bytes errorData);
     event DebugRewardDistributionEnd(address indexed liquidatedUser);
     event LiquidationMarketGapDetected(address indexed trader, uint256 liquidationPrice, uint256 actualExecutionPrice, int256 positionSize, uint256 gapLoss);
-    event LiquidationScanParamsUpdated(uint256 maxChecksPerPoke, uint256 maxLiquidationsPerPoke);
     modifier onlyOwner() {
         LibDiamond.enforceIsContractOwner();
         _;
@@ -49,29 +49,10 @@ contract OBLiquidationFacet {
         emit LiquidationConfigUpdated(s.liquidationScanOnTrade, s.liquidationDebug);
     }
 
-    function setLiquidationScanParams(uint256 checksPerPoke, uint256 maxLiquidationsPerPoke) external onlyOwner {
-        require(checksPerPoke > 0 && checksPerPoke <= 1000, "OB: bad checksPerPoke");
-        require(maxLiquidationsPerPoke > 0 && maxLiquidationsPerPoke <= checksPerPoke, "OB: bad maxLiquidations");
-        OrderBookStorage.State storage s = OrderBookStorage.state();
-        s.maxLiquidationChecksPerPoke = checksPerPoke;
-        s.maxLiquidationsPerPoke = maxLiquidationsPerPoke;
-        emit LiquidationScanParamsUpdated(checksPerPoke, maxLiquidationsPerPoke);
-    }
-
     function setConfigLiquidationDebug(bool enable) external onlyOwner {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         s.liquidationDebug = enable;
         emit LiquidationConfigUpdated(s.liquidationScanOnTrade, s.liquidationDebug);
-    }
-
-    function pokeLiquidationsMulti(uint256 rounds) external {
-        require(rounds > 0 && rounds <= 20, "OB: bad rounds");
-        for (uint256 i = 0; i < rounds; i++) {
-            // Each external call updates mark and processes a batch
-            this.pokeLiquidations();
-            // If we wrapped to index 0, we've completed a full pass
-            if (OrderBookStorage.state().lastCheckedIndex == 0) { break; }
-        }
     }
 
 
@@ -108,8 +89,7 @@ contract OBLiquidationFacet {
 
         s.liquidationInProgress = true;
         uint256 startIndex = s.lastCheckedIndex;
-        uint256 checksPerPoke = s.maxLiquidationChecksPerPoke > 0 ? s.maxLiquidationChecksPerPoke : 50;
-        uint256 endIndex = Math.min(startIndex + checksPerPoke, tradersLength);
+        uint256 endIndex = Math.min(startIndex + 5, tradersLength);
         uint256 liquidationsTriggered = 0;
         uint256 tradersChecked = 0; uint256 lastIndexProcessed = startIndex;
         emit LiquidationCheckStarted(markPrice, tradersLength, startIndex, endIndex);
@@ -123,9 +103,8 @@ contract OBLiquidationFacet {
             if (didLiq) {
                 liquidationsTriggered++;
                 emit AutoLiquidationTriggered(trader, s.marketId, posSize, markPrice);
-                emit LiquidationCompleted(trader, liquidationsTriggered, "Market Order");
-                uint256 maxLiqs = s.maxLiquidationsPerPoke > 0 ? s.maxLiquidationsPerPoke : (checksPerPoke / 2);
-                if (liquidationsTriggered >= maxLiqs) { break; }
+                emit LiquidationCompleted(trader, liquidationsTriggered, usedDirectVault ? "Direct Vault" : "Market Order");
+                if (liquidationsTriggered >= 5) { break; }
             }
         }
 
@@ -143,57 +122,23 @@ contract OBLiquidationFacet {
     function _checkAndLiquidateTrader(address trader, uint256 markPrice) internal returns (bool didLiquidate, int256 positionSize, bool usedDirectVault) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         bool isLiquidatable = false;
-        // Must not suppress error; if position state change fails, revert
-        isLiquidatable = s.vault.isLiquidatable(trader, s.marketId, markPrice);
-        emit LiquidationLiquidatableCheck(trader, isLiquidatable, markPrice);
+        try s.vault.isLiquidatable(trader, s.marketId, markPrice) returns (bool liquidatable) { isLiquidatable = liquidatable; emit LiquidationLiquidatableCheck(trader, isLiquidatable, markPrice); }
+        catch { emit LiquidationLiquidatableCheck(trader, false, markPrice); return (false, 0, false); }
         if (!isLiquidatable) return (false, 0, false);
-        // Get the user's position size
-        (int256 size, , ) = s.vault.getPositionSummary(trader, s.marketId);
-        if (size == 0) return (false, 0, false);
-        positionSize = size;
-        emit LiquidationPositionRetrieved(trader, size, 0, 0);
-        // First, force market order, up to 5 attempts for partials
-        int256 startSize = size;
-        int attempts = 0;
-        bool anyFilled = false;
-        while (attempts < 5 && size != 0) {
-            attempts++;
-            bool wantBuy = size < 0;
-            uint256 amount = uint256(size < 0 ? -size : size);
-            // If no liquidity exists, stop trying market order
-            if ((wantBuy && s.bestAsk == 0) || (!wantBuy && s.bestBid == 0)) break;
-            LiquidationExecutionResult memory res = _executeLiquidationMarketOrder(trader, wantBuy, amount, markPrice);
+
+        try s.vault.getPositionSummary(trader, s.marketId) returns (int256 size, uint256 /*entryPrice*/, uint256 marginLocked) {
+            if (size == 0) return (false, 0, false);
+            positionSize = size;
+            emit LiquidationPositionRetrieved(trader, size, marginLocked, 0);
+            LiquidationExecutionResult memory res = _executeLiquidationMarketOrder(trader, size < 0, uint256(size < 0 ? -size : size), markPrice);
             if (res.filledAmount > 0) {
-                anyFilled = true;
                 _processEnhancedLiquidationWithGapProtection(trader, size, markPrice, res);
-                (int256 newSize, , ) = s.vault.getPositionSummary(trader, s.marketId);
-                if (newSize == 0) return (true, startSize, false); // Fully filled
-                if (newSize == size) break; // No progress
-                size = newSize;
-                continue;
-            } else {
-                // No matches even for available orders/liquidity
-                break;
+                return (true, size, false);
             }
-        }
-        // if we made any progress, return success
-        (int256 afterMarket, , ) = s.vault.getPositionSummary(trader, s.marketId);
-        if (afterMarket != positionSize) return (true, startSize, false);
-        // Fallback to direct vault-side liquidation (no suppression)
-        bool vaultSuccess = false;
-        uint256 execPrice = markPrice;
-        if (execPrice == 0) execPrice = s.lastMarkPrice != 0 ? s.lastMarkPrice : s.lastTradePrice;
-        if (execPrice == 0) execPrice = size < 0 ? s.bestAsk : s.bestBid;
-        if (size < 0) {
-            s.vault.liquidateShort(trader, s.marketId, address(this), execPrice);
-            vaultSuccess = true;
-        } else if (size > 0) {
-            s.vault.liquidateLong(trader, s.marketId, address(this), execPrice);
-            vaultSuccess = true;
-        }
-        (int256 afterVault, , ) = s.vault.getPositionSummary(trader, s.marketId);
-        bool directReduced = afterVault != positionSize;
-        return (directReduced, positionSize, true);
+            bool fallbackSuccess = _executeDirectVaultLiquidation(s, trader, size, markPrice);
+            if (fallbackSuccess) { return (true, size, true); }
+            return (false, 0, false);
+        } catch { return (false, 0, false); }
     }
 
     function _executeLiquidationMarketOrder(address trader, bool isBuy, uint256 amount, uint256 markPrice) internal returns (LiquidationExecutionResult memory result) {
@@ -248,6 +193,47 @@ contract OBLiquidationFacet {
         return result;
     }
 
+    function _executeDirectVaultLiquidation(
+        OrderBookStorage.State storage s,
+        address trader,
+        int256 positionSize,
+        uint256 markPrice
+    ) internal returns (bool) {
+        if (positionSize == 0) {
+            emit LiquidationFallbackExecuted(trader, false, markPrice, false, "NO_POSITION");
+            return false;
+        }
+        uint256 execPrice = markPrice;
+        if (execPrice == 0) {
+            execPrice = s.lastMarkPrice != 0 ? s.lastMarkPrice : s.lastTradePrice;
+            if (execPrice == 0) {
+                execPrice = positionSize < 0 ? s.bestAsk : s.bestBid;
+            }
+        }
+        if (execPrice == 0) {
+            emit LiquidationFallbackExecuted(trader, positionSize < 0, markPrice, false, "NO_REFERENCE_PRICE");
+            return false;
+        }
+        bool isShort = positionSize < 0;
+        if (isShort) {
+            try s.vault.liquidateShort(trader, s.marketId, address(this), execPrice) {
+                emit LiquidationFallbackExecuted(trader, true, execPrice, true, "DIRECT_SHORT");
+                return true;
+            } catch (bytes memory) {
+                emit LiquidationFallbackExecuted(trader, true, execPrice, false, "VAULT_CALL_FAILED");
+                return false;
+            }
+        } else {
+            try s.vault.liquidateLong(trader, s.marketId, address(this), execPrice) {
+                emit LiquidationFallbackExecuted(trader, false, execPrice, true, "DIRECT_LONG");
+                return true;
+            } catch (bytes memory) {
+                emit LiquidationFallbackExecuted(trader, false, execPrice, false, "VAULT_CALL_FAILED");
+                return false;
+            }
+        }
+    }
+
     function _processEnhancedLiquidationWithGapProtection(
         address trader,
         int256 positionSize,
@@ -270,14 +256,6 @@ contract OBLiquidationFacet {
             }
             if (gapLoss > 0) {
                 emit LiquidationMarketGapDetected(trader, liquidationTriggerPrice, executionResult.worstExecutionPrice, positionSize, gapLoss);
-                // Confiscate available collateral up to the computed gap loss to reduce shortfall
-                uint256 available = 0;
-                try s.vault.getAvailableCollateral(trader) returns (uint256 a) { available = a; } catch { available = 0; }
-                uint256 toConfiscate = gapLoss < available ? gapLoss : available;
-                if (toConfiscate > 0) {
-                    // Best-effort; ignore failures to avoid reverting liquidation completion
-                    try s.vault.confiscateAvailableCollateralForGapLoss(trader, toConfiscate) { } catch { }
-                }
             }
         }
 
@@ -395,15 +373,8 @@ contract OBLiquidationFacet {
 
     function _executeTradeForLiquidation(address buyer, address seller, uint256 price, uint256 amount, bool buyerMargin, bool sellerMargin) internal {
         // delegate to trade execution facet
-        (bool ok, bytes memory err) = address(this).call(abi.encodeWithSignature("obExecuteTrade(address,address,uint256,uint256,bool,bool)", buyer, seller, price, amount, buyerMargin, sellerMargin));
-        if (!ok) {
-            // Revert to avoid order book state divergence if trade execution fails
-            if (err.length > 0) {
-                assembly { revert(add(err, 0x20), mload(err)) }
-            } else {
-                revert("OrderBook: liquidation trade execution failed");
-            }
-        }
+        (bool ok, ) = address(this).call(abi.encodeWithSignature("obExecuteTrade(address,address,uint256,uint256,bool,bool)", buyer, seller, price, amount, buyerMargin, sellerMargin));
+        ok; // ignore result
     }
 
     function _recordLiquidationMakerContribution(address maker, uint256 price, uint256 amount) internal {

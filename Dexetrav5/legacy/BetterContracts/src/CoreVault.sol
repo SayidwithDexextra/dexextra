@@ -32,11 +32,9 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant ORDERBOOK_ROLE = keccak256("ORDERBOOK_ROLE");
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     bytes32 public constant FACTORY_ROLE = keccak256("FACTORY_ROLE");
-    // Allows external systems (e.g., CollateralHub) to manage cross-chain credit ledger
-    bytes32 public constant EXTERNAL_CREDITOR_ROLE = keccak256("EXTERNAL_CREDITOR_ROLE");
 
     // LiquidationManager implementation to which heavy liquidation logic is delegated
-    address internal liquidationManager;
+    address public liquidationManager;
 
 
     /**
@@ -77,12 +75,10 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     // Use liquidation loss for: actual USDC amounts to confiscate from collateral
 
     // ============ State Variables ============
-    IERC20 internal immutable collateralToken;
+    IERC20 public immutable collateralToken;
     
     // Core user data
     mapping(address => uint256) public userCollateral;
-    // Cross-chain credit ledger (math-only credits from spokes; NOT withdrawable on hub)
-    mapping(address => uint256) public userCrossChainCredit;
     mapping(address => int256) public userRealizedPnL;
     mapping(address => PositionManager.Position[]) public userPositions;
     mapping(address => VaultAnalytics.PendingOrder[]) public userPendingOrders;
@@ -92,7 +88,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     
     // User tracking for socialized loss distribution
     address[] public allKnownUsers;
-    mapping(address => bool) internal isKnownUser;
+    mapping(address => bool) public isKnownUser;
     // REMOVED: userMarginByMarket - margin now tracked exclusively in Position structs
     
     // Market management
@@ -102,8 +98,8 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
 
     // Anchor price and timestamp captured when a position first enters liquidation control.
     // Used to clamp socialized loss so profitable users are not overcharged due to delays in liquidity.
-    mapping(address => mapping(bytes32 => uint256)) internal liquidationAnchorPrice;
-    mapping(address => mapping(bytes32 => uint256)) internal liquidationAnchorTimestamp;
+    mapping(address => mapping(bytes32 => uint256)) public liquidationAnchorPrice;
+    mapping(address => mapping(bytes32 => uint256)) public liquidationAnchorTimestamp;
 
     /**
      * @dev Set or clear under-liquidation control flag for a user's position
@@ -134,15 +130,11 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         }
     }
     mapping(address => bool) public registeredOrderBooks;
-    mapping(address => bytes32[]) internal orderBookToMarkets;
-    address[] internal allOrderBooks;
+    mapping(address => bytes32[]) public orderBookToMarkets;
+    address[] public allOrderBooks;
     mapping(bytes32 => uint256) public marketMarkPrices;
     // Bad debt per market when winners cannot fully cover a shortfall (USDC, 6 decimals)
     mapping(bytes32 => uint256) public marketBadDebt;
-    // Settlement status per market (finalized at a terminal price)
-    mapping(bytes32 => bool) public marketSettled;
-    // Dispute flag per market when haircut scale falls below threshold
-    mapping(bytes32 => bool) public marketDisputed;
     // ===== Dynamic Maintenance Margin (MMR) Parameters =====
     // BASE_MMR_BPS (default 10%) + PENALTY_MMR_BPS (default 10%) + f(fill_ratio) capped by MAX_MMR_BPS (default 50%)
     uint256 public baseMmrBps = 1000;           // 10% buffer
@@ -156,11 +148,9 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     
     // ============ ADL Gas & Debug Controls ============
     // Limit number of profitable positions considered (top-K) and processed per tx
-    uint256 internal adlMaxCandidates = 50;       // Max candidates to sort/evaluate
-    uint256 internal adlMaxPositionsPerTx = 10;   // Max positions reduced per ADL execution
-    bool internal adlDebug = false;               // Guard for verbose debug events
-    // Minimum acceptable haircut scale (RAY). If computed scale < threshold, mark market disputed.
-    uint256 internal minSettlementScaleRay = 5e17; // 0.5
+    uint256 public adlMaxCandidates = 50;       // Max candidates to sort/evaluate
+    uint256 public adlMaxPositionsPerTx = 10;   // Max positions reduced per ADL execution
+    bool public adlDebug = false;               // Guard for verbose debug events
     
     // Global stats
     uint256 public totalCollateralDeposited;
@@ -169,8 +159,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     // ============ Events ============
     event CollateralDeposited(address indexed user, uint256 amount);
     event CollateralWithdrawn(address indexed user, uint256 amount);
-    event ExternalCreditAdded(address indexed user, uint256 amount);
-    event ExternalCreditRemoved(address indexed user, uint256 amount);
     event MarginLocked(address indexed user, bytes32 indexed marketId, uint256 amount, uint256 totalLockedAfter);
     event MarginReleased(address indexed user, bytes32 indexed marketId, uint256 amount, uint256 totalLockedAfter);
     event MarginToppedUp(address indexed user, bytes32 indexed marketId, uint256 amount);
@@ -191,13 +179,8 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     event AdlConfigUpdated(uint256 maxCandidates, uint256 maxPositionsPerTx, bool debugEnabled);
     // Haircut-specific transparency events
     event HaircutApplied(address indexed user, bytes32 indexed marketId, uint256 debitAmount, uint256 collateralAfter);
-    // Market-level haircut scaling (scale in RAY = 1e18)
-    event HaircutApplied(bytes32 indexed marketId, uint256 scaleRay, uint256 totalMarginLocked, uint256 totalLiabilities);
-    event MarketDisputed(bytes32 indexed marketId, uint256 scaleRay, uint256 minScaleRay);
     event BadDebtRecorded(bytes32 indexed marketId, uint256 amount, address indexed liquidatedUser);
     event BadDebtOffset(bytes32 indexed marketId, uint256 amount, uint256 remainingBadDebt);
-    // Settlement completion (oracle-agnostic, uses provided final price)
-    event VaultMarketSettled(bytes32 indexed marketId, uint256 finalPrice, uint256 totalProfit6, uint256 totalLoss6, uint256 badDebt6);
     // Debug: Detailed liquidation eligibility check
     event DebugIsLiquidatable(
         address indexed user,
@@ -278,8 +261,8 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     function withdrawCollateral(uint256 amount) external nonReentrant whenNotPaused {
         require(amount > 0, "!amount");
         
-        // Withdrawable collateral excludes cross-chain credits; include realized PnL adjustments
-        uint256 available = getWithdrawableCollateral(msg.sender);
+        // Use unified available collateral including realized PnL
+        uint256 available = getAvailableCollateral(msg.sender);
         require(available >= amount, "!available");
 
         // Determine how much to withdraw from realized PnL (6 decimals) vs deposited collateral
@@ -304,44 +287,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         // Transfer total amount out
         collateralToken.safeTransfer(msg.sender, amount);
         emit CollateralWithdrawn(msg.sender, amount);
-    }
-
-    // ===== Internal helpers for unified debits/credits =====
-    function _consumeUserFunds(address user, uint256 amount) internal returns (uint256 fromExtCredit, uint256 fromCollateral) {
-        uint256 fromExt = 0;
-        uint256 extBal = userCrossChainCredit[user];
-        if (extBal > 0) {
-            fromExt = amount <= extBal ? amount : extBal;
-            if (fromExt > 0) {
-                userCrossChainCredit[user] = extBal - fromExt;
-            }
-        }
-        uint256 remaining = amount - fromExt;
-        uint256 fromColl = 0;
-        if (remaining > 0) {
-            uint256 collBal = userCollateral[user];
-            require(collBal >= remaining, "!balance");
-            userCollateral[user] = collBal - remaining;
-            fromColl = remaining;
-        }
-        return (fromExt, fromColl);
-    }
-
-    /**
-     * @dev External credit ledger for cross-chain deposits (math-only, not withdrawable on hub)
-     */
-    function creditExternal(address user, uint256 amount) external onlyRole(EXTERNAL_CREDITOR_ROLE) {
-        require(user != address(0) && amount > 0, "invalid");
-        userCrossChainCredit[user] += amount;
-        emit ExternalCreditAdded(user, amount);
-    }
-
-    function debitExternal(address user, uint256 amount) external onlyRole(EXTERNAL_CREDITOR_ROLE) {
-        require(user != address(0) && amount > 0, "invalid");
-        uint256 bal = userCrossChainCredit[user];
-        require(bal >= amount, "insufficient ext credit");
-        userCrossChainCredit[user] = bal - amount;
-        emit ExternalCreditRemoved(user, amount);
     }
 
     // ============ Position Management (Delegated to Library) ============
@@ -404,33 +349,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
 
         // Handle realized P&L
         if (result.realizedPnL != 0) {
-            // Always record to realized PnL ledger (can be negative)
             userRealizedPnL[user] += result.realizedPnL;
-
-            if (result.realizedPnL < 0) {
-                // Debit realized losses directly from collateral (6 decimals), mirroring settlement behavior.
-                // Convert 18d PnL to 6d loss amount.
-                int256 loss6Signed = result.realizedPnL / int256(DECIMAL_SCALE); // negative
-                uint256 loss6 = uint256(-loss6Signed);
-                if (loss6 > 0) {
-                    // Consume cross-chain credit first, then collateral. Record bad debt if still short.
-                    uint256 extBal = userCrossChainCredit[user];
-                    uint256 useExt = loss6 <= extBal ? loss6 : extBal;
-                    if (useExt > 0) { userCrossChainCredit[user] = extBal - useExt; }
-                    uint256 remaining = loss6 - useExt;
-                    if (remaining > 0) {
-                        uint256 collBal = userCollateral[user];
-                        if (collBal >= remaining) {
-                            userCollateral[user] = collBal - remaining;
-                        } else {
-                            uint256 shortfall = remaining - collBal;
-                            userCollateral[user] = 0;
-                            marketBadDebt[marketId] += shortfall;
-                            emit BadDebtRecorded(marketId, shortfall, user);
-                        }
-                    }
-                }
-            }
         }
         
         // Update market IDs
@@ -506,10 +425,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         bool isMarginHealthy
     ) {
         // Get basic collateral and P&L
-        // Treat externally credited funds as part of total "trading" collateral so that
-        // UI portfolio calculations reflect gasless/off-chain deposits consistently.
-        // Note: withdraw flows still exclude external credit via getWithdrawableCollateral().
-        totalCollateral = userCollateral[user] + userCrossChainCredit[user];
+        totalCollateral = userCollateral[user];
         realizedPnL = userRealizedPnL[user];
         
         // Calculate margin used in active positions
@@ -558,12 +474,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
             if (anyUnderLiquidation && realizedPnLAdj < 0) {
                 realizedPnLAdj = 0;
             }
-            // Avoid double-counting realized losses in available collateral; losses are already debited from collateral
-            if (realizedPnLAdj < 0) {
-                realizedPnLAdj = 0;
-            }
             int256 realizedPnL6 = realizedPnLAdj / int256(DECIMAL_SCALE);
-            // totalCollateral already includes userCrossChainCredit[user]; do not add it again here.
             int256 baseWithRealized = int256(totalCollateral) + realizedPnL6;
             uint256 availableBeforeReserved = baseWithRealized > 0 ? uint256(baseWithRealized) : 0;
             availableMargin = availableBeforeReserved > totalMarginCommitted
@@ -594,8 +505,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
      * @return utilizationBps Margin utilization in basis points (0-10000)
      */
     function getMarginUtilization(address user) external view returns (uint256 utilizationBps) {
-        // Include external credit to reflect full trading collateral in utilization ratio.
-        uint256 totalCollateral = userCollateral[user] + userCrossChainCredit[user];
+        uint256 totalCollateral = userCollateral[user];
         if (totalCollateral == 0) return 0;
         
         uint256 totalMarginUsed = 0;
@@ -653,11 +563,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
             markPrices
         );
 
-        // Add cross-chain credit to available collateral for trading (withdraws still exclude this)
-        if (userCrossChainCredit[user] > 0) {
-            summary.availableCollateral += userCrossChainCredit[user];
-        }
-
         // Subtract outstanding per-position socialized haircuts from availableCollateral
         if (summary.availableCollateral > 0) {
             uint256 outstandingHaircut6 = 0;
@@ -698,12 +603,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         int256 baseWithRealized = int256(baseAvailable) + realizedPnL6;
         uint256 availableWithRealized = baseWithRealized > 0 ? uint256(baseWithRealized) : 0;
 
-        // Include cross-chain credit for trading availability (not withdrawable on hub)
-        uint256 extCredit = userCrossChainCredit[user];
-        if (extCredit > 0) {
-            availableWithRealized += extCredit;
-        }
-
         // Subtract outstanding per-position socialized loss (6 decimals)
         if (availableWithRealized > 0) {
             uint256 outstandingHaircut6 = 0;
@@ -726,51 +625,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         return availableWithRealized > reserved ? availableWithRealized - reserved : 0;
     }
 
-    /**
-     * @dev Withdrawable collateral excludes cross-chain credit; used by withdrawCollateral
-     */
-    function getWithdrawableCollateral(address user) internal view returns (uint256) {
-        // Convert to VaultAnalytics.Position[]
-        VaultAnalytics.Position[] memory positions = new VaultAnalytics.Position[](userPositions[user].length);
-        for (uint256 i = 0; i < userPositions[user].length; i++) {
-            positions[i] = VaultAnalytics.Position({
-                marketId: userPositions[user][i].marketId,
-                size: userPositions[user][i].size,
-                entryPrice: userPositions[user][i].entryPrice,
-                marginLocked: userPositions[user][i].marginLocked
-            });
-        }
-        // Base available = collateral - margin locked in positions
-        uint256 baseAvailable = VaultAnalytics.getAvailableCollateral(userCollateral[user], positions);
-        // Add realized PnL (negative clamped as in getAvailableCollateral)
-        int256 realizedPnL18 = userRealizedPnL[user];
-        if (userPositions[user].length == 0 && realizedPnL18 < 0) {
-            realizedPnL18 = 0;
-        }
-        int256 realizedPnL6 = realizedPnL18 / int256(DECIMAL_SCALE);
-        int256 baseWithRealized = int256(baseAvailable) + realizedPnL6;
-        uint256 availableWithRealized = baseWithRealized > 0 ? uint256(baseWithRealized) : 0;
-        // Subtract outstanding haircut
-        if (availableWithRealized > 0) {
-            uint256 outstandingHaircut6 = 0;
-            for (uint256 i = 0; i < userPositions[user].length; i++) {
-                outstandingHaircut6 += userPositions[user][i].socializedLossAccrued6;
-            }
-            if (outstandingHaircut6 > 0) {
-                availableWithRealized = availableWithRealized > outstandingHaircut6
-                    ? (availableWithRealized - outstandingHaircut6)
-                    : 0;
-            }
-        }
-        // Subtract reserved for orders
-        uint256 reserved = 0;
-        VaultAnalytics.PendingOrder[] storage pending = userPendingOrders[user];
-        for (uint256 i = 0; i < pending.length; i++) {
-            reserved += pending[i].marginReserved;
-        }
-        return availableWithRealized > reserved ? availableWithRealized - reserved : 0;
-    }
-
     function getTotalMarginUsed(address user) public view returns (uint256) {
         // Convert to VaultAnalytics.Position[]
         VaultAnalytics.Position[] memory positions = new VaultAnalytics.Position[](userPositions[user].length);
@@ -785,28 +639,63 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         return VaultAnalytics.getTotalMarginUsed(positions);
     }
 
-    /**
-     * @dev Aggregate total margin locked in a specific market across all users (USDC, 6 decimals).
-     *      Intended for off-chain analytics and admin dashboards; may be gas-expensive on-chain.
-     */
-    function getTotalMarginLockedInMarket(bytes32 marketId) external view returns (uint256 totalLocked6) {
-        address[] memory usersWithPositions = _getUsersWithPositionsInMarket(marketId);
-        for (uint256 u = 0; u < usersWithPositions.length; u++) {
-            PositionManager.Position[] storage positions = userPositions[usersWithPositions[u]];
-            for (uint256 i = 0; i < positions.length; i++) {
-                if (positions[i].marketId == marketId && positions[i].size != 0) {
-                    totalLocked6 += positions[i].marginLocked;
-                }
-            }
-        }
-        return totalLocked6;
-    }
-
     function getUserPositions(address user) external view returns (PositionManager.Position[] memory) {
         return userPositions[user];
     }
 
-    // getUserPositionCount, getPositionPayoutEquity, and getUserPayoutEquityTotal removed to reduce bytecode size
+    function getUserPositionCount(address user) external view returns (uint256) {
+        return userPositions[user].length;
+    }
+
+    /**
+     * @dev Payout equity for a specific market position: posted_margin + PnL - socialized_loss (all 6 decimals)
+     *      This is strictly for payout/accounting views; liquidation/MMR math remains unchanged.
+     */
+    function getPositionPayoutEquity(
+        address user,
+        bytes32 marketId
+    ) external view returns (int256 equity6, uint256 notional6, bool hasPosition) {
+        PositionManager.Position[] storage positions = userPositions[user];
+        for (uint256 i = 0; i < positions.length; i++) {
+            if (positions[i].marketId == marketId && positions[i].size != 0) {
+                hasPosition = true;
+                uint256 markPrice = getMarkPrice(marketId);
+                uint256 absSize = uint256(positions[i].size >= 0 ? positions[i].size : -positions[i].size);
+                notional6 = (absSize * markPrice) / (10**18);
+
+                int256 priceDiff = int256(markPrice) - int256(positions[i].entryPrice);
+                int256 pnl18 = (priceDiff * positions[i].size) / int256(TICK_PRECISION);
+                int256 pnl6 = pnl18 / int256(DECIMAL_SCALE);
+                // Equity for payout: posted margin + PnL - accrued haircut
+                equity6 = int256(positions[i].marginLocked) + pnl6 - int256(positions[i].socializedLossAccrued6);
+                return (equity6, notional6, true);
+            }
+        }
+        return (0, 0, false);
+    }
+
+    /**
+     * @dev Sum payout equity across all open positions for a user.
+     *      Returns (equity6Total, notional6Total).
+     */
+    function getUserPayoutEquityTotal(address user) external view returns (int256 equity6Total, uint256 notional6Total) {
+        PositionManager.Position[] storage positions = userPositions[user];
+        int256 total = 0;
+        uint256 totalNotional = 0;
+        for (uint256 i = 0; i < positions.length; i++) {
+            if (positions[i].size != 0) {
+                uint256 markPrice = getMarkPrice(positions[i].marketId);
+                uint256 absSize = uint256(positions[i].size >= 0 ? positions[i].size : -positions[i].size);
+                totalNotional += (absSize * markPrice) / (10**18);
+
+                int256 priceDiff = int256(markPrice) - int256(positions[i].entryPrice);
+                int256 pnl18 = (priceDiff * positions[i].size) / int256(TICK_PRECISION);
+                int256 pnl6 = pnl18 / int256(DECIMAL_SCALE);
+                total += int256(positions[i].marginLocked) + pnl6 - int256(positions[i].socializedLossAccrued6);
+            }
+        }
+        return (total, totalNotional);
+    }
 
     function getMarkPrice(bytes32 marketId) public view returns (uint256) {
         // Return stored mark price (updated by SETTLEMENT_ROLE)
@@ -843,7 +732,19 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         _unpause();
     }
 
-    // getGlobalStats removed to reduce bytecode size
+    function getGlobalStats() external view returns (
+        uint256 totalDeposited,
+        uint256 totalLocked,
+        uint256 totalUsers,
+        uint256 totalMarkets
+    ) {
+        return (
+            totalCollateralDeposited,
+            totalMarginLocked,
+            0, // Total users calculation would require additional tracking
+            allOrderBooks.length
+        );
+    }
 
     // ============ Factory Interface Methods ============
     
@@ -852,27 +753,22 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         require(hasRole(FACTORY_ROLE, msg.sender) || hasRole(ORDERBOOK_ROLE, msg.sender), "unauthorized");
         require(amount > 0, "!amount");
 
-        // Prefer consuming realized PnL (6 decimals) first
+        // Prefer consuming realized PnL (6 decimals) first, then deposited collateral
         int256 realizedPnL18 = userRealizedPnL[user];
         uint256 realizedPnL6 = realizedPnL18 > 0 ? uint256(realizedPnL18 / int256(DECIMAL_SCALE)) : 0;
         uint256 fromPnL = amount <= realizedPnL6 ? amount : realizedPnL6;
-        uint256 remainingAfterPnL = amount - fromPnL;
+        uint256 fromDeposit = amount - fromPnL;
 
         if (fromPnL > 0) {
             userRealizedPnL[user] -= int256(fromPnL * DECIMAL_SCALE);
         }
 
-        uint256 creditPart = 0;
-        uint256 collateralPart = 0;
-        if (remainingAfterPnL > 0) {
-            (creditPart, collateralPart) = _consumeUserFunds(user, remainingAfterPnL);
+        if (fromDeposit > 0) {
+            require(userCollateral[user] >= fromDeposit, "!balance");
+            userCollateral[user] -= fromDeposit;
         }
 
-        // Credit recipient: preserve backing type
-        if (creditPart > 0) {
-            userCrossChainCredit[recipient] += creditPart;
-        }
-        userCollateral[recipient] += fromPnL + collateralPart;
+        userCollateral[recipient] += amount;
     }
 
     function transferCollateral(address from, address to, uint256 amount) external onlyRole(ORDERBOOK_ROLE) {
@@ -891,18 +787,9 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         require(maker != address(0) && amount > 0, "invalid");
         address ob = marketToOrderBook[marketId];
         require(ob != address(0) && ob == msg.sender, "unauthorized ob");
-        // Consume from OB: prefer external credit first, then collateral
-        uint256 extBal = userCrossChainCredit[ob];
-        uint256 fromExt = amount <= extBal ? amount : extBal;
-        if (fromExt > 0) { userCrossChainCredit[ob] = extBal - fromExt; }
-        uint256 remaining = amount - fromExt;
-        if (remaining > 0) {
-            require(userCollateral[ob] >= remaining, "insufficient ob balance");
-            userCollateral[ob] -= remaining;
-        }
-        // Credit maker preserving backing type
-        if (fromExt > 0) { userCrossChainCredit[maker] += fromExt; }
-        if (remaining > 0) { userCollateral[maker] += remaining; }
+        require(userCollateral[ob] >= amount, "insufficient ob balance");
+        userCollateral[ob] -= amount;
+        userCollateral[maker] += amount;
         emit MakerLiquidationRewardPaid(maker, liquidatedUser, marketId, amount);
     }
 
@@ -928,8 +815,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
                 userPositions[user][i].marginLocked = locked - amount;
                 positionFound = true;
                 emit MarginReleased(user, marketId, amount, userPositions[user][i].marginLocked);
-                // Liquidation threshold depends on margin; recompute after margin change
-                _recomputeAndStoreLiquidationPrice(user, marketId);
                 break;
             }
         }
@@ -991,7 +876,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         uint256 available = getAvailableCollateral(user);
         require(available >= amount, "insufficient collateral");
 
-        // Ensure not double-reserving same reservation id (can be namespaced by caller)
+        // Ensure not double-reserving same orderId
         VaultAnalytics.PendingOrder[] storage orders = userPendingOrders[user];
         for (uint256 i = 0; i < orders.length; i++) {
             require(orders[i].orderId != orderId, "already reserved");
@@ -1067,172 +952,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         marketMarkPrices[marketId] = price;
     }
 
-    /**
-     * @dev Generic market settlement: finalize all user positions in a market at a provided final price.
-     *      - Oracle-agnostic: caller provides the terminal price (6 decimals)
-     *      - Realizes PnL to userRealizedPnL (18 decimals) for winners
-     *      - Deducts losses directly from userCollateral for losers (up to balance), recording bad debt if needed
-     *      - Releases all locked margin by removing positions in the market
-     *
-     * Industry-standard behavior: payout per position becomes marginLocked + PnL - accrued haircut.
-     * Implementation leverages the ledger model:
-     *   deltaCollateral6 = PnL6 - haircut6
-     *   - if positive: credit to realized PnL (withdrawable profits)
-     *   - if negative: debit user collateral; shortfall recorded as market bad debt
-     */
-    function settleMarket(bytes32 marketId, uint256 finalPrice) external nonReentrant {
-        require(marketToOrderBook[marketId] != address(0), "market!");
-        require(!marketSettled[marketId], "settled");
-        require(finalPrice > 0, "!price");
-
-        // Persist terminal price for the market
-        marketMarkPrices[marketId] = finalPrice;
-
-        // First pass: compute net positive PnL liabilities, losers' debit capacity (capped by per-position locked margin),
-        // and total margin locked in this market for transparency.
-        uint256 totalLiabilities6 = 0;            // Sum of max(pnl - haircut, 0) across all positions (USDC, 6d)
-        uint256 losersCapacity6 = 0;              // Sum of min(loss, marginLocked) across losing positions (USDC, 6d)
-        uint256 marketTotalMarginLocked6 = 0;     // Sum of margin locked across all positions in this market (USDC, 6d)
-
-        address[] memory users = _getUsersWithPositionsInMarket(marketId);
-        for (uint256 u = 0; u < users.length; u++) {
-            address user = users[u];
-            PositionManager.Position[] storage positionsView = userPositions[user];
-            for (uint256 i = 0; i < positionsView.length; i++) {
-                PositionManager.Position storage p = positionsView[i];
-                if (p.marketId != marketId) { continue; }
-
-                // Compute PnL at final price in USDC (6 decimals)
-                int256 priceDiff = int256(finalPrice) - int256(p.entryPrice);
-                int256 pnl18 = (priceDiff * p.size) / int256(TICK_PRECISION);
-                int256 pnl6 = pnl18 / int256(DECIMAL_SCALE);
-
-                uint256 haircut6 = p.socializedLossAccrued6; // prior socialized loss applied at position-level
-                int256 delta6 = pnl6 - int256(haircut6);
-
-                // Track market-level aggregates
-                marketTotalMarginLocked6 += p.marginLocked;
-
-                if (delta6 > 0) {
-                    totalLiabilities6 += uint256(delta6);
-                } else if (delta6 < 0) {
-                    uint256 loss6 = uint256(-delta6);
-                    // Losing traders only lose up to margin they have locked for this position
-                    uint256 seizeCap6 = p.marginLocked;
-                    // Sanity cap: cannot seize more than user's current collateral balance
-                    uint256 balance = userCollateral[user];
-                    if (seizeCap6 > balance) { seizeCap6 = balance; }
-                    uint256 debitPlanned6 = loss6 <= seizeCap6 ? loss6 : seizeCap6;
-                    losersCapacity6 += debitPlanned6;
-                }
-            }
-        }
-
-        // Determine haircut scaling factor (RAY = 1e18) so that total payouts <= losers' capacity
-        uint256 scaleRay = 1e18;
-        if (totalLiabilities6 > 0 && totalLiabilities6 > losersCapacity6) {
-            scaleRay = (losersCapacity6 * 1e18) / totalLiabilities6;
-        }
-
-        // Note: Dispute threshold removed; always proceed with settlement even if scale is very low.
-
-        // Emit haircut applied event if we are scaling down payouts
-        if (scaleRay < 1e18) {
-            emit HaircutApplied(marketId, scaleRay, marketTotalMarginLocked6, totalLiabilities6);
-        }
-
-        // Second pass: apply scaled payouts to winners and capped debits to losers, then remove positions
-        uint256 totalProfit6 = 0;
-        uint256 totalLoss6 = 0;
-        uint256 badDebt6Total = 0;
-
-        for (uint256 u2 = 0; u2 < users.length; u2++) {
-            address user2 = users[u2];
-            PositionManager.Position[] storage positions = userPositions[user2];
-
-            uint256 i2 = 0;
-            while (i2 < positions.length) {
-                if (positions[i2].marketId != marketId) {
-                    unchecked { i2++; }
-                    continue;
-                }
-
-                PositionManager.Position storage pos = positions[i2];
-
-                // Compute net delta (pnl - prior haircut) in USDC (6d)
-                int256 priceDiff2 = int256(finalPrice) - int256(pos.entryPrice);
-                int256 pnl18b = (priceDiff2 * pos.size) / int256(TICK_PRECISION);
-                int256 pnl6b = pnl18b / int256(DECIMAL_SCALE);
-                uint256 haircut6b = pos.socializedLossAccrued6;
-                int256 delta6b = pnl6b - int256(haircut6b);
-
-                if (delta6b > 0) {
-                    // Apply proportional haircut to winners
-                    uint256 profit6b = (uint256(delta6b) * scaleRay) / 1e18;
-                    if (profit6b > 0) {
-                        userRealizedPnL[user2] += int256(profit6b) * int256(DECIMAL_SCALE);
-                        totalProfit6 += profit6b;
-
-                        // Reduce user's cumulative haircut ledger if any
-                        uint256 ledger = userSocializedLoss[user2];
-                        if (ledger > 0) {
-                            uint256 applied = haircut6b <= ledger ? haircut6b : ledger;
-                            userSocializedLoss[user2] = ledger - applied;
-                        }
-                    }
-                } else if (delta6b < 0) {
-                    // Debit only up to locked margin for this position, never below zero account balance
-                    uint256 loss6b = uint256(-delta6b);
-                    uint256 seizeCap6b = pos.marginLocked;
-                    uint256 balance2 = userCollateral[user2];
-                    if (seizeCap6b > balance2) { seizeCap6b = balance2; }
-                    uint256 debit6 = loss6b <= seizeCap6b ? loss6b : seizeCap6b;
-                    // Realized PnL should reflect the actual amount deducted (capped), not the theoretical loss
-                    if (debit6 > 0) {
-                        userRealizedPnL[user2] -= int256(debit6) * int256(DECIMAL_SCALE);
-                        // Prefer consuming external credit first for settlement debits
-                        uint256 extBal2 = userCrossChainCredit[user2];
-                        uint256 useExt2 = debit6 <= extBal2 ? debit6 : extBal2;
-                        if (useExt2 > 0) { userCrossChainCredit[user2] = extBal2 - useExt2; }
-                        uint256 rem2 = debit6 - useExt2;
-                        if (rem2 > 0) { userCollateral[user2] = balance2 - rem2; } else { userCollateral[user2] = balance2; }
-                        totalLoss6 += debit6;
-                    }
-                    uint256 shortfall2 = loss6b - debit6;
-                    if (shortfall2 > 0) {
-                        // Record any residual as bad debt for auditability; solvency is maintained by scaling
-                        marketBadDebt[marketId] += shortfall2;
-                        badDebt6Total += shortfall2;
-                        emit BadDebtRecorded(marketId, shortfall2, user2);
-                    }
-                }
-
-                // Release locked margin by removing the position
-                uint256 locked2 = pos.marginLocked;
-                if (locked2 > 0) {
-                    if (totalMarginLocked >= locked2) {
-                        totalMarginLocked -= locked2;
-                    } else {
-                        totalMarginLocked = 0;
-                    }
-                }
-
-                // Remove position via swap & pop
-                if (i2 < positions.length - 1) {
-                    positions[i2] = positions[positions.length - 1];
-                }
-                positions.pop();
-                // Do not increment i2; evaluate swapped-in element next
-            }
-
-            // Remove marketId reference from user's index list (best-effort)
-            PositionManager.removeMarketIdFromUser(userMarketIds[user2], marketId);
-        }
-
-        marketSettled[marketId] = true;
-        emit VaultMarketSettled(marketId, finalPrice, totalProfit6, totalLoss6, badDebt6Total);
-    }
-
     // ============ ADL Configuration ============
     function setAdlConfig(
         uint256 maxCandidates,
@@ -1245,16 +964,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         adlMaxPositionsPerTx = maxPositionsPerTx;
         adlDebug = debugEnabled;
         emit AdlConfigUpdated(maxCandidates, maxPositionsPerTx, debugEnabled);
-    }
-
-    /**
-     * @dev Admin: set minimum acceptable settlement haircut scale. If computed scale
-     *      is below this threshold, the market is marked disputed and automatic settlement is skipped.
-     *      scale is expressed in RAY (1e18), e.g., 0.5e18 for 50%.
-     */
-    function setMinSettlementScaleRay(uint256 newMinScaleRay) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newMinScaleRay > 0 && newMinScaleRay <= 1e18, "CoreVault: invalid min scale");
-        minSettlementScaleRay = newMinScaleRay;
     }
 
     /**
