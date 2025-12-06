@@ -1,0 +1,15 @@
+# Hack Mode scenario — user-provided batch
+# Run with: RUN ./scenarios/hack-mode-lmld-sequence.txt
+#STRICT ON
+
+U1 LS 1 1 10
+U2 LB 1 1 10
+
+U3 LS 5.1 1 20
+U4 LB 5.1 1 1
+U4 LB 5.1 1 1
+
+SU 1
+LMLD 1
+
+

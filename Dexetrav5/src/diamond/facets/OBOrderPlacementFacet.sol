@@ -30,6 +30,7 @@ contract OBOrderPlacementFacet {
     event SlippageProtectionTriggered(uint256 currentPrice, uint256 maxPrice, uint256 remainingAmount);
     event MatchingCompleted(address indexed buyer, uint256 originalAmount, uint256 filledAmount, uint256 remainingAmount);
     event SelfCrossNetted(address indexed user, uint256 price, uint256 amount, bool aggressorIsBuy);
+    event PriceLevelPruned(uint256 price, bool isBuy);
 
     modifier validOrder(uint256 price, uint256 amount) {
         require(price > 0, "Price must be greater than 0");
@@ -605,7 +606,7 @@ contract OBOrderPlacementFacet {
             s.orders[prevOrderId].nextOrderId = order.nextOrderId;
             if (level.lastOrderId == orderId) { level.lastOrderId = prevOrderId; }
         }
-        if (level.totalAmount == 0) { level.exists = false; level.firstOrderId = 0; level.lastOrderId = 0; }
+        if (level.totalAmount == 0) { level.exists = false; level.firstOrderId = 0; level.lastOrderId = 0; _prunePriceLevel(s, price, isBuy); }
     }
 
     function _removeFromBuyBook(OrderBookStorage.State storage s, uint256 orderId, uint256 price) private {
@@ -635,10 +636,69 @@ contract OBOrderPlacementFacet {
         return prev;
     }
 
+    function _prunePriceLevel(OrderBookStorage.State storage s, uint256 price, bool isBuy) private {
+        if (isBuy) {
+            if (!s.buyPriceExists[price]) { return; }
+            s.buyPriceExists[price] = false;
+            uint256 len = s.buyPrices.length;
+            for (uint256 i = 0; i < len; i++) {
+                if (s.buyPrices[i] == price) {
+                    if (i < len - 1) { s.buyPrices[i] = s.buyPrices[len - 1]; }
+                    s.buyPrices.pop();
+                    emit PriceLevelPruned(price, true);
+                    break;
+                }
+            }
+        } else {
+            if (!s.sellPriceExists[price]) { return; }
+            s.sellPriceExists[price] = false;
+            uint256 len2 = s.sellPrices.length;
+            for (uint256 j = 0; j < len2; j++) {
+                if (s.sellPrices[j] == price) {
+                    if (j < len2 - 1) { s.sellPrices[j] = s.sellPrices[len2 - 1]; }
+                    s.sellPrices.pop();
+                    emit PriceLevelPruned(price, false);
+                    break;
+                }
+            }
+        }
+    }
+
     function _removeOrderFromUserList(OrderBookStorage.State storage s, address user, uint256 orderId) private {
         uint256[] storage lst = s.userOrders[user];
         for (uint256 i = 0; i < lst.length; i++) {
             if (lst[i] == orderId) { if (i < lst.length - 1) { lst[i] = lst[lst.length - 1]; } lst.pop(); break; }
+        }
+    }
+
+    // --- Admin maintenance helpers ---
+    function defragPriceLevels() external onlyOwner {
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        _defragPriceArray(s, true);
+        _defragPriceArray(s, false);
+    }
+
+    function _defragPriceArray(OrderBookStorage.State storage s, bool isBuy) private {
+        uint256 writeIdx = 0;
+        uint256[] storage arr = isBuy ? s.buyPrices : s.sellPrices;
+        for (uint256 readIdx = 0; readIdx < arr.length; readIdx++) {
+            uint256 price = arr[readIdx];
+            OrderBookStorage.PriceLevel storage level = isBuy ? s.buyLevels[price] : s.sellLevels[price];
+            bool alive = level.exists && level.totalAmount > 0;
+            if (alive) {
+                arr[writeIdx] = price;
+                writeIdx++;
+            } else {
+                if (isBuy) { s.buyPriceExists[price] = false; }
+                else { s.sellPriceExists[price] = false; }
+                emit PriceLevelPruned(price, isBuy);
+            }
+        }
+        while (arr.length > writeIdx) { arr.pop(); }
+        if (isBuy) {
+            if (s.bestBid == 0 || !s.buyLevels[s.bestBid].exists) { s.bestBid = _findNewBestBid(s); }
+        } else {
+            if (s.bestAsk == 0 || !s.sellLevels[s.bestAsk].exists) { s.bestAsk = _findNewBestAsk(s); }
         }
     }
 
@@ -731,8 +791,15 @@ contract OBOrderPlacementFacet {
     }
 
     function _onOrderBookLiquidityChanged() private {
-        // Propagate any scan failures so they surface in logs
-        IOBLiquidationFacet(address(this)).pokeLiquidations();
+        // OPTIMIZATION: Use lightweight mark price update handler instead of full poke
+        // This checks liquidation bounds and only processes if needed
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        if (!s.liquidationInProgress && !s.liquidationTrackingActive && gasleft() > 100_000) {
+            uint256 currentMark = s.lastMarkPrice;
+            if (currentMark > 0) {
+                try IOBLiquidationFacet(address(this)).onMarkPriceUpdate(currentMark) { } catch { }
+            }
+        }
     }
 }
 

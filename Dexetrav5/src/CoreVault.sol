@@ -186,7 +186,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     event SocializedLossApplied(bytes32 indexed marketId, uint256 lossAmount, address indexed liquidatedUser);
     
     // Enhanced liquidation events
-    event AvailableCollateralConfiscated(address indexed user, uint256 amount, uint256 remainingAvailable);
     event UserLossSocialized(address indexed user, uint256 lossAmount, uint256 remainingCollateral);
     event AdlConfigUpdated(uint256 maxCandidates, uint256 maxPositionsPerTx, bool debugEnabled);
     // Haircut-specific transparency events
@@ -373,12 +372,18 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         
         // Realize any per-position haircut tied to this trade against realized PnL from the closed units
         if (result.haircutToConfiscate6 > 0) {
-            // Available realized profit to offset haircut (convert realized PnL 18d -> 6d)
-            uint256 realizedProfit6 = 0;
-            if (result.realizedPnL > 0) {
-                realizedProfit6 = uint256(result.realizedPnL) / DECIMAL_SCALE;
+            uint256 haircutTotal6 = result.haircutToConfiscate6;
+
+            // Always clear the outstanding haircut ledger for this user (penalty is one-time per position)
+            uint256 ledger = userSocializedLoss[user];
+            if (ledger > 0) {
+                userSocializedLoss[user] = haircutTotal6 >= ledger ? 0 : (ledger - haircutTotal6);
             }
-            uint256 appliedFromProfit6 = result.haircutToConfiscate6 <= realizedProfit6 ? result.haircutToConfiscate6 : realizedProfit6;
+
+            // Available realized profit to offset haircut (convert realized PnL 18d -> 6d)
+            uint256 realizedProfit6 = result.realizedPnL > 0 ? uint256(result.realizedPnL) / DECIMAL_SCALE : 0;
+            uint256 appliedFromProfit6 = haircutTotal6 <= realizedProfit6 ? haircutTotal6 : realizedProfit6;
+
             if (appliedFromProfit6 > 0) {
                 // Reduce realized profit credited to the user
                 int256 applied18 = int256(appliedFromProfit6) * int256(DECIMAL_SCALE);
@@ -388,19 +393,9 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
                 } else if (result.realizedPnL > 0) {
                     result.realizedPnL = 0;
                 }
-                // Decrement the cumulative UI ledger
-                uint256 ledger = userSocializedLoss[user];
-                if (ledger > 0) {
-                    userSocializedLoss[user] = appliedFromProfit6 >= ledger ? 0 : (ledger - appliedFromProfit6);
-                }
                 emit HaircutApplied(user, marketId, appliedFromProfit6, userCollateral[user]);
             }
-            // Any remainder beyond realized profit becomes bad debt tied to this liquidation of units
-            uint256 remainderHaircut6 = result.haircutToConfiscate6 - appliedFromProfit6;
-            if (remainderHaircut6 > 0) {
-                marketBadDebt[marketId] += remainderHaircut6;
-                emit BadDebtRecorded(marketId, remainderHaircut6, user);
-            }
+            // Any remaining portion of the haircut simply expires after the position closes.
         }
 
         // Handle realized P&L
@@ -1502,31 +1497,21 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     function _getCloseLiquidity(bytes32 marketId, uint256 /*absSize*/) internal view returns (uint256 liquidity18) {
         address obAddr = marketToOrderBook[marketId];
         if (obAddr == address(0)) return 0;
-        // Attempt to get depth; if it fails, return 0 to enforce max risk
-        try IOBPricingFacet(obAddr).getOrderBookDepth(mmrLiquidityDepthLevels) returns (
-            uint256[] memory /*bidPrices*/,
-            uint256[] memory bidAmounts,
-            uint256[] memory /*askPrices*/,
-            uint256[] memory askAmounts
-        ) {
-            // For simplicity, approximate close direction using current best prices
-            // If bestBid is nonzero and bestAsk is max, treat as one-sided; we sum both sides anyway for robustness
-            // We cannot know position direction here; use total opposite side relative to worst-case. 
-            // Heuristic: use max of aggregated bids and aggregated asks as available liquidity proxy
-            uint256 sumBids;
-            for (uint256 i = 0; i < bidAmounts.length; i++) {
-                sumBids += bidAmounts[i];
-            }
-            uint256 sumAsks;
-            for (uint256 j = 0; j < askAmounts.length; j++) {
-                sumAsks += askAmounts[j];
-            }
-            // Use larger of sides as proxy market liquidity for stability
-            liquidity18 = sumBids > sumAsks ? sumBids : sumAsks;
-            return liquidity18;
-        } catch {
-            return 0;
+        // Attempt to get depth; surface errors instead of swallowing to expose ADL issues
+        (uint256[] memory bidPrices, uint256[] memory bidAmounts, uint256[] memory askPrices, uint256[] memory askAmounts) =
+            IOBPricingFacet(obAddr).getOrderBookDepth(mmrLiquidityDepthLevels);
+
+        uint256 sumBids;
+        for (uint256 i = 0; i < bidAmounts.length; i++) {
+            sumBids += bidAmounts[i];
         }
+        uint256 sumAsks;
+        for (uint256 j = 0; j < askAmounts.length; j++) {
+            sumAsks += askAmounts[j];
+        }
+        // Use larger of sides as proxy market liquidity for stability
+        liquidity18 = sumBids > sumAsks ? sumBids : sumAsks;
+        return liquidity18;
     }
 
     // ===== Admin setters for dynamic MMR parameters =====
@@ -1591,19 +1576,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     // ============ Enhanced Liquidation Functions ============
     
     /**
-     * @dev Confiscate user's available collateral to cover gap losses during liquidation
-     * @param user User address
-     * @param gapLossAmount Amount of gap loss to cover from available collateral
-     */
-    function confiscateAvailableCollateralForGapLoss(
-        address user, 
-        uint256 gapLossAmount
-    ) external onlyRole(ORDERBOOK_ROLE) {
-        bytes memory data = abi.encodeWithSelector(this.confiscateAvailableCollateralForGapLoss.selector, user, gapLossAmount);
-        _delegateLiq(data);
-    }
-    
-    /**
      * @dev External wrapper for socialized loss - called by OrderBook
      * @param marketId Market where the loss occurred
      * @param lossAmount Amount to socialize across users
@@ -1615,6 +1587,24 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         address liquidatedUser
     ) external onlyRole(ORDERBOOK_ROLE) {
         bytes memory data = abi.encodeWithSelector(this.socializeLoss.selector, marketId, lossAmount, liquidatedUser);
+        _delegateLiq(data);
+    }
+
+    /**
+     * @notice Single entrypoint for off-chain workers: route by marketId to the correct order book and liquidate.
+     * @dev Trustless: order book fetches mark price and enforces liquidation threshold.
+     */
+    function liquidateDirect(bytes32 marketId, address trader) external {
+        bytes memory data = abi.encodeWithSelector(this.liquidateDirect.selector, marketId, trader);
+        _delegateLiq(data);
+    }
+
+    /**
+     * @notice Batch liquidations to amortize base gas across multiple targets.
+     * @dev Capped in LiquidationManager for safety.
+     */
+    function batchLiquidate(bytes32[] calldata marketIds, address[] calldata traders) external {
+        bytes memory data = abi.encodeWithSelector(this.batchLiquidate.selector, marketIds, traders);
         _delegateLiq(data);
     }
     

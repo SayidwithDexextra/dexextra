@@ -48,7 +48,10 @@ const {
   displayConfig, // Import displayConfig
   MARKET_INFO,
   displayFullConfig,
+  getNetworkConfig,
 } = require("../config/contracts");
+const fs = require("fs");
+const path = require("path");
 
 // 🎨 ENHANCED COLOR PALETTE
 const colors = {
@@ -109,6 +112,101 @@ function formatWithAutoDecimalDetection(
       const divBy1e6 = parseFloat(ethers.formatUnits(valueBigInt, 6));
       if (divBy1e6 >= 0.01 && divBy1e6 <= 1000000) {
         return divBy1e6.toFixed(displayDecimals);
+      }
+
+      // Mirror ADL listeners on LiquidationManager for direct LM calls (non-delegate)
+      if (this.contracts.liquidationManager) {
+        const lm = this.contracts.liquidationManager;
+        lm.on(
+          "SocializationStarted",
+          (marketId, totalLossAmount, liquidatedUser, timestamp, event) => {
+            this.handleSocializationStartedEvent(
+              marketId,
+              totalLossAmount,
+              liquidatedUser,
+              timestamp,
+              event
+            );
+          }
+        );
+        lm.on(
+          "ProfitablePositionFound",
+          (
+            user,
+            marketId,
+            positionSize,
+            entryPrice,
+            markPrice,
+            unrealizedPnL,
+            profitScore,
+            event
+          ) => {
+            this.handleProfitablePositionFoundEvent(
+              user,
+              marketId,
+              positionSize,
+              entryPrice,
+              markPrice,
+              unrealizedPnL,
+              profitScore,
+              event
+            );
+          }
+        );
+        lm.on(
+          "AdministrativePositionClosure",
+          (
+            user,
+            marketId,
+            sizeBeforeReduction,
+            sizeAfterReduction,
+            realizedProfit,
+            newEntryPrice,
+            event
+          ) => {
+            this.handleAdministrativePositionClosureEvent(
+              user,
+              marketId,
+              sizeBeforeReduction,
+              sizeAfterReduction,
+              realizedProfit,
+              newEntryPrice,
+              event
+            );
+          }
+        );
+        lm.on(
+          "SocializationCompleted",
+          (
+            marketId,
+            totalLossCovered,
+            remainingLoss,
+            positionsAffected,
+            liquidatedUser,
+            event
+          ) => {
+            this.handleSocializationCompletedEvent(
+              marketId,
+              totalLossCovered,
+              remainingLoss,
+              positionsAffected,
+              liquidatedUser,
+              event
+            );
+          }
+        );
+        lm.on(
+          "SocializationFailed",
+          (marketId, lossAmount, reason, liquidatedUser, event) => {
+            this.handleSocializationFailedEvent(
+              marketId,
+              lossAmount,
+              reason,
+              liquidatedUser,
+              event
+            );
+          }
+        );
       }
 
       // Check if it's 12 decimals (e.g., 25000000000000 -> 25)
@@ -654,6 +752,21 @@ class InteractiveTrader {
       Number.isFinite(maxConc) && maxConc > 0 ? maxConc : defaultConcurrency;
     this.activeTasks = 0;
     this.pendingQueue = [];
+
+    const parseDuration = (value, fallback) => {
+      const parsed = parseInt(value, 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    };
+
+    // Tunable post-trade pauses so errors stay visible longer in the CLI
+    this.tradeSuccessPauseMs = parseDuration(
+      process.env.HACK_TRADE_SUCCESS_PAUSE_MS,
+      3000
+    );
+    this.tradeErrorPauseMs = parseDuration(
+      process.env.HACK_TRADE_ERROR_PAUSE_MS,
+      5000
+    );
 
     // Enable HTTP keep-alive for RPC
     try {
@@ -2300,18 +2413,6 @@ ${
           }
         );
 
-        // ADO Event: Available Collateral Confiscated - tracks gap loss coverage
-        this.contracts.vault.on(
-          "AvailableCollateralConfiscated",
-          (user, amount, remainingAvailable, event) => {
-            this.handleAvailableCollateralConfiscatedEvent(
-              user,
-              amount,
-              remainingAvailable,
-              event
-            );
-          }
-        );
       }
       // Listen for GapLoss and Liquidation Processing events from OrderBook
       if (this.contracts.orderBook) {
@@ -2564,7 +2665,7 @@ ${
       );
       console.log(
         colorText(
-          "   📊 ADL Events: SocializedLossApplied, UserLossSocialized, AvailableCollateralConfiscated",
+          "   📊 ADL Events: SocializedLossApplied, UserLossSocialized",
           colors.dim
         )
       );
@@ -2721,7 +2822,6 @@ ${
         "PositionUpdated",
         "SocializedLossApplied",
         "UserLossSocialized",
-        "AvailableCollateralConfiscated",
       ];
       console.log(
         colorText(
@@ -4454,73 +4554,6 @@ ${
     console.log(notification);
   }
 
-  handleAvailableCollateralConfiscatedEvent(
-    user,
-    amount,
-    remainingAvailable,
-    event
-  ) {
-    const timestamp = new Date().toLocaleTimeString();
-    const userType = this.formatUserDisplay(user);
-    const amountFormatted = formatWithAutoDecimalDetection(amount, 6, 2);
-    const remainingFormatted = formatWithAutoDecimalDetection(
-      remainingAvailable,
-      6,
-      2
-    );
-
-    console.log("🔥 ADL EVENT DETECTED: AvailableCollateralConfiscated");
-
-    const notification = `
-${colors.bgRed}${colors.white}${
-      colors.bright
-    }           🏦 COLLATERAL CONFISCATED              ${colors.reset}
-${colors.brightRed}┌─────────────────────────────────────────────────────────┐${
-      colors.reset
-    }
-${colors.brightRed}│${colors.reset} ${colors.brightYellow}🏦 GAP LOSS COVERAGE${
-      colors.reset
-    } ${colors.dim}at ${timestamp}${colors.reset}          ${
-      colors.brightRed
-    }│${colors.reset}
-${colors.brightRed}│${
-      colors.reset
-    }                                                         ${
-      colors.brightRed
-    }│${colors.reset}
-${colors.brightRed}│${colors.reset} ${colors.brightMagenta}👤 Affected User:${
-      colors.reset
-    } ${userType.padEnd(15)}             ${colors.brightRed}│${colors.reset}
-${colors.brightRed}│${colors.reset} ${colors.brightYellow}💰 Confiscated:${
-      colors.reset
-    } $${amountFormatted} USDC                  ${colors.brightRed}│${
-      colors.reset
-    }
-${colors.brightRed}│${colors.reset} ${colors.brightGreen}💰 Remaining:${
-      colors.reset
-    } $${remainingFormatted} USDC                     ${colors.brightRed}│${
-      colors.reset
-    }
-${colors.brightRed}│${
-      colors.reset
-    }                                                         ${
-      colors.brightRed
-    }│${colors.reset}
-${colors.brightRed}│${colors.reset} ${colors.dim}Block: ${
-      event.blockNumber
-    } | Tx: ${(event && event.transactionHash
-      ? event.transactionHash
-      : ""
-    ).slice(0, 10)}...${colors.reset} ${colors.brightRed}│${colors.reset}
-${colors.brightRed}└─────────────────────────────────────────────────────────┘${
-      colors.reset
-    }
-    `;
-
-    console.log(notification);
-    process.stdout.write("\x07"); // Alert sound
-  }
-
   handleLiquidationPositionProcessedEvent(
     trader,
     positionSize,
@@ -6122,6 +6155,123 @@ ${colors.brightRed}└───────────────────�
         return "POKE_VAULT_SWEEP";
       }
 
+      case "SEED_LM": {
+        const marketHex = parts[cursor++];
+        const obAddr = parts[cursor++];
+        if (!marketHex || !obAddr)
+          throw new Error("SEED_LM usage: SEED_LM <marketIdHex> <orderBookAddr>");
+        const signer =
+          user || this.currentUser || (this.users && this.users.length ? this.users[0] : null);
+        if (!signer || !signer.provider) throw new Error("No signer available for SEED_LM");
+        const lmWithSigner = this.contracts.liquidationManager.connect(signer);
+        await this.withRpcRetry(() =>
+          lmWithSigner.seedMarketOrderBook(marketHex, obAddr)
+        );
+        console.log(
+          colorText(
+            `✅ Seeded LM mapping market=${marketHex} -> ob=${obAddr}`,
+            colors.brightGreen
+          )
+        );
+        return `SEED_LM ${marketHex} ${obAddr}`;
+      }
+
+      case "CHECK_SETTLED": {
+        let targetMarketId = null;
+        if (parts[cursor] && /^0x[0-9a-fA-F]{64}$/i.test(parts[cursor])) {
+          targetMarketId = parts[cursor++];
+        } else {
+          targetMarketId = await this.getActiveMarketId();
+        }
+        if (!targetMarketId || targetMarketId === ethers.ZeroHash) {
+          throw new Error("Cannot resolve marketId for CHECK_SETTLED");
+        }
+        const settlementFacet = await ethers.getContractAt(
+          "OBSettlementFacet",
+          this.contracts.orderBookAddress,
+          this.currentUser || this.users?.[0]
+        );
+        const settled = await settlementFacet.isSettled();
+        const label =
+          this.currentMarket?.symbol ||
+          (typeof targetMarketId === "string"
+            ? `${targetMarketId.slice(0, 10)}…`
+            : "market");
+        console.log(
+          colorText(
+            `ℹ️ Market ${label} (${targetMarketId
+              .toString()
+              .slice(0, 10)}…) is ${settled ? "SETTLED" : "OPEN"}.`,
+            settled ? colors.red : colors.green
+          )
+        );
+        return `CHECK_SETTLED ${settled ? "SETTLED" : "OPEN"}`;
+      }
+
+      case "LD": {
+        const targetStr = parts[cursor++];
+        if (!targetStr) throw new Error("LD usage: LD <targetUserIndex>");
+        const idx = Number(targetStr);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= this.users.length)
+          throw new Error("Invalid target user index");
+        const target = this.users[idx];
+        const marketId = await this.getActiveMarketId();
+        if (!marketId || marketId === ethers.ZeroHash)
+          throw new Error("Cannot resolve active marketId");
+        const tx = await this.withRpcRetry(() =>
+          this.contracts.vault
+            .connect(user || this.currentUser)
+            .liquidateDirect(marketId, target.address)
+        );
+        const rcpt = await tx.wait();
+        console.log(
+          colorText(
+            `✅ LD (vault) ${target.address} tx=${tx.hash} gas=${rcpt?.gasUsed || "?"}`,
+            colors.brightGreen
+          )
+        );
+        return `LD target=${idx}`;
+      }
+
+      case "LMLD": {
+        const targetStr = parts[cursor++];
+        if (!targetStr) throw new Error("LMLD usage: LMLD <targetUserIndex>");
+        const idx = Number(targetStr);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= this.users.length)
+          throw new Error("Invalid target user index");
+        const target = this.users[idx];
+        const marketId = await this.getActiveMarketId();
+        if (!marketId || marketId === ethers.ZeroHash)
+          throw new Error("Cannot resolve active marketId");
+        const marketStr = marketId.toString();
+        let obUsed = ethers.ZeroAddress;
+        try {
+          obUsed = await this.ensureLmMarketMapping(marketId, user || this.currentUser);
+          const tx = await this.withRpcRetry(() =>
+            this.contracts.liquidationManager
+              .connect(user || this.currentUser)
+              .liquidateDirect(marketId, target.address)
+          );
+          const rcpt = await tx.wait();
+          console.log(
+            colorText(
+              `✅ LMLD (LM) ${target.address} tx=${tx.hash} gas=${rcpt?.gasUsed || "?"}`,
+              colors.brightGreen
+            )
+          );
+          return `LMLD target=${idx}`;
+        } catch (err) {
+          const msg = err?.reason || err?.message || String(err);
+          console.log(
+            colorText(
+              `❌ LMLD failed marketId=${marketStr} ob=${obUsed || "unknown"} msg=${msg}`,
+              colors.red
+            )
+          );
+          throw new Error(`LMLD failed market=${marketStr} ob=${obUsed || "unknown"} :: ${msg}`);
+        }
+      }
+
       case "LIQ_DEBUG": {
         const mode = (parts[cursor++] || "").toUpperCase();
         if (mode !== "ON" && mode !== "OFF")
@@ -6340,6 +6490,24 @@ ${colors.brightRed}└───────────────────�
     console.log(
       colorText(
         "│ Liq:    POKE_LIQ [ON|OFF] | POKE_VAULT (direct sweep)      │",
+        colors.white
+      )
+    );
+    console.log(
+      colorText(
+        "│ Liq2:   LD targetIdx (vault direct) | LMLD targetIdx (LM)   │",
+        colors.white
+      )
+    );
+    console.log(
+      colorText(
+        "│ State:  CHECK_SETTLED [marketId?]                          │",
+        colors.white
+      )
+    );
+    console.log(
+      colorText(
+        "│ Admin:  SEED_LM <marketId> <orderBook> (seed LM mapping)    │",
         colors.white
       )
     );
@@ -8056,16 +8224,27 @@ ${colors.brightRed}└───────────────────�
         const marginFilter = this.contracts.vault.filters.MarginConfiscated(
           this.currentUser.address
         );
-        const penaltyEvents = await this.contracts.vault.queryFilter(
-          marginFilter,
-          0
-        );
+        const penaltyEvents = await this.contracts.vault.queryFilter(marginFilter, 0);
         for (const ev of penaltyEvents) {
           try {
             const p = BigInt(ev.args.penalty.toString());
             totalPenalty6 += p;
             lastPenalty6 = p;
           } catch (_) {}
+        }
+        // If LM was called directly (non-delegate), its events live on LM address; include them
+        if (this.contracts.liquidationManager) {
+          const lmFilter = this.contracts.liquidationManager.filters.MarginConfiscated(
+            this.currentUser.address
+          );
+          const lmEvents = await this.contracts.liquidationManager.queryFilter(lmFilter, 0);
+          for (const ev of lmEvents) {
+            try {
+              const p = BigInt(ev.args.penalty.toString());
+              totalPenalty6 += p;
+              lastPenalty6 = p;
+            } catch (_) {}
+          }
         }
       } catch (_) {}
       const totalPenaltyDisplay = formatUSDC(totalPenalty6);
@@ -9087,6 +9266,18 @@ ${colors.brightRed}└───────────────────�
       )
     );
     console.log(
+      colorText(
+        "│ 25. 🧹 Direct Liquidate (router)        │",
+        colors.brightRed
+      )
+    );
+    console.log(
+      colorText(
+        "│ 26. 🧹 Direct Liquidate (via LM)        │",
+        colors.brightRed
+      )
+    );
+    console.log(
       colorText("│ T. 💼 Market Total Margin                │", colors.blue)
     );
     console.log(
@@ -9213,6 +9404,12 @@ ${colors.brightRed}└───────────────────�
     case "19":
       await this.vaultDirectLiquidationSweep();
       break;
+      case "25":
+        await this.liquidateDirectInteractive();
+        break;
+      case "26":
+        await this.liquidateDirectViaLmInteractive();
+        break;
       case "t":
         await this.viewMarketTotalMargin();
         break;
@@ -9403,6 +9600,355 @@ ${colors.brightRed}└───────────────────�
       );
     }
     await this.pause(1500);
+  }
+
+  async liquidateDirectInteractive() {
+    console.clear();
+    console.log(boxText("🧹 DIRECT LIQUIDATE (ROUTER)", colors.brightRed));
+
+    // Resolve active marketId (auto-fill)
+    let marketId = await this.getActiveMarketId();
+    if (!marketId || marketId === ethers.ZeroHash) {
+      // Fallback to first configured market
+      const entries = Object.values(MARKET_INFO || {});
+      if (entries.length && entries[0].marketId) {
+        marketId = entries[0].marketId;
+      }
+    }
+    if (!marketId || marketId === ethers.ZeroHash) {
+      console.log(colorText("⚠️ Unable to resolve active marketId", colors.yellow));
+      await this.pause(1200);
+      return;
+    }
+
+    const marketName = await safeDecodeMarketId(marketId, this.contracts);
+    console.log(
+      colorText(
+        `📍 Market: ${marketName} (${marketId.toString().slice(0, 10)}…)`,
+        colors.cyan
+      )
+    );
+    console.log(
+      colorText(
+        `Caller: ${this.currentUser ? this.currentUser.address : "unknown"}`,
+        colors.dim
+      )
+    );
+
+    // Show the 5 users (A–E)
+    const labels = ["A", "B", "C", "D", "E"];
+    const limit = Math.min(labels.length, this.users.length);
+    for (let i = 0; i < limit; i++) {
+      const u = this.users[i];
+      const name = i === 0 ? "Deployer" : `User ${i}`;
+      const shortAddr = `${u.address.slice(0, 6)}…${u.address.slice(-4)}`;
+      console.log(
+        colorText(`${labels[i]}. ${name.padEnd(8)} | ${shortAddr}`, colors.white)
+      );
+    }
+
+    const choiceRaw = await this.askQuestion(
+      colorText("\n🎯 Select user to liquidate (A-E, Enter to cancel): ", colors.brightMagenta)
+    );
+    const choice = (choiceRaw || "").trim().toUpperCase();
+    if (!choice) {
+      console.log(colorText("ℹ️ Cancelled", colors.dim));
+      await this.pause(800);
+      return;
+    }
+    const idx = labels.indexOf(choice);
+    if (idx < 0 || idx >= limit) {
+      console.log(colorText("❌ Invalid selection", colors.red));
+      await this.pause(1000);
+      return;
+    }
+
+    const targetUser = this.users[idx];
+    console.log(
+      colorText(
+        `🚀 Sending liquidateDirect for ${targetUser.address} on ${marketName}`,
+        colors.yellow
+      )
+    );
+
+    try {
+      const tx = await this.contracts.vault
+        .connect(this.currentUser)
+        .liquidateDirect(marketId, targetUser.address);
+      console.log(colorText("⏳ Transaction submitted...", colors.yellow));
+      const rcpt = await tx.wait();
+      console.log(
+        colorText(
+          `✅ Liquidation sent | tx ${tx.hash} | gas ${rcpt?.gasUsed || "?"}`,
+          colors.brightGreen
+        )
+      );
+    } catch (error) {
+      const msg = error?.reason || error?.message || String(error);
+      console.log(colorText(`❌ Liquidation failed: ${msg}`, colors.red));
+    }
+
+    await this.pause(1500);
+  }
+
+  async liquidateDirectViaLmInteractive() {
+    console.clear();
+    console.log(boxText("🧹 DIRECT LIQUIDATE (LIQUIDATION MANAGER)", colors.brightRed));
+
+    if (!this.contracts.liquidationManager) {
+      console.log(colorText("❌ LiquidationManager not configured/loaded.", colors.red));
+      await this.pause(1200);
+      return;
+    }
+
+    // Resolve active marketId (auto-fill)
+    let marketId = await this.getActiveMarketId();
+    if (!marketId || marketId === ethers.ZeroHash) {
+      const entries = Object.values(MARKET_INFO || {});
+      if (entries.length && entries[0].marketId) {
+        marketId = entries[0].marketId;
+      }
+    }
+    if (!marketId || marketId === ethers.ZeroHash) {
+      console.log(colorText("⚠️ Unable to resolve active marketId", colors.yellow));
+      await this.pause(1200);
+      return;
+    }
+
+    const marketName = await safeDecodeMarketId(marketId, this.contracts);
+    console.log(
+      colorText(
+        `📍 Market: ${marketName} (${marketId.toString().slice(0, 10)}…)`,
+        colors.cyan
+      )
+    );
+    console.log(
+      colorText(
+        `Caller: ${this.currentUser ? this.currentUser.address : "unknown"}`,
+        colors.dim
+      )
+    );
+
+    const labels = ["A", "B", "C", "D", "E"];
+    const limit = Math.min(labels.length, this.users.length);
+    for (let i = 0; i < limit; i++) {
+      const u = this.users[i];
+      const name = i === 0 ? "Deployer" : `User ${i}`;
+      const shortAddr = `${u.address.slice(0, 6)}…${u.address.slice(-4)}`;
+      console.log(colorText(`${labels[i]}. ${name.padEnd(8)} | ${shortAddr}`, colors.white));
+    }
+
+    const choiceRaw = await this.askQuestion(
+      colorText("\n🎯 Select user to liquidate (A-E, Enter to cancel): ", colors.brightMagenta)
+    );
+    const choice = (choiceRaw || "").trim().toUpperCase();
+    if (!choice) {
+      console.log(colorText("ℹ️ Cancelled", colors.dim));
+      await this.pause(800);
+      return;
+    }
+    const idx = labels.indexOf(choice);
+    if (idx < 0 || idx >= limit) {
+      console.log(colorText("❌ Invalid selection", colors.red));
+      await this.pause(1000);
+      return;
+    }
+
+    const targetUser = this.users[idx];
+    console.log(
+      colorText(
+        `🚀 Sending liquidateDirect via LM for ${targetUser.address} on ${marketName}`,
+        colors.yellow
+      )
+    );
+
+    try {
+      await this.ensureLmMarketMapping(marketId, this.currentUser);
+
+      const tx = await this.withRpcRetry(() =>
+        this.contracts.liquidationManager
+          .connect(this.currentUser)
+          .liquidateDirect(marketId, targetUser.address)
+      );
+      console.log(colorText("⏳ Transaction submitted...", colors.yellow));
+      const rcpt = await tx.wait();
+      console.log(
+        colorText(
+          `✅ Liquidation sent via LM | tx ${tx.hash} | gas ${rcpt?.gasUsed || "?"}`,
+          colors.brightGreen
+        )
+      );
+    } catch (error) {
+      const msg = error?.reason || error?.message || String(error);
+      console.log(colorText(`❌ Liquidation via LM failed: ${msg}`, colors.red));
+    }
+
+    await this.pause(1500);
+  }
+
+  // Ensure LM has a market→orderBook mapping when calling LM directly (non-delegate path)
+  async ensureLmMarketMapping(marketId, signerOverride) {
+    try {
+      const lmOb = await this.contracts.liquidationManager.marketToOrderBook(marketId);
+      if (lmOb && lmOb !== ethers.ZeroAddress) return lmOb;
+      // try to pull from vault mapping
+      let candidateOb = await this.contracts.vault.marketToOrderBook(marketId);
+      // fallback to in-memory orderBookAddress
+      if (!candidateOb || candidateOb === ethers.ZeroAddress) {
+        candidateOb = this.contracts.orderBookAddress || null;
+      }
+      // fallback to MARKET_INFO lookup by marketId
+      if (!candidateOb || candidateOb === ethers.ZeroAddress) {
+        try {
+          const entries = Object.values(MARKET_INFO || {});
+          const match = entries.find(
+            (m) => m?.marketId && String(m.marketId).toLowerCase() === String(marketId).toLowerCase()
+          );
+          if (match?.orderBook) candidateOb = match.orderBook;
+        } catch (_) {}
+      }
+      // fallback to deployment file
+      if (!candidateOb || candidateOb === ethers.ZeroAddress) {
+        const dep = this.loadLocalDeployment();
+        if (dep) {
+          const depSource = dep.__sourceFile || "deployment-json";
+          // direct aluminumMarket field
+          if (
+            dep.aluminumMarket &&
+            dep.aluminumMarket.marketId &&
+            String(dep.aluminumMarket.marketId).toLowerCase() === String(marketId).toLowerCase()
+          ) {
+            candidateOb = dep.aluminumMarket.orderBook;
+            console.log(
+              colorText(
+                `ℹ️ LM mapping from deployment (${depSource}) aluminumMarket.orderBook=${candidateOb}`,
+                colors.cyan
+              )
+            );
+          }
+          // check generic markets array
+          if (
+            (!candidateOb || candidateOb === ethers.ZeroAddress) &&
+            Array.isArray(dep.markets)
+          ) {
+            const match = dep.markets.find(
+              (m) =>
+                m?.marketId &&
+                String(m.marketId).toLowerCase() === String(marketId).toLowerCase()
+            );
+            if (match?.orderBook) candidateOb = match.orderBook;
+            if (candidateOb && candidateOb !== ethers.ZeroAddress) {
+              console.log(
+                colorText(
+                  `ℹ️ LM mapping from deployment (${depSource}) markets[].orderBook=${candidateOb}`,
+                  colors.cyan
+                )
+              );
+            }
+          }
+          // check contracts aliases like <SYMBOL>_ORDERBOOK
+          if (!candidateOb || candidateOb === ethers.ZeroAddress) {
+            const contracts = dep.contracts || {};
+            const values = Object.values(contracts || {});
+            // best effort: if marketId matches aluminumMarketId-like key
+            if (contracts.ALUMINUM_MARKET_ID && String(contracts.ALUMINUM_MARKET_ID).toLowerCase() === String(marketId).toLowerCase()) {
+              candidateOb = contracts.ALUMINUM_ORDERBOOK || contracts.ORDERBOOK || null;
+            } else if (contracts.ORDERBOOK) {
+              candidateOb = contracts.ORDERBOOK;
+            }
+            if (candidateOb && candidateOb !== ethers.ZeroAddress) {
+              console.log(
+                colorText(
+                  `ℹ️ LM mapping from deployment (${depSource}) contracts ORDERBOOK=${candidateOb}`,
+                  colors.cyan
+                )
+              );
+            }
+          }
+          if (candidateOb && candidateOb !== ethers.ZeroAddress) {
+            this.contracts.orderBookAddress = candidateOb; // cache for later
+          }
+        }
+      }
+      if (candidateOb && candidateOb !== ethers.ZeroAddress) {
+        // choose signer; fallback to deployer if current lacks privileges
+        const signerPrimary =
+          signerOverride ||
+          this.currentUser ||
+          (this.users && this.users.length ? this.users[0] : null);
+        const signerFallback =
+          this.users && this.users.length ? this.users[0] : signerPrimary;
+        const signerList = [];
+        if (signerPrimary) signerList.push(signerPrimary);
+        if (signerFallback && signerFallback !== signerPrimary) signerList.push(signerFallback);
+
+        for (const signer of signerList) {
+          if (!signer || !signer.provider) continue;
+          try {
+            const lmWithSigner = this.contracts.liquidationManager.connect(signer);
+            await this.withRpcRetry(() =>
+              lmWithSigner.seedMarketOrderBook(marketId, candidateOb)
+            );
+            console.log(
+              colorText(
+                `ℹ️ Seeded LM market mapping to orderBook ${candidateOb} using signer ${signer.address}`,
+                colors.cyan
+              )
+            );
+            return candidateOb;
+          } catch (seedErr) {
+            console.log(
+              colorText(
+                `⚠️ LM seeding attempt failed with signer ${signer.address}: ${seedErr?.reason || seedErr?.message || seedErr}`,
+                colors.yellow
+              )
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.log(
+        colorText(
+          `⚠️ ensureLmMarketMapping failed: ${e?.reason || e?.message || e}`,
+          colors.yellow
+        )
+      );
+    }
+    console.log(
+      colorText(
+        `⚠️ LM mapping unresolved for marketId ${String(marketId).slice(0, 18)}…; try SEED_LM <marketId> <orderBook> in hack mode.`,
+        colors.yellow
+      )
+    );
+    return ethers.ZeroAddress;
+  }
+
+  // Load deployment file for the active network (best-effort)
+  loadLocalDeployment() {
+    try {
+      const netCfg = getNetworkConfig();
+      const candidates = [];
+      const envName =
+        (process.env.HARDHAT_NETWORK || process.env.NETWORK || "").toLowerCase();
+      if (envName) candidates.push(`${envName}-deployment.json`);
+      const cfgName = (netCfg?.name || "").split(" ")[0].toLowerCase();
+      if (cfgName) candidates.push(`${cfgName}-deployment.json`);
+      // Common local fallbacks
+      candidates.push("localhost-deployment.json");
+      candidates.push("local-development.json");
+      candidates.push("local-development-deployment.json");
+
+      for (const fname of candidates) {
+        const fpath = path.join(__dirname, "..", "deployments", fname);
+        if (fs.existsSync(fpath)) {
+          const raw = fs.readFileSync(fpath, "utf8");
+          const parsed = JSON.parse(raw);
+          parsed.__sourceFile = fpath;
+          return parsed;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   async selectMarket() {
@@ -10598,6 +11144,7 @@ ${colors.brightRed}└───────────────────�
       )
     );
 
+    let hadError = false;
     try {
       const price = await this.askQuestion(
         colorText(`💰 Enter price (USDC): $`, colors.yellow)
@@ -10605,7 +11152,7 @@ ${colors.brightRed}└───────────────────�
 
       if (!price || isNaN(price)) {
         console.log(colorText("❌ Invalid price", colors.red));
-        await this.pause(2000);
+        await this.pause(this.tradeErrorPauseMs);
         return;
       }
 
@@ -10636,7 +11183,7 @@ ${colors.brightRed}└───────────────────�
 
         if (!aluAmount || isNaN(aluAmount)) {
           console.log(colorText("❌ Invalid ALU amount", colors.red));
-          await this.pause(2000);
+          await this.pause(this.tradeErrorPauseMs);
           return;
         }
 
@@ -10650,7 +11197,7 @@ ${colors.brightRed}└───────────────────�
 
         if (!usdcValue || isNaN(usdcValue)) {
           console.log(colorText("❌ Invalid USDC value", colors.red));
-          await this.pause(2000);
+          await this.pause(this.tradeErrorPauseMs);
           return;
         }
 
@@ -10659,7 +11206,7 @@ ${colors.brightRed}└───────────────────�
         amount = (parseFloat(usdcValue) / parseFloat(price)).toFixed(6);
       } else {
         console.log(colorText("❌ Invalid choice", colors.red));
-        await this.pause(2000);
+        await this.pause(this.tradeErrorPauseMs);
         return;
       }
 
@@ -10707,7 +11254,7 @@ ${colors.brightRed}└───────────────────�
                 colors.red
               )
             );
-            await this.pause(2000);
+            await this.pause(this.tradeErrorPauseMs);
             return;
           }
 
@@ -10729,7 +11276,7 @@ ${colors.brightRed}└───────────────────�
                 colors.red
               )
             );
-            await this.pause(2000);
+            await this.pause(this.tradeErrorPauseMs);
             return;
           }
         } catch (e) {
@@ -10760,10 +11307,14 @@ ${colors.brightRed}└───────────────────�
         console.log(colorText("❌ Order cancelled", colors.yellow));
       }
     } catch (error) {
+      hadError = true;
       console.log(colorText("❌ Order failed: " + error.message, colors.red));
     }
 
-    await this.pause(3000);
+    const postOrderPause = hadError
+      ? this.tradeErrorPauseMs
+      : this.tradeSuccessPauseMs;
+    await this.pause(postOrderPause);
   }
   async placeMarketOrder(isBuy) {
     console.clear();
@@ -10785,6 +11336,7 @@ ${colors.brightRed}└───────────────────�
         colors.yellow
       )
     );
+    let hadError = false;
     try {
       // Get current best price for reference (diamond view facet provides bestBid/bestAsk)
       const bestBid = await this.contracts.obView.bestBid();
@@ -10798,7 +11350,7 @@ ${colors.brightRed}└───────────────────�
         console.log(
           colorText("❌ No liquidity available for market order", colors.red)
         );
-        await this.pause(2000);
+        await this.pause(this.tradeErrorPauseMs);
         return;
       }
 
@@ -10839,7 +11391,7 @@ ${colors.brightRed}└───────────────────�
 
         if (!aluAmount || isNaN(aluAmount)) {
           console.log(colorText("❌ Invalid ALU amount", colors.red));
-          await this.pause(2000);
+          await this.pause(this.tradeErrorPauseMs);
           return;
         }
 
@@ -10855,7 +11407,7 @@ ${colors.brightRed}└───────────────────�
 
         if (!usdcValue || isNaN(usdcValue)) {
           console.log(colorText("❌ Invalid USDC value", colors.red));
-          await this.pause(2000);
+          await this.pause(this.tradeErrorPauseMs);
           return;
         }
 
@@ -10866,7 +11418,7 @@ ${colors.brightRed}└───────────────────�
         ).toFixed(6);
       } else {
         console.log(colorText("❌ Invalid choice", colors.red));
-        await this.pause(2000);
+        await this.pause(this.tradeErrorPauseMs);
         return;
       }
 
@@ -10996,12 +11548,16 @@ ${colors.brightRed}└───────────────────�
         console.log(colorText("❌ Order cancelled", colors.yellow));
       }
     } catch (error) {
+      hadError = true;
       console.log(
         colorText("❌ Market order failed: " + error.message, colors.red)
       );
     }
 
-    await this.pause(3000);
+    const postOrderPause = hadError
+      ? this.tradeErrorPauseMs
+      : this.tradeSuccessPauseMs;
+    await this.pause(postOrderPause);
   }
   async viewMyOrders() {
     console.clear();

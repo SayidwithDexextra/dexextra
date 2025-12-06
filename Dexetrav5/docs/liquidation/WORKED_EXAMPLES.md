@@ -825,3 +825,5 @@ Winners:
 
 6. **Maker rewards**: Come from penalty portion of seized funds, distributed proportionally to liquidity providers.
 
+
+

@@ -19,7 +19,6 @@ const CoreVaultFallbackABI = [
   "event MarginUnreserved(address indexed user, bytes32 orderId, uint256 amount)",
   "event LiquidationExecuted(address indexed user, bytes32 indexed marketId, address indexed liquidator, uint256 totalLoss, uint256 remainingCollateral)",
   "event UserLossSocialized(address indexed user, uint256 lossAmount, uint256 remainingCollateral)",
-  "event AvailableCollateralConfiscated(address indexed user, uint256 amount, uint256 remainingAvailable)",
   "event HaircutApplied(address indexed user, bytes32 indexed marketId, uint256 debitAmount, uint256 collateralAfter)",
   "event SocializedLossApplied(bytes32 indexed marketId, uint256 lossAmount, address indexed liquidatedUser)",
   // Core functions

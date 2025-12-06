@@ -11,7 +11,6 @@ interface ICoreVault {
     function transferCollateral(address from, address to, uint256 amount) external;
     function getAvailableCollateral(address user) external view returns (uint256);
     function updateMarkPrice(bytes32 marketId, uint256 price) external;
-    function confiscateAvailableCollateralForGapLoss(address user, uint256 gapLossAmount) external;
     function settleMarket(bytes32 marketId, uint256 finalPrice) external;
     function payMakerLiquidationReward(address liquidatedUser, bytes32 marketId, address maker, uint256 amount) external;
     // Order reservation for margin orders

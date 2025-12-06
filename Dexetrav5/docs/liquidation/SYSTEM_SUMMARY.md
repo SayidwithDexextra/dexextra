@@ -232,7 +232,6 @@ Realization (position closed):
 - `liquidateShort/Long(user, marketId, liquidator, execPrice)`: Full liquidation
 - `updatePositionWithLiquidation(...)`: Partial liquidation
 - `_socializeLoss(marketId, lossAmount, liquidatedUser)`: ADL distribution
-- `confiscateAvailableCollateralForGapLoss(user, amount)`: Gap protection
 - `payMakerLiquidationReward(...)`: Transfer rewards to makers
 
 **MMR Calculation**
@@ -433,4 +432,5 @@ Realization (position closed):
 **Version:** 1.0  
 **Last Updated:** December 2025  
 **Status:** Production Ready
+
 

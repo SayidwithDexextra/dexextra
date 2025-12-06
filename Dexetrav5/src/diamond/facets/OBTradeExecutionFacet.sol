@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import "../libraries/OrderBookStorage.sol";
 import "../interfaces/ICoreVault.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
-import "../interfaces/IOBLiquidationFacet.sol";
 
 contract OBTradeExecutionFacet {
     using Math for uint256;
@@ -14,6 +13,17 @@ contract OBTradeExecutionFacet {
     event TradeExecutionCompleted(address indexed buyer, address indexed seller, uint256 price, uint256 amount);
     event FeesDeducted(address indexed buyer, uint256 buyerFee, address indexed seller, uint256 sellerFee);
     event PriceUpdated(uint256 lastTradePrice, uint256 currentMarkPrice);
+    event TradeRecorded(
+        bytes32 indexed marketId,
+        address indexed buyer,
+        address indexed seller,
+        uint256 price,
+        uint256 amount,
+        uint256 buyerFee,
+        uint256 sellerFee,
+        uint256 timestamp,
+        uint256 liquidationPrice // 0 for non-liquidation trades
+    );
     function getLastTwentyTrades() external view returns (OrderBookStorage.Trade[] memory tradeData) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         uint256 count = s.lastTwentyCount;
@@ -167,17 +177,15 @@ contract OBTradeExecutionFacet {
         try s.vault.updateMarkPrice(s.marketId, currentMark) { } catch { }
         emit PriceUpdated(s.lastTradePrice, currentMark);
 
-        // Track known users for liquidation scanning
+        // Track known users for liquidation scanning (legacy)
         if (buyer != address(0) && buyer != address(this) && !s.isKnownUser[buyer]) { s.isKnownUser[buyer] = true; s.allKnownUsers.push(buyer); }
         if (seller != address(0) && seller != address(this) && !s.isKnownUser[seller]) { s.isKnownUser[seller] = true; s.allKnownUsers.push(seller); }
 
+        // Canonical trade log for off-chain ingestion
+        uint256 liqPrice = (s.liquidationMode || buyer == address(this) || seller == address(this)) ? currentMark : 0;
+        emit TradeRecorded(s.marketId, buyer, seller, price, amount, buyerFee, sellerFee, block.timestamp, liqPrice);
         emit TradeExecutionCompleted(buyer, seller, price, amount);
         s.nonReentrantLock = false;
-
-        // Trigger liquidation scan after releasing the reentrancy lock
-        if (!s.liquidationInProgress) {
-            IOBLiquidationFacet(address(this)).pokeLiquidations();
-        }
     }
 
     function _calculateExecutionMargin(OrderBookStorage.State storage s, int256 amount, uint256 executionPrice) private view returns (uint256) {

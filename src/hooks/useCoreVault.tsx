@@ -472,7 +472,6 @@ export function useCoreVault(walletAddress?: string) {
             const topicMarginUnreserved = ethers.id('MarginUnreserved(address,bytes32,uint256)');
             const topicPositionUpdated = ethers.id('PositionUpdated(address,bytes32,int256,int256,uint256,uint256)');
             const topicUserLossSocialized = ethers.id('UserLossSocialized(address,uint256,uint256)');
-            const topicAvailableConfiscated = ethers.id('AvailableCollateralConfiscated(address,uint256,uint256)');
 
             const topicToName: Record<string, string> = {
               [topicCollateralDeposited.toLowerCase()]: 'CollateralDeposited',
@@ -483,7 +482,6 @@ export function useCoreVault(walletAddress?: string) {
               [topicMarginUnreserved.toLowerCase()]: 'MarginUnreserved',
               [topicPositionUpdated.toLowerCase()]: 'PositionUpdated',
               [topicUserLossSocialized.toLowerCase()]: 'UserLossSocialized',
-              [topicAvailableConfiscated.toLowerCase()]: 'AvailableCollateralConfiscated',
             };
 
             // Subscribe to all CoreVault logs; filter to current user by topic in handler

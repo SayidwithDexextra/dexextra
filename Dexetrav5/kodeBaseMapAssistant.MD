@@ -86,7 +86,6 @@ function updatePositionWithLiquidation(address user, bytes32 marketId, int256 si
 ```solidity
 function isLiquidatable(address user, bytes32 marketId, uint256 markPrice) external returns (bool)
 function liquidateShort/Long(address user, bytes32 marketId, address liquidator, uint256 executionPrice) external
-function confiscateAvailableCollateralForGapLoss(address user, uint256 gapLossAmount) external
 function socializeLoss(bytes32 marketId, uint256 lossAmount, address liquidatedUser) external
 function setUnderLiquidation(address user, bytes32 marketId, bool state) external
 function getUsersWithPositionsInMarket(bytes32 marketId) external view returns (address[] memory users)
@@ -186,8 +185,8 @@ try vault.getPositionSummary(user, marketId) returns (int256 size, uint256 entry
 
 3. Gap Protection (_processEnhancedLiquidationWithGapProtection)
    ├── Calculate gap loss: execution_price - trigger_price
-   ├── Confiscate collateral: vault.confiscateAvailableCollateralForGapLoss()
-   ├── Socialize losses: vault.socializeLoss() (if needed)
+   ├── Emit telemetry: LiquidationMarketGapDetected (no collateral confiscation)
+   ├── Socialize losses: vault.socializeLoss() (if locked margin exhausted)
    └── Update mark price: vault.updateMarkPrice()
 ```
 

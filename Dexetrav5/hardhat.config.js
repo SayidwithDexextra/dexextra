@@ -43,7 +43,7 @@ const config = {
       chainId: 31337,
       allowUnlimitedContractSize: true,
       blockGasLimit: 100000000,
-      gas: 30000000,
+      gas: 50000000,
       mining: {
         auto: true,
         interval: [100, 300],
@@ -56,7 +56,7 @@ const config = {
       url: "http://127.0.0.1:8545",
       allowUnlimitedContractSize: true,
       blockGasLimit: 100000000,
-      gas: 30000000,
+      gas: 20000000,
       timeout: 120000,
     },
     ganache: {

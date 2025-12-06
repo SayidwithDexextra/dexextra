@@ -301,8 +301,9 @@ struct Position {
 │        Long: gapLoss = max(0, liquidationPrice - execPrice) │
 │        Short: gapLoss = max(0, execPrice - liquidationPrice)│
 │    ↓                                                         │
-│    [B] Confiscate from available collateral:                │
-│        vault.confiscateAvailableCollateralForGapLoss()      │
+│    [B] Emit gap-loss telemetry (no confiscation):           │
+│        LiquidationMarketGapDetected fired for monitoring    │
+│        Any deficit beyond locked margin → socialized loss   │
 │    ↓                                                         │
 │    [C] Distribute Maker Rewards:                            │
 │        rewardPool = min(expectedPenalty, OB balance)        │
@@ -463,7 +464,6 @@ struct Position {
 | `liquidateShort()` | Execute full short liquidation | OrderBook | - |
 | `liquidateLong()` | Execute full long liquidation | OrderBook | - |
 | `updatePositionWithLiquidation()` | Execute partial liquidation | OrderBook | - |
-| `confiscateAvailableCollateralForGapLoss()` | Seize collateral for execution slippage | OrderBook | - |
 | `socializeLoss()` | Public entry for loss socialization | OrderBook | - |
 | `payMakerLiquidationReward()` | Distribute maker rewards | OrderBook | - |
 | `getAvailableCollateral()` | Calculate withdrawable funds | External | `uint256` |
@@ -770,8 +770,8 @@ event AutoLiquidationTriggered(address indexed user, bytes32 indexed marketId, i
 event SocializedLossApplied(bytes32 indexed marketId, uint256 lossAmount, address indexed liquidatedUser);
 event HaircutApplied(address indexed user, bytes32 indexed marketId, uint256 debitAmount, uint256 collateralAfter);
 event BadDebtRecorded(bytes32 indexed marketId, uint256 amount, address indexed liquidatedUser);
-event AvailableCollateralConfiscated(address indexed user, uint256 amount, uint256 remainingAvailable);
 ```
+> Gap-loss telemetry now lives entirely in `LiquidationMarketGapDetected`; no additional collateral seizure events are emitted.
 
 ### Reward Events
 ```solidity
@@ -796,11 +796,11 @@ event SocializationFailed(...);  // ADL failure reason
 ### CoreVault ↔ LiquidationManager
 - **Delegation**: CoreVault uses `delegatecall` to LiquidationManager
 - **Shared Storage**: Both contracts must maintain **identical** storage layout
-- **Functions Delegated**: `liquidateShort`, `liquidateLong`, `updatePositionWithLiquidation`, `socializeLoss`, `confiscateAvailableCollateralForGapLoss`
+- **Functions Delegated**: `liquidateShort`, `liquidateLong`, `updatePositionWithLiquidation`, `socializeLoss`
 
 ### OrderBook ↔ CoreVault
 - **Roles**: OrderBook has `ORDERBOOK_ROLE` on CoreVault
-- **Calls**: `setUnderLiquidation`, `liquidateShort/Long`, `updatePositionWithLiquidation`, `payMakerLiquidationReward`, `confiscateAvailableCollateralForGapLoss`
+- **Calls**: `setUnderLiquidation`, `liquidateShort/Long`, `updatePositionWithLiquidation`, `payMakerLiquidationReward`
 - **Views**: `isLiquidatable`, `getMarkPrice`, `getPositionSummary`, `getAvailableCollateral`
 
 ### OBLiquidationFacet ↔ OBTradeExecutionFacet

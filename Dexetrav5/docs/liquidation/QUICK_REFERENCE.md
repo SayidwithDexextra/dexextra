@@ -252,8 +252,9 @@ event MakerLiquidationRewardPaid(address indexed maker, address indexed liquidat
 ### Gap Protection
 ```solidity
 event LiquidationMarketGapDetected(address indexed trader, uint256 liquidationPrice, uint256 actualExecutionPrice, int256 positionSize, uint256 gapLoss)
-event AvailableCollateralConfiscated(address indexed user, uint256 amount, uint256 remainingAvailable)
 ```
+
+> Gap detection is now informational only—once the liquidated user's locked margin is consumed, any remaining shortfall immediately flows into the socialization pipeline instead of confiscating additional available collateral.
 
 ---
 
@@ -395,4 +396,5 @@ console.log("Bad Debt:", ethers.utils.formatUnits(badDebt, 6), "USDC");
 **Last Updated:** December 2025  
 **Version:** 1.0  
 **Contact:** See main project documentation
+
 

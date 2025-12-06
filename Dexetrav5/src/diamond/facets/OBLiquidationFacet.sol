@@ -74,6 +74,28 @@ contract OBLiquidationFacet {
         emit LiquidationConfigUpdated(s.liquidationScanOnTrade, s.liquidationDebug);
     }
 
+    /**
+     * @notice Trustless direct liquidation entrypoint for off-chain workers.
+     * @dev Pulls mark price on-chain and routes through the existing liquidation flow.
+     */
+    function liquidateDirect(address trader) external {
+        require(trader != address(0), "OB: bad trader");
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        require(!s.liquidationInProgress && !s.liquidationTrackingActive, "OB: liq busy");
+        s.liquidationInProgress = true;
+
+        uint256 markPrice = _calculateMarkPrice();
+        s.lastMarkPrice = markPrice;
+        s.vault.updateMarkPrice(s.marketId, markPrice);
+
+        (bool didLiquidate, int256 posSize, bool usedDirectVault) = _checkAndLiquidateTrader(trader, markPrice);
+        s.liquidationInProgress = false;
+
+        require(didLiquidate, "OB: liquidation failed");
+        emit AutoLiquidationTriggered(trader, s.marketId, posSize, markPrice);
+        emit LiquidationCompleted(trader, 1, usedDirectVault ? "DirectVault" : "Direct");
+    }
+
     function pokeLiquidationsMulti(uint256 rounds) external {
         require(rounds > 0 && rounds <= 20, "OB: bad rounds");
         for (uint256 i = 0; i < rounds; i++) {
@@ -308,14 +330,6 @@ contract OBLiquidationFacet {
             }
             if (gapLoss > 0) {
                 emit LiquidationMarketGapDetected(trader, liquidationTriggerPrice, executionResult.worstExecutionPrice, positionSize, gapLoss);
-                // Confiscate available collateral up to the computed gap loss to reduce shortfall
-                uint256 available = 0;
-                try s.vault.getAvailableCollateral(trader) returns (uint256 a) { available = a; } catch { available = 0; }
-                uint256 toConfiscate = gapLoss < available ? gapLoss : available;
-                if (toConfiscate > 0) {
-                    // Best-effort; ignore failures to avoid reverting liquidation completion
-                    try s.vault.confiscateAvailableCollateralForGapLoss(trader, toConfiscate) { } catch { }
-                }
             }
         }
 

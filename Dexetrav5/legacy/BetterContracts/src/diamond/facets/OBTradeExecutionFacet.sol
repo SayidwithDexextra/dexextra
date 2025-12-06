@@ -136,12 +136,6 @@ contract OBTradeExecutionFacet {
         try s.vault.updateMarkPrice(s.marketId, currentMark) { } catch { }
         emit PriceUpdated(s.lastTradePrice, currentMark);
 
-        // Optional immediate liquidation scan on trade
-        if (s.liquidationScanOnTrade && !s.liquidationInProgress) {
-            // Use interface instead of low-level call
-            try IOBLiquidationFacet(address(this)).pokeLiquidations() { } catch { }
-        }
-
         // Track known users for liquidation scanning
         if (buyer != address(0) && buyer != address(this) && !s.isKnownUser[buyer]) { s.isKnownUser[buyer] = true; s.allKnownUsers.push(buyer); }
         if (seller != address(0) && seller != address(this) && !s.isKnownUser[seller]) { s.isKnownUser[seller] = true; s.allKnownUsers.push(seller); }

@@ -27,9 +27,7 @@ OBLiquidationFacet._checkPositionsForLiquidation(mark)
             │       │       ├─→ OBTradeExecutionFacet.obExecuteTrade(...) [internal call]
             │       │       └─→ OBLiquidationFacet._recordLiquidationMakerContribution(maker, price, amount)
             │       └─→ OBLiquidationFacet._processEnhancedLiquidationWithGapProtection(...)
-            │           ├─→ Calculate gap loss
-            │           ├─→ CoreVault.confiscateAvailableCollateralForGapLoss(user, gapLoss)
-            │           │   └─→ LiquidationManager.confiscateAvailableCollateralForGapLoss(...) [delegatecall]
+            │           ├─→ Calculate gap loss & emit LiquidationMarketGapDetected (informational only; shortfalls roll into socialization once locked margin is exhausted)
             │           ├─→ OBPricingFacet.calculateMarkPrice() [recalc after execution]
             │           └─→ OBLiquidationFacet._distributeLiquidationRewards(liquidatedUser, rewardPool)
             │               └─→ For each maker:
@@ -382,18 +380,17 @@ OBLiquidationFacet._distributeLiquidationRewards(liquidatedUser, rewardAmount)
 | OBLiquidationFacet | CoreVault | `getPositionSummary` | External call | Get user position |
 | OBLiquidationFacet | CoreVault | `getUsersWithPositionsInMarket` | External call | Get all users to scan |
 | OBLiquidationFacet | CoreVault | `liquidateShort/Long` | External call | Execute full liquidation |
-| OBLiquidationFacet | CoreVault | `confiscateAvailableCollateralForGapLoss` | External call | Seize for slippage |
 | OBLiquidationFacet | CoreVault | `payMakerLiquidationReward` | External call | Pay maker rewards |
 | OBLiquidationFacet | OBTradeExecutionFacet | `obExecuteTrade` | Internal call (Diamond) | Execute liquidation trade |
 | OBLiquidationFacet | OBPricingFacet | `calculateMarkPrice` | Staticcall (Diamond) | Get current mark |
 | CoreVault | LiquidationManager | `liquidateShort/Long` | Delegatecall | Heavy liquidation logic |
 | CoreVault | LiquidationManager | `updatePositionWithLiquidation` | Delegatecall | Partial liquidation |
 | CoreVault | LiquidationManager | `isLiquidatable` | Delegatecall | Liquidation check |
-| CoreVault | LiquidationManager | `confiscateAvailableCollateralForGapLoss` | Delegatecall | Gap loss handling |
 | CoreVault | LiquidationManager | `getAvailableCollateral` | Delegatecall | Calculate withdrawable |
 | LiquidationManager | PositionManager | `executePositionNetting` | Library call | Update position state |
 | LiquidationManager | VaultAnalytics | `getAvailableCollateral` | Library call | Calculate available funds |
 
+> Gap loss handling no longer confiscates free collateral; once locked margin is depleted the remaining deficit immediately routes through `socializeLoss`.
 ---
 
 ## Key State Transitions

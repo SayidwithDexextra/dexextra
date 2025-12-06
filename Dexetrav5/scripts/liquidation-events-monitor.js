@@ -73,6 +73,27 @@ const LIQUIDATION_EVENTS_ABI = [
   "event DebugRewardDistributionEnd(address indexed liquidatedUser)",
   "event LiquidationMarketGapDetected(address indexed trader,uint256 liquidationPrice,uint256 actualExecutionPrice,int256 positionSize,uint256 gapLoss)",
   "event LiquidationScanParamsUpdated(uint256 maxChecksPerPoke,uint256 maxLiquidationsPerPoke)",
+  // Trade ingestion event (added for order-book fills)
+  "event TradeRecorded(bytes32 indexed marketId,address indexed buyer,address indexed seller,uint256 price,uint256 amount,uint256 buyerFee,uint256 sellerFee,uint256 timestamp,uint256 liquidationPrice)",
+  // Order book maintenance
+  "event PriceLevelPruned(uint256 price,bool isBuy)",
+];
+
+const LM_EVENTS_ABI = [
+  "event MarginConfiscated(address indexed user, uint256 marginAmount, uint256 totalLoss, uint256 penalty, address indexed liquidator)",
+  "event SocializationStarted(bytes32 indexed marketId, uint256 totalLossAmount, address indexed liquidatedUser, uint256 timestamp)",
+  "event ProfitablePositionFound(address indexed user, bytes32 indexed marketId, int256 positionSize, uint256 entryPrice, uint256 markPrice, uint256 unrealizedPnL, uint256 profitScore)",
+  "event AdministrativePositionClosure(address indexed user, bytes32 indexed marketId, uint256 sizeBeforeReduction, uint256 sizeAfterReduction, uint256 realizedProfit, uint256 newEntryPrice)",
+  "event SocializationCompleted(bytes32 indexed marketId, uint256 totalLossCovered, uint256 remainingLoss, uint256 positionsAffected, address indexed liquidatedUser)",
+  "event SocializationFailed(bytes32 indexed marketId, uint256 lossAmount, string reason, address indexed liquidatedUser)",
+  "event SocializationDiagnostics(bytes32 indexed marketId, uint256 markPrice, uint256 profitableNotional6, uint256 profitableUserCount, uint256 userCount, uint256 winnersFound, uint256 lossAmount, address indexed liquidatedUser)",
+  "event SocializedLossApplied(bytes32 indexed marketId, uint256 lossAmount, address indexed liquidatedUser)",
+  "event UserLossSocialized(address indexed user, uint256 lossAmount, uint256 remainingCollateral)",
+  "event MakerLiquidationRewardPaid(address indexed maker, address indexed liquidatedUser, bytes32 indexed marketId, uint256 rewardAmount)",
+];
+
+const CORE_VAULT_VIEW_ABI = [
+  "function getLiquidationPrice(address user, bytes32 marketId) view returns (uint256 liquidationPrice, bool hasPosition)",
 ];
 
 // Color helpers (ANSI)
@@ -112,6 +133,7 @@ const eventColor = (name) => {
     DebugRewardDistributionStart: colors.gray,
     DebugRewardDistributionEnd: colors.gray,
     DebugMakerRewardPayOutcome: colors.gray,
+    PriceLevelPruned: colors.cyan,
   };
   return map[name] || colors.cyan;
 };
@@ -191,11 +213,55 @@ async function resolveTargetAddress() {
   return { candidate, source };
 }
 
+async function resolveLmAddress() {
+  if (getContract?.refreshAddresses) {
+    try {
+      await getContract.refreshAddresses();
+    } catch (e) {
+      console.warn("Address refresh skipped:", e.message);
+    }
+  }
+  let source = "config:LIQUIDATION_MANAGER";
+  let candidate = getAddress("LIQUIDATION_MANAGER") || CONFIG_ADDRESSES?.LIQUIDATION_MANAGER;
+  if (!candidate || !ethers.isAddress(candidate)) {
+    console.log(`${colors.dim}LM not found in config; LM events will be skipped.${colors.reset}`);
+    return null;
+  }
+  return { candidate, source };
+}
+
+async function resolveCoreVaultAddress() {
+  if (getContract?.refreshAddresses) {
+    try {
+      await getContract.refreshAddresses();
+    } catch (e) {
+      console.warn("Address refresh skipped:", e.message);
+    }
+  }
+  let candidate = getAddress("CORE_VAULT") || CONFIG_ADDRESSES?.CORE_VAULT;
+  if (!candidate || !ethers.isAddress(candidate)) return null;
+  return { candidate, source: "config:CORE_VAULT" };
+}
+
 async function main() {
   const { candidate: address, source } = await resolveTargetAddress();
   const provider = ethers.provider;
   const iface = new ethers.Interface(LIQUIDATION_EVENTS_ABI);
   const contract = new ethers.Contract(address, iface, provider);
+
+  const lmResolved = await resolveLmAddress();
+  const lmIface = lmResolved ? new ethers.Interface(LM_EVENTS_ABI) : null;
+  const lmContract =
+    lmResolved && lmIface ? new ethers.Contract(lmResolved.candidate, lmIface, provider) : null;
+  const coreVaultResolved = await resolveCoreVaultAddress();
+  const coreVaultLmContract =
+    coreVaultResolved && lmIface
+      ? new ethers.Contract(coreVaultResolved.candidate, lmIface, provider)
+      : null;
+  const coreVaultViewContract =
+    coreVaultResolved && CORE_VAULT_VIEW_ABI.length
+      ? new ethers.Contract(coreVaultResolved.candidate, CORE_VAULT_VIEW_ABI, provider)
+      : null;
 
   console.log(
     `${colors.bold}${colors.cyan}📡 Listening for OBLiquidationFacet events…${colors.reset}`
@@ -211,19 +277,85 @@ async function main() {
   );
   console.log(`${colors.dim}Press Ctrl+C to stop.${colors.reset}\n`);
 
-  // Subscribe to every event fragment
+  // Subscribe to every event fragment (OrderBook / OBLiquidationFacet)
   iface.fragments
     .filter((frag) => frag.type === "event")
     .forEach((frag) => {
-      contract.on(frag.name, (...params) => {
+      contract.on(frag.name, async (...params) => {
         const eventObj = params[params.length - 1];
         const argMap = {};
         frag.inputs.forEach((input, idx) => {
           argMap[input.name || `arg${idx}`] = params[idx];
         });
         logEvent(frag.name, argMap, eventObj);
+        // On TradeRecorded, fetch seller's liquidation price from CoreVault (same market)
+        if (frag.name === "TradeRecorded" && coreVaultViewContract) {
+          try {
+            const [liqPx, hasPos] = await coreVaultViewContract.getLiquidationPrice(
+              argMap.seller,
+              argMap.marketId
+            );
+            const extra = hasPos
+              ? `liquidationPrice=${formatValue(liqPx)}`
+              : "liquidationPrice=n/a (no position)";
+            console.log(
+              `${colors.dim}│ [TradeRecorded] seller ${shorten(argMap.seller)} market ${formatValue(
+                argMap.marketId
+              )} ${extra}${colors.reset}`
+            );
+          } catch (e) {
+            console.warn(
+              `${colors.dim}│ [TradeRecorded] liquidation price lookup failed: ${e.message}${colors.reset}`
+            );
+          }
+        }
       });
     });
+
+  // Subscribe to LM ADL / socialization events if available
+  if (lmContract && lmIface) {
+    console.log(
+      `${colors.dim}LM events: ${lmIface.fragments
+        .filter((f) => f.type === "event")
+        .map((f) => f.name)
+        .join(", ")} | contract: ${lmResolved.candidate}${colors.reset}`
+    );
+
+    lmIface.fragments
+      .filter((frag) => frag.type === "event")
+      .forEach((frag) => {
+        lmContract.on(frag.name, (...params) => {
+          const eventObj = params[params.length - 1];
+          const argMap = {};
+          frag.inputs.forEach((input, idx) => {
+            argMap[input.name || `arg${idx}`] = params[idx];
+          });
+          logEvent(`${frag.name} [LM]`, argMap, eventObj);
+        });
+      });
+  }
+
+  // Subscribe to LM events emitted via delegatecall on CoreVault (events appear at CoreVault address)
+  if (coreVaultLmContract && lmIface) {
+    console.log(
+      `${colors.dim}LM events (via CoreVault delegate): ${lmIface.fragments
+        .filter((f) => f.type === "event")
+        .map((f) => f.name)
+        .join(", ")} | contract: ${coreVaultResolved.candidate}${colors.reset}`
+    );
+    lmIface.fragments
+      .filter((frag) => frag.type === "event")
+      .forEach((frag) => {
+        coreVaultLmContract.on(frag.name, (...params) => {
+          const eventObj = params[params.length - 1];
+          const argMap = {};
+          frag.inputs.forEach((input, idx) => {
+            argMap[input.name || `arg${idx}`] = params[idx];
+          });
+          logEvent(`${frag.name} [CoreVault]`, argMap, eventObj);
+        });
+      });
+  }
 
   // Keep process alive
   process.on("SIGINT", () => {

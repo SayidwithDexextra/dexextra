@@ -455,8 +455,7 @@ contract OBOrderPlacementFacet {
     }
 
     function _onOrderBookLiquidityChanged() private {
-        // Use dedicated interface for poke; ignore failures
-        try IOBLiquidationFacet(address(this)).pokeLiquidations() { } catch { }
+        // Intentionally left blank: liquidation scanning is now triggered exclusively off-chain.
     }
 }
 
