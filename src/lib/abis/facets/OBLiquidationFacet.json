@@ -263,6 +263,18 @@
           "internalType": "string",
           "name": "method",
           "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "int256",
+          "name": "startSize",
+          "type": "int256"
+        },
+        {
+          "indexed": false,
+          "internalType": "int256",
+          "name": "remainingSize",
+          "type": "int256"
         }
       ],
       "name": "LiquidationCompleted",

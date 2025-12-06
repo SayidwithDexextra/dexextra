@@ -16,7 +16,13 @@ contract OBLiquidationFacet {
     event LiquidationTraderBeingChecked(address indexed trader, uint256 index, uint256 totalTraders);
     event LiquidationLiquidatableCheck(address indexed trader, bool isLiquidatable, uint256 markPrice);
     event AutoLiquidationTriggered(address indexed user, bytes32 indexed marketId, int256 positionSize, uint256 markPrice);
-    event LiquidationCompleted(address indexed trader, uint256 liquidationsTriggered, string method);
+    event LiquidationCompleted(
+        address indexed trader,
+        uint256 liquidationsTriggered,
+        string method,
+        int256 startSize,
+        int256 remainingSize
+    );
     event LiquidationIndexUpdated(uint256 oldIndex, uint256 newIndex, uint256 tradersLength);
     event LiquidationCheckFinished(uint256 tradersChecked, uint256 liquidationsTriggered, uint256 nextStartIndex);
     event LiquidationCheckTriggered(uint256 currentMark, uint256 lastMarkPrice);
@@ -88,12 +94,13 @@ contract OBLiquidationFacet {
         s.lastMarkPrice = markPrice;
         s.vault.updateMarkPrice(s.marketId, markPrice);
 
-        (bool didLiquidate, int256 posSize, bool usedDirectVault) = _checkAndLiquidateTrader(trader, markPrice);
+        (bool didLiquidate, int256 posSize, bool usedDirectVault, int256 remainingSize) =
+            _checkAndLiquidateTrader(trader, markPrice);
         s.liquidationInProgress = false;
 
         require(didLiquidate, "OB: liquidation failed");
         emit AutoLiquidationTriggered(trader, s.marketId, posSize, markPrice);
-        emit LiquidationCompleted(trader, 1, usedDirectVault ? "DirectVault" : "Direct");
+        emit LiquidationCompleted(trader, 1, usedDirectVault ? "DirectVault" : "Direct", posSize, remainingSize);
     }
 
     function pokeLiquidationsMulti(uint256 rounds) external {
@@ -151,11 +158,12 @@ contract OBLiquidationFacet {
             if (i >= usersWithPositions.length) break;
             address trader = usersWithPositions[i];
             emit LiquidationTraderBeingChecked(trader, i, tradersLength);
-            (bool didLiq, int256 posSize, bool usedDirectVault) = _checkAndLiquidateTrader(trader, markPrice);
+            (bool didLiq, int256 posSize, bool usedDirectVault, int256 remainingSize) =
+                _checkAndLiquidateTrader(trader, markPrice);
             if (didLiq) {
                 liquidationsTriggered++;
                 emit AutoLiquidationTriggered(trader, s.marketId, posSize, markPrice);
-                emit LiquidationCompleted(trader, liquidationsTriggered, "Market Order");
+                emit LiquidationCompleted(trader, liquidationsTriggered, "Market Order", posSize, remainingSize);
                 uint256 maxLiqs = s.maxLiquidationsPerPoke > 0 ? s.maxLiquidationsPerPoke : (checksPerPoke / 2);
                 if (liquidationsTriggered >= maxLiqs) { break; }
             }
@@ -172,7 +180,10 @@ contract OBLiquidationFacet {
         emit LiquidationCheckFinished(tradersChecked, liquidationsTriggered, s.lastCheckedIndex);
     }
 
-    function _checkAndLiquidateTrader(address trader, uint256 markPrice) internal returns (bool didLiquidate, int256 positionSize, bool usedDirectVault) {
+    function _checkAndLiquidateTrader(address trader, uint256 markPrice)
+        internal
+        returns (bool didLiquidate, int256 positionSize, bool usedDirectVault, int256 remainingSize)
+    {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         bool isLiquidatable = false;
         // Must not suppress error; if position state change fails, revert
@@ -180,15 +191,16 @@ contract OBLiquidationFacet {
         emit LiquidationLiquidatableCheck(trader, isLiquidatable, markPrice);
         if (!isLiquidatable) {
             _releaseLiquidationFlag(s, trader);
-            return (false, 0, false);
+            return (false, 0, false, 0);
         }
         // Get the user's position size
         (int256 size, , ) = s.vault.getPositionSummary(trader, s.marketId);
         if (size == 0) {
             _releaseLiquidationFlag(s, trader);
-            return (false, 0, false);
+            return (false, 0, false, 0);
         }
         positionSize = size;
+        remainingSize = size;
         emit LiquidationPositionRetrieved(trader, size, 0, 0);
         // First, force market order, up to 5 attempts for partials
         int256 startSize = size;
@@ -206,8 +218,9 @@ contract OBLiquidationFacet {
                 _processEnhancedLiquidationWithGapProtection(trader, size, markPrice, res);
                 (int256 newSize, , ) = s.vault.getPositionSummary(trader, s.marketId);
                 if (newSize == 0) {
+                    remainingSize = 0;
                     _releaseLiquidationFlag(s, trader);
-                    return (true, startSize, false); // Fully filled
+                    return (true, startSize, false, remainingSize); // Fully filled
                 }
                 if (newSize == size) break; // No progress
                 size = newSize;
@@ -220,8 +233,9 @@ contract OBLiquidationFacet {
         // if we made any progress, return success
         (int256 afterMarket, , ) = s.vault.getPositionSummary(trader, s.marketId);
         if (afterMarket != positionSize) {
+            remainingSize = afterMarket;
             _releaseLiquidationFlag(s, trader);
-            return (true, startSize, false);
+            return (true, startSize, false, remainingSize);
         }
         // Fallback to direct vault-side liquidation (no suppression)
         bool vaultSuccess = false;
@@ -237,8 +251,9 @@ contract OBLiquidationFacet {
         }
         (int256 afterVault, , ) = s.vault.getPositionSummary(trader, s.marketId);
         bool directReduced = afterVault != positionSize;
+        remainingSize = afterVault;
         _releaseLiquidationFlag(s, trader);
-        return (directReduced, positionSize, true);
+        return (directReduced, positionSize, true, remainingSize);
     }
 
     function _releaseLiquidationFlag(OrderBookStorage.State storage s, address trader) private {

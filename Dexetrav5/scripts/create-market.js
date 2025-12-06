@@ -173,8 +173,16 @@ async function getTxOverrides() {
 async function createNonceManager(signer) {
   const address = await signer.getAddress();
   let next = await signer.provider.getTransactionCount(address, "pending");
+  console.log("🧮 Starting nonce for deployer:", next);
   return {
     async nextOverrides() {
+      // Re-sync with chain to avoid "nonce too low" when other txs were sent
+      const chainNonce = await signer.provider.getTransactionCount(
+        address,
+        "pending"
+      );
+      if (chainNonce > next) next = chainNonce;
+
       const fee = await getTxOverrides();
       const ov = { ...fee, nonce: next };
       next += 1;

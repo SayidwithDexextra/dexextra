@@ -1966,11 +1966,13 @@ ${gradient("╚═════╝ ╚══════╝╚═╝  ╚═╝�
 
       this.contracts.orderBook.on(
         "LiquidationCompleted",
-        (trader, liquidationsTriggered, method, event) => {
+        (trader, liquidationsTriggered, method, startSize, remainingSize, event) => {
           this.handleLiquidationCompletedEvent(
             trader,
             liquidationsTriggered,
             method,
+            startSize,
+            remainingSize,
             event
           );
         }
@@ -3551,6 +3553,37 @@ ${colors.brightRed}└───────────────────�
       `${colors.dim}[${timestamp}]${colors.reset} ${colors.brightGreen}✅ TRADE EXECUTION DONE${colors.reset} | ` +
         `${amt} ALU @ $${px}`
     );
+  }
+
+  handleLiquidationCompletedEvent(
+    trader,
+    liquidationsTriggered,
+    method,
+    startSize,
+    remainingSize,
+    event
+  ) {
+    const timestamp = new Date().toLocaleTimeString();
+    const tShort = trader ? trader.slice(0, 8) + "..." + trader.slice(-6) : "(n/a)";
+    const start = formatWithAutoDecimalDetection(startSize, 18, 4);
+    const remaining = formatWithAutoDecimalDetection(remainingSize, 18, 4);
+    const remainingIsZero =
+      remainingSize && typeof remainingSize.isZero === "function"
+        ? remainingSize.isZero()
+        : remainingSize === 0 || remainingSize === "0" || remainingSize === 0n;
+    const fullyClosed = remainingIsZero;
+    const statusIcon = fullyClosed ? "✅" : "⚠️";
+    const statusColor = fullyClosed ? colors.green : colors.yellow;
+    console.log(
+      `${colors.dim}[${timestamp}]${colors.reset} ${statusColor}${statusIcon} LIQUIDATION COMPLETED${colors.reset} | ` +
+        `${tShort} | method: ${method} | ` +
+        `start: ${start} | remaining: ${remaining} | total in batch: ${liquidationsTriggered}`
+    );
+    if (event && event.transactionHash) {
+      console.log(
+        `${colors.dim}tx:${colors.reset} ${event.transactionHash.slice(0, 10)}...`
+      );
+    }
   }
 
   handleLiquidationIndexUpdatedEvent(oldIndex, newIndex, tradersLength, event) {

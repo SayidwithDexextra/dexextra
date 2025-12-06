@@ -306,6 +306,9 @@ async function main() {
   // Get network info
   const network = await ethers.provider.getNetwork();
   const networkName = process.env.HARDHAT_NETWORK || "unknown";
+  const isLocalEnv =
+    ["localhost", "hardhat"].includes(String(networkName).toLowerCase()) ||
+    network.chainId === 31337n;
   console.log(`🌐 Network: ${networkName} (Chain ID: ${network.chainId})`);
 
   // Get all signers and validate we have enough
@@ -567,7 +570,17 @@ async function main() {
       contracts.FUTURES_MARKET_FACTORY
     );
 
-    // Set fixed MMR: 10% buffer + 10% penalty = 20% total, no scaling
+  if (isLocalEnv) {
+    console.log(
+      "     → Granting EXTERNAL_CREDITOR_ROLE to deployer (local testing)..."
+    );
+    await coreVault.grantRole(EXTERNAL_CREDITOR_ROLE, deployer.address);
+    console.log(
+      "     ✅ Deployer can grant simulated cross-chain credits (local only)"
+    );
+  }
+
+  // Set fixed MMR: 10% buffer + 10% penalty = 20% total, no scaling
     console.log(
       "     → Setting global MMR params (fixed 20%: 10% buffer + 10% penalty)..."
     );
@@ -1010,22 +1023,37 @@ async function main() {
           collateralAmountStr = USER3_COLLATERAL; // User 3 gets less for testing
         }
         const collateralAmount = ethers.parseUnits(collateralAmountStr, 6);
-        await mockUSDC
-          .connect(user)
-          .approve(contracts.CORE_VAULT, collateralAmount);
-        await coreVault.connect(user).depositCollateral(collateralAmount);
-        console.log(
-          `     ✅ Deposited ${collateralAmountStr} USDC as collateral`
-        );
+        if (i === 0 && isLocalEnv) {
+          // Simulate a spoke-chain deposit by crediting cross-chain balance instead of on-vault deposit
+          await coreVault.creditExternal(user.address, collateralAmount);
+          console.log(
+            `     ✅ Granted simulated spoke credit of ${collateralAmountStr} USDC (local-only)`
+          );
+        } else {
+          await mockUSDC
+            .connect(user)
+            .approve(contracts.CORE_VAULT, collateralAmount);
+          await coreVault.connect(user).depositCollateral(collateralAmount);
+          console.log(
+            `     ✅ Deposited ${collateralAmountStr} USDC as collateral`
+          );
+        }
 
         // Show final balances
         const balance = await mockUSDC.balanceOf(user.address);
         const collateral = await coreVault.userCollateral(user.address);
+        const extCredit = await coreVault.userCrossChainCredit(user.address);
         console.log(
           `     📊 Final: ${ethers.formatUnits(
             balance,
             6
-          )} USDC wallet, ${ethers.formatUnits(collateral, 6)} USDC collateral`
+          )} USDC wallet, ${ethers.formatUnits(
+            collateral,
+            6
+          )} USDC collateral, ${ethers.formatUnits(
+            extCredit,
+            6
+          )} USDC cross-chain credit`
         );
       } catch (error) {
         console.log(`     ❌ Error: ${error.message}`);

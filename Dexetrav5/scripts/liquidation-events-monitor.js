@@ -51,7 +51,7 @@ const LIQUIDATION_EVENTS_ABI = [
   "event LiquidationTraderBeingChecked(address indexed trader,uint256 index,uint256 totalTraders)",
   "event LiquidationLiquidatableCheck(address indexed trader,bool isLiquidatable,uint256 markPrice)",
   "event AutoLiquidationTriggered(address indexed user,bytes32 indexed marketId,int256 positionSize,uint256 markPrice)",
-  "event LiquidationCompleted(address indexed trader,uint256 liquidationsTriggered,string method)",
+  "event LiquidationCompleted(address indexed trader,uint256 liquidationsTriggered,string method,int256 startSize,int256 remainingSize)",
   "event LiquidationIndexUpdated(uint256 oldIndex,uint256 newIndex,uint256 tradersLength)",
   "event LiquidationCheckFinished(uint256 tradersChecked,uint256 liquidationsTriggered,uint256 nextStartIndex)",
   "event LiquidationCheckTriggered(uint256 currentMark,uint256 lastMarkPrice)",

@@ -670,6 +670,30 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         return summary;
     }
 
+    /**
+     * @notice Returns a per-user collateral breakdown.
+     * @dev depositedCollateral is vault-native and withdrawable (subject to locks);
+     *      crossChainCredit is math-only trading power (not withdrawable on hub);
+     *      withdrawableCollateral excludes crossChainCredit;
+     *      availableForTrading includes crossChainCredit.
+     */
+    function getCollateralBreakdown(address user)
+        external
+        view
+        returns (
+            uint256 depositedCollateral,
+            uint256 crossChainCredit,
+            uint256 withdrawableCollateral,
+            uint256 availableForTrading
+        )
+    {
+        depositedCollateral = userCollateral[user];
+        crossChainCredit = userCrossChainCredit[user];
+        // getWithdrawableCollateral excludes cross-chain credit by design
+        withdrawableCollateral = getWithdrawableCollateral(user);
+        availableForTrading = getAvailableCollateral(user);
+    }
+
     function getAvailableCollateral(address user) public view returns (uint256) {
         // Convert to VaultAnalytics.Position[]
         VaultAnalytics.Position[] memory positions = new VaultAnalytics.Position[](userPositions[user].length);
