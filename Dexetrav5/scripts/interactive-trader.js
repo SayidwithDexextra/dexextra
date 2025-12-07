@@ -852,6 +852,175 @@ class InteractiveTrader {
     }
   }
 
+  /**
+   * Fetch collateral breakdown (deposited vs cross-chain credit) with graceful fallback
+   * if the vault does not yet expose getCollateralBreakdown.
+   */
+  async getCollateralBreakdownFor(userAddress) {
+    const zero = {
+      depositedCollateral: 0n,
+      crossChainCredit: 0n,
+      withdrawableCollateral: 0n,
+      availableForTrading: 0n,
+      isDepositedEstimate: false,
+      isCrossEstimate: false,
+      isWithdrawableEstimate: false,
+    };
+    // Prefer the on-chain breakdown if available
+    try {
+      if (
+        this.contracts?.vault?.getCollateralBreakdown &&
+        typeof this.contracts.vault.getCollateralBreakdown === "function"
+      ) {
+        const res = await this.contracts.vault.getCollateralBreakdown(
+          userAddress
+        );
+        if (Array.isArray(res) && res.length >= 4) {
+          return {
+            depositedCollateral: BigInt(res[0].toString()),
+            crossChainCredit: BigInt(res[1].toString()),
+            withdrawableCollateral: BigInt(res[2].toString()),
+            availableForTrading: BigInt(res[3].toString()),
+            isDepositedEstimate: false,
+            isCrossEstimate: false,
+            isWithdrawableEstimate: false,
+          };
+        }
+      }
+    } catch (e) {
+      console.log(
+        colorText(
+          `⚠️  getCollateralBreakdown failed; falling back to estimates: ${e.message}`,
+          colors.yellow
+        )
+      );
+    }
+
+    try {
+      const hasUserCollateral =
+        this.contracts?.vault?.userCollateral &&
+        typeof this.contracts.vault.userCollateral === "function";
+      const hasUserCross =
+        this.contracts?.vault?.userCrossChainCredit &&
+        typeof this.contracts.vault.userCrossChainCredit === "function";
+
+      const depositedPromise = hasUserCollateral
+        ? this.contracts.vault.userCollateral(userAddress)
+        : Promise.resolve(0n);
+      const crossPromise = hasUserCross
+        ? this.contracts.vault.userCrossChainCredit(userAddress)
+        : Promise.resolve(0n);
+      const availablePromise = this.contracts.vault.getAvailableCollateral(
+        userAddress
+      );
+
+      const [deposited, crossCredit, available] = await Promise.all([
+        depositedPromise,
+        crossPromise,
+        availablePromise,
+      ]);
+
+      const depositedBn = hasUserCollateral
+        ? BigInt(deposited?.toString?.() || 0)
+        : availableBn; // best-effort estimate when getter missing
+      const crossBn = hasUserCross
+        ? BigInt(crossCredit?.toString?.() || 0)
+        : 0n;
+      const availableBn = BigInt(available?.toString?.() || 0);
+      // Estimate withdrawable by stripping cross-chain credit (cannot call internal getWithdrawableCollateral).
+      const withdrawableEst =
+        availableBn > crossBn ? availableBn - crossBn : 0n;
+      return {
+        depositedCollateral: depositedBn,
+        crossChainCredit: crossBn,
+        withdrawableCollateral: withdrawableEst,
+        availableForTrading: availableBn,
+        isDepositedEstimate: !hasUserCollateral,
+        isCrossEstimate: !hasUserCross,
+        isWithdrawableEstimate: true,
+      };
+    } catch (err) {
+      console.log(
+        colorText(
+          `⚠️  Could not fetch collateral breakdown: ${err.message}`,
+          colors.yellow
+        )
+      );
+      return zero;
+    }
+  }
+
+  async logCollateralBreakdown(prefix = "Collateral") {
+    const breakdown = await this.getCollateralBreakdownFor(
+      this.currentUser.address
+    );
+    const fmt = (v) => formatUSDC(BigInt(v));
+    console.log(
+      colorText(
+        `\n${prefix}: deposited=${fmt(
+          breakdown.depositedCollateral
+        )}${breakdown.isDepositedEstimate ? " (est)" : ""} | cross-chain=${fmt(
+          breakdown.crossChainCredit
+        )}${breakdown.isCrossEstimate ? " (est)" : ""} | available=${fmt(
+          breakdown.availableForTrading
+        )} | withdrawable${
+          breakdown.isWithdrawableEstimate ? " (est)" : ""
+        }=${fmt(breakdown.withdrawableCollateral)}`,
+        colors.brightCyan
+      )
+    );
+  }
+
+  async viewAllUsersCollateralBreakdown() {
+    console.clear();
+    console.log(
+      boxText("📊 COLLATERAL BREAKDOWN (ALL USERS)", colors.brightCyan)
+    );
+    try {
+      // Use the locally loaded signer set; ensure it's populated
+      if (!this.users || this.users.length === 0) {
+        await this.loadUsers();
+      }
+      const users = this.users || [];
+      if (users.length === 0) {
+        console.log(colorText("ℹ️  No users found.", colors.yellow));
+        await this.pause(2500);
+        return;
+      }
+
+      for (let i = 0; i < users.length; i++) {
+        const addr = users[i].address || users[i];
+        const breakdown = await this.getCollateralBreakdownFor(addr);
+        const fmt = (v) => formatUSDC(BigInt(v));
+        console.log(
+          colorText(
+            `\n[${i}] ${addr}\n  deposited=${fmt(
+              breakdown.depositedCollateral
+            )}${breakdown.isDepositedEstimate ? " (est)" : ""} | cross-chain=${fmt(
+              breakdown.crossChainCredit
+            )}${breakdown.isCrossEstimate ? " (est)" : ""} | available=${fmt(
+              breakdown.availableForTrading
+            )} | withdrawable${
+              breakdown.isWithdrawableEstimate ? " (est)" : ""
+            }=${fmt(breakdown.withdrawableCollateral)}`,
+            colors.white
+          )
+        );
+      }
+    } catch (err) {
+      console.log(
+        colorText(
+          `❌ Failed to fetch users or breakdowns: ${err.message}`,
+          colors.red
+        )
+      );
+    }
+    // Keep the screen up until the user exits manually
+    await this.askQuestion(
+      colorText("\nPress Enter (or Esc) to return to the menu...", colors.dim)
+    );
+  }
+
   async initialize() {
     console.clear();
     await this.showWelcomeScreen();
@@ -1671,17 +1840,23 @@ ${gradient("╚═════╝ ╚══════╝╚═╝  ╚═╝�
         }
       );
 
-      // UNCOMMENTED: Old liquidation debugging events continued
-      this.contracts.orderBook.on(
-        "LiquidationCheckTriggered",
-        (currentMark, lastMarkPrice, event) => {
-          this.handleLiquidationCheckTriggeredEvent(
-            currentMark,
-            lastMarkPrice,
-            event
-          );
-        }
-      );
+      // Legacy poke-liquidation events are optional on new deployments
+      if (
+        this.contracts.orderBook.interface.events?.[
+          "LiquidationCheckTriggered(uint256,uint256)"
+        ]
+      ) {
+        this.contracts.orderBook.on(
+          "LiquidationCheckTriggered",
+          (currentMark, lastMarkPrice, event) => {
+            this.handleLiquidationCheckTriggeredEvent(
+              currentMark,
+              lastMarkPrice,
+              event
+            );
+          }
+        );
+      }
 
       this.contracts.orderBook.on(
         "TradeExecutionCompleted",
@@ -1696,39 +1871,56 @@ ${gradient("╚═════╝ ╚══════╝╚═╝  ╚═╝�
         }
       );
 
-      // UNCOMMENTED: Old liquidation debugging events continued
-      // Listen for _checkPositionsForLiquidation debug events
-      this.contracts.orderBook.on(
-        "LiquidationCheckStarted",
-        (markPrice, tradersLength, startIndex, endIndex, event) => {
-          this.handleLiquidationCheckStartedEvent(
-            markPrice,
-            tradersLength,
-            startIndex,
-            endIndex,
-            event
-          );
-        }
-      );
+      if (
+        this.contracts.orderBook.interface.events?.[
+          "LiquidationCheckStarted(uint256,uint256,uint256,uint256)"
+        ]
+      ) {
+        // Listen for _checkPositionsForLiquidation debug events
+        this.contracts.orderBook.on(
+          "LiquidationCheckStarted",
+          (markPrice, tradersLength, startIndex, endIndex, event) => {
+            this.handleLiquidationCheckStartedEvent(
+              markPrice,
+              tradersLength,
+              startIndex,
+              endIndex,
+              event
+            );
+          }
+        );
+      }
 
-      this.contracts.orderBook.on(
-        "LiquidationRecursionGuardSet",
-        (inProgress, event) => {
-          this.handleLiquidationRecursionGuardSetEvent(inProgress, event);
-        }
-      );
+      if (
+        this.contracts.orderBook.interface.events?.[
+          "LiquidationRecursionGuardSet(bool)"
+        ]
+      ) {
+        this.contracts.orderBook.on(
+          "LiquidationRecursionGuardSet",
+          (inProgress, event) => {
+            this.handleLiquidationRecursionGuardSetEvent(inProgress, event);
+          }
+        );
+      }
 
-      this.contracts.orderBook.on(
-        "LiquidationTraderBeingChecked",
-        (trader, index, totalTraders, event) => {
-          this.handleLiquidationTraderBeingCheckedEvent(
-            trader,
-            index,
-            totalTraders,
-            event
-          );
-        }
-      );
+      if (
+        this.contracts.orderBook.interface.events?.[
+          "LiquidationTraderBeingChecked(address,uint256,uint256)"
+        ]
+      ) {
+        this.contracts.orderBook.on(
+          "LiquidationTraderBeingChecked",
+          (trader, index, totalTraders, event) => {
+            this.handleLiquidationTraderBeingCheckedEvent(
+              trader,
+              index,
+              totalTraders,
+              event
+            );
+          }
+        );
+      }
 
       this.contracts.orderBook.on(
         "LiquidationLiquidatableCheck",
@@ -1978,29 +2170,41 @@ ${gradient("╚═════╝ ╚══════╝╚═╝  ╚═╝�
         }
       );
 
-      this.contracts.orderBook.on(
-        "LiquidationIndexUpdated",
-        (oldIndex, newIndex, tradersLength, event) => {
-          this.handleLiquidationIndexUpdatedEvent(
-            oldIndex,
-            newIndex,
-            tradersLength,
-            event
-          );
-        }
-      );
+      if (
+        this.contracts.orderBook.interface.events?.[
+          "LiquidationIndexUpdated(uint256,uint256,uint256)"
+        ]
+      ) {
+        this.contracts.orderBook.on(
+          "LiquidationIndexUpdated",
+          (oldIndex, newIndex, tradersLength, event) => {
+            this.handleLiquidationIndexUpdatedEvent(
+              oldIndex,
+              newIndex,
+              tradersLength,
+              event
+            );
+          }
+        );
+      }
 
-      this.contracts.orderBook.on(
-        "LiquidationCheckFinished",
-        (tradersChecked, liquidationsTriggered, nextStartIndex, event) => {
-          this.handleLiquidationCheckFinishedEvent(
-            tradersChecked,
-            liquidationsTriggered,
-            nextStartIndex,
-            event
-          );
-        }
-      );
+      if (
+        this.contracts.orderBook.interface.events?.[
+          "LiquidationCheckFinished(uint256,uint256,uint256)"
+        ]
+      ) {
+        this.contracts.orderBook.on(
+          "LiquidationCheckFinished",
+          (tradersChecked, liquidationsTriggered, nextStartIndex, event) => {
+            this.handleLiquidationCheckFinishedEvent(
+              tradersChecked,
+              liquidationsTriggered,
+              nextStartIndex,
+              event
+            );
+          }
+        );
+      }
 
       this.contracts.orderBook.on(
         "LiquidationMarginConfiscated",
@@ -6158,29 +6362,13 @@ ${colors.brightRed}└───────────────────�
       }
 
       case "POKE_LIQ": {
-        // Optional: ON/OFF to toggle liquidationScanOnTrade, or no arg to just poke now
-        const sub = (parts[cursor++] || "").toUpperCase();
-        if (sub === "ON" || sub === "OFF") {
-          const enable = sub === "ON";
-          await this.withRpcRetry(() =>
-            this.contracts.orderBook.setConfigLiquidationScanOnTrade(enable)
-          ).catch(() => {});
-          console.log(
-            colorText(
-              `⚙️ liquidationScanOnTrade ${enable ? "ENABLED" : "DISABLED"}`,
-              colors.brightYellow
-            )
-          );
-          return `POKE_LIQ ${sub}`;
-        }
-
-        // Just poke immediately
-        const obWithSigner = this.contracts.orderBook.connect(
-          user || this.currentUser
+        console.log(
+          colorText(
+            "⚠️ Legacy pokeLiquidations flow has been removed. Use LIQUIDATE or the vault sweep helpers instead.",
+            colors.brightYellow
+          )
         );
-        await this.withRpcRetry(() => obWithSigner.pokeLiquidations());
-        console.log(colorText("📣 pokeLiquidations() sent", colors.cyan));
-        return "POKE_LIQ";
+        return "POKE_LIQ_DEPRECATED";
       }
 
       case "POKE_VAULT": {
@@ -6306,109 +6494,33 @@ ${colors.brightRed}└───────────────────�
       }
 
       case "LIQ_DEBUG": {
-        const mode = (parts[cursor++] || "").toUpperCase();
-        if (mode !== "ON" && mode !== "OFF")
-          throw new Error("LIQ_DEBUG usage: LIQ_DEBUG ON|OFF");
-        const enable = mode === "ON";
-        await this.withRpcRetry(() =>
-          this.contracts.orderBook.setConfigLiquidationDebug(enable)
-        );
         console.log(
           colorText(
-            `⚙️ liquidationDebug ${enable ? "ENABLED" : "DISABLED"}`,
+            "⚠️ LIQ_DEBUG is deprecated; legacy poke liquidation diagnostics have been removed.",
             colors.brightYellow
           )
         );
-        return `LIQ_DEBUG ${mode}`;
+        return "LIQ_DEBUG_DEPRECATED";
       }
 
       case "LIQ_SHOW": {
-        const [scanOnTrade, debug] = await this.withRpcRetry(async () => {
-          const scan = await this.contracts.orderBook.liquidationScanOnTrade();
-          const dbg = await this.contracts.orderBook.liquidationDebug();
-          return [scan, dbg];
-        });
         console.log(
           colorText(
-            `⚙️ LIQ SETTINGS | scanOnTrade=${
-              scanOnTrade ? "ON" : "OFF"
-            } | debug=${debug ? "ON" : "OFF"}`,
+            "ℹ️ LIQ_SHOW no longer reports legacy scan settings (feature removed).",
             colors.cyan
           )
         );
-        return "LIQ_SHOW";
+        return "LIQ_SHOW_DEPRECATED";
       }
 
       case "LIQ_SNAP": {
-        // Snapshot liquidation math directly via view calls (no events required)
-        const ts = new Date().toLocaleTimeString();
-        const marketId = await this.withRpcRetry(async () => {
-          try {
-            const staticInfo = await this.contracts.obView.marketStatic();
-            return staticInfo[1];
-          } catch (e) {
-            return ethers.ZeroHash;
-          }
-        });
-        const users = await this.withRpcRetry(() =>
-          this.contracts.vault.getUsersWithPositionsInMarket(marketId)
-        );
-        const mark = await this.withRpcRetry(() =>
-          this.contracts.obPricing.calculateMarkPrice()
-        );
         console.log(
-          `${colors.dim}[${ts}]${colors.reset} ${colors.cyan}🔎 LIQ SNAP${
-            colors.reset
-          } | Users=${users.length} | Mark $${formatPrice(mark, 6, 4)}`
+          colorText(
+            "🔎 LIQ_SNAP deprecated: CoreVault no longer exposes bulk user enumeration for legacy snapshots.",
+            colors.brightYellow
+          )
         );
-        for (const u of users) {
-          try {
-            const [size, entryPrice, marginLocked] = await this.withRpcRetry(
-              () => this.contracts.vault.getPositionSummary(u, marketId)
-            );
-            const [liquidationPrice, hasPosition] = await this.withRpcRetry(
-              () => this.contracts.vault.getLiquidationPrice(u, marketId)
-            );
-            const [equity6, notional6 /*, hasPos2*/] = await this.withRpcRetry(
-              () => this.contracts.vault.getPositionEquity(u, marketId)
-            );
-            const [mmrBps /*, fillRatio, hasPos3*/] = await this.withRpcRetry(
-              () =>
-                this.contracts.vault.getEffectiveMaintenanceMarginBps(
-                  u,
-                  marketId
-                )
-            );
-            const maintenance6 = (BigInt(notional6) * BigInt(mmrBps)) / 10000n;
-            const side =
-              BigInt(size) >= 0n
-                ? `${colors.green}LONG${colors.reset}`
-                : `${colors.red}SHORT${colors.reset}`;
-            const tShort = u.slice(0, 8) + "..." + u.slice(-6);
-            console.log(
-              `${colors.dim}[${ts}]${colors.reset} ${colors.brightBlue}🧪 SNAP${
-                colors.reset
-              } | ${tShort} | ${side} ${formatAmount(
-                size,
-                18,
-                4
-              )} ALU @ $${formatPrice(entryPrice, 6, 4)} | ` +
-                `Liq $${formatPrice(liquidationPrice, 6, 4)} | Eq $${formatUSDC(
-                  equity6
-                )} vs MMR $${formatUSDC(maintenance6)} | Locked $${formatUSDC(
-                  marginLocked
-                )}`
-            );
-          } catch (e) {
-            console.log(
-              colorText(
-                `⚠️ SNAP error for ${u}: ${e?.message || e}`,
-                colors.yellow
-              )
-            );
-          }
-        }
-        return "LIQ_SNAP";
+        return "LIQ_SNAP_DEPRECATED";
       }
       case "LIQ_VERIFY": {
         const role = ethers.keccak256(ethers.toUtf8Bytes("ORDERBOOK_ROLE"));
@@ -6522,7 +6634,7 @@ ${colors.brightRed}└───────────────────�
     );
     console.log(
       colorText(
-        "│ Liq:    POKE_LIQ [ON|OFF] | POKE_VAULT (direct sweep)      │",
+        "│ Liq:    POKE_LIQ (deprecated) | POKE_VAULT (direct sweep)  │",
         colors.white
       )
     );
@@ -9311,6 +9423,12 @@ ${colors.brightRed}└───────────────────�
       )
     );
     console.log(
+      colorText(
+        "│ 27. 📊 Collateral Breakdown (all users) │",
+        colors.brightCyan
+      )
+    );
+    console.log(
       colorText("│ T. 💼 Market Total Margin                │", colors.blue)
     );
     console.log(
@@ -9443,6 +9561,9 @@ ${colors.brightRed}└───────────────────�
       case "26":
         await this.liquidateDirectViaLmInteractive();
         break;
+      case "27":
+        await this.viewAllUsersCollateralBreakdown();
+        break;
       case "t":
         await this.viewMarketTotalMargin();
         break;
@@ -9509,130 +9630,25 @@ ${colors.brightRed}└───────────────────�
   async pokeLiquidationsFromOrderBook() {
     console.clear();
     console.log(boxText("🚨 POKE LIQUIDATIONS (ORDERBOOK)", colors.brightRed));
-    try {
-      const obAddr = this.contracts.orderBookAddress;
-      const tx = await this.withRpcRetry(() =>
-        this.contracts.orderBook.connect(this.currentUser).pokeLiquidations()
-      );
-      const rcpt = await tx.wait();
-      console.log(
-        colorText(
-          `✅ pokeLiquidations() sent to ${obAddr || "orderbook"} | tx ${tx?.hash} | gas ${rcpt?.gasUsed}`,
-          colors.brightGreen
-        )
-      );
-    } catch (error) {
-      console.log(
-        colorText(
-          `❌ OrderBook poke failed: ${error?.reason || error?.message || error}`,
-          colors.red
-        )
-      );
-    }
-    await this.pause(1200);
+    console.log(
+      colorText(
+        "⚠️ Legacy pokeLiquidations entrypoint has been removed; use LIQUIDATE/LD commands instead.",
+        colors.brightYellow
+      )
+    );
+    await this.pause(1600);
   }
 
   async vaultDirectLiquidationSweep() {
     console.clear();
     console.log(boxText("🏛️ VAULT DIRECT LIQUIDATION SWEEP", colors.brightYellow));
-    try {
-      const marketId = await this.getActiveMarketId();
-      if (!marketId || marketId === ethers.ZeroHash) {
-        console.log(colorText("⚠️ Unable to resolve active marketId", colors.yellow));
-        await this.pause(1200);
-        return;
-      }
-
-      // Mark price from pricing facet; fall back to vault mark if needed
-      let markPrice = 0n;
-      try {
-        markPrice = BigInt(
-          (await this.withRpcRetry(() =>
-            this.contracts.obPricing.calculateMarkPrice()
-          ))?.toString?.() || "0"
-        );
-      } catch (_) {
-        try {
-          markPrice = BigInt(
-            (await this.withRpcRetry(() =>
-              this.contracts.vault.getMarkPrice(marketId)
-            ))?.toString?.() || "0"
-          );
-        } catch (_) {
-          markPrice = 0n;
-        }
-      }
-
-      const users = await this.withRpcRetry(() =>
-        this.contracts.vault.getUsersWithPositionsInMarket(marketId)
-      );
-      console.log(
-        colorText(
-          `📋 Candidates in market ${await safeDecodeMarketId(marketId, this.contracts)}: ${users.length}`,
-          colors.cyan
-        )
-      );
-
-      let triggered = 0;
-      const vaultWithSigner = this.contracts.vault.connect(this.currentUser);
-      const shortAddr = (addr) =>
-        addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "unknown";
-
-      for (const u of users) {
-        try {
-          const [size] = await this.withRpcRetry(() =>
-            this.contracts.vault.getPositionSummary(u, marketId)
-          );
-          const sizeBig = BigInt(size.toString());
-          if (sizeBig === 0n) continue;
-
-          const liquidatable = await this.withRpcRetry(() =>
-            this.contracts.vault.callStatic.isLiquidatable(u, marketId, markPrice)
-          ).catch(() => false);
-          if (!liquidatable) continue;
-
-          const isLong = sizeBig > 0n;
-          const tx = isLong
-            ? await vaultWithSigner.liquidateLong(
-                u,
-                marketId,
-                this.currentUser.address,
-                markPrice
-              )
-            : await vaultWithSigner.liquidateShort(
-                u,
-                marketId,
-                this.currentUser.address,
-                markPrice
-              );
-          const rcpt = await tx.wait();
-          triggered++;
-          console.log(
-            colorText(
-              `✅ Vault liquidation ${isLong ? "LONG" : "SHORT"} ${shortAddr(u)} | tx ${
-                tx?.hash
-              } | gas ${rcpt?.gasUsed}`,
-              colors.brightGreen
-            )
-          );
-        } catch (err) {
-          const msg = err?.reason || err?.error?.message || err?.message || String(err);
-          console.log(colorText(`⚠️ Skip ${shortAddr(u)}: ${msg}`, colors.yellow));
-        }
-      }
-
-      if (triggered === 0) {
-        console.log(colorText("ℹ️ No liquidatable users found for direct vault sweep.", colors.cyan));
-      }
-    } catch (error) {
-      console.log(
-        colorText(
-          `❌ Vault liquidation sweep failed: ${error?.reason || error?.message || error}`,
-          colors.red
-        )
-      );
-    }
-    await this.pause(1500);
+    console.log(
+      colorText(
+        "⚠️ Deprecated: requires legacy user enumeration that has been removed from CoreVault.",
+        colors.brightYellow
+      )
+    );
+    await this.pause(1600);
   }
 
   async liquidateDirectInteractive() {
@@ -11262,6 +11278,8 @@ ${colors.brightRed}└───────────────────�
         )
       );
 
+      await this.logCollateralBreakdown("Pre-trade collateral");
+
       const confirm = await this.askQuestion(
         colorText("\n✅ Confirm order? (y/n): ", colors.brightGreen)
       );
@@ -11336,6 +11354,7 @@ ${colors.brightRed}└───────────────────�
         console.log(
           colorText(`⛽ Gas used: ${receipt.gasUsed.toString()}`, colors.dim)
         );
+        await this.logCollateralBreakdown("Post-trade collateral");
       } else {
         console.log(colorText("❌ Order cancelled", colors.yellow));
       }
@@ -11537,6 +11556,8 @@ ${colors.brightRed}└───────────────────�
         )
       );
 
+      await this.logCollateralBreakdown("Pre-trade collateral");
+
       const confirm = await this.askQuestion(
         colorText(
           "\n✅ Confirm market order with slippage protection? (y/n): ",
@@ -11577,6 +11598,7 @@ ${colors.brightRed}└───────────────────�
         console.log(
           colorText(`⛽ Gas used: ${receipt.gasUsed.toString()}`, colors.dim)
         );
+        await this.logCollateralBreakdown("Post-trade collateral");
       } else {
         console.log(colorText("❌ Order cancelled", colors.yellow));
       }

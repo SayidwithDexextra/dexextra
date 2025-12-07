@@ -615,7 +615,7 @@ async function main() {
   console.log("  → Granting SETTLEMENT_ROLE to FuturesMarketFactory...");
   await coreVault.grantRole(SETTLEMENT_ROLE, contracts.FUTURES_MARKET_FACTORY);
   console.log("  → Setting global MMR params (fixed 20%)...");
-  await coreVault.setMmrParams(1000, 1000, 2000, 0, 1);
+  await coreVault.setMmrParams(1000, 1000, 2000, 1);
   console.log("     ✅ MMR params set");
 
   // Create ALUMINUM market (mirrors deploy.js)

@@ -24,6 +24,8 @@
 
 ---
 
+> **Notice (Dec 2025):** Legacy poke/scan parameters (`maxLiquidationChecksPerPoke`, `pokeLiquidations`, etc.) are no longer used on modern deployments. They remain documented here for archival purposes while the docs are refreshed.
+
 ## 📊 Key Numbers
 
 | Constant | Value | Meaning |
@@ -271,7 +273,7 @@ facet.setConfigLiquidationScanOnTrade(true)
 facet.setConfigLiquidationDebug(true)
 
 // MMR parameters (CoreVault)
-vault.setMmrParams(baseMmrBps, penaltyMmrBps, maxMmrBps, scalingSlopeBps, liquidityDepthLevels)
+vault.setMmrParams(baseMmrBps, penaltyMmrBps, maxMmrBps, liquidityDepthLevels)
 
 // ADL parameters (LiquidationManager via delegatecall)
 // No direct setter; modified in deployment

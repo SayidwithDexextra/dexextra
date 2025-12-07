@@ -580,14 +580,14 @@ async function main() {
     );
   }
 
-  // Set fixed MMR: 10% buffer + 10% penalty = 20% total, no scaling
-    console.log(
-      "     → Setting global MMR params (fixed 20%: 10% buffer + 10% penalty)..."
-    );
-    await coreVault.setMmrParams(1000, 1000, 2000, 0, 1);
-    console.log(
-      "     ✅ MMR params set: base=10%, penalty=10%, cap=20%, scaling=0, depth=1"
-    );
+  // Set fixed MMR: 10% buffer + 10% penalty = 20% total, no scaling (scalingSlopeBps=0)
+  console.log(
+    "     → Setting global MMR params (fixed 20%: 10% buffer + 10% penalty)..."
+  );
+  await coreVault.setMmrParams(1000, 1000, 2000, 0, 1);
+  console.log(
+    "     ✅ MMR params set: base=10%, penalty=10%, cap=20%, depth=1"
+  );
 
     console.log("     ✅ All modular roles granted successfully!");
 

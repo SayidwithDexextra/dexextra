@@ -415,6 +415,20 @@ contract OBLiquidationFacet {
                 }
                 unchecked { remainingAmount -= matchAmount; }
                 if (sellOrder.amount > matchAmount) { sellOrder.amount -= matchAmount; } else { sellOrder.amount = 0; }
+                // Release or right-size reserved margin for the resting maker order
+                if (sellOrder.isMarginOrder) {
+                    if (sellOrder.amount == 0) {
+                        bytes32 rid = _reservationId(s, sellOrder.trader, currentOrderId);
+                        s.vault.unreserveMargin(sellOrder.trader, rid);
+                        s.vault.unreserveMargin(sellOrder.trader, bytes32(currentOrderId));
+                    } else {
+                        uint256 newReserved = _calculateMarginRequired(s, sellOrder.amount, sellOrder.price, sellOrder.isBuy);
+                        bytes32 rid2 = _reservationId(s, sellOrder.trader, currentOrderId);
+                        s.vault.releaseExcessMargin(sellOrder.trader, rid2, newReserved);
+                        s.vault.releaseExcessMargin(sellOrder.trader, bytes32(currentOrderId), newReserved);
+                        s.orders[currentOrderId].marginRequired = newReserved;
+                    }
+                }
                 if (level.totalAmount > matchAmount) { level.totalAmount -= matchAmount; } else { level.totalAmount = 0; }
                 if (sellOrder.amount == 0) { _removeOrderFromLevel(currentOrderId, currentPrice, false); _removeOrderFromUserList(sellOrder.trader, currentOrderId); delete s.orders[currentOrderId]; }
                 currentOrderId = nextSellOrderId;
@@ -450,6 +464,20 @@ contract OBLiquidationFacet {
                 }
                 unchecked { remainingAmount -= matchAmount; }
                 if (buyOrder.amount > matchAmount) { buyOrder.amount -= matchAmount; } else { buyOrder.amount = 0; }
+                // Release or right-size reserved margin for the resting maker order
+                if (buyOrder.isMarginOrder) {
+                    if (buyOrder.amount == 0) {
+                        bytes32 rid = _reservationId(s, buyOrder.trader, currentOrderId);
+                        s.vault.unreserveMargin(buyOrder.trader, rid);
+                        s.vault.unreserveMargin(buyOrder.trader, bytes32(currentOrderId));
+                    } else {
+                        uint256 newReserved = _calculateMarginRequired(s, buyOrder.amount, buyOrder.price, buyOrder.isBuy);
+                        bytes32 rid2 = _reservationId(s, buyOrder.trader, currentOrderId);
+                        s.vault.releaseExcessMargin(buyOrder.trader, rid2, newReserved);
+                        s.vault.releaseExcessMargin(buyOrder.trader, bytes32(currentOrderId), newReserved);
+                        s.orders[currentOrderId].marginRequired = newReserved;
+                    }
+                }
                 if (level.totalAmount > matchAmount) { level.totalAmount -= matchAmount; } else { level.totalAmount = 0; }
                 if (buyOrder.amount == 0) { _removeOrderFromLevel(currentOrderId, currentPrice, true); _removeOrderFromUserList(buyOrder.trader, currentOrderId); delete s.orders[currentOrderId]; }
                 currentOrderId = nextBuyOrderId;
@@ -458,6 +486,22 @@ contract OBLiquidationFacet {
             currentPrice = _getPrevBuyPrice(currentPrice);
         }
         return remainingAmount;
+    }
+
+    function _calculateMarginRequired(
+        OrderBookStorage.State storage s,
+        uint256 amount,
+        uint256 price,
+        bool isBuy
+    ) private view returns (uint256) {
+        if (amount == 0) return 0;
+        uint256 notional = Math.mulDiv(amount, price, 1e18);
+        uint256 marginBps = isBuy ? s.marginRequirementBps : 15000;
+        return Math.mulDiv(notional, marginBps, 10000);
+    }
+
+    function _reservationId(OrderBookStorage.State storage s, address trader, uint256 orderId) private view returns (bytes32) {
+        return keccak256(abi.encodePacked(s.marketId, trader, orderId));
     }
 
     function _executeTradeForLiquidation(address buyer, address seller, uint256 price, uint256 amount, bool buyerMargin, bool sellerMargin) internal {

@@ -91,6 +91,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     uint256 public baseMmrBps = 1000;
     uint256 public penaltyMmrBps = 1000;
     uint256 public maxMmrBps = 2000;
+    // Dynamic scaling parameters (kept minimal to restore ADL tuning hooks)
     uint256 public scalingSlopeBps = 0;
     uint256 public priceGapSlopeBps = 0;
     uint256 public mmrLiquidityDepthLevels = 1;
@@ -414,7 +415,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                 uint256 actualLoss = tradingLoss + penalty;
             
                 uint256 seizableFromLocked = actualLoss > locked ? locked : actualLoss;
-                uint256 collateralAvailable_ = userCollateral[user];
+                uint256 collateralAvailable_ = userCollateral[user] + userCrossChainCredit[user];
                 uint256 seized = seizableFromLocked > collateralAvailable_ ? collateralAvailable_ : seizableFromLocked;
                 uint256 uncoveredLoss = tradingLoss > seized ? (tradingLoss - seized) : 0;
                 if (uncoveredLoss > 0) {
@@ -558,7 +559,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                 uint256 actualLoss = tradingLoss + penalty;
             
                 uint256 seizableFromLocked = actualLoss > locked ? locked : actualLoss;
-                uint256 collateralAvailable_ = userCollateral[user];
+                uint256 collateralAvailable_ = userCollateral[user] + userCrossChainCredit[user];
                 uint256 seized = seizableFromLocked > collateralAvailable_ ? collateralAvailable_ : seizableFromLocked;
                 uint256 uncoveredLoss = tradingLoss > seized ? (tradingLoss - seized) : 0;
             
@@ -688,7 +689,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                 if (closesExposure && newSize != 0) { basisPriceForMargin = entryPrice; }
                 uint256 newRequiredMargin = _calculateExecutionMargin(newSize, basisPriceForMargin);
                 uint256 confiscatable = oldLocked > newRequiredMargin ? (oldLocked - newRequiredMargin) : 0;
-                uint256 collateralAvailable_ = userCollateral[user];
+                uint256 collateralAvailable_ = userCollateral[user] + userCrossChainCredit[user];
                 uint256 seizableFromLocked = actualLossClosed > confiscatable ? confiscatable : actualLossClosed;
                 uint256 seized = seizableFromLocked > collateralAvailable_ ? collateralAvailable_ : seizableFromLocked;
                 uint256 uncoveredLoss = tradingLossClosed > seized ? (tradingLossClosed - seized) : 0;
@@ -1187,6 +1188,14 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         return _buildWinnerCacheSimple(winners, marketId, markPrice);
     }
 
+    function _getUsersWithPositionsInMarket(bytes32 marketId) internal view returns (address[] memory) {
+        return marketUsers[marketId];
+    }
+
+    function getUsersWithPositionsInMarket(bytes32 marketId) external view returns (address[] memory) {
+        return marketUsers[marketId];
+    }
+
     function _computeWinnerCapacity(
         address user,
         bytes32 marketId,
@@ -1216,16 +1225,6 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     ) private {
         _applyHaircutToPositionOptimized(user, marketId, amount, markPrice);
     }
-
-
-    function _getUsersWithPositionsInMarket(bytes32 marketId) internal view returns (address[] memory) {
-        return marketUsers[marketId];
-    }
-
-    function getUsersWithPositionsInMarket(bytes32 marketId) external view returns (address[] memory) {
-        return marketUsers[marketId];
-    }
-
     function addUserToMarketIndex(address user, bytes32 marketId) external onlyRole(ORDERBOOK_ROLE) {
         _addUserToMarketIndex(user, marketId);
     }
@@ -1560,11 +1559,6 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     /**
      * @dev OPTIMIZED: Batch update position caches when mark price changes
      * Uses gas-bounded iteration to stay under block gas limit
-     * @param marketId Market to update
-     * @param newMarkPrice New mark price
-     * @param maxUpdates Maximum positions to update (gas bound)
-     * @return updatedCount Number of positions updated
-     * @return hasMore True if more positions need updating
      */
     function refreshPositionCaches(
         bytes32 marketId,
@@ -1767,7 +1761,6 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         uint256 _baseMmrBps,
         uint256 _penaltyMmrBps,
         uint256 _maxMmrBps,
-        uint256 _scalingSlopeBps,
         uint256 _liquidityDepthLevels
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_baseMmrBps <= 10000 && _penaltyMmrBps <= 10000 && _maxMmrBps <= 10000, "bps!");
@@ -1775,7 +1768,6 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         baseMmrBps = _baseMmrBps;
         penaltyMmrBps = _penaltyMmrBps;
         maxMmrBps = _maxMmrBps;
-        scalingSlopeBps = _scalingSlopeBps;
         mmrLiquidityDepthLevels = _liquidityDepthLevels;
     }
 
@@ -1807,7 +1799,9 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                 marginLocked: userPositions[user][i].marginLocked
             });
         }
-        uint256 baseAvailable = VaultAnalytics.getAvailableCollateral(userCollateral[user], positions);
+        // Base available = (collateral + ext credit) - margin locked in positions
+        uint256 collateralForTrading = userCollateral[user] + userCrossChainCredit[user];
+        uint256 baseAvailable = VaultAnalytics.getAvailableCollateral(collateralForTrading, positions);
         int256 realizedPnL18 = userRealizedPnL[user];
         if (userPositions[user].length == 0 && realizedPnL18 < 0) { realizedPnL18 = 0; }
         int256 realizedPnL6 = realizedPnL18 / int256(DECIMAL_SCALE);

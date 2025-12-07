@@ -10,6 +10,8 @@
 
 ---
 
+> **Notice (Dec 2025):** Legacy `pokeLiquidations` scanners and scan-on-trade toggles have been removed. This summary still references them for legacy deployments; current systems rely exclusively on `liquidateDirect`.
+
 ## System Overview
 
 The DexExtra liquidation system is a **multi-layered, gas-optimized liquidation engine** that handles position liquidations with sophisticated loss distribution across profitable traders.

@@ -6,6 +6,8 @@ This folder contains comprehensive documentation for the DexExtra liquidation an
 
 ---
 
+> **Notice (Dec 2025):** Legacy `pokeLiquidations`/scan-on-trade flows described in some documents are deprecated. The live system now relies solely on `liquidateDirect` keepers; legacy references remain temporarily for archival context.
+
 ## Documentation Files
 
 ### 📖 [LIQUIDATION_SYSTEM_GUIDE.md](./LIQUIDATION_SYSTEM_GUIDE.md)

@@ -31,7 +31,7 @@ Goal: cut on-chain gas for liquidations by moving “finding” off-chain, keepi
 - No trusted caller price: contract always pulls mark price.
 - Price recency enforced by oracle/pricing facet.
 - Mitigate MEV with private mempool/Flashbots.
-- Keep legacy scan (`pokeLiquidations`) as a safety fallback for liveness.
+- Legacy `pokeLiquidations` scanning has been removed; rely on `liquidateDirect` keepers exclusively.
 
 ## Implementation Phases
 1) Add `liquidateDirect` with on-chain price fetch and threshold check.  

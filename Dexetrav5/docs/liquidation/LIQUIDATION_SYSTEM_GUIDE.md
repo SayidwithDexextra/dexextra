@@ -10,6 +10,8 @@
 
 ---
 
+> **Notice (Dec 2025):** Legacy `pokeLiquidations`/scan-on-trade flows have been removed in favor of the `liquidateDirect` keeper model. References to those flows remain here for historical context and will be pruned in a future documentation pass.
+
 ## System Architecture
 
 ### Overview
@@ -730,8 +732,7 @@ TICK_PRECISION = 1e6                    // Price precision
 baseMmrBps = 1000           // 10% base
 penaltyMmrBps = 1000        // +10% penalty
 maxMmrBps = 2000            // 20% cap
-scalingSlopeBps = 0         // disabled
-priceGapSlopeBps = 0        // disabled
+// Legacy knobs removed in Dec 2025: scalingSlopeBps & priceGapSlopeBps now hard-coded to zero.
 mmrLiquidityDepthLevels = 1 // minimal depth sampling
 ```
 

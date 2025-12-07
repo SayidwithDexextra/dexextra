@@ -119,11 +119,7 @@ The OrderBook uses a diamond pattern with multiple facets for different operatio
 
 | Function | Usage | Contract |
 |----------|-------|----------|
-| `setConfigLiquidationScanOnTrade(enable)` | Enables/disables scan on trade | OBLiquidationFacet |
-| `setConfigLiquidationDebug(enable)` | Enables/disables debug events | OBLiquidationFacet |
-| `liquidationScanOnTrade()` | Checks if scan on trade is enabled | OBLiquidationFacet |
-| `liquidationDebug()` | Checks if debug is enabled | OBLiquidationFacet |
-| `pokeLiquidations()` | Manually triggers liquidation scan | OBLiquidationFacet |
+| `liquidateDirect(trader)` | Trustless liquidation entrypoint used by keepers | OBLiquidationFacet |
 
 ## 💎 MockUSDC Functions
 

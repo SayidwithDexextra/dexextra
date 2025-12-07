@@ -705,8 +705,9 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
                 marginLocked: userPositions[user][i].marginLocked
             });
         }
-        // Base available = collateral - margin locked in positions
-        uint256 baseAvailable = VaultAnalytics.getAvailableCollateral(userCollateral[user], positions);
+        // Base available = (collateral + ext credit) - margin locked in positions
+        uint256 collateralForTrading = userCollateral[user] + userCrossChainCredit[user];
+        uint256 baseAvailable = VaultAnalytics.getAvailableCollateral(collateralForTrading, positions);
         
         // Add realized PnL converted to 6 decimals (PnL is tracked in 18 decimals)
         int256 realizedPnL18 = userRealizedPnL[user];
@@ -717,12 +718,6 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         int256 realizedPnL6 = realizedPnL18 / int256(DECIMAL_SCALE);
         int256 baseWithRealized = int256(baseAvailable) + realizedPnL6;
         uint256 availableWithRealized = baseWithRealized > 0 ? uint256(baseWithRealized) : 0;
-
-        // Include cross-chain credit for trading availability (not withdrawable on hub)
-        uint256 extCredit = userCrossChainCredit[user];
-        if (extCredit > 0) {
-            availableWithRealized += extCredit;
-        }
 
         // Subtract outstanding per-position socialized loss (6 decimals)
         if (availableWithRealized > 0) {
@@ -1554,6 +1549,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         scalingSlopeBps = _scalingSlopeBps;
         mmrLiquidityDepthLevels = _liquidityDepthLevels;
     }
+
 
     /**
      * @dev Advanced MMR params including price gap sensitivity slope (bps at 100% gap).

@@ -262,7 +262,7 @@ describe("Dynamic MMR - Liquidity-aware Maintenance Margin", function () {
     // Place balanced liquidity
     await placeLiquidity();
     // Update params: base=5%, penalty=5%, slope=30%, max=40%, depth=3
-    await coreVault.setMmrParams(500, 500, 4000, 3000, 3);
+    await coreVault.setMmrParams(500, 500, 4000, 3);
 
     // Open a moderate short (5 ALU)
     await orderBook
@@ -337,7 +337,7 @@ describe("Dynamic MMR - Liquidity-aware Maintenance Margin", function () {
 
     // Reduce liquidity (cancel some orders) to increase fill_ratio → higher mmr → lower free margin
     // Easiest: set params with higher slope and lower depth to increase mmr strongly
-    await coreVault.setMmrParams(1000, 1000, 5000, 4000, 1); // slope 40%
+    await coreVault.setMmrParams(1000, 1000, 5000, 1);
     const [free2] = await coreVault.getPositionFreeMargin(
       user3.address,
       marketId

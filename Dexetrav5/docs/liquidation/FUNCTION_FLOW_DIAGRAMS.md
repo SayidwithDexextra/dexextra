@@ -2,6 +2,8 @@
 
 ## Quick Reference: Function Call Chains
 
+> **Notice (Dec 2025):** Flow #1 documents the legacy `pokeLiquidations` scanner, which has been removed. Use the diagram as historical reference only; modern keepers invoke `liquidateDirect`.
+
 ### 1. Automated Liquidation Scan
 
 ```

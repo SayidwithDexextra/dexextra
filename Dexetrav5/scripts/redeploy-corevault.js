@@ -169,7 +169,7 @@ async function main() {
 
   // Set global fixed MMR params (same as deploy.js baseline)
   console.log("  🔧 Setting MMR params (base=10%, penalty=10%, cap=20%, scaling=0, depth=1)...");
-  await coreVault.setMmrParams(1000, 1000, 2000, 0, 1);
+  await coreVault.setMmrParams(1000, 1000, 2000, 1);
   console.log("  ✅ MMR params set");
 
   // Grant roles to EXISTING Factory (if present) so it can continue managing legacy/new ops if desired
