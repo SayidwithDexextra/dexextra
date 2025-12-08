@@ -38,6 +38,9 @@ const CoreVaultFallbackABI = [
   "function getEffectiveMaintenanceMarginBps(address user, bytes32 marketId) external view returns (uint256)",
   // Liquidation status helpers
   "function isUnderLiquidationPosition(address user, bytes32 marketId) external view returns (bool)",
+  // Liquidation entrypoints
+  "function liquidateDirect(bytes32 marketId, address trader) external",
+  "function batchLiquidate(bytes32[] marketIds, address[] traders) external",
   // Helper mapping in CoreVault to find OrderBook for market
   "function marketToOrderBook(bytes32) external view returns (address)"
 ];

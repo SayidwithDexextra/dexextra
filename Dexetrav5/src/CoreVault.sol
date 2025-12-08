@@ -28,6 +28,19 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
     using Address for address;
 
+    // ============ Custom Errors ============
+    error InvalidImpl();
+    error LiqImplNotSet();
+    error InvalidAmount();
+    error InvalidAddress();
+    error CollateralDecimalsMustBe6();
+    error InsufficientAvailable();
+    error InsufficientBalance();
+    error MarketNotFound();
+    error AlreadyReserved();
+    error PositionNotFound();
+    error UnauthorizedOrderBook();
+
     // ============ Access Control Roles ============
     bytes32 public constant ORDERBOOK_ROLE = keccak256("ORDERBOOK_ROLE");
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
@@ -43,7 +56,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
      * @dev Admin setter for liquidation manager implementation
      */
     function setLiquidationManager(address _impl) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_impl != address(0), "invalid impl");
+        if (_impl == address(0)) revert InvalidImpl();
         liquidationManager = _impl;
     }
 
@@ -52,7 +65,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
      */
     function _delegateLiq(bytes memory data) internal returns (bytes memory) {
         address impl = liquidationManager;
-        require(impl != address(0), "liq impl not set");
+        if (impl == address(0)) revert LiqImplNotSet();
         return impl.functionDelegateCall(data);
     }
 
@@ -254,15 +267,15 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         try IERC20Metadata(_collateralToken).decimals() returns (uint8 d) {
             decs = d;
         } catch {
-            revert("Collateral token must implement decimals()");
+            revert CollateralDecimalsMustBe6();
         }
-        require(decs == 6, "Collateral must be 6 decimals");
+        if (decs != 6) revert CollateralDecimalsMustBe6();
     }
 
     // ============ Collateral Management ============
     
     function depositCollateral(uint256 amount) external nonReentrant whenNotPaused {
-        require(amount > 0, "!amount");
+        if (amount == 0) revert InvalidAmount();
         
         collateralToken.safeTransferFrom(msg.sender, address(this), amount);
         userCollateral[msg.sender] += amount;
@@ -275,11 +288,11 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     }
 
     function withdrawCollateral(uint256 amount) external nonReentrant whenNotPaused {
-        require(amount > 0, "!amount");
+        if (amount == 0) revert InvalidAmount();
         
         // Withdrawable collateral excludes cross-chain credits; include realized PnL adjustments
         uint256 available = getWithdrawableCollateral(msg.sender);
-        require(available >= amount, "!available");
+        if (available < amount) revert InsufficientAvailable();
 
         // Determine how much to withdraw from realized PnL (6 decimals) vs deposited collateral
         int256 realizedPnL18 = userRealizedPnL[msg.sender];
@@ -295,7 +308,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
 
         // Withdraw the remainder from deposited collateral
         if (fromDeposit > 0) {
-            require(userCollateral[msg.sender] >= fromDeposit, "!balance");
+            if (userCollateral[msg.sender] < fromDeposit) revert InsufficientBalance();
             userCollateral[msg.sender] -= fromDeposit;
             totalCollateralDeposited -= fromDeposit;
         }
@@ -319,7 +332,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         uint256 fromColl = 0;
         if (remaining > 0) {
             uint256 collBal = userCollateral[user];
-            require(collBal >= remaining, "!balance");
+            if (collBal < remaining) revert InsufficientBalance();
             userCollateral[user] = collBal - remaining;
             fromColl = remaining;
         }
@@ -330,16 +343,18 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
      * @dev External credit ledger for cross-chain deposits (math-only, not withdrawable on hub)
      */
     function creditExternal(address user, uint256 amount) external onlyRole(EXTERNAL_CREDITOR_ROLE) {
-        require(user != address(0) && amount > 0, "invalid");
+        if (user == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidAmount();
         userCrossChainCredit[user] += amount;
         _ensureUserTracked(user);
         emit ExternalCreditAdded(user, amount);
     }
 
     function debitExternal(address user, uint256 amount) external onlyRole(EXTERNAL_CREDITOR_ROLE) {
-        require(user != address(0) && amount > 0, "invalid");
+        if (user == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidAmount();
         uint256 bal = userCrossChainCredit[user];
-        require(bal >= amount, "insufficient ext credit");
+        if (bal < amount) revert InsufficientBalance();
         userCrossChainCredit[user] = bal - amount;
         emit ExternalCreditRemoved(user, amount);
     }
@@ -834,8 +849,8 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         bytes32 marketId,
         address orderBook
     ) external onlyRole(FACTORY_ROLE) {
-        require(orderBook != address(0), "!orderBook");
-        require(marketToOrderBook[marketId] == address(0), "exists");
+        if (orderBook == address(0)) revert InvalidAddress();
+        if (marketToOrderBook[marketId] != address(0)) revert AlreadyReserved();
         
         marketToOrderBook[marketId] = orderBook;
         
@@ -909,16 +924,17 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         address maker,
         uint256 amount
     ) external onlyRole(ORDERBOOK_ROLE) {
-        require(maker != address(0) && amount > 0, "invalid");
+        if (maker == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidAmount();
         address ob = marketToOrderBook[marketId];
-        require(ob != address(0) && ob == msg.sender, "unauthorized ob");
+        if (ob == address(0) || ob != msg.sender) revert UnauthorizedOrderBook();
         // Consume from OB: prefer external credit first, then collateral
         uint256 extBal = userCrossChainCredit[ob];
         uint256 fromExt = amount <= extBal ? amount : extBal;
         if (fromExt > 0) { userCrossChainCredit[ob] = extBal - fromExt; }
         uint256 remaining = amount - fromExt;
         if (remaining > 0) {
-            require(userCollateral[ob] >= remaining, "insufficient ob balance");
+            if (userCollateral[ob] < remaining) revert InsufficientBalance();
             userCollateral[ob] -= remaining;
         }
         // Credit maker preserving backing type
@@ -930,22 +946,24 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
 
     // Lock margin directly to a market (position margin) - Updated for consolidated tracking
     function lockMargin(address user, bytes32 marketId, uint256 amount) external onlyRole(ORDERBOOK_ROLE) {
-        require(user != address(0) && amount > 0, "invalid");
-        require(marketToOrderBook[marketId] != address(0), "market!");
+        if (user == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidAmount();
+        if (marketToOrderBook[marketId] == address(0)) revert MarketNotFound();
         uint256 avail = getAvailableCollateral(user);
-        require(avail >= amount, "insufficient collateral");
+        if (avail < amount) revert InsufficientAvailable();
         _increasePositionMargin(user, marketId, amount);
     }
 
     function releaseMargin(address user, bytes32 marketId, uint256 amount) external onlyRole(ORDERBOOK_ROLE) {
-        require(user != address(0) && amount > 0, "invalid");
+        if (user == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidAmount();
         
         // Find and update position margin
         bool positionFound = false;
         for (uint256 i = 0; i < userPositions[user].length; i++) {
             if (userPositions[user][i].marketId == marketId) {
                 uint256 locked = userPositions[user][i].marginLocked;
-                require(locked >= amount, "insufficient locked");
+                if (locked < amount) revert InsufficientBalance();
                 // Relax guard: allow release below accrued haircut. Haircut is realized from payout streams, not enforced by margin floor.
                 userPositions[user][i].marginLocked = locked - amount;
                 positionFound = true;
@@ -970,11 +988,11 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
      * @param amount Additional margin amount to lock (in 6 decimals)
      */
     function topUpPositionMargin(bytes32 marketId, uint256 amount) external nonReentrant whenNotPaused {
-        require(amount > 0, "!amount");
-        require(marketToOrderBook[marketId] != address(0), "market!");
+        if (amount == 0) revert InvalidAmount();
+        if (marketToOrderBook[marketId] == address(0)) revert MarketNotFound();
         
         uint256 available = getAvailableCollateral(msg.sender);
-        require(available >= amount, "insufficient collateral");
+        if (available < amount) revert InsufficientAvailable();
         _increasePositionMargin(msg.sender, marketId, amount);
         emit MarginToppedUp(msg.sender, marketId, amount);
     }
@@ -994,7 +1012,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
                 break;
             }
         }
-        require(positionFound, "No position found for market");
+        if (!positionFound) revert PositionNotFound();
         totalMarginLocked += amount;
 
         // Recompute fixed liquidation trigger after top-up
@@ -1006,17 +1024,18 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         external
         onlyRole(ORDERBOOK_ROLE)
     {
-        require(user != address(0) && amount > 0, "invalid");
+        if (user == address(0)) revert InvalidAddress();
+        if (amount == 0) revert InvalidAmount();
         // Ensure market is authorized/assigned
-        require(marketToOrderBook[marketId] != address(0), "market!");
+        if (marketToOrderBook[marketId] == address(0)) revert MarketNotFound();
 
         uint256 available = getAvailableCollateral(user);
-        require(available >= amount, "insufficient collateral");
+        if (available < amount) revert InsufficientAvailable();
 
         // Ensure not double-reserving same reservation id (can be namespaced by caller)
         VaultAnalytics.PendingOrder[] storage orders = userPendingOrders[user];
         for (uint256 i = 0; i < orders.length; i++) {
-            require(orders[i].orderId != orderId, "already reserved");
+            if (orders[i].orderId == orderId) revert AlreadyReserved();
         }
 
         orders.push(VaultAnalytics.PendingOrder({ orderId: orderId, marginReserved: amount, timestamp: block.timestamp }));
@@ -1024,7 +1043,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     }
 
     function unreserveMargin(address user, bytes32 orderId) external onlyRole(ORDERBOOK_ROLE) {
-        require(user != address(0), "invalid");
+        if (user == address(0)) revert InvalidAddress();
         VaultAnalytics.PendingOrder[] storage orders = userPendingOrders[user];
         uint256 reserved = 0;
         bool found = false;
@@ -1062,7 +1081,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
                     // Increasing reservation requires sufficient available collateral
                     uint256 increase = newTotalReservedForOrder - current;
                     uint256 available = getAvailableCollateral(user);
-                    require(available >= increase, "insufficient collateral");
+                    if (available < increase) revert InsufficientAvailable();
                     orders[i].marginReserved = newTotalReservedForOrder;
                     // No event for increase; reservation change is implicit
                 }
@@ -1073,13 +1092,13 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     }
 
     function registerOrderBook(address orderBook) external onlyRole(FACTORY_ROLE) {
-        require(!registeredOrderBooks[orderBook], "exists");
+        if (registeredOrderBooks[orderBook]) revert AlreadyReserved();
         registeredOrderBooks[orderBook] = true;
         allOrderBooks.push(orderBook);
     }
 
     function assignMarketToOrderBook(bytes32 marketId, address orderBook) external onlyRole(FACTORY_ROLE) {
-        require(registeredOrderBooks[orderBook], "!registered");
+        if (!registeredOrderBooks[orderBook]) revert UnauthorizedOrderBook();
         marketToOrderBook[marketId] = orderBook;
         orderBookToMarkets[orderBook].push(marketId);
         emit MarketAuthorized(marketId, orderBook);

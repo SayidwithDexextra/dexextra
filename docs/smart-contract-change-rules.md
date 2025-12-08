@@ -27,3 +27,4 @@ Guidelines that MUST be satisfied before merging any smart contract changes.
 - Do NOT modify liquidation thresholds, sequencing, or settlement ordering without explicit approval and new tests.
 - Do NOT alter socialized loss share calculations, caps, or distribution recipients without explicit approval and new tests.
 - Do NOT introduce growth-only storage patterns that expand contract size without offsetting reductions.
+- Do NOT change any view function signatures, outputs, or semantics that the frontend depends on unless coordinated with frontend owners and explicitly approved.

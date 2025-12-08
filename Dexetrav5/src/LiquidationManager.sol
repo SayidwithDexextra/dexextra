@@ -31,6 +31,18 @@ interface IOrderBookLiq {
  */
 contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     
+    // ============ Custom Errors ============
+    error InvalidAmount();
+    error InvalidAddress();
+    error InvalidMarket();
+    error InvalidOrderBook();
+    error CollateralDecimalsMustBe6();
+    error InsufficientBalance();
+    error PositionNotFound();
+    error LengthMismatch();
+    error InvalidBatchSize();
+    error InvalidConfig();
+
     // ============ Constants ============
     uint256 public constant LIQUIDATION_PENALTY_BPS = 1000; // 10%
     uint256 public constant DECIMAL_SCALE = 1e12; // 10^(ALU_DECIMALS - USDC_DECIMALS)
@@ -130,7 +142,6 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     event LiquidationExecuted(address indexed user, bytes32 indexed marketId, address indexed liquidator, uint256 totalLoss, uint256 remainingCollateral);
     event MarginConfiscated(address indexed user, uint256 marginAmount, uint256 totalLoss, uint256 penalty, address indexed liquidator);
     event LiquidatorRewardPaid(address indexed liquidator, address indexed liquidatedUser, bytes32 indexed marketId, uint256 rewardAmount, uint256 liquidatorCollateral);
-    event MakerLiquidationRewardPaid(address indexed maker, address indexed liquidatedUser, bytes32 indexed marketId, uint256 rewardAmount);
     event PositionUpdated(address indexed user, bytes32 indexed marketId, int256 oldSize, int256 newSize, uint256 entryPrice, uint256 marginLocked);
     event SocializedLossApplied(bytes32 indexed marketId, uint256 lossAmount, address indexed liquidatedUser);
     event UserLossSocialized(address indexed user, uint256 lossAmount, uint256 remainingCollateral);
@@ -197,31 +208,8 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         collateralToken = IERC20(_collateralToken);
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
         uint8 decs;
-        try IERC20Metadata(_collateralToken).decimals() returns (uint8 d) { decs = d; } catch { revert("Collateral token must implement decimals()"); }
-        require(decs == 6, "Collateral must be 6 decimals");
-    }
-
-    /**
-     * @dev Admin utility to register or update a market→order book mapping on the LM itself.
-     *      This is only needed when calling LM directly (not via CoreVault delegatecall),
-     *      because the delegated path uses CoreVault storage instead.
-     */
-    function seedMarketOrderBook(bytes32 marketId, address orderBook) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(orderBook != address(0), "!orderBook");
-        marketToOrderBook[marketId] = orderBook;
-        if (!registeredOrderBooks[orderBook]) {
-            registeredOrderBooks[orderBook] = true;
-            allOrderBooks.push(orderBook);
-        }
-        // Avoid duplicate pushes
-        bool exists = false;
-        bytes32[] storage markets = orderBookToMarkets[orderBook];
-        for (uint256 i = 0; i < markets.length; i++) {
-            if (markets[i] == marketId) { exists = true; break; }
-        }
-        if (!exists) {
-            markets.push(marketId);
-        }
+        try IERC20Metadata(_collateralToken).decimals() returns (uint8 d) { decs = d; } catch { revert CollateralDecimalsMustBe6(); }
+        if (decs != 6) revert CollateralDecimalsMustBe6();
     }
 
     function setUnderLiquidation(
@@ -811,7 +799,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
                 return;
             }
         }
-        revert("No position found for liquidation");
+        revert PositionNotFound();
     }
 
     function _calculateExecutionMargin(int256 amount, uint256 executionPrice) internal pure returns (uint256) {
@@ -819,21 +807,6 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         uint256 notionalValue = (absAmount * executionPrice) / (10**18);
         uint256 marginBps = amount >= 0 ? 10000 : 15000;
         return (notionalValue * marginBps) / 10000;
-    }
-
-    function payMakerLiquidationReward(
-        address liquidatedUser,
-        bytes32 marketId,
-        address maker,
-        uint256 amount
-    ) external onlyRole(ORDERBOOK_ROLE) {
-        require(maker != address(0) && amount > 0, "invalid");
-        address ob = marketToOrderBook[marketId];
-        require(ob != address(0) && ob == msg.sender, "unauthorized ob");
-        require(userCollateral[ob] >= amount, "insufficient ob balance");
-        userCollateral[ob] -= amount;
-        userCollateral[maker] += amount;
-        emit MakerLiquidationRewardPaid(maker, liquidatedUser, marketId, amount);
     }
 
     function socializeLoss(
@@ -853,9 +826,9 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     // that are themselves nonReentrant. Guarding here would trip the same
     // ReentrancyGuard storage slot and revert with ReentrancyGuardReentrantCall.
     function liquidateDirect(bytes32 marketId, address trader) external {
-        require(trader != address(0), "LM: bad trader");
+        if (trader == address(0)) revert InvalidAddress();
         address ob = marketToOrderBook[marketId];
-        require(ob != address(0), "LM: unknown market");
+        if (ob == address(0)) revert InvalidMarket();
         IOrderBookLiq(ob).liquidateDirect(trader);
     }
 
@@ -866,13 +839,13 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     // Same rationale as liquidateDirect: downstream vault calls are already guarded.
     function batchLiquidate(bytes32[] calldata marketIds, address[] calldata traders) external {
         uint256 len = marketIds.length;
-        require(len == traders.length, "LM: length mismatch");
-        require(len > 0 && len <= MAX_BATCH_SIZE, "LM: invalid batch size");
+        if (len != traders.length) revert LengthMismatch();
+        if (len == 0 || len > MAX_BATCH_SIZE) revert InvalidBatchSize();
         for (uint256 i = 0; i < len; i++) {
             address trader = traders[i];
-            require(trader != address(0), "LM: bad trader");
+            if (trader == address(0)) revert InvalidAddress();
             address ob = marketToOrderBook[marketIds[i]];
-            require(ob != address(0), "LM: unknown market");
+            if (ob == address(0)) revert InvalidMarket();
             IOrderBookLiq(ob).liquidateDirect(trader);
         }
     }
@@ -889,7 +862,7 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         uint256 lossAmount,
         address liquidatedUser
     ) internal {
-        require(lossAmount > 0, "Loss amount must be positive");
+        if (lossAmount == 0) revert InvalidAmount();
         if (adlDebug) emit SocializationStarted(marketId, lossAmount, liquidatedUser, block.timestamp);
 
         uint256 markPrice = getMarkPrice(marketId);
@@ -1763,8 +1736,8 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         uint256 _maxMmrBps,
         uint256 _liquidityDepthLevels
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_baseMmrBps <= 10000 && _penaltyMmrBps <= 10000 && _maxMmrBps <= 10000, "bps!");
-        require(_liquidityDepthLevels > 0 && _liquidityDepthLevels <= 50, "depth!");
+        if (_baseMmrBps > 10000 || _penaltyMmrBps > 10000 || _maxMmrBps > 10000) revert InvalidConfig();
+        if (_liquidityDepthLevels == 0 || _liquidityDepthLevels > 50) revert InvalidConfig();
         baseMmrBps = _baseMmrBps;
         penaltyMmrBps = _penaltyMmrBps;
         maxMmrBps = _maxMmrBps;
@@ -1779,8 +1752,8 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
         uint256 _liquidityDepthLevels,
         uint256 _priceGapSlopeBps
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_baseMmrBps <= 10000 && _penaltyMmrBps <= 10000 && _maxMmrBps <= 10000, "bps!");
-        require(_liquidityDepthLevels > 0 && _liquidityDepthLevels <= 50, "depth!");
+        if (_baseMmrBps > 10000 || _penaltyMmrBps > 10000 || _maxMmrBps > 10000) revert InvalidConfig();
+        if (_liquidityDepthLevels == 0 || _liquidityDepthLevels > 50) revert InvalidConfig();
         baseMmrBps = _baseMmrBps;
         penaltyMmrBps = _penaltyMmrBps;
         maxMmrBps = _maxMmrBps;
