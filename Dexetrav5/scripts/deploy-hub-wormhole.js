@@ -40,58 +40,91 @@ async function main() {
   if (!coreVaultAddr) {
     throw new Error("CORE_VAULT_ADDRESS is required in env");
   }
-
-  // Deploy or attach CollateralHub
-  let collateralHubAddr = process.env.COLLATERAL_HUB_ADDRESS;
-  let collateralHub;
-  const CollateralHub = await ethers.getContractFactory("CollateralHub");
+  const collateralHubAddr = process.env.COLLATERAL_HUB_ADDRESS;
   if (!collateralHubAddr) {
-    console.log("Deploying CollateralHub...");
-    // Operator not used by v2 math-only credits, but constructor requires it
-    const operator = process.env.CORE_VAULT_OPERATOR_ADDRESS || deployer.address;
-    collateralHub = await CollateralHub.deploy(deployer.address, coreVaultAddr, operator);
-    await collateralHub.waitForDeployment();
-    collateralHubAddr = await collateralHub.getAddress();
-    console.log("  ✅ CollateralHub:", collateralHubAddr);
-  } else {
-    collateralHub = await ethers.getContractAt("CollateralHub", collateralHubAddr);
-    console.log("Using existing CollateralHub:", collateralHubAddr);
+    throw new Error(
+      "COLLATERAL_HUB_ADDRESS is required and must point to your existing hub"
+    );
   }
+  const collateralHub = await ethers.getContractAt(
+    "CollateralHub",
+    collateralHubAddr
+  );
+  console.log("Using existing CollateralHub:", collateralHubAddr);
 
   // Grant EXTERNAL_CREDITOR_ROLE on CoreVault to CollateralHub
   try {
     const coreVault = await ethers.getContractAt("CoreVault", coreVaultAddr);
-    const EXTERNAL_CREDITOR_ROLE = ethers.keccak256(ethers.toUtf8Bytes("EXTERNAL_CREDITOR_ROLE"));
-    const hasRole = await coreVault.hasRole(EXTERNAL_CREDITOR_ROLE, collateralHubAddr);
+    const EXTERNAL_CREDITOR_ROLE = ethers.keccak256(
+      ethers.toUtf8Bytes("EXTERNAL_CREDITOR_ROLE")
+    );
+    const hasRole = await coreVault.hasRole(
+      EXTERNAL_CREDITOR_ROLE,
+      collateralHubAddr
+    );
     if (!hasRole) {
-      console.log("Granting EXTERNAL_CREDITOR_ROLE to CollateralHub on CoreVault...");
+      console.log(
+        "Granting EXTERNAL_CREDITOR_ROLE to CollateralHub on CoreVault..."
+      );
       await coreVault.grantRole(EXTERNAL_CREDITOR_ROLE, collateralHubAddr);
       console.log("  ✅ Role granted");
     } else {
       console.log("EXTERNAL_CREDITOR_ROLE already granted to CollateralHub");
     }
   } catch (e) {
-    console.log("⚠️ Could not verify/grant EXTERNAL_CREDITOR_ROLE on CoreVault:", e?.message || e);
+    console.log(
+      "⚠️ Could not verify/grant EXTERNAL_CREDITOR_ROLE on CoreVault:",
+      e?.message || e
+    );
   }
 
-  // Deploy Hub inbox/outbox (Wormhole)
-  console.log("\nDeploying Hub Wormhole Inbox/Outbox...");
-  const HubBridgeInbox = await ethers.getContractFactory("HubBridgeInboxWormhole");
-  const inbox = await HubBridgeInbox.deploy(collateralHubAddr, deployer.address);
-  await inbox.waitForDeployment();
-  const inboxAddr = await inbox.getAddress();
-  console.log("  ✅ HUB_INBOX_ADDRESS:", inboxAddr);
+  // Deploy or attach Hub inbox/outbox (Wormhole)
+  console.log("\nHub Wormhole Inbox/Outbox...");
+  const inboxEnv = process.env.HUB_INBOX_ADDRESS;
+  const outboxEnv = process.env.HUB_OUTBOX_ADDRESS;
 
-  const HubBridgeOutbox = await ethers.getContractFactory("HubBridgeOutboxWormhole");
-  const outbox = await HubBridgeOutbox.deploy(deployer.address);
-  await outbox.waitForDeployment();
-  const outboxAddr = await outbox.getAddress();
-  console.log("  ✅ HUB_OUTBOX_ADDRESS:", outboxAddr);
+  const HubBridgeInbox = await ethers.getContractFactory(
+    "HubBridgeInboxWormhole"
+  );
+  const HubBridgeOutbox = await ethers.getContractFactory(
+    "HubBridgeOutboxWormhole"
+  );
+
+  let inbox, inboxAddr;
+  if (inboxEnv) {
+    inboxAddr = inboxEnv;
+    inbox = await ethers.getContractAt("HubBridgeInboxWormhole", inboxAddr);
+    console.log("  ℹ️ Using existing HUB_INBOX_ADDRESS:", inboxAddr);
+  } else {
+    console.log("Deploying HubInbox...");
+    inbox = await HubBridgeInbox.deploy(collateralHubAddr, deployer.address);
+    await inbox.waitForDeployment();
+    inboxAddr = await inbox.getAddress();
+    console.log("  ✅ HUB_INBOX_ADDRESS:", inboxAddr);
+  }
+
+  let outbox, outboxAddr;
+  if (outboxEnv) {
+    outboxAddr = outboxEnv;
+    outbox = await ethers.getContractAt("HubBridgeOutboxWormhole", outboxAddr);
+    console.log("  ℹ️ Using existing HUB_OUTBOX_ADDRESS:", outboxAddr);
+  } else {
+    console.log("Deploying HubOutbox...");
+    outbox = await HubBridgeOutbox.deploy(deployer.address);
+    await outbox.waitForDeployment();
+    outboxAddr = await outbox.getAddress();
+    console.log("  ✅ HUB_OUTBOX_ADDRESS:", outboxAddr);
+  }
 
   // Wire roles on hub
   console.log("\nWiring hub roles...");
-  const BRIDGE_INBOX_ROLE = ethers.keccak256(ethers.toUtf8Bytes("BRIDGE_INBOX_ROLE"));
-  const hasInboxRole = await collateralHub.hasRole(BRIDGE_INBOX_ROLE, inboxAddr);
+  const BRIDGE_INBOX_ROLE = ethers.keccak256(
+    ethers.toUtf8Bytes("BRIDGE_INBOX_ROLE")
+  );
+  const hasInboxRole = await collateralHub.hasRole(
+    BRIDGE_INBOX_ROLE,
+    inboxAddr
+  );
   if (!hasInboxRole) {
     await collateralHub.grantRole(BRIDGE_INBOX_ROLE, inboxAddr);
     console.log("  ✅ BRIDGE_INBOX_ROLE granted on CollateralHub to HUB_INBOX");
@@ -100,46 +133,117 @@ async function main() {
   }
 
   // Optional: allow hub outbox to be used by requester (not strictly necessary)
-  const WITHDRAW_SENDER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("WITHDRAW_SENDER_ROLE"));
+  const WITHDRAW_SENDER_ROLE = ethers.keccak256(
+    ethers.toUtf8Bytes("WITHDRAW_SENDER_ROLE")
+  );
   try {
-    const hasSender = await outbox.hasRole(WITHDRAW_SENDER_ROLE, deployer.address);
+    const hasSender = await outbox.hasRole(
+      WITHDRAW_SENDER_ROLE,
+      deployer.address
+    );
     if (!hasSender) {
       await outbox.grantRole(WITHDRAW_SENDER_ROLE, deployer.address);
-      console.log("  ✅ WITHDRAW_SENDER_ROLE granted to deployer on HUB_OUTBOX");
+      console.log(
+        "  ✅ WITHDRAW_SENDER_ROLE granted to deployer on HUB_OUTBOX"
+      );
     }
   } catch {}
 
-  // Optional: set remote apps if envs provided
+  // Optional: set remote apps if envs provided (Polygon / Arbitrum)
   console.log("\nConfiguring remote app allowlists (optional)...");
-  const polygonDomain = process.env.BRIDGE_DOMAIN_POLYGON;
-  const polygonRemoteApp =
-    process.env.BRIDGE_REMOTE_APP_POLYGON ||
-    (process.env.SPOKE_OUTBOX_ADDRESS ? toBytes32Address(process.env.SPOKE_OUTBOX_ADDRESS) : null);
-  if (polygonDomain && polygonRemoteApp) {
-    await inbox.setRemoteApp(Number(polygonDomain), polygonRemoteApp);
-    console.log(`  ✅ HUB_INBOX trusts POLYGON app ${polygonRemoteApp} @ domain ${polygonDomain}`);
-  } else {
-    console.log("  ℹ️ Skipped setting POLYGON remote app on HUB_INBOX");
+  async function maybeSet(
+    domainEnv,
+    remoteAppEnv,
+    fallbackOutbox,
+    label,
+    skipFlagEnv
+  ) {
+    if (process.env[skipFlagEnv] === "1") {
+      console.log(
+        `  ℹ️ Skipping ${label} remote app on HUB_INBOX (flag ${skipFlagEnv}=1)`
+      );
+      return;
+    }
+    const domain = process.env[domainEnv];
+    const remoteApp =
+      process.env[remoteAppEnv] ||
+      (fallbackOutbox ? toBytes32Address(fallbackOutbox) : null);
+    if (domain && remoteApp) {
+      await inbox.setRemoteApp(Number(domain), remoteApp);
+      console.log(
+        `  ✅ HUB_INBOX trusts ${label} app ${remoteApp} @ domain ${domain}`
+      );
+    } else {
+      console.log(
+        `  ℹ️ Skipped setting ${label} remote app on HUB_INBOX (domain/app missing)`
+      );
+    }
   }
 
-  const hubDomain = process.env.BRIDGE_DOMAIN_HUB;
-  const polygonInboxApp =
-    process.env.SPOKE_INBOX_ADDRESS ? toBytes32Address(process.env.SPOKE_INBOX_ADDRESS) : null;
-  if (polygonDomain && polygonInboxApp) {
-    await outbox.setRemoteApp(Number(polygonDomain), polygonInboxApp);
-    console.log(`  ✅ HUB_OUTBOX targets POLYGON inbox ${polygonInboxApp} @ domain ${polygonDomain}`);
-  } else {
-    console.log("  ℹ️ Skipped setting POLYGON remote app on HUB_OUTBOX");
+  async function maybeSetOutbox(domainEnv, inboxEnv, label, skipFlagEnv) {
+    if (process.env[skipFlagEnv] === "1") {
+      console.log(
+        `  ℹ️ Skipping ${label} remote app on HUB_OUTBOX (flag ${skipFlagEnv}=1)`
+      );
+      return;
+    }
+    const domain = process.env[domainEnv];
+    const inboxApp = process.env[inboxEnv]
+      ? toBytes32Address(process.env[inboxEnv])
+      : null;
+    if (domain && inboxApp) {
+      await outbox.setRemoteApp(Number(domain), inboxApp);
+      console.log(
+        `  ✅ HUB_OUTBOX targets ${label} inbox ${inboxApp} @ domain ${domain}`
+      );
+    } else {
+      console.log(
+        `  ℹ️ Skipped setting ${label} remote app on HUB_OUTBOX (domain/inbox missing)`
+      );
+    }
   }
+
+  await maybeSet(
+    "BRIDGE_DOMAIN_POLYGON",
+    "BRIDGE_REMOTE_APP_POLYGON",
+    process.env.SPOKE_OUTBOX_ADDRESS_POLYGON,
+    "POLYGON",
+    "SKIP_POLYGON"
+  );
+  await maybeSet(
+    "BRIDGE_DOMAIN_ARBITRUM",
+    "BRIDGE_REMOTE_APP_ARBITRUM",
+    process.env.SPOKE_OUTBOX_ADDRESS_ARBITRUM,
+    "ARBITRUM",
+    "SKIP_ARBITRUM"
+  );
+
+  await maybeSetOutbox(
+    "BRIDGE_DOMAIN_POLYGON",
+    "SPOKE_INBOX_ADDRESS",
+    "POLYGON",
+    "SKIP_POLYGON"
+  );
+  await maybeSetOutbox(
+    "BRIDGE_DOMAIN_ARBITRUM",
+    "SPOKE_INBOX_ADDRESS_ARBITRUM",
+    "ARBITRUM",
+    "SKIP_ARBITRUM"
+  );
 
   // Optional: grant endpoint role to relayer/endpoint
   const endpointHub = process.env.BRIDGE_ENDPOINT_HUB;
   if (endpointHub) {
-    const BRIDGE_ENDPOINT_ROLE = ethers.keccak256(ethers.toUtf8Bytes("BRIDGE_ENDPOINT_ROLE"));
+    const BRIDGE_ENDPOINT_ROLE = ethers.keccak256(
+      ethers.toUtf8Bytes("BRIDGE_ENDPOINT_ROLE")
+    );
     const hasEp = await inbox.hasRole(BRIDGE_ENDPOINT_ROLE, endpointHub);
     if (!hasEp) {
       await inbox.grantRole(BRIDGE_ENDPOINT_ROLE, endpointHub);
-      console.log("  ✅ Granted BRIDGE_ENDPOINT_ROLE on HUB_INBOX to", endpointHub);
+      console.log(
+        "  ✅ Granted BRIDGE_ENDPOINT_ROLE on HUB_INBOX to",
+        endpointHub
+      );
     }
   }
 
@@ -154,9 +258,3 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-
-
-
-
-
-

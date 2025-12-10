@@ -244,42 +244,78 @@ export default function DepositModal({
     const targetChainIdHex = '0xa4b1'
 
     const ensureArbitrumNetwork = async () => {
+      const friendlyHelp =
+        'Open your wallet and switch to Arbitrum One (chainId 42161). If you do not see a prompt, manually select Arbitrum in your wallet and retry.'
+
       let currentNetwork = await provider.getNetwork()
       if (currentNetwork.chainId === targetChainId) return
 
-      try {
+      const requestSwitch = async () => {
         await (window as any).ethereum.request({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: targetChainIdHex }]
         })
         currentNetwork = await provider.getNetwork()
-        if (currentNetwork.chainId === targetChainId) return
-      } catch (switchError) {
-        // Attempt to add chain if not present
-        try {
-          if (env.ARBITRUM_RPC_URL) {
-            await (window as any).ethereum.request({
-              method: 'wallet_addEthereumChain',
-              params: [{
-                chainId: targetChainIdHex,
-                chainName: 'Arbitrum One',
-                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-                rpcUrls: [env.ARBITRUM_RPC_URL],
-                blockExplorerUrls: ['https://arbiscan.io']
-              }]
-            })
-            currentNetwork = await provider.getNetwork()
-            if (currentNetwork.chainId === targetChainId) return
-          }
-        } catch (addError) {
-          console.warn('Failed to add Arbitrum chain', addError)
-        }
-        throw new Error('Please switch your wallet to Arbitrum (chainId 42161).')
+        return currentNetwork.chainId === targetChainId
       }
+
+      try {
+        const switched = await requestSwitch()
+        if (switched) return
+      } catch (switchError: any) {
+        const userRejected = switchError?.code === 4001
+        const chainMissing = switchError?.code === 4902 // Unrecognized chain
+
+        if (!chainMissing) {
+          throw new Error(
+            userRejected
+              ? 'You rejected the network switch. Please accept the prompt to move to Arbitrum (chainId 42161).'
+              : `We couldn't switch automatically. ${friendlyHelp}`
+          )
+        }
+      }
+
+      // If the chain is missing, attempt to add then switch again.
+      try {
+        if (env.ARBITRUM_RPC_URL) {
+          await (window as any).ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: targetChainIdHex,
+              chainName: 'Arbitrum One',
+              nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+              rpcUrls: [env.ARBITRUM_RPC_URL],
+              blockExplorerUrls: ['https://arbiscan.io']
+            }]
+          })
+
+          const switchedAfterAdd = await requestSwitch().catch(() => false)
+          if (switchedAfterAdd) return
+        }
+      } catch (addError: any) {
+        console.warn('Failed to add Arbitrum chain', addError)
+        const userRejected = addError?.code === 4001
+        throw new Error(
+          userRejected
+            ? 'Please approve adding Arbitrum in your wallet, then accept the switch request.'
+            : `We couldn't add Arbitrum automatically. Add Arbitrum One (chainId 42161) in your wallet using your preferred RPC, then switch and retry.`
+        )
+      }
+
+      throw new Error(friendlyHelp)
     }
 
     await ensureArbitrumNetwork()
     const signer = await provider.getSigner()
+    const feeData = await provider.getFeeData()
+    const bump = (v?: bigint | null, fallbackGwei = 2n) => {
+      if (v && v > 0) return (v * 13n) / 10n + 1n // ~+30%
+      const fallback = fallbackGwei * 1_000_000_000n
+      return (fallback * 13n) / 10n + 1n
+    }
+    const maxPriorityFeePerGas = bump(feeData.maxPriorityFeePerGas ?? feeData.gasPrice)
+    const maxFeePerGas = bump(feeData.maxFeePerGas ?? feeData.gasPrice)
+    const txOpts = { maxFeePerGas, maxPriorityFeePerGas }
 
     const erc20Abi = [
       'function allowance(address owner, address spender) view returns (uint256)',
@@ -302,11 +338,11 @@ export default function DepositModal({
 
     const currentAllowance: bigint = await token.allowance(userAddress, vaultAddress)
     if (currentAllowance < amountWei) {
-      const approveTx = await token.approve(vaultAddress, amountWei)
+      const approveTx = await token.approve(vaultAddress, amountWei, txOpts)
       await approveTx.wait()
     }
 
-    const depositTx = await vault.deposit(tokenAddress, amountWei)
+    const depositTx = await vault.deposit(tokenAddress, amountWei, txOpts)
     await depositTx.wait()
   }
 

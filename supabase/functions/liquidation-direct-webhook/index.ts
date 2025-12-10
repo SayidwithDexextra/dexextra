@@ -47,6 +47,9 @@ function hexToBytes(hex: string) {
   for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
   return out;
 }
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 function normalizeHex32(hex: string): string | null {
   const clean = (hex || "").replace(/^0x/, "").toLowerCase();
   if (clean.length !== 64) return null;
@@ -163,6 +166,12 @@ function attachLogAddress(log: any) {
 
 function ensureLogAddresses(logs: any[]) {
   return Array.isArray(logs) ? logs.map((log) => attachLogAddress(log)) : logs;
+}
+
+function isZeroLike(value: string | null | undefined) {
+  if (value === null || value === undefined) return false;
+  const num = Number(value);
+  return Number.isFinite(num) && num === 0;
 }
 
 async function verifySignature(raw: string, signature: string | null, traceId: string) {
@@ -298,7 +307,7 @@ async function resolveMarketByAddress(supabase: any, address: string | null | un
   }
 }
 
-async function fetchOnchainLiq(marketHex: string, wallet: string, traceId: string): Promise<string | null> {
+async function fetchOnchainLiqOnce(marketHex: string, wallet: string, traceId: string): Promise<string | null> {
   try {
     if (!CORE_VAULT || !RPC_URL || !wallet) return null;
     const publicClient = createPublicClient({ transport: http(RPC_URL) });
@@ -317,6 +326,37 @@ async function fetchOnchainLiq(marketHex: string, wallet: string, traceId: strin
     logStep(traceId, "onchain_liq_fetch_error", { marketHex, wallet, reason: (e as any)?.message || String(e) });
     return null;
   }
+}
+
+async function fetchOnchainLiq(
+  marketHex: string,
+  wallet: string,
+  traceId: string,
+  opts: { retries?: number; delayMs?: number } = {}
+): Promise<string | null> {
+  const attempts = Math.max(1, (opts.retries ?? 2) + 1); // first attempt + retries
+  const delayMs = Math.max(0, opts.delayMs ?? 2500);
+
+  let last: string | null = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    last = await fetchOnchainLiqOnce(marketHex, wallet, traceId);
+    const zeroLike = isZeroLike(last);
+
+    if (last && !zeroLike) return last;
+
+    if (attempt < attempts) {
+      logStep(traceId, "onchain_liq_retry", { attempt, wallet, marketHex, last });
+      if (delayMs) await sleep(delayMs);
+    }
+  }
+
+  if (isZeroLike(last)) {
+    logStep(traceId, "onchain_liq_zero_after_retries", { wallet, marketHex });
+    return null;
+  }
+
+  return last;
 }
 
 async function upsertNetTrade(opts: {

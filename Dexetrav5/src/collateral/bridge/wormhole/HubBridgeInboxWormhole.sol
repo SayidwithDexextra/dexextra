@@ -19,8 +19,8 @@ import "../../interfaces/ICollateralHub.sol";
 contract HubBridgeInboxWormhole is AccessControl, ReentrancyGuard {
     bytes32 public constant BRIDGE_ENDPOINT_ROLE = keccak256("BRIDGE_ENDPOINT_ROLE");
 
-    // Hub CollateralHub to credit users on inbound messages
-    address public immutable collateralHub;
+    // Hub CollateralHub to credit users on inbound messages (mutable to allow re-pointing on redeploys)
+    address public collateralHub;
 
     // Map remote domain (e.g., 137 for Polygon, 42161 for Arbitrum) => remote app (bytes32 Wormhole addr fmt)
     mapping(uint64 => bytes32) public remoteAppByDomain;
@@ -29,6 +29,7 @@ contract HubBridgeInboxWormhole is AccessControl, ReentrancyGuard {
     uint8 private constant TYPE_DEPOSIT = 1;
 
     event RemoteAppSet(uint64 indexed domain, bytes32 indexed remoteApp);
+    event CollateralHubUpdated(address indexed previous, address indexed current);
     event DepositDelivered(uint64 indexed srcDomain, address indexed user, address token, uint256 amount, bytes32 depositId);
 
     error InvalidEndpoint();
@@ -39,6 +40,14 @@ contract HubBridgeInboxWormhole is AccessControl, ReentrancyGuard {
         require(_collateralHub != address(0) && _admin != address(0), "params");
         collateralHub = _collateralHub;
         _grantRole(DEFAULT_ADMIN_ROLE, _admin);
+    }
+
+    function setCollateralHub(address _collateralHub) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_collateralHub != address(0), "collateralHub");
+        address prev = collateralHub;
+        if (prev == _collateralHub) return;
+        collateralHub = _collateralHub;
+        emit CollateralHubUpdated(prev, _collateralHub);
     }
 
     function setRemoteApp(uint64 domain, bytes32 remoteApp) external onlyRole(DEFAULT_ADMIN_ROLE) {

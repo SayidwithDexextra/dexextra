@@ -229,6 +229,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [topUpSymbol, setTopUpSymbol] = useState<string>('');
   const [topUpAmount, setTopUpAmount] = useState<string>('');
   const [currentMargin, setCurrentMargin] = useState<number>(0);
+  const [isToppingUp, setIsToppingUp] = useState(false);
 
   // Add close position state and handler
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -246,8 +247,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   };
 
   const handleTopUpSubmit = async () => {
+    // Temporary: disable gasless top-up while CoreVault metaTopUp is under investigation
+    showError(
+      'Gasless margin top-up is temporarily disabled while we upgrade the vault. ' +
+      'You can still adjust risk by closing or reducing positions.'
+    , 'Top-up unavailable');
+    return;
+
     if (!topUpPositionId || !topUpAmount || !walletAddress) return;
-    
+
+    const amtNum = Number(topUpAmount);
+    if (Number.isNaN(amtNum) || amtNum <= 0) {
+      showError('Enter a valid top-up amount greater than 0');
+      return;
+    }
+
+    setIsToppingUp(true);
     try {
       console.log(`Topping up position ${topUpPositionId} for ${topUpSymbol} with amount ${topUpAmount}`);
       const marketId = topUpPositionId as string;
@@ -280,10 +295,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       setTopUpPositionId(null);
       setTopUpSymbol('');
       setShowTopUpModal(false);
-      alert('Position topped up successfully!');
-    } catch (error) {
+      try {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('positionsRefreshRequested'));
+        }
+      } catch {}
+      showSuccess('Position top-up submitted. Pending confirmation.', 'Top-up sent');
+    } catch (error: any) {
       console.error('Error topping up position:', error);
-      alert('Failed to top up position. Please try again.');
+      showError(error?.message || 'Failed to top up position. Please try again.');
+    } finally {
+      setIsToppingUp(false);
     }
   };
 
@@ -1568,20 +1590,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setShowTopUpModal(false);
                     setTopUpAmount('');
                   }}
-                  className="px-3 py-1.5 text-[11px] font-medium text-[#808080] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors"
+                  className="px-3 py-1.5 text-[11px] font-medium text-[#808080] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  disabled={isToppingUp}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleTopUpSubmit}
-                  disabled={!topUpAmount || parseFloat(topUpAmount) <= 0}
+                  disabled={!topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp}
                   className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors ${
-                    !topUpAmount || parseFloat(topUpAmount) <= 0
+                    !topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp
                       ? 'text-[#606060] bg-[#2A2A2A] cursor-not-allowed'
                       : 'text-white bg-blue-500 hover:bg-blue-600'
                   }`}
                 >
-                  Confirm Top-Up
+                  {isToppingUp ? 'Submitting...' : 'Confirm Top-Up'}
                 </button>
               </div>
             </div>

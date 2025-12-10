@@ -133,19 +133,40 @@ export default function SpokeDepositModal({
         {/* Footer */}
         <div className="px-6 pb-5 pt-2">
           <button
+            type="button"
             onClick={handleSubmit}
             disabled={isSubmitting}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[#333333] bg-[#1A1A1A] hover:bg-[#2A2A2A] hover:border-[#444444] text-[12px] font-medium text-white transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+            aria-busy={isSubmitting}
+            className={[
+              'group relative w-full inline-flex items-center justify-center gap-2 overflow-hidden rounded-full',
+              'border border-[#222222] bg-[#0F0F0F] px-5 py-2.5 text-[12px] font-medium text-white',
+              'transition-all duration-200 hover:bg-[#1A1A1A] hover:border-[#333333]',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2A2A2A] focus-visible:ring-offset-0',
+              'disabled:opacity-50 disabled:cursor-not-allowed disabled:border-[#222222]/60 disabled:bg-[#0F0F0F]/80'
+            ].join(' ')}
+            style={{
+              boxShadow: '0 12px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.03)'
+            }}
           >
+            <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/5 via-transparent to-white/5 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
             {isSubmitting ? (
               <>
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border border-white/30 border-t-white" />
-                <span>Depositing</span>
+                <div className="relative h-3.5 w-3.5">
+                  <div className="absolute inset-0 rounded-full border border-white/10" />
+                  <div className="absolute inset-0 rounded-full border-2 border-t-white/90 border-r-white/40 border-b-white/20 border-l-white/10 animate-spin" />
+                </div>
+                <span className="tracking-wide">Depositing</span>
               </>
             ) : (
               <>
-                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-                <span>Deposit</span>
+                <div className="relative w-1.5 h-1.5 flex-shrink-0">
+                  <div className="absolute inset-0 rounded-full bg-green-400" />
+                  <div
+                    className="absolute inset-0 rounded-full shadow-[0_0_0_6px_rgba(74,222,128,0.18)] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                    aria-hidden="true"
+                  />
+                </div>
+                <span className="tracking-wide">Deposit</span>
               </>
             )}
           </button>

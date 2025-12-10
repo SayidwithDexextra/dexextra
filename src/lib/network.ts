@@ -33,6 +33,14 @@ export function getChainId(): number {
   return env.CHAIN_ID
 }
 
+function getExpectedChainId(): number {
+  const id = getChainId()
+  if (!Number.isFinite(id)) {
+    throw new Error('Invalid CHAIN_ID configuration')
+  }
+  return id
+}
+
 // Cache providers to ensure a single long-lived instance is reused
 let cachedHttpProvider: ethers.Provider | null = null
 let cachedWsProvider: ethers.WebSocketProvider | null = null
@@ -105,12 +113,81 @@ export async function ensureHyperliquidWallet(): Promise<ethers.Signer> {
   if (typeof window === 'undefined' || !(window as any).ethereum) {
     throw new Error('No wallet provider available')
   }
-  const browserProvider = new ethers.BrowserProvider((window as any).ethereum)
-  const net = await browserProvider.getNetwork()
-  if (Number(net.chainId) !== getChainId()) {
-    throw new Error(`Wrong network. Please switch to chainId ${getChainId()}.`)
+
+  const ethereum = (window as any).ethereum
+  const expectedChainId = getExpectedChainId()
+  const expectedChainHex = `0x${expectedChainId.toString(16)}`
+
+  const readInjectedChainId = async (): Promise<number> => {
+    try {
+      const chainHex = await ethereum.request({ method: 'eth_chainId' })
+      if (typeof chainHex === 'string') {
+        return parseInt(chainHex, 16)
+      }
+    } catch {
+      // Fall back to ethers network lookup below
+    }
+    const browserProvider = new ethers.BrowserProvider(ethereum)
+    const net = await browserProvider.getNetwork()
+    return Number(net.chainId)
   }
-  return browserProvider.getSigner()
+
+  const trySwitch = async () => {
+    await ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: expectedChainHex }]
+    })
+  }
+
+  const tryAddAndSwitch = async () => {
+    if (!env.RPC_URL) return
+    await ethereum.request({
+      method: 'wallet_addEthereumChain',
+      params: [{
+        chainId: expectedChainHex,
+        chainName: 'Hyperliquid',
+        nativeCurrency: { name: 'Hyperliquid', symbol: 'HYPE', decimals: 18 },
+        rpcUrls: [env.RPC_URL],
+        blockExplorerUrls: env.APP_URL ? [env.APP_URL] : []
+      }]
+    })
+    await trySwitch()
+  }
+
+  let currentChainId = await readInjectedChainId()
+  if (currentChainId !== expectedChainId) {
+    try {
+      await trySwitch()
+    } catch (switchErr: any) {
+      const userRejected = switchErr?.code === 4001
+      const chainMissing = switchErr?.code === 4902
+
+      if (chainMissing) {
+        try {
+          await tryAddAndSwitch()
+        } catch (addErr: any) {
+          const addRejected = addErr?.code === 4001
+          throw new Error(
+            addRejected
+              ? 'Please approve adding the Hyperliquid network, then retry.'
+              : `Unable to add or switch networks automatically. Open your wallet and select chainId ${expectedChainId} (hex ${expectedChainHex}).`
+          )
+        }
+      } else if (userRejected) {
+        throw new Error(`You rejected the network switch. Please accept the prompt to use chainId ${expectedChainId}.`)
+      } else {
+        throw new Error(`We couldn't switch networks automatically. Select chainId ${expectedChainId} (hex ${expectedChainHex}) in your wallet and retry.`)
+      }
+    }
+
+    currentChainId = await readInjectedChainId()
+    if (currentChainId !== expectedChainId) {
+      throw new Error(`Network mismatch. Wallet shows chainId ${currentChainId}, expected ${expectedChainId}. Please switch in your wallet and retry.`)
+    }
+  }
+
+  const freshProvider = new ethers.BrowserProvider(ethereum)
+  return freshProvider.getSigner()
 }
 
 export function isOnCorrectChain(chainId?: number | bigint): boolean {

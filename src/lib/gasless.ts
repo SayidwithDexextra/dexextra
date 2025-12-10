@@ -3,6 +3,69 @@ import MetaTradeFacet from '@/lib/abis/facets/MetaTradeFacet.json';
 
 type Hex = `0x${string}`;
 
+type ChainCheckResult = { ok: true } | { ok: false; error: string };
+
+const TARGET_CHAIN_ID = Number(CHAIN_CONFIG.chainId || 0);
+const TARGET_CHAIN_HEX = `0x${TARGET_CHAIN_ID.toString(16)}`;
+
+async function ensureCorrectChain(): Promise<ChainCheckResult> {
+  if (typeof window === 'undefined' || !(window as any)?.ethereum) {
+    return { ok: false, error: 'No wallet provider detected.' };
+  }
+
+  const ethereum = (window as any).ethereum;
+  let activeChainId: number | null = null;
+
+  try {
+    const active = await ethereum.request({ method: 'eth_chainId' });
+    if (typeof active === 'string') {
+      activeChainId = parseInt(active, 16);
+    }
+    if (activeChainId === TARGET_CHAIN_ID) {
+      return { ok: true };
+    }
+  } catch {
+    // Fallback to switch attempt below
+  }
+
+  try {
+    await ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: TARGET_CHAIN_HEX }],
+    });
+    return { ok: true };
+  } catch (switchErr: any) {
+    if (switchErr?.code === 4902) {
+      try {
+        await ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: TARGET_CHAIN_HEX,
+            chainName: 'Hyperliquid Mainnet',
+            rpcUrls: [CHAIN_CONFIG.rpcUrl].filter(Boolean),
+            nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
+          }],
+        });
+        return { ok: true };
+      } catch (addErr: any) {
+        return {
+          ok: false,
+          error: 'Add Hyperliquid Mainnet (chainId 999) to your wallet, then retry.',
+        };
+      }
+    }
+
+    const activeText = activeChainId
+      ? `Current chainId is ${activeChainId}.`
+      : 'Current chain is unknown.';
+
+    return {
+      ok: false,
+      error: `Switch your wallet to Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) before enabling trading. ${activeText}`,
+    };
+  }
+}
+
 export type GaslessMethod =
   | 'metaPlaceLimit'
   | 'metaPlaceMarginLimit'
@@ -297,6 +360,11 @@ export async function signAndSubmitGasless(params: {
   const ethereum = (window as any)?.ethereum;
   if (!ethereum) return { success: false, error: 'No wallet provider' };
 
+  const chainCheck = await ensureCorrectChain();
+  if (!chainCheck.ok) {
+    return { success: false, error: chainCheck.error };
+  }
+
   const payload = JSON.stringify({
     types: { EIP712Domain: [
       { name: 'name', type: 'string' },
@@ -371,6 +439,12 @@ export async function createGaslessSession(params: {
 
   const ethereum = (window as any)?.ethereum;
   if (!ethereum) return { success: false, error: 'No wallet provider' };
+
+  const chainCheck = await ensureCorrectChain();
+  if (!chainCheck.ok) {
+    return { success: false, error: chainCheck.error };
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const defaultLifetime = Number((process as any)?.env?.NEXT_PUBLIC_SESSION_DEFAULT_LIFETIME_SECS ?? 86400);
   const expiry = BigInt(expirySec ?? (now + defaultLifetime));
