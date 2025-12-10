@@ -20,6 +20,7 @@ const envSchema = z.object({
 
   // Blockchain Configuration
   RPC_URL: z.string().url().default('https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-'),
+  ARBITRUM_RPC_URL: z.string().url().optional(),
   // Optional backup RPC HTTP URLs
   RPC_URL_BACKUP: z.string().url().optional(),
   // Optional comma-separated list of additional RPC URLs
@@ -61,6 +62,7 @@ const envSchema = z.object({
   // Spoke Vault Addresses (per chain) - used for external deposits
   SPOKE_POLYGON_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Polygon spoke vault address').optional(),
   SPOKE_ARBITRUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum spoke vault address').optional(),
+  SPOKE_ARBITRUM_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum USDC address').optional(),
   SPOKE_ETHEREUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum spoke vault address').optional(),
   SPOKE_HYPERLIQUID_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Hyperliquid spoke vault address').optional(),
 
@@ -217,6 +219,7 @@ const processEnv = {
   // Spoke Vault Addresses (allow NEXT_PUBLIC_ fallbacks on client)
   SPOKE_POLYGON_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_POLYGON_VAULT_ADDRESS : process.env.SPOKE_POLYGON_VAULT_ADDRESS,
   SPOKE_ARBITRUM_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ARBITRUM_VAULT_ADDRESS : process.env.SPOKE_ARBITRUM_VAULT_ADDRESS,
+  SPOKE_ARBITRUM_USDC_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ARBITRUM_USDC_ADDRESS : process.env.SPOKE_ARBITRUM_USDC_ADDRESS,
   SPOKE_ETHEREUM_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_ETHEREUM_VAULT_ADDRESS : process.env.SPOKE_ETHEREUM_VAULT_ADDRESS,
   SPOKE_HYPERLIQUID_VAULT_ADDRESS: isClientSide ? process.env.NEXT_PUBLIC_SPOKE_HYPERLIQUID_VAULT_ADDRESS : process.env.SPOKE_HYPERLIQUID_VAULT_ADDRESS,
   

@@ -32,6 +32,53 @@ export interface SessionCreateResponse {
   expirySec?: number;
 }
 
+// Normalize provider/wallet signature errors (especially noisy on mobile wallets)
+function normalizeProviderError(err: any): string {
+  const raw = err?.message || err?.data?.message || String(err || '');
+  const msg = (raw || '').toLowerCase();
+  if (msg.includes('user rejected') || msg.includes('denied') || msg.includes('rejected')) {
+    return 'Signature was rejected in your wallet.';
+  }
+  if (msg.includes('unsupported method') || msg.includes('eth_signtypeddata_v4')) {
+    return 'Your wallet does not support this signing method on this device.';
+  }
+  if (msg.includes('timeout') || msg.includes('timed out')) {
+    return 'Signature request timed out. Please try again.';
+  }
+  if (msg.includes('cannot read') || msg.includes('undefined')) {
+    return 'Wallet is not ready. Reopen your wallet and try again.';
+  }
+  return raw || 'Signature failed. Please retry.';
+}
+
+// Normalize relayer errors so phone users see a concise reason
+function normalizeRelayErrorBody(body: string): string {
+  let text = body?.trim?.() || '';
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed?.error) text = String(parsed.error);
+  } catch {
+    // ignore JSON parse issues; fall through to raw text
+  }
+  const lower = (text || '').toLowerCase();
+  if (lower.includes('insufficient collateral')) {
+    return 'Insufficient collateral for this order. Deposit more or reduce size.';
+  }
+  if (lower.includes('nonce too low')) {
+    return 'Trading session expired. Please refresh and try again.';
+  }
+  if (lower.includes('session')) {
+    return text || 'Session error. Please reconnect your wallet.';
+  }
+  return text || 'Relay request failed.';
+}
+
+function normalizeNetworkError(err: any): string {
+  const raw = err?.message || String(err || '');
+  if (/failed to fetch/i.test(raw)) return 'Network error talking to relayer. Check connectivity.';
+  return raw || 'Network error. Please retry.';
+}
+
 async function fetchNonce(orderBook: string, trader: string): Promise<bigint> {
   const url = `/api/gasless/nonce?orderBook=${orderBook}&trader=${trader}`;
   const res = await fetch(url, { method: 'GET' });
@@ -262,31 +309,42 @@ export async function signAndSubmitGasless(params: {
     message: jsonMessage,
   });
 
-  const signature: string = await ethereum.request({
-    method: 'eth_signTypedData_v4',
-    params: [trader, payload],
-  });
+  let signature: string;
+  try {
+    signature = await ethereum.request({
+      method: 'eth_signTypedData_v4',
+      params: [trader, payload],
+    });
+  } catch (err) {
+    return { success: false, error: normalizeProviderError(err) };
+  }
 
   // Submit to relayer API
   try {
     console.log('[UpGas][client] POST /api/gasless/trade (legacy)', { orderBook, method, hasMessage: true, hasSignature: true });
   } catch {}
-  const res = await fetch('/api/gasless/trade', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      orderBook,
-      method,
-      message: jsonMessage,
-      signature,
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    try { console.warn('[UpGas][client] relay http error', { status: res.status, text }); } catch {}
-    return { success: false, error: `relay http ${res.status}: ${text}` };
+  let res: Response;
+  try {
+    res = await fetch('/api/gasless/trade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderBook,
+        method,
+        message: jsonMessage,
+        signature,
+      }),
+    });
+  } catch (err) {
+    return { success: false, error: normalizeNetworkError(err) };
   }
-  const json = await res.json();
+  const body = await res.text();
+  if (!res.ok) {
+    try { console.warn('[UpGas][client] relay http error', { status: res.status, body }); } catch {}
+    return { success: false, error: normalizeRelayErrorBody(body) };
+  }
+  let json: any = {};
+  try { json = body ? JSON.parse(body) : {}; } catch { json = {}; }
   try { console.log('[UpGas][client] relay success', { txHash: json?.txHash }); } catch {}
   return { success: true, txHash: json?.txHash as string };
 }
@@ -371,22 +429,33 @@ export async function createGaslessSession(params: {
     message,
   });
 
-  const signature: string = await ethereum.request({
-    method: 'eth_signTypedData_v4',
-    params: [trader, payload],
-  });
-
-  const res = await fetch('/api/gasless/session/init', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ permit: message, signature }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    try { console.warn('[UpGas][client] session init http error', { status: res.status, text }); } catch {}
-    return { success: false, error: `session http ${res.status}: ${text}` };
+  let signature: string;
+  try {
+    signature = await ethereum.request({
+      method: 'eth_signTypedData_v4',
+      params: [trader, payload],
+    });
+  } catch (err) {
+    return { success: false, error: normalizeProviderError(err) };
   }
-  const json = await res.json();
+
+  let res: Response;
+  try {
+    res = await fetch('/api/gasless/session/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permit: message, signature }),
+    });
+  } catch (err) {
+    return { success: false, error: normalizeNetworkError(err) };
+  }
+  const body = await res.text();
+  if (!res.ok) {
+    try { console.warn('[UpGas][client] session init http error', { status: res.status, body }); } catch {}
+    return { success: false, error: normalizeRelayErrorBody(body) };
+  }
+  let json: any = {};
+  try { json = body ? JSON.parse(body) : {}; } catch { json = {}; }
   try { console.log('[UpGas][client] session init success', { sessionId: json?.sessionId, txHash: json?.txHash }); } catch {}
   return { success: true, sessionId: json?.sessionId, txHash: json?.txHash, expirySec: Number(expiry) };
 }
@@ -420,17 +489,23 @@ export async function submitSessionTrade(params: {
       orderId: orderId?.toString(),
     },
   };
-  const res = await fetch('/api/gasless/trade', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    try { console.warn('[UpGas][client] session trade http error', { status: res.status, text }); } catch {}
-    return { success: false, error: `relay http ${res.status}: ${text}` };
+  let res: Response;
+  try {
+    res = await fetch('/api/gasless/trade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    return { success: false, error: normalizeNetworkError(err) };
   }
-  const json = await res.json();
+  const body = await res.text();
+  if (!res.ok) {
+    try { console.warn('[UpGas][client] session trade http error', { status: res.status, body }); } catch {}
+    return { success: false, error: normalizeRelayErrorBody(body) };
+  }
+  let json: any = {};
+  try { json = body ? JSON.parse(body) : {}; } catch { json = {}; }
   try { console.log('[UpGas][client] session trade success', { txHash: json?.txHash }); } catch {}
   return { success: true, txHash: json?.txHash as string };
 }

@@ -1,15 +1,19 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { ethers } from 'ethers'
 import { DepositModalProps, Token } from './types'
 import DepositModalInput from './DepositModalInput'
 import DepositModalReview from './DepositModalReview'
 import DepositModalStatus from './DepositModalStatus'
 import DepositTokenSelect from './DepositTokenSelect'
 import DepositExternalInput from './DepositExternalInput'
+import SpokeDepositModal from '@/components/DepositModal/SpokeDepositModal'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { env } from '@/lib/env'
+import SpokeVaultAbi from '@/lib/abis/SpokeVault.json'
 
 // Close Icon Component
 const CloseIcon = () => (
@@ -22,12 +26,16 @@ export default function DepositModal({
   isOpen,
   onClose
 }: DepositModalProps) {
-  const [step, setStep] = useState<'select' | 'input' | 'external' | 'review' | 'processing' | 'success' | 'error'>('select')
+  const [step, setStep] = useState<'select' | 'input' | 'external' | 'spoke' | 'review' | 'processing' | 'success' | 'error'>('select')
   const [depositAmount, setDepositAmount] = useState('')
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'success' | 'error'>('pending')
   const [error, setError] = useState<string | null>(null)
   const { walletAddress } = useWalletAddress()
   const coreVault = useCoreVault()
+  const [isFunctionDepositLoading, setIsFunctionDepositLoading] = useState(false)
+  const [showSpokeDepositModal, setShowSpokeDepositModal] = useState(false)
+  const [spokeDepositAmount, setSpokeDepositAmount] = useState('')
+  const [spokeDepositError, setSpokeDepositError] = useState<string | null>(null)
   
   // Stablecoins by chain
   const polygonUSDC: Token = {
@@ -128,11 +136,17 @@ export default function DepositModal({
   ]
 
   const [sourceToken, setSourceToken] = useState<Token>(polygonUSDC)
+  const isArbitrumFlow = (sourceToken?.chain || '').toLowerCase() === 'arbitrum'
   
   const vaultToken: Token = {
     symbol: 'VAULT',
     icon: '🏦',
     name: 'Dexetera CoreVault'
+  }
+  const spokeVaultToken: Token = {
+    symbol: 'SPOKE',
+    icon: '🏦',
+    name: 'Arbitrum SpokeVault'
   }
 
   // Reset state when modal closes
@@ -142,6 +156,10 @@ export default function DepositModal({
       setDepositAmount('');
       setPaymentStatus('pending');
       setError(null);
+      setIsFunctionDepositLoading(false);
+      setShowSpokeDepositModal(false);
+      setSpokeDepositAmount('');
+      setSpokeDepositError(null);
     }
   }, [isOpen])
 
@@ -184,6 +202,143 @@ export default function DepositModal({
     }
   }
 
+  // Initiate function-based deposit via Arbitrum SpokeVault (amount modal)
+  const handleExternalFunctionDeposit = async () => {
+    const chain = (sourceToken?.chain || '').toLowerCase()
+    if (chain !== 'arbitrum') {
+      setError('Function deposit is only available on Arbitrum.')
+      setPaymentStatus('error')
+      setStep('error')
+      return
+    }
+
+    setSpokeDepositAmount(depositAmount || '1')
+    setSpokeDepositError(null)
+    setShowSpokeDepositModal(true)
+    setStep('spoke')
+    return
+  }
+
+  // Execute the actual spoke deposit
+  const performSpokeDeposit = async (rawAmount: string) => {
+    const vaultAddress = env.SPOKE_ARBITRUM_VAULT_ADDRESS
+    const tokenAddress =
+      sourceToken.contractAddress ||
+      env.SPOKE_ARBITRUM_USDC_ADDRESS ||
+      (process.env.NEXT_PUBLIC_SPOKE_ARBITRUM_USDC_ADDRESS as string) ||
+      (process.env.SPOKE_ARBITRUM_USDC_ADDRESS as string) ||
+      ''
+
+    if (!vaultAddress) {
+      throw new Error('Arbitrum spoke vault address is not configured.')
+    }
+    if (!tokenAddress) {
+      throw new Error('Arbitrum USDC address is not configured.')
+    }
+    if (typeof window === 'undefined' || !(window as any).ethereum) {
+      throw new Error('Wallet not detected. Please connect your wallet.')
+    }
+
+    const provider = new ethers.BrowserProvider((window as any).ethereum)
+    const targetChainId = 42161n
+    const targetChainIdHex = '0xa4b1'
+
+    const ensureArbitrumNetwork = async () => {
+      let currentNetwork = await provider.getNetwork()
+      if (currentNetwork.chainId === targetChainId) return
+
+      try {
+        await (window as any).ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: targetChainIdHex }]
+        })
+        currentNetwork = await provider.getNetwork()
+        if (currentNetwork.chainId === targetChainId) return
+      } catch (switchError) {
+        // Attempt to add chain if not present
+        try {
+          if (env.ARBITRUM_RPC_URL) {
+            await (window as any).ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: targetChainIdHex,
+                chainName: 'Arbitrum One',
+                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+                rpcUrls: [env.ARBITRUM_RPC_URL],
+                blockExplorerUrls: ['https://arbiscan.io']
+              }]
+            })
+            currentNetwork = await provider.getNetwork()
+            if (currentNetwork.chainId === targetChainId) return
+          }
+        } catch (addError) {
+          console.warn('Failed to add Arbitrum chain', addError)
+        }
+        throw new Error('Please switch your wallet to Arbitrum (chainId 42161).')
+      }
+    }
+
+    await ensureArbitrumNetwork()
+    const signer = await provider.getSigner()
+
+    const erc20Abi = [
+      'function allowance(address owner, address spender) view returns (uint256)',
+      'function approve(address spender, uint256 value) returns (bool)',
+      'function balanceOf(address owner) view returns (uint256)',
+      'function decimals() view returns (uint8)',
+    ]
+
+    const token = new ethers.Contract(tokenAddress, erc20Abi, signer)
+    const vault = new ethers.Contract(vaultAddress, SpokeVaultAbi, signer)
+
+    const userAddress = await signer.getAddress()
+    const decimals: number = Number(await token.decimals().catch(() => 6))
+    const amountWei = ethers.parseUnits(rawAmount, decimals)
+
+    const balance: bigint = await token.balanceOf(userAddress)
+    if (balance < amountWei) {
+      throw new Error(`Insufficient balance. Need ${rawAmount} ${sourceToken.symbol}.`)
+    }
+
+    const currentAllowance: bigint = await token.allowance(userAddress, vaultAddress)
+    if (currentAllowance < amountWei) {
+      const approveTx = await token.approve(vaultAddress, amountWei)
+      await approveTx.wait()
+    }
+
+    const depositTx = await vault.deposit(tokenAddress, amountWei)
+    await depositTx.wait()
+  }
+
+  const handleSpokeDepositSubmit = async (amount: string) => {
+    const parsed = Number(amount)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setSpokeDepositError('Enter an amount greater than zero.')
+      return
+    }
+
+    setDepositAmount(amount)
+    setSpokeDepositError(null)
+    setIsFunctionDepositLoading(true)
+    setStep('processing')
+    setPaymentStatus('pending')
+
+    try {
+      await performSpokeDeposit(amount)
+      setShowSpokeDepositModal(false)
+      setPaymentStatus('success')
+      setStep('success')
+    } catch (err: any) {
+      console.error('Function deposit error:', err)
+      setPaymentStatus('error')
+      setStep('error')
+      setError(err?.message || 'Failed to process deposit')
+      setSpokeDepositError(err?.message || 'Failed to process deposit')
+    } finally {
+      setIsFunctionDepositLoading(false)
+    }
+  }
+
   // Close modal
   const handleClose = () => {
     onClose()
@@ -201,7 +356,8 @@ export default function DepositModal({
         selectedToken={sourceToken}
         onSelectToken={(t) => setSourceToken(t)}
         onContinue={() => {
-          if ((sourceToken?.chain || '').toLowerCase() === 'hyperliquid') {
+          const chain = (sourceToken?.chain || '').toLowerCase()
+          if (chain === 'hyperliquid') {
             setStep('input')
           } else {
             setStep('external')
@@ -211,14 +367,49 @@ export default function DepositModal({
     )
   }
 
+  if (step === 'spoke') {
+    return (
+      <SpokeDepositModal
+        isOpen={isOpen && showSpokeDepositModal}
+        onClose={() => {
+          setShowSpokeDepositModal(false)
+          setSpokeDepositError(null)
+          setStep('select')
+        }}
+        onSubmit={handleSpokeDepositSubmit}
+        selectedToken={sourceToken}
+        defaultAmount={spokeDepositAmount || '1'}
+        isSubmitting={isFunctionDepositLoading}
+        errorMessage={spokeDepositError}
+      />
+    )
+  }
+
   if (step === 'external') {
     return (
-      <DepositExternalInput
-        isOpen={isOpen}
-        onClose={handleClose}
-        onBack={() => setStep('select')}
-        selectedToken={sourceToken}
-      />
+      <>
+        <DepositExternalInput
+          isOpen={isOpen}
+          onClose={handleClose}
+          onBack={() => setStep('select')}
+          selectedToken={sourceToken}
+          onFunctionDeposit={handleExternalFunctionDeposit}
+          isFunctionDepositLoading={isFunctionDepositLoading}
+          functionDepositLabel={`Deposit ${sourceToken.symbol}`}
+        />
+        <SpokeDepositModal
+          isOpen={showSpokeDepositModal}
+          onClose={() => {
+            setShowSpokeDepositModal(false)
+            setSpokeDepositError(null)
+          }}
+          onSubmit={handleSpokeDepositSubmit}
+          selectedToken={sourceToken}
+          defaultAmount={spokeDepositAmount || '1'}
+          isSubmitting={isFunctionDepositLoading}
+          errorMessage={spokeDepositError}
+        />
+      </>
     )
   }
 
@@ -269,7 +460,7 @@ export default function DepositModal({
       status={paymentStatus}
       amount={depositAmount}
       sourceToken={sourceToken}
-      targetToken={vaultToken}
+      targetToken={isArbitrumFlow ? spokeVaultToken : vaultToken}
       isDirectDeposit={true}
     />
   )

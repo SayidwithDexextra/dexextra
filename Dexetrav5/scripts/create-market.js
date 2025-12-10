@@ -360,13 +360,178 @@ async function ensurePlacementSelectors(
   }
 }
 
+// Verify that every selector from the planned cutArg exists on the Diamond; if
+// any are missing, re-apply a targeted diamondCut(Add) using the provided
+// facet addresses.
+async function ensureDiamondSelectors(orderBookAddress, cutArg, nonceManager) {
+  try {
+    if (!Array.isArray(cutArg) || !cutArg.length) return;
+    const loupeAbi = ["function facetAddress(bytes4) view returns (address)"];
+    const cutAbi = [
+      "function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)",
+    ];
+    const loupe = await ethers.getContractAt(loupeAbi, orderBookAddress);
+    const diamondCut = await ethers.getContractAt(cutAbi, orderBookAddress);
+    const repairCut = [];
+
+    for (const entry of cutArg) {
+      const facetAddress = entry?.[0];
+      const selectors = Array.isArray(entry?.[2]) ? entry[2] : [];
+      if (!facetAddress || !selectors.length) continue;
+      const missingSelectors = [];
+      for (const sel of selectors) {
+        try {
+          const addr = await loupe.facetAddress(sel);
+          if (!addr || String(addr).toLowerCase() === ethers.ZeroAddress) {
+            missingSelectors.push(sel);
+          }
+        } catch {
+          missingSelectors.push(sel);
+        }
+      }
+      if (missingSelectors.length) {
+        repairCut.push({
+          facetAddress,
+          action: 0,
+          functionSelectors: missingSelectors,
+        });
+      }
+    }
+
+    if (!repairCut.length) {
+      console.log("  ✅ Diamond already exposes all selectors from cutArg");
+      return;
+    }
+
+    console.log(
+      "  ⚠️ Missing selectors detected; applying diamondCut(Add):",
+      repairCut.length
+    );
+    const overrides =
+      nonceManager && typeof nonceManager.nextOverrides === "function"
+        ? await nonceManager.nextOverrides()
+        : await getTxOverrides();
+    const tx = await diamondCut.diamondCut(
+      repairCut,
+      ethers.ZeroAddress,
+      "0x",
+      overrides
+    );
+    console.log("    - diamondCut tx:", tx.hash);
+    const rc = await tx.wait();
+    console.log(
+      "  ✅ diamondCut applied to repair selectors:",
+      rc?.hash || tx.hash
+    );
+  } catch (e) {
+    console.log("  ⚠️ ensureDiamondSelectors failed:", e?.message || String(e));
+  }
+}
+
+// Ensure sessionRegistry is set on the diamond (MetaTradeFacet)
+async function ensureSessionRegistry(orderBook, registryAddr, nonceManager) {
+  try {
+    if (!registryAddr || !ethers.isAddress(registryAddr)) {
+      console.log(
+        "  ⚠️ sessionRegistry skipped: registry address not provided"
+      );
+      return;
+    }
+    const loupe = await ethers.getContractAt(
+      ["function facetAddress(bytes4) view returns (address)"],
+      orderBook
+    );
+    const selView = ethers.id("sessionRegistry()").slice(0, 10);
+    const selSet = ethers.id("setSessionRegistry(address)").slice(0, 10);
+    const viewFacet = await loupe.facetAddress(selView);
+    const setFacet = await loupe.facetAddress(selSet);
+    const hasView = viewFacet && viewFacet !== ethers.ZeroAddress;
+    const hasSet = setFacet && setFacet !== ethers.ZeroAddress;
+    if (!hasView || !hasSet) {
+      console.log(
+        "  ⚠️ sessionRegistry selectors not found on diamond; skipping attach",
+        { hasView, hasSet }
+      );
+      return;
+    }
+    const facet = await ethers.getContractAt(
+      [
+        "function setSessionRegistry(address) external",
+        "function sessionRegistry() view returns (address)",
+      ],
+      orderBook
+    );
+    const current = await facet.sessionRegistry();
+    if (current && current.toLowerCase() === registryAddr.toLowerCase()) {
+      console.log("  ✅ sessionRegistry already set:", current);
+      return;
+    }
+    const overrides =
+      nonceManager && typeof nonceManager.nextOverrides === "function"
+        ? await nonceManager.nextOverrides()
+        : await getTxOverrides();
+    const tx = await facet.setSessionRegistry(registryAddr, overrides);
+    console.log("  • setSessionRegistry tx:", tx.hash);
+    const rc = await tx.wait();
+    console.log(
+      "  ✅ sessionRegistry set on diamond",
+      rc?.hash || tx.hash,
+      "block",
+      rc?.blockNumber
+    );
+  } catch (e) {
+    console.log("  ⚠️ ensureSessionRegistry failed:", e?.message || String(e));
+  }
+}
+
+// Allow the OrderBook on the GlobalSessionRegistry allowlist
+async function allowOrderbookOnRegistry(orderBook, registryAddr, nonceManager) {
+  try {
+    if (!registryAddr || !ethers.isAddress(registryAddr)) {
+      console.log("  ⚠️ registry allowlist skipped: registry address missing");
+      return;
+    }
+    const registry = await ethers.getContractAt(
+      [
+        "function allowedOrderbook(address) view returns (bool)",
+        "function setAllowedOrderbook(address,bool)",
+      ],
+      registryAddr
+    );
+    const allowed = await registry.allowedOrderbook(orderBook);
+    if (allowed) {
+      console.log("  ✅ OrderBook already allowed on registry");
+      return;
+    }
+    const overrides =
+      nonceManager && typeof nonceManager.nextOverrides === "function"
+        ? await nonceManager.nextOverrides()
+        : await getTxOverrides();
+    const tx = await registry.setAllowedOrderbook(orderBook, true, overrides);
+    console.log("  • setAllowedOrderbook tx:", tx.hash);
+    const rc = await tx.wait();
+    console.log(
+      "  ✅ OrderBook allowed on registry",
+      rc?.hash || tx.hash,
+      "block",
+      rc?.blockNumber
+    );
+  } catch (e) {
+    console.log(
+      "  ⚠️ allowOrderbookOnRegistry failed:",
+      e?.message || String(e)
+    );
+  }
+}
+
 async function buildCutViaApiOrEnv() {
   const baseUrl = (
     process.env.APP_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000"
   ).replace(/\/$/, "");
-  // 1) Try API (mirrors CreateMarket form)
+
+  // 1) Try API (mirrors CreateMarket form + server-side validation)
   try {
     logStep("build_cut_api", "start", { url: `${baseUrl}/api/orderbook/cut` });
     const res = await fetchWithTimeout(
@@ -377,12 +542,15 @@ async function buildCutViaApiOrEnv() {
     if (res && res.ok) {
       const { cut, initFacet } = await res
         .json()
-        .catch((e) => ({ cut: null, initFacet: null }));
+        .catch(() => ({ cut: null, initFacet: null }));
       const cutArg = (Array.isArray(cut) ? cut : []).map((c) => [
         c.facetAddress,
         typeof c.action === "number" ? c.action : 0,
         c.functionSelectors,
       ]);
+      const emptySelectors = cutArg
+        .filter((c) => !Array.isArray(c[2]) || c[2].length === 0)
+        .map((c) => c[0]);
       const totalSelectors = (Array.isArray(cutArg) ? cutArg : []).reduce(
         (acc, c) => acc + (Array.isArray(c[2]) ? c[2].length : 0),
         0
@@ -391,6 +559,7 @@ async function buildCutViaApiOrEnv() {
         cutLength: cutArg.length,
         totalSelectors,
         hasInitFacet: Boolean(initFacet),
+        emptySelectors: emptySelectors.length,
       });
       try {
         console.log("\n🔎 Facets (API):");
@@ -401,7 +570,11 @@ async function buildCutViaApiOrEnv() {
           console.log(`  • [${idx}] facetAddress=${addr} selectors=${sels}`);
         });
       } catch {}
-      if (cutArg.length > 0 && initFacet)
+      if (emptySelectors.length) {
+        console.log(
+          "  ⚠️ API cut contained empty selector lists. Falling back to env/artifacts..."
+        );
+      } else if (cutArg.length > 0 && initFacet)
         return { cutArg, initFacet, facets: { initFacet } };
     } else if (res) {
       logStep("build_cut_api", "error", {
@@ -495,6 +668,32 @@ async function buildCutViaApiOrEnv() {
     "FACET_SETTLEMENT",
     "FACET_SETTLEMENT_ADDRESS",
   ]);
+  const vaultFacet = readEnvAny([
+    "ORDERBOOK_VAULT_FACET",
+    "ORDERBOOK_VAULT_FACET_ADDRESS",
+    "ORDERBOOK_VALUT_FACET",
+    "ORDERBOOK_VALUT_FACET_ADDRESS",
+    "ORDER_BOOK_VAULT_FACET",
+    "ORDER_BOOK_VAULT_FACET_ADDRESS",
+    "OB_VAULT_FACET",
+    "OB_VAULT_FACET_ADDRESS",
+    "ORDERBOOK_VAULT_ADMIN_FACET",
+    "ORDERBOOK_VAULT_ADMIN_FACET_ADDRESS",
+    "VAULT_ADMIN_FACET",
+    "VAULT_ADMIN_FACET_ADDRESS",
+  ]);
+  const lifecycleFacet = readEnvAny([
+    "MARKET_LIFECYCLE_FACET",
+    "MARKET_LIFECYCLE_FACET_ADDRESS",
+    "LIFECYCLE_FACET",
+    "LIFECYCLE_FACET_ADDRESS",
+  ]);
+  const metaTradeFacet = readEnvAny([
+    "META_TRADE_FACET",
+    "META_TRADE_FACET_ADDRESS",
+    "METATRADE_FACET",
+    "METATRADE_FACET_ADDRESS",
+  ]);
 
   const missing = [];
   if (!initFacet) missing.push("ORDER_BOOK_INIT_FACET");
@@ -505,12 +704,16 @@ async function buildCutViaApiOrEnv() {
   if (!liqFacet) missing.push("OB_LIQUIDATION_FACET");
   if (!viewFacet) missing.push("OB_VIEW_FACET");
   if (!settleFacet) missing.push("OB_SETTLEMENT_FACET");
+  if (!vaultFacet) missing.push("ORDERBOOK_VAULT_FACET");
+  if (!lifecycleFacet) missing.push("MARKET_LIFECYCLE_FACET");
+  if (!metaTradeFacet) missing.push("META_TRADE_FACET");
   if (missing.length) {
     logStep("build_cut_env", "error", { missing });
     throw new Error(
       `Missing required facet env variables: ${missing.join(", ")}`
     );
   }
+
   logStep("build_cut_env", "success", {
     hasInitFacet: Boolean(initFacet),
     adminFacet,
@@ -520,6 +723,9 @@ async function buildCutViaApiOrEnv() {
     liqFacet,
     viewFacet,
     settleFacet,
+    vaultFacet,
+    lifecycleFacet,
+    metaTradeFacet,
   });
   try {
     console.log("\n🔎 Facets (env):");
@@ -531,6 +737,9 @@ async function buildCutViaApiOrEnv() {
     console.log("  • liqFacet:", liqFacet);
     console.log("  • viewFacet:", viewFacet);
     console.log("  • settleFacet:", settleFacet);
+    console.log("  • vaultFacet:", vaultFacet);
+    console.log("  • lifecycleFacet:", lifecycleFacet);
+    console.log("  • metaTradeFacet:", metaTradeFacet);
   } catch {}
 
   // Build selectors from artifacts (same approach as API)
@@ -544,6 +753,13 @@ async function buildCutViaApiOrEnv() {
   const liqSelectors = selectorsFromAbi(loadFacetAbi("OBLiquidationFacet"));
   const viewSelectors = selectorsFromAbi(loadFacetAbi("OBViewFacet"));
   const settleSelectors = selectorsFromAbi(loadFacetAbi("OBSettlementFacet"));
+  const vaultSelectors = selectorsFromAbi(
+    loadFacetAbi("OrderBookVaultAdminFacet")
+  );
+  const lifecycleSelectors = selectorsFromAbi(
+    loadFacetAbi("MarketLifecycleFacet")
+  );
+  const metaSelectors = selectorsFromAbi(loadFacetAbi("MetaTradeFacet"));
 
   const cutArg = [
     [adminFacet, 0, adminSelectors],
@@ -553,7 +769,19 @@ async function buildCutViaApiOrEnv() {
     [liqFacet, 0, liqSelectors],
     [viewFacet, 0, viewSelectors],
     [settleFacet, 0, settleSelectors],
+    [vaultFacet, 0, vaultSelectors],
+    [lifecycleFacet, 0, lifecycleSelectors],
+    [metaTradeFacet, 0, metaSelectors],
   ];
+  const emptySelectors = cutArg
+    .filter((c) => !Array.isArray(c[2]) || c[2].length === 0)
+    .map((c) => c[0]);
+  if (emptySelectors.length) {
+    logStep("build_cut_artifacts", "error", { emptySelectors });
+    throw new Error(
+      `Facet selectors could not be built for: ${emptySelectors.join(", ")}`
+    );
+  }
   const totalSelectors = cutArg.reduce(
     (acc, c) => acc + (Array.isArray(c[2]) ? c[2].length : 0),
     0
@@ -567,6 +795,9 @@ async function buildCutViaApiOrEnv() {
       liq: liqSelectors.length,
       view: viewSelectors.length,
       settle: settleSelectors.length,
+      vault: vaultSelectors.length,
+      lifecycle: lifecycleSelectors.length,
+      meta: metaSelectors.length,
     },
     totalSelectors,
   });
@@ -591,6 +822,9 @@ async function buildCutViaApiOrEnv() {
       liqFacet,
       viewFacet,
       settleFacet,
+      vaultFacet,
+      lifecycleFacet,
+      metaTradeFacet,
     },
   };
 }
@@ -1120,6 +1354,13 @@ async function main() {
     const OBSettlementFacet = await ethers.getContractFactory(
       "OBSettlementFacet"
     );
+    const OrderBookVaultAdminFacet = await ethers.getContractFactory(
+      "OrderBookVaultAdminFacet"
+    );
+    const MarketLifecycleFacet = await ethers.getContractFactory(
+      "MarketLifecycleFacet"
+    );
+    const MetaTradeFacet = await ethers.getContractFactory("MetaTradeFacet");
 
     const initFacet = await OrderBookInitFacet.deploy();
     await initFacet.waitForDeployment();
@@ -1137,6 +1378,12 @@ async function main() {
     await viewFacet.waitForDeployment();
     const settlementFacet = await OBSettlementFacet.deploy();
     await settlementFacet.waitForDeployment();
+    const vaultFacet = await OrderBookVaultAdminFacet.deploy();
+    await vaultFacet.waitForDeployment();
+    const lifecycleFacet = await MarketLifecycleFacet.deploy();
+    await lifecycleFacet.waitForDeployment();
+    const metaFacet = await MetaTradeFacet.deploy();
+    await metaFacet.waitForDeployment();
 
     function selectors(iface) {
       return iface.fragments
@@ -1150,6 +1397,9 @@ async function main() {
     const liqSelectors = selectors(liqFacet.interface);
     const viewSelectors = selectors(viewFacet.interface);
     const settleSelectors = selectors(settlementFacet.interface);
+    const vaultSelectors = selectors(vaultFacet.interface);
+    const lifecycleSelectors = selectors(lifecycleFacet.interface);
+    const metaSelectors = selectors(metaFacet.interface);
 
     const initFacetAddrLocal = await initFacet.getAddress();
     const adminAddrLocal = await adminFacet.getAddress();
@@ -1159,6 +1409,9 @@ async function main() {
     const liqAddrLocal = await liqFacet.getAddress();
     const viewAddrLocal = await viewFacet.getAddress();
     const settleAddrLocal = await settlementFacet.getAddress();
+    const vaultAddrLocal = await vaultFacet.getAddress();
+    const lifecycleAddrLocal = await lifecycleFacet.getAddress();
+    const metaAddrLocal = await metaFacet.getAddress();
 
     try {
       console.log("\n🔎 Facets (deployed locally):");
@@ -1170,6 +1423,9 @@ async function main() {
       console.log("  • liqFacet:", liqAddrLocal);
       console.log("  • viewFacet:", viewAddrLocal);
       console.log("  • settleFacet:", settleAddrLocal);
+      console.log("  • vaultFacet:", vaultAddrLocal);
+      console.log("  • lifecycleFacet:", lifecycleAddrLocal);
+      console.log("  • metaTradeFacet:", metaAddrLocal);
     } catch {}
 
     cutArg = [
@@ -1180,6 +1436,9 @@ async function main() {
       [liqAddrLocal, 0, liqSelectors],
       [viewAddrLocal, 0, viewSelectors],
       [settleAddrLocal, 0, settleSelectors],
+      [vaultAddrLocal, 0, vaultSelectors],
+      [lifecycleAddrLocal, 0, lifecycleSelectors],
+      [metaAddrLocal, 0, metaSelectors],
     ];
     initFacetAddr = initFacetAddrLocal;
   }
@@ -1297,6 +1556,25 @@ async function main() {
   console.log("  • OrderBook:", orderBook);
   console.log("  • Market ID:", marketId);
   logStep("parse_event", "success", { orderBook, marketId });
+
+  // Gasless wiring env (optional but recommended)
+  const sessionRegistryAddr =
+    readEnvAny([
+      "SESSION_REGISTRY_ADDRESS",
+      "SESSION_REGISTRY",
+      "GLOBAL_SESSION_REGISTRY",
+      "REGISTRY",
+    ]) ||
+    readEnvAny([
+      "NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS",
+      "NEXT_PUBLIC_SESSION_REGISTRY",
+    ]);
+
+  // Post-deploy verification: ensure every selector from the planned cut is live
+  try {
+    console.log("\n🧩 Verifying Diamond selectors vs planned cutArg...");
+    await ensureDiamondSelectors(orderBook, cutArg, nonceMgr);
+  } catch (_) {}
 
   // Configure OB and grant roles
   console.log("\n🔒 Configuring roles and trading params...");
@@ -1450,6 +1728,17 @@ async function main() {
     console.log("    - mined:", r2?.hash || tx2.hash);
     console.log("  ✅ Roles granted on CoreVault");
     logStep("grant_roles", "success");
+  }
+
+  // Gasless session setup: allowlist in registry + set sessionRegistry on diamond
+  if (sessionRegistryAddr) {
+    console.log("\n🛰️  Configuring gasless session registry wiring...");
+    await allowOrderbookOnRegistry(orderBook, sessionRegistryAddr, nonceMgr);
+    await ensureSessionRegistry(orderBook, sessionRegistryAddr, nonceMgr);
+  } else {
+    console.log(
+      "\n🛰️  Gasless registry wiring skipped (SESSION_REGISTRY_ADDRESS not set)"
+    );
   }
 
   // Post-deploy verification: ensure required placement selectors exist on the Diamond

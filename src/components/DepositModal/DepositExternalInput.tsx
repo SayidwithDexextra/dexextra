@@ -4,18 +4,36 @@ import { createPortal } from 'react-dom'
 import { env } from '@/lib/env'
 import { useMemo, useState } from 'react'
 
+type ExternalDepositToken = { symbol: string; icon: string; name?: string; chain?: string }
+
 interface DepositExternalInputProps {
   isOpen: boolean
   onClose: () => void
   onBack: () => void
-  selectedToken: { symbol: string; icon: string; name?: string; chain?: string }
+  selectedToken: ExternalDepositToken
+  /**
+   * Optional handler to trigger a contract/function-based deposit from the UI.
+   * When provided, the component will render a primary "Deposit" CTA.
+   */
+  onFunctionDeposit?: (token: ExternalDepositToken) => Promise<void>
+  /**
+   * Optional loading flag for the deposit button when managed by parent.
+   */
+  isFunctionDepositLoading?: boolean
+  /**
+   * Optional override for the CTA label.
+   */
+  functionDepositLabel?: string
 }
 
 export default function DepositExternalInput({
   isOpen,
   onClose,
   onBack,
-  selectedToken
+  selectedToken,
+  onFunctionDeposit,
+  isFunctionDepositLoading,
+  functionDepositLabel
 }: DepositExternalInputProps) {
   if (!isOpen) return null
 
@@ -30,7 +48,9 @@ export default function DepositExternalInput({
   }, [chain])
 
   const [copied, setCopied] = useState(false)
-  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(depositAddress || 'NOT_CONFIGURED')}`
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(depositAddress || 'NOT_CONFIGURED')}`
 
   const copyAddress = async () => {
     try {
@@ -42,12 +62,24 @@ export default function DepositExternalInput({
     } catch {}
   }
 
-  const confirmationsHint =
-    chain.toLowerCase() === 'polygon'
-      ? '20 confirmations required.'
-      : chain.toLowerCase() === 'arbitrum'
-      ? '10 confirmations required.'
-      : 'Confirmations required may vary.';
+  const handleFunctionDeposit = async () => {
+    if (!onFunctionDeposit || isSubmitting || isFunctionDepositLoading) return
+    setSubmitError(null)
+    setIsSubmitting(true)
+    try {
+      await onFunctionDeposit(selectedToken)
+    } catch (err: any) {
+      const message = err?.message || 'Failed to start deposit. Please try again.'
+      setSubmitError(message)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const hasFunctionHandler = Boolean(onFunctionDeposit)
+  const showFunctionCta = true
+  const functionDepositCtaLabel = functionDepositLabel || 'Deposit'
+  const functionCtaLoading = Boolean(isSubmitting || isFunctionDepositLoading)
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -122,7 +154,7 @@ export default function DepositExternalInput({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 space-y-4">
           {/* Unified Deposit Container */}
           <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
             {/* Address header + pill */}
@@ -169,20 +201,47 @@ export default function DepositExternalInput({
                     <img
                       src={qrSrc}
                       alt="Deposit QR Code"
-                      width={200}
-                      height={200}
+                      width={180}
+                      height={180}
                       className="rounded"
                     />
                   </div>
                 </div>
                 {/* Notice right */}
-                <div className="rounded-md border border-[#222222] bg-[#1A1A1A] px-4 py-6">
-                  <div className="text-xs text-red-400">
+                <div className="rounded-md border border-[#222222] bg-[#1A1A1A] px-4 py-4 flex flex-col gap-3 justify-center">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasFunctionHandler ? 'bg-green-400' : 'bg-[#404040]'}`} />
+                    <div className="text-xs text-white">Deposit {selectedToken?.symbol}</div>
+                  </div>
+                  <div className="text-[10px] text-[#9CA3AF]">
                     Send only {selectedToken?.symbol} on the {chain} network.
                   </div>
-                  {/* <div className="mt-3 text-[11px] text-[#9CA3AF]">
-                    $15.00 minimum deposit, {confirmationsHint}
-                  </div> */}
+                  {showFunctionCta && (
+                    <div className="flex flex-col items-center gap-2 text-center">
+                      <button
+                        onClick={handleFunctionDeposit}
+                        disabled={functionCtaLoading || !hasFunctionHandler}
+                        className="group relative inline-flex items-center justify-center gap-2 rounded-md border border-[#333333] bg-[#121212] px-5 py-2.5 text-[11px] font-medium text-white hover:bg-[#1A1A1A] hover:border-[#444444] transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
+                      >
+                        {functionCtaLoading ? (
+                          <>
+                            <div className="h-3 w-3 animate-spin rounded-full border border-white/30 border-t-white" />
+                            <span>Processing</span>
+                          </>
+                        ) : (
+                          <>
+                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasFunctionHandler ? 'bg-green-400' : 'bg-[#404040]'}`} />
+                            <span>{functionDepositCtaLabel}</span>
+                          </>
+                        )}
+                      </button>
+                      {!hasFunctionHandler && (
+                        <div className="text-[10px] text-[#606060]">
+                          Connect a wallet to enable deposits.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -199,17 +258,29 @@ export default function DepositExternalInput({
               </div>
             </div>
           )}
+          {submitError && (
+            <div className="group bg-[#1A0F0F] rounded-md border border-red-500/30 transition-all duration-200">
+              <div className="flex items-center gap-2 p-2.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                <div className="text-[11px] text-red-200">
+                  {submitError}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-[#1A1A1A] bg-[#0F0F0F]">
-          <button
-            onClick={onBack}
-            className="group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-[#333333] bg-[#1A1A1A] hover:bg-[#2A2A2A] hover:border-[#444444] transition-all duration-200"
-          >
-            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-            <span className="text-[11px] font-medium text-white">Back to Chain Selection</span>
-          </button>
+        <div className="px-6 py-3 border-t border-[#1A1A1A] bg-[#0F0F0F]">
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={onBack}
+              className="group relative w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border border-[#333333] bg-[#1A1A1A] hover:bg-[#2A2A2A] hover:border-[#444444] transition-all duration-200"
+            >
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+              <span className="text-[11px] font-medium text-white">Back to Chain Selection</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>,

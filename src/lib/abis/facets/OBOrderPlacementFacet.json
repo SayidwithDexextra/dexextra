@@ -383,6 +383,25 @@
       "anonymous": false,
       "inputs": [
         {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "price",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "isBuy",
+          "type": "bool"
+        }
+      ],
+      "name": "PriceLevelPruned",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
           "indexed": true,
           "internalType": "address",
           "name": "user",
@@ -482,6 +501,13 @@
         }
       ],
       "name": "cancelOrderBy",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "defragPriceLevels",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"

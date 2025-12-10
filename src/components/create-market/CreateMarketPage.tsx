@@ -202,13 +202,14 @@ export const CreateMarketPage = () => {
       const dataSource = marketData.dataSource || 'User Provided';
       const tags = marketData.tags || [];
       let sourceLocator = (marketData as any).sourceLocator || null;
+      const skipMetricWorker = Boolean((marketData as any).skipMetricWorker);
       // Attempt to prefill startPrice using background worker (non-blocking with timeout)
       try {
         const workerUrl =
           (process.env as any).NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
           (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
           '';
-        if (workerUrl && typeof metricUrl === 'string' && metricUrl.trim()) {
+        if (!skipMetricWorker && workerUrl && typeof metricUrl === 'string' && metricUrl.trim()) {
           const ai = await runMetricAIWithPolling(
             {
               metric: String(symbol || '').toUpperCase(),
@@ -230,6 +231,8 @@ export const CreateMarketPage = () => {
               }
             }
           }
+        } else if (skipMetricWorker) {
+          try { console.info('[create-market][debug] Skipping metric worker due to debug flag'); } catch {}
         }
       } catch {
         // Soft-fail; continue without AI prefill

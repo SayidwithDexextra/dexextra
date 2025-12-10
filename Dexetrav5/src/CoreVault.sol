@@ -113,6 +113,16 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     // Track positions that are currently under liquidation control
     mapping(address => mapping(bytes32 => bool)) public isUnderLiquidationPosition;
 
+    // Gasless top-up EIP712 support
+    mapping(address => uint256) public topUpNonces;
+    bytes32 private constant EIP712_DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 private constant TOPUP_TYPEHASH =
+        keccak256("TopUp(address user,bytes32 marketId,uint256 amount,uint256 nonce)");
+    bytes32 private constant NAME_HASH = keccak256("CoreVault");
+    bytes32 private constant VERSION_HASH = keccak256("1");
+    bytes32 private immutable DOMAIN_SEPARATOR;
+
     // Anchor price and timestamp captured when a position first enters liquidation control.
     // Used to clamp socialized loss so profitable users are not overcharged due to delays in liquidity.
     mapping(address => mapping(bytes32 => uint256)) internal liquidationAnchorPrice;
@@ -270,6 +280,16 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
             revert CollateralDecimalsMustBe6();
         }
         if (decs != 6) revert CollateralDecimalsMustBe6();
+
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                EIP712_DOMAIN_TYPEHASH,
+                NAME_HASH,
+                VERSION_HASH,
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     // ============ Collateral Management ============
@@ -988,13 +1008,37 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
      * @param amount Additional margin amount to lock (in 6 decimals)
      */
     function topUpPositionMargin(bytes32 marketId, uint256 amount) external nonReentrant whenNotPaused {
+        _topUp(msg.sender, marketId, amount);
+    }
+
+    /**
+     * @dev Gasless top-up using EIP712 signature. Relayer pays gas; user signs.
+     */
+    function metaTopUpPositionMargin(
+        address user,
+        bytes32 marketId,
+        uint256 amount,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant whenNotPaused {
+        uint256 nonce = topUpNonces[user];
+        bytes32 structHash = keccak256(abi.encode(TOPUP_TYPEHASH, user, marketId, amount, nonce));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+        address signer = ecrecover(digest, v, r, s);
+        if (signer != user) revert InvalidAddress();
+
+        topUpNonces[user] = nonce + 1;
+        _topUp(user, marketId, amount);
+    }
+
+    function _topUp(address user, bytes32 marketId, uint256 amount) internal {
         if (amount == 0) revert InvalidAmount();
         if (marketToOrderBook[marketId] == address(0)) revert MarketNotFound();
-        
-        uint256 available = getAvailableCollateral(msg.sender);
+        uint256 available = getAvailableCollateral(user);
         if (available < amount) revert InsufficientAvailable();
-        _increasePositionMargin(msg.sender, marketId, amount);
-        emit MarginToppedUp(msg.sender, marketId, amount);
+        _increasePositionMargin(user, marketId, amount);
+        emit MarginToppedUp(user, marketId, amount);
     }
 
     /**
@@ -1536,7 +1580,7 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
         address obAddr = marketToOrderBook[marketId];
         if (obAddr == address(0)) return 0;
         // Attempt to get depth; surface errors instead of swallowing to expose ADL issues
-        (uint256[] memory bidPrices, uint256[] memory bidAmounts, uint256[] memory askPrices, uint256[] memory askAmounts) =
+        (, uint256[] memory bidAmounts, , uint256[] memory askAmounts) =
             IOBPricingFacet(obAddr).getOrderBookDepth(mmrLiquidityDepthLevels);
 
         uint256 sumBids;

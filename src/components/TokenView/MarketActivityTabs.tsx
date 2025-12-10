@@ -14,6 +14,7 @@ import { usePortfolioData } from '@/hooks/usePortfolioData';
 import type { Address } from 'viem';
 import { signAndSubmitGasless, createGaslessSession, submitSessionTrade } from '@/lib/gasless';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
+import { gaslessTopUpPosition } from '@/lib/gaslessTopup';
 import { parseUnits } from 'viem';
 
 // Public USDC icon (fallback to Circle's official)
@@ -249,58 +250,31 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     
     try {
       console.log(`Topping up position ${topUpPositionId} for ${topUpSymbol} with amount ${topUpAmount}`);
-      // Resolve signer from injected provider
-      let signer: ethers.Signer | null = null;
-      if (typeof window !== 'undefined' && (window as any).ethereum) {
-        signer = await ensureHyperliquidWallet();
-      }
-      if (!signer) {
-        throw new Error('No signer available. Please connect your wallet.');
-      }
-
-      // Initialize contracts using shared config (includes CoreVault at configured address)
-      const contracts = await initializeContracts({ providerOrSigner: signer });
-
-      // Use actual marketId from position id (already bytes32 hex)
       const marketId = topUpPositionId as string;
-      const amount6 = ethers.parseUnits(topUpAmount, 6);
 
-      // Optional: liquidation price before
-      try {
-        console.log(`📡 [RPC] Checking liquidation price before top-up`);
-        let startTimeLiq = Date.now();
-        const [liqBefore] = await contracts.vault.getLiquidationPrice(walletAddress, marketId);
-        const durationLiq = Date.now() - startTimeLiq;
-        console.log(`✅ [RPC] Liquidation price check completed in ${durationLiq}ms`, { liqBefore: String(liqBefore) });
-      } catch (error) {
-        console.warn(`⚠️ [RPC] Liquidation price check failed:`, error);
+      if (GASLESS) {
+        const res = await gaslessTopUpPosition({
+          vault: CONTRACT_ADDRESSES.CORE_VAULT,
+          trader: walletAddress,
+          marketId,
+          amount: topUpAmount,
+        });
+        if (!res.success) throw new Error(res.error || 'gasless top-up failed');
+        console.log('Gasless top-up tx:', res.txHash);
+      } else {
+        // Fallback: direct signer flow
+        let signer: ethers.Signer | null = null;
+        if (typeof window !== 'undefined' && (window as any).ethereum) {
+          signer = await ensureHyperliquidWallet();
+        }
+        if (!signer) {
+          throw new Error('No signer available. Please connect your wallet.');
+        }
+        const contracts = await initializeContracts({ providerOrSigner: signer });
+        const amount6 = ethers.parseUnits(topUpAmount, 6);
+        const tx = await contracts.vault.topUpPositionMargin(marketId, amount6);
+        await tx.wait();
       }
-
-      console.log(`📡 [RPC] Submitting position top-up transaction`);
-      let startTimeTx = Date.now();
-      const tx = await contracts.vault.topUpPositionMargin(marketId, amount6);
-      const durationTx = Date.now() - startTimeTx;
-      console.log(`✅ [RPC] Position top-up transaction submitted in ${durationTx}ms`, { txHash: tx.hash });
-
-      // Optional: liquidation price after
-      try {
-        console.log(`📡 [RPC] Checking liquidation price after top-up`);
-        let startTimeLiqAfter = Date.now();
-        const [liqAfter] = await contracts.vault.getLiquidationPrice(walletAddress, marketId);
-        const durationLiqAfter = Date.now() - startTimeLiqAfter;
-        console.log(`✅ [RPC] Post top-up liquidation price check completed in ${durationLiqAfter}ms`, { liqAfter: String(liqAfter) });
-      } catch (error) {
-        console.warn(`⚠️ [RPC] Post top-up liquidation price check failed:`, error);
-      }
-      console.log('Transaction sent, waiting for confirmation...');
-      await tx.wait();
-      console.log('Top-up successful!');
-
-      // Optional: liquidation price after
-      try {
-        const [liqAfter] = await contracts.vault.getLiquidationPrice(walletAddress, marketId);
-        console.log('Liq after:', String(liqAfter));
-      } catch {}
 
       setTopUpAmount('');
       setTopUpPositionId(null);

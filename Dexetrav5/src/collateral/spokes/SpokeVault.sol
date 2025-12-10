@@ -23,6 +23,7 @@ contract SpokeVault is ISpokeVault, AccessControl, ReentrancyGuard {
 
 	event BridgeInboxUpdated(address indexed inbox);
 	event AllowedTokenUpdated(address indexed token, bool allowed);
+	event Deposited(address indexed payer, address indexed token, uint256 amount);
 
 	constructor(address[] memory _initialAllowedTokens, address _admin, address _bridgeInbox) {
 		require(_admin != address(0), "params");
@@ -61,6 +62,17 @@ contract SpokeVault is ISpokeVault, AccessControl, ReentrancyGuard {
 		require(isAllowedToken[token], "not allowed");
 		isAllowedToken[token] = false;
 		emit AllowedTokenUpdated(token, false);
+	}
+
+	/**
+	 * @notice Active deposit path (pulls tokens via transferFrom)
+	 * @dev Requires prior ERC20 approval from the caller to this vault.
+	 */
+	function deposit(address token, uint256 amount) external nonReentrant {
+		require(isAllowedToken[token], "token not allowed");
+		require(amount > 0, "amount");
+		require(IERC20(token).transferFrom(msg.sender, address(this), amount), "transferFrom failed");
+		emit Deposited(msg.sender, token, amount);
 	}
 
 	function releaseToUser(

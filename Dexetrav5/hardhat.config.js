@@ -1,15 +1,19 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("@nomicfoundation/hardhat-verify");
-require("dotenv").config(); // Load main .env file
+const path = require("path");
+// Load envs: .env.local (repo root) then .env
+require("dotenv").config({ path: path.resolve(__dirname, "../.env.local") });
+require("dotenv").config();
 // require("dotenv").config({ path: ".env.polygon" }); // Load specific network configs if needed
 
 // Define accounts in a centralized place
 const accounts = [
   process.env.PRIVATE_KEY_DEPLOYER,
-  process.env.PRIVATE_KEY_USER1,
-  process.env.PRIVATE_KEY_USER2,
-  process.env.PRIVATE_KEY_USER3,
-  process.env.PRIVATE_KEY_USER4, // Ensuring 5 signers are available for deploy script
+  // process.env.PRIVATE_KEY_USER1,
+  // process.env.PRIVATE_KEY_USER2,
+  // process.env.PRIVATE_KEY_USER3,
+  // process.env.PRIVATE_KEY_USER4, // Ensuring 5 signers are available for deploy script
+  // process.env.ADMIN_PRIVATE_KEY, // fallback admin key
 ].filter(Boolean);
 
 // Fallback for single private key if specific user keys aren't set
@@ -18,6 +22,8 @@ const networkAccounts =
     ? accounts
     : process.env.PRIVATE_KEY
     ? [process.env.PRIVATE_KEY]
+    : process.env.ADMIN_PRIVATE_KEY
+    ? [process.env.ADMIN_PRIVATE_KEY]
     : [];
 
 const config = {

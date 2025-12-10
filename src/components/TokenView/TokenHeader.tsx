@@ -19,6 +19,15 @@ const formatNumberWithCommas = (value: number): string => {
   });
 };
 
+// Helper: format price with commas and 2 decimals for display
+const formatPriceWithCommas = (value: number): string => {
+  if (!Number.isFinite(value)) return '0.00';
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+};
+
 // Helper: format large numbers into readable strings
 const formatLargeNumber = (value: number): string => {
   if (value >= 1e9) {
@@ -654,7 +663,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                       />
                     ) : (
                       <span className="text-[13px] font-bold text-white">
-                        ${formatNumberWithCommas(enhancedTokenData.markPrice)}
+                        ${formatPriceWithCommas(enhancedTokenData.markPrice)}
                       </span>
                     )}
                     <span className={`text-[10px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
@@ -721,7 +730,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 />
               ) : (
                 <span className="text-base font-bold text-white font-mono">
-                  {enhancedTokenData.markPrice.toFixed(2)}
+                  ${formatPriceWithCommas(enhancedTokenData.markPrice)}
                 </span>
               )}
               <span className={`text-[11px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>

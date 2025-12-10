@@ -11,6 +11,7 @@ import OBTradeExecutionFacetArtifact from '@/lib/abis/facets/OBTradeExecutionFac
 import OBLiquidationFacetArtifact from '@/lib/abis/facets/OBLiquidationFacet.json';
 import OBViewFacetArtifact from '@/lib/abis/facets/OBViewFacet.json';
 import OBSettlementFacetArtifact from '@/lib/abis/facets/OBSettlementFacet.json';
+import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 
@@ -115,6 +116,7 @@ function loadFacetAbi(contractName: string): any[] {
     case 'OBLiquidationFacet': return (OBLiquidationFacetArtifact as any)?.abi || [];
     case 'OBViewFacet': return (OBViewFacetArtifact as any)?.abi || [];
     case 'OBSettlementFacet': return (OBSettlementFacetArtifact as any)?.abi || [];
+    case 'OrderBookVaultAdminFacet': return (OrderBookVaultAdminFacetArtifact as any)?.abi || [];
     case 'MarketLifecycleFacet': return (MarketLifecycleFacetArtifact as any)?.abi || [];
     case 'MetaTradeFacet': return (MetaTradeFacetArtifact as any)?.abi || [];
     default: return [];
@@ -136,10 +138,15 @@ export async function GET() {
     const liqFacet = process.env.OB_LIQUIDATION_FACET || process.env.NEXT_PUBLIC_OB_LIQUIDATION_FACET;
     const viewFacet = process.env.OB_VIEW_FACET || process.env.NEXT_PUBLIC_OB_VIEW_FACET;
     const settleFacet = process.env.OB_SETTLEMENT_FACET || process.env.NEXT_PUBLIC_OB_SETTLEMENT_FACET;
+    const vaultFacet =
+      process.env.ORDERBOOK_VALUT_FACET ||
+      process.env.NEXT_PUBLIC_ORDERBOOK_VALUT_FACET ||
+      process.env.ORDERBOOK_VAULT_FACET ||
+      process.env.NEXT_PUBLIC_ORDERBOOK_VAULT_FACET;
     const lifecycleFacet = process.env.MARKET_LIFECYCLE_FACET || process.env.NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
     const metaTradeFacet = process.env.META_TRADE_FACET || process.env.NEXT_PUBLIC_META_TRADE_FACET;
 
-    if (!initFacet || !adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !lifecycleFacet || !metaTradeFacet) {
+    if (!initFacet || !adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !vaultFacet || !lifecycleFacet || !metaTradeFacet) {
       logStep('validate_env', 'error', {
         missing: {
           initFacet: !initFacet,
@@ -150,6 +157,7 @@ export async function GET() {
           liqFacet: !liqFacet,
           viewFacet: !viewFacet,
           settleFacet: !settleFacet,
+          vaultFacet: !vaultFacet,
           lifecycleFacet: !lifecycleFacet,
           metaTradeFacet: !metaTradeFacet,
         }
@@ -166,6 +174,7 @@ export async function GET() {
     const liqAbi = loadFacetAbi('OBLiquidationFacet');
     const viewAbi = loadFacetAbi('OBViewFacet');
     const settleAbi = loadFacetAbi('OBSettlementFacet');
+    const vaultAbi = loadFacetAbi('OrderBookVaultAdminFacet');
     const lifecycleAbi = loadFacetAbi('MarketLifecycleFacet');
     const metaAbi = loadFacetAbi('MetaTradeFacet');
 
@@ -177,6 +186,7 @@ export async function GET() {
       { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(liqAbi) },
       { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(viewAbi) },
       { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(settleAbi) },
+      { facetAddress: vaultFacet, action: 0, functionSelectors: selectorsFromAbi(vaultAbi) },
       { facetAddress: lifecycleFacet, action: 0, functionSelectors: selectorsFromAbi(lifecycleAbi) },
       { facetAddress: metaTradeFacet, action: 0, functionSelectors: selectorsFromAbi(metaAbi) },
     ];

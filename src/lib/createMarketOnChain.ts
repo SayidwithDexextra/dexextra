@@ -11,6 +11,7 @@ import {
 } from '@/lib/contracts';
 import FuturesMarketFactoryGenerated from '@/lib/abis/FuturesMarketFactory.json';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
+import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
 
 type ProgressEvent = {
   step: string;
@@ -67,6 +68,8 @@ export async function createMarketOnChain(params: {
 
   const { symbol, metricUrl, startPrice, dataSource = 'User Provided', tags = [], feeRecipient, onProgress, pipelineId } = params;
   if (!symbol || !metricUrl) throw new Error('Symbol and metricUrl are required');
+  const symbolNormalized = String(symbol).trim().toUpperCase();
+  const metricUrlNormalized = String(metricUrl).trim();
 
   // Build cutArg and initFacet from server (source of truth, compiled artifacts)
   let initFacet: string | null = null;
@@ -99,6 +102,9 @@ export async function createMarketOnChain(params: {
     const viewAddr = (process.env as any).NEXT_PUBLIC_OB_VIEW_FACET;
     const settleAddr = (process.env as any).NEXT_PUBLIC_OB_SETTLEMENT_FACET;
     const metaAddr = (process.env as any).NEXT_PUBLIC_META_TRADE_FACET;
+    const vaultAddr =
+      (process.env as any).NEXT_PUBLIC_ORDERBOOK_VALUT_FACET ||
+      (process.env as any).NEXT_PUBLIC_ORDERBOOK_VAULT_FACET;
     initFacet = (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET || null;
     const adminSelectors = selectorsFromAbi(OBAdminFacetABI as any[]);
     const pricingSelectors = selectorsFromAbi(OBPricingFacetABI as any[]);
@@ -107,6 +113,7 @@ export async function createMarketOnChain(params: {
     const liqSelectors = selectorsFromAbi(OBLiquidationFacetABI as any[]);
     const viewSelectors = selectorsFromAbi(OBViewFacetABI as any[]);
     const settleSelectors = selectorsFromAbi(OBSettlementFacetABI as any[]);
+    const vaultSelectors = selectorsFromAbi(((OrderBookVaultAdminFacetArtifact as any)?.abi || []) as any[]);
     const lifecycleAddr = (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
     const lifecycleSelectors = selectorsFromAbi(MarketLifecycleFacetABI as any[]);
     const metaSelectors = selectorsFromAbi(((MetaTradeFacetArtifact as any)?.abi || []) as any[]);
@@ -118,6 +125,7 @@ export async function createMarketOnChain(params: {
       [liqAddr, 0, liqSelectors],
       [viewAddr, 0, viewSelectors],
       [settleAddr, 0, settleSelectors],
+      [vaultAddr, 0, vaultSelectors],
       [lifecycleAddr, 0, lifecycleSelectors],
       [metaAddr, 0, metaSelectors],
     ].filter(([addr]) => typeof addr === 'string' && ethers.isAddress(String(addr))) as any;
@@ -150,6 +158,20 @@ export async function createMarketOnChain(params: {
   const browserProvider = new ethers.BrowserProvider((window as any).ethereum);
   const signer = await browserProvider.getSigner();
   const signerAddress = await signer.getAddress();
+  try {
+    const net = await browserProvider.getNetwork();
+    const rpcChainIdHex = await (browserProvider as any).send?.('eth_chainId', []);
+    const rpcChainIdNum = rpcChainIdHex ? Number(rpcChainIdHex) : undefined;
+    // eslint-disable-next-line no-console
+    console.log('[SIGNER_CHECK][client]', { signerAddress, chainId: Number(net.chainId), rpcChainIdHex, rpcChainIdNum });
+  } catch {}
+  // Client-side guard: ensure the signer matches the intended creator (server expects creatorWalletAddress)
+  if (feeRecipient && ethers.isAddress(feeRecipient)) {
+    const expected = feeRecipient.toLowerCase();
+    if (signerAddress.toLowerCase() !== expected) {
+      throw new Error(`Connected wallet ${signerAddress} does not match expected creator ${feeRecipient}`);
+    }
+  }
   const network = await browserProvider.getNetwork();
 
   // Resolve factory
@@ -173,6 +195,12 @@ export async function createMarketOnChain(params: {
   const startPrice6 = ethers.parseUnits(String(startPrice ?? '1'), 6);
   const settlementTs = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
   const owner = feeRecipient && ethers.isAddress(feeRecipient) ? feeRecipient : signerAddress;
+
+  // Prevent zero/invalid start price before signing
+  const startPriceNum = Number(startPrice);
+  if (!Number.isFinite(startPriceNum) || startPriceNum <= 0) {
+    throw new Error('Start price must be greater than zero');
+  }
 
   if (gaslessEnabled) {
     // Gasless path: sign typed data and submit via backend relayer
@@ -223,8 +251,8 @@ export async function createMarketOnChain(params: {
       ],
     } as const;
     const message = {
-      marketSymbol: symbol,
-      metricUrl,
+      marketSymbol: symbolNormalized,
+      metricUrl: metricUrlNormalized,
       settlementDate: settlementTs,
       startPrice: startPrice6.toString(),
       dataSource,
@@ -256,6 +284,17 @@ export async function createMarketOnChain(params: {
       console.log('[SIGNCHECK][client] message', message);
     } catch {}
     const signature = await (signer as any).signTypedData(domain as any, types as any, message as any);
+    // Local verification to ensure the signature matches the connected wallet
+    try {
+      const recoveredLocal = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
+      if (recoveredLocal.toLowerCase() !== signerAddress.toLowerCase()) {
+      // eslint-disable-next-line no-console
+      console.warn('[LOCAL_SIG_MISMATCH]', { recoveredLocal, signerAddress, domain, message, signature });
+      throw new Error(`Signature recovered ${recoveredLocal} but expected ${signerAddress}`);
+      }
+    } catch (err: any) {
+      throw new Error(`Signature self-check failed: ${err?.message || String(err)}`);
+    }
     try {
       const recovered = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
       // eslint-disable-next-line no-console
@@ -269,9 +308,10 @@ export async function createMarketOnChain(params: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        symbol,
-        metricUrl,
+        symbol: symbolNormalized,
+        metricUrl: metricUrlNormalized,
         startPrice: String(startPrice),
+        startPrice6: startPrice6.toString(), // send scaled value to keep hashing aligned
         dataSource,
         tags,
         creatorWalletAddress: signerAddress,

@@ -1,0 +1,161 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+
+interface SpokeDepositModalProps {
+  isOpen: boolean
+  onClose: () => void
+  onSubmit: (amount: string) => Promise<void> | void
+  selectedToken: { symbol: string; icon: string }
+  defaultAmount?: string
+  isSubmitting?: boolean
+  errorMessage?: string | null
+}
+
+export default function SpokeDepositModal({
+  isOpen,
+  onClose,
+  onSubmit,
+  selectedToken,
+  defaultAmount = '1',
+  isSubmitting = false,
+  errorMessage
+}: SpokeDepositModalProps) {
+  const [amount, setAmount] = useState(defaultAmount)
+
+  useEffect(() => {
+    if (isOpen) {
+      setAmount(defaultAmount)
+      document.body.style.overflow = 'hidden'
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isOpen, defaultAmount])
+
+  if (!isOpen) return null
+
+  const handleSubmit = async () => {
+    await onSubmit(amount)
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300" />
+
+      <div
+        className="group relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] transition-all duration-200"
+        style={{
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)',
+          backdropFilter: 'blur(20px)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-[#1A1A1A]">
+          <div className="flex items-center gap-3 min-w-0 flex-1 justify-center">
+            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+            <div className="relative group">
+              <div
+                className="w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-200 group-hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(96, 165, 250, 0.9) 0%, rgba(6, 182, 212, 0.9) 50%, rgba(139, 92, 246, 0.9) 100%)',
+                  boxShadow: '0 8px 32px rgba(96, 165, 250, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
+                }}
+              >
+                <img
+                  src={selectedToken.icon}
+                  alt={selectedToken.symbol}
+                  className="w-6 h-6 rounded-full"
+                />
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="group flex items-center justify-center w-8 h-8 rounded-md transition-all duration-200 border bg-red-500/10 border-red-500/20 hover:bg-red-500/15 hover:border-red-500/30"
+            aria-label="Close"
+          >
+            <svg className="w-4 h-4 text-red-400 group-hover:text-red-300 transition-colors duration-200" viewBox="0 0 24 24" fill="none">
+              <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Title */}
+        <div className="px-6 pt-3 pb-1 text-center space-y-1">
+          <h2 className="text-lg font-semibold text-white">Deposit {selectedToken.symbol} (Arbitrum)</h2>
+          <p className="text-[11px] text-[#808080]">Enter the amount to deposit to the spoke vault.</p>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 pt-4 pb-2 space-y-3">
+          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+            <div className="flex items-center justify-between p-3 border-b border-[#1A1A1A]">
+              <div className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                Amount
+              </div>
+              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-2 py-0.5 rounded">
+                {selectedToken.symbol}
+              </div>
+            </div>
+            <div className="p-3">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-full bg-transparent text-white text-lg font-semibold placeholder:text-[#404040] outline-none"
+              />
+              <div className="mt-2 text-[10px] text-[#606060]">
+                Funds deposit directly to the Arbitrum spoke vault.
+              </div>
+            </div>
+          </div>
+
+          {errorMessage && (
+            <div className="group bg-[#1A0F0F] rounded-md border border-red-500/30 transition-all duration-200">
+              <div className="flex items-center gap-2 p-2.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                <div className="text-[11px] text-red-200">
+                  {errorMessage}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 pb-5 pt-2">
+          <button
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[#333333] bg-[#1A1A1A] hover:bg-[#2A2A2A] hover:border-[#444444] text-[12px] font-medium text-white transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? (
+              <>
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border border-white/30 border-t-white" />
+                <span>Depositing</span>
+              </>
+            ) : (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                <span>Deposit</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+
+
+

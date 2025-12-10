@@ -16,6 +16,7 @@ import {
 import { MarketLifecycleFacetABI } from '@/lib/contracts';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
+import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
 import { getPusherServer } from '@/lib/pusher-server';
 
 function shortAddr(a: any) {
@@ -243,6 +244,38 @@ function extractError(e: any) {
   }
 }
 
+function decodeRevert(iface: ethers.Interface, e: any) {
+  try {
+    const data =
+      (typeof e?.data === 'string' && e.data) ||
+      (typeof e?.error?.data === 'string' && e.error.data) ||
+      (typeof e?.info?.error?.data === 'string' && e.info.error.data) ||
+      null;
+    if (data && data.startsWith('0x')) {
+      try {
+        const parsed = iface.parseError(data);
+        return {
+          name: parsed?.name || null,
+          args: parsed?.args ? Array.from(parsed.args) : null,
+          data,
+        };
+      } catch {
+        return { name: null, args: null, data };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+const ERROR_SELECTORS: Record<string, string> = {
+  '0x5cd5d233': 'BadSignature',
+  '0x7fb0cdec': 'MetaExpired',
+  '0x4bd574ec': 'BadNonce',
+  '0x6dfe7469': 'MarketCreationRestricted',
+  '0xd92e233d': 'ZeroAddress',
+  '0x1f8f95a0': 'InvalidOraclePrice',
+};
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -266,6 +299,10 @@ export async function POST(req: Request) {
     const symbol = rawSymbol.toUpperCase();
     const metricUrl = String(body?.metricUrl || '').trim();
     const startPrice = String(body?.startPrice || '1');
+    const startPrice6Input = body?.startPrice6;
+    const startPrice6 = (startPrice6Input !== undefined && startPrice6Input !== null)
+      ? BigInt(String(startPrice6Input))
+      : ethers.parseUnits(startPrice, 6);
     const dataSource = String(body?.dataSource || 'User Provided');
     const tags = Array.isArray(body?.tags) ? body.tags.slice(0, 10).map((t: any) => String(t)) : [];
     const creatorWalletAddress = (body?.creatorWalletAddress && ethers.isAddress(body.creatorWalletAddress)) ? body.creatorWalletAddress : null;
@@ -279,6 +316,14 @@ export async function POST(req: Request) {
     logS('validate_input', 'start');
     if (!symbol) return NextResponse.json({ error: 'Symbol is required' }, { status: 400 });
     if (!metricUrl) return NextResponse.json({ error: 'Metric URL is required' }, { status: 400 });
+    try {
+      const startPriceBn = BigInt(startPrice6);
+      if (startPriceBn <= 0n) {
+        return NextResponse.json({ error: 'startPrice must be greater than zero (6 decimals)' }, { status: 400 });
+      }
+    } catch {
+      return NextResponse.json({ error: 'Invalid startPrice' }, { status: 400 });
+    }
     logS('validate_input', 'success');
 
     // Env configuration
@@ -294,6 +339,11 @@ export async function POST(req: Request) {
     const liqFacet = process.env.OB_LIQUIDATION_FACET || (process.env as any).NEXT_PUBLIC_OB_LIQUIDATION_FACET;
     const viewFacet = process.env.OB_VIEW_FACET || (process.env as any).NEXT_PUBLIC_OB_VIEW_FACET;
     const settleFacet = process.env.OB_SETTLEMENT_FACET || (process.env as any).NEXT_PUBLIC_OB_SETTLEMENT_FACET;
+    const vaultFacet =
+      process.env.ORDERBOOK_VALUT_FACET ||
+      process.env.ORDERBOOK_VAULT_FACET ||
+      (process.env as any).NEXT_PUBLIC_ORDERBOOK_VALUT_FACET ||
+      (process.env as any).NEXT_PUBLIC_ORDERBOOK_VAULT_FACET;
     const lifecycleFacet = process.env.MARKET_LIFECYCLE_FACET || (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
     const metaTradeFacet = process.env.META_TRADE_FACET || (process.env as any).NEXT_PUBLIC_META_TRADE_FACET;
     const coreVaultAddress = process.env.CORE_VAULT_ADDRESS || (process.env as any).NEXT_PUBLIC_CORE_VAULT_ADDRESS;
@@ -302,7 +352,7 @@ export async function POST(req: Request) {
     if (!pk) return NextResponse.json({ error: 'ADMIN_PRIVATE_KEY not configured' }, { status: 400 });
     if (!factoryAddress || !ethers.isAddress(factoryAddress)) return NextResponse.json({ error: 'Factory address not configured' }, { status: 400 });
     if (!initFacet || !ethers.isAddress(initFacet)) return NextResponse.json({ error: 'Init facet address not configured' }, { status: 400 });
-    if (!adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !lifecycleFacet || !metaTradeFacet) {
+    if (!adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !vaultFacet || !lifecycleFacet || !metaTradeFacet) {
       return NextResponse.json({ error: 'One or more facet addresses are missing' }, { status: 400 });
     }
     if (!coreVaultAddress || !ethers.isAddress(coreVaultAddress)) {
@@ -315,12 +365,14 @@ export async function POST(req: Request) {
     const nonceMgr = await createNonceManager(wallet);
     const ownerAddress = await wallet.getAddress();
     try {
-      const [net, bal] = await Promise.all([
+      const [net, bal, rpcChainIdHex] = await Promise.all([
         provider.getNetwork(),
         provider.getBalance(ownerAddress),
+        provider.send('eth_chainId', []),
       ]);
+      const rpcChainIdNum = rpcChainIdHex ? Number(rpcChainIdHex) : undefined;
       const balanceEth = ethers.formatEther(bal);
-      logS('wallet_ready', 'success', { ownerAddress, chainId: Number(net.chainId), balanceWei: bal.toString(), balanceEth });
+      logS('wallet_ready', 'success', { ownerAddress, chainId: Number(net.chainId), rpcChainIdHex, rpcChainIdNum, balanceWei: bal.toString(), balanceEth });
     } catch {
       logS('wallet_ready', 'success', { ownerAddress });
     }
@@ -333,6 +385,7 @@ export async function POST(req: Request) {
     const liqAbi = loadFacetAbi('OBLiquidationFacet', OBLiquidationFacetABI as any[]);
     const viewAbi = loadFacetAbi('OBViewFacet', OBViewFacetABI as any[]);
     const settleAbi = loadFacetAbi('OBSettlementFacet', OBSettlementFacetABI as any[]);
+    const vaultAbi = loadFacetAbi('OrderBookVaultAdminFacet', (OrderBookVaultAdminFacetArtifact as any)?.abi || []);
     const lifecycleAbi = loadFacetAbi('MarketLifecycleFacet', (MarketLifecycleFacetArtifact as any)?.abi || (MarketLifecycleFacetABI as any[]));
     const metaFacetAbi = (MetaTradeFacetArtifact as any)?.abi || [];
 
@@ -344,6 +397,7 @@ export async function POST(req: Request) {
       { facetAddress: liqFacet, action: 0, functionSelectors: selectorsFromAbi(liqAbi) },
       { facetAddress: viewFacet, action: 0, functionSelectors: selectorsFromAbi(viewAbi) },
       { facetAddress: settleFacet, action: 0, functionSelectors: selectorsFromAbi(settleAbi) },
+      { facetAddress: vaultFacet, action: 0, functionSelectors: selectorsFromAbi(vaultAbi) },
       { facetAddress: lifecycleFacet, action: 0, functionSelectors: selectorsFromAbi(lifecycleAbi) },
       { facetAddress: metaTradeFacet, action: 0, functionSelectors: selectorsFromAbi(metaFacetAbi) },
     ];
@@ -381,9 +435,7 @@ export async function POST(req: Request) {
     ];
     const factoryAbi = Array.isArray(baseFactoryAbi) ? [...baseFactoryAbi, ...(gaslessEnabled ? metaAbi : [])] : (gaslessEnabled ? metaAbi : baseFactoryAbi);
     const factory = new ethers.Contract(factoryAddress, factoryAbi, wallet);
-
-    // Params
-    const startPrice6 = ethers.parseUnits(startPrice, 6);
+    const factoryIface = new ethers.Interface(factoryAbi);
     const feeRecipient = (body?.feeRecipient && ethers.isAddress(body.feeRecipient)) ? body.feeRecipient : (creatorWalletAddress || ownerAddress);
 
     // Preflight bytecode checks
@@ -429,6 +481,10 @@ export async function POST(req: Request) {
       // hash tags
       const tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
       // hash cut
+      const TYPEHASH_META_CREATE = ethers.id(
+        'MetaCreate(string marketSymbol,string metricUrl,uint256 settlementDate,uint256 startPrice,string dataSource,bytes32 tagsHash,address diamondOwner,bytes32 cutHash,address initFacet,address creator,uint256 nonce,uint256 deadline)'
+      );
+
       const perCutHashes: string[] = [];
       for (const c of cutArg) {
         const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((c?.[2] || []).length).fill('bytes4'), c?.[2] || []));
@@ -466,6 +522,35 @@ export async function POST(req: Request) {
         nonce: nonce.toString(),
         deadline: deadline.toString(),
       };
+      // Use the exact message values for the contract call to avoid any drift
+      const callSymbol = message.marketSymbol;
+      const callMetricUrl = message.metricUrl;
+      const callSettlementDate = Number(message.settlementDate);
+      const callStartPrice = BigInt(message.startPrice);
+      const callTags = tags;
+      try {
+        const debug = {
+          factory: factoryAddress,
+          chainId: Number(net.chainId),
+          domain,
+          message,
+        startPriceRaw: startPrice,
+        startPrice6: startPrice6.toString(),
+          creator,
+          diamondOwner: ownerAddress,
+          cutArgPreview: Array.isArray(cutArg)
+            ? cutArg.map((c: any) => ({
+              facetAddress: c?.[0],
+              action: c?.[1],
+              selectors: Array.isArray(c?.[2]) ? c[2].length : 0,
+            }))
+            : null,
+          initFacet,
+          tags,
+        };
+        // eslint-disable-next-line no-console
+        console.log('[META_DEBUG]', JSON.stringify(debug, null, 2));
+      } catch {}
       try {
         // eslint-disable-next-line no-console
         console.log('[SIGNCHECK][server] creator', creator);
@@ -479,6 +564,56 @@ export async function POST(req: Request) {
         console.log('[SIGNCHECK][server] hashes', { tagsHash, cutHash });
         // eslint-disable-next-line no-console
         console.log('[SIGNCHECK][server] message', message);
+        // eslint-disable-next-line no-console
+        console.log('[SIGNCHECK][server] signature', signature);
+        // Extra digest + signature dump for debugging BadSignature
+        try {
+          const structHash = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(
+              ['bytes32','bytes32','bytes32','uint256','uint256','bytes32','bytes32','bytes32','address','address','uint256','uint256'],
+              [
+                TYPEHASH_META_CREATE,
+                ethers.keccak256(ethers.toUtf8Bytes(symbol)),
+                ethers.keccak256(ethers.toUtf8Bytes(metricUrl)),
+                settlementTs,
+                BigInt(startPrice6),
+                ethers.keccak256(ethers.toUtf8Bytes(dataSource)),
+                tagsHash,
+                cutHash,
+                initFacet,
+                creator,
+                BigInt(message.nonce),
+                BigInt(message.deadline),
+              ]
+            )
+          );
+          const digest = ethers.TypedDataEncoder.hash(domain as any, {
+            MetaCreate: [
+              { name: 'marketSymbol', type: 'string' },
+              { name: 'metricUrl', type: 'string' },
+              { name: 'settlementDate', type: 'uint256' },
+              { name: 'startPrice', type: 'uint256' },
+              { name: 'dataSource', type: 'string' },
+              { name: 'tagsHash', type: 'bytes32' },
+              { name: 'diamondOwner', type: 'address' },
+              { name: 'cutHash', type: 'bytes32' },
+              { name: 'initFacet', type: 'address' },
+              { name: 'creator', type: 'address' },
+              { name: 'nonce', type: 'uint256' },
+              { name: 'deadline', type: 'uint256' },
+            ],
+          } as const, message as any);
+          const sigDump = {
+            structHash,
+            digest,
+            signature,
+          };
+          // eslint-disable-next-line no-console
+          console.log('[META_SIGNATURE_DEBUG]', JSON.stringify(sigDump, null, 2));
+        } catch (eDebug: any) {
+          // eslint-disable-next-line no-console
+          console.warn('[META_SIGNATURE_DEBUG] failed', eDebug?.message || String(eDebug));
+        }
       } catch {}
       try {
         const recovered = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
@@ -507,12 +642,12 @@ export async function POST(req: Request) {
       logS('factory_static_call_meta', 'start');
       try {
         await factory.getFunction('metaCreateFuturesMarketDiamond').staticCall(
-          symbol,
-          metricUrl,
-          settlementTs,
-          startPrice6,
+          callSymbol,
+          callMetricUrl,
+          callSettlementDate,
+          callStartPrice,
           dataSource,
-          tags,
+          callTags,
           ownerAddress,
           cutArg,
           initFacet,
@@ -524,10 +659,22 @@ export async function POST(req: Request) {
         logS('factory_static_call_meta', 'success');
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed (no reason)';
-        const hint = 'Possible causes: restricted creation for creator; insufficient Vault balance for the creator; invalid facets/addresses; or network mismatch.';
+        const decoded = decodeRevert(factoryIface, e);
+        const rawData =
+          (typeof e?.data === 'string' && e.data) ||
+          (typeof e?.error?.data === 'string' && e.error.data) ||
+          (typeof decoded?.data === 'string' && decoded.data) ||
+          null;
+        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
+        const mapped = selector ? ERROR_SELECTORS[selector] : null;
+        const customError = decoded?.name || mapped || null;
+        const hint =
+          customError === 'BadSignature'
+            ? 'Bad signature: signer/payload mismatch. Ensure symbol casing matches server, signer is intended creator, and factory/domain match.'
+            : 'Static call reverted. Check create permissions and facet/init addresses.';
         const msg = `${raw}`;
-        logS('factory_static_call_meta', 'error', { error: msg, code: e?.code, hint });
-        return NextResponse.json({ error: msg, hint }, { status: 400 });
+        logS('factory_static_call_meta', 'error', { error: msg, code: e?.code, hint, customError, customErrorArgs: decoded?.args, rawData });
+        return NextResponse.json({ error: msg, hint, customError, customErrorArgs: decoded?.args || null, rawData: rawData || null }, { status: 400 });
       }
 
       // Send tx (relayer pays gas)
@@ -535,12 +682,12 @@ export async function POST(req: Request) {
       const overrides = await nonceMgr.nextOverrides();
       logS('factory_send_tx_meta_prep', 'success', { nonce: (overrides as any)?.nonce, ...('maxFeePerGas' in overrides ? { maxFeePerGas: (overrides as any).maxFeePerGas?.toString?.() } : {}), ...('maxPriorityFeePerGas' in overrides ? { maxPriorityFeePerGas: (overrides as any).maxPriorityFeePerGas?.toString?.() } : {}), ...('gasPrice' in overrides ? { gasPrice: (overrides as any).gasPrice?.toString?.() } : {}) });
       tx = await factory.getFunction('metaCreateFuturesMarketDiamond')(
-        symbol,
-        metricUrl,
-        settlementTs,
-        startPrice6,
+        callSymbol,
+        callMetricUrl,
+        callSettlementDate,
+        callStartPrice,
         dataSource,
-        tags,
+        callTags,
         ownerAddress,
         cutArg,
         initFacet,
@@ -583,9 +730,10 @@ export async function POST(req: Request) {
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed (no reason)';
         const hint = 'Possible causes: public creation disabled; creation fee required without sufficient CoreVault balance for the Deployer; invalid facet/addresses; or network mismatch.';
+        const decoded = decodeRevert(factoryIface, e);
         const msg = `${raw}`;
-        logS('factory_static_call', 'error', { error: msg, code: e?.code, hint });
-        return NextResponse.json({ error: msg, hint }, { status: 400 });
+        logS('factory_static_call', 'error', { error: msg, code: e?.code, hint, customError: decoded?.name, customErrorArgs: decoded?.args, rawData: decoded?.data });
+        return NextResponse.json({ error: msg, hint, customError: decoded?.name || null, customErrorArgs: decoded?.args || null, rawData: decoded?.data || null }, { status: 400 });
       }
       // Send tx
       logS('factory_send_tx', 'start');

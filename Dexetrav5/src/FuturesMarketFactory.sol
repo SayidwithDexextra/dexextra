@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 import "./diamond/Diamond.sol";
 import "./diamond/interfaces/IDiamondCut.sol";
 import "./CoreVault.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 // OrderBook (Diamond) admin/view minimal interfaces
 interface IOBAdminFacet {
     function updateTradingParameters(uint256 _marginRequirementBps, uint256 _tradingFee, address _feeRecipient) external;
@@ -60,18 +62,32 @@ error MarginTooLowForLeverage();
 error RewardMustBePositive();
 error ReasonRequired();
 error UseCreateMarketDiamond();
+error MetaExpired();
+error BadSignature();
+error BadNonce();
 
 /**
  * @title FuturesMarketFactory
  * @dev Factory contract for creating custom futures markets with dedicated OrderBooks (Diamond)
  * @notice Allows users to create and trade custom metric futures with margin support
  */
-contract FuturesMarketFactory {
+contract FuturesMarketFactory is EIP712 {
+    // EIP-712 domain defaults (overridable via redeploy)
+    string private constant EIP712_NAME = "DexetraFactory";
+    string private constant EIP712_VERSION = "1";
+
+    // EIP-712 type hash for meta-create
+    bytes32 private constant TYPEHASH_META_CREATE =
+        keccak256(
+            "MetaCreate(string marketSymbol,string metricUrl,uint256 settlementDate,uint256 startPrice,string dataSource,bytes32 tagsHash,address diamondOwner,bytes32 cutHash,address initFacet,address creator,uint256 nonce,uint256 deadline)"
+        );
+
     // ============ State Variables ============
     
-    CoreVault immutable vault;
+    CoreVault public vault;
     address admin;
     address feeRecipient;
+    mapping(address => uint256) public metaCreateNonce;
     
     // Default trading parameters - Conservative defaults (1:1 margin, no leverage)
     uint256 defaultMarginRequirementBps = 10000; // 100% margin requirement (1:1)
@@ -111,6 +127,36 @@ contract FuturesMarketFactory {
     // Market creation settings
     uint256 internal marketCreationFee = 100 * 10**6; // 100 USDC fee to create market
     bool internal publicMarketCreation = true; // Allow anyone to create markets
+
+    // ============ Internal Helpers ============
+
+    function _hashTags(string[] memory tags) internal pure returns (bytes32) {
+        // Packed hashing to mirror client-side ethers.solidityPacked(['string', ...], tags)
+        bytes memory packed;
+        uint256 len = tags.length;
+        for (uint256 i = 0; i < len; ) {
+            packed = abi.encodePacked(packed, tags[i]);
+            unchecked { ++i; }
+        }
+        return keccak256(packed);
+    }
+
+    function _hashFacetCuts(IDiamondCut.FacetCut[] memory cut) internal pure returns (bytes32) {
+        uint256 len = cut.length;
+        bytes32[] memory perCut = new bytes32[](len);
+        for (uint256 i = 0; i < len; ) {
+            perCut[i] = keccak256(
+                abi.encode(
+                    cut[i].facetAddress,
+                    cut[i].action,
+                    keccak256(abi.encodePacked(cut[i].functionSelectors))
+                )
+            );
+            unchecked { ++i; }
+        }
+        return keccak256(abi.encodePacked(perCut));
+    }
+
     
     // ============ Events ============
     
@@ -166,7 +212,7 @@ contract FuturesMarketFactory {
         address _vault,
         address _admin,
         address _feeRecipient
-    ) {
+    ) EIP712(EIP712_NAME, EIP712_VERSION) {
         if (_vault == address(0) || _admin == address(0) || _feeRecipient == address(0)) revert ZeroAddress();
         
         vault = CoreVault(_vault);
@@ -204,7 +250,6 @@ contract FuturesMarketFactory {
      * @param diamondOwner Owner of the Diamond (admin)
      * @param cut Initial facet cut describing facets and selectors
      * @param initFacet Address to run initialization delegatecall (e.g., OrderBookInitFacet)
-     * @param initCalldata Calldata passed to initFacet
      */
     function createFuturesMarketDiamond(
         string memory marketSymbol,
@@ -216,7 +261,7 @@ contract FuturesMarketFactory {
         address diamondOwner,
         IDiamondCut.FacetCut[] memory cut,
         address initFacet,
-        bytes memory initCalldata
+        bytes memory /*initCalldata*/
     ) external 
         canCreateMarket 
         validMarketSymbol(marketSymbol) 
@@ -263,6 +308,95 @@ contract FuturesMarketFactory {
         emit FuturesMarketCreated(orderBook, marketId, marketSymbol, msg.sender, marketCreationFee, metricUrl, settlementDate, startPrice);
         return (orderBook, marketId);
     }
+
+    /**
+     * @dev Gasless meta-create entrypoint (relayer pays gas; creator signs EIP-712)
+     */
+    function metaCreateFuturesMarketDiamond(
+        string memory marketSymbol,
+        string memory metricUrl,
+        uint256 settlementDate,
+        uint256 startPrice,
+        string memory dataSource,
+        string[] memory tags,
+        address diamondOwner,
+        IDiamondCut.FacetCut[] memory cut,
+        address initFacet,
+        address creator,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
+    ) external returns (address orderBook, bytes32 marketId) {
+        uint256 symLen = bytes(marketSymbol).length;
+        if (symLen == 0 || symLen > 64) revert InvalidMarketSymbol();
+        uint256 urlLen = bytes(metricUrl).length;
+        if (urlLen == 0 || urlLen > 256) revert InvalidMetricUrl();
+        if (settlementDate <= block.timestamp || settlementDate > block.timestamp + 365 days) revert InvalidSettlementDate();
+        if (startPrice == 0) revert InvalidOraclePrice();
+        if (bytes(dataSource).length == 0) revert InvalidInput();
+        if (tags.length > 10) revert InvalidInput();
+        if (diamondOwner == address(0) || initFacet == address(0) || creator == address(0)) revert ZeroAddress();
+        if (block.timestamp > deadline) revert MetaExpired();
+        if (nonce != metaCreateNonce[creator]) revert BadNonce();
+
+        bytes32 tagsHash = _hashTags(tags);
+        bytes32 cutHash = _hashFacetCuts(cut);
+        bytes32 structHash = keccak256(
+            abi.encode(
+                TYPEHASH_META_CREATE,
+                keccak256(bytes(marketSymbol)),
+                keccak256(bytes(metricUrl)),
+                settlementDate,
+                startPrice,
+                keccak256(bytes(dataSource)),
+                tagsHash,
+                diamondOwner,
+                cutHash,
+                initFacet,
+                creator,
+                nonce,
+                deadline
+            )
+        );
+
+        address signer = ECDSA.recover(_hashTypedDataV4(structHash), signature);
+        if (signer != creator) revert BadSignature();
+        if (!(publicMarketCreation || creator == admin)) revert MarketCreationRestricted();
+
+        // Increment nonce to prevent replay before external calls
+        metaCreateNonce[creator] = nonce + 1;
+
+        if (marketCreationFee > 0 && creator != admin) {
+            vault.deductFees(creator, marketCreationFee, feeRecipient);
+        }
+
+        marketId = keccak256(abi.encodePacked(marketSymbol, metricUrl, creator, block.timestamp, block.number));
+        if (marketExists[marketId]) revert MarketIdCollision();
+
+        // Deploy Diamond with initializer identical to direct create
+        bytes4 initSel = bytes4(keccak256("obInitialize(address,bytes32,address)"));
+        bytes memory initData = abi.encodeWithSelector(initSel, address(vault), marketId, feeRecipient);
+        Diamond diamond = new Diamond(diamondOwner, cut, initFacet, initData);
+        orderBook = address(diamond);
+
+        vault.registerOrderBook(orderBook);
+        vault.assignMarketToOrderBook(marketId, orderBook);
+
+        // Track metadata and emit using logical creator (not relayer)
+        marketToOrderBook[marketId] = orderBook;
+        orderBookToMarket[orderBook] = marketId;
+        marketExists[marketId] = true;
+        marketCreators[marketId] = creator;
+        marketSymbols[marketId] = marketSymbol;
+        allMarkets.push(marketId);
+        marketMetricUrls[marketId] = metricUrl;
+        marketSettlementDates[marketId] = settlementDate;
+
+        vault.updateMarkPrice(marketId, startPrice);
+        
+        emit FuturesMarketCreated(orderBook, marketId, marketSymbol, creator, marketCreationFee, metricUrl, settlementDate, startPrice);
+        return (orderBook, marketId);
+    }
     
     /**
      * @dev Deactivate a futures market (emergency function or by creator)
@@ -297,6 +431,14 @@ contract FuturesMarketFactory {
         }
         
         // event omitted to reduce bytecode size
+    }
+
+    /**
+     * @dev Update the CoreVault reference for new markets. Admin-only.
+     */
+    function updateVault(address newVault) external onlyAdmin {
+        if (newVault == address(0)) revert ZeroAddress();
+        vault = CoreVault(newVault);
     }
     
     // ============ Oracle Integration Functions ============

@@ -441,6 +441,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
                     startPrice: formData.startPrice || '1',
                     tags: Array.isArray(formData.tags) ? formData.tags : [],
                     skipArchive: true,
+                    skipMetricWorker: true,
                   };
                   try { console.log('[create-market][debug] Bypass enabled → skipping AI metric validation + Wayback archive'); } catch {}
                   await onSubmit(debugData);
