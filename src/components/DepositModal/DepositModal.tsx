@@ -36,6 +36,7 @@ export default function DepositModal({
   const [showSpokeDepositModal, setShowSpokeDepositModal] = useState(false)
   const [spokeDepositAmount, setSpokeDepositAmount] = useState('')
   const [spokeDepositError, setSpokeDepositError] = useState<string | null>(null)
+  const [networkWarning, setNetworkWarning] = useState<string | null>(null)
   
   // Stablecoins by chain
   const polygonUSDC: Token = {
@@ -160,6 +161,7 @@ export default function DepositModal({
       setShowSpokeDepositModal(false);
       setSpokeDepositAmount('');
       setSpokeDepositError(null);
+      setNetworkWarning(null);
     }
   }, [isOpen])
 
@@ -248,7 +250,10 @@ export default function DepositModal({
         'Open your wallet and switch to Arbitrum One (chainId 42161). If you do not see a prompt, manually select Arbitrum in your wallet and retry.'
 
       let currentNetwork = await provider.getNetwork()
-      if (currentNetwork.chainId === targetChainId) return
+      if (currentNetwork.chainId === targetChainId) {
+        setNetworkWarning(null)
+        return
+      }
 
       const requestSwitch = async () => {
         await (window as any).ethereum.request({
@@ -261,17 +266,22 @@ export default function DepositModal({
 
       try {
         const switched = await requestSwitch()
-        if (switched) return
+        if (switched) {
+          setNetworkWarning(null)
+          return
+        }
       } catch (switchError: any) {
         const userRejected = switchError?.code === 4001
         const chainMissing = switchError?.code === 4902 // Unrecognized chain
 
         if (!chainMissing) {
-          throw new Error(
-            userRejected
-              ? 'You rejected the network switch. Please accept the prompt to move to Arbitrum (chainId 42161).'
-              : `We couldn't switch automatically. ${friendlyHelp}`
-          )
+          const message = userRejected
+            ? 'You rejected the network switch request. Please approve the Arbitrum One prompt in your wallet.'
+            : 'Check your wallet for a network switch prompt. If you do not see one, open your wallet and manually select Arbitrum One (chainId 42161), then retry.'
+          setNetworkWarning(message)
+          const tagged = new Error(message)
+          ;(tagged as any).isNetworkSwitchIssue = true
+          throw tagged
         }
       }
 
@@ -295,14 +305,19 @@ export default function DepositModal({
       } catch (addError: any) {
         console.warn('Failed to add Arbitrum chain', addError)
         const userRejected = addError?.code === 4001
-        throw new Error(
-          userRejected
-            ? 'Please approve adding Arbitrum in your wallet, then accept the switch request.'
-            : `We couldn't add Arbitrum automatically. Add Arbitrum One (chainId 42161) in your wallet using your preferred RPC, then switch and retry.`
-        )
+        const message = userRejected
+          ? 'Please approve adding Arbitrum in your wallet, then accept the switch request.'
+          : `We couldn't add Arbitrum automatically. Add Arbitrum One (chainId 42161) in your wallet using your preferred RPC, then switch and retry.`
+        setNetworkWarning(message)
+        const tagged = new Error(message)
+        ;(tagged as any).isNetworkSwitchIssue = true
+        throw tagged
       }
 
-      throw new Error(friendlyHelp)
+      setNetworkWarning(friendlyHelp)
+      const tagged = new Error(friendlyHelp)
+      ;(tagged as any).isNetworkSwitchIssue = true
+      throw tagged
     }
 
     await ensureArbitrumNetwork()
@@ -355,6 +370,7 @@ export default function DepositModal({
 
     setDepositAmount(amount)
     setSpokeDepositError(null)
+    setNetworkWarning(null)
     setIsFunctionDepositLoading(true)
     setStep('processing')
     setPaymentStatus('pending')
@@ -366,10 +382,18 @@ export default function DepositModal({
       setStep('success')
     } catch (err: any) {
       console.error('Function deposit error:', err)
-      setPaymentStatus('error')
-      setStep('error')
-      setError(err?.message || 'Failed to process deposit')
-      setSpokeDepositError(err?.message || 'Failed to process deposit')
+      if (err?.isNetworkSwitchIssue) {
+        // Keep user in spoke modal with a warning banner for manual switch
+        setPaymentStatus('pending')
+        setStep('spoke')
+        setShowSpokeDepositModal(true)
+        setSpokeDepositError(null)
+      } else {
+        setPaymentStatus('error')
+        setStep('error')
+        setError(err?.message || 'Failed to process deposit')
+        setSpokeDepositError(err?.message || 'Failed to process deposit')
+      }
     } finally {
       setIsFunctionDepositLoading(false)
     }
@@ -410,6 +434,7 @@ export default function DepositModal({
         onClose={() => {
           setShowSpokeDepositModal(false)
           setSpokeDepositError(null)
+          setNetworkWarning(null)
           setStep('select')
         }}
         onSubmit={handleSpokeDepositSubmit}
@@ -417,6 +442,7 @@ export default function DepositModal({
         defaultAmount={spokeDepositAmount || '1'}
         isSubmitting={isFunctionDepositLoading}
         errorMessage={spokeDepositError}
+        warningMessage={networkWarning}
       />
     )
   }

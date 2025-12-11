@@ -11,6 +11,7 @@ interface SpokeDepositModalProps {
   defaultAmount?: string
   isSubmitting?: boolean
   errorMessage?: string | null
+  warningMessage?: string | null
 }
 
 export default function SpokeDepositModal({
@@ -20,7 +21,8 @@ export default function SpokeDepositModal({
   selectedToken,
   defaultAmount = '1',
   isSubmitting = false,
-  errorMessage
+  errorMessage,
+  warningMessage
 }: SpokeDepositModalProps) {
   const [amount, setAmount] = useState(defaultAmount)
 
@@ -94,6 +96,17 @@ export default function SpokeDepositModal({
 
         {/* Body */}
         <div className="px-6 pt-4 pb-2 space-y-3">
+          {warningMessage && (
+            <div className="group bg-[#1A140A] rounded-md border border-amber-400/30 transition-all duration-200">
+              <div className="flex items-start gap-2 p-2.5">
+                <div className="w-1.5 h-1.5 mt-1 rounded-full bg-amber-400" />
+                <div className="text-[11px] text-amber-100 leading-relaxed">
+                  {warningMessage}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
             <div className="flex items-center justify-between p-3 border-b border-[#1A1A1A]">
               <div className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
