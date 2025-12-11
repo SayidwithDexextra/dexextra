@@ -1,6 +1,6 @@
 'use client'
 
-import { Faucet } from '@/components/Faucet'
+import { ArbitrumFaucet, Faucet } from '@/components/Faucet'
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 
 export default function RewardsPage() {
@@ -73,8 +73,10 @@ export default function RewardsPage() {
         </div>
       </div>
 
-      {/* Right Main Content - Faucet */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Right Main Content - Faucets */}
+      <div className="flex-1 flex flex-col min-w-0 gap-3">
+        <ArbitrumFaucet />
+
         <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 flex-1 flex flex-col overflow-hidden">
           
           {/* Faucet Header */}
