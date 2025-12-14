@@ -516,8 +516,15 @@ export default function DepositModal({
       isOpen={isOpen}
       onClose={handleClose}
       onNewDeposit={() => {
-        setStep('input');
-        setDepositAmount('');
+        const chain = (sourceToken?.chain || '').toLowerCase()
+        const isExternalFlow = chain !== 'hyperliquid'
+        setStep(isExternalFlow ? 'external' : 'input')
+        setDepositAmount('')
+        setPaymentStatus('pending')
+        setError(null)
+        setShowSpokeDepositModal(false)
+        setSpokeDepositError(null)
+        setNetworkWarning(null)
       }}
       status={paymentStatus}
       amount={depositAmount}

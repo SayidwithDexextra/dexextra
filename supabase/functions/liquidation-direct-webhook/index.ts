@@ -702,7 +702,65 @@ Deno.serve(async (req) => {
       });
       results.push({ status: "ok", event: "PriceUpdated", market: marketMeta.marketUuid, liquidations: compare });
     } else if (decoded.eventName === "LiquidationCompleted") {
-      results.push({ status: "ok", event: "LiquidationCompleted" });
+      if (!supabase) {
+        results.push({ status: "skipped", event: "LiquidationCompleted", reason: "no_supabase" });
+        continue;
+      }
+
+      const args: any = decoded.args;
+      const trader = normalizeAddress(String(args.trader || ""));
+      const remainingRaw = toBigIntSafe(args.remainingSize);
+      const orderBookCandidates = collectLogAddresses(log);
+      const orderBookAddr = orderBookCandidates[0] ?? null;
+
+      if (!trader) {
+        results.push({ status: "skipped", event: "LiquidationCompleted", reason: "missing_trader" });
+        continue;
+      }
+      if (remainingRaw === null) {
+        results.push({ status: "skipped", event: "LiquidationCompleted", reason: "missing_remaining_size" });
+        continue;
+      }
+      if (!orderBookAddr) {
+        results.push({ status: "skipped", event: "LiquidationCompleted", reason: "missing_orderbook" });
+        continue;
+      }
+
+      let marketMeta: { marketUuid: string; marketHex: string } | null = null;
+      for (const candidate of orderBookCandidates) {
+        marketMeta = await resolveMarketByAddress(supabase, candidate, traceId);
+        if (marketMeta) break;
+      }
+      if (!marketMeta) {
+        results.push({ status: "skipped", event: "LiquidationCompleted", reason: "market_not_resolved" });
+        continue;
+      }
+
+      // Remove any leftover size from the aggregated user_trades entry.
+      const deltaRaw = -remainingRaw;
+      const nowIso = new Date().toISOString();
+      await upsertNetTrade({
+        supabase,
+        marketUuid: marketMeta.marketUuid,
+        wallet: trader,
+        deltaRaw,
+        payload: {
+          price: "0",
+          liquidation_price: null,
+          trade_timestamp: nowIso,
+          order_book_address: normalizeAddress(orderBookAddr) || "",
+        },
+        traceId,
+      });
+
+      results.push({
+        status: "ok",
+        event: "LiquidationCompleted",
+        trader,
+        market: marketMeta.marketUuid,
+        orderBook: orderBookAddr,
+        deltaApplied: deltaRaw.toString(),
+      });
     } else {
       results.push({ status: "skipped", event: decoded.eventName });
     }

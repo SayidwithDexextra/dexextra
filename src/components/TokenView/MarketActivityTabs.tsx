@@ -419,8 +419,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               : statusLc === 'cancelled'
                 ? 'CANCELLED'
                 : 'PENDING';
-        let qty = Number(o?.quantity || 0);
-        if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000;
+        let qty = normalizeQuantity(Number(o?.quantity || 0));
+        let filledQty = normalizeQuantity(Number(o?.filledQuantity || 0));
         flat.push({
           id: String(o?.id || ''),
           symbol: symbolUpper,
@@ -428,7 +428,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
           price: Number(o?.price || 0),
           size: qty,
-          filled: Number(o?.filledQuantity || 0),
+          filled: filledQty,
           status,
           timestamp: Number(o?.timestamp || Date.now()),
           metricId: String(o?.metricId || symbolUpper)
@@ -567,6 +567,29 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  // Display helpers
+  const formatPrice = (value: number) =>
+    new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number.isFinite(value) ? value : 0);
+
+  const formatAmount = (value: number, decimals = 4) => {
+    if (!Number.isFinite(value) || value === 0) return '0.0000';
+    if (value < 0.00000001 && value > 0) return value.toFixed(8);
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: Math.min(decimals, 4),
+      maximumFractionDigits: decimals,
+    }).format(value);
+  };
+
+  const normalizeQuantity = (qty: number) => {
+    const n = Number.isFinite(qty) ? qty : 0;
+    // Orders often arrive in 1e12 base units; scale down when clearly oversized
+    if (n >= 1_000_000) return n / 1_000_000_000_000;
+    return n;
   };
 
   const renderPositionsTable = () => {
@@ -840,13 +863,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               <span className="text-[11px] text-white">{order.type}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <span className="text-[11px] text-white font-mono">${order.price.toFixed(2)}</span>
+                              <span className="text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <span className="text-[11px] text-white font-mono">{order.size.toFixed(4)}</span>
+                              <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <span className="text-[11px] text-white font-mono">{order.filled.toFixed(4)}</span>
+                              <span className="text-[11px] text-white font-mono">{formatAmount(order.filled, 4)}</span>
                             </td>
                             <td className="px-2 py-1.5 text-right">
                               <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
@@ -870,13 +893,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                         <div className="flex flex-col gap-1">
                                           <span className="text-[9px] text-[#606060]">Order Value</span>
                                           <span className="text-[10px] font-medium text-white font-mono">
-                                            ${(order.price * order.size).toFixed(2)}
+                                            ${formatPrice(order.price * order.size)}
                                           </span>
                                         </div>
                                         <div className="flex flex-col gap-1">
                                           <span className="text-[9px] text-[#606060]">Fill Progress</span>
                                           <span className="text-[10px] font-medium text-white font-mono">
-                                            {((order.filled / order.size) * 100).toFixed(1)}%
+                                            {order.size > 0 ? ((order.filled / order.size) * 100).toFixed(1) : '0.0'}%
                                           </span>
                                         </div>
                                       </div>
@@ -1283,13 +1306,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <span className="text-[11px] text-white">{order.type}</span>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">${order.price.toFixed(2)}</span>
+                            <span className="text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">{order.size.toFixed(4)}</span>
+                            <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">{order.filled.toFixed(4)}</span>
+                            <span className="text-[11px] text-white font-mono">{formatAmount(order.filled, 4)}</span>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>

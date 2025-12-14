@@ -124,7 +124,7 @@ export default function EnableTradingModal({
           <div className="flex flex-col items-center justify-center gap-2">
             <EnableTradingIcon />
             <div className="flex flex-col items-center">
-              <span className="text-sm font-medium text-white tracking-wide text-center">Dexetera Gasless</span>
+              <span className="text-sm font-medium text-white tracking-wide text-center">Dexetera Gasless Trading</span>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-[#606060] text-center">
                   {isConnected ? 'Wallet connected' : 'Wallet not connected'}

@@ -184,11 +184,15 @@ export async function createMarketOnChain(params: {
   const factoryAbi =
     (FuturesMarketFactoryGenerated as any)?.abi ||
     (FuturesMarketFactoryGenerated as any);
-  const gaslessEnabled = String((process.env as any).NEXT_PUBLIC_GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
-  const metaAbi = [
+  // Helper ABI to mirror on-chain hashing/domain (added in FuturesMarketFactory)
+  const helperAbi = [
+    'function computeTagsHash(string[] tags) view returns (bytes32)',
+    'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)',
     'function metaCreateNonce(address) view returns (uint256)',
+    'function eip712DomainInfo() view returns (string name,string version,uint256 chainId,address verifyingContract,bytes32 domainSeparator)',
   ];
-  const mergedAbi = Array.isArray(factoryAbi) ? [...factoryAbi, ...(gaslessEnabled ? metaAbi : [])] : (gaslessEnabled ? metaAbi : factoryAbi);
+  const gaslessEnabled = String((process.env as any).NEXT_PUBLIC_GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
+  const mergedAbi = Array.isArray(factoryAbi) ? [...factoryAbi, ...(gaslessEnabled ? helperAbi : [])] : (gaslessEnabled ? helperAbi : factoryAbi);
   const factory = new ethers.Contract(factoryAddress, mergedAbi, signer);
 
   // Params
@@ -205,26 +209,49 @@ export async function createMarketOnChain(params: {
   if (gaslessEnabled) {
     // Gasless path: sign typed data and submit via backend relayer
     onProgress?.({ step: 'meta_prepare', status: 'start' });
-    // helpers to hash arrays consistent with contract
-    const tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
-    const perCutHashes: string[] = [];
-    for (const entry of cutArg) {
-      const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((entry?.[2] || []).length).fill('bytes4'), entry?.[2] || []));
-      const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [entry?.[0], entry?.[1], selectorsHash]);
-      perCutHashes.push(ethers.keccak256(enc));
+    // helpers to hash arrays consistent with contract (prefer on-chain helper)
+    let tagsHash: string;
+    let cutHash: string;
+    try {
+      tagsHash = await factory.computeTagsHash(tags);
+    } catch {
+      tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
     }
-    const cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+    try {
+      const helperCut = cutArg.map((c) => ({ facetAddress: c[0], action: c[1], functionSelectors: c[2] }));
+      cutHash = await factory.computeCutHash(helperCut as any);
+    } catch {
+      const perCutHashes: string[] = [];
+      for (const entry of cutArg) {
+        const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((entry?.[2] || []).length).fill('bytes4'), entry?.[2] || []));
+        const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [entry?.[0], entry?.[1], selectorsHash]);
+        perCutHashes.push(ethers.keccak256(enc));
+      }
+      cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+    }
     // fetch meta nonce
     let nonceBn: bigint = 0n;
     try {
       nonceBn = await factory.metaCreateNonce(signerAddress);
     } catch {}
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 15 * 60); // 15 minutes
+    // Domain: prefer on-chain helper to avoid env drift
+    let domainName = String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_NAME || 'DexeteraFactory');
+    let domainVersion = String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_VERSION || '1');
+    let domainChainId = Number(network.chainId);
+    let domainVerifying = factoryAddress;
+    try {
+      const info = await factory.eip712DomainInfo();
+      if (info?.name) domainName = info.name;
+      if (info?.version) domainVersion = info.version;
+      if (info?.chainId) domainChainId = Number(info.chainId);
+      if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
+    } catch {}
     const domain = {
-      name: String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_NAME || 'DexetraFactory'),
-      version: String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_VERSION || '1'),
-      chainId: Number(network.chainId),
-      verifyingContract: factoryAddress,
+      name: domainName,
+      version: domainVersion,
+      chainId: domainChainId,
+      verifyingContract: domainVerifying,
     } as const;
     // Diamond owner must match what the server will pass to metaCreate (admin wallet by default)
     const envDiamondOwner =

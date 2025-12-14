@@ -73,7 +73,8 @@ error BadNonce();
  */
 contract FuturesMarketFactory is EIP712 {
     // EIP-712 domain defaults (overridable via redeploy)
-    string private constant EIP712_NAME = "DexetraFactory";
+    // NOTE: Update domain name to align with new deployment/clients
+    string private constant EIP712_NAME = "DexeteraFactory";
     string private constant EIP712_VERSION = "1";
 
     // EIP-712 type hash for meta-create
@@ -218,6 +219,79 @@ contract FuturesMarketFactory is EIP712 {
         vault = CoreVault(_vault);
         admin = _admin;
         feeRecipient = _feeRecipient;
+    }
+
+    /**
+     * @dev Expose the EIP-712 domain components to help clients verify they are hashing
+     *      with the exact on-chain domain. This does not change any state.
+     */
+    function eip712DomainInfo()
+        external
+        view
+        returns (
+            string memory name,
+            string memory version,
+            uint256 chainId,
+            address verifyingContract,
+            bytes32 domainSeparator
+        )
+    {
+        return (
+            EIP712_NAME,
+            EIP712_VERSION,
+            block.chainid,
+            address(this),
+            _domainSeparatorV4()
+        );
+    }
+
+    /**
+     * @dev Debug helpers to mirror internal hashing for meta-create.
+     *      These are view-only and safe to call off-chain to confirm
+     *      client-side hashes match contract-side hashes.
+     */
+    function computeTagsHash(string[] calldata tags) external pure returns (bytes32) {
+        return _hashTags(tags);
+    }
+
+    function computeCutHash(IDiamondCut.FacetCut[] calldata cut) external pure returns (bytes32) {
+        return _hashFacetCuts(cut);
+    }
+
+    function computeStructHash(
+        string calldata marketSymbol,
+        string calldata metricUrl,
+        uint256 settlementDate,
+        uint256 startPrice,
+        string calldata dataSource,
+        bytes32 tagsHash,
+        address diamondOwner,
+        bytes32 cutHash,
+        address initFacet,
+        address creator,
+        uint256 nonce,
+        uint256 deadline
+    ) external pure returns (bytes32) {
+        bytes32 TYPEHASH_META_CREATE_LOCAL = keccak256(
+            "MetaCreate(string marketSymbol,string metricUrl,uint256 settlementDate,uint256 startPrice,string dataSource,bytes32 tagsHash,address diamondOwner,bytes32 cutHash,address initFacet,address creator,uint256 nonce,uint256 deadline)"
+        );
+        return keccak256(
+            abi.encode(
+                TYPEHASH_META_CREATE_LOCAL,
+                keccak256(bytes(marketSymbol)),
+                keccak256(bytes(metricUrl)),
+                settlementDate,
+                startPrice,
+                keccak256(bytes(dataSource)),
+                tagsHash,
+                diamondOwner,
+                cutHash,
+                initFacet,
+                creator,
+                nonce,
+                deadline
+            )
+        );
     }
     
     // ============ Futures Market Creation ============

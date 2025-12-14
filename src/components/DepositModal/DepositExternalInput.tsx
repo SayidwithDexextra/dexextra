@@ -2,9 +2,12 @@
 
 import { createPortal } from 'react-dom'
 import { env } from '@/lib/env'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 
 type ExternalDepositToken = { symbol: string; icon: string; name?: string; chain?: string }
+
+// Cache QR image object URLs per address to avoid repeat network fetch + delay
+const qrCache = new Map<string, string>()
 
 interface DepositExternalInputProps {
   isOpen: boolean
@@ -50,7 +53,40 @@ export default function DepositExternalInput({
   const [copied, setCopied] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(depositAddress || 'NOT_CONFIGURED')}`
+  const [qrSrc, setQrSrc] = useState(() => {
+    const cached = depositAddress ? qrCache.get(depositAddress) : null
+    return (
+      cached ||
+      `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(depositAddress || 'NOT_CONFIGURED')}`
+    )
+  })
+
+  // Preload QR image once and reuse cached object URL to remove visible delay
+  useEffect(() => {
+    const addr = depositAddress || 'NOT_CONFIGURED'
+    const cached = qrCache.get(addr)
+    if (cached) {
+      setQrSrc(cached)
+      return
+    }
+
+    const controller = new AbortController()
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(addr)}`
+
+    fetch(qrUrl, { signal: controller.signal })
+      .then((res) => res.blob())
+      .then((blob) => {
+        const objectUrl = URL.createObjectURL(blob)
+        qrCache.set(addr, objectUrl)
+        setQrSrc(objectUrl)
+      })
+      .catch(() => {
+        // Fallback to direct URL if prefetch fails
+        setQrSrc(qrUrl)
+      })
+
+    return () => controller.abort()
+  }, [depositAddress])
 
   const copyAddress = async () => {
     try {

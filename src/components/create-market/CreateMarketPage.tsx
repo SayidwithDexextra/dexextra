@@ -142,6 +142,19 @@ export const CreateMarketPage = () => {
   const markDone = (id: string) => setStepStatus(id, 'done');
   const markError = (id: string) => setStepStatus(id, 'error');
 
+  const runInspect = async (orderBook: string | null | undefined, pipelineId: string | null) => {
+    if (!orderBook) return;
+    try {
+      await fetch('/api/markets/inspect-gasless', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderBook, autoFix: false, pipelineId }),
+      });
+    } catch {
+      // best-effort; do not block UX
+    }
+  };
+
   
 
   const isUserRejected = (e: any): boolean => {
@@ -475,6 +488,9 @@ export const CreateMarketPage = () => {
         markDone('roles');
         markDone('save');
       }
+
+      // Trigger post-deploy inspection (gasless readiness, roles, allowlist)
+      void runInspect(orderBook, pipelineId);
 
       // Notify token page to refetch its market data and drop the deploying flag
       {

@@ -401,6 +401,29 @@ export async function POST(req: Request) {
       { facetAddress: lifecycleFacet, action: 0, functionSelectors: selectorsFromAbi(lifecycleAbi) },
       { facetAddress: metaTradeFacet, action: 0, functionSelectors: selectorsFromAbi(metaFacetAbi) },
     ];
+    // Force override cut/initFacet from /api/orderbook/cut to avoid drift
+    try {
+      const baseUrl = process.env.APP_URL || 'http://localhost:3000';
+      const resp = await fetch(`${baseUrl}/api/orderbook/cut`, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`cut API ${resp.status}`);
+      const data = await resp.json();
+      const apiCut = Array.isArray(data?.cut) ? data.cut : [];
+      const apiInit = data?.initFacet || null;
+      if (!apiCut.length || !apiInit || !ethers.isAddress(apiInit)) {
+        throw new Error('cut API returned invalid cut/initFacet');
+      }
+      cut = apiCut.map((c: any) => ({
+        facetAddress: c?.facetAddress,
+        action: c?.action ?? 0,
+        functionSelectors: Array.isArray(c?.functionSelectors) ? c.functionSelectors : [],
+      }));
+      initFacetAddr = apiInit;
+      // eslint-disable-next-line no-console
+      console.log('[RELAYER_DEBUG_CUT_OVERRIDE]', { fromApi: true, cutLen: cut.length, initFacet: initFacetAddr });
+    } catch (e: any) {
+      // eslint-disable-next-line no-console
+      console.warn('[RELAYER_DEBUG_CUT_OVERRIDE] failed', e?.message || String(e));
+    }
   try {
     const cutSummary = cut.map((c) => ({ facetAddress: c.facetAddress, selectorCount: (c.functionSelectors || []).length }));
     logS('facet_cut_built', 'success', { cutSummary, cut });
@@ -478,20 +501,29 @@ export async function POST(req: Request) {
         chainId: Number(net.chainId),
         verifyingContract: factoryAddress,
       } as const;
-      // hash tags
-      const tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
-      // hash cut
+      // hash tags and cut via contract helpers to avoid drift
+      let tagsHash: string;
+      let cutHash: string;
+      try {
+        const helper = new ethers.Contract(factoryAddress, [
+          'function computeTagsHash(string[] tags) view returns (bytes32)',
+          'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)'
+        ], wallet);
+        tagsHash = await helper.computeTagsHash(tags);
+        cutHash = await helper.computeCutHash(cutArg);
+      } catch {
+        tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
+        const perCutHashes: string[] = [];
+        for (const c of cutArg) {
+          const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((c?.[2] || []).length).fill('bytes4'), c?.[2] || []));
+          const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [c?.[0], c?.[1], selectorsHash]);
+          perCutHashes.push(ethers.keccak256(enc));
+        }
+        cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+      }
       const TYPEHASH_META_CREATE = ethers.id(
         'MetaCreate(string marketSymbol,string metricUrl,uint256 settlementDate,uint256 startPrice,string dataSource,bytes32 tagsHash,address diamondOwner,bytes32 cutHash,address initFacet,address creator,uint256 nonce,uint256 deadline)'
       );
-
-      const perCutHashes: string[] = [];
-      for (const c of cutArg) {
-        const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((c?.[2] || []).length).fill('bytes4'), c?.[2] || []));
-        const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [c?.[0], c?.[1], selectorsHash]);
-        perCutHashes.push(ethers.keccak256(enc));
-      }
-      const cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
       const types = {
         MetaCreate: [
           { name: 'marketSymbol', type: 'string' },
@@ -522,6 +554,20 @@ export async function POST(req: Request) {
         nonce: nonce.toString(),
         deadline: deadline.toString(),
       };
+      // Debug log to verify exact domain/message inputs used for signature
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[RELAYER_DEBUG_INPUTS]', JSON.stringify({
+          factoryAddress,
+          domainName: domain.name,
+          domainVersion: domain.version,
+          domainChainId: domain.chainId,
+          domainVerifyingContract: domain.verifyingContract,
+          tagsHash,
+          cutHash,
+          message,
+        }, null, 2));
+      } catch {}
       // Use the exact message values for the contract call to avoid any drift
       const callSymbol = message.marketSymbol;
       const callMetricUrl = message.metricUrl;
@@ -937,6 +983,17 @@ export async function POST(req: Request) {
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
     try {
+      const bal = await provider.getBalance(await wallet.getAddress());
+      const feeData = await provider.getFeeData();
+      // eslint-disable-next-line no-console
+      console.log('[grant_roles][balance]', {
+        wallet: await wallet.getAddress(),
+        balanceWei: bal.toString(),
+        balanceEth: ethers.formatEther(bal),
+        maxFeePerGas: feeData.maxFeePerGas?.toString?.(),
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString?.(),
+        gasPrice: feeData.gasPrice?.toString?.(),
+      });
       const ov1 = await nonceMgr.nextOverrides();
       const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
       logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash, nonce: (tx1 as any)?.nonce });
@@ -965,6 +1022,15 @@ export async function POST(req: Request) {
       }
       logS('grant_roles', 'success');
     } catch (e: any) {
+      try {
+        const bal = await provider.getBalance(await wallet.getAddress());
+        // eslint-disable-next-line no-console
+        console.log('[grant_roles][error][balance]', {
+          wallet: await wallet.getAddress(),
+          balanceWei: bal.toString(),
+          balanceEth: ethers.formatEther(bal),
+        });
+      } catch {}
       logS('grant_roles', 'error', { error: extractError(e) });
       return NextResponse.json({ error: 'Admin role grant failed', details: extractError(e) }, { status: 500 });
     }

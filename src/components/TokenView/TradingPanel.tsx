@@ -177,11 +177,16 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     return target.value;
   };
 
-  // Format price from raw value
+  // Format price with commas + 2 decimals
   const formatPrice = (rawPrice: string | number) => {
-    if (!rawPrice) return '0.00';
-    const numPrice = typeof rawPrice === 'string' ? parseFloat(rawPrice) : rawPrice;
-    return numPrice.toFixed(2);
+    const numPrice = typeof rawPrice === 'string'
+      ? parseFloat(rawPrice.replace(/,/g, ''))
+      : rawPrice;
+    if (!Number.isFinite(numPrice)) return '0.00';
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numPrice);
   };
 
   // Sanitize a numeric string, permitting a single dot and up to 6 decimals
@@ -2039,13 +2044,26 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                       pattern="[0-9]*[.,]?[0-9]*"
                       value={triggerPriceInput}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const value = e.target.value;
-                        // Allow only numbers and decimal point
-                        if (/^\d*\.?\d*$/.test(value)) {
-                          setTriggerPriceInput(value);
-                          const parsed = parseFloat(value);
-                          setTriggerPrice(!isNaN(parsed) ? parsed : 0);
+                        // Strip commas before sanitizing
+                        const raw = e.target.value.replace(/,/g, '');
+                        const value = sanitizeDecimalInput(raw, 8);
+                        setTriggerPriceInput(value);
+                        const parsed = parseFloat(value);
+                        setTriggerPrice(Number.isFinite(parsed) ? parsed : 0);
+                      }}
+                      onBlur={() => {
+                        const num = parseFloat((triggerPriceInput || '').replace(/,/g, ''));
+                        if (Number.isFinite(num) && num > 0) {
+                          setTriggerPriceInput(formatPrice(num));
+                          setTriggerPrice(num);
+                        } else {
+                          setTriggerPriceInput('');
+                          setTriggerPrice(0);
                         }
+                      }}
+                      onFocus={() => {
+                        // Remove commas for easier editing
+                        setTriggerPriceInput((triggerPriceInput || '').replace(/,/g, ''));
                       }}
                       placeholder="0.00"
                       className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 pl-6 text-xs font-medium text-white placeholder-[#606060] focus:outline-none focus:border-blue-400 transition-colors duration-200"

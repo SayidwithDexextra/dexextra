@@ -218,8 +218,24 @@ export default function Header() {
           width: 'calc(100vw - 60px)' // Fixed width for collapsed navbar only
         }}
       >
-        {/* Search Section */}
-        <div className="flex items-center flex-1 max-w-xl">
+        {/* Brand + Search Section */}
+        <div className="flex items-center flex-1 max-w-xl gap-3">
+          <div className="flex items-center gap-2 pr-3 border-r border-[#2f2f2f]">
+            <Image
+              src="/Dexicon/LOGO-Dexetera-02.svg" // Transparent mark
+              alt="Dexetera"
+              width={22}
+              height={22}
+              className="w-5.5 h-5.5 min-w-[22px] min-h-[22px] drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
+              priority
+            />
+            <span
+              className="text-white/90 font-semibold text-[12px] uppercase"
+              style={{ letterSpacing: '0.08em' }}
+            >
+              Dexetera
+            </span>
+          </div>
           <div className="relative w-full max-w-sm">
             <div 
               className="absolute left-3 top-1/2 transform -translate-y-1/2 z-10 pointer-events-none"
@@ -323,6 +339,7 @@ export default function Header() {
                 speed={100}
                 maxIterations={12}
                 animateOnMount={true}
+                animateOnHover={false}
                 animateOnChange={true}
               />
             </div>
@@ -362,6 +379,7 @@ export default function Header() {
                 speed={100}
                 maxIterations={12}
                 animateOnMount={true}
+                animateOnHover={false}
                 animateOnChange={true}
               />
             </div>
@@ -395,6 +413,7 @@ export default function Header() {
                   speed={100}
                   maxIterations={12}
                   animateOnMount={true}
+                  animateOnHover={false}
                 />
               </div>
             )}

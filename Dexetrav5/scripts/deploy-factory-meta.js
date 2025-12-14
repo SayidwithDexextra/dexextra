@@ -2,7 +2,9 @@
 const { ethers } = require("hardhat");
 
 async function main() {
-  console.log("\n🚀 Deploying FuturesMarketFactory with EIP-712 meta-create enabled...\n");
+  console.log(
+    "\n🚀 Deploying FuturesMarketFactory with EIP-712 meta-create enabled...\n"
+  );
 
   // Read required env
   const coreVault = process.env.CORE_VAULT_ADDRESS;
@@ -15,9 +17,12 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   console.log("Deployer:", deployer.address);
 
-  const admin = adminEnv && ethers.isAddress(adminEnv) ? adminEnv : deployer.address;
+  const admin =
+    adminEnv && ethers.isAddress(adminEnv) ? adminEnv : deployer.address;
   const feeRecipient =
-    feeRecipientEnv && ethers.isAddress(feeRecipientEnv) ? feeRecipientEnv : admin;
+    feeRecipientEnv && ethers.isAddress(feeRecipientEnv)
+      ? feeRecipientEnv
+      : admin;
 
   console.log("CoreVault:", coreVault);
   console.log("Admin:", admin);
@@ -26,7 +31,8 @@ async function main() {
   // Deploy
   const Factory = await ethers.getContractFactory("FuturesMarketFactory");
   const factory = await Factory.deploy(coreVault, admin, feeRecipient);
-  const depTx = factory.deploymentTransaction?.() || factory.deploymentTransaction || null;
+  const depTx =
+    factory.deploymentTransaction?.() || factory.deploymentTransaction || null;
   if (depTx?.hash) {
     console.log("  • tx:", depTx.hash);
   }
@@ -39,7 +45,9 @@ async function main() {
   console.log("\n🔒 Granting roles on CoreVault...");
   const core = await ethers.getContractAt("CoreVault", coreVault);
   const FACTORY_ROLE = ethers.keccak256(ethers.toUtf8Bytes("FACTORY_ROLE"));
-  const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SETTLEMENT_ROLE"));
+  const SETTLEMENT_ROLE = ethers.keccak256(
+    ethers.toUtf8Bytes("SETTLEMENT_ROLE")
+  );
 
   try {
     const tx1 = await core.grantRole(FACTORY_ROLE, factoryAddress);
@@ -65,20 +73,15 @@ async function main() {
   console.log(`NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS=${factoryAddress}`);
   console.log(`GASLESS_CREATE_ENABLED=true`);
   console.log(`NEXT_PUBLIC_GASLESS_CREATE_ENABLED=true`);
-  console.log(`EIP712_FACTORY_DOMAIN_NAME=DexetraFactory`);
+  console.log(`EIP712_FACTORY_DOMAIN_NAME=DexeteraFactory`);
   console.log(`EIP712_FACTORY_DOMAIN_VERSION=1`);
 
-  console.log("\nℹ️  Next step: run `node scripts/sync-factory-abi.js` to update frontend ABI.");
+  console.log(
+    "\nℹ️  Next step: run `node scripts/sync-factory-abi.js` to update frontend ABI."
+  );
 }
 
 main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-
-
-
-
-
-
-

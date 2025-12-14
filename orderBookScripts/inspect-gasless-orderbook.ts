@@ -1,11 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Inspect an OrderBook (diamond) for GAS (gasless session) readiness.
+ * Inspect an OrderBook (diamond) for GAS (gasless session) readiness + canonical facets/roles.
  *
  * Reads configuration from .env.local:
  *   - RPC_URL (or RPC_URL_HYPEREVM)
  *   - SESSION_REGISTRY_ADDRESS
  *   - CORE_VAULT_ADDRESS (optional: role checks skipped if absent)
+ *   - APP_URL (optional, defaults http://localhost:3000) for canonical cut fetch
  *
  * Usage:
  *   tsx scripts/inspect-gasless-orderbook.ts --orderbook 0xOrderBook
@@ -17,6 +18,7 @@
  *  - Diamond has required session* selectors (loupe facetAddress(bytes4) != 0)
  *  - setSessionRegistry(address) selector present
  *  - CoreVault roles granted (ORDERBOOK_ROLE, SETTLEMENT_ROLE) [if CORE_VAULT_ADDRESS provided]
+ *  - Canonical OrderBook cut (from /api/orderbook/cut) matches diamond selectors/facets
  */
 import fs from 'fs';
 import path from 'path';
@@ -24,6 +26,7 @@ import dotenv from 'dotenv';
 import { ethers } from 'ethers';
 
 type CheckResult = { name: string; pass: boolean; details?: Record<string, any> | string };
+type FacetCut = { facetAddress: string; action: number; functionSelectors: string[] };
 
 function loadEnv() {
   const root = process.cwd();
@@ -70,6 +73,7 @@ async function main() {
   const registryAddress = requireEnv('SESSION_REGISTRY_ADDRESS');
   if (!ethers.isAddress(registryAddress)) throw new Error('SESSION_REGISTRY_ADDRESS is not a valid address');
   const coreVaultAddress = process.env.CORE_VAULT_ADDRESS;
+  const appUrl = process.env.APP_URL || 'http://localhost:3000';
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   try {
@@ -82,6 +86,11 @@ async function main() {
 
   // Diamond loupe
   const loupe = new ethers.Contract(orderBook, ['function facetAddress(bytes4) view returns (address)'], provider);
+  const loupeSelectors = new ethers.Contract(
+    orderBook,
+    ['function facetFunctionSelectors(address) view returns (bytes4[])'],
+    provider
+  );
 
   // Check for MetaTradeFacet.sessionRegistry()
   let sessionRegistryOnDiamond = '0x0000000000000000000000000000000000000000';
@@ -195,6 +204,71 @@ async function main() {
       name: 'coreVault.address.provided',
       pass: false,
       details: 'CORE_VAULT_ADDRESS not set; role checks skipped',
+    });
+  }
+
+  // Canonical OrderBook cut vs diamond
+  try {
+    const resp = await fetch(`${appUrl}/api/orderbook/cut`, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`cut API ${resp.status}`);
+    const data = await resp.json();
+    const cutRaw: FacetCut[] = Array.isArray(data?.cut) ? data.cut : [];
+    const cut: FacetCut[] = cutRaw.map((c) => ({
+      facetAddress: ethers.getAddress(c.facetAddress),
+      action: Number(c.action ?? 0),
+      functionSelectors: Array.isArray(c.functionSelectors) ? c.functionSelectors : [],
+    }));
+    checks.push({
+      name: 'canonicalCut.fetch',
+      pass: cut.length > 0,
+      details: { cutLen: cut.length, url: `${appUrl}/api/orderbook/cut` },
+    });
+
+    // For each selector ensure diamond facet matches canonical facet
+    for (const entry of cut) {
+      if (!entry.functionSelectors?.length) continue;
+      // optional: compare selector list on diamond facetFunctionSelectors
+      try {
+        const onDiamondSelectors: string[] = await loupeSelectors.facetFunctionSelectors(entry.facetAddress);
+        const missingSelectors = entry.functionSelectors.filter(
+          (sel) => !onDiamondSelectors.map((s) => s.toLowerCase()).includes(sel.toLowerCase())
+        );
+        checks.push({
+          name: `diamond.facetFunctionSelectors.matches.${entry.facetAddress}`,
+          pass: missingSelectors.length === 0,
+          details: { missingSelectors, totalExpected: entry.functionSelectors.length },
+        });
+      } catch (e: any) {
+        checks.push({
+          name: `diamond.facetFunctionSelectors.readable.${entry.facetAddress}`,
+          pass: false,
+          details: e?.message || String(e),
+        });
+      }
+
+      for (const sel of entry.functionSelectors) {
+        try {
+          const facet = await loupe.facetAddress(sel);
+          const ok = facet && facet !== ethers.ZeroAddress && facet.toLowerCase() === entry.facetAddress.toLowerCase();
+          checks.push({
+            name: `diamond.hasSelector.canonical.${sel}`,
+            pass: ok === true,
+            details: { expectedFacet: entry.facetAddress, actualFacet: facet },
+          });
+        } catch (e: any) {
+          checks.push({
+            name: `diamond.hasSelector.canonical.${sel}.readable`,
+            pass: false,
+            details: e?.message || String(e),
+          });
+        }
+      }
+    }
+  } catch (e: any) {
+    checks.push({
+      name: 'canonicalCut.fetch',
+      pass: false,
+      details: e?.message || String(e),
     });
   }
 

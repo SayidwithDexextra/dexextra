@@ -53,7 +53,15 @@ function formatPriceDisplay(value: number, displayDecimals = 4): string {
     // Very small prices get more precision to avoid scientific notation
     return value.toFixed(8);
   }
-  return value.toFixed(displayDecimals);
+  if (value >= 1) {
+    // Human-friendly formatting for larger prices (commas + 2 decimals)
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value);
+  }
+  // Sub-dollar values keep finer precision (default 4dp)
+  return value.toFixed(Math.max(2, displayDecimals));
 }
 
 function formatAmountDisplay(value: number, displayDecimals = 4): string {

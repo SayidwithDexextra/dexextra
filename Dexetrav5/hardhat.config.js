@@ -6,25 +6,10 @@ require("dotenv").config({ path: path.resolve(__dirname, "../.env.local") });
 require("dotenv").config();
 // require("dotenv").config({ path: ".env.polygon" }); // Load specific network configs if needed
 
-// Define accounts in a centralized place
-const accounts = [
-  process.env.PRIVATE_KEY_DEPLOYER,
-  // process.env.PRIVATE_KEY_USER1,
-  // process.env.PRIVATE_KEY_USER2,
-  // process.env.PRIVATE_KEY_USER3,
-  // process.env.PRIVATE_KEY_USER4, // Ensuring 5 signers are available for deploy script
-  // process.env.ADMIN_PRIVATE_KEY, // fallback admin key
-].filter(Boolean);
-
-// Fallback for single private key if specific user keys aren't set
-const networkAccounts =
-  accounts.length > 0
-    ? accounts
-    : process.env.PRIVATE_KEY
-    ? [process.env.PRIVATE_KEY]
-    : process.env.ADMIN_PRIVATE_KEY
-    ? [process.env.ADMIN_PRIVATE_KEY]
-    : [];
+// Single-source signer: LEGACY_ADMIN
+const networkAccounts = process.env.LEGACY_ADMIN
+  ? [process.env.LEGACY_ADMIN]
+  : [];
 
 const config = {
   solidity: {

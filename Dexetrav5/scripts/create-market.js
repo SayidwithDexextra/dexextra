@@ -1508,6 +1508,17 @@ async function main() {
 
   let receipt;
   try {
+    const gasLimitOverride = Number(
+      process.env.CREATE_MARKET_GAS_LIMIT || process.env.GAS_LIMIT
+    );
+    const txOverrides = await nonceMgr.nextOverrides();
+    if (Number.isFinite(gasLimitOverride) && gasLimitOverride > 0) {
+      txOverrides.gasLimit = BigInt(Math.floor(gasLimitOverride));
+      console.log(
+        "  • Using gasLimit override:",
+        txOverrides.gasLimit.toString()
+      );
+    }
     const createTx = await factory.createFuturesMarketDiamond(
       symbol,
       metricUrl,
@@ -1521,7 +1532,7 @@ async function main() {
         ? initFacetAddr
         : await (async () => initFacetAddr)(),
       "0x",
-      await nonceMgr.nextOverrides()
+      txOverrides
     );
     console.log("  • Tx sent:", createTx.hash);
     receipt = await createTx.wait();
@@ -1816,7 +1827,7 @@ async function main() {
     }
   } catch (_) {}
 
-  // Save to DB via API (mirrors CreateMarket form); fallback to direct Supabase service
+  // Save to DB via API (mirrors CreateMarket form); also upsert directly to Supabase
   try {
     const initialOrder = {
       metricUrl,
@@ -1824,85 +1835,78 @@ async function main() {
       dataSource,
       tags,
     };
+    const marketSavePayload = {
+      marketIdentifier: symbol,
+      symbol,
+      name: `${(symbol.split("-")[0] || symbol).toUpperCase()} Futures`,
+      description: `OrderBook market for ${symbol}`,
+      category: Array.isArray(tags) && tags.length ? tags[0] : "CUSTOM",
+      decimals: Number(process.env.DEFAULT_MARKET_DECIMALS || 6),
+      minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
+      requiresKyc: false,
+      settlementDate: settlementTs,
+      tradingEndDate: null,
+      dataRequestWindowSeconds: Number(
+        process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600
+      ),
+      autoSettle: true,
+      oracleProvider: null,
+      initialOrder,
+      chainId: Number(network.chainId),
+      networkName: effectiveNetworkName,
+      creatorWalletAddress: deployer.address,
+      marketAddress: orderBook,
+      marketIdBytes32: marketId,
+      transactionHash: receipt?.hash || null,
+      blockNumber: receipt?.blockNumber || null,
+      gasUsed: receipt?.gasUsed?.toString?.() || null,
+    };
     if (effectiveNetworkName === "hyperliquid") {
       const baseUrl = (
         process.env.APP_URL ||
         process.env.NEXT_PUBLIC_APP_URL ||
         "http://localhost:3000"
       ).replace(/\/$/, "");
+      let apiOk = false;
       console.log("\n🗄️  Saving market via API...");
       logStep("save_market_api", "start", {
         url: `${baseUrl}/api/markets/save`,
       });
-      const resp = await fetchWithTimeout(
-        `${baseUrl}/api/markets/save`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            marketIdentifier: symbol,
-            symbol,
-            name: `${(symbol.split("-")[0] || symbol).toUpperCase()} Futures`,
-            description: `OrderBook market for ${symbol}`,
-            category: Array.isArray(tags) && tags.length ? tags[0] : "CUSTOM",
-            decimals: Number(process.env.DEFAULT_MARKET_DECIMALS || 8),
-            minimumOrderSize: Number(
-              process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1
-            ),
-            settlementDate: settlementTs,
-            tradingEndDate: null,
-            dataRequestWindowSeconds: Number(
-              process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600
-            ),
-            autoSettle: true,
-            oracleProvider: null,
-            initialOrder,
-            chainId: Number(network.chainId),
-            networkName: effectiveNetworkName,
-            creatorWalletAddress: deployer.address,
-            marketAddress: orderBook,
-            marketIdBytes32: marketId,
-            transactionHash: receipt?.hash || null,
-            blockNumber: receipt?.blockNumber || null,
-            gasUsed: receipt?.gasUsed?.toString?.() || null,
-          }),
-        },
-        12000
-      );
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err?.error || `HTTP ${resp.status}`);
+      try {
+        const resp = await fetchWithTimeout(
+          `${baseUrl}/api/markets/save`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(marketSavePayload),
+          },
+          12000
+        );
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err?.error || `HTTP ${resp.status}`);
+        }
+        console.log("  ✅ Market saved via API");
+        logStep("save_market_api", "success");
+        apiOk = true;
+      } catch (e) {
+        console.log("  ⚠️ API save failed:", e?.message || e);
+        logStep("save_market_api", "error", { error: e?.message || String(e) });
       }
-      console.log("  ✅ Market saved via API");
-      logStep("save_market_api", "success");
+      try {
+        console.log("  • Upserting market directly to Supabase (mainnet)...");
+        await saveMarketToSupabase(marketSavePayload);
+        console.log("  ✅ Supabase: market upserted (mainnet)");
+        logStep("save_market_supabase_mainnet", "success", { apiOk });
+      } catch (e) {
+        console.log("  ⚠️ Supabase upsert (mainnet) failed:", e?.message || e);
+        logStep("save_market_supabase_mainnet", "error", {
+          error: e?.message || String(e),
+        });
+      }
     } else {
       console.log("\n🗄️  Saving market to Supabase (service role)...");
-      await saveMarketToSupabase({
-        marketIdentifier: symbol,
-        symbol,
-        name: `${(symbol.split("-")[0] || symbol).toUpperCase()} Futures`,
-        description: `OrderBook market for ${symbol}`,
-        category: Array.isArray(tags) && tags.length ? tags[0] : "CUSTOM",
-        decimals: Number(process.env.DEFAULT_MARKET_DECIMALS || 8),
-        minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
-        requiresKyc: false,
-        settlementDate: settlementTs,
-        tradingEndDate: null,
-        dataRequestWindowSeconds: Number(
-          process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600
-        ),
-        autoSettle: true,
-        oracleProvider: null,
-        initialOrder,
-        chainId: Number(network.chainId),
-        networkName: effectiveNetworkName,
-        creatorWalletAddress: deployer.address,
-        marketAddress: orderBook,
-        marketIdBytes32: marketId,
-        transactionHash: receipt?.hash || null,
-        blockNumber: receipt?.blockNumber || null,
-        gasUsed: receipt?.gasUsed?.toString?.() || null,
-      });
+      await saveMarketToSupabase(marketSavePayload);
       console.log("  ✅ Market saved via Supabase service role");
       logStep("save_market_supabase", "success");
     }
