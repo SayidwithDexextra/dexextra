@@ -13,16 +13,37 @@ export interface EnableTradingModalProps {
   onSuccess?: (sessionId: string) => void
 }
 
-// Minimal, professional system icon for the header area
-function EnableTradingIcon() {
+function CircleCheckIcon({ className }: { className?: string }) {
   return (
-    <div className="w-12 h-12 rounded-xl bg-[#1A1A1A] border border-[#222222] flex items-center justify-center shadow-inner">
-      <img
-        src="/Dexicon/LOGO-Dexetera-05.svg"
-        alt="Dexetera"
-        className="w-6 h-6 opacity-90"
+    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M10 18.25a8.25 8.25 0 1 0 0-16.5 8.25 8.25 0 0 0 0 16.5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        opacity="0.9"
       />
-    </div>
+      <path
+        d="M6.2 10.2 8.7 12.7 13.8 7.6"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function CircleDotIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M10 18.25a8.25 8.25 0 1 0 0-16.5 8.25 8.25 0 0 0 0 16.5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        opacity="0.9"
+      />
+      <path d="M10 12.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Z" fill="currentColor" />
+    </svg>
   )
 }
 
@@ -36,7 +57,6 @@ export default function EnableTradingModal({
   const { sessionActive, loading, enableTrading, sessionId } = useSession()
   const [isWorking, setIsWorking] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const isConnected = Boolean(walletData?.isConnected && walletData?.address)
   const addressShort = walletData?.address ? formatAddress(walletData.address) : null
@@ -45,7 +65,7 @@ export default function EnableTradingModal({
     []
   )
 
-  const shouldRender = isOpen && !sessionActive
+  const shouldRender = isOpen
 
   const handlePrimary = async () => {
     setErrorMessage(null)
@@ -70,11 +90,8 @@ export default function EnableTradingModal({
       return
     }
 
-    // If already connected and session is enabled, close out quickly
-    if (sessionActive) {
-      onClose()
-      return
-    }
+    if (!gaslessEnabled) return
+    if (sessionActive) return
 
     // Enable trading (gasless session)
     try {
@@ -94,17 +111,16 @@ export default function EnableTradingModal({
 
   const primaryCta = useMemo(() => {
     if (!isConnected) return 'Connect Wallet'
-    if (loading || isWorking) return 'Enabling...'
-    if (sessionActive) return 'Trading Enabled'
-    return 'Enable Trading'
+    if (!gaslessEnabled) return 'Gasless Disabled'
+    if (loading || isWorking) return 'Signing...'
+    if (sessionActive) return 'Activated'
+    return 'Sign to Activate'
   }, [isConnected, loading, isWorking, sessionActive])
 
   const primaryDisabled = useMemo(() => {
     if (!isConnected) return false
-    if (loading || isWorking) return true
-    if (sessionActive) return true
     if (!gaslessEnabled) return true
-    return false
+    return loading || isWorking || sessionActive
   }, [isConnected, loading, isWorking, sessionActive, gaslessEnabled])
 
   // Ensure hooks above always run; decide rendering after hooks are declared
@@ -112,182 +128,160 @@ export default function EnableTradingModal({
     return null
   }
 
+  const walletRowLeftIcon = isConnected ? (
+    <CircleCheckIcon className="h-5 w-5 text-green-400" />
+  ) : (
+    <CircleDotIcon className="h-5 w-5 text-[#404040]" />
+  )
+
+  const sessionRowLeftIcon = sessionActive ? (
+    <CircleCheckIcon className="h-5 w-5 text-green-400" />
+  ) : (
+    <CircleDotIcon className="h-5 w-5 text-[#404040]" />
+  )
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-200" onClick={onClose} />
 
       {/* Container */}
-      <div className="relative z-10 w-full max-w-[30rem] bg-[#0F0F0F] rounded-xl border border-[#222222] shadow-2xl transform transition-all duration-300 hover:shadow-3xl">
+      <div className="relative z-10 w-full max-w-[30rem] bg-[#0F0F0F] rounded-md border border-[#222222] shadow-2xl">
+        {/* Close */}
+        <button
+          onClick={onClose}
+          className="absolute right-4 top-4 group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200"
+          aria-label="Close"
+        >
+          <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+
         {/* Header */}
-        <div className="relative p-4 border-b border-[#1A1A1A]">
+        <div className="p-4 border-b border-[#1A1A1A]">
           <div className="flex flex-col items-center justify-center gap-2">
-            <EnableTradingIcon />
-            <div className="flex flex-col items-center">
-              <span className="text-sm font-medium text-white tracking-wide text-center">Dexetera Gasless Trading</span>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-[#606060] text-center">
-                  {isConnected ? 'Wallet connected' : 'Wallet not connected'}
-                </span>
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isConnected ? 'bg-green-400' : 'bg-[#404040]'}`} />
-              </div>
+            <div className="w-12 h-12 rounded-xl bg-[#1A1A1A] border border-[#222222] flex items-center justify-center shadow-inner">
+              <img src="/Dexicon/LOGO-Dexetera-05.svg" alt="Dexetera" className="w-6 h-6 opacity-90" />
             </div>
-          </div>
-
-          <div className="absolute right-4 top-4 flex items-center gap-1.5">
-            {/* Refresh Detection Button */}
-            <button
-              onClick={async () => {
-                setIsRefreshing(true)
-                try {
-                  await new Promise(resolve => setTimeout(resolve, 500))
-                  if (typeof window !== 'undefined') {
-                    window.location.reload()
-                  }
-                } finally {
-                  setIsRefreshing(false)
-                }
-              }}
-              disabled={isRefreshing}
-              className="opacity-70 hover:opacity-100 transition-all duration-200 p-1 hover:bg-green-500/10 rounded text-green-400 hover:text-green-300 disabled:opacity-50"
-              title="Refresh wallet detection"
-            >
-              <svg
-                className={`w-3 h-3 transition-transform duration-500 ${isRefreshing ? 'animate-spin' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-
-            {/* Close */}
-            <button
-              onClick={onClose}
-              className="group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200"
-            >
-              <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="flex flex-col items-center">
+              <span className="text-sm font-medium text-white tracking-wide text-center">Activate Gasless Mode</span>
+              <span className="text-[10px] text-[#606060] text-center">
+                {isConnected ? 'Wallet Connected' : 'Wallet Not Connected'}
+              </span>
+            </div>
           </div>
         </div>
 
         {/* Body */}
         <div className="p-4">
-          {/* Empty/Primary State */}
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-            <div className="flex items-center justify-center p-2.5">
-              <div className="min-w-0 text-center">
-                <span className="text-[11px] font-medium text-white block">
-                  {sessionActive ? 'Trading Enabled' : 'Enable Trading'}
-                </span>
-                <span className="text-[10px] text-[#606060] block">
-                  {sessionActive
-                    ? 'You can now place trades gaslessly'
-                    : 'Let’s set up your wallet to trade on Dexetera'}
-                </span>
-              </div>
-              <div className="hidden items-center gap-2"></div>
-            </div>
-
-            {/* Expandable details */}
-            <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-16 overflow-hidden transition-all duration-200">
-              <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                <div className="text-[9px] pt-1.5">
-                  <span className="text-[#606060] block text-center">
-                    {isConnected
-                      ? gaslessEnabled
-                        ? 'We’ll create a short-lived session for gasless trading.'
-                        : 'Gasless trading is disabled by configuration.'
-                      : 'Connect your wallet to continue.'}
+          <div className="space-y-3">
+            {/* Wallet row */}
+            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="flex items-center justify-center">{walletRowLeftIcon}</div>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-[11px] font-medium text-[#9CA3AF] min-w-0 truncate">Wallet Connected</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-white font-mono truncate max-w-[10rem]">
+                    {isConnected ? addressShort : '—'}
                   </span>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Status Row */}
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-              <div className="flex items-center justify-center p-2.5">
-                <div className="flex items-center justify-center gap-2 min-w-0">
-                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isConnected ? 'bg-green-400' : 'bg-[#404040]'}`} />
-                  <div className="min-w-0">
-                    <span className="text-[11px] font-medium text-white block text-center truncate">Wallet</span>
-                    <span className="text-[10px] text-[#606060] block text-center truncate">
-                      {isConnected ? addressShort : 'Not connected'}
+              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                  <div className="text-[9px] pt-1.5">
+                    <span className="text-[#606060] block">
+                      {isConnected ? 'Wallet is ready.' : 'Connect your wallet to continue.'}
                     </span>
                   </div>
                 </div>
-                <svg className="hidden w-3 h-3 text-[#404040]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
-                </svg>
               </div>
             </div>
+
+            {/* Session row */}
             <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-              <div className="flex items-center justify-center p-2.5">
-                <div className="flex items-center justify-center gap-2 min-w-0">
-                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sessionActive ? 'bg-green-400' : (loading || isWorking) ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
-                  <div className="min-w-0">
-                    <span className="text-[11px] font-medium text-white block text-center truncate">Trading Session</span>
-                    <span className="text-[10px] text-[#606060] block text-center truncate">
-                      {sessionActive ? (sessionId ? `Active • ${sessionId.slice(0, 6)}…` : 'Active') : 'Not enabled'}
+              <div className="flex items-center justify-between p-2.5">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="flex items-center justify-center">{sessionRowLeftIcon}</div>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-[11px] font-medium text-[#9CA3AF] min-w-0 truncate">Trading Session</span>
+                    {(loading || isWorking) && !sessionActive ? (
+                      <span className="text-[10px] text-blue-400">Signing…</span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`text-[10px] px-1.5 py-0.5 rounded border
+                      ${sessionActive ? 'text-green-400 bg-[#1A1A1A] border-[#333333]' : 'text-[#606060] bg-[#1A1A1A] border-[#222222]'}
+                    `}
+                  >
+                    {sessionActive ? 'Active' : 'Inactive'}
+                  </div>
+                </div>
+              </div>
+              <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                  <div className="text-[9px] pt-1.5">
+                    <span className="text-[#606060] block">
+                      {sessionActive
+                        ? sessionId
+                          ? `Session: ${sessionId.slice(0, 10)}…`
+                          : 'Session is active.'
+                        : gaslessEnabled
+                          ? 'Sign once to create a short-lived gasless trading session.'
+                          : 'Gasless trading is disabled by configuration.'}
                     </span>
                   </div>
                 </div>
-                <svg className="hidden w-3 h-3 text-[#404040]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
-                </svg>
               </div>
             </div>
           </div>
 
-          {/* Error */}
+          {/* Error / Config hint */}
           {errorMessage && (
             <div className="mt-4 bg-[#1A1A1A] border border-[#333333] rounded-md p-3">
               <span className="text-[10px] text-red-400">{errorMessage}</span>
             </div>
           )}
+          {!gaslessEnabled && (
+            <div className="mt-4 bg-[#1A1A1A] border border-[#333333] rounded-md p-3">
+              <span className="text-[10px] text-[#606060]">
+                Gasless trading is disabled. Set <span className="font-mono text-white">NEXT_PUBLIC_GASLESS_ENABLED=true</span> to enable.
+              </span>
+            </div>
+          )}
 
           {/* CTA */}
-          <div className="mt-4">
-            <button
-              onClick={handlePrimary}
-              disabled={primaryDisabled}
-              className={`w-full h-10 rounded-md text-white text-sm font-medium transition-all duration-200
-                ${sessionActive ? 'bg-green-600/70 cursor-default' : primaryDisabled ? 'bg-[#2A2A2A] text-[#808080] cursor-not-allowed' : 'bg-[#166534] hover:bg-[#15803D]'}
-              `}
-            >
-              {primaryCta}
-            </button>
-            {!gaslessEnabled && (
-              <p className="mt-2 text-[10px] text-[#606060] text-center">
-                Gasless trading is disabled. Set NEXT_PUBLIC_GASLESS_ENABLED=true to enable.
-              </p>
-            )}
-          </div>
-        </div>
+          <button
+            onClick={handlePrimary}
+            disabled={primaryDisabled}
+            className={`mt-4 w-full h-10 rounded-md text-white text-sm font-medium transition-all duration-200
+              ${sessionActive
+                ? 'bg-green-600/70 cursor-default'
+                : primaryDisabled
+                  ? 'bg-[#2A2A2A] text-[#808080] cursor-not-allowed'
+                  : 'bg-[#166534] hover:bg-[#15803D]'}
+            `}
+          >
+            {primaryCta}
+          </button>
 
-        {/* Footer */}
-        <div className="px-4 py-3 border-t border-[#1A1A1A] bg-[#0A0A0A] rounded-b-xl">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-[#1A1A1A] rounded flex items-center justify-center">
-                <img src="/Dexicon/LOGO-Dexetera-05.svg" alt="Dexetera" className="w-2.5 h-2.5 opacity-70" />
-              </div>
-              <span className="text-[10px] text-[#808080] font-medium">Dexetera</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <p className="text-[10px] text-[#606060]">
-                By enabling, you agree to our
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">Terms</a>
-                and
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">Privacy Policy</a>
-              </p>
-            </div>
-          </div>
+          <p className="mt-2 text-[10px] text-[#606060] text-center">
+            By signing, you agree to our
+            <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">
+              Terms
+            </a>
+            and
+            <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">
+              Privacy Policy
+            </a>
+            .
+          </p>
         </div>
       </div>
     </div>

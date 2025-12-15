@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import useWallet from '@/hooks/useWallet'
 import { debugWalletDetection } from '@/lib/wallet'
@@ -10,15 +10,21 @@ interface WalletModalProps {
   onClose: () => void
 }
 
+const SUPABASE_STORAGE_HOST = 'https://khhknmobkkkvvogznxdj.supabase.co'
+const METAMASK_ICON_URL =
+  'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//MetaMask_Fox.svg.png'
+
 // Professional wallet icons with official brand colors and designs
 const WalletIcons = {
   'MetaMask': () => (
     <img 
-      src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos//MetaMask_Fox.svg.png"
+      src={METAMASK_ICON_URL}
       alt="MetaMask"
       width="32"
       height="32"
       style={{ borderRadius: '8px' }}
+      decoding="async"
+      loading="eager"
       onError={(e) => {
         // Fallback to original SVG if image fails
         const target = e.target as HTMLImageElement;
@@ -125,6 +131,39 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const { providers, connect } = useWallet()
   const [connecting, setConnecting] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isAnimating, setIsAnimating] = useState(false)
+
+  // Mirror SearchModal/DepositTokenSelect animation behavior (fade/scale in)
+  useEffect(() => {
+    if (isOpen) {
+      setIsAnimating(true)
+    } else {
+      setIsAnimating(false)
+    }
+  }, [isOpen])
+
+  // Preconnect + preload MetaMask icon so it is cached before modal opens.
+  // This runs even when `isOpen` is false (component can remain mounted).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    // Preconnect once to the Supabase storage host used for logos
+    const existingPreconnect = document.head.querySelector(
+      `link[rel="preconnect"][href="${SUPABASE_STORAGE_HOST}"]`
+    )
+    if (!existingPreconnect) {
+      const link = document.createElement('link')
+      link.rel = 'preconnect'
+      link.href = SUPABASE_STORAGE_HOST
+      link.crossOrigin = ''
+      document.head.appendChild(link)
+    }
+
+    // Preload MetaMask icon
+    const img = new Image()
+    img.decoding = 'async'
+    img.src = METAMASK_ICON_URL
+  }, [])
 
   if (!isOpen) return null
   if (typeof document === 'undefined') return null
@@ -170,15 +209,15 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const topWallets = [...installedWallets, ...notInstalledWallets].slice(0, 6)
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
       {/* Sophisticated Backdrop with Subtle Gradient */}
       <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300"
+        className={`absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
         onClick={onClose}
       />
       
       {/* Main Modal Container - Sophisticated Minimal Design */}
-      <div className="relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] shadow-2xl transform transition-all duration-300 hover:shadow-3xl">
+      <div className={`relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] shadow-2xl transform transition-all duration-200 hover:shadow-3xl ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
         
         <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
           <div className="flex items-center gap-3">

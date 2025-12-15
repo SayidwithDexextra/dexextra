@@ -1,7 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
+import { usePathname } from 'next/navigation';
+import Link from 'next/link';
 import { useETHPrice } from '../hooks/useETHPrice';
+import { useActiveMarkets } from '@/contexts/ActiveMarketsContext';
+import { useTheme } from '@/contexts/ThemeContext';
 
 const Footer: React.FC = () => {
+  const pathname = usePathname();
   const { 
     price: ethPrice, 
     changePercent24h, 
@@ -11,6 +16,42 @@ const Footer: React.FC = () => {
     isStale,
     refreshPrice 
   } = useETHPrice();
+
+  const { rankedSymbols } = useActiveMarkets();
+  const { theme, toggleTheme } = useTheme();
+
+  const currentTokenSymbol = useMemo(() => {
+    const path = String(pathname || '');
+    const match = path.match(/^\/token\/([^/?#]+)/i);
+    if (!match) return null;
+    const raw = match[1] || '';
+    try {
+      return decodeURIComponent(raw).toUpperCase();
+    } catch {
+      return raw.toUpperCase();
+    }
+  }, [pathname]);
+
+  const topMarketLinks = useMemo(() => {
+    const ranked = Array.isArray(rankedSymbols) ? rankedSymbols : [];
+    const filtered = ranked.filter(s => !currentTokenSymbol || String(s).toUpperCase() !== currentTokenSymbol);
+    const top3 = filtered.slice(0, 3);
+
+    if (top3.length > 0) {
+      return top3.map((sym) => ({
+        label: sym,
+        href: `/token/${encodeURIComponent(sym)}`,
+        title: 'Your active market',
+      }));
+    }
+
+    // Fallback (no wallet involvement yet)
+    return [
+      { label: 'Explore', href: '/explore', title: 'Explore markets' },
+      { label: 'Markets', href: '/markets', title: 'Browse markets' },
+      { label: 'Portfolio', href: '/portfolio', title: 'View portfolio' },
+    ];
+  }, [rankedSymbols, currentTokenSymbol]);
   
   // Create tooltip text for ETH price
   const getETHPriceTooltip = () => {
@@ -76,8 +117,11 @@ const Footer: React.FC = () => {
           Live
         </div>
 
-        {/* Aggregating Status */}
-        <div 
+        {/* How it works - placeholder docs link */}
+        <Link
+          href="#"
+          onClick={(e) => e.preventDefault()}
+          title="How it works: markets are created on-chain, users place orders on the OrderBook, and positions/settlement are handled by smart contracts."
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -86,13 +130,31 @@ const Footer: React.FC = () => {
             fontSize: '12px',
             fontWeight: '400',
             color: '#FFFFFF',
+            textDecoration: 'none',
+            cursor: 'pointer',
+            transition: 'color 0.2s ease, opacity 0.2s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#CCCCCC';
+            e.currentTarget.style.opacity = '0.95';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#FFFFFF';
+            e.currentTarget.style.opacity = '1';
           }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          <svg
+            width="16"
+            height="16"
+            viewBox="-1 -1 26 26"
+            fill="currentColor"
+            aria-hidden="true"
+            style={{ display: 'block', flexShrink: 0 }}
+          >
+            <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-20C8.69 1 6 3.69 6 7c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-4.26c1.81-1.27 3-3.36 3-5.74 0-3.31-2.69-6-6-6zm2.71 10.29L14 11.74V16h-4v-4.26l-.71-.45A4.992 4.992 0 0 1 8 7c0-2.21 1.79-4 4-4s4 1.79 4 4c0 1.64-.8 3.16-2.29 4.29z"/>
           </svg>
-          Aggregating
-        </div>
+          How it works
+        </Link>
 
         {/* Networks */}
         <div 
@@ -125,7 +187,7 @@ const Footer: React.FC = () => {
           gap: '16px',
         }}
       >
-        <a 
+        <Link 
           href="/terms"
           style={{
             padding: '4px 8px',
@@ -140,9 +202,9 @@ const Footer: React.FC = () => {
           onMouseLeave={(e) => e.currentTarget.style.color = '#FFFFFF'}
         >
           Terms of Service
-        </a>
+        </Link>
         
-        <a 
+        <Link 
           href="/privacy"
           style={{
             padding: '4px 8px',
@@ -157,7 +219,7 @@ const Footer: React.FC = () => {
           onMouseLeave={(e) => e.currentTarget.style.color = '#FFFFFF'}
         >
           Privacy Policy
-        </a>
+        </Link>
 
         {/* Social Icons */}
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -301,23 +363,8 @@ const Footer: React.FC = () => {
           )}
         </div>
 
-        {/* GWEI Display */}
-        <div 
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#FFFFFF',
-          }}
-        >
-          <span style={{ color: '#00FF88' }}>⛽</span>
-          8.06 GWEI
-        </div>
-
         {/* Support */}
-        <a 
+        <Link 
           href="/support"
           style={{
             display: 'flex',
@@ -338,10 +385,13 @@ const Footer: React.FC = () => {
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
           </svg>
           Support
-        </a>
+        </Link>
 
         {/* Theme Toggle */}
         <button 
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -358,26 +408,82 @@ const Footer: React.FC = () => {
           onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
           onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 3a6 6 0 0 0 9 5.2A9 9 0 1 1 8.2 3a6 6 0 0 0 3.8 0z"/>
-          </svg>
+          {theme === 'dark' ? (
+            // Sun icon (indicates switching to light mode)
+            <svg
+              width="16"
+              height="16"
+              viewBox="-1 -1 26 26"
+              fill="currentColor"
+              aria-hidden="true"
+              style={{ display: 'block', flexShrink: 0 }}
+            >
+              <path d="M6.76 4.84l-1.8-1.79L3.55 4.46l1.79 1.8 1.42-1.42zM1 13h3v-2H1v2zm10 10h2v-3h-2v3zm9-10v-2h-3v2h3zm-2.55-8.54l-1.41-1.41-1.8 1.79 1.42 1.42 1.79-1.8zM17.24 19.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/>
+            </svg>
+          ) : (
+            // Moon icon (indicates switching to dark mode)
+            <svg
+              width="16"
+              height="16"
+              viewBox="-1 -1 26 26"
+              fill="currentColor"
+              aria-hidden="true"
+              style={{ display: 'block', flexShrink: 0 }}
+            >
+              <path d="M12.76 2.05a.75.75 0 0 0-.82.3.75.75 0 0 0-.03.88A8.5 8.5 0 0 0 20.77 12a.75.75 0 0 0 1.18.61.75.75 0 0 0 .3-.82A9.75 9.75 0 0 1 12.76 2.05zM3.25 12c0-3.77 2.55-6.93 6.04-7.87a11.25 11.25 0 0 0 10.58 14.58A8.75 8.75 0 0 1 3.25 12z"/>
+            </svg>
+          )}
         </button>
 
-        {/* User Account */}
+        {/* Active Markets (positions first, then orders) */}
         <div 
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
-            fontSize: '14px',
+            fontSize: '12px',
             fontWeight: '500',
             color: '#FFFFFF',
           }}
         >
-          <span>Collector</span>
-          <span style={{ color: '#00FF88' }}>Pro</span>
-          <span>Crypto</span>
-          <span style={{ color: '#FFB800' }}>USD</span>
+          <span
+            style={{
+              color: '#9CA3AF',
+              fontSize: '11px',
+              fontWeight: '500',
+              letterSpacing: '0.2px',
+              marginRight: '2px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Active Markets:
+          </span>
+          {topMarketLinks.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              title={l.title}
+              style={{
+                padding: '2px 6px',
+                border: '1px solid #333333',
+                borderRadius: '4px',
+                color: '#FFFFFF',
+                textDecoration: 'none',
+                cursor: 'pointer',
+                transition: 'opacity 0.2s ease, border-color 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = '0.9';
+                e.currentTarget.style.borderColor = '#444444';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = '1';
+                e.currentTarget.style.borderColor = '#333333';
+              }}
+            >
+              {l.label}
+            </Link>
+          ))}
         </div>
 
         {/* Volume Control */}

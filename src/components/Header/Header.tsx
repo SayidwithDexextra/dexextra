@@ -436,6 +436,10 @@ export default function Header() {
               }}
               onClick={() => {
                 console.log('Deposit button clicked');
+                if (!walletData.isConnected) {
+                  setIsWalletModalOpen(true);
+                  return;
+                }
                 setIsDepositModalOpen(true);
               }}
             >
@@ -461,12 +465,45 @@ export default function Header() {
 
           {/* User Profile Section */}
           <div 
-            className="flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-pointer transition-all duration-200"
+            className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-pointer transition-all duration-200 ${
+              !walletData.isConnected ? 'border border-[#222222] hover:border-[#333333]' : ''
+            }`}
+            style={{
+              // Subtle gradient flare to draw attention when disconnected (design-system compliant)
+              background: !walletData.isConnected
+                ? `
+                    radial-gradient(130px 46px at 18% 42%, rgba(255,184,0,0.28), transparent 62%),
+                    radial-gradient(110px 44px at 78% 58%, rgba(249,115,22,0.20), transparent 66%),
+                    linear-gradient(180deg, rgba(26,26,26,0.90), rgba(15,15,15,0.90))
+                  `
+                : 'transparent',
+              boxShadow: !walletData.isConnected
+                ? '0 0 0 1px rgba(255,184,0,0.18), 0 12px 26px rgba(0, 0, 0, 0.40)'
+                : 'none'
+            }}
             onMouseEnter={(e) => {
-              (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+              if (!walletData.isConnected) {
+                (e.currentTarget as any).style.background = `
+                  radial-gradient(150px 52px at 18% 42%, rgba(255,184,0,0.42), transparent 64%),
+                  radial-gradient(120px 50px at 78% 58%, rgba(249,115,22,0.30), transparent 68%),
+                  linear-gradient(180deg, rgba(26,26,26,0.95), rgba(15,15,15,0.92))
+                `;
+                (e.currentTarget as any).style.boxShadow = '0 0 0 1px rgba(255,184,0,0.28), 0 16px 36px rgba(0, 0, 0, 0.50)';
+              } else {
+                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+              }
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as any).style.backgroundColor = 'transparent'
+              if (!walletData.isConnected) {
+                (e.currentTarget as any).style.background = `
+                  radial-gradient(130px 46px at 18% 42%, rgba(255,184,0,0.28), transparent 62%),
+                  radial-gradient(110px 44px at 78% 58%, rgba(249,115,22,0.20), transparent 66%),
+                  linear-gradient(180deg, rgba(26,26,26,0.90), rgba(15,15,15,0.90))
+                `;
+                (e.currentTarget as any).style.boxShadow = '0 0 0 1px rgba(255,184,0,0.18), 0 12px 26px rgba(0, 0, 0, 0.40)';
+              } else {
+                (e.currentTarget as any).style.backgroundColor = 'transparent'
+              }
             }}
             onClick={() => walletData.isConnected ? setIsProfileModalOpen(true) : setIsWalletModalOpen(true)}
           >

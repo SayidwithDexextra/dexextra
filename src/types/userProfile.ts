@@ -12,6 +12,7 @@ export interface UserProfile {
   discord_url?: string;
   instagram_url?: string;
   youtube_url?: string;
+  facebook_url?: string;
   profile_image_url?: string;
   banner_image_url?: string;
   email_notifications_enabled: boolean;
@@ -31,6 +32,7 @@ export interface PublicUserProfile {
   discord_url?: string;
   instagram_url?: string;
   youtube_url?: string;
+  facebook_url?: string;
   profile_image_url?: string;
   banner_image_url?: string;
   created_at: string;
@@ -47,6 +49,7 @@ export interface UserProfileFormData {
   discord: string; // maps to discord_url
   instagram: string; // maps to instagram_url
   youtube: string; // maps to youtube_url
+  facebook: string; // maps to facebook_url
 }
 
 export interface CreateUserProfileRequest {
@@ -65,6 +68,7 @@ export interface UpdateUserProfileRequest {
   discord_url?: string;
   instagram_url?: string;
   youtube_url?: string;
+  facebook_url?: string;
   profile_image_url?: string;
   banner_image_url?: string;
   email_notifications_enabled?: boolean;
@@ -97,6 +101,7 @@ export function formDataToUserProfile(
     discord_url: formData.discord || undefined,
     instagram_url: formData.instagram || undefined,
     youtube_url: formData.youtube || undefined,
+    facebook_url: formData.facebook || undefined,
     profile_image_url: profileImageUrl,
     banner_image_url: bannerImageUrl,
   };
@@ -114,5 +119,6 @@ export function userProfileToFormData(profile: UserProfile): UserProfileFormData
     discord: profile.discord_url || '',
     instagram: profile.instagram_url || '',
     youtube: profile.youtube_url || '',
+    facebook: profile.facebook_url || '',
   };
 } 

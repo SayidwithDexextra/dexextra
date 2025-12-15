@@ -597,9 +597,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-2">
                 <div className={`w-1 h-1 rounded-full flex-shrink-0 ${enhancedTokenData.isDeployed ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                <span className="text-[10px] font-medium text-[#808080]">Token Information</span>
+                <span className="text-[10px] font-medium text-[#E5E7EB]">Token Information</span>
               </div>
-              <span className="text-[9px] text-[#606060]">{enhancedTokenData.marketStatus}</span>
+              <span className="text-[9px] text-[#CBD5E1]">{enhancedTokenData.marketStatus}</span>
             </div>
             
             <div className="flex items-center gap-2">
@@ -622,7 +622,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                       className={`text-[10px] ${
                         activeTab === index 
                           ? 'text-white bg-[#2A2A2A]' 
-                          : 'text-[#606060] bg-[#1A1A1A] hover:bg-[#222222]'
+                          : 'text-[#CBD5E1] bg-[#1A1A1A] hover:bg-[#222222]'
                       } px-2 py-0.5 rounded transition-colors duration-200`}
                     >
                       {tab.label}
@@ -681,7 +681,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 {/* Display Unrealized PNL when contracted */}
                 {isLimitTabActive && tabItems[activeTab] && (
                   <div className="mt-1 text-[10px] flex justify-between">
-                    <span className="text-[#606060]">{tabItems[activeTab].labelShort}</span>
+                    <span className="text-[#CBD5E1]">{tabItems[activeTab].labelShort}</span>
                     <span className={`${tabItems[activeTab].id === 'haircut' && socializedLossNum > 0 ? 'text-red-400' : 'text-white'} font-mono`}>
                       {tabItems[activeTab].value}
                     </span>
@@ -702,13 +702,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-1.5">
               <div className={`w-1 h-1 rounded-full flex-shrink-0 ${showLiveIndicator ? 'bg-green-400 animate-pulse' : 'bg-blue-400'}`} />
-              <span className="text-[10px] font-medium text-[#808080]">Current Price</span>
+              <span className="text-[10px] font-medium text-[#E5E7EB]">Current Price</span>
             </div>
             <div className="flex items-center gap-1">
               {showLiveIndicator && (
                 <span className="text-[7px] text-green-400 bg-[#1A2A1A] px-1 py-0.5 rounded">LIVE</span>
               )}
-              <span className="text-[9px] text-[#606060]">USDC</span>
+              <span className="text-[9px] text-[#CBD5E1]">USDC</span>
             </div>
           </div>
           
@@ -746,7 +746,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 className={`w-5 h-5 flex items-center justify-center rounded transition-all duration-200 ${
                   isLoadingDirectPrice || isLoadingTrading 
                     ? 'bg-blue-400/10 text-blue-400' 
-                    : 'bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#606060] hover:text-white'
+                    : 'bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#CBD5E1] hover:text-white'
                 }`}
                 title="Refresh direct OrderBook price data"
               >
@@ -762,14 +762,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             <div className="mt-1 flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <div className="w-1 h-1 rounded-full bg-yellow-400" />
-                <span className="text-[10px] text-[#808080]">Settlement</span>
+                <span className="text-[10px] text-[#E5E7EB]">Settlement</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-white font-mono">
                   {formatCompactMoney(proposedSettlementValue)}
                 </span>
                 {remainingText && (
-                  <span className="text-[10px] text-[#606060]">
+                  <span className="text-[10px] text-[#CBD5E1]">
                     {remainingText} left
                   </span>
                 )}
@@ -781,7 +781,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           <div className="mt-1.5 space-y-1 text-[9px]">
             <div className="flex justify-between">
               {tabItems[activeTab] && (
-                <span className="text-[#606060]">{tabItems[activeTab].labelShort}</span>
+                <span className="text-[#CBD5E1]">{tabItems[activeTab].labelShort}</span>
               )}
               <div className="flex items-center gap-1">
                 {tabItems[activeTab] && (
@@ -806,7 +806,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             
             {enhancedTokenData.isDeployed && enhancedTokenData.fundingRate !== 0 && (
               <div className="flex justify-between">
-                <span className="text-[#606060]">Funding Rate:</span>
+                <span className="text-[#CBD5E1]">Funding Rate:</span>
                 <span className={`font-mono ${enhancedTokenData.fundingRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {enhancedTokenData.fundingRate > 0 ? '+' : ''}{(enhancedTokenData.fundingRate * 100).toFixed(4)}%
                 </span>
@@ -816,20 +816,20 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             {/* Status Messages */}
             {!enhancedTokenData.isDeployed && (
               <div className="flex justify-between">
-                <span className="text-[#606060]">Status:</span>
+                <span className="text-[#CBD5E1]">Status:</span>
                 <span className="text-yellow-400">Deployment Pending</span>
               </div>
             )}
 
             {directPriceError && (
               <div className="flex justify-between">
-                <span className="text-[#606060]">Error:</span>
+                <span className="text-[#CBD5E1]">Error:</span>
                 <span className="text-red-400">OrderBook Connection</span>
               </div>
             )}
             {tradingError && (
               <div className="flex justify-between">
-                <span className="text-[#606060]">Trading Data:</span>
+                <span className="text-[#CBD5E1]">Trading Data:</span>
                 <span className="text-red-400">Error</span>
               </div>
             )}

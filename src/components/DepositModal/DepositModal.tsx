@@ -177,6 +177,39 @@ export default function DepositModal({
     }
   }, [isOpen])
 
+  // Preconnect + preload QR for the selected chain's deposit address.
+  // This makes the QR on the deposit-address step appear instantly.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const chain = (sourceToken?.chain || '').toLowerCase()
+    const addr =
+      chain === 'polygon' ? env.SPOKE_POLYGON_VAULT_ADDRESS :
+      chain === 'arbitrum' ? env.SPOKE_ARBITRUM_VAULT_ADDRESS :
+      chain === 'ethereum' ? env.SPOKE_ETHEREUM_VAULT_ADDRESS :
+      chain === 'hyperliquid' ? env.SPOKE_HYPERLIQUID_VAULT_ADDRESS :
+      ''
+
+    if (!addr) return
+
+    const qrHost = 'https://api.qrserver.com'
+    const existingPreconnect = document.head.querySelector(
+      `link[rel="preconnect"][href="${qrHost}"]`
+    )
+    if (!existingPreconnect) {
+      const link = document.createElement('link')
+      link.rel = 'preconnect'
+      link.href = qrHost
+      link.crossOrigin = ''
+      document.head.appendChild(link)
+    }
+
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(addr)}`
+    const img = new Image()
+    img.decoding = 'async'
+    img.src = qrUrl
+  }, [sourceToken?.chain])
+
 
   // Function to handle deposit
   const handleDeposit = async () => {
@@ -403,8 +436,6 @@ export default function DepositModal({
   const handleClose = () => {
     onClose()
   }
-  
-  if (!isOpen) return null
 
   // Delegate rendering to sub-modals which already implement the Sophisticated Minimal Design System
   if (step === 'select') {

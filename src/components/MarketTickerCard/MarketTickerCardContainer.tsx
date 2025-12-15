@@ -11,6 +11,7 @@ interface MarketTickerCardContainerProps {
   cards: MarketTickerCardData[];
   onCardLongPosition?: (cardId: string) => void;
   onCardShortPosition?: (cardId: string) => void;
+  isLoading?: boolean;
   className?: string;
 }
 
@@ -19,24 +20,26 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
   cards,
   onCardLongPosition,
   onCardShortPosition,
+  isLoading = false,
   className,
 }) => {
   // Render all dynamic cards fed from live data
   const cardsWithStatic: MarketTickerCardData[] = cards;
+  const sectionClasses = [styles.section, className].filter(Boolean).join(' ');
 
   return (
-    <section className={className}>
+    <section className={sectionClasses}>
       {title && (
-        <h2 style={{
-          fontSize: '32px',
-          fontWeight: '700',
-          color: '#ffffff',
-          marginBottom: '16px',
-          marginLeft: '32px',
-          fontFamily: 'system-ui, -apple-system, sans-serif'
-        }}>
-          {title}
-        </h2>
+        <div className={styles.sectionHeader}>
+          <h2 className={styles.sectionTitle}>{title}</h2>
+          <div className={styles.sectionBadge} aria-label="Market count">
+            <span
+              className={isLoading ? styles.statusDotLoading : styles.statusDot}
+              aria-hidden="true"
+            />
+            <span className={styles.badgeText}>{cardsWithStatic.length}</span>
+          </div>
+        </div>
       )}
       
       <div className={styles.container}>

@@ -138,8 +138,8 @@ export default function Home() {
       </div>
       
       {/* Markets Section */}
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-7xl mx-auto">
+      <div className="w-full py-8">
+        <div className="w-full">
           {marketsError ? (
             <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 text-center">
               <p className="text-red-500">Error loading markets: {marketsError}</p>

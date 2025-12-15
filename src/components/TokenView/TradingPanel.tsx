@@ -2257,7 +2257,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             {/* Trade Summary - Sophisticated Design */}
             <div className="space-y-1 mb-1">
                 <div className="flex items-center justify-between mb-1">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Order Summary</h4>
+                  <h4 className="text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Order Summary</h4>
                   <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
                     {orderType.toUpperCase()}
                   </div>
@@ -2265,22 +2265,22 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                 
                 <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
                   <div className="p-1.5">
-                    <div className="space-y-0.5 text-[9px]">
-                      <div className="flex justify-between">
-                        <span className="text-[#606060]">Order Amount:</span>
-                        <span className="text-white font-mono">{isUsdMode ? '$' : ''}{formatNumber(amount)}{!isUsdMode ? ' units' : ''}</span>
+                    <div className="space-y-0.5 text-[10px]">
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <span className="text-[#606060] flex-1 min-w-0 truncate">Order Amount:</span>
+                        <span className="text-white font-mono whitespace-nowrap">{isUsdMode ? '$' : ''}{formatNumber(amount)}{!isUsdMode ? ' units' : ''}</span>
                       </div>
                       {/* Leverage and Position Size removed */}
-                      <div className="flex justify-between">
-                        <span className="text-[#606060]">Trading Fee:</span>
-                        <span className="text-white font-mono">${formatNumber((quoteState.value && quoteState.value > 0) ? (quoteState.value * 0.001) : (isUsdMode ? (amount * 0.001) : (amount * resolveCurrentPrice() * 0.001)))}</span>
+                      <div className="flex items-center justify-between gap-2 min-w-0">
+                        <span className="text-[#606060] flex-1 min-w-0 truncate">Trading Fee:</span>
+                        <span className="text-white font-mono whitespace-nowrap">${formatNumber((quoteState.value && quoteState.value > 0) ? (quoteState.value * 0.001) : (isUsdMode ? (amount * 0.001) : (amount * resolveCurrentPrice() * 0.001)))}</span>
                       </div>
                       {orderType === 'limit' && (
                         <>
                           <div className="border-t border-[#1A1A1A] my-1"></div>
-                          <div className="flex justify-between">
-                            <span className="text-[#606060]">Limit Price:</span>
-                            <span className="text-white font-mono">${triggerPrice > 0 ? formatNumber(triggerPrice) : 'Not set'}</span>
+                          <div className="flex items-center justify-between gap-2 min-w-0">
+                            <span className="text-[#606060] flex-1 min-w-0 truncate">Limit Price:</span>
+                            <span className="text-white font-mono whitespace-nowrap">${triggerPrice > 0 ? formatNumber(triggerPrice) : 'Not set'}</span>
                           </div>
                         </>
                       )}
@@ -2306,16 +2306,16 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                         // Adjusted liquidity check to consider currentPrice as fallback for market orders
                         const hasLiquidity = orderType === 'limit' ? (selectedOption === 'long' ? bestAsk > 0 : bestBid > 0) : (selectedOption === 'long' ? (bestAsk > 0 || currentPrice > 0) : (bestBid > 0 || currentPrice > 0));
                         return (
-                          <div className="text-[8px] space-y-0.5">
+                          <div className="text-[10px] space-y-0.5">
                             {/* Quote health/status */}
-                            <div className="flex justify-between">
-                              <span className="text-[#606060]">Est. Fill Price:</span>
-                              <span className="text-white font-mono">{quoteState.isLoading ? '...' : (hasLiquidity ? `$${formatNumber(estPrice)}` : 'No liquidity')}{quoteState.partial ? ' (partial)' : ''}</span>
+                            <div className="flex items-center justify-between gap-2 min-w-0">
+                              <span className="text-[#606060] flex-1 min-w-0 truncate">Est. Fill Price:</span>
+                              <span className="text-white font-mono whitespace-nowrap">{quoteState.isLoading ? '...' : (hasLiquidity ? `$${formatNumber(estPrice)}` : 'No liquidity')}{quoteState.partial ? ' (partial)' : ''}</span>
                             </div>
                     
-                            <div className="flex justify-between">
+                            <div className="flex items-center justify-end gap-2 min-w-0">
                               {/* <span className="text-[#606060]">{isUsdMode ? 'Est. Units:' : 'Est. Value:'}</span> */}
-                              <span className="text-white font-mono">
+                              <span className="text-white font-mono whitespace-nowrap">
                                 {quoteState.isLoading ? '...'
                                   : (hasLiquidity
                                       ? (isUsdMode
@@ -2324,17 +2324,17 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                                       : 'No liquidity')}
                               </span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-[#606060]">Order Value:</span>
-                              <span className="text-white font-mono">{hasLiquidity ? `$${formatNumber(orderValue)}` : 'No liquidity'}</span>
+                            <div className="flex items-center justify-between gap-2 min-w-0">
+                              <span className="text-[#606060] flex-1 min-w-0 truncate">Order Value:</span>
+                              <span className="text-white font-mono whitespace-nowrap">{hasLiquidity ? `$${formatNumber(orderValue)}` : 'No liquidity'}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-[#606060]">Margin Required{selectedOption === 'short' ? ' (150%)' : ''}:</span>
-                              <span className="text-white font-mono">{hasLiquidity ? `$${formatNumber(marginRequired)}` : 'No liquidity'}</span>
+                            <div className="flex items-center justify-between gap-2 min-w-0">
+                              <span className="text-[#606060] flex-1 min-w-0 truncate">Margin Required{selectedOption === 'short' ? ' (150%)' : ''}:</span>
+                              <span className="text-white font-mono whitespace-nowrap">{hasLiquidity ? `$${formatNumber(marginRequired)}` : 'No liquidity'}</span>
                             </div>
-                            <div className="flex justify-between">
-                              <span className="text-[#606060]">Liquidation Price:</span>
-                              <span className="text-white font-mono">{hasLiquidity ? `$${formatNumber(computedLiquidationPrice || 0)}` : 'No liquidity'}</span>
+                            <div className="flex items-center justify-between gap-2 min-w-0">
+                              <span className="text-[#606060] flex-1 min-w-0 truncate">Liquidation Price:</span>
+                              <span className="text-white font-mono whitespace-nowrap">{hasLiquidity ? `$${formatNumber(computedLiquidationPrice || 0)}` : 'No liquidity'}</span>
                             </div>
                     
                           </div>

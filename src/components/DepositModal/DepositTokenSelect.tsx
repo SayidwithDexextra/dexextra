@@ -1,9 +1,17 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Token } from './types'
 import { env } from '@/lib/env'
+
+// Chain logo mapping for header icons
+const CHAIN_LOGOS: Record<string, string> = {
+  Polygon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/polygon-matic-logo.png',
+  Arbitrum: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/arbitrum-arb-logo.png',
+  Ethereum: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/ethereum-eth-logo.png',
+  Hyperliquid: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/HyperlIquid.png',
+}
 
 interface DepositTokenSelectProps {
   isOpen: boolean
@@ -23,38 +31,88 @@ export default function DepositTokenSelect({
   onContinue
 }: DepositTokenSelectProps) {
   const [localSelected, setLocalSelected] = useState<string>(selectedToken?.symbol || '')
-
-  if (!isOpen) return null
+  const [openChain, setOpenChain] = useState<string | null>(null)
+  const [isAnimating, setIsAnimating] = useState(false)
 
   const handleSelect = (t: Token) => {
     setLocalSelected(t.symbol)
     onSelectToken(t)
   }
 
-  // Chain logo mapping for header icons
-  const CHAIN_LOGOS: Record<string, string> = {
-    Polygon: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/polygon-matic-logo.png',
-    Arbitrum: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/arbitrum-arb-logo.png',
-    Ethereum: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/ethereum-eth-logo.png',
-    Hyperliquid: 'https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/logos/HyperlIquid.png',
-  }
-
   // Group tokens by chain
-  const chainToTokens = availableTokens.reduce<Record<string, Token[]>>((acc, t) => {
-    const chain = t.chain || 'Other'
-    if (!acc[chain]) acc[chain] = []
-    acc[chain].push(t)
-    return acc
-  }, {})
+  const chainToTokens = useMemo(() => {
+    return availableTokens.reduce<Record<string, Token[]>>((acc, t) => {
+      const chain = t.chain || 'Other'
+      if (!acc[chain]) acc[chain] = []
+      acc[chain].push(t)
+      return acc
+    }, {})
+  }, [availableTokens])
 
   // Ensure Hyperliquid appears only if tokens exist; no forced empty section
 
-  const chainNames = Object.keys(chainToTokens)
-  const [openChain, setOpenChain] = useState<string | null>(null)
+  const chainNames = useMemo(() => Object.keys(chainToTokens), [chainToTokens])
 
   const toggleChain = (chain: string) => {
     setOpenChain((prev) => (prev === chain ? null : chain))
   }
+
+  // Keep local selection in sync (component stays mounted even when closed)
+  useEffect(() => {
+    setLocalSelected(selectedToken?.symbol || '')
+  }, [selectedToken?.symbol])
+
+  // Reset expanded section each time modal opens (avoids surprising stale UI)
+  useEffect(() => {
+    if (!isOpen) {
+      setOpenChain(null)
+    }
+  }, [isOpen])
+
+  // Match SearchModal animation behavior (fade/scale in)
+  useEffect(() => {
+    if (isOpen) {
+      setIsAnimating(true)
+    } else {
+      setIsAnimating(false)
+    }
+  }, [isOpen])
+
+  // Preconnect + preload token/chain logos so they're cached before the modal is shown.
+  // This runs even when `isOpen` is false (because the component remains mounted).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    // Preconnect once to the Supabase storage host used for logos
+    const supabaseHost = 'https://khhknmobkkkvvogznxdj.supabase.co'
+    const existingPreconnect = document.head.querySelector(
+      `link[rel="preconnect"][href="${supabaseHost}"]`
+    )
+    if (!existingPreconnect) {
+      const link = document.createElement('link')
+      link.rel = 'preconnect'
+      link.href = supabaseHost
+      link.crossOrigin = ''
+      document.head.appendChild(link)
+    }
+
+    const urls = new Set<string>()
+    for (const url of Object.values(CHAIN_LOGOS)) {
+      if (typeof url === 'string' && url) urls.add(url)
+    }
+    for (const t of availableTokens) {
+      const url = (t as any)?.icon
+      if (typeof url === 'string' && url.startsWith('http')) urls.add(url)
+    }
+
+    // Kick off downloads; browser will cache them for the modal.
+    // Keep it simple (small # of assets).
+    for (const url of urls) {
+      const img = new Image()
+      img.decoding = 'async'
+      img.src = url
+    }
+  }, [availableTokens])
 
   // Determine if a chain is enabled based on presence of its Spoke Vault address
   const chainHasVault = (chain: string) => {
@@ -66,16 +124,22 @@ export default function DepositTokenSelect({
     return true
   }
 
+  if (!isOpen) return null
+
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
+    >
       {/* Sophisticated Backdrop with Subtle Gradient */}
       <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300"
+        className={`absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
         onClick={onClose}
       />
       
       {/* Main Modal Container - Sophisticated Minimal Design */}
-      <div className="relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] shadow-2xl transform transition-all duration-300 hover:shadow-3xl">
+      <div
+        className={`group relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] shadow-2xl transform transition-all duration-200 hover:shadow-3xl ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
+      >
         
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-[#1A1A1A]">
@@ -127,6 +191,11 @@ export default function DepositTokenSelect({
                           src={CHAIN_LOGOS[chain]}
                           alt={`${chain} logo`}
                           className="w-4 h-4"
+                          width={16}
+                          height={16}
+                          decoding="async"
+                          loading="eager"
+                          fetchPriority="high"
                         />
                       </div>
                     )}
@@ -186,6 +255,11 @@ export default function DepositTokenSelect({
                                     src={t.icon} 
                                     alt={t.symbol} 
                                     className="w-6 h-6 rounded-full"
+                                    width={24}
+                                    height={24}
+                                    decoding="async"
+                                    loading="eager"
+                                    fetchPriority="high"
                                   />
                                 </div>
                                 <div className="min-w-0 flex-1">

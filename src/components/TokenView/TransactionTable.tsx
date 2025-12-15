@@ -330,12 +330,12 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       case 'liquidated':
         return 'text-red-400';
       default:
-        return 'text-gray-400';
+        return 'text-gray-200';
     }
   };
 
   const getPnLColor = (pnl?: number) => {
-    if (!pnl) return 'text-gray-400';
+    if (!pnl) return 'text-gray-200';
     return pnl >= 0 ? 'text-[#00D084]' : 'text-[#FF4747]';
   };
 
@@ -358,7 +358,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             className={`flex-1 py-1 px-1.5 rounded text-[10px] font-medium transition-colors ${
               view === 'orderbook'
                 ? 'bg-[#333333] text-white'
-                : 'text-gray-400 hover:text-white'
+                : 'text-gray-200 hover:text-white'
             }`}
           >
             BOOK
@@ -368,7 +368,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             className={`flex-1 py-1 px-1.5 rounded text-[10px] font-medium transition-colors ${
               view === 'transactions'
                 ? 'bg-[#333333] text-white'
-                : 'text-gray-400 hover:text-white'
+                : 'text-gray-200 hover:text-white'
             }`}
           >
             TRADES
@@ -385,19 +385,19 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {error}
           </div>
         ) : view === 'transactions' ? (
-          <div className="text-[10px] text-gray-500 text-center py-1">
+          <div className="text-[10px] text-gray-200 text-center py-1">
             {filteredAndSortedData.length} filled
                 {!marketIdentifier && (
-                  <span className="block text-[9px] text-gray-600">
+                  <span className="block text-[9px] text-gray-300">
                     Connect wallet to see orders
                   </span>
                 )}
           </div>
         ) : (
-          <div className="text-[10px] text-gray-500 text-center py-1">
+          <div className="text-[10px] text-gray-200 text-center py-1">
             Order Book
                 {!marketIdentifier && (
-                  <span className="block text-[9px] text-gray-600">
+                  <span className="block text-[9px] text-gray-300">
                     Market data unavailable
                   </span>
                 )}
@@ -408,13 +408,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       {/* Table Headers */}
       <div className="mb-1">
         {view === 'orderbook' ? (
-          <div className="grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 text-[10px] font-medium text-gray-500 px-1">
+          <div className="grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 text-[10px] font-medium text-gray-200 px-1">
             <div className="flex items-center justify-center">PRICE</div>
             <div className="flex items-center justify-center">SIZE (UNITS)</div>
             <div className="flex items-center justify-center">TOTAL (USD)</div>
           </div>
         ) : (
-          <div className="grid grid-cols-[1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-500 px-1">
+          <div className="grid grid-cols-[1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-200 px-1">
             <div className="text-right">SIZE (UNITS)</div>
             <div className="text-right">PRICE</div>
             <div className="text-right">TIME</div>
@@ -431,7 +431,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             <div className="overflow-hidden flex flex-col justify-end" style={{ minHeight: '200px' }}>
               <div className="overflow-y-auto orders-table-scroll flex-grow-0" style={{ maxHeight: '200px' }}>
                 {asks.length === 0 ? (
-                  <div className="text-[10px] text-gray-500 text-center py-2">
+                  <div className="text-[10px] text-gray-200 text-center py-2">
                     No sell orders
                   </div>
                 ) : (
@@ -466,7 +466,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                             <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
                               {formatAmountDisplay(remainingQuantity, 4)}
                             </div>
-                            <div className="flex items-center justify-center text-gray-400 font-mono text-[10px] tabular-nums">
+                            <div className="flex items-center justify-center text-gray-200 font-mono text-[10px] tabular-nums">
                               {formatCurrency(lineUsd)}
                             </div>
                           </div>
@@ -479,18 +479,18 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             </div>
 
             {/* Ask Orders Label */}
-            <div className="text-[9px] text-gray-500 px-1 py-0.5 flex items-center justify-between">
+            <div className="text-[9px] text-gray-200 px-1 py-0.5 flex items-center justify-between">
               <span>ASKS (SELL)</span>
               <span className="text-[#FF4747]">{asks.length} orders</span>
             </div>
 
             {/* Spread Display */}
             <div className="pt-0 pb-1 px-1 bg-[#1A1A1A] border-y border-gray-700">
-              <div className="text-[10px] text-gray-400 text-center font-mono tabular-nums">
+              <div className="text-[10px] text-gray-200 text-center font-mono tabular-nums">
                 {bestAskPrice > 0 && bestBidPrice > 0 ? (
                   <>
                     Spread: ${((bestAskPrice - bestBidPrice)).toFixed(4)}
-                    <span className="text-[9px] text-gray-500 ml-2">
+                    <span className="text-[9px] text-gray-200 ml-2">
                       ({((((bestAskPrice - bestBidPrice) / (bestBidPrice || 1)) * 100).toFixed(2))}%)
                     </span>
                   </>
@@ -502,13 +502,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
             {/* Bid Orders (Buy Orders) - Bottom half */}
             <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="text-[9px] text-gray-500 mb-1 px-1 flex items-center justify-between">
+              <div className="text-[9px] text-gray-200 mb-1 px-1 flex items-center justify-between">
                 <span>BIDS (BUY)</span>
                 <span className="text-[#00D084]">{bids.length} orders</span>
               </div>
               <div className="flex-1 overflow-y-auto orders-table-scroll">
                 {bids.length === 0 ? (
-                  <div className="text-[10px] text-gray-500 text-center py-2">
+                  <div className="text-[10px] text-gray-200 text-center py-2">
                     No buy orders
                   </div>
                 ) : (
@@ -543,7 +543,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                             <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
                               {formatAmountDisplay(remainingQuantity, 4)}
                             </div>
-                            <div className="flex items-center justify-center text-gray-400 font-mono text-[10px] tabular-nums">
+                            <div className="flex items-center justify-center text-gray-200 font-mono text-[10px] tabular-nums">
                               {formatCurrency(lineUsd)}
                             </div>
                           </div>
@@ -559,10 +559,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           /* Traditional Trades Display */
           <div className="overflow-y-auto orders-table-scroll">
             {filteredAndSortedData.length === 0 ? (
-              <div className="text-[10px] text-gray-500 text-center py-4">
+              <div className="text-[10px] text-gray-200 text-center py-4">
                 No filled orders found
                 {!marketIdentifier && (
-                  <div className="text-[9px] text-gray-600 mt-1">
+                  <div className="text-[9px] text-gray-300 mt-1">
                     Market data unavailable
                   </div>
                 )}
@@ -606,7 +606,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                         <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
                           {order.price ? `$${formatPriceDisplay(order.price, 4)}` : 'MARKET'}
                         </div>
-                        <div className="text-right text-gray-400 font-mono text-[10px] flex items-center justify-end tabular-nums">
+                        <div className="text-right text-gray-200 font-mono text-[10px] flex items-center justify-end tabular-nums">
                           {formatTime(order.created_at)}
                         </div>
                       </div>

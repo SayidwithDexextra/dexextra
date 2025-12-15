@@ -598,7 +598,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">
             <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${positionsIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
-                      <span className="text-[11px] font-medium text-[#808080]">
+                      <span className="text-[11px] font-medium text-[#E5E7EB]">
               {positionsIsLoading ? 'Loading open positions…' : 'No open positions'}
                       </span>
                     </div>
@@ -647,7 +647,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 <span className="text-[11px] font-medium text-white">
                                   {marketSymbolMap.get(position.symbol)?.name || position.symbol}
                                 </span>
-                                <span className="text-[10px] text-[#606060]">{position.symbol}</span>
+                                <span className="text-[10px] text-[#CBD5E1]">{position.symbol}</span>
                                 {position.isUnderLiquidation && (
                                   <div className="px-1 py-0.5 bg-yellow-400/10 rounded">
                                     <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
@@ -667,7 +667,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <span className="text-[11px] text-white font-mono">{position.size.toFixed(2)}</span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-white font-mono">${position.markPrice.toFixed(2)}</span>
+                            <span className="text-[11px] text-white font-mono">${formatPrice(position.markPrice)}</span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
                             <div className="flex justify-end">
@@ -704,7 +704,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     ? 'text-yellow-400 font-bold'
                                     : 'text-white'
                                 }`}>
-                                  ${position.liquidationPrice.toFixed(2)}
+                                  ${formatPrice(position.liquidationPrice)}
                                 </span>
                               </div>
                               {position.isUnderLiquidation && (
@@ -717,7 +717,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           <td className="px-2 py-1.5 text-right">
                   <button 
                     onClick={() => setExpandedPositionId(expandedPositionId === position.id ? null : position.id)}
-                    className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#808080] hover:text-white hover:bg-[#2A2A2A] rounded"
+                    className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
                   >
                     {expandedPositionId === position.id ? 'Hide' : 'Manage'}
                             </button>
@@ -731,7 +731,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           <div className="flex items-center gap-4">
                             <div className="flex items-center gap-3">
                               <div className="flex flex-col gap-1">
-                                <span className="text-[9px] text-[#606060]">Current Margin</span>
+                                <span className="text-[9px] text-[#CBD5E1]">Current Margin</span>
                                 <span className={`text-[10px] font-medium font-mono ${
                                   position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
                                 }`}>
@@ -739,7 +739,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 </span>
                               </div>
                               <div className="flex flex-col gap-1">
-                                <span className="text-[9px] text-[#606060]">Leverage</span>
+                                <span className="text-[9px] text-[#CBD5E1]">Leverage</span>
                                 <span className={`text-[10px] font-medium font-mono ${
                                   position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
                                 }`}>
@@ -808,7 +808,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${openOrdersIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
-                      <span className="text-[11px] font-medium text-[#808080]">
+                      <span className="text-[11px] font-medium text-[#E5E7EB]">
                         {openOrdersIsLoading ? 'Loading open orders…' : 'No open orders'}
                       </span>
                     </div>
@@ -852,7 +852,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   <span className="text-[11px] font-medium text-white">
                                     {marketSymbolMap.get(order.symbol)?.name || order.symbol}
                                   </span>
-                                  <span className="text-[10px] text-[#606060]">{order.symbol}</span>
+                                  <span className="text-[10px] text-[#CBD5E1]">{order.symbol}</span>
                                 </div>
                               </div>
                             </td>
@@ -877,7 +877,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <td className="px-2 py-1.5 text-right">
                               <button
                                 onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#808080] hover:text-white hover:bg-[#2A2A2A] rounded"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
                               >
                                 {expandedOrderId === order.id ? 'Hide' : 'Manage'}
                               </button>
@@ -891,13 +891,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     <div className="flex items-center gap-4">
                                       <div className="flex items-center gap-3">
                                         <div className="flex flex-col gap-1">
-                                          <span className="text-[9px] text-[#606060]">Order Value</span>
+                                          <span className="text-[9px] text-[#CBD5E1]">Order Value</span>
                                           <span className="text-[10px] font-medium text-white font-mono">
                                             ${formatPrice(order.price * order.size)}
                                           </span>
                                         </div>
                                         <div className="flex flex-col gap-1">
-                                          <span className="text-[9px] text-[#606060]">Fill Progress</span>
+                                          <span className="text-[9px] text-[#CBD5E1]">Fill Progress</span>
                                           <span className="text-[10px] font-medium text-white font-mono">
                                             {order.size > 0 ? ((order.filled / order.size) * 100).toFixed(1) : '0.0'}%
                                           </span>
@@ -1097,7 +1097,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         <div className="flex items-center justify-center p-8">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-            <span className="text-[11px] font-medium text-[#808080]">
+            <span className="text-[11px] font-medium text-[#E5E7EB]">
               Loading trade history...
             </span>
           </div>
@@ -1110,7 +1110,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         <div className="flex items-center justify-center p-8">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-            <span className="text-[11px] font-medium text-[#808080]">
+            <span className="text-[11px] font-medium text-[#E5E7EB]">
               Connect wallet to view trade history
             </span>
           </div>
@@ -1123,7 +1123,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         <div className="flex items-center justify-center p-8">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-            <span className="text-[11px] font-medium text-[#808080]">
+            <span className="text-[11px] font-medium text-[#E5E7EB]">
               No trades yet
             </span>
           </div>
@@ -1150,19 +1150,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
             <h4 className="text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide whitespace-nowrap">Trading Performance</h4>
             <div className="flex items-center gap-4 text-nowrap">
               <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#606060] whitespace-nowrap">Volume:</span>
+                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Volume:</span>
                 <span className="text-[10px] font-medium text-white font-mono">${stats.totalVolume.toFixed(2)}</span>
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#606060] whitespace-nowrap">Fees:</span>
+                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Fees:</span>
                 <span className="text-[10px] font-medium text-white font-mono">${stats.totalFees.toFixed(4)}</span>
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#606060] whitespace-nowrap">Buy/Sell:</span>
+                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Buy/Sell:</span>
                 <span className="text-[10px] font-medium text-white font-mono">{stats.buyCount}/{stats.sellCount}</span>
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#606060] whitespace-nowrap">Avg Size:</span>
+                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Avg Size:</span>
                 <span className="text-[10px] font-medium text-white font-mono">${stats.avgTradeSize.toFixed(2)}</span>
               </div>
             </div>
@@ -1181,7 +1181,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               <option value="50">50 trades</option>
               <option value="100">100 trades</option>
             </select>
-            <span className="text-[10px] text-[#606060]">
+            <span className="text-[10px] text-[#CBD5E1]">
               {orderBookState.tradeCount} total trades
             </span>
           </div>
@@ -1244,14 +1244,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
             <button
               onClick={() => setTradeOffset(Math.max(0, tradeOffset - tradeLimit))}
               disabled={tradeOffset === 0}
-              className="px-2 py-1 text-[11px] text-[#808080] hover:text-white disabled:text-[#404040] disabled:cursor-not-allowed"
+              className="px-2 py-1 text-[11px] text-[#E5E7EB] hover:text-white disabled:text-[#404040] disabled:cursor-not-allowed"
             >
               Previous
             </button>
             <button
               onClick={() => setTradeOffset(tradeOffset + tradeLimit)}
               disabled={!hasMoreTrades}
-              className="px-2 py-1 text-[11px] text-[#808080] hover:text-white disabled:text-[#404040] disabled:cursor-not-allowed"
+              className="px-2 py-1 text-[11px] text-[#E5E7EB] hover:text-white disabled:text-[#404040] disabled:cursor-not-allowed"
             >
               Next
             </button>
@@ -1275,7 +1275,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#808080]">
+                      <span className="text-[11px] font-medium text-[#E5E7EB]">
                         No order history
                       </span>
                     </div>
@@ -1390,11 +1390,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               className={`px-2.5 py-1.5 text-[11px] font-medium rounded transition-all duration-200 flex items-center gap-1.5 ${
                 activeTab === tab.id
                   ? 'text-white bg-[#1A1A1A] border border-[#333333]'
-                  : 'text-[#808080] hover:text-white hover:bg-[#1A1A1A] border border-transparent hover:border-[#222222]'
+                  : 'text-[#E5E7EB] hover:text-white hover:bg-[#1A1A1A] border border-transparent hover:border-[#222222]'
               }`}
             >
               <span>{tab.label}</span>
-              <div className="text-[10px] text-[#606060] bg-[#2A2A2A] px-1.5 py-0.5 rounded">
+              <div className="text-[10px] text-[#CBD5E1] bg-[#2A2A2A] px-1.5 py-0.5 rounded">
                 {tab.count}
               </div>
             </button>
@@ -1405,12 +1405,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           {isLoading ? (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-              <span className="text-[10px] text-[#606060]">Loading...</span>
+              <span className="text-[10px] text-[#CBD5E1]">Loading...</span>
             </>
           ) : (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-              <span className="text-[10px] text-[#606060]">Live</span>
+              <span className="text-[10px] text-[#CBD5E1]">Live</span>
             </>
           )}
         </div>
@@ -1421,7 +1421,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#808080]">
+                      <span className="text-[11px] font-medium text-[#E5E7EB]">
                 Connect wallet to view {activeTab}
                       </span>
                     </div>
@@ -1463,7 +1463,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 </div>
                 <button
                   onClick={() => setShowCloseModal(false)}
-                  className="text-[#606060] hover:text-white transition-colors"
+                  className="text-[#CBD5E1] hover:text-white transition-colors"
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1475,7 +1475,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
             
             <div className="space-y-4">
               <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded">
-                <span className="text-[10px] text-[#808080]">Position Size</span>
+                <span className="text-[10px] text-[#E5E7EB]">Position Size</span>
                 <span className="text-[11px] font-medium text-white font-mono">
                   {maxSize.toFixed(2)}
                 </span>
@@ -1529,7 +1529,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setCloseSize('');
                     setCloseError(null);
                   }}
-                  className="px-3 py-1.5 text-[11px] font-medium text-[#808080] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors"
+                  className="px-3 py-1.5 text-[11px] font-medium text-[#E5E7EB] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors"
                   disabled={isClosing}
                 >
                   Cancel
@@ -1539,7 +1539,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   disabled={isClosing || !closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize}
                   className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors flex items-center gap-1.5 ${
                     isClosing || !closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize
-                      ? 'text-[#606060] bg-[#2A2A2A] cursor-not-allowed'
+                      ? 'text-[#CBD5E1] bg-[#2A2A2A] cursor-not-allowed'
                       : 'text-white bg-red-500 hover:bg-red-600'
                   }`}
                 >
@@ -1576,7 +1576,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               </h3>
               <button
                 onClick={() => setShowTopUpModal(false)}
-                className="text-[#606060] hover:text-white transition-colors"
+                className="text-[#CBD5E1] hover:text-white transition-colors"
               >
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1586,7 +1586,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
             
             <div className="space-y-4">
               <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded">
-                <span className="text-[10px] text-[#808080]">Current Margin</span>
+                <span className="text-[10px] text-[#E5E7EB]">Current Margin</span>
                 <span className="text-[11px] font-medium text-white font-mono">
                   ${currentMargin.toFixed(2)}
                               </span>
@@ -1613,7 +1613,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setShowTopUpModal(false);
                     setTopUpAmount('');
                   }}
-                  className="px-3 py-1.5 text-[11px] font-medium text-[#808080] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 text-[11px] font-medium text-[#E5E7EB] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   disabled={isToppingUp}
                 >
                   Cancel
@@ -1623,7 +1623,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   disabled={!topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp}
                   className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors ${
                     !topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp
-                      ? 'text-[#606060] bg-[#2A2A2A] cursor-not-allowed'
+                      ? 'text-[#CBD5E1] bg-[#2A2A2A] cursor-not-allowed'
                       : 'text-white bg-blue-500 hover:bg-blue-600'
                   }`}
                 >

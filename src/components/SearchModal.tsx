@@ -64,6 +64,16 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
   const design = searchModalDesign.searchModal
 
+  const formatUsdNumber = useCallback((value: number, decimals?: number) => {
+    const safe = Number.isFinite(value) ? value : 0
+    const dRaw = typeof decimals === 'number' && Number.isFinite(decimals) ? Math.floor(decimals) : 4
+    const d = Math.max(0, Math.min(dRaw, 8))
+    return `$${new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: d,
+      maximumFractionDigits: d,
+    }).format(safe)}`
+  }, [])
+
   // Load recent searches from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('dexextra-recent-searches')
@@ -494,7 +504,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       <div className="flex items-center gap-2">
                         <div className="text-right">
                           <div className="text-[10px] text-white font-mono">
-                            ${market.initial_price ? market.initial_price.toFixed(4) : '0.0000'}
+                            {formatUsdNumber(market.initial_price, market.price_decimals ?? 4)}
                           </div>
                           <div className={`text-[9px] ${
                             market.deployment_status === 'deployed' ? 'text-green-400' : 'text-yellow-400'

@@ -60,7 +60,10 @@ function normalizePositionStruct(positionLike: any) {
   };
 }
 
-export function usePositions(marketSymbol?: string, options?: { enabled?: boolean }): PositionState {
+export function usePositions(
+  marketSymbol?: string,
+  options?: { enabled?: boolean; pollIntervalMs?: number }
+): PositionState {
   const wallet = useWallet() as any;
   const walletAddress: string | null = wallet?.walletData?.address ?? wallet?.address ?? null;
   const walletSigner = wallet?.walletData?.signer ?? wallet?.signer ?? null;
@@ -121,12 +124,14 @@ export function usePositions(marketSymbol?: string, options?: { enabled?: boolea
   // Fetch positions data
   useEffect(() => {
     const enabled = options?.enabled !== false;
+    const pollIntervalMs = Math.max(2000, Number(options?.pollIntervalMs ?? 5000) || 5000);
     pfLog('Positions fetch prerequisites', {
       hasContracts: Boolean(contracts),
       hasWallet: Boolean(walletAddress),
       marketSymbol: marketSymbol || null,
       isMarketLoading,
-      enabled
+      enabled,
+      pollIntervalMs
     });
     // If a specific market is requested, wait until it resolves before fetching
     if (!contracts || !walletAddress || (marketSymbol && isMarketLoading)) {
@@ -525,7 +530,7 @@ export function usePositions(marketSymbol?: string, options?: { enabled?: boolea
       }
     } catch {}
 
-    const interval = setInterval(fetchPositions, 5000);
+    const interval = setInterval(fetchPositions, pollIntervalMs);
 
     return () => {
       clearInterval(interval);
@@ -536,7 +541,7 @@ export function usePositions(marketSymbol?: string, options?: { enabled?: boolea
         }
       } catch {}
     };
-  }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32, options?.enabled]);
+  }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32, options?.enabled, options?.pollIntervalMs]);
 
   return state;
 }

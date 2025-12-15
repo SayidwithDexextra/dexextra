@@ -56,7 +56,7 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 	const enabled = options?.enabled !== false
 
 	// Use the existing usePositions hook for positions
-	const positionsState = usePositions(undefined, { enabled })
+	const positionsState = usePositions(undefined, { enabled, pollIntervalMs: options?.refreshInterval })
 
 	// Local state for orders
 	const [ordersBuckets, setOrdersBuckets] = useState<PortfolioOrdersBucket[]>([])

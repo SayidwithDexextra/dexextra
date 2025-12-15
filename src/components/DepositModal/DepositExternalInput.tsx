@@ -60,6 +60,7 @@ export default function DepositExternalInput({
       `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(depositAddress || 'NOT_CONFIGURED')}`
     )
   })
+  const [qrLoaded, setQrLoaded] = useState(false)
 
   // Preload QR image once and reuse cached object URL to remove visible delay
   useEffect(() => {
@@ -67,10 +68,22 @@ export default function DepositExternalInput({
     const cached = qrCache.get(addr)
     if (cached) {
       setQrSrc(cached)
+      setQrLoaded(true)
       return
     }
 
     const controller = new AbortController()
+    const qrHost = 'https://api.qrserver.com'
+    const existingPreconnect = document.head.querySelector(
+      `link[rel="preconnect"][href="${qrHost}"]`
+    )
+    if (!existingPreconnect) {
+      const link = document.createElement('link')
+      link.rel = 'preconnect'
+      link.href = qrHost
+      link.crossOrigin = ''
+      document.head.appendChild(link)
+    }
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(addr)}`
 
     fetch(qrUrl, { signal: controller.signal })
@@ -79,10 +92,12 @@ export default function DepositExternalInput({
         const objectUrl = URL.createObjectURL(blob)
         qrCache.set(addr, objectUrl)
         setQrSrc(objectUrl)
+        setQrLoaded(true)
       })
       .catch(() => {
         // Fallback to direct URL if prefetch fails
         setQrSrc(qrUrl)
+        setQrLoaded(false)
       })
 
     return () => controller.abort()
@@ -234,12 +249,19 @@ export default function DepositExternalInput({
                 {/* QR code left */}
                 <div className="flex items-center justify-center">
                   <div className="p-2 rounded-md border border-[#222222] bg-white">
+                    {!qrLoaded && (
+                      <div className="absolute -mt-1 -ml-1 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    )}
                     <img
                       src={qrSrc}
                       alt="Deposit QR Code"
                       width={180}
                       height={180}
                       className="rounded"
+                      decoding="async"
+                      loading="eager"
+                      fetchPriority="high"
+                      onLoad={() => setQrLoaded(true)}
                     />
                   </div>
                 </div>

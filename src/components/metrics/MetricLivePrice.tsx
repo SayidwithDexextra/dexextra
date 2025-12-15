@@ -36,7 +36,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     token,
     marketIdentifier,
     className = '',
-    label = 'Metric Value',
+    label = 'Metric Info',
     prefix = '',
     suffix = '',
     isLive = true,

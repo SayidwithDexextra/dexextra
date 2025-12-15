@@ -21,7 +21,8 @@ export default function Settings({ className }: SettingsProps) {
     twitter: '',
     discord: '',
     instagram: '',
-    youtube: ''
+    youtube: '',
+    facebook: ''
   })
 
   const [profileImage, setProfileImage] = useState<string | null>(null)
@@ -43,6 +44,7 @@ export default function Settings({ className }: SettingsProps) {
         discord: walletData.userProfile.discord_url || '',
         instagram: walletData.userProfile.instagram_url || '',
         youtube: walletData.userProfile.youtube_url || '',
+        facebook: walletData.userProfile.facebook_url || '',
       })
       setProfileImage(walletData.userProfile.profile_image_url || null)
       setBannerImage(walletData.userProfile.banner_image_url || null)
@@ -655,12 +657,37 @@ export default function Settings({ className }: SettingsProps) {
                     </svg>
                   </div>
                   <input
-                    type="url"
+                    type="text"
                     id="instagram"
                     name="instagram"
                     value={formData.instagram}
                     onChange={handleInputChange}
-                    placeholder="https://instagram.com/username"
+                    placeholder="@username or https://www.instagram.com/username/"
+                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#00d4aa] focus:outline-none transition-colors duration-200"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="facebook" className="block text-[11px] font-medium text-[#808080] mb-2">
+                  Facebook
+                </label>
+                <div className="relative">
+                  <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[#606060]">
+                      <path
+                        d="M9.2 15V9.2h2l.3-2.3H9.2V5.4c0-.7.2-1.2 1.2-1.2h1.3V2.1c-.2 0-1 0-2 0-2 0-3.3 1.2-3.3 3.5v1.3H4.3v2.3h2.1V15h2.8z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </div>
+                  <input
+                    type="text"
+                    id="facebook"
+                    name="facebook"
+                    value={formData.facebook}
+                    onChange={handleInputChange}
+                    placeholder="@username or https://www.facebook.com/username"
                     className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#00d4aa] focus:outline-none transition-colors duration-200"
                   />
                 </div>

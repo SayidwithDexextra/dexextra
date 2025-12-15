@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { UserProfileService } from '@/lib/userProfileService';
 import { z } from 'zod';
+import { normalizeSocialUrlInput } from '@/lib/socialUrl';
 
 // Validation schemas
 const GetProfileSchema = z.object({
@@ -28,6 +29,20 @@ const optionalEmail = () =>
     })
     .optional();
 
+const optionalSocialUrl = (platform: Parameters<typeof normalizeSocialUrlInput>[0], errorMessage: string) =>
+  z
+    .string()
+    .optional()
+    .refine((val) => !val || val === '' || normalizeSocialUrlInput(platform, val) !== null, {
+      message: errorMessage,
+    })
+    .transform((val) => {
+      if (!val || val === '') return undefined;
+      // Safe due to refine above
+      const normalized = normalizeSocialUrlInput(platform, val);
+      return normalized === null ? undefined : normalized;
+    });
+
 const UpdateProfileSchema = z.object({
   wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format'),
   username: z.string().optional(),
@@ -37,8 +52,9 @@ const UpdateProfileSchema = z.object({
   website: optionalUrl('Invalid website URL'),
   twitter_url: optionalUrl('Invalid Twitter URL'),
   discord_url: optionalUrl('Invalid Discord URL'),
-  instagram_url: optionalUrl('Invalid Instagram URL'),
+  instagram_url: optionalSocialUrl('instagram', 'Invalid Instagram URL or handle'),
   youtube_url: optionalUrl('Invalid YouTube URL'),
+  facebook_url: optionalSocialUrl('facebook', 'Invalid Facebook URL or handle'),
   profile_image_url: optionalUrl('Invalid profile image URL'),
   banner_image_url: optionalUrl('Invalid banner image URL'),
   email_notifications_enabled: z.boolean().optional(),

@@ -58,7 +58,7 @@ export default function TokenStats({ tokenData }: TokenStatsProps) {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
         {stats.map((stat, index) => (
           <div key={index} className="flex flex-col">
-            <span className="text-[#808080] text-sm font-medium mb-1 uppercase tracking-wider">
+            <span className="text-[#E5E7EB] text-sm font-medium mb-1 uppercase tracking-wider">
               {stat.label}
             </span>
             <span 
