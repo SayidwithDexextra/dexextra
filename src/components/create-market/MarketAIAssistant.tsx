@@ -3,6 +3,7 @@
 import React, { useState, forwardRef, useImperativeHandle } from 'react';
 import { MetricResolutionModal } from '@/components/MetricResolutionModal';
 import type { MetricResolutionResponse } from '@/components/MetricResolutionModal/types';
+import { runMetricAIWithPolling, type MetricAIResult } from '@/lib/metricAiWorker';
 
 interface MarketAIAssistantProps {
   metric: string;
@@ -37,6 +38,47 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
     modalData: null as MetricResolutionResponse | null,
     showAcceptedScreenshot: false
   });
+
+  const toModalResponse = (ai: MetricAIResult, processingMs: number): MetricResolutionResponse => {
+    const rawSources = Array.isArray(ai?.sources) ? ai.sources : [];
+    const sources = rawSources
+      .map((s: any) => ({
+        url: String(s?.url || ''),
+        screenshot_url: String(s?.screenshot_url || ''),
+        quote: String(s?.quote || ''),
+        match_score: typeof s?.match_score === 'number' ? s.match_score : 0.5,
+        css_selector: s?.css_selector,
+        xpath: s?.xpath,
+        html_snippet: s?.html_snippet,
+        js_extractor: s?.js_extractor,
+      }))
+      .filter((s: any) => Boolean(s?.url));
+
+    return {
+      status: 'completed',
+      processingTime: `${processingMs}ms`,
+      cached: false,
+      data: {
+        metric: String(ai?.metric || metric || ''),
+        value: String(ai?.value || ''),
+        unit: String(ai?.unit || ''),
+        as_of: String(ai?.as_of || new Date().toISOString()),
+        confidence: typeof ai?.confidence === 'number' ? ai.confidence : 0.5,
+        asset_price_suggestion: String(ai?.asset_price_suggestion || ai?.value || ''),
+        reasoning: String(ai?.reasoning || ''),
+        sources,
+      },
+      performance: {
+        totalTime: processingMs,
+        breakdown: {
+          cacheCheck: '0ms',
+          scraping: '0ms',
+          processing: `${processingMs}ms`,
+          aiAnalysis: '0ms',
+        },
+      },
+    };
+  };
 
   const handleUrlAdd = () => {
     const url = state.currentUrl.trim();
@@ -88,100 +130,53 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
     }));
 
     try {
-      const response = await fetch('/api/resolve-metric-fast', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          metric: metric,
+      const started = Date.now();
+      const ai = await runMetricAIWithPolling(
+        {
+          metric: String(metric),
           description: description || `Resolve current value for ${metric}`,
-          urls: state.urls
-        }),
-      });
+          urls: state.urls,
+          context: 'create',
+        },
+        { intervalMs: 1500, timeoutMs: 15000 }
+      );
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Analysis failed' }));
-        throw new Error(errorData.error || 'Analysis failed');
-      }
+      if (!ai) throw new Error('AI analysis did not return a result in time');
 
-      const responseData = await response.json();
+      const processingMs = Math.max(0, Date.now() - started);
+      const modalData = toModalResponse(ai, processingMs);
 
-      if (responseData.status === 'completed' && responseData.data) {
-        const metricData = {
-          ...responseData.data,
-          processingTime: responseData.processingTime,
-          cached: responseData.cached
-        };
+      setState(prev => ({
+        ...prev,
+        isAnalyzing: false,
+        showModal: true,
+        modalData
+      }));
 
-        const modalData: MetricResolutionResponse = {
-          status: 'completed',
-          processingTime: responseData.processingTime || '0ms',
-          cached: responseData.cached || false,
-          data: {
-            metric: metricData.metric,
-            value: metricData.value,
-            unit: metricData.unit,
-            as_of: metricData.as_of,
-            confidence: metricData.confidence,
-            asset_price_suggestion: metricData.asset_price_suggestion,
-            reasoning: metricData.reasoning,
-            sources: metricData.sources.map((source: any) => ({
-              url: source.url,
-              screenshot_url: source.screenshot_url || '',
-              quote: source.quote,
-              match_score: source.match_score,
-              css_selector: source.css_selector,
-              xpath: source.xpath,
-              html_snippet: source.html_snippet,
-              js_extractor: source.js_extractor
-            }))
-          },
-          performance: {
-            totalTime: parseInt(responseData.processingTime) || 0,
-            breakdown: {
-              cacheCheck: '0ms',
-              scraping: '0ms',
-              processing: responseData.processingTime || '0ms',
-              aiAnalysis: '0ms'
+      const bestSource = modalData.data.sources?.[0];
+      onMetricResolution({
+        metricUrl: bestSource?.url || state.urls[0],
+        dataSource: bestSource?.url || 'AI Analysis',
+        startPrice: modalData.data.asset_price_suggestion || '1',
+        sourceLocator: bestSource
+          ? {
+              url: bestSource.url,
+              css_selector: bestSource.css_selector,
+              xpath: bestSource.xpath,
+              html_snippet: bestSource.html_snippet,
+              js_extractor: bestSource.js_extractor
             }
-          }
-        };
-
-        setState(prev => ({
-          ...prev,
-          isAnalyzing: false,
-          showModal: true,
-          modalData
-        }));
-
-        // Update form with the analyzed data and best source locator
-        const bestSource = metricData.sources[0];
-        onMetricResolution({
-          metricUrl: bestSource?.url || state.urls[0],
-          dataSource: bestSource?.url || 'AI Analysis',
-          startPrice: metricData.asset_price_suggestion || '1',
-          sourceLocator: bestSource ? {
-            url: bestSource.url,
-            css_selector: bestSource.css_selector,
-            xpath: bestSource.xpath,
-            html_snippet: bestSource.html_snippet,
-            js_extractor: bestSource.js_extractor
-          } : undefined
-        });
-
-      } else if (responseData.status === 'processing') {
-        pollJobStatus(responseData.jobId);
-      } else {
-        throw new Error('Unexpected response format');
-      }
+          : undefined
+      });
 
     } catch (error) {
       console.error('Analysis Error:', error);
       setState(prev => ({
         ...prev,
         error: error instanceof Error ? error.message : 'Analysis failed',
-        isAnalyzing: false
+        isAnalyzing: false,
+        showModal: false,
+        modalData: null
       }));
     }
   };
@@ -191,97 +186,6 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
       void handleAnalyze();
     }
   }));
-
-  const pollJobStatus = async (jobId: string) => {
-    const maxAttempts = 30;
-    let attempts = 0;
-
-    const poll = async () => {
-      try {
-        attempts++;
-        const response = await fetch(`/api/resolve-metric-fast?jobId=${jobId}`);
-        const data = await response.json();
-
-        if (data.status === 'completed' && data.data) {
-          const metricData = {
-            ...data.data,
-            processingTime: `${data.processingTime}ms`
-          };
-
-          const modalData: MetricResolutionResponse = {
-            status: 'completed',
-            processingTime: data.processingTime || '0ms',
-            cached: false,
-            data: {
-              metric: metricData.metric,
-              value: metricData.value,
-              unit: metricData.unit,
-              as_of: metricData.as_of,
-              confidence: metricData.confidence,
-              asset_price_suggestion: metricData.asset_price_suggestion,
-              reasoning: metricData.reasoning,
-              sources: metricData.sources.map((source: any) => ({
-                url: source.url,
-                screenshot_url: source.screenshot_url || '',
-                quote: source.quote,
-                match_score: source.match_score,
-                css_selector: source.css_selector,
-                xpath: source.xpath,
-                html_snippet: source.html_snippet,
-                js_extractor: source.js_extractor
-              }))
-            },
-            performance: {
-              totalTime: parseInt(data.processingTime) || 0,
-              breakdown: {
-                cacheCheck: '0ms',
-                scraping: '0ms',
-                processing: data.processingTime || '0ms',
-                aiAnalysis: '0ms'
-              }
-            }
-          };
-
-          setState(prev => ({
-            ...prev,
-            isAnalyzing: false,
-            showModal: true,
-            modalData
-          }));
-
-          const bestSource = metricData.sources[0];
-          onMetricResolution({
-            metricUrl: bestSource?.url || state.urls[0],
-            dataSource: bestSource?.url || 'AI Analysis',
-            startPrice: metricData.asset_price_suggestion || '1',
-            sourceLocator: bestSource ? {
-              url: bestSource.url,
-              css_selector: bestSource.css_selector,
-              xpath: bestSource.xpath,
-              html_snippet: bestSource.html_snippet,
-              js_extractor: bestSource.js_extractor
-            } : undefined
-          });
-
-        } else if (data.status === 'failed') {
-          throw new Error(data.error || 'Job failed');
-        } else if (data.status === 'processing' && attempts < maxAttempts) {
-          setTimeout(poll, 2000);
-        } else {
-          throw new Error('Processing timeout');
-        }
-      } catch (error) {
-        console.error('Job polling error:', error);
-        setState(prev => ({
-          ...prev,
-          error: error instanceof Error ? error.message : 'Processing failed',
-          isAnalyzing: false
-        }));
-      }
-    };
-
-    poll();
-  };
 
   return (
     <div className={`space-y-3 bg-[#0F0F0F] rounded-md border border-[#222222] ${compact ? 'p-3' : 'p-4'}`}>

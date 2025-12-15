@@ -185,7 +185,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     if (!Number.isFinite(numPrice)) return '0.00';
     return new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      // Limit prices can require more precision (tick sizes can be < 0.01)
+      maximumFractionDigits: 8,
     }).format(numPrice);
   };
 
@@ -200,7 +201,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     // Trim decimals beyond max
     if (tail.length > maxDecimals) tail = tail.slice(0, maxDecimals);
     // Preserve leading 0 if starting with '.'
-    if (cleaned.startsWith('.') && head === '') return `.${tail}`;
+    if (cleaned.startsWith('.') && head === '') {
+      // Allow typing "." and ".5" style numbers
+      return tail.length > 0 ? `.${tail}` : '.';
+    }
+    // Preserve a trailing decimal point while typing (e.g. "0." or "12.")
+    if (cleaned.includes('.') && cleaned.endsWith('.') && tail.length === 0) {
+      return `${head}.`;
+    }
     return tail.length > 0 ? `${head}.${tail}` : head;
   };
 

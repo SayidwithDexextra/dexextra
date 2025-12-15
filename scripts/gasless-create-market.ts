@@ -95,9 +95,9 @@ Required env:
   CREATOR_PRIVATE_KEY (user signing the gasless payload)
 Optional env:
   GASLESS_RELAYER_URL (default: ${process.env.APP_URL || 'http://localhost:3000'}/api/markets/create)
-  EIP712_FACTORY_DOMAIN_NAME (default: DexetraFactory)
+  EIP712_FACTORY_DOMAIN_NAME (default: DexetraFactory; prefer on-chain eip712DomainInfo())
   EIP712_FACTORY_DOMAIN_VERSION (default: 1)
-  DIAMOND_OWNER_ADDRESS (must match relayer/admin submitter)
+  DIAMOND_OWNER_ADDRESS (must match relayer/admin submitter; required when --submit unless your relayer uses creator as owner)
   GASLESS_CREATE_ENABLED (default: true)
 Flags:
   --symbol SYMBOL           Market symbol (e.g. BTC-USD) [required]
@@ -129,6 +129,9 @@ async function main() {
 
   const creatorPk = process.env.CREATOR_PRIVATE_KEY;
   if (!creatorPk) throw new Error('Missing CREATOR_PRIVATE_KEY');
+
+  const factoryAddressEnv = getEnvAddress('FUTURES_MARKET_FACTORY_ADDRESS');
+  if (!factoryAddressEnv) throw new Error('Missing FUTURES_MARKET_FACTORY_ADDRESS');
 
   // Load cut/initFacet: prefer server /api/orderbook/cut to avoid selector drift
   let initFacet: string | null = null;
@@ -217,11 +220,8 @@ async function main() {
     throw new Error('initFacet not available. Ensure /api/orderbook/cut and env are configured.');
   }
 
-  // Hard-code to rule out env drift during debugging
-  const factoryAddress = '0x1f05F6AEAA41B559Bd4C4946AA886Fde0bD504f4';
-  const hardDomainName = 'DexeteraFactory';
-  const hardDomainVersion = '1';
-  console.log('[env-log] using factoryAddress (hard)', factoryAddress);
+  const factoryAddress = factoryAddressEnv;
+  console.log('[env-log] using factoryAddress (env)', factoryAddress);
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   // Domain sanity logs
@@ -261,12 +261,32 @@ async function main() {
   // Force-enable gasless path
   const gaslessEnabled = true;
 
+  // Domain: prefer on-chain helper to avoid name/version drift (this is the #1 cause of bad recovery)
   const chainId = (await provider.getNetwork()).chainId;
+  let domainName = String(process.env.EIP712_FACTORY_DOMAIN_NAME || 'DexetraFactory');
+  let domainVersion = String(process.env.EIP712_FACTORY_DOMAIN_VERSION || '1');
+  let domainChainId = Number(chainId);
+  let domainVerifyingContract = factoryAddress;
+  try {
+    const helperDomain = new ethers.Contract(
+      factoryAddress,
+      ['function eip712DomainInfo() view returns (string,string,uint256,address,bytes32)'],
+      provider
+    );
+    const [dName, dVer, dChainId, dAddr] = await helperDomain.eip712DomainInfo();
+    if (dName) domainName = String(dName);
+    if (dVer) domainVersion = String(dVer);
+    if (dChainId) domainChainId = Number(dChainId);
+    if (dAddr && ethers.isAddress(String(dAddr))) domainVerifyingContract = String(dAddr);
+    console.log('[domain-check] on-chain eip712DomainInfo', { name: domainName, version: domainVersion, chainId: domainChainId, verifyingContract: domainVerifyingContract });
+  } catch (e: any) {
+    console.warn('[domain-check] eip712DomainInfo unavailable, falling back to env defaults', e?.message || String(e));
+  }
   const domain = {
-    name: hardDomainName, // hard-coded to avoid env drift
-    version: hardDomainVersion,
-    chainId: Number(chainId),
-    verifyingContract: factoryAddress!,
+    name: domainName,
+    version: domainVersion,
+    chainId: domainChainId,
+    verifyingContract: domainVerifyingContract,
   } as const;
   try {
     console.log('[domain-check] TypedData domain hash', ethers.TypedDataEncoder.hashDomain(domain));
@@ -358,11 +378,17 @@ async function main() {
   const factory = new ethers.Contract(factoryAddress!, mergedAbi, creatorWallet);
   const nonce = await factory.metaCreateNonce(creator);
 
-  const diamondOwner =
-    (process.env.DIAMOND_OWNER_ADDRESS &&
-      ethers.isAddress(String(process.env.DIAMOND_OWNER_ADDRESS)) &&
-      String(process.env.DIAMOND_OWNER_ADDRESS)) ||
-    creator;
+  const submit = Boolean(args.submit);
+  const diamondOwnerEnv =
+    process.env.DIAMOND_OWNER_ADDRESS && ethers.isAddress(String(process.env.DIAMOND_OWNER_ADDRESS))
+      ? String(process.env.DIAMOND_OWNER_ADDRESS)
+      : null;
+  // IMPORTANT: the relayer verifies diamondOwner as its own owner/admin address (ownerAddress).
+  // If you sign with a different diamondOwner, the recovered address will not match.
+  const diamondOwner = diamondOwnerEnv || creator;
+  if (submit && !diamondOwnerEnv) {
+    throw new Error('DIAMOND_OWNER_ADDRESS is required when --submit (must match relayer/admin ownerAddress used in verification).');
+  }
 
   const types = {
     MetaCreate: [
@@ -406,6 +432,16 @@ async function main() {
     types as any,
     message as any
   );
+  // Local recovery sanity check before submitting to relayer
+  try {
+    const recoveredLocal = ethers.verifyTypedData(domain as any, types as any, message as any, signature);
+    console.log('[signcheck] recoveredLocal', recoveredLocal);
+    if (recoveredLocal.toLowerCase() !== creator.toLowerCase()) {
+      throw new Error(`Local recovered ${recoveredLocal} does not match creator ${creator} (domain/message mismatch)`);
+    }
+  } catch (e: any) {
+    throw new Error(`Local signature self-check failed: ${e?.message || String(e)}`);
+  }
 
   console.log('--- Gasless Create Payload (sign-only unless --submit) ---');
   console.log('creator:', creator);
@@ -419,7 +455,6 @@ async function main() {
   console.log('signature:', signature);
   console.log('relayerBase (resolved):', (process.env.GASLESS_RELAYER_URL as string | undefined) || (process.env.APP_URL ? `${process.env.APP_URL}` : 'http://localhost:3000'));
 
-  const submit = Boolean(args.submit);
   if (!submit) {
     console.log('\nRun with --submit to POST to the relayer.');
     return;
