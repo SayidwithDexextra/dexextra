@@ -49,6 +49,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'CoreVault address not configured' }, { status: 400 });
     }
 
+    // Use ADMIN_PRIVATE_KEY for market pipeline role grants (explicit user requirement).
+    // Keep ROLE_ADMIN_PRIVATE_KEY as a fallback for deployments that separate concerns.
     const adminPk = process.env.ADMIN_PRIVATE_KEY || process.env.ROLE_ADMIN_PRIVATE_KEY;
     const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
     if (!adminPk || !rpcUrl) {

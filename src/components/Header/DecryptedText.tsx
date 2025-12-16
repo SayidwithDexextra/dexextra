@@ -10,6 +10,11 @@ interface DecryptedTextProps {
     animateOnHover?: boolean
     animateOnMount?: boolean
     animateOnChange?: boolean
+    /**
+     * Optional external trigger to force re-animation even if `text` is unchanged
+     * (useful when upstream data refreshes but formatted display value stays the same).
+     */
+    animateTrigger?: any
 }
 
 export default function DecryptedText({
@@ -22,6 +27,7 @@ export default function DecryptedText({
     animateOnHover = true,
     animateOnMount = false,
     animateOnChange = true,
+    animateTrigger,
 }: DecryptedTextProps) {
     const [displayText, setDisplayText] = useState<string>(text)
     const [isHovering, setIsHovering] = useState<boolean>(false)
@@ -31,6 +37,7 @@ export default function DecryptedText({
     const [hasAnimatedOnMount, setHasAnimatedOnMount] = useState<boolean>(false)
     const intervalRef = useRef<NodeJS.Timeout | undefined>(undefined)
     const previousTextRef = useRef<string>(text)
+    const previousTriggerRef = useRef<any>(animateTrigger)
 
     // Prevent hydration mismatches by only enabling animations after mount
     useEffect(() => {
@@ -59,6 +66,17 @@ export default function DecryptedText({
             }
         }
     }, [text, isMounted, animateOnChange, isAnimating])
+
+    // Force animation when external trigger changes (even if text is the same)
+    useEffect(() => {
+        if (!isMounted || isAnimating) return
+        if (animateTrigger === undefined) return
+        const prev = previousTriggerRef.current
+        if (prev !== animateTrigger) {
+            setShouldAnimate(true)
+            previousTriggerRef.current = animateTrigger
+        }
+    }, [animateTrigger, isMounted, isAnimating])
 
     // Update display text when text prop changes
     useEffect(() => {

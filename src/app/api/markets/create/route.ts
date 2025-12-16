@@ -328,8 +328,10 @@ export async function POST(req: Request) {
 
     // Env configuration
     const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
-    // Use a single required admin key for all on-chain actions in this route
+    // Use ADMIN_PRIVATE_KEY for factory + diamond actions (existing behavior).
     const pk = process.env.ADMIN_PRIVATE_KEY;
+    // Use ADMIN_PRIVATE_KEY for CoreVault role grants (explicit user requirement).
+    const roleGranterPk = process.env.ADMIN_PRIVATE_KEY;
     const factoryAddress = process.env.FUTURES_MARKET_FACTORY_ADDRESS || (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS;
     const initFacet = process.env.ORDER_BOOK_INIT_FACET || (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET;
     const adminFacet = process.env.OB_ADMIN_FACET || (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET;
@@ -350,6 +352,7 @@ export async function POST(req: Request) {
 
     if (!rpcUrl) return NextResponse.json({ error: 'RPC_URL not configured' }, { status: 400 });
     if (!pk) return NextResponse.json({ error: 'ADMIN_PRIVATE_KEY not configured' }, { status: 400 });
+    if (!roleGranterPk) return NextResponse.json({ error: 'ADMIN_PRIVATE_KEY not configured (role grants)' }, { status: 400 });
     if (!factoryAddress || !ethers.isAddress(factoryAddress)) return NextResponse.json({ error: 'Factory address not configured' }, { status: 400 });
     if (!initFacet || !ethers.isAddress(initFacet)) return NextResponse.json({ error: 'Init facet address not configured' }, { status: 400 });
     if (!adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !vaultFacet || !lifecycleFacet || !metaTradeFacet) {
@@ -362,6 +365,8 @@ export async function POST(req: Request) {
     // Provider and signer
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const wallet = new ethers.Wallet(pk, provider);
+    // IMPORTANT: use a SINGLE nonce manager for this signer across all txs in this route.
+    // Creating multiple nonce managers for the same key causes "nonce has already been used".
     const nonceMgr = await createNonceManager(wallet);
     const ownerAddress = await wallet.getAddress();
     try {
@@ -417,9 +422,12 @@ export async function POST(req: Request) {
         action: c?.action ?? 0,
         functionSelectors: Array.isArray(c?.functionSelectors) ? c.functionSelectors : [],
       }));
-      initFacetAddr = apiInit;
+      // Keep initFacet in sync with the API response so downstream calls use the same init facet.
+      // (initFacetAddr was a legacy variable name; initFacet is the canonical one.)
+      // eslint-disable-next-line no-param-reassign
+      (initFacet as any) = apiInit;
       // eslint-disable-next-line no-console
-      console.log('[RELAYER_DEBUG_CUT_OVERRIDE]', { fromApi: true, cutLen: cut.length, initFacet: initFacetAddr });
+      console.log('[RELAYER_DEBUG_CUT_OVERRIDE]', { fromApi: true, cutLen: cut.length, initFacet });
     } catch (e: any) {
       // eslint-disable-next-line no-console
       console.warn('[RELAYER_DEBUG_CUT_OVERRIDE] failed', e?.message || String(e));
@@ -891,12 +899,10 @@ export async function POST(req: Request) {
       if (!registryAddress || !ethers.isAddress(registryAddress)) {
         logS('attach_session_registry', 'error', { error: 'Missing SESSION_REGISTRY_ADDRESS' });
       } else {
-        // Use the same ADMIN_PRIVATE_KEY for the registry allowlist step
-        const registryPk =
-          process.env.ADMIN_PRIVATE_KEY ||
-          null;
-        const regWallet = registryPk ? new ethers.Wallet(registryPk, provider) : wallet;
-        const regNonceMgr = await createNonceManager(regWallet as any);
+        // Use ADMIN_PRIVATE_KEY for session-registry operations (explicit user requirement).
+        const registryPk = process.env.ADMIN_PRIVATE_KEY || null;
+        // Since we require ADMIN_PRIVATE_KEY here, always use the route wallet/nonceMgr.
+        const regWallet = wallet;
         try { logS('attach_session_registry', 'start', { registrySigner: await (regWallet as any).getAddress?.() }); } catch {}
 
         // 1) Ensure this OrderBook is allowed in the registry
@@ -910,7 +916,7 @@ export async function POST(req: Request) {
           if (!allowed) {
             // Some RPCs require balance sufficient for block gas limit during estimateGas.
             // Provide a conservative gasLimit to bypass over-aggressive balance checks.
-            const ovAllow = { ...(await regNonceMgr.nextOverrides()), gasLimit: 300000n };
+            const ovAllow = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
             const txAllow = await registry.setAllowedOrderbook(orderBook, true, ovAllow as any);
             logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
             const rAllow = await txAllow.wait();
@@ -932,6 +938,7 @@ export async function POST(req: Request) {
         // 2) Attach session registry on MetaTradeFacet (if not set)
         try {
           logS('attach_session_registry', 'start', { orderBook, registry: registryAddress });
+          // Use ADMIN_PRIVATE_KEY for setSessionRegistry() (explicit user requirement).
           const meta = new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, wallet);
           const current = await meta.sessionRegistry();
           if (!current || String(current).toLowerCase() !== String(registryAddress).toLowerCase()) {
@@ -977,7 +984,7 @@ export async function POST(req: Request) {
       logS('attach_session_registry', 'error', { error: e?.message || String(e) });
     }
 
-    // Grant roles on CoreVault
+    // Grant roles on CoreVault (ADMIN_PRIVATE_KEY signer)
     logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
     const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
@@ -995,9 +1002,9 @@ export async function POST(req: Request) {
         gasPrice: feeData.gasPrice?.toString?.(),
       });
       const ov1 = await nonceMgr.nextOverrides();
-      const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
+      let tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
       logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash, nonce: (tx1 as any)?.nonce });
-      const r1 = await tx1.wait();
+      let r1 = await tx1.wait();
       {
         const payer1 = (tx1 as any)?.from || (await (wallet as any).getAddress?.());
         const spend1 = await computeTxSpend(provider, payer1, r1);
@@ -1008,9 +1015,9 @@ export async function POST(req: Request) {
         });
       }
       const ov2 = await nonceMgr.nextOverrides();
-      const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
+      let tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
       logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash, nonce: (tx2 as any)?.nonce });
-      const r2 = await tx2.wait();
+      let r2 = await tx2.wait();
       {
         const payer2 = (tx2 as any)?.from || (await (wallet as any).getAddress?.());
         const spend2 = await computeTxSpend(provider, payer2, r2);

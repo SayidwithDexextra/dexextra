@@ -3,10 +3,15 @@
  * Grant ORDERBOOK_ROLE and SETTLEMENT_ROLE to an OrderBook on CoreVault.
  *
  * Env (from .env.local):
- *   - RPC_URL (or RPC_URL_HYPEREVM)
+ *   - RPC_URL (or RPC_URL_HYPEREVM or HYPERLIQUID_RPC_URL)
  *   - CORE_VAULT_ADDRESS  (target CoreVault)
  *   - ORDERBOOK_ADDRESS    (orderbook/diamond to grant roles to)
- *   - ADMIN_PRIVATE_KEY or LEGACY_ADMIN or PRIVATE_KEY (signer with admin)
+ *   - ADMIN_PRIVATE_KEY    (signer with DEFAULT_ADMIN_ROLE on CoreVault)
+ *
+ * CLI overrides:
+ *   --rpc <url>
+ *   --corevault <address>
+ *   --orderbook <address>
  *
  * Usage:
  *   tsx orderBookScripts/grant-orderbook-roles.ts
@@ -26,6 +31,13 @@ function loadEnv() {
   }
 }
 
+function getArg(flag: string): string | undefined {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return undefined;
+  const v = process.argv[idx + 1];
+  return v && !v.startsWith('--') ? v : undefined;
+}
+
 function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing required env: ${name}`);
@@ -35,17 +47,15 @@ function requireEnv(name: string): string {
 async function main() {
   loadEnv();
 
-  const rpcUrl = process.env.RPC_URL || process.env.RPC_URL_HYPEREVM;
-  if (!rpcUrl) throw new Error('RPC_URL (or RPC_URL_HYPEREVM) is required');
+  const rpcUrl =
+    getArg('--rpc') || process.env.RPC_URL || process.env.RPC_URL_HYPEREVM || process.env.HYPERLIQUID_RPC_URL;
+  if (!rpcUrl) throw new Error('RPC_URL (or RPC_URL_HYPEREVM or HYPERLIQUID_RPC_URL) is required');
 
-  const coreVaultAddress = requireEnv('CORE_VAULT_ADDRESS');
-  const orderBookAddress = requireEnv('ORDERBOOK_ADDRESS');
+  const coreVaultAddress = getArg('--corevault') || requireEnv('CORE_VAULT_ADDRESS');
+  const orderBookAddress = getArg('--orderbook') || requireEnv('ORDERBOOK_ADDRESS');
 
-  const pk =
-    process.env.ADMIN_PRIVATE_KEY ||
-    process.env.LEGACY_ADMIN ||
-    process.env.PRIVATE_KEY;
-  if (!pk) throw new Error('Provide ADMIN_PRIVATE_KEY or LEGACY_ADMIN or PRIVATE_KEY');
+  const pk = process.env.ADMIN_PRIVATE_KEY;
+  if (!pk) throw new Error('Provide ADMIN_PRIVATE_KEY (signer with DEFAULT_ADMIN_ROLE on CoreVault)');
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(pk, provider);

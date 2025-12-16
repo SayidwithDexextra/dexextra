@@ -60,7 +60,7 @@ export const CreateMarketPage = () => {
         'Patch missing selectors if needed',  // 8 (ensure_selectors_missing/diamond_cut)
         'Attach session registry',            // 9 (attach_session_registry)
         'Grant admin roles on CoreVault',     // 10 (grant_roles)
-        'Save market metadata',               // 11 (save_market)
+        'Saving market metadata',               // 11 (save_market)
         'Finalize deployment',                // 12
       ]
     : [
@@ -73,7 +73,7 @@ export const CreateMarketPage = () => {
         'Verify required selectors',          // 6
         'Patch missing selectors if needed',  // 7
         'Grant admin roles on CoreVault',     // 8
-        'Save market metadata',               // 9
+        'Saving market metadata',               // 9
         'Finalize deployment',                // 10
       ];
   const stepIndexMap: Record<string, number> = {

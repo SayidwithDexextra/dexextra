@@ -62,6 +62,8 @@ export default function Header() {
   const router = useRouter()
   const [hasMounted, setHasMounted] = useState(false)
   const [vaultEvent, setVaultEvent] = useState<any | null>(null)
+  // Sequence counter used to force DecryptedText to re-animate on each vault refresh
+  const [vaultUpdateSeq, setVaultUpdateSeq] = useState(0)
   
   // Align with useCoreVault data as single source of truth
   const core = useCoreVault(walletData.address || undefined)
@@ -93,6 +95,7 @@ export default function Header() {
       try {
         // Minimal guard: only accept updates for connected user
         setVaultEvent(e.detail || null)
+        setVaultUpdateSeq((s) => s + 1)
         console.log('[Dispatch] 🎧 [EVT][Header] Received coreVaultSummary', e.detail)
       } catch {}
     }
@@ -115,6 +118,13 @@ export default function Header() {
       }
     }
   }, [])
+
+  // Fallback: if core values update but no event is received for some reason, still re-trigger animations.
+  useEffect(() => {
+    if (!walletData.isConnected) return
+    setVaultUpdateSeq((s) => s + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [core.availableBalance, core.totalCollateral, core.realizedPnL, core.unrealizedPnL, walletData.isConnected])
 
   // Debug logs removed to prevent any rendering interference 
 
@@ -330,6 +340,7 @@ export default function Header() {
               </span>
               <DecryptedText
                 text={displayPortfolioValue}
+                animateTrigger={vaultUpdateSeq}
                 style={{
                   fontSize: '14px',
                   color: '#FFFFFFFF',
@@ -370,6 +381,7 @@ export default function Header() {
               </div>
               <DecryptedText
                 text={displayCashValue}
+                animateTrigger={vaultUpdateSeq}
                 style={{
                   fontSize: '14px',
                   color: '#FFFFFFFF',
@@ -404,6 +416,7 @@ export default function Header() {
                 </span>
                 <DecryptedText
                   text={formatCurrency(String(unrealizedPnL), true)}
+                  animateTrigger={vaultUpdateSeq}
                   style={{
                     fontSize: '14px',
                     color: unrealizedPnL >= 0 ? '#00d4aa' : '#ff6b6b',
