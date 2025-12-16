@@ -34,6 +34,7 @@ export default function TokenPage({ params }: TokenPageProps) {
   const { symbol } = use(params);
   const searchParams = useSearchParams();
   const router = useRouter();
+  const isDeploying = searchParams.get('deploying') === '1';
 
   const [tradingAction, setTradingAction] = useState<'long' | 'short' | null>(null);
 
@@ -49,7 +50,7 @@ export default function TokenPage({ params }: TokenPageProps) {
     }
   }, [searchParams]);
   return (
-    <MarketDataProvider symbol={symbol}>
+    <MarketDataProvider symbol={symbol} tickerEnabled={!isDeploying}>
       <TokenPageContent symbol={symbol} tradingAction={tradingAction} onSwitchNetwork={() => router.refresh()} />
     </MarketDataProvider>
   );

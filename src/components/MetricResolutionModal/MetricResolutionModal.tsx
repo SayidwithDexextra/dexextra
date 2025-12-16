@@ -35,7 +35,7 @@ const LoadingSpinner = () => (
   <div className={styles.loadingContainer}>
     <div className={styles.loadingSpinner} />
     <div className={styles.loadingText}>
-      Analyzing metric data...
+      Analyzing Metric Data...
       <br />
       <span className={styles.loadingSubtext}>
         Please wait while our AI processes your sources

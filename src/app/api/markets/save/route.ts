@@ -20,6 +20,19 @@ function getSupabase() {
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
+async function archiveWithTimeout(
+  url: string,
+  opts: Parameters<typeof archivePage>[1],
+  timeoutMs = 4500
+) {
+  return await Promise.race([
+    archivePage(url, opts),
+    new Promise<Awaited<ReturnType<typeof archivePage>>>((resolve) =>
+      setTimeout(() => resolve({ success: false, error: 'timeout' }), timeoutMs)
+    ),
+  ]);
+}
+
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
     console.log(JSON.stringify({
@@ -228,7 +241,7 @@ export async function POST(req: Request) {
         const secret = process.env.WAYBACK_API_SECRET as string | undefined;
         const appUrl = (process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)) as string | undefined;
         const authHeader = access && secret ? `LOW ${access}:${secret}` : undefined;
-        const res = await archivePage(metricUrl, {
+        const res = await archiveWithTimeout(metricUrl, {
           captureOutlinks: false,
           captureScreenshot: true,
           skipIfRecentlyArchived: true,
@@ -237,7 +250,7 @@ export async function POST(req: Request) {
             ...(appUrl ? { 'User-Agent': `Dexextra/1.0 (+${appUrl})` } : { 'User-Agent': 'Dexextra/1.0' }),
           },
           debug: true,
-        });
+        }, 4500);
         if (res?.success && res.waybackUrl) {
           archivedWaybackUrl = String(res.waybackUrl);
           archivedWaybackTs = res.timestamp ? String(res.timestamp) : null;

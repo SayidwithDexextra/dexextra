@@ -19,6 +19,10 @@ import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
 import { getPusherServer } from '@/lib/pusher-server';
 
+// Vercel: this endpoint can be long-running during deployment.
+export const runtime = 'nodejs';
+export const maxDuration = 300;
+
 function shortAddr(a: any) {
   const s = String(a || '');
   return (s.startsWith('0x') && s.length === 42) ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
@@ -27,6 +31,40 @@ function shortAddr(a: any) {
 function trunc(s: any, n = 120) {
   const t = String(s ?? '');
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+}
+
+function maskSecret(v: any, opts?: { showStart?: number; showEnd?: number }) {
+  const s = String(v ?? '');
+  if (!s) return '';
+  const showStart = Math.max(0, opts?.showStart ?? 0);
+  const showEnd = Math.max(0, opts?.showEnd ?? 0);
+  if (s.length <= showStart + showEnd) return `${s.slice(0, Math.min(2, s.length))}…`;
+  return `${s.slice(0, showStart)}…${s.slice(s.length - showEnd)}`;
+}
+
+function safeUrlInfo(v: any) {
+  const raw = String(v ?? '').trim();
+  if (!raw) return null;
+  try {
+    // If this is a bare host without protocol, coerce for parsing.
+    const hasProto = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw);
+    const u = new URL(hasProto ? raw : `https://${raw}`);
+    return {
+      protocol: hasProto ? u.protocol : null,
+      host: u.host,
+      origin: `${u.protocol}//${u.host}`,
+      pathname: u.pathname && u.pathname !== '/' ? u.pathname : '',
+    };
+  } catch {
+    // Not a URL; return a truncated string.
+    return { raw: trunc(raw, 120) };
+  }
+}
+
+function envSource(primaryName: string, fallbackName: string) {
+  const p = (process.env as any)[primaryName];
+  const f = (process.env as any)[fallbackName];
+  return p ? primaryName : f ? fallbackName : null;
 }
 
 function friendly(step: string) {
@@ -146,6 +184,19 @@ function getSupabase() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+async function archiveWithTimeout(
+  url: string,
+  opts: Parameters<typeof archivePage>[1],
+  timeoutMs = 4500
+) {
+  return await Promise.race([
+    archivePage(url, opts),
+    new Promise<Awaited<ReturnType<typeof archivePage>>>((resolve) =>
+      setTimeout(() => resolve({ success: false, error: 'timeout' }), timeoutMs)
+    ),
+  ]);
 }
 
 function selectorsFromAbi(abi: any[]): string[] {
@@ -312,6 +363,140 @@ export async function POST(req: Request) {
     const settlementTs = typeof body?.settlementDate === 'number' && body.settlementDate > 0
       ? Math.floor(body.settlementDate)
       : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+
+    // One comprehensive, machine-readable env/config snapshot for Vercel vs localhost comparisons.
+    // IMPORTANT: keep secrets masked; prefer presence + length over raw values.
+    try {
+      const headers = req.headers;
+      const nodeEnv = process.env.NODE_ENV;
+      const vercelEnv = process.env.VERCEL_ENV;
+      const vercel = String(process.env.VERCEL || '') === '1';
+
+      const rpcUrlSource =
+        process.env.RPC_URL ? 'RPC_URL' :
+        process.env.JSON_RPC_URL ? 'JSON_RPC_URL' :
+        process.env.ALCHEMY_RPC_URL ? 'ALCHEMY_RPC_URL' :
+        null;
+      const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
+
+      const adminPk = process.env.ADMIN_PRIVATE_KEY;
+      const appUrl = process.env.APP_URL;
+      const gaslessEnabled = String(process.env.GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
+
+      const factoryAddressSource = envSource('FUTURES_MARKET_FACTORY_ADDRESS', 'NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS');
+      const initFacetSource = envSource('ORDER_BOOK_INIT_FACET', 'NEXT_PUBLIC_ORDER_BOOK_INIT_FACET');
+      const coreVaultSource = envSource('CORE_VAULT_ADDRESS', 'NEXT_PUBLIC_CORE_VAULT_ADDRESS');
+
+      const sbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+      const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+
+      const snapshot = {
+        tag: 'RELAYER_ENV_SNAPSHOT',
+        area: 'market_creation',
+        route: 'POST /api/markets/create',
+        timestamp: new Date().toISOString(),
+        runtime: {
+          nodeEnv,
+          nextRuntime: (process.env as any).NEXT_RUNTIME || null,
+          vercel,
+          vercelEnv: vercelEnv || null,
+          vercelUrl: process.env.VERCEL_URL || null,
+          vercelRegion: process.env.VERCEL_REGION || null,
+          vercelGit: {
+            commitSha: process.env.VERCEL_GIT_COMMIT_SHA || null,
+            commitRef: process.env.VERCEL_GIT_COMMIT_REF || null,
+            repoSlug: process.env.VERCEL_GIT_REPO_SLUG || null,
+          },
+        },
+        request: {
+          host: headers.get('host'),
+          xForwardedHost: headers.get('x-forwarded-host'),
+          xForwardedProto: headers.get('x-forwarded-proto'),
+          xVercelId: headers.get('x-vercel-id'),
+          userAgent: trunc(headers.get('user-agent'), 140),
+        },
+        input: {
+          pipelineId: pipelineId || null,
+          symbol: symbol || null,
+          metricUrl: metricUrl ? trunc(metricUrl, 160) : null,
+          startPrice: startPrice || null,
+          startPrice6: String(startPrice6),
+          settlementTs,
+          creatorWalletAddress: creatorWalletAddress ? shortAddr(creatorWalletAddress) : null,
+          tagsCount: Array.isArray(tags) ? tags.length : 0,
+          iconImageUrl: iconImageUrl ? trunc(iconImageUrl, 160) : null,
+          aiSourceLocatorPresent: Boolean(aiSourceLocator),
+        },
+        env: {
+          gaslessEnabled,
+          appUrl: safeUrlInfo(appUrl),
+          rpcUrl: safeUrlInfo(rpcUrl),
+          rpcUrlSource,
+          nativeTokenSymbol: process.env.NATIVE_TOKEN_SYMBOL || (process.env as any).NEXT_PUBLIC_NATIVE_TOKEN_SYMBOL || null,
+        },
+        addresses: {
+          factory: {
+            source: factoryAddressSource,
+            value: shortAddr(process.env.FUTURES_MARKET_FACTORY_ADDRESS || (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS),
+          },
+          initFacet: {
+            source: initFacetSource,
+            value: shortAddr(process.env.ORDER_BOOK_INIT_FACET || (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET),
+          },
+          coreVault: {
+            source: coreVaultSource,
+            value: shortAddr(process.env.CORE_VAULT_ADDRESS || (process.env as any).NEXT_PUBLIC_CORE_VAULT_ADDRESS),
+          },
+          facets: {
+            OB_ADMIN_FACET: shortAddr(process.env.OB_ADMIN_FACET || (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET),
+            OB_PRICING_FACET: shortAddr(process.env.OB_PRICING_FACET || (process.env as any).NEXT_PUBLIC_OB_PRICING_FACET),
+            OB_ORDER_PLACEMENT_FACET: shortAddr(process.env.OB_ORDER_PLACEMENT_FACET || (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET),
+            OB_TRADE_EXECUTION_FACET: shortAddr(process.env.OB_TRADE_EXECUTION_FACET || (process.env as any).NEXT_PUBLIC_OB_TRADE_EXECUTION_FACET),
+            OB_LIQUIDATION_FACET: shortAddr(process.env.OB_LIQUIDATION_FACET || (process.env as any).NEXT_PUBLIC_OB_LIQUIDATION_FACET),
+            OB_VIEW_FACET: shortAddr(process.env.OB_VIEW_FACET || (process.env as any).NEXT_PUBLIC_OB_VIEW_FACET),
+            OB_SETTLEMENT_FACET: shortAddr(process.env.OB_SETTLEMENT_FACET || (process.env as any).NEXT_PUBLIC_OB_SETTLEMENT_FACET),
+            ORDERBOOK_VAULT_FACET: shortAddr(
+              process.env.ORDERBOOK_VALUT_FACET ||
+              process.env.ORDERBOOK_VAULT_FACET ||
+              (process.env as any).NEXT_PUBLIC_ORDERBOOK_VALUT_FACET ||
+              (process.env as any).NEXT_PUBLIC_ORDERBOOK_VAULT_FACET
+            ),
+            MARKET_LIFECYCLE_FACET: shortAddr(process.env.MARKET_LIFECYCLE_FACET || (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET),
+            META_TRADE_FACET: shortAddr(process.env.META_TRADE_FACET || (process.env as any).NEXT_PUBLIC_META_TRADE_FACET),
+          },
+        },
+        secrets: {
+          adminPrivateKey: {
+            present: Boolean(adminPk),
+            length: adminPk ? String(adminPk).length : 0,
+            masked: adminPk ? maskSecret(adminPk, { showStart: 2, showEnd: 2 }) : null,
+          },
+          supabaseServiceKey: {
+            present: Boolean(sbKey),
+            length: sbKey ? String(sbKey).length : 0,
+            masked: sbKey ? maskSecret(sbKey, { showStart: 3, showEnd: 3 }) : null,
+          },
+        },
+        integrations: {
+          supabase: {
+            url: safeUrlInfo(sbUrl),
+            hasServiceKey: Boolean(sbKey),
+          },
+          pusher: {
+            enabled: Boolean(pusher && pusherChannel),
+            channel: pusherChannel || null,
+            // Just presence checks; do not emit raw key material.
+            hasAppId: Boolean(process.env.PUSHER_APP_ID),
+            hasKey: Boolean(process.env.PUSHER_KEY),
+            hasSecret: Boolean(process.env.PUSHER_SECRET),
+            cluster: process.env.PUSHER_CLUSTER || null,
+          },
+        },
+      };
+
+      // Exactly one log line for easy copy/paste and diffing.
+      console.log(JSON.stringify(snapshot));
+    } catch {}
 
     logS('validate_input', 'start');
     if (!symbol) return NextResponse.json({ error: 'Symbol is required' }, { status: 400 });
@@ -1081,6 +1266,13 @@ export async function POST(req: Request) {
     logS('save_market', 'start');
     try {
       const supabase = getSupabase();
+      if (!supabase) {
+        logS('save_market', 'error', { error: 'Supabase not configured' });
+        if (process.env.NODE_ENV === 'production') {
+          return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+        }
+        // In dev, allow pipeline to continue (best-effort)
+      }
       // Attempt to archive the metric URL via SavePageNow (server-side, authenticated if keys exist)
       if (supabase) {
         const network = await provider.getNetwork();
@@ -1088,7 +1280,7 @@ export async function POST(req: Request) {
           const access = process.env.WAYBACK_API_ACCESS_KEY as string | undefined;
           const secret = process.env.WAYBACK_API_SECRET as string | undefined;
           const authHeader = access && secret ? `LOW ${access}:${secret}` : undefined;
-          const archiveRes = await archivePage(metricUrl, {
+          const archiveRes = await archiveWithTimeout(metricUrl, {
             captureOutlinks: false,
             captureScreenshot: true,
             skipIfRecentlyArchived: true,
@@ -1096,7 +1288,7 @@ export async function POST(req: Request) {
               ...(authHeader ? { Authorization: authHeader } : {}),
               'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'http://localhost:3000'})`,
             },
-          });
+          }, 4500);
           if (archiveRes?.success && archiveRes.waybackUrl) {
             archivedWaybackUrl = String(archiveRes.waybackUrl);
             archivedWaybackTs = archiveRes.timestamp ? String(archiveRes.timestamp) : null;
@@ -1141,12 +1333,34 @@ export async function POST(req: Request) {
           market_status: 'ACTIVE',
           deployed_at: new Date().toISOString(),
         };
-        await supabase.from('markets').insert(insertPayload).select('id').single();
+        // Idempotent save: allow safe retries on timeouts / client refresh.
+        const { data: savedRow, error: saveErr } = await supabase
+          .from('markets')
+          .upsert([insertPayload], { onConflict: 'market_identifier' })
+          .select('id')
+          .limit(1)
+          .maybeSingle();
+        if (saveErr) throw saveErr;
+
+        // Ensure a ticker row exists immediately to prevent frontend 404 spam.
+        const markPriceScaled = (() => {
+          const n = Number(startPrice);
+          if (!Number.isFinite(n) || Number.isNaN(n) || n <= 0) return 0;
+          return Math.round(n * 1_000_000);
+        })();
+        try {
+          if (savedRow?.id) {
+            await supabase.from('market_tickers').upsert(
+              [{ market_id: savedRow.id, mark_price: markPriceScaled, last_update: new Date().toISOString(), is_stale: true }],
+              { onConflict: 'market_id' }
+            );
+          }
+        } catch {}
       }
       logS('save_market', 'success');
     } catch (e: any) {
-      // Non-fatal; continue
       logS('save_market', 'error', { error: e?.message || String(e) });
+      return NextResponse.json({ error: 'Save market failed', details: e?.message || String(e) }, { status: 500 });
     }
 
     // Respond
