@@ -18,7 +18,7 @@ const Footer: React.FC = () => {
   } = useETHPrice();
 
   const { rankedSymbols } = useActiveMarkets();
-  const { theme, toggleTheme } = useTheme();
+  const { theme } = useTheme();
 
   const currentTokenSymbol = useMemo(() => {
     const path = String(pathname || '');
@@ -389,9 +389,10 @@ const Footer: React.FC = () => {
 
         {/* Theme Toggle */}
         <button 
-          onClick={toggleTheme}
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          disabled
+          aria-disabled="true"
+          aria-label={`Theme locked to ${theme}`}
+          title="Theme switching is disabled"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -402,14 +403,13 @@ const Footer: React.FC = () => {
             color: '#FFFFFF',
             background: 'none',
             border: 'none',
-            cursor: 'pointer',
+            cursor: 'not-allowed',
             transition: 'opacity 0.2s ease',
+            opacity: 0.5,
           }}
-          onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
-          onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
         >
-          {theme === 'dark' ? (
-            // Sun icon (indicates switching to light mode)
+          {theme === 'light' ? (
+            // Sun icon (light theme indicator)
             <svg
               width="16"
               height="16"
@@ -421,7 +421,7 @@ const Footer: React.FC = () => {
               <path d="M6.76 4.84l-1.8-1.79L3.55 4.46l1.79 1.8 1.42-1.42zM1 13h3v-2H1v2zm10 10h2v-3h-2v3zm9-10v-2h-3v2h3zm-2.55-8.54l-1.41-1.41-1.8 1.79 1.42 1.42 1.79-1.8zM17.24 19.16l1.8 1.79 1.41-1.41-1.79-1.8-1.42 1.42zM4.84 17.24l-1.79 1.8 1.41 1.41 1.8-1.79-1.42-1.42zM12 6a6 6 0 1 0 0 12 6 6 0 0 0 0-12z"/>
             </svg>
           ) : (
-            // Moon icon (indicates switching to dark mode)
+            // Moon icon (dark theme indicator)
             <svg
               width="16"
               height="16"

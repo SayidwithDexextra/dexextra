@@ -12,7 +12,9 @@ type ThemeState = {
 
 const ThemeContext = createContext<ThemeState | undefined>(undefined);
 
-const STORAGE_KEY = 'dexetra_theme';
+// Theme switching is intentionally disabled across the platform.
+// Keep this provider for API compatibility, but lock the theme to a single value.
+const LOCKED_THEME: ThemeMode = 'dark';
 
 function applyThemeToDom(theme: ThemeMode) {
   if (typeof document === 'undefined') return;
@@ -22,52 +24,22 @@ function applyThemeToDom(theme: ThemeMode) {
   el.classList.add(theme);
 }
 
-function getInitialTheme(): ThemeMode {
-  // Default to dark to match current styling; allow user pref if present.
-  if (typeof window === 'undefined') return 'dark';
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === 'light' || stored === 'dark') return stored;
-  } catch {}
-  try {
-    const prefersLight = window.matchMedia?.('(prefers-color-scheme: light)')?.matches;
-    return prefersLight ? 'light' : 'dark';
-  } catch {
-    return 'dark';
-  }
-}
-
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Important for Next.js hydration:
-  // The server cannot read localStorage / matchMedia, so it always renders the default theme.
-  // If the client chooses a different theme during the *first render*, React hydration will fail.
-  // Start with a deterministic value that matches SSR, then resolve user/system preference after mount.
-  const [theme, _setTheme] = useState<ThemeMode>('dark');
+  // Keep state so consumers still re-render predictably, but never allow switching.
+  const [theme] = useState<ThemeMode>(LOCKED_THEME);
 
-  const setTheme = useCallback((t: ThemeMode) => {
-    _setTheme(t);
-    applyThemeToDom(t);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, t);
-    } catch {}
+  const setTheme = useCallback((_t: ThemeMode) => {
+    // no-op: theme switching disabled
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setTheme(theme === 'dark' ? 'light' : 'dark');
-  }, [setTheme, theme]);
-
-  // After hydration, align with stored preference / system theme (if any).
-  useEffect(() => {
-    const initial = getInitialTheme();
-    _setTheme(initial);
-    applyThemeToDom(initial);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // no-op: theme switching disabled
   }, []);
 
-  // Ensure DOM stays in sync whenever theme changes after mount.
+  // Ensure the locked theme is applied after mount.
   useEffect(() => {
-    applyThemeToDom(theme);
-  }, [theme]);
+    applyThemeToDom(LOCKED_THEME);
+  }, []);
 
   const value = useMemo<ThemeState>(() => ({ theme, setTheme, toggleTheme }), [theme, setTheme, toggleTheme]);
 
