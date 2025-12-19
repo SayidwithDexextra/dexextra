@@ -20,8 +20,11 @@ try {
   const fs = require("fs");
   const dotenv = require("dotenv");
   const candidates = [
+    // repo root (dexextra/.env.local) when running from Dexetrav5/*
+    path.resolve(__dirname, "..", "..", ".env.local"),
     path.resolve(process.cwd(), ".env.local"),
     path.join(__dirname, "..", ".env.local"),
+    path.resolve(__dirname, "..", "..", ".env"),
     path.resolve(process.cwd(), ".env"),
     path.join(__dirname, "..", ".env"),
   ];

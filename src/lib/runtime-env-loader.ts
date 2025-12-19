@@ -106,11 +106,9 @@ export function debugEnvironment(): void {
   console.log(`    - process.env: ${!!process.env.SETTLEMENT_PRIVATE_KEY}`);
   console.log(`    - _loadedVars PRIVATE_KEY: ${!!_loadedVars['PRIVATE_KEY']}`);
   console.log(`    - process.env PRIVATE_KEY: ${!!process.env.PRIVATE_KEY}`);
-  
-  // Show first 10 chars of keys for debugging (security safe)
-  const privateKeys = Object.keys(_loadedVars).filter(k => k.includes('PRIVATE'));
-  privateKeys.forEach(key => {
-    const value = _loadedVars[key];
-    console.log(`    - ${key}: ${value ? value.substring(0, 10) + '...' : 'undefined'}`);
-  });
+ 
+  // IMPORTANT: Never print key material (even partial) to logs.
+  // In production environments (e.g. Vercel), logs are often accessible to many operators/tools.
+  const privateKeyNames = Object.keys(_loadedVars).filter((k) => k.includes('PRIVATE'));
+  console.log(`  - PRIVATE* vars present (names only): ${privateKeyNames.join(', ') || '(none)'}`);
 }

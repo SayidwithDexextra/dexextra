@@ -8,31 +8,18 @@ import { env } from '@/lib/env';
  */
 export async function GET(request: NextRequest) {
   try {
+    // This route is for local debugging only.
+    // Never expose env/debug output in production (Vercel) where it can leak sensitive config.
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     console.log('🔍 Debug Settlement Environment API called');
-    
-    // Capture console output
-    const logs: string[] = [];
-    const originalLog = console.log;
-    const originalWarn = console.warn;
-    
-    console.log = (...args: any[]) => {
-      logs.push(`[LOG] ${args.join(' ')}`);
-      originalLog(...args);
-    };
-    
-    console.warn = (...args: any[]) => {
-      logs.push(`[WARN] ${args.join(' ')}`);
-      originalWarn(...args);
-    };
-    
-    // Run debug
+
+    // Run debug (debugEnvironment is safe: it does not print secret values)
     debugEnvironment();
     const settlementKey = getSettlementPrivateKey();
-    
-    // Restore console
-    console.log = originalLog;
-    console.warn = originalWarn;
-    
+
     const result = {
       success: true,
       environment: {
@@ -43,9 +30,8 @@ export async function GET(request: NextRequest) {
         runtimeLoader: !!settlementKey,
         keyLength: settlementKey?.length || 0,
         keyValid: settlementKey ? (settlementKey.startsWith('0x') && settlementKey.length === 66) : false,
-        keyPreview: settlementKey ? `${settlementKey.substring(0, 6)}...${settlementKey.substring(62)}` : null
+        // Never return any key material (even partial) to the caller.
       },
-      logs,
       timestamp: new Date().toISOString()
     };
     

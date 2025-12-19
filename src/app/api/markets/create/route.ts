@@ -469,12 +469,10 @@ export async function POST(req: Request) {
           adminPrivateKey: {
             present: Boolean(adminPk),
             length: adminPk ? String(adminPk).length : 0,
-            masked: adminPk ? maskSecret(adminPk, { showStart: 2, showEnd: 2 }) : null,
           },
           supabaseServiceKey: {
             present: Boolean(sbKey),
             length: sbKey ? String(sbKey).length : 0,
-            masked: sbKey ? maskSecret(sbKey, { showStart: 3, showEnd: 3 }) : null,
           },
         },
         integrations: {
@@ -688,20 +686,41 @@ export async function POST(req: Request) {
 
       // Build typed data and verify off-chain
       const net = await provider.getNetwork();
-      const domain = {
-        name: String(process.env.EIP712_FACTORY_DOMAIN_NAME || 'DexetraFactory'),
-        version: String(process.env.EIP712_FACTORY_DOMAIN_VERSION || '1'),
-        chainId: Number(net.chainId),
-        verifyingContract: factoryAddress,
-      } as const;
+      // Domain: prefer on-chain helper to avoid env drift (matches client behavior)
+      let domainName = String(
+        process.env.EIP712_FACTORY_DOMAIN_NAME ||
+          (process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_NAME ||
+          'DexeteraFactory'
+      );
+      let domainVersion = String(
+        process.env.EIP712_FACTORY_DOMAIN_VERSION ||
+          (process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_VERSION ||
+          '1'
+      );
+      let domainChainId = Number(net.chainId);
+      let domainVerifying = factoryAddress;
       // hash tags and cut via contract helpers to avoid drift
       let tagsHash: string;
       let cutHash: string;
       try {
-        const helper = new ethers.Contract(factoryAddress, [
-          'function computeTagsHash(string[] tags) view returns (bytes32)',
-          'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)'
-        ], wallet);
+        const helper = new ethers.Contract(
+          factoryAddress,
+          [
+            'function computeTagsHash(string[] tags) view returns (bytes32)',
+            'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)',
+            'function eip712DomainInfo() view returns (string name,string version,uint256 chainId,address verifyingContract,bytes32 domainSeparator)',
+          ],
+          wallet
+        );
+        // best-effort: read domain from chain so signatures don't break when env drifts
+        try {
+          const info = await helper.eip712DomainInfo();
+          if (info?.name) domainName = String(info.name);
+          if (info?.version) domainVersion = String(info.version);
+          if (info?.chainId) domainChainId = Number(info.chainId);
+          if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
+        } catch {}
+
         tagsHash = await helper.computeTagsHash(tags);
         cutHash = await helper.computeCutHash(cutArg);
       } catch {
@@ -714,6 +733,12 @@ export async function POST(req: Request) {
         }
         cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
       }
+      const domain = {
+        name: domainName,
+        version: domainVersion,
+        chainId: domainChainId,
+        verifyingContract: domainVerifying,
+      } as const;
       const TYPEHASH_META_CREATE = ethers.id(
         'MetaCreate(string marketSymbol,string metricUrl,uint256 settlementDate,uint256 startPrice,string dataSource,bytes32 tagsHash,address diamondOwner,bytes32 cutHash,address initFacet,address creator,uint256 nonce,uint256 deadline)'
       );

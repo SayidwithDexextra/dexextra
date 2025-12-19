@@ -25,9 +25,9 @@
  *   --roles <comma-separated roles>
  *
  * Usage:
- *   tsx orderBookScripts/grant-corevault-roles.ts
- *   tsx orderBookScripts/grant-corevault-roles.ts --roles DEFAULT_ADMIN_ROLE
- *   tsx orderBookScripts/grant-corevault-roles.ts --to 0x... --roles ORDERBOOK_ROLE,SETTLEMENT_ROLE
+ *   tsx accessControlScripts/grant-corevault-roles.ts
+ *   tsx accessControlScripts/grant-corevault-roles.ts --roles DEFAULT_ADMIN_ROLE
+ *   tsx accessControlScripts/grant-corevault-roles.ts --to 0x... --roles ORDERBOOK_ROLE,SETTLEMENT_ROLE
  */
 import fs from "fs";
 import path from "path";
@@ -86,11 +86,14 @@ async function main() {
   const rpcUrl =
     getArg("--rpc") ||
     process.env.RPC_URL ||
+    process.env.NEXT_PUBLIC_RPC_URL ||
     process.env.RPC_URL_HYPEREVM ||
+    process.env.NEXT_PUBLIC_RPC_URL_HYPEREVM ||
     process.env.HYPERLIQUID_RPC_URL;
   if (!rpcUrl) throw new Error("RPC_URL (or RPC_URL_HYPEREVM or HYPERLIQUID_RPC_URL) is required");
 
-  const coreVaultAddress = getArg("--corevault") || process.env.CORE_VAULT_ADDRESS;
+  const coreVaultAddress =
+    getArg("--corevault") || process.env.CORE_VAULT_ADDRESS || process.env.NEXT_PUBLIC_CORE_VAULT_ADDRESS;
   if (!coreVaultAddress) throw new Error("CORE_VAULT_ADDRESS is required (or pass --corevault)");
 
   const to = getArg("--to") || process.env.RELAYER_ADDRESS || process.env.DIAMOND_OWNER_ADDRESS;

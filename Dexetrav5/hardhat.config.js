@@ -8,7 +8,7 @@ require("dotenv").config();
 
 // Single-source signer: LEGACY_ADMIN
 const networkAccounts = process.env.LEGACY_ADMIN
-  ? [process.env.LEGACY_ADMIN]
+  ? [process.env.LEGACY_ADMIN, process.env.PRIVATE_KEY_USER3, process.env.PRIVATE_KEY_USER2,process.env.PRIVATE_KEY_USER5]
   : [];
 
 const config = {
