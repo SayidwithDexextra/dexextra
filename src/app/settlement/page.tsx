@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMarkets } from '@/hooks/useMarkets';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
+import { getMetricAIWorkerBaseUrl } from '@/lib/metricAiWorker';
 
 type SettleState = {
   marketId: string | null;
@@ -193,10 +194,12 @@ export default function SettlementPage() {
 
       const metric = selectedMarket.market_identifier || selectedMarket.symbol;
       // Use external worker with polling to avoid blocking
-      const workerUrl =
-        (process.env as any).NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
-        (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
-        '';
+      let workerUrl = '';
+      try {
+        workerUrl = getMetricAIWorkerBaseUrl();
+      } catch {
+        workerUrl = '';
+      }
       let resolution: any = null;
       if (workerUrl) {
         try {

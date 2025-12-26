@@ -32,7 +32,10 @@
     "mark": "hardhat run scripts/mark-price-cli.js --network hyperliquid",
     "mark:localhost": "hardhat run scripts/mark-price-cli.js --network localhost",
     "mark:hyperliquid": "hardhat run scripts/mark-price-cli.js --network hyperliquid",
-    "mark:hyperliquid-testnet": "hardhat run scripts/mark-price-cli.js --network hyperliquid_testnet"
+    "mark:hyperliquid-testnet": "hardhat run scripts/mark-price-cli.js --network hyperliquid_testnet",
+    "Liq": "hardhat --network hyperliquid run scripts/test-liquidations-supabase.js",
+    "Liq:testnet": "hardhat --network hyperliquid_testnet run scripts/test-liquidations-supabase.js",
+    "Liq:localhost": "hardhat --network localhost run scripts/test-liquidations-supabase.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",

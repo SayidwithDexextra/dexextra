@@ -22,6 +22,12 @@ export class OrderService {
   // Cache last successful results per (trader, metricId) to avoid UI flapping to zero
   private lastOrdersByKey = new Map<string, Order[]>();
   private backoffMs = 0;
+  // Cache contract-code existence to avoid spamming eth_getCode/getBytecode on every call
+  private contractExistsCache = new Map<string, { exists: boolean; timestamp: number }>();
+  private readonly CONTRACT_EXISTS_TTL_MS = 10 * 60 * 1000; // 10 minutes when exists
+  private readonly CONTRACT_MISSING_TTL_MS = 30 * 1000; // 30s when missing (allows deployments to appear)
+  // Optional debug logging (off by default to avoid console spam)
+  private readonly DEBUG = env.NEXT_PUBLIC_DEBUG_ORDER_SERVICE === 'true';
   private readonly ORDERBOOK_ABI = parseAbi([
     // Minimal VIEM-compatible ABI subset required by this service
     'function getUserOrders(address user) external view returns (uint256[] orderIds)',
@@ -34,10 +40,20 @@ export class OrderService {
 
   private async ensureContractAvailable(address: Address): Promise<boolean> {
     try {
+      const key = String(address).toLowerCase();
+      const cached = this.contractExistsCache.get(key);
+      if (cached) {
+        const ttl = cached.exists ? this.CONTRACT_EXISTS_TTL_MS : this.CONTRACT_MISSING_TTL_MS;
+        if (Date.now() - cached.timestamp < ttl) {
+          return cached.exists;
+        }
+      }
       // Check that bytecode exists at the target address on the configured network
       // Many BAD_DATA decode errors are caused by pointing at the wrong chain or a non-contract address
       const bytecode = await this.client.getBytecode({ address });
-      return !!bytecode && bytecode !== '0x';
+      const exists = !!bytecode && bytecode !== '0x';
+      this.contractExistsCache.set(key, { exists, timestamp: Date.now() });
+      return exists;
     } catch {
       return false;
     }
@@ -98,16 +114,18 @@ export class OrderService {
       // Dynamically resolve OrderBook address based on metricId
       const orderBookAddress = this.resolveOrderBookAddress(metricId);
       
-      console.log('🔍 OrderService: Getting order from dynamic OrderBook:', {
-        orderId: orderId.toString(),
-        metricId,
-        orderBookAddress,
-        note: 'Using dynamic OrderBook resolution'
-      });
+      if (this.DEBUG) {
+        console.log('🔍 OrderService: Getting order from dynamic OrderBook:', {
+          orderId: orderId.toString(),
+          metricId,
+          orderBookAddress,
+          note: 'Using dynamic OrderBook resolution'
+        });
+      }
       // Guard: ensure contract exists on configured network
       const exists = await this.ensureContractAvailable(orderBookAddress);
       if (!exists) {
-        console.warn('⚠️ OrderService: OrderBook not deployed on configured network, skipping getOrder');
+        if (this.DEBUG) console.warn('⚠️ OrderService: OrderBook not deployed on configured network, skipping getOrder');
         return null;
       }
       const result = await this.client.readContract({
@@ -130,7 +148,7 @@ export class OrderService {
    */
   async getUserActiveOrders(trader: Address, metricId?: string): Promise<Order[]> {
     try {
-      console.log('🔍 OrderService: Getting user active orders using dynamic OrderBook approach for trader:', trader);
+      if (this.DEBUG) console.log('🔍 OrderService: Getting user active orders using dynamic OrderBook approach for trader:', trader);
       
       // Use the dynamic OrderBook-based approach
       const allOrders = await this.getUserOrdersFromOrderBook(trader, metricId);
@@ -140,11 +158,13 @@ export class OrderService {
         order.status === 'pending' || order.status === 'partially_filled'
       );
       
-      console.log('📊 OrderService: Filtered active orders:', {
-        totalOrders: allOrders.length,
-        activeOrders: activeOrders.length,
-        trader
-      });
+      if (this.DEBUG) {
+        console.log('📊 OrderService: Filtered active orders:', {
+          totalOrders: allOrders.length,
+          activeOrders: activeOrders.length,
+          trader
+        });
+      }
       
       return activeOrders;
     } catch (error) {
@@ -161,6 +181,10 @@ export class OrderService {
     try {
       // Build cache key early so we can serve cached data when hidden
       const key = `${trader.toLowerCase()}::${metricId || 'ALL'}`;
+
+      // Strong dedupe: if a request is already in flight for this key, reuse it immediately.
+      const existingInFlight = this.inFlightGetUserOrders.get(key);
+      if (existingInFlight) return existingInFlight;
 
       // If tab is hidden, return last known good result instead of empty to avoid UI flapping
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
@@ -181,16 +205,18 @@ export class OrderService {
       // Dynamically resolve OrderBook address based on metricId
       const orderBookAddress = this.resolveOrderBookAddress(metricId);
       
-      console.log('🔍 OrderService: Getting user orders from dynamic OrderBook:', {
-        trader,
-        metricId,
-        orderBookAddress,
-        note: 'Using dynamic OrderBook resolution'
-      });
+      if (this.DEBUG) {
+        console.log('🔍 OrderService: Getting user orders from dynamic OrderBook:', {
+          trader,
+          metricId,
+          orderBookAddress,
+          note: 'Using dynamic OrderBook resolution'
+        });
+      }
       // Guard: ensure contract exists on configured network
       const exists = await this.ensureContractAvailable(orderBookAddress);
       if (!exists) {
-        console.warn('⚠️ OrderService: OrderBook not deployed on configured network, returning empty orders');
+        if (this.DEBUG) console.warn('⚠️ OrderService: OrderBook not deployed on configured network, returning empty orders');
         return [];
       }
       // OrderBook.getUserOrders returns array of order IDs (bytes32[])
@@ -211,11 +237,13 @@ export class OrderService {
         this.lastGetUserOrdersTs.set(key, Date.now());
         this.backoffMs = Math.max(0, Math.floor(this.backoffMs / 2));
 
-      console.log('📊 OrderService: OrderBook getUserOrders result:', {
-        orderIdsCount: orderIds.length,
-        orderIds: orderIds.slice(0, 3), // Log first 3 IDs
-        metricId
-      });
+      if (this.DEBUG) {
+        console.log('📊 OrderService: OrderBook getUserOrders result:', {
+          orderIdsCount: orderIds.length,
+          orderIds: orderIds.slice(0, 3), // Log first 3 IDs
+          metricId
+        });
+      }
 
       // For each order ID, fetch the full order details
         const orders: Order[] = [];
@@ -223,22 +251,24 @@ export class OrderService {
         try {
           const order = await this.getOrder(orderId, metricId);
           if (order) {
-            console.log(`✅ OrderService: Successfully transformed order ${order.id} with metricId="${order.metricId}"`);
+            if (this.DEBUG) console.log(`✅ OrderService: Successfully transformed order ${order.id} with metricId="${order.metricId}"`);
             orders.push(order);
           } else {
-            console.warn(`⚠️ OrderService: getOrder returned null for orderId ${orderId}`);
+            if (this.DEBUG) console.warn(`⚠️ OrderService: getOrder returned null for orderId ${orderId}`);
           }
         } catch (error) {
-          console.warn('⚠️ OrderService: Failed to fetch order details for ID:', orderId, error);
+          if (this.DEBUG) console.warn('⚠️ OrderService: Failed to fetch order details for ID:', orderId, error);
         }
         }
         
-        console.log('📊 OrderService: Successfully fetched detailed orders:', {
-          totalOrders: orders.length,
-          ordersWithCorrectMetricId: orders.filter(o => o.metricId === metricId).length,
-          orderSummary: orders.map(o => ({ id: o.id, metricId: o.metricId, status: o.status })),
-          expectedMetricId: metricId
-        });
+        if (this.DEBUG) {
+          console.log('📊 OrderService: Successfully fetched detailed orders:', {
+            totalOrders: orders.length,
+            ordersWithCorrectMetricId: orders.filter(o => o.metricId === metricId).length,
+            orderSummary: orders.map(o => ({ id: o.id, metricId: o.metricId, status: o.status })),
+            expectedMetricId: metricId
+          });
+        }
         // Persist last successful result to serve while hidden or on transient failures
         this.lastOrdersByKey.set(key, orders);
         return orders;

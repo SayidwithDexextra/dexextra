@@ -2,7 +2,7 @@
 // Sets marketCreationFee to zero on the deployed FuturesMarketFactory.
 // Usage:
 //   FUTURES_MARKET_FACTORY_ADDRESS=0x... npx hardhat run scripts/disable-market-fee.js --network hyperliquid
-// Requires LEGACY_ADMIN (or the first configured account) to be the factory admin.
+// Requires PRIVATE_KEY_USERD (or the first configured account) to be the factory admin.
 
 const { ethers } = require("hardhat");
 
@@ -30,6 +30,8 @@ main().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });
+
+
 
 
 

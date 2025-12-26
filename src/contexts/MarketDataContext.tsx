@@ -211,4 +211,9 @@ export function useMarketData(): MarketDataContextValue {
   return ctx;
 }
 
+/** Non-throwing variant: returns null when not under `MarketDataProvider`. */
+export function useMaybeMarketData(): MarketDataContextValue | null {
+  return useContext(MarketDataContext) ?? null;
+}
+
 

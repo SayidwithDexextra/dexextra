@@ -102,6 +102,110 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     return id;
   }, [marketIdentifier, md.symbol]);
 
+  // --- Realtime optimistic overlay for OrderBook depth (no polling) ---
+  // Applies small, short-lived deltas from `ordersUpdated` events so the BOOK tab updates instantly.
+  const depthOverlayRef = React.useRef<{
+    bidsDelta: Map<string, { delta: number; expiresAt: number }>;
+    asksDelta: Map<string, { delta: number; expiresAt: number }>;
+    seenTrace: Map<string, number>;
+  }>({ bidsDelta: new Map(), asksDelta: new Map(), seenTrace: new Map() });
+  const [depthOverlayTick, setDepthOverlayTick] = useState(0);
+
+  const bigintToFloat = (x: bigint, decimals: number, maxFraction = 8): number => {
+    const TEN = 10n;
+    const base = TEN ** BigInt(decimals);
+    const intPart = x / base;
+    const fracPart = x % base;
+    const fracStrFull = fracPart.toString().padStart(decimals, '0');
+    const fracStr = maxFraction > 0 ? fracStrFull.slice(0, Math.min(maxFraction, decimals)) : '';
+    const str = fracStr ? `${intPart.toString()}.${fracStr}` : intPart.toString();
+    return parseFloat(str);
+  };
+
+  // When fresh depth arrives, clear overlay so we don't "double count" (base has caught up).
+  useEffect(() => {
+    try {
+      const bids = depthOverlayRef.current.bidsDelta;
+      const asks = depthOverlayRef.current.asksDelta;
+      if (bids.size === 0 && asks.size === 0) return;
+      bids.clear();
+      asks.clear();
+      // eslint-disable-next-line no-console
+      console.log('[RealTimeToken] ui:orderbook:overlay:cleared', { market: validMarketIdentifier });
+      setDepthOverlayTick((x) => x + 1);
+    } catch {}
+  }, [md.lastUpdated, validMarketIdentifier]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOrdersUpdated = (e: any) => {
+      const detail = (e as CustomEvent)?.detail as any;
+      const sym = String(detail?.symbol || '').trim().toUpperCase();
+      const mySym = String(validMarketIdentifier || '').trim().toUpperCase();
+      if (!sym || !mySym) return;
+      if (sym !== mySym) return;
+
+      const now = Date.now();
+      const eventType = String(detail?.eventType || detail?.reason || '').trim();
+      const isCancelOrFill =
+        eventType === 'OrderCancelled' ||
+        eventType === 'cancel' ||
+        eventType === 'OrderFilled';
+      const isPlacement =
+        eventType === 'OrderPlaced' ||
+        eventType === 'order-placed';
+      // Only apply depth deltas for known lifecycle events
+      if (!isCancelOrFill && !isPlacement) return;
+
+      // We can only optimistically adjust depth when we have price+amount+side.
+      if (!detail?.price || !detail?.amount || detail?.isBuy === undefined) return;
+
+      // Strong dedupe: txHash if present; else fall back to orderId+fields.
+      // This prevents double-counting when we receive the same placement via onchain + pusher.
+      const txHash = String(detail?.txHash || detail?.transactionHash || '');
+      const orderId = detail?.orderId !== undefined ? String(detail.orderId) : '';
+      const priceRaw = String(detail?.price || '');
+      const amountRaw = String(detail?.amount || '');
+      const isBuyRaw = detail?.isBuy === undefined ? '' : (Boolean(detail.isBuy) ? 'B' : 'S');
+      const eventKey = txHash
+        ? `tx:${txHash}:${sym}:${orderId || isBuyRaw}`
+        : `oid:${orderId || 'noOrderId'}:${sym}:${eventType}:${priceRaw}:${amountRaw}:${isBuyRaw}`;
+      {
+        const prev = depthOverlayRef.current.seenTrace.get(eventKey) || 0;
+        if (now - prev < 10_000) return;
+        depthOverlayRef.current.seenTrace.set(eventKey, now);
+      }
+
+      let price = 0;
+      let amount = 0;
+      try {
+        price = bigintToFloat(BigInt(String(detail.price)), 6, 8); // 6dp
+      } catch {}
+      try {
+        amount = bigintToFloat(BigInt(String(detail.amount)), 18, 8); // 18dp
+      } catch {}
+      if (!Number.isFinite(price) || !Number.isFinite(amount) || price <= 0 || amount <= 0) return;
+
+      const isBuy = Boolean(detail.isBuy);
+      const ttlMs = 8_000;
+
+      // Place adds liquidity at a level; cancel/fill removes liquidity at a level (best-effort).
+      const sign = isCancelOrFill ? -1 : 1;
+      const map = isBuy ? depthOverlayRef.current.bidsDelta : depthOverlayRef.current.asksDelta;
+      const priceKey = price.toFixed(8);
+      const existing = map.get(priceKey);
+      const nextDelta = (existing?.delta || 0) + sign * amount;
+      map.set(priceKey, { delta: nextDelta, expiresAt: now + ttlMs });
+
+      // eslint-disable-next-line no-console
+      console.log('[RealTimeToken] ui:orderbook:patched', { eventKey, symbol: sym, eventType, price, amount, isBuy, delta: nextDelta });
+      setDepthOverlayTick((x) => x + 1);
+    };
+
+    window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+    return () => window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+  }, [validMarketIdentifier]);
+
   const obData = useMemo(() => ({
     depth: md.depth,
     bestBid: md.bestBid ?? 0,
@@ -240,7 +344,48 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       })).sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest ask first for descending display
 
       console.log('🔍 [ORDERBOOK][ONCHAIN] Bids:', bidOrders.length, 'Asks:', askOrders.length);
-      return { bids: bidOrders, asks: askOrders };
+      // Apply optimistic overlay deltas (best-effort) so the book updates instantly on events
+      try {
+        const now = Date.now();
+        const overlay = depthOverlayRef.current;
+        const applySide = (side: 'bid' | 'ask', arr: any[]) => {
+          const map = side === 'bid' ? overlay.bidsDelta : overlay.asksDelta;
+          // prune expired
+          for (const [p, rec] of map.entries()) {
+            if (!rec || rec.expiresAt <= now) map.delete(p);
+          }
+          if (map.size === 0) return arr;
+          const out = [...arr];
+          const idxMap = new Map<number, number>();
+          out.forEach((o, i) => idxMap.set(Number(o.price || 0), i));
+          for (const [pKey, rec] of map.entries()) {
+            const p = parseFloat(pKey);
+            const i = idxMap.get(p);
+            if (i !== undefined) {
+              const q = Number(out[i].quantity || 0) + Number(rec.delta || 0);
+              out[i] = { ...out[i], quantity: q > 0 ? q : 0 };
+            } else if (rec.delta > 0) {
+              out.push({
+                order_id: `${side.toUpperCase()}-RT-${p}-${now}`,
+                side: side === 'bid' ? 'BUY' : 'SELL',
+                order_status: 'PENDING',
+                price: p,
+                quantity: rec.delta,
+                filled_quantity: 0,
+                created_at: nowIso,
+                trader_wallet_address: '0x0000000000000000000000000000000000000000'
+              });
+            }
+          }
+          const cleaned = out.filter((o) => Number(o.quantity || 0) > 0);
+          // sort by price descending (matches existing)
+          cleaned.sort((a, b) => (Number(b.price || 0) - Number(a.price || 0)));
+          return cleaned;
+        };
+        return { bids: applySide('bid', bidOrders), asks: applySide('ask', askOrders) };
+      } catch {
+        return { bids: bidOrders, asks: askOrders };
+      }
     }
 
     // Fallback to pending orders from DB (if any)
@@ -252,7 +397,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest ask first for descending display
     console.log('🔍 [ORDERBOOK][DB] Bids:', buyOrders.length, 'Asks:', sellOrders.length);
     return { bids: buyOrders, asks: sellOrders };
-  }, [obData?.depth, pendingOrders]);
+  }, [obData?.depth, pendingOrders, depthOverlayTick]);
 
   // Best Bid/Ask derived from depth with on-chain fallback values
   const bestBidPrice = useMemo(() => {

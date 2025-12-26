@@ -17,11 +17,274 @@ const InputSchema = z.object({
   context: z.enum(['create', 'settlement']).optional()
 });
 
+const MAX_RAW_HTML_CHARS = Number(process.env.METRIC_AI_MAX_RAW_HTML_CHARS || 250_000);
+const MAX_SOURCE_DIGEST_CHARS = Number(process.env.METRIC_AI_MAX_SOURCE_DIGEST_CHARS || 9_000);
+const MAX_SOURCES_JOIN_CHARS = Number(process.env.METRIC_AI_MAX_SOURCES_JOIN_CHARS || 30_000);
+const MAX_KEY_LINES = Number(process.env.METRIC_AI_MAX_KEY_LINES || 60);
+const MAX_CHART_SNIPPETS = Number(process.env.METRIC_AI_MAX_CHART_SNIPPETS || 8);
+const MAX_NUMERIC_CANDIDATES = Number(process.env.METRIC_AI_MAX_NUMERIC_CANDIDATES || 30);
+
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
   if (!url || !key) throw new Error('Supabase env missing');
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+function safeText(s: unknown) {
+  return String(s ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function decodeBasicEntities(input: string) {
+  return input
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function stripTagsToLines(html: string) {
+  // Keep line breaks so we can select "price-looking" lines instead of one giant blob.
+  const withBreaks = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '\n')
+    .replace(/<style[\s\S]*?<\/style>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|td|th|h1|h2|h3|h4|h5|h6|section|article|header|footer|br)\s*>/gi, '\n')
+    .replace(/<(br|hr)\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ');
+
+  return decodeBasicEntities(withBreaks)
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function collectKeyLines(text: string, extraKeywords: string[]) {
+  const base = [
+    'price',
+    'last',
+    'close',
+    'closing',
+    'settle',
+    'settlement',
+    'open',
+    'high',
+    'low',
+    'quote',
+    'bid',
+    'ask',
+    'index',
+    'spot',
+    'usd',
+    'eur',
+    'gbp',
+    'btc',
+    'eth',
+    'per ',
+    '$',
+  ];
+  const kw = [...base, ...extraKeywords].map(k => k.toLowerCase());
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const picked: string[] = [];
+  for (const line of lines) {
+    const low = line.toLowerCase();
+    const hasKw = kw.some(k => (k === '$' ? low.includes('$') : low.includes(k)));
+    const hasNumber = /[-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?/.test(line);
+    if (hasKw && hasNumber) picked.push(line);
+    if (picked.length >= MAX_KEY_LINES) break;
+  }
+
+  // If we found nothing, fall back to the first few dense numeric lines.
+  if (picked.length === 0) {
+    for (const line of lines) {
+      if ((line.match(/\d/g) || []).length >= 6) picked.push(line);
+      if (picked.length >= Math.min(20, MAX_KEY_LINES)) break;
+    }
+  }
+
+  return picked;
+}
+
+function normalizeNumberString(raw: string) {
+  const s = safeText(raw);
+  // Keep leading sign, remove thousand separators/spaces.
+  return s.replace(/,/g, '').replace(/\s+/g, '');
+}
+
+function uniqBy<T>(items: T[], key: (t: T) => string) {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const k = key(item);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(item);
+  }
+  return out;
+}
+
+function extractNumericCandidates(rawHtml: string) {
+  // Goal: surface "quote-like" numeric values even when page is mostly JS-rendered.
+  // We do NOT execute JS; we only pattern-match common payloads.
+  const html = rawHtml;
+  const out: Array<{ label: string; value: string; context: string }> = [];
+
+  // A) Common JSON keys in inline state blobs / scripts.
+  // Examples: "last": 123.45, "price":"123.45", "regularMarketPrice":{ "raw": 123.45 }
+  const jsonKeyRe =
+    /["'](last|price|close|settle(?:ment)?|regularMarketPrice|currentPrice|markPrice|indexPrice|spotPrice|value|latest|lastPrice)["']\s*:\s*(\{[^{}]{0,300}\}|"[^"]{1,40}"|'[^']{1,40}'|[-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?)/gi;
+  let jm: RegExpExecArray | null;
+  while ((jm = jsonKeyRe.exec(html))) {
+    const label = jm[1];
+    const rhs = (jm[2] || '').trim();
+    let value = '';
+    // Pull a number out of object/string/number RHS.
+    const num =
+      rhs.match(/[-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?/)?.[0] ||
+      rhs.match(/"raw"\s*:\s*([-+]?\d+(?:\.\d+)?)/i)?.[1] ||
+      rhs.match(/'raw'\s*:\s*([-+]?\d+(?:\.\d+)?)/i)?.[1] ||
+      '';
+    if (num) value = normalizeNumberString(num);
+    if (value) out.push({ label, value, context: 'inline_json_key' });
+    if (out.length >= MAX_NUMERIC_CANDIDATES) break;
+  }
+
+  // B) Human-visible label patterns in raw HTML/text.
+  const textish = stripTagsToLines(html);
+  const labelPatterns: Array<{ label: string; re: RegExp }> = [
+    { label: 'last', re: /\b(last|last price)\b[^0-9-+]{0,20}([-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?)/i },
+    { label: 'price', re: /\b(price)\b[^0-9-+]{0,20}([-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?)/i },
+    { label: 'close', re: /\b(close|closing)\b[^0-9-+]{0,20}([-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?)/i },
+    { label: 'settle', re: /\b(settle|settlement)\b[^0-9-+]{0,20}([-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?)/i },
+    { label: 'bid', re: /\b(bid)\b[^0-9-+]{0,20}([-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?)/i },
+    { label: 'ask', re: /\b(ask)\b[^0-9-+]{0,20}([-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?)/i },
+  ];
+
+  for (const line of textish.split('\n').map(l => l.trim()).filter(Boolean)) {
+    for (const p of labelPatterns) {
+      const m = line.match(p.re);
+      if (m?.[2]) {
+        const value = normalizeNumberString(m[2]);
+        if (value) out.push({ label: p.label, value, context: `text_line:${line.slice(0, 180)}` });
+      }
+    }
+    if (out.length >= MAX_NUMERIC_CANDIDATES) break;
+  }
+
+  // C) Meta tags occasionally contain a quote/price in content.
+  // (We keep this generic and low-trust; model will decide.)
+  const metaRe =
+    /<meta[^>]+(?:name|property)=["']([^"']{1,80})["'][^>]+content=["']([^"']{1,200})["'][^>]*>/gi;
+  let mm: RegExpExecArray | null;
+  while ((mm = metaRe.exec(html))) {
+    const key = (mm[1] || '').toLowerCase();
+    if (!/(price|last|close|quote|value)/i.test(key)) continue;
+    const num = (mm[2] || '').match(/[-+]?\d{1,3}(?:[,\d]{0,12})?(?:\.\d+)?/)?.[0];
+    if (num) out.push({ label: key.slice(0, 40), value: normalizeNumberString(num), context: 'meta_tag' });
+    if (out.length >= MAX_NUMERIC_CANDIDATES) break;
+  }
+
+  // Deduplicate; keep the earliest occurrences (usually closer to top-of-page).
+  return uniqBy(out, x => `${x.label}:${x.value}`).slice(0, MAX_NUMERIC_CANDIDATES);
+}
+
+function extractMetaTags(html: string) {
+  const readMeta = (re: RegExp) => {
+    const m = html.match(re);
+    return m?.[1] ? decodeBasicEntities(m[1]).trim() : '';
+  };
+  const title = readMeta(/<title[^>]*>([\s\S]{0,500}?)<\/title>/i);
+  const ogTitle = readMeta(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']{0,500})["'][^>]*>/i);
+  const desc = readMeta(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']{0,800})["'][^>]*>/i);
+  const ogDesc = readMeta(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']{0,800})["'][^>]*>/i);
+  return {
+    title: safeText(ogTitle || title),
+    description: safeText(ogDesc || desc),
+  };
+}
+
+function extractJsonLdPrices(html: string) {
+  // Look for Product/Offer style JSON-LD where price is structured.
+  const out: Array<{ currency?: string; price?: string; context?: string }> = [];
+  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const raw = (m[1] || '').trim();
+    if (!raw) continue;
+    try {
+      const json = JSON.parse(raw);
+      const stack: any[] = [json];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (!cur) continue;
+        if (Array.isArray(cur)) {
+          for (const x of cur) stack.push(x);
+          continue;
+        }
+        if (typeof cur === 'object') {
+          // Offer-like nodes
+          const price = cur.price ?? cur.lowPrice ?? cur.highPrice;
+          const currency = cur.priceCurrency ?? cur.currency;
+          if (price != null) {
+            out.push({
+              currency: currency ? String(currency) : undefined,
+              price: String(price),
+              context: cur['@type'] ? String(cur['@type']) : undefined
+            });
+          }
+          for (const v of Object.values(cur)) stack.push(v);
+        }
+      }
+    } catch {
+      // ignore invalid json-ld
+    }
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+function extractChartSignals(rawHtml: string) {
+  // Many "chart" pages render price data inside inline scripts / embedded JSON.
+  // We do NOT execute JS; we just pattern-match likely OHLC/candlestick payloads.
+  const html = rawHtml;
+  const snippets: string[] = [];
+
+  // 1) OHLC arrays: [ts, open, high, low, close]
+  const ohlcRe = /\[\s*(\d{10,13})\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*,\s*([-+]?\d+(?:\.\d+)?)\s*\]/g;
+  let lastOhlc: { ts: string; open: string; high: string; low: string; close: string } | null = null;
+  let om: RegExpExecArray | null;
+  while ((om = ohlcRe.exec(html))) {
+    lastOhlc = { ts: om[1], open: om[2], high: om[3], low: om[4], close: om[5] };
+  }
+
+  // 2) Object-based candlesticks: {time:..., open:..., high:..., low:..., close:...}
+  const objRe = /\{\s*[^{}]{0,2000}?\bopen\s*:\s*([-+]?\d+(?:\.\d+)?)\s*,\s*\bhigh\s*:\s*([-+]?\d+(?:\.\d+)?)\s*,\s*\blow\s*:\s*([-+]?\d+(?:\.\d+)?)\s*,\s*\bclose\s*:\s*([-+]?\d+(?:\.\d+)?)\s*[,}]/g;
+  let lastObj: { open: string; high: string; low: string; close: string } | null = null;
+  let jm: RegExpExecArray | null;
+  while ((jm = objRe.exec(html))) {
+    lastObj = { open: jm[1], high: jm[2], low: jm[3], close: jm[4] };
+  }
+
+  // 3) Keyword windows (candlestick / ohlc / series / dataset)
+  const keyRe = /\b(candlestick|ohlc|open|high|low|close|tradingview|highcharts|chartjs|chart\.js|lightweight-charts)\b/gi;
+  let km: RegExpExecArray | null;
+  while ((km = keyRe.exec(html))) {
+    const start = Math.max(0, km.index - 350);
+    const end = Math.min(html.length, km.index + 450);
+    const chunk = html.slice(start, end).replace(/\s+/g, ' ').trim();
+    if (chunk.length > 0) snippets.push(chunk);
+    if (snippets.length >= MAX_CHART_SNIPPETS) break;
+  }
+
+  const derivedClose = lastOhlc?.close || lastObj?.close || '';
+  return {
+    derivedClose: derivedClose ? String(derivedClose) : '',
+    derivedOhlc: lastOhlc || lastObj || null,
+    snippets: Array.from(new Set(snippets)).slice(0, MAX_CHART_SNIPPETS),
+  };
 }
 
 function corsHeaders(origin?: string) {
@@ -81,26 +344,88 @@ export async function POST(req: NextRequest) {
         const texts: string[] = [];
         for (const url of input.urls) {
           try {
-            const r = await fetch(url, { headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` } });
-            const html = await r.text();
-            const stripped = html.replace(/<script[\s\S]*?<\/script>/gi, ' ')
-                                 .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-                                 .replace(/<[^>]+>/g, ' ')
-                                 .replace(/\s+/g, ' ')
-                                 .slice(0, 6000);
-            texts.push(`SOURCE: ${url}\n${stripped}`);
+            const fetchedAt = new Date().toISOString();
+            const r = await fetch(url, {
+              headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` }
+            });
+            const contentType = r.headers.get('content-type') || '';
+            const htmlRaw = (await r.text()).slice(0, MAX_RAW_HTML_CHARS);
+
+            const meta = extractMetaTags(htmlRaw);
+            const textLines = stripTagsToLines(htmlRaw);
+            const keyLines = collectKeyLines(textLines, [
+              input.metric,
+              ...(input.description ? input.description.split(/\s+/).slice(0, 8) : [])
+            ]);
+            const jsonLd = extractJsonLdPrices(htmlRaw);
+            const chart = extractChartSignals(htmlRaw);
+            const candidates = extractNumericCandidates(htmlRaw);
+
+            const digestParts: string[] = [];
+            digestParts.push(`URL: ${url}`);
+            digestParts.push(`FETCHED_AT: ${fetchedAt}`);
+            digestParts.push(`HTTP_STATUS: ${r.status}`);
+            if (contentType) digestParts.push(`CONTENT_TYPE: ${contentType}`);
+            if (meta.title) digestParts.push(`TITLE: ${meta.title}`);
+            if (meta.description) digestParts.push(`META_DESCRIPTION: ${meta.description}`);
+            if (jsonLd.length) {
+              digestParts.push(
+                `JSON_LD_PRICE_CANDIDATES: ${jsonLd
+                  .slice(0, 6)
+                  .map(x => `${x.price}${x.currency ? ' ' + x.currency : ''}${x.context ? ' (' + x.context + ')' : ''}`)
+                  .join(' | ')}`
+              );
+            }
+            if (candidates.length) {
+              digestParts.push(`NUMERIC_CANDIDATES:`);
+              for (const c of candidates.slice(0, 18)) {
+                digestParts.push(`- ${c.label}: ${c.value} (${c.context})`);
+              }
+            }
+            if (chart.derivedClose) {
+              digestParts.push(`CHART_DERIVED_LAST_CLOSE: ${chart.derivedClose}`);
+              if (chart.derivedOhlc) {
+                digestParts.push(`CHART_DERIVED_OHLC: ${JSON.stringify(chart.derivedOhlc).slice(0, 500)}`);
+              }
+            }
+            if (chart.snippets.length) {
+              digestParts.push(`CHART_SNIPPETS:`);
+              for (const snip of chart.snippets) digestParts.push(`- ${snip.slice(0, 900)}`);
+            }
+            digestParts.push(`KEY_LINES:`);
+            for (const line of keyLines) digestParts.push(`- ${line.slice(0, 500)}`);
+
+            const digest = digestParts.join('\n').slice(0, MAX_SOURCE_DIGEST_CHARS);
+            texts.push(`SOURCE:\n${digest}`);
           } catch { /* skip bad sources */ }
         }
         const prompt = [
           `METRIC: ${input.metric}`,
           input.description ? `DESCRIPTION: ${input.description}` : '',
           `TASK: Determine the current numeric value and a tradable asset_price_suggestion.`,
-          `Return JSON: { "value": "...", "unit": "...", "as_of": "...", "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
+          `Return JSON: { "value": "...",  "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
+          `EVIDENCE PRIORITY (use the best available evidence; cite it):`,
+          `- Prefer explicit quotes/fields that clearly refer to the metric (e.g., "last/price/close/settle") over unrelated numbers.`,
+          `- Prefer structured pricing where available: JSON_LD_PRICE_CANDIDATES, then explicit KEY_LINES, then NUMERIC_CANDIDATES with strong context.`,
+          `- For chart pages, if CHART_DERIVED_LAST_CLOSE/OHLC is present, prefer the latest CLOSE as the asset_price_suggestion and cite it.`,
+          `DISAMBIGUATION RULES (important on busy pages):`,
+          `- Ignore numbers that look like axis ticks, timestamps, percent changes, volumes, page counters, or unrelated KPIs.`,
+          `- If multiple plausible candidates exist, choose the one most consistent with the metric name/description and any unit hints; reduce confidence and explain.`,
+          `- If sources disagree materially, prefer the most recent (FETCHED_AT) and/or the most directly labeled quote; otherwise use a conservative median and reduce confidence.`,
+          `OUTPUT RULES:`,
+          `- asset_price_suggestion must be the best tradable "quote-like" number you can defend from evidence (not an axis label).`,
+          `- value can include context or units if needed; asset_price_suggestion must be numeric only.`,
           `PRICE RULES:`,
           `- If financial quote (USD per BTC/oz/barrel/etc) use as-is; else rescale large metrics to natural human units.`,
           `- asset_price_suggestion must be a numeric string with up to 5 significant figures, no units.`,
+          `CHART RULES (IMPORTANT):`,
+          `- If a source provides CHART_DERIVED_LAST_CLOSE or OHLC (open/high/low/close), prefer the latest CLOSE as the asset_price_suggestion.`,
+          `- Candlestick charts: use CLOSE, not OPEN, unless the chart is explicitly "current/open".`,
+          `- If you use chart-derived pricing, cite the relevant CHART_DERIVED_* or CHART_SNIPPETS in source_quotes.`,
+          `MISSING / JS-RENDERED PAGES:`,
+          `- If you cannot find any credible numeric value in the provided SOURCES (e.g., page is JS-rendered and raw HTML lacks the quote), return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2, and explain what evidence was missing.`,
           `SOURCES:`,
-          texts.join('\n\n')
+          texts.join('\n\n').slice(0, MAX_SOURCES_JOIN_CHARS)
         ].filter(Boolean).join('\n');
 
         const resp = await openai.chat.completions.create({
@@ -192,8 +517,11 @@ export async function POST(req: NextRequest) {
       { status: 202, headers: corsHeaders(req.headers.get('origin') || undefined) }
     );
   } catch (e: any) {
+    // Provide structured validation details for easier debugging (esp. local dev).
+    const isZod = e && typeof e === 'object' && (e as any).name === 'ZodError';
+    const issues = isZod ? (e as any).issues : undefined;
     return NextResponse.json(
-      { error: 'Invalid input', message: e?.message || 'Unknown error' },
+      { error: 'Invalid input', message: e?.message || 'Unknown error', ...(issues ? { issues } : {}) },
       { status: 400, headers: corsHeaders(req.headers.get('origin') || undefined) }
     );
   }

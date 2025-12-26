@@ -12,9 +12,9 @@
  *   - SESSION_REGISTRY_ADDRESS (required unless --registry)
  *   - CORE_VAULT_ADDRESS (required unless --corevault)
  *   - Signer keys:
- *       - REGISTRY_OWNER_PRIVATE_KEY / RELAYER_PRIVATE_KEY / ADMIN_PRIVATE_KEY / LEGACY_ADMIN / LEGACY_ADMIN_PRIVATE_KEY
+ *       - REGISTRY_OWNER_PRIVATE_KEY / RELAYER_PRIVATE_KEY / ADMIN_PRIVATE_KEY / PRIVATE_KEY_USERD / PRIVATE_KEY_USERD_PRIVATE_KEY
  *         (must be the CURRENT owner of the registry to transfer ownership)
- *       - LEGACY_ADMIN (must have DEFAULT_ADMIN_ROLE on CoreVault to grant roles)
+ *       - PRIVATE_KEY_USERD (must have DEFAULT_ADMIN_ROLE on CoreVault to grant roles)
  *
  * Usage:
  *   npx --no-install tsx accessControlScripts/setup-access-control.ts --to 0x... --roles ORDERBOOK_ROLE,SETTLEMENT_ROLE
@@ -175,8 +175,8 @@ async function pickRegistryOwnerSigner(
     "RELAYER_PRIVATE_KEY",
     "ADMIN_PRIVATE_KEY",
     "ROLE_ADMIN_PRIVATE_KEY",
-    "LEGACY_ADMIN",
-    "LEGACY_ADMIN_PRIVATE_KEY",
+    "PRIVATE_KEY_USERD",
+    "PRIVATE_KEY_USERD_PRIVATE_KEY",
   ]);
 
   for (const c of candidates) {
@@ -219,22 +219,22 @@ async function pickCoreVaultGrantSigner(
       const adminRole = (await vaultRO.getRoleAdmin(r.role)) as string;
       requiredAdminRoles.add(adminRole.toLowerCase());
     } catch {
-      // If getRoleAdmin isn't available, we can't reliably auto-pick. Fall back to LEGACY_ADMIN.
+      // If getRoleAdmin isn't available, we can't reliably auto-pick. Fall back to PRIVATE_KEY_USERD.
       requiredAdminRoles.clear();
       break;
     }
   }
 
   const candidates = collectCandidatePks([
-    "LEGACY_ADMIN",
+    "PRIVATE_KEY_USERD",
     "ROLE_ADMIN_PRIVATE_KEY",
     "ADMIN_PRIVATE_KEY",
-    "LEGACY_ADMIN_PRIVATE_KEY",
+    "PRIVATE_KEY_USERD_PRIVATE_KEY",
   ]);
 
   if (requiredAdminRoles.size === 0) {
-    const fallback = candidates.find((c) => c.envName === "LEGACY_ADMIN");
-    if (!fallback) throw new Error("LEGACY_ADMIN is required (private key with DEFAULT_ADMIN_ROLE on CoreVault)");
+    const fallback = candidates.find((c) => c.envName === "PRIVATE_KEY_USERD");
+    if (!fallback) throw new Error("PRIVATE_KEY_USERD is required (private key with DEFAULT_ADMIN_ROLE on CoreVault)");
     return { signer: new ethers.Wallet(fallback.pk, provider), signerEnv: fallback.envName };
   }
 

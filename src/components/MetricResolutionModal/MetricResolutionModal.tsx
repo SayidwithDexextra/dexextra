@@ -49,6 +49,7 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
   onClose, 
   response,
   onAccept,
+  onDenySuggestedAssetPrice,
   imageUrl = 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=600&h=300&fit=crop&auto=format',
   fullscreenImageUrl = 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=1400&h=900&fit=crop&auto=format'
 }) => {
@@ -169,6 +170,23 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
     }
   };
 
+  const hasSuggestedAssetPrice = (() => {
+    const raw = String(data?.asset_price_suggestion || '').trim();
+    if (!raw) return false;
+    const numeric = raw.replace(/[^0-9.]/g, '');
+    if (!numeric) return false;
+    const n = parseFloat(numeric);
+    return !Number.isNaN(n);
+  })();
+
+  const handleDenySuggestedAssetPrice = () => {
+    try {
+      onDenySuggestedAssetPrice?.();
+    } finally {
+      onClose();
+    }
+  };
+
   return createPortal(
     <div className={styles.overlay} onClick={handleBackdropClick}>
       <div className={styles.modal}>
@@ -218,7 +236,9 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
               {/* Asset Price - Similar to approval amount */}
               <div className={styles.assetPrice}>
                 <span className={styles.assetPriceLabel}>Suggested Asset Price</span>
-                <span className={styles.assetPriceValue}>${formatValue(data?.asset_price_suggestion)}</span>
+                <span className={styles.assetPriceValue}>
+                  {hasSuggestedAssetPrice ? `$${formatValue(data?.asset_price_suggestion)}` : '—'}
+                </span>
               </div>
 
               {/* Summary Section */}
@@ -251,7 +271,12 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
 
         {/* Action Button */}
         <div className={styles.actions}>
-          <button className={styles.acceptButton} onClick={handleAccept}>
+          {hasSuggestedAssetPrice && (
+            <button className={styles.denyButton} onClick={handleDenySuggestedAssetPrice} type="button">
+              Deny
+            </button>
+          )}
+          <button className={styles.acceptButton} onClick={handleAccept} type="button">
             Accept
           </button>
         </div>

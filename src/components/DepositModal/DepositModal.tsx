@@ -282,8 +282,20 @@ export default function DepositModal({
       const friendlyHelp =
         'Open your wallet and switch to Arbitrum One (chainId 42161). If you do not see a prompt, manually select Arbitrum in your wallet and retry.'
 
-      let currentNetwork = await provider.getNetwork()
-      if (currentNetwork.chainId === targetChainId) {
+      const getWalletChainId = async (): Promise<bigint | null> => {
+        try {
+          const raw = await (window as any).ethereum.request({ method: 'eth_chainId' })
+          if (typeof raw === 'bigint') return raw
+          if (typeof raw === 'number') return BigInt(raw)
+          if (typeof raw === 'string') return BigInt(raw) // supports hex ("0xa4b1") and decimal ("42161")
+          return null
+        } catch {
+          return null
+        }
+      }
+
+      let currentChainId = await getWalletChainId()
+      if (currentChainId === targetChainId) {
         setNetworkWarning(null)
         return
       }
@@ -293,8 +305,8 @@ export default function DepositModal({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: targetChainIdHex }]
         })
-        currentNetwork = await provider.getNetwork()
-        return currentNetwork.chainId === targetChainId
+        currentChainId = await getWalletChainId()
+        return currentChainId === targetChainId
       }
 
       try {
@@ -308,9 +320,11 @@ export default function DepositModal({
         const chainMissing = switchError?.code === 4902 // Unrecognized chain
 
         if (!chainMissing) {
+          const detected =
+            typeof currentChainId === 'bigint' ? ` Detected chainId: ${currentChainId.toString()}.` : ''
           const message = userRejected
-            ? 'You rejected the network switch request. Please approve the Arbitrum One prompt in your wallet.'
-            : 'Check your wallet for a network switch prompt. If you do not see one, open your wallet and manually select Arbitrum One (chainId 42161), then retry.'
+            ? `You rejected the network switch request. Please approve the Arbitrum One prompt in your wallet.${detected}`
+            : `Check your wallet for a network switch prompt. If you do not see one, open your wallet and manually select Arbitrum One (chainId 42161), then retry.${detected}`
           setNetworkWarning(message)
           const tagged = new Error(message)
           ;(tagged as any).isNetworkSwitchIssue = true
@@ -415,17 +429,21 @@ export default function DepositModal({
       setStep('success')
     } catch (err: any) {
       console.error('Function deposit error:', err)
-      if (err?.isNetworkSwitchIssue) {
-        // Keep user in spoke modal with a warning banner for manual switch
+      const message = err?.message || 'Failed to process deposit'
+      const isBalanceIssue =
+        typeof message === 'string' && message.toLowerCase().includes('insufficient balance')
+
+      if (err?.isNetworkSwitchIssue || isBalanceIssue) {
+        // Keep user in spoke modal with a warning/error banner and allow retry.
         setPaymentStatus('pending')
         setStep('spoke')
         setShowSpokeDepositModal(true)
-        setSpokeDepositError(null)
+        setSpokeDepositError(isBalanceIssue ? message : null)
       } else {
         setPaymentStatus('error')
         setStep('error')
-        setError(err?.message || 'Failed to process deposit')
-        setSpokeDepositError(err?.message || 'Failed to process deposit')
+        setError(message)
+        setSpokeDepositError(message)
       }
     } finally {
       setIsFunctionDepositLoading(false)

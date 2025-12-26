@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWallet } from './useWallet';
 import { usePositions } from './usePositions';
 import { initializeContracts } from '@/lib/contracts';
@@ -12,7 +12,7 @@ import { ethers } from 'ethers';
 import type { Address } from 'viem';
 import { createPublicClient, http } from 'viem';
 import { createClientWithRPC } from '@/lib/viemClient';
-import { usePusher } from '@/lib/pusher-client';
+import { useMarketEventHub } from '@/services/realtime/marketEventHub';
 // Minimal ABI fragments for events to avoid wildcard import issues
 const OrderBookEventABI = [
   {
@@ -144,6 +144,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
   const fastRefreshRef = useRef<null | (() => void)>(null);
   const lastRealtimeRefreshRef = useRef<number>(0);
   const ENABLE_ORDERBOOK_POLLING = false;
+  const [obAddress, setObAddress] = useState<Address | null>(null);
 
   // Initialize contracts when wallet is connected and market is resolvable
   useEffect(() => {
@@ -189,6 +190,13 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           }));
           return;
         }
+        // Track address for centralized event hub
+        try {
+          const addr = String(orderBookAddressOverride);
+          if (addr.startsWith('0x') && addr.length === 42) {
+            setObAddress(addr as Address);
+          }
+        } catch {}
         // Choose runner: prefer signer; else derive signer from BrowserProvider; else fail
         let runner: ethers.Signer | ethers.Provider | undefined = undefined;
         if (walletSigner) {
@@ -266,6 +274,17 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
 
     init();
   }, [walletIsConnected, walletSigner, marketId, (marketRow as any)?.market_address]);
+
+  // Centralized real-time event bridge (OrderPlaced + TradeExecutionCompleted).
+  // Replaces the previous per-hook Pusher subscription.
+  const hubSubscriber = useMemo(() => {
+    return {
+      dispatchDomEvents: true,
+      onOrdersChanged: () => fastRefreshRef.current?.(),
+      onTradesChanged: () => fastRefreshRef.current?.(),
+    };
+  }, []);
+  useMarketEventHub(marketId || '', obAddress, hubSubscriber);
 
   // Fetch initial market data (no polling)
   useEffect(() => {
@@ -468,30 +487,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     return () => { clearInterval(interval); };
   }, [contracts, walletAddress, marketId]);
 
-  // Near real-time push via Pusher
-  const pusher = usePusher();
-  useEffect(() => {
-    if (!pusher) return;
-    if (!contracts) return;
-
-    const handlers = {
-      'order-update': () => fastRefreshRef.current?.(),
-      'trading-event': () => fastRefreshRef.current?.(),
-      'price-update': () => fastRefreshRef.current?.(),
-      'batch-price-update': () => fastRefreshRef.current?.(),
-    } as Record<string, (data: any) => void>;
-
-    const channelKey = marketId || '';
-    const unsubs: Array<() => void> = [];
-    if (channelKey) {
-      try { unsubs.push(pusher.subscribeToChannel(`market-${channelKey}`, handlers)); } catch {}
-    }
-    try { unsubs.push(pusher.subscribeToChannel('recent-transactions', { 'new-order': () => fastRefreshRef.current?.() })); } catch {}
-
-    return () => {
-      unsubs.forEach((u) => { try { u(); } catch {} });
-    };
-  }, [pusher, contracts, marketId]);
+  // (Realtime handled by MarketEventHub)
 
   // Place market order
   const placeMarketOrder = useCallback(async (
@@ -1295,22 +1291,66 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
     }
     logGoddOrders(16, 'Resolved market entries for sweep', { marketCount: entries.length });
     dlog('Market entries resolved', { markets: entries.length });
-    // Fetch sequentially to avoid bursty RPC and transient "empty" reads
-    const buckets: Array<{ symbol: string; token: string; orders: any[] }> = [];
-    for (const m of entries) {
-      const metric = m?.marketIdentifier || m?.symbol || '';
-      if (!metric) continue;
-      dlog('Fetching active orders for market', { metric, symbol: m?.symbol });
-      logGoddOrders(17, 'Fetching orders for market', { metric, symbol: m?.symbol });
-      const orders = await orderService.getUserActiveOrders(trader as any, metric);
-      if (Array.isArray(orders) && orders.length > 0) {
+    // Fast path: bounded concurrency sweep with per-market timeouts (prevents one slow market blocking all).
+    const chainId = CHAIN_CONFIG.chainId;
+    const markets = (entries || [])
+      .filter((m: any) => {
+        // Filter to current chain when present
+        if (m?.chainId && String(m.chainId) !== String(chainId)) return false;
+        return true;
+      })
+      .map((m: any) => {
+        const metric = String(m?.marketIdentifier || m?.symbol || '').trim();
         const symbol = String(m?.symbol || '').toUpperCase();
-        const token = m?.name || symbol;
-        dlog('Active orders fetched', { metric, count: orders.length });
-        logGoddOrders(18, 'Orders found for market', { symbol, count: orders.length });
-        buckets.push({ symbol, token, orders });
+        const token = m?.name || symbol || metric;
+        return { m, metric, symbol, token };
+      })
+      .filter((x) => Boolean(x.metric));
+
+    const withTimeout = async <T,>(p: Promise<T>, ms: number): Promise<T> => {
+      let t: any;
+      const timeout = new Promise<never>((_, rej) => {
+        t = setTimeout(() => rej(new Error(`timeout:${ms}ms`)), ms);
+      });
+      try {
+        return await Promise.race([p, timeout]) as T;
+      } finally {
+        try { clearTimeout(t); } catch {}
       }
-    }
+    };
+
+    const CONCURRENCY = 8;
+    const PER_MARKET_TIMEOUT_MS = 7000;
+    const buckets: Array<{ symbol: string; token: string; orders: any[] }> = [];
+
+    let idx = 0;
+    const worker = async () => {
+      while (idx < markets.length) {
+        const myIdx = idx++;
+        const item = markets[myIdx];
+        if (!item) continue;
+        try {
+          dlog('Fetching active orders for market', { metric: item.metric, symbol: item.symbol });
+          logGoddOrders(17, 'Fetching orders for market', { metric: item.metric, symbol: item.symbol });
+          const orders = await withTimeout(
+            orderService.getUserActiveOrders(trader as any, item.metric),
+            PER_MARKET_TIMEOUT_MS
+          );
+          if (Array.isArray(orders) && orders.length > 0) {
+            dlog('Active orders fetched', { metric: item.metric, count: orders.length });
+            logGoddOrders(18, 'Orders found for market', { symbol: item.symbol, count: orders.length });
+            buckets.push({ symbol: item.symbol, token: item.token, orders });
+          }
+        } catch (e: any) {
+          // Skip slow/failing markets; keep rest responsive
+          dwarn('Market orders fetch skipped', { metric: item.metric, symbol: item.symbol, error: e?.message || String(e) });
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, markets.length) }, () => worker()));
+    // Stable ordering for UI (avoid flicker from async completion order)
+    buckets.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
     try {
       const totalOrders = (buckets || []).reduce((sum, b) => sum + ((b?.orders || []).length), 0);
       dlog('Done fetching active orders across markets', { bucketCount: buckets.length, totalOrders });
@@ -1322,6 +1362,46 @@ export async function getUserActiveOrdersAllMarkets(trader: string): Promise<Arr
     dwarn('Error fetching active orders; returning cached or empty');
     logGoddOrders(20, 'Error during all-market fetch; returning fallback', { error: error?.message });
     return cached?.data || [];
+  }
+}
+
+// Utility function (not a hook) to fetch active orders for a single market for a user.
+// Used for event-driven updates to avoid sweeping every market.
+export async function getUserActiveOrdersForMarket(
+  trader: string,
+  marketIdentifier: string
+): Promise<{ symbol: string; token: string; orders: any[] } | null> {
+  if (!trader || !marketIdentifier) return null;
+  const metric = String(marketIdentifier).trim();
+  if (!metric) return null;
+
+  // Best-effort ensure market info exists (used for display name/symbol)
+  try {
+    const initial = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
+    if (!initial.length) {
+      try { await populateMarketInfoClient(metric); } catch {}
+    }
+  } catch {}
+
+  // Resolve market metadata
+  const entries: any[] = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {});
+  const lower = metric.toLowerCase();
+  const m = entries.find((x: any) => {
+    const candidates = [
+      x?.marketIdentifier?.toLowerCase?.(),
+      x?.symbol?.toLowerCase?.(),
+      x?.name?.toLowerCase?.(),
+    ].filter(Boolean);
+    return candidates.includes(lower);
+  });
+  const symbol = String(m?.symbol || metric).toUpperCase();
+  const token = m?.name || symbol;
+
+  try {
+    const orders = await orderService.getUserActiveOrders(trader as any, metric);
+    return { symbol, token, orders: Array.isArray(orders) ? orders : [] };
+  } catch (e: any) {
+    return { symbol, token, orders: [] };
   }
 }
 

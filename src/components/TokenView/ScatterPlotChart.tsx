@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Chart } from 'chart.js/auto';
 import { useMarketData } from '@/contexts/MarketDataContext';
-import { runMetricAIWithPolling } from '@/lib/metricAiWorker';
+import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAiWorker';
 import supabaseClient from '@/lib/supabase-browser';
 
 type ScatterPoint = { x: number; y: number; ts?: number };
@@ -132,10 +132,12 @@ export default function ScatterPlotChart({
       (aiLocator && (aiLocator.url || aiLocator.primary_source_url)) ||
       (md?.market as any)?.initial_order?.metricUrl ||
       null;
-    const workerUrl =
-      (process as any)?.env?.NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
-      (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
-      '';
+    let workerUrl = '';
+    try {
+      workerUrl = getMetricAIWorkerBaseUrl();
+    } catch {
+      workerUrl = '';
+    }
     if (!marketId || !metricUrl || !workerUrl) {
       try {
         console.log('[ScatterIngest] prerequisites missing', {

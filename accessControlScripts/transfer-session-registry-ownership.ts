@@ -3,7 +3,7 @@
  * Transfer ownership of the GlobalSessionRegistry to a new owner.
  *
  * This script is designed for the common "rotate owner key" workflow:
- * - Signer (current owner) is derived from LEGACY_ADMIN_PRIVATE_KEY
+ * - Signer (current owner) is derived from PRIVATE_KEY_USERD_PRIVATE_KEY
  * - New owner address is derived from ADMIN_PRIVATE_KEY (no need to pass an address)
  *
  * Configuration is read from .env.local (project root), falling back to .env:
@@ -13,8 +13,8 @@
  *       - REGISTRY_OWNER_PRIVATE_KEY (preferred explicit)
  *       - RELAYER_PRIVATE_KEY (when relayer currently owns the registry)
  *       - ADMIN_PRIVATE_KEY (common after you rotate ownership to admin)
- *       - LEGACY_ADMIN (legacy name used elsewhere in this repo)
- *       - LEGACY_ADMIN_PRIVATE_KEY (compat)
+ *       - PRIVATE_KEY_USERD (legacy name used elsewhere in this repo)
+ *       - PRIVATE_KEY_USERD_PRIVATE_KEY (compat)
  *   - New owner can be provided by:
  *       - --new-owner 0x...
  *       - DIAMOND_OWNER_ADDRESS (preferred default “admin/owner” address in this repo)
@@ -104,8 +104,8 @@ async function pickRegistryOwnerSigner(
     "ADMIN_PRIVATE_KEY",
     "RELAYER_PRIVATE_KEY",
     "ROLE_ADMIN_PRIVATE_KEY",
-    "LEGACY_ADMIN",
-    "LEGACY_ADMIN_PRIVATE_KEY",
+    "PRIVATE_KEY_USERD",
+    "PRIVATE_KEY_USERD_PRIVATE_KEY",
   ]);
 
   for (const c of candidates) {

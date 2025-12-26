@@ -13,7 +13,7 @@ import { ethers } from 'ethers';
 import { ProgressOverlay } from './ProgressOverlay';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
-import { runMetricAIWithPolling } from '@/lib/metricAiWorker';
+import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAiWorker';
 
 export const CreateMarketPage = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -218,10 +218,7 @@ export const CreateMarketPage = () => {
       const skipMetricWorker = Boolean((marketData as any).skipMetricWorker);
       // Attempt to prefill startPrice using background worker (non-blocking with timeout)
       try {
-        const workerUrl =
-          (process.env as any).NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
-          (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_AI_WORKER_URL ||
-          '';
+        const workerUrl = getMetricAIWorkerBaseUrl();
         if (!skipMetricWorker && workerUrl && typeof metricUrl === 'string' && metricUrl.trim()) {
           const ai = await runMetricAIWithPolling(
             {

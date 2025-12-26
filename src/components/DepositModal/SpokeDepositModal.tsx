@@ -25,10 +25,12 @@ export default function SpokeDepositModal({
   warningMessage
 }: SpokeDepositModalProps) {
   const [amount, setAmount] = useState(defaultAmount)
+  const [localError, setLocalError] = useState<string | null>(null)
 
   useEffect(() => {
     if (isOpen) {
       setAmount(defaultAmount)
+      setLocalError(null)
       document.body.style.overflow = 'hidden'
     }
     return () => {
@@ -39,7 +41,13 @@ export default function SpokeDepositModal({
   if (!isOpen) return null
 
   const handleSubmit = async () => {
-    await onSubmit(amount)
+    setLocalError(null)
+    try {
+      await onSubmit(amount)
+    } catch (err: any) {
+      // Safety net: don't let async click handlers surface as unhandled rejections.
+      setLocalError(err?.message || 'Failed to process deposit')
+    }
   }
 
   return createPortal(
@@ -131,12 +139,12 @@ export default function SpokeDepositModal({
             </div>
           </div>
 
-          {errorMessage && (
+          {(errorMessage || localError) && (
             <div className="group bg-[#1A0F0F] rounded-md border border-red-500/30 transition-all duration-200">
               <div className="flex items-center gap-2 p-2.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
                 <div className="text-[11px] text-red-200">
-                  {errorMessage}
+                  {errorMessage || localError}
                 </div>
               </div>
             </div>

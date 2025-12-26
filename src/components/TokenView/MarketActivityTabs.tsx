@@ -7,7 +7,6 @@ import { useMarketData } from '@/contexts/MarketDataContext';
 import { initializeContracts } from '@/lib/contracts';
 import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
-import { usePositions as useAllPositions } from '@/hooks/usePositions';
 import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
 import { usePortfolioData } from '@/hooks/usePortfolioData';
@@ -75,7 +74,7 @@ interface MarketActivityTabsProps {
 
 export default function MarketActivityTabs({ symbol, className = '' }: MarketActivityTabsProps) {
   const [activeTab, setActiveTab] = useState<TabType>('positions');
-  const [positions, setPositions] = useState<Position[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]); // base positions (from vault reads)
   const [trades, setTrades] = useState<Trade[]>([]);
   const [orderHistory, setOrderHistory] = useState<Order[]>([]);
   const isMountedRef = useRef(true);
@@ -102,11 +101,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Removed ordersUpdated -> refreshOrders recursion guard; UI re-renders from state updates
 
   // Reuse portfolio logic: fetch ALL positions and markets map
-  const { positions: allPositions, isLoading: positionsIsLoading } = useAllPositions(undefined, { enabled: activeTab === 'positions' });
-  const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 });
-  const { ordersBuckets, isLoadingOrders, refreshOrders: refreshPortfolioOrders } = usePortfolioData({
+  // Event-driven only (no polling). Positions refresh via 'positionsRefreshRequested' / 'ordersUpdated'.
+  // Disable autoRefresh polling; markets are fetched once on mount.
+  const { markets } = useMarkets({ limit: 500, autoRefresh: false });
+  const { positions: allPositions, isLoadingPositions: positionsIsLoading, ordersBuckets, isLoadingOrders } = usePortfolioData({
     enabled: !!walletAddress,
-    refreshInterval: 15000
+    // Disable polling; orders refresh via 'ordersUpdated' events.
+    refreshInterval: 0
   });
   const marketIdMap = useMemo(() => {
     const map = new Map<string, { symbol: string; name: string }>();
@@ -131,6 +132,199 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return map;
   }, [markets]);
   
+  // Optimistic overlay for positions on trade events (prevents "revert" when vault reads lag a block).
+  // We keep small deltas for a short TTL and render basePositions + deltas.
+  const posOverlayRef = useRef<Map<string, { delta: number; expiresAt: number }>>(new Map());
+  const appliedTraceRef = useRef<Map<string, number>>(new Map());
+  const [posOverlayTick, setPosOverlayTick] = useState(0); // re-render trigger
+
+  const displayedPositions = useMemo(() => {
+    const base = Array.isArray(positions) ? positions : [];
+    const now = Date.now();
+    const overlay = posOverlayRef.current;
+    const next: Position[] = [];
+    for (const p of base) {
+      const sym = String(p.symbol || '').toUpperCase();
+      const o = overlay.get(sym);
+      if (!o || o.expiresAt <= now || !Number.isFinite(o.delta) || o.delta === 0) {
+        next.push(p);
+        continue;
+      }
+      const signed = p.side === 'LONG' ? p.size : -p.size;
+      const nextSigned = signed + o.delta;
+      if (Math.abs(nextSigned) < 1e-12) continue;
+      const nextSide: Position['side'] = nextSigned >= 0 ? 'LONG' : 'SHORT';
+      next.push({ ...p, side: nextSide, size: Math.abs(nextSigned) });
+    }
+    // Add new positions created purely from overlay (no base yet)
+    for (const [sym, o] of overlay.entries()) {
+      if (o.expiresAt <= now || !Number.isFinite(o.delta) || o.delta === 0) continue;
+      const exists = next.some((p) => String(p.symbol || '').toUpperCase() === sym);
+      if (exists) continue;
+      next.push({
+        id: `${sym}:${now}`,
+        symbol: sym,
+        side: o.delta >= 0 ? 'LONG' : 'SHORT',
+        size: Math.abs(o.delta),
+        entryPrice: 0,
+        markPrice: 0,
+        pnl: 0,
+        pnlPercent: 0,
+        liquidationPrice: 0,
+        margin: 0,
+        leverage: 1,
+        timestamp: now,
+        isUnderLiquidation: false,
+      });
+    }
+    return next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions, posOverlayTick]);
+
+  // Immediate optimistic UI patch for Open Orders on `ordersUpdated`.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress) return;
+
+    const onOrdersUpdated = (e: any) => {
+      const detail = (e as CustomEvent)?.detail as any;
+      const traceId = String(detail?.traceId || '');
+      const now = Date.now();
+      if (traceId) {
+        const prev = openOrdersOverlayRef.current.seenTrace.get(traceId) || 0;
+        if (now - prev < 10_000) return;
+        openOrdersOverlayRef.current.seenTrace.set(traceId, now);
+      }
+
+      const sym = String(detail?.symbol || '').toUpperCase();
+      const trader = String(detail?.trader || '').toLowerCase();
+      const me = String(walletAddress || '').toLowerCase();
+      if (!sym || !me) return;
+      // Only mutate UI for the current wallet's orders when trader is present
+      if (trader && trader !== me) return;
+
+      const eventType = String(detail?.eventType || detail?.reason || '').trim();
+      const orderId = detail?.orderId !== undefined ? String(detail.orderId) : '';
+      const ttlMs = 8_000;
+
+      if (eventType === 'OrderCancelled' || eventType === 'cancel') {
+        if (orderId) {
+          // Ensure a cancel can't leave behind a stale optimistic "added" order (which can render as 0/0/0).
+          openOrdersOverlayRef.current.removed.set(orderId, now + ttlMs);
+          openOrdersOverlayRef.current.added.delete(orderId);
+        }
+        setOpenOrdersOverlayTick((x) => x + 1);
+        // eslint-disable-next-line no-console
+        console.log('[RealTimeToken] ui:openOrders:patched', { traceId, symbol: sym, eventType, orderId, action: 'remove' });
+        return;
+      }
+
+      // Treat as an order placement only when we have enough fields to render a real row.
+      // IMPORTANT: don't treat empty eventType as "placed" (it can be a partial/unknown payload) or we may add 0/0/0 rows.
+      const isPlacementEvent = eventType === 'OrderPlaced' || eventType === 'order-placed';
+      if (isPlacementEvent) {
+        if (!orderId) return;
+        // If we already marked this id removed, don't re-add it (race between cancel + stale updates).
+        if (openOrdersOverlayRef.current.removed.has(orderId)) return;
+
+        let priceNum = 0;
+        let sizeNum = 0;
+        try {
+          const pStr = String(detail?.price || '0');
+          priceNum = parseFloat(ethers.formatUnits(BigInt(pStr), 6)); // 6 decimals
+          if (!Number.isFinite(priceNum)) priceNum = 0;
+        } catch {}
+        try {
+          const aStr = String(detail?.amount || '0');
+          sizeNum = parseFloat(ethers.formatUnits(BigInt(aStr), 18)); // 18 decimals
+          if (!Number.isFinite(sizeNum)) sizeNum = 0;
+        } catch {}
+
+        // If we don't have a real price/size, skip creating an optimistic order row.
+        if (!(priceNum > 0) || !(sizeNum > 0)) {
+          // eslint-disable-next-line no-console
+          console.warn('[RealTimeToken] ui:openOrders:skip:add:missing-fields', { traceId, symbol: sym, eventType, orderId, priceNum, sizeNum });
+          return;
+        }
+
+        const isBuy = detail?.isBuy === undefined ? true : Boolean(detail.isBuy);
+        const side: Order['side'] = isBuy ? 'BUY' : 'SELL';
+
+        const optimistic: Order = {
+          id: orderId,
+          symbol: sym,
+          side,
+          type: 'LIMIT',
+          price: priceNum,
+          size: sizeNum,
+          filled: 0,
+          status: 'PENDING',
+          timestamp: now,
+          metricId: sym,
+        };
+
+        openOrdersOverlayRef.current.added.set(orderId, { order: optimistic, expiresAt: now + ttlMs });
+        setOpenOrdersOverlayTick((x) => x + 1);
+        // eslint-disable-next-line no-console
+        console.log('[RealTimeToken] ui:openOrders:patched', { traceId, symbol: sym, eventType: 'OrderPlaced', orderId, action: 'add' });
+      }
+    };
+
+    window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+    return () => window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
+  }, [walletAddress]);
+
+  // Immediate UI patch for positions on trade events (no waiting on contract reads).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress) return;
+
+    const onPositionsRefresh = (e: any) => {
+      const detail = (e as CustomEvent)?.detail as any;
+      const sym = String(detail?.symbol || '').toUpperCase();
+      const traceId = String(detail?.traceId || '');
+      const buyer = String(detail?.buyer || '').toLowerCase();
+      const seller = String(detail?.seller || '').toLowerCase();
+      const me = String(walletAddress || '').toLowerCase();
+      if (!sym || !me) return;
+      if (buyer !== me && seller !== me) return;
+
+      // Dedup repeated dispatches for the same tx/trace in a short window
+      if (traceId) {
+        const now = Date.now();
+        const prev = appliedTraceRef.current.get(traceId) || 0;
+        if (now - prev < 10_000) return;
+        appliedTraceRef.current.set(traceId, now);
+      }
+
+      let delta = 0;
+      try {
+        const amtStr = String(detail?.amount || '0');
+        // amount is units in 18 decimals
+        delta = parseFloat(ethers.formatUnits(BigInt(amtStr), 18));
+        if (!Number.isFinite(delta)) delta = 0;
+      } catch {
+        delta = 0;
+      }
+      if (delta === 0) return;
+
+      const signedDelta = buyer === me ? delta : -delta;
+      const now = Date.now();
+      const ttlMs = 8_000; // keep overlay long enough for vault to catch up
+      const existing = posOverlayRef.current.get(sym);
+      const nextDelta = (existing?.delta || 0) + signedDelta;
+      posOverlayRef.current.set(sym, { delta: nextDelta, expiresAt: now + ttlMs });
+      // eslint-disable-next-line no-console
+      console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
+      setPosOverlayTick((x) => x + 1);
+    };
+
+    window.addEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
+    return () => {
+      window.removeEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
+    };
+  }, [walletAddress]);
+
   // Resolve per-market OrderBook address from symbol/metricId using populated CONTRACT_ADDRESSES.MARKET_INFO
   const resolveOrderBookAddress = useCallback((symbolOrMetricId?: string | null): string | null => {
     try {
@@ -372,7 +566,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         if (!txHash) throw new Error('Gasless close failed');
         try {
           if (typeof window !== 'undefined') {
-            window.dispatchEvent(new Event('ordersUpdated'));
+            window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: { symbol: metricId, reason: 'close', timestamp: Date.now() } }));
             window.dispatchEvent(new Event('positionsRefreshRequested'));
           }
         } catch {}
@@ -383,7 +577,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         }
         try {
           if (typeof window !== 'undefined') {
-            window.dispatchEvent(new Event('ordersUpdated'));
+            window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: { symbol: metricId, reason: 'close', timestamp: Date.now() } }));
             window.dispatchEvent(new Event('positionsRefreshRequested'));
           }
         } catch {}
@@ -440,38 +634,91 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
   const openOrders = useMemo(() => {
     const flat = flattenOrderBuckets(ordersBuckets);
-    return flat.filter(o => o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(String(o.id)));
+    // Defensive: never render a LIMIT order with non-positive price/size. This usually indicates a stale/partial
+    // optimistic/session snapshot, and it matches the "$0 / 0 / 0" ghost rows we've observed after cancels.
+    return flat
+      .filter((o) => o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(String(o.id)))
+      .filter((o) => {
+        const sizeOk = Number(o.size) > 0;
+        const priceOk = o.type === 'LIMIT' ? Number(o.price) > 0 : true;
+        if (!sizeOk || !priceOk) {
+          // eslint-disable-next-line no-console
+          console.warn('[RealTimeToken] ui:openOrders:skip:invalid-order', {
+            id: String(o.id),
+            symbol: o.symbol,
+            type: o.type,
+            status: o.status,
+            price: o.price,
+            size: o.size,
+            filled: o.filled,
+          });
+          return false;
+        }
+        return true;
+      });
   }, [ordersBuckets, flattenOrderBuckets, optimisticallyRemovedOrderIds]);
   const openOrdersIsLoading = Boolean(isLoadingOrders && activeTab === 'orders');
 
-  useEffect(() => {
-    if (!walletAddress) return;
-    logGoddMat(27, 'Wallet detected; triggering initial open orders refresh', { walletAddress });
-    void refreshPortfolioOrders();
-  }, [walletAddress, refreshPortfolioOrders]);
+  // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
+  // Prevents flicker/revert while backend/onchain read catches up.
+  const openOrdersOverlayRef = useRef<{
+    added: Map<string, { order: Order; expiresAt: number }>;
+    removed: Map<string, number>;
+    seenTrace: Map<string, number>;
+  }>({ added: new Map(), removed: new Map(), seenTrace: new Map() });
+  const [openOrdersOverlayTick, setOpenOrdersOverlayTick] = useState(0);
+
+  const displayedOpenOrders = useMemo(() => {
+    const base = Array.isArray(openOrders) ? openOrders : [];
+    const now = Date.now();
+    const overlay = openOrdersOverlayRef.current;
+
+    // prune expired
+    for (const [id, until] of overlay.removed.entries()) {
+      if (until <= now) overlay.removed.delete(id);
+    }
+    for (const [id, rec] of overlay.added.entries()) {
+      if (rec.expiresAt <= now) overlay.added.delete(id);
+    }
+
+    const next = base.filter((o) => !overlay.removed.has(String(o.id)));
+    for (const rec of overlay.added.values()) {
+      const id = String(rec.order.id);
+      // Never show an optimistic "added" order if we've also marked it removed (race safety).
+      if (overlay.removed.has(id)) continue;
+      const exists = next.some((o) => String(o.id) === id);
+      if (!exists) next.push(rec.order);
+    }
+    // Stable ordering: newest first
+    next.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+    return next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openOrders, openOrdersOverlayTick]);
+  const lastUiLogRef = useRef<{ key: string } | null>(null);
 
   useEffect(() => {
     if (!walletAddress) return;
     logGoddMat(21, 'MarketActivityTabs updated openOrders derived state', {
       bucketCount: ordersBuckets.length,
-      flattenedOrderCount: openOrders.length,
+      flattenedOrderCount: displayedOpenOrders.length,
       activeTab
     });
-  }, [walletAddress, ordersBuckets, openOrders.length, activeTab]);
+  }, [walletAddress, ordersBuckets, displayedOpenOrders.length, activeTab]);
 
+  // Real-time UI update log (post-render): confirms the Open Orders UI state changed.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
     if (!walletAddress) return;
-    logGoddMat(22, 'Subscribing to global ordersUpdated listener from MarketActivityTabs', { walletAddress });
-    const onOrdersUpdated = () => {
-      logGoddMat(23, 'ordersUpdated event captured; triggering refreshPortfolioOrders', { walletAddress });
-      void refreshPortfolioOrders();
-    };
-    window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
-    return () => {
-      window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
-    };
-  }, [walletAddress, refreshPortfolioOrders]);
+    const key = `${activeTab}:${ordersBuckets.length}:${displayedOpenOrders.length}:${optimisticallyRemovedOrderIds.size}`;
+    if (lastUiLogRef.current?.key === key) return;
+    lastUiLogRef.current = { key };
+    // eslint-disable-next-line no-console
+    console.log('[RealTimeToken] ui:openOrders:rendered', {
+      activeTab,
+      bucketCount: ordersBuckets.length,
+      openOrdersCount: displayedOpenOrders.length,
+      hiddenOptimisticCount: optimisticallyRemovedOrderIds.size,
+    });
+  }, [walletAddress, activeTab, ordersBuckets.length, displayedOpenOrders.length, optimisticallyRemovedOrderIds.size]);
   // Fetch order history ONLY when History tab is active, throttle and skip when hidden
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -546,8 +793,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   }, [activeTab, walletAddress, metricId]);
 
   const tabs = [
-    { id: 'positions' as TabType, label: 'Positions', count: positions.length },
-    { id: 'orders' as TabType, label: 'Open Orders', count: openOrders.length },
+    { id: 'positions' as TabType, label: 'Positions', count: displayedPositions.length },
+    { id: 'orders' as TabType, label: 'Open Orders', count: displayedOpenOrders.length },
     { id: 'trades' as TabType, label: 'Trade History', count: orderBookState.tradeCount },
     { id: 'history' as TabType, label: 'Order History', count: orderHistory.length },
   ];
@@ -593,7 +840,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   };
 
   const renderPositionsTable = () => {
-    if (positions.length === 0) {
+    if (displayedPositions.length === 0) {
   return (
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">
@@ -620,14 +867,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       </tr>
                     </thead>
                     <tbody>
-                      {positions.map((position, index) => (
+                      {displayedPositions.map((position, index) => (
             <React.Fragment key={`${position.id}-${index}`}>
               <tr className={`mat-slide-rtl group/row transition-colors duration-200 ${
                 position.isUnderLiquidation 
                   ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
                   : 'hover:bg-[#1A1A1A]'
               } ${
-                index !== positions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
+                index !== displayedPositions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
               }`} style={{ animationDelay: `${index * 50}ms` }}>
                           <td className="pl-2 pr-1 py-1.5">
                               <div className="flex items-center gap-1">
@@ -803,7 +1050,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   };
 
   const renderOpenOrdersTable = () => {
-    if (openOrders.length === 0) {
+    if (displayedOpenOrders.length === 0) {
       return (
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">
@@ -831,9 +1078,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       </tr>
                     </thead>
                     <tbody>
-                      {openOrders.map((order, index) => (
+                      {displayedOpenOrders.map((order, index) => (
                         <React.Fragment key={`${order.id}-${index}`}>
-                          <tr className={`mat-slide-rtl hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== openOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
+                          <tr className={`mat-slide-rtl hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
                             <td className="pl-2 pr-1 py-1.5">
                               <div className="flex items-center gap-1">
                                 <div className="relative w-5 h-5">
@@ -947,19 +1194,27 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   next.add(String(order.id));
                                                   return next;
                                                 });
-                                                // keep original refresh hook if available
-                                                try {
-                                                  // @ts-ignore
-                                                  if (typeof fetchOpenOrders !== 'undefined') {
-                                                    // @ts-ignore
-                                                    fetchOpenOrders({ showSpinner: activeTab === 'orders' });
-                                                  }
-                                                } catch {}
-                                                // ensure portfolio-wide refresh fires to update counts immediately
-                                                try { await refreshPortfolioOrders(); } catch {}
                                                 try {
                                                   if (typeof window !== 'undefined') {
-                                                    window.dispatchEvent(new Event('ordersUpdated'));
+                                                    const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
+                                                    let price6 = '0';
+                                                    let amount18 = '0';
+                                                    try { price6 = String(ethers.parseUnits(String(order.price || 0), 6)); } catch {}
+                                                    try { amount18 = String(ethers.parseUnits(String(remaining), 18)); } catch {}
+                                                    window.dispatchEvent(new CustomEvent('ordersUpdated', {
+                                                      detail: {
+                                                        symbol: metric,
+                                                        eventType: 'OrderCancelled',
+                                                        reason: 'cancel',
+                                                        orderId: String(order.id),
+                                                        trader: String(walletAddress || ''),
+                                                        // For optimistic OrderBook depth patching (TransactionTable)
+                                                        price: price6,
+                                                        amount: amount18,
+                                                        isBuy: String(order.side || '').toUpperCase() === 'BUY',
+                                                        timestamp: Date.now()
+                                                      }
+                                                    }));
                                                   }
                                                 } catch {}
                                               } else {
@@ -974,16 +1229,25 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                     return next;
                                                   });
                                                   try {
-                                                    // @ts-ignore
-                                                    if (typeof fetchOpenOrders !== 'undefined') {
-                                                      // @ts-ignore
-                                                      fetchOpenOrders({ showSpinner: activeTab === 'orders' });
-                                                    }
-                                                  } catch {}
-                                                  try { await refreshPortfolioOrders(); } catch {}
-                                                  try {
                                                     if (typeof window !== 'undefined') {
-                                                      window.dispatchEvent(new Event('ordersUpdated'));
+                                                      const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
+                                                      let price6 = '0';
+                                                      let amount18 = '0';
+                                                      try { price6 = String(ethers.parseUnits(String(order.price || 0), 6)); } catch {}
+                                                      try { amount18 = String(ethers.parseUnits(String(remaining), 18)); } catch {}
+                                                      window.dispatchEvent(new CustomEvent('ordersUpdated', {
+                                                        detail: {
+                                                          symbol: metric,
+                                                          eventType: 'OrderCancelled',
+                                                          reason: 'cancel',
+                                                          orderId: String(order.id),
+                                                          trader: String(walletAddress || ''),
+                                                          price: price6,
+                                                          amount: amount18,
+                                                          isBuy: String(order.side || '').toUpperCase() === 'BUY',
+                                                          timestamp: Date.now()
+                                                        }
+                                                      }));
                                                     }
                                                   } catch {}
                                                 }
@@ -1383,8 +1647,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               onClick={() => {
                 setActiveTab(tab.id);
                 if (tab.id === 'orders') {
-                  logGoddMat(26, 'Orders tab clicked; triggering refreshPortfolioOrders');
-                  void refreshPortfolioOrders();
+                  logGoddMat(26, 'Orders tab clicked', { activeTab: tab.id });
                 }
               }}
               className={`px-2.5 py-1.5 text-[11px] font-medium rounded transition-all duration-200 flex items-center gap-1.5 ${

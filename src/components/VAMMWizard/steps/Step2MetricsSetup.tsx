@@ -602,6 +602,39 @@ ${metricData.sources.map((source: any, index: number) =>
     // Modal acceptance closes modal and shows screenshot below
   };
 
+  const handleModalDenySuggestedAssetPrice = () => {
+    const currentSuggestion = String(formData?.metricResolution?.asset_price_suggestion || '').trim();
+    const currentInitialPrice = String((formData as any)?.initialPrice || '').trim();
+    const shouldClearInitialPrice = currentSuggestion && currentInitialPrice === currentSuggestion;
+
+    // Clear suggestion in persisted form state
+    if (formData?.metricResolution) {
+      updateFormData({
+        metricResolution: {
+          ...(formData.metricResolution as any),
+          asset_price_suggestion: ''
+        },
+        ...(shouldClearInitialPrice ? { initialPrice: '' } : {})
+      });
+    } else if (shouldClearInitialPrice) {
+      updateFormData({ initialPrice: '' } as any);
+    }
+
+    // Keep modal state consistent if reopened
+    setAssistantState(prev => ({
+      ...prev,
+      modalData: prev.modalData
+        ? {
+            ...prev.modalData,
+            data: {
+              ...prev.modalData.data,
+              asset_price_suggestion: ''
+            }
+          }
+        : prev.modalData
+    }));
+  };
+
   return (
     <div className={styles.aiAssistantContainer}>
       <div className={styles.aiAssistantHeader}>
@@ -732,6 +765,7 @@ ${metricData.sources.map((source: any, index: number) =>
         onClose={handleModalClose}
         response={assistantState.modalData}
         onAccept={handleModalAccept}
+        onDenySuggestedAssetPrice={handleModalDenySuggestedAssetPrice}
         imageUrl={`https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/metric-oracle-screenshots/${assistantState.modalData?.data?.sources?.[0]?.screenshot_url || "/placeholder-market.svg"}`}
         fullscreenImageUrl={`https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/metric-oracle-screenshots/${assistantState.modalData?.data?.sources?.[0]?.screenshot_url || "/placeholder-market.svg"}`}
       />

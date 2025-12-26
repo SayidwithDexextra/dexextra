@@ -16,7 +16,7 @@
  * - Integration with HyperLiquid deployment
  */
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import UserProfileModal from '../UserProfileModal'
@@ -64,6 +64,8 @@ export default function Header() {
   const [vaultEvent, setVaultEvent] = useState<any | null>(null)
   // Sequence counter used to force DecryptedText to re-animate on each vault refresh
   const [vaultUpdateSeq, setVaultUpdateSeq] = useState(0)
+  const lastSummaryCentsKeyRef = useRef<string | null>(null)
+  const lastAnimateCentsKeyRef = useRef<string | null>(null)
   
   // Align with useCoreVault data as single source of truth
   const core = useCoreVault(walletData.address || undefined)
@@ -93,9 +95,28 @@ export default function Header() {
   useEffect(() => {
     const onSummary = (e: any) => {
       try {
-        // Minimal guard: only accept updates for connected user
-        setVaultEvent(e.detail || null)
-        setVaultUpdateSeq((s) => s + 1)
+        // Only accept updates for connected user and only re-render when cents-level display would change.
+        if (!walletData.isConnected) return
+        const d = e.detail || null
+        if (!d) return
+
+        const available = parseFloat(d.availableCollateral ?? '0') || 0
+        const totalCollateral = parseFloat(d.totalCollateral ?? '0') || 0
+        const realized = parseFloat(d.realizedPnL ?? '0') || 0
+        const unrealized = parseFloat(d.unrealizedPnL ?? '0') || 0
+        const realizedForPortfolio = Math.max(0, realized)
+        const portfolio = totalCollateral + realizedForPortfolio + unrealized
+
+        const centsKey = [
+          Math.round(portfolio * 100),
+          Math.round(available * 100),
+          Math.round(unrealized * 100),
+        ].join('|')
+
+        if (lastSummaryCentsKeyRef.current === centsKey) return
+        lastSummaryCentsKeyRef.current = centsKey
+
+        setVaultEvent(d)
         console.log('[Dispatch] 🎧 [EVT][Header] Received coreVaultSummary', e.detail)
       } catch {}
     }
@@ -117,14 +138,7 @@ export default function Header() {
         window.removeEventListener('ordersUpdated', onOrdersUpdated)
       }
     }
-  }, [])
-
-  // Fallback: if core values update but no event is received for some reason, still re-trigger animations.
-  useEffect(() => {
-    if (!walletData.isConnected) return
-    setVaultUpdateSeq((s) => s + 1)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [core.availableBalance, core.totalCollateral, core.realizedPnL, core.unrealizedPnL, walletData.isConnected])
+  }, [walletData.isConnected])
 
   // Debug logs removed to prevent any rendering interference 
 
@@ -159,6 +173,35 @@ export default function Header() {
   const cashValueDisplay = useMemo(() => {
     return formatCurrency(String(roundedCashCents / 100))
   }, [roundedCashCents])
+
+  // Re-animate *only* when the cents-level display changes (prevents constant re-animation on noisy updates).
+  const roundedUnrealizedPnLCents = useMemo(() => {
+    return Math.round((unrealizedPnL || 0) * 100)
+  }, [unrealizedPnL])
+
+  const animateCentsKey = useMemo(() => {
+    if (!walletData.isConnected) return null
+    return [roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents].join('|')
+  }, [walletData.isConnected, roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents])
+
+  useEffect(() => {
+    if (!walletData.isConnected || !animateCentsKey) {
+      lastAnimateCentsKeyRef.current = null
+      return
+    }
+
+    // On first connected snapshot, animate once (Header already mounted with $0.00).
+    if (lastAnimateCentsKeyRef.current === null) {
+      lastAnimateCentsKeyRef.current = animateCentsKey
+      setVaultUpdateSeq((s) => s + 1)
+      return
+    }
+
+    if (lastAnimateCentsKeyRef.current !== animateCentsKey) {
+      lastAnimateCentsKeyRef.current = animateCentsKey
+      setVaultUpdateSeq((s) => s + 1)
+    }
+  }, [walletData.isConnected, animateCentsKey])
 
   // Trace derived values that trigger UI rendering
   useEffect(() => {
@@ -351,7 +394,7 @@ export default function Header() {
                 maxIterations={12}
                 animateOnMount={true}
                 animateOnHover={false}
-                animateOnChange={true}
+                animateOnChange={false}
               />
             </div>
             
@@ -392,7 +435,7 @@ export default function Header() {
                 maxIterations={12}
                 animateOnMount={true}
                 animateOnHover={false}
-                animateOnChange={true}
+                animateOnChange={false}
               />
             </div>
 
@@ -427,6 +470,7 @@ export default function Header() {
                   maxIterations={12}
                   animateOnMount={true}
                   animateOnHover={false}
+                  animateOnChange={false}
                 />
               </div>
             )}

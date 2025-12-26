@@ -11,7 +11,7 @@ async function main() {
     throw new Error("FUTURES_MARKET_FACTORY_ADDRESS required");
 
   // Prefer a signer if available, but allow read-only execution when no accounts
-  // are configured (e.g. when LEGACY_ADMIN isn't present in env).
+  // are configured (e.g. when PRIVATE_KEY_USERD isn't present in env).
   const signers = await ethers.getSigners();
   const runner = signers.length ? signers[0] : ethers.provider;
   const factory = await ethers.getContractAt(

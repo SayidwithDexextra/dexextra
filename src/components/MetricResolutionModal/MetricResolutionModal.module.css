@@ -456,13 +456,38 @@
   background: rgba(0, 0, 0, 0.9);
   display: flex;
   justify-content: center;
+  gap: 10px;
   border-bottom-left-radius: 20px;
   border-bottom-right-radius: 20px;
   flex-shrink: 0;
 }
 
+.denyButton {
+  flex: 1;
+  padding: 12px 20px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #FFFFFF;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.denyButton:hover {
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.denyButton:active {
+  transform: translateY(0);
+}
+
 .acceptButton {
-  width: 100%;
+  flex: 1;
   padding: 12px 20px;
   background: #FFFFFF;
   color: #000000;

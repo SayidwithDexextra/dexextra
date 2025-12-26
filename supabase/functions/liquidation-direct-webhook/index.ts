@@ -174,6 +174,72 @@ function isZeroLike(value: string | null | undefined) {
   return Number.isFinite(num) && num === 0;
 }
 
+async function fetchDbNetPositionRaw(opts: {
+  supabase: any;
+  marketUuid: string;
+  wallet: string;
+  traceId: string;
+}): Promise<bigint> {
+  const walletLower = normalizeAddress(opts.wallet);
+  if (!walletLower) return 0n;
+
+  // `user_trades` schema isn't defined in this repo, so we defensively sum `amount`
+  // across all rows matching (market_id, user_wallet_address). This works whether
+  // the table stores individual trades or aggregated rows.
+  const pageSize = 1000;
+  let from = 0;
+  let total = 0n;
+
+  while (true) {
+    const to = from + pageSize - 1;
+    let data: any[] | null = null;
+    try {
+      const res = await opts.supabase
+        .from(USER_TRADES_TABLE)
+        .select("amount")
+        .eq("market_id", opts.marketUuid)
+        .ilike("user_wallet_address", walletLower)
+        .range(from, to);
+      if (res?.error) {
+        logStep(opts.traceId, "db_net_fetch_error", {
+          marketUuid: opts.marketUuid,
+          wallet: walletLower,
+          message: res.error.message,
+        });
+        break;
+      }
+      data = res?.data || [];
+    } catch (e) {
+      logStep(opts.traceId, "db_net_fetch_exception", {
+        marketUuid: opts.marketUuid,
+        wallet: walletLower,
+        error: (e as any)?.message || String(e),
+      });
+      break;
+    }
+
+    if (!data.length) break;
+
+    for (const row of data) {
+      const amountStr =
+        row?.amount === null || row?.amount === undefined
+          ? null
+          : typeof row.amount === "string"
+          ? row.amount
+          : row.amount.toString();
+      const amtRaw = decimalToUnits(amountStr, AMOUNT_DECIMALS);
+      if (amtRaw === null) continue;
+      total += amtRaw;
+    }
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  logStep(opts.traceId, "db_net_position", { marketUuid: opts.marketUuid, wallet: walletLower, netRaw: total.toString() });
+  return total;
+}
+
 async function verifySignature(raw: string, signature: string | null, traceId: string) {
   if (!SIGNING_KEY) return { ok: false, reason: "missing_signing_key" };
   if (!signature) return { ok: false, reason: "missing_signature" };
@@ -736,22 +802,34 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Remove any leftover size from the aggregated user_trades entry.
-      const deltaRaw = -remainingRaw;
-      const nowIso = new Date().toISOString();
-      await upsertNetTrade({
+      // IMPORTANT: `remainingSize` is the on-chain position size AFTER liquidation attempts.
+      // Liquidation can be partial; we must NOT force Supabase to 0 unless remainingSize is 0.
+      // Instead, reconcile Supabase net position to match remainingSize (apply only the delta).
+      const dbNetRaw = await fetchDbNetPositionRaw({
         supabase,
         marketUuid: marketMeta.marketUuid,
         wallet: trader,
-        deltaRaw,
-        payload: {
-          price: "0",
-          liquidation_price: null,
-          trade_timestamp: nowIso,
-          order_book_address: normalizeAddress(orderBookAddr) || "",
-        },
         traceId,
       });
+      const deltaRaw = remainingRaw - dbNetRaw;
+      const nowIso = new Date().toISOString();
+      if (deltaRaw !== 0n) {
+        await upsertNetTrade({
+          supabase,
+          marketUuid: marketMeta.marketUuid,
+          wallet: trader,
+          deltaRaw,
+          payload: {
+            price: "0",
+            liquidation_price: null,
+            trade_timestamp: nowIso,
+            order_book_address: normalizeAddress(orderBookAddr) || "",
+          },
+          traceId,
+        });
+      } else {
+        logStep(traceId, "liq_completed_no_reconcile_needed", { trader, market: marketMeta.marketUuid });
+      }
 
       results.push({
         status: "ok",

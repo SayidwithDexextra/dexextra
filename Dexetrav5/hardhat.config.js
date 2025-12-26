@@ -6,9 +6,14 @@ require("dotenv").config({ path: path.resolve(__dirname, "../.env.local") });
 require("dotenv").config();
 // require("dotenv").config({ path: ".env.polygon" }); // Load specific network configs if needed
 
-// Single-source signer: LEGACY_ADMIN
-const networkAccounts = process.env.LEGACY_ADMIN
-  ? [process.env.LEGACY_ADMIN, process.env.PRIVATE_KEY_USER3, process.env.PRIVATE_KEY_USER2,process.env.PRIVATE_KEY_USER5]
+// Single-source signer: PRIVATE_KEY_USERD
+const networkAccounts = process.env.PRIVATE_KEY_USERD
+  ? [
+      process.env.PRIVATE_KEY_USERD,
+      process.env.PRIVATE_KEY_USER3,
+      process.env.PRIVATE_KEY_USER2,
+      process.env.PRIVATE_KEY_USER5,
+    ]
   : [];
 
 const config = {

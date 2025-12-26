@@ -15,7 +15,7 @@
 // - Uses /api/orderbook/cut if reachable at localhost:3000; otherwise falls
 //   back to env facets and local artifacts.
 // - Prints tagsHash, cutHash, domain separator, structHash, digest, signature
-//   (if LEGACY_ADMIN is set to sign).
+//   (if PRIVATE_KEY_USERD is set to sign).
 
 const { ethers } = require("hardhat");
 const fetch = require("node-fetch");
@@ -193,10 +193,10 @@ async function main() {
   };
   const creator =
     getEnvAddr("CREATOR_ADDRESS") ||
-    (process.env.LEGACY_ADMIN
-      ? new ethers.Wallet(process.env.LEGACY_ADMIN).address
+    (process.env.PRIVATE_KEY_USERD
+      ? new ethers.Wallet(process.env.PRIVATE_KEY_USERD).address
       : null);
-  if (!creator) throw new Error("Set CREATOR_ADDRESS or LEGACY_ADMIN");
+  if (!creator) throw new Error("Set CREATOR_ADDRESS or PRIVATE_KEY_USERD");
   const nonce = "0";
   const deadline = Math.floor(Date.now() / 1000) + 15 * 60;
   const message = {
@@ -229,8 +229,8 @@ async function main() {
   console.log("digest:", digest);
   console.log("message:", message);
 
-  if (process.env.LEGACY_ADMIN) {
-    const wallet = new ethers.Wallet(process.env.LEGACY_ADMIN, provider);
+  if (process.env.PRIVATE_KEY_USERD) {
+    const wallet = new ethers.Wallet(process.env.PRIVATE_KEY_USERD, provider);
     const signature = await wallet.signTypedData(domain, types, message);
     console.log("signature:", signature);
     console.log(
@@ -238,7 +238,7 @@ async function main() {
       ethers.verifyTypedData(domain, types, message, signature)
     );
   } else {
-    console.log("Set LEGACY_ADMIN to also sign and recover.");
+    console.log("Set PRIVATE_KEY_USERD to also sign and recover.");
   }
 }
 
@@ -246,6 +246,8 @@ main().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });
+
+
 
 
 

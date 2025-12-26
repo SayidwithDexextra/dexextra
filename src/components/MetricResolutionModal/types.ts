@@ -44,6 +44,12 @@ export interface MetricResolutionModalProps {
   onClose: () => void;
   response: MetricResolutionResponse | null;
   onAccept?: () => void;
+  /**
+   * Invoked when the user explicitly rejects the suggested asset price (if present).
+   * Parent components should clear any auto-populated price fields (e.g. startPrice/initialPrice)
+   * and/or remove `asset_price_suggestion` from stored AI results.
+   */
+  onDenySuggestedAssetPrice?: () => void;
   imageUrl?: string;
   fullscreenImageUrl?: string;
 } 

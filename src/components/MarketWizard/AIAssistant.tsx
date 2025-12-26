@@ -374,6 +374,31 @@ ${metricData.sources.map((source: any, index: number) =>
     // Modal acceptance closes modal and shows screenshot below
   };
 
+  const handleModalDenySuggestedAssetPrice = () => {
+    // Clear the AI-suggested price without discarding the rest of the AI resolution.
+    if (formData.metricResolution) {
+      updateFormData({
+        metricResolution: {
+          ...(formData.metricResolution as any),
+          asset_price_suggestion: ''
+        } as any
+      });
+    }
+
+    setAssistantState(prev => ({
+      ...prev,
+      modalData: prev.modalData
+        ? {
+            ...prev.modalData,
+            data: {
+              ...prev.modalData.data,
+              asset_price_suggestion: ''
+            }
+          }
+        : prev.modalData
+    }));
+  };
+
   return (
     <div className={styles.aiAssistantContainer}>
       <div className={styles.aiAssistantHeader}>
@@ -509,6 +534,7 @@ ${metricData.sources.map((source: any, index: number) =>
         onClose={handleModalClose}
         response={assistantState.modalData}
         onAccept={handleModalAccept}
+        onDenySuggestedAssetPrice={handleModalDenySuggestedAssetPrice}
         imageUrl={`https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/metric-oracle-screenshots/${assistantState.modalData?.data?.sources?.[0]?.screenshot_url || "/placeholder-market.svg"}`}
         fullscreenImageUrl={`https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/metric-oracle-screenshots/${assistantState.modalData?.data?.sources?.[0]?.screenshot_url || "/placeholder-market.svg"}`}
       />

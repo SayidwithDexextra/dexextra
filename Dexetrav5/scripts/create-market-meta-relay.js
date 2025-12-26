@@ -4,7 +4,7 @@
 //
 // Required env:
 //  - RPC_URL (or JSON_RPC_URL / ALCHEMY_RPC_URL)
-//  - LEGACY_ADMIN (private key; used as creator and relayer)
+//  - PRIVATE_KEY_USERD (private key; used as creator and relayer)
 //  - FUTURES_MARKET_FACTORY_ADDRESS
 //  - ORDER_BOOK_INIT_FACET
 //  - OB_ADMIN_FACET
@@ -65,8 +65,8 @@ async function main() {
     process.env.JSON_RPC_URL ||
     process.env.ALCHEMY_RPC_URL;
   if (!rpcUrl) throw new Error("RPC_URL / JSON_RPC_URL required");
-  const pk = process.env.LEGACY_ADMIN;
-  if (!pk) throw new Error("LEGACY_ADMIN private key required");
+  const pk = process.env.PRIVATE_KEY_USERD;
+  if (!pk) throw new Error("PRIVATE_KEY_USERD private key required");
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(pk, provider);
   const creator = await wallet.getAddress();
@@ -280,6 +280,8 @@ main().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });
+
+
 
 
 

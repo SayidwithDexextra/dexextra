@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWallet } from './useWallet'
 import { usePositions } from './usePositions'
-import { getUserActiveOrdersAllMarkets } from './useOrderBook'
-import { populateMarketInfoClient } from '@/lib/contractConfig'
+import { CHAIN_CONFIG } from '@/lib/contractConfig'
 
 export interface PortfolioOrdersBucket {
 	symbol: string
@@ -46,6 +45,20 @@ const ORDERS_CACHE_TTL = 10000 // 10 seconds cache
 const MAX_RETRIES = 3
 const RETRY_DELAY_BASE = 1000 // 1 second base delay
 
+function isActiveStatus(status: any): boolean {
+	const s = String(status || '').trim().toUpperCase()
+	if (!s) return true
+	return !['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED'].includes(s)
+}
+
+type OrdersSessionCachePayload = {
+	version: 1
+	chainId: string | number
+	walletAddress: string
+	ts: number
+	buckets: PortfolioOrdersBucket[]
+}
+
 /**
  * Centralized hook for portfolio data (positions + orders)
  * Ensures consistent loading, retry logic, and prevents race conditions
@@ -70,37 +83,73 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 	const mountedRef = useRef(true)
 	const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const retryCountRef = useRef(0)
+	const eventRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const lastEventRefreshAtRef = useRef<number>(0)
+	const didHydrateSessionRef = useRef<string>('') // key to avoid rehydrating repeatedly
+
+	const getSessionKey = useCallback((addr: string) => {
+		const chainId = String((CHAIN_CONFIG as any)?.chainId ?? 'unknown')
+		// Keep key stable per tab (sessionStorage is tab-scoped anyway)
+		return `portfolio:orders:v1:${chainId}:${String(addr).toLowerCase()}`
+	}, [])
+
+	const tryHydrateFromSession = useCallback((addr: string) => {
+		if (typeof window === 'undefined') return false
+		const key = getSessionKey(addr)
+		if (didHydrateSessionRef.current === key) return false
+		didHydrateSessionRef.current = key
+		try {
+			const raw = window.sessionStorage.getItem(key)
+			if (!raw) return false
+			const payload = JSON.parse(raw) as OrdersSessionCachePayload
+			if (!payload || payload.version !== 1) return false
+			if (String(payload.walletAddress || '').toLowerCase() !== String(addr).toLowerCase()) return false
+			if (!Array.isArray(payload.buckets)) return false
+			// Apply immediately (UI tweak: avoid showing "Loading open orders")
+			setOrdersBuckets(payload.buckets)
+			setHasLoadedOrdersOnce(true)
+			setIsLoadingOrders(false)
+			setOrdersError(null)
+			setLastUpdated(payload.ts || Date.now())
+			// eslint-disable-next-line no-console
+			console.log('[RealTimeToken] cache:orders:rehydrate', {
+				walletAddress: addr,
+				bucketCount: payload.buckets.length,
+				totalOrders: payload.buckets.reduce((sum, b) => sum + (b?.orders?.length || 0), 0),
+				ageMs: Date.now() - Number(payload.ts || 0),
+			})
+			return true
+		} catch {
+			return false
+		}
+	}, [getSessionKey])
+
+	const persistToSession = useCallback((addr: string, buckets: PortfolioOrdersBucket[]) => {
+		if (typeof window === 'undefined') return
+		try {
+			const key = getSessionKey(addr)
+			const payload: OrdersSessionCachePayload = {
+				version: 1,
+				chainId: String((CHAIN_CONFIG as any)?.chainId ?? 'unknown'),
+				walletAddress: addr,
+				ts: Date.now(),
+				buckets,
+			}
+			window.sessionStorage.setItem(key, JSON.stringify(payload))
+			// eslint-disable-next-line no-console
+			console.log('[RealTimeToken] cache:orders:persist', {
+				walletAddress: addr,
+				bucketCount: buckets.length,
+				totalOrders: buckets.reduce((sum, b) => sum + (b?.orders?.length || 0), 0),
+			})
+		} catch {}
+	}, [getSessionKey])
 
 	// Ensure market info is populated before fetching orders
 	const ensureMarketInfoPopulated = useCallback(async (): Promise<void> => {
-		if (globalState.marketInfoPopulated) {
-			pfLog('Market info already populated')
-			return
-		}
-
-		if (globalState.marketInfoPopulating) {
-			pfLog('Market info population in progress, waiting...')
-			await globalState.marketInfoPopulating
-			return
-		}
-
-		const populatePromise = (async () => {
-			try {
-				pfLog('Populating market info...')
-				await populateMarketInfoClient()
-				globalState.marketInfoPopulated = true
-				pfLog('Market info populated successfully')
-			} catch (error: any) {
-				pfError('Failed to populate market info:', error)
-				globalState.marketInfoPopulated = false
-				throw error
-			} finally {
-				globalState.marketInfoPopulating = null
-			}
-		})()
-
-		globalState.marketInfoPopulating = populatePromise
-		await populatePromise
+		// Portfolio orders now come from Supabase-backed API (`/api/orders/active-buckets`),
+		// so we no longer need client-side MARKET_INFO population.
+		return
 	}, [])
 
 	// Fetch orders with retry logic
@@ -138,7 +187,10 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 				pfLog('Fetching orders', { address: address.slice(0, 6) + '...', attempt: retryAttempt + 1 })
 				const startTime = Date.now()
 				
-				const buckets = await getUserActiveOrdersAllMarkets(address)
+				const resp = await fetch(`/api/orders/active-buckets?trader=${encodeURIComponent(address)}&limit=800&perMarket=50`, { method: 'GET' })
+				if (!resp.ok) throw new Error(`orders active-buckets non-200: ${resp.status}`)
+				const json = await resp.json()
+				const buckets = (json as any)?.buckets || []
 				const duration = Date.now() - startTime
 				
 				goddLog(6, 'Received buckets from all markets', {
@@ -181,9 +233,12 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 		return await fetchPromise
 	}, [ensureMarketInfoPopulated])
 
-	// Refresh function exposed to components
-	const refreshOrders = useCallback(async () => {
+	// Refresh function (supports silent refresh to avoid UI spinners during SWR / realtime events)
+	const refreshOrders = useCallback(async (opts?: { silent?: boolean }) => {
 		if (!walletAddress || !enabled) return
+		const silent = Boolean(opts?.silent)
+		// eslint-disable-next-line no-console
+		console.log('[RealTimeToken] portfolio:refreshOrders:start', { walletAddress })
 		goddLog(9, 'refreshOrders invoked', { address: walletAddress })
 		
 		// Clear cache to force fresh fetch
@@ -191,7 +246,8 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 		globalState.ordersFetching.delete(walletAddress.toLowerCase())
 		
 		try {
-			setIsLoadingOrders(true)
+			// Only show spinner on the very first load; all subsequent refreshes should be silent to avoid flicker.
+			if (!silent && !hasLoadedOrdersOnce) setIsLoadingOrders(true)
 			setOrdersError(null)
 			
 			const buckets = await fetchOrders(walletAddress)
@@ -199,6 +255,13 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 			if (!mountedRef.current) return
 			
 			setOrdersBuckets(buckets)
+			persistToSession(walletAddress, buckets)
+			// eslint-disable-next-line no-console
+			console.log('[RealTimeToken] portfolio:ordersBuckets:applied', {
+				walletAddress,
+				bucketCount: buckets.length,
+				totalOrders: buckets.reduce((sum, b) => sum + (b?.orders?.length || 0), 0),
+			})
 			goddLog(10, 'refreshOrders applied new buckets', { bucketCount: buckets.length })
 			setLastUpdated(Date.now())
 			setIsLoadingOrders(false)
@@ -212,7 +275,137 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 			setIsLoadingOrders(false)
 			setHasLoadedOrdersOnce(true)
 		}
-	}, [walletAddress, enabled, fetchOrders])
+	}, [walletAddress, enabled, fetchOrders, hasLoadedOrdersOnce, persistToSession])
+
+	// Session-cache hydration + SWR revalidation: hydrate immediately, then silently refresh live data.
+	useEffect(() => {
+		if (!enabled || !walletAddress) return
+		const didHydrate = tryHydrateFromSession(walletAddress)
+		if (didHydrate) {
+			// eslint-disable-next-line no-console
+			console.log('[RealTimeToken] cache:orders:revalidate:start', { walletAddress })
+			void refreshOrders({ silent: true })
+		}
+	}, [enabled, walletAddress, tryHydrateFromSession, refreshOrders])
+
+	// Event-driven refresh (no polling): when realtime pipeline dispatches 'ordersUpdated',
+	// refresh portfolio orders. Debounced to avoid storms from bursty event logs.
+	useEffect(() => {
+		if (typeof window === 'undefined') return
+		if (!enabled || !walletAddress) return
+
+		const onOrdersUpdated = (e: any) => {
+			const detail = (e as CustomEvent)?.detail as any
+			// eslint-disable-next-line no-console
+			console.log('[RealTimeToken] portfolio:ordersUpdated:received', {
+				traceId: detail?.traceId,
+				symbol: detail?.symbol,
+				source: detail?.source,
+				txHash: detail?.txHash,
+				blockNumber: detail?.blockNumber,
+				timestamp: detail?.timestamp,
+			})
+			const now = Date.now()
+			// Basic rate limit (events can arrive in bursts)
+			if (now - lastEventRefreshAtRef.current < 250) return
+			lastEventRefreshAtRef.current = now
+
+			// Instant state patch for user-initiated cancels (prevents "ghost order" until backend catches up)
+			try {
+				const eventType = String(detail?.eventType || detail?.reason || '').trim()
+				const symbolHint = String(detail?.symbol || '').trim()
+				const orderId = detail?.orderId !== undefined ? String(detail.orderId) : ''
+				if ((eventType === 'OrderCancelled' || eventType === 'cancel') && symbolHint && orderId) {
+					setOrdersBuckets((prev) => {
+						const next = Array.isArray(prev) ? [...prev] : []
+						const symUpper = symbolHint.toUpperCase()
+						for (let i = next.length - 1; i >= 0; i--) {
+							const b: any = next[i]
+							if (String(b?.symbol || '').toUpperCase() !== symUpper) continue
+							const orders = Array.isArray(b?.orders) ? b.orders : []
+							const filtered = orders.filter((o: any) => String(o?.id || o?.orderId || o?.order_id || '') !== orderId)
+							if (filtered.length === 0) {
+								next.splice(i, 1)
+							} else if (filtered.length !== orders.length) {
+								next[i] = { ...b, orders: filtered }
+							}
+						}
+						persistToSession(walletAddress, next as any)
+						// eslint-disable-next-line no-console
+						console.log('[RealTimeToken] portfolio:ordersBuckets:patched:cancel', { orderId, symbol: symUpper, bucketCount: next.length })
+						return next
+					})
+				}
+			} catch {}
+
+			if (eventRefreshTimerRef.current) clearTimeout(eventRefreshTimerRef.current)
+			eventRefreshTimerRef.current = setTimeout(() => {
+				eventRefreshTimerRef.current = null
+				const symbolHint = String(detail?.symbol || '').trim()
+				if (symbolHint) {
+					// eslint-disable-next-line no-console
+					console.log('[RealTimeToken] portfolio:ordersUpdated:refreshMarket:run', { traceId: detail?.traceId, symbol: symbolHint })
+					;(async () => {
+						try {
+							// Per-market refresh via Supabase-backed API (no on-chain reads)
+							const params = new URLSearchParams({ metricId: symbolHint, trader: walletAddress, limit: '200' })
+							const res = await fetch(`/api/orders/query?${params.toString()}`, { method: 'GET' })
+							if (!res.ok) throw new Error(`orders query non-200: ${res.status}`)
+							const data = await res.json()
+							const raw = (data as any)?.orders || []
+							const active = (raw || []).filter((o: any) => isActiveStatus(o?.order_status))
+							const bucket = {
+								symbol: String((data as any)?.resolvedMarketId || symbolHint).toUpperCase(),
+								token: String((data as any)?.resolvedMarketId || symbolHint),
+								orders: active,
+							}
+							if (!mountedRef.current) return
+							setOrdersBuckets((prev) => {
+								const next = Array.isArray(prev) ? [...prev] : []
+								const key = String(bucket.symbol || '').toUpperCase()
+								const idx = next.findIndex((b: any) => String(b?.symbol || '').toUpperCase() === key)
+								const hasOrders = Array.isArray(bucket.orders) && bucket.orders.length > 0
+								if (idx >= 0) {
+									if (hasOrders) next[idx] = bucket as any
+									else next.splice(idx, 1)
+								} else {
+									if (hasOrders) next.push(bucket as any)
+								}
+								// eslint-disable-next-line no-console
+								console.log('[RealTimeToken] portfolio:ordersBuckets:patched', {
+									traceId: detail?.traceId,
+									symbol: key,
+									bucketCount: next.length,
+									totalOrders: next.reduce((sum: number, b: any) => sum + (b?.orders?.length || 0), 0),
+								})
+								persistToSession(walletAddress, next as any)
+								return next
+							})
+							setLastUpdated(Date.now())
+						} catch {
+							// fallback to full refresh
+							// eslint-disable-next-line no-console
+							console.log('[RealTimeToken] portfolio:ordersUpdated:refreshMarket:fallbackFull', { traceId: detail?.traceId })
+							void refreshOrders({ silent: true })
+						}
+					})()
+				} else {
+					// eslint-disable-next-line no-console
+					console.log('[RealTimeToken] portfolio:ordersUpdated:refreshOrders:run', { traceId: detail?.traceId })
+					void refreshOrders({ silent: true })
+				}
+			}, 50)
+		}
+
+		window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener)
+		return () => {
+			window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener)
+			if (eventRefreshTimerRef.current) {
+				clearTimeout(eventRefreshTimerRef.current)
+				eventRefreshTimerRef.current = null
+			}
+		}
+	}, [enabled, walletAddress, refreshOrders])
 
 	// Main effect to fetch orders
 	useEffect(() => {

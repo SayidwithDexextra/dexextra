@@ -70,6 +70,7 @@ export function usePositions(
   const walletIsConnected: boolean = !!(wallet?.walletData?.isConnected ?? wallet?.isConnected);
   const [contracts, setContracts] = useState<any>(null);
   const inFlightRef = useRef(false);
+  const pendingRefreshRef = useRef(false);
   const unmountedRef = useRef(false);
   const [state, setState] = useState<PositionState>({
     positions: [],
@@ -124,14 +125,17 @@ export function usePositions(
   // Fetch positions data
   useEffect(() => {
     const enabled = options?.enabled !== false;
-    const pollIntervalMs = Math.max(2000, Number(options?.pollIntervalMs ?? 5000) || 5000);
+    const rawPoll = options?.pollIntervalMs;
+    const pollingDisabled = rawPoll !== undefined && Number(rawPoll) <= 0;
+    const pollIntervalMs = pollingDisabled ? 0 : Math.max(2000, Number(rawPoll ?? 5000) || 5000);
     pfLog('Positions fetch prerequisites', {
       hasContracts: Boolean(contracts),
       hasWallet: Boolean(walletAddress),
       marketSymbol: marketSymbol || null,
       isMarketLoading,
       enabled,
-      pollIntervalMs
+      pollIntervalMs,
+      pollingDisabled
     });
     // If a specific market is requested, wait until it resolves before fetching
     if (!contracts || !walletAddress || (marketSymbol && isMarketLoading)) {
@@ -157,9 +161,17 @@ export function usePositions(
     }
 
     const fetchPositions = async () => {
-      if (inFlightRef.current) return;
+      if (inFlightRef.current) {
+        // If an event arrives while a fetch is in progress, queue exactly one follow-up fetch.
+        pendingRefreshRef.current = true;
+        // eslint-disable-next-line no-console
+        console.log('[RealTimeToken] positions:fetch:queued');
+        return;
+      }
       inFlightRef.current = true;
       try {
+        // eslint-disable-next-line no-console
+        console.log('[RealTimeToken] positions:fetch:start', { marketSymbol: marketSymbol || null });
         pfLog('fetchPositions start', { walletAddress, marketSymbol: marketSymbol || null });
         setState(prev => ({ ...prev, isLoading: true }));
         // Use a minimal ABI reader to avoid ABI shape issues when decoding tuples
@@ -515,14 +527,45 @@ export function usePositions(
       finally {
         pfLog('fetchPositions done');
         inFlightRef.current = false;
+        try {
+          // eslint-disable-next-line no-console
+          console.log('[RealTimeToken] positions:fetch:done', { count: state.positions?.length ?? 0, marketSymbol: marketSymbol || null });
+        } catch {}
+        if (pendingRefreshRef.current && !unmountedRef.current) {
+          pendingRefreshRef.current = false;
+          // eslint-disable-next-line no-console
+          console.log('[RealTimeToken] positions:fetch:drainQueued');
+          // Schedule next tick to avoid deep recursion
+          setTimeout(() => { fetchPositions(); }, 0);
+        }
       }
     };
 
     fetchPositions();
 
     // Real-time listeners: trigger immediate refresh on portfolio/order events
-    const onPositionsRefresh = () => { fetchPositions(); };
-    const onOrdersUpdated = () => { fetchPositions(); };
+    const onPositionsRefresh = (e: any) => {
+      const detail = (e as CustomEvent)?.detail as any;
+      // eslint-disable-next-line no-console
+      console.log('[RealTimeToken] positions:event:positionsRefreshRequested', {
+        traceId: detail?.traceId,
+        symbol: detail?.symbol,
+        txHash: detail?.txHash,
+        blockNumber: detail?.blockNumber,
+      });
+      fetchPositions();
+    };
+    const onOrdersUpdated = (e: any) => {
+      const detail = (e as CustomEvent)?.detail as any;
+      // eslint-disable-next-line no-console
+      console.log('[RealTimeToken] positions:event:ordersUpdated', {
+        traceId: detail?.traceId,
+        symbol: detail?.symbol,
+        txHash: detail?.txHash,
+        blockNumber: detail?.blockNumber,
+      });
+      fetchPositions();
+    };
     try {
       if (typeof window !== 'undefined') {
         window.addEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
@@ -530,10 +573,11 @@ export function usePositions(
       }
     } catch {}
 
-    const interval = setInterval(fetchPositions, pollIntervalMs);
+    // Polling is optional; for some views (like token page activity), we run event-driven only.
+    const interval = pollingDisabled ? null : setInterval(fetchPositions, pollIntervalMs);
 
     return () => {
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       try {
         if (typeof window !== 'undefined') {
           window.removeEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);

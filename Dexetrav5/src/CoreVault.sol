@@ -1405,10 +1405,11 @@ contract CoreVault is AccessControl, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @dev Compute liquidation price for user's position in a market using current equity.
-     *      - Uses current mark price to compute equity (includes unrealized PnL)
-     *      - Long:   P_liq = (P_now - E/Q) * 10000 / (10000 - MMR_BPS)
-     *      - Short:  P_liq = (P_now + E/Q) * 10000 / (10000 + MMR_BPS)
+     * @dev Liquidation price helper for UI/UX.
+     *      - This system does not provide a meaningful liquidation price for longs (they are 100% margined),
+     *        so longs intentionally return a stored liquidationPrice of 0.
+     *      - Shorts have a stored liquidation trigger price (6 decimals).
+     *      - If the position is flagged under liquidation, this returns (0, true) to hide the trigger.
      *      Returns (0, false) if no position exists.
      */
     function getLiquidationPrice(

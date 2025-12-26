@@ -2,12 +2,12 @@
 /**
  * Grant CoreVault roles to a target wallet address (idempotent).
  *
- * Defaults to granting DEFAULT_ADMIN_ROLE to DIAMOND_OWNER_ADDRESS using LEGACY_ADMIN.
+ * Defaults to granting DEFAULT_ADMIN_ROLE to DIAMOND_OWNER_ADDRESS using PRIVATE_KEY_USERD.
  *
  * Env (from .env.local preferred):
  *   - RPC_URL (or RPC_URL_HYPEREVM)
  *   - CORE_VAULT_ADDRESS
- *   - LEGACY_ADMIN (private key of an address that already has DEFAULT_ADMIN_ROLE)
+ *   - PRIVATE_KEY_USERD (private key of an address that already has DEFAULT_ADMIN_ROLE)
  *   - RELAYER_ADDRESS (optional; default target if set)
  *   - DIAMOND_OWNER_ADDRESS (optional fallback target if RELAYER_ADDRESS is not set)
  *
@@ -99,8 +99,8 @@ async function main() {
   const to = getArg("--to") || process.env.RELAYER_ADDRESS || process.env.DIAMOND_OWNER_ADDRESS;
   if (!to) throw new Error("RELAYER_ADDRESS (or DIAMOND_OWNER_ADDRESS) is required (or pass --to)");
 
-  const pk = process.env.LEGACY_ADMIN;
-  if (!pk) throw new Error("LEGACY_ADMIN is required (private key with DEFAULT_ADMIN_ROLE on CoreVault)");
+  const pk = process.env.PRIVATE_KEY_USERD;
+  if (!pk) throw new Error("PRIVATE_KEY_USERD is required (private key with DEFAULT_ADMIN_ROLE on CoreVault)");
 
   const rolesInput = getArg("--roles") || process.env.GRANT_ROLES || "DEFAULT_ADMIN_ROLE";
   const roles = parseRoles(rolesInput);

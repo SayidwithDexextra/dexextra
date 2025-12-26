@@ -1,11 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Address, createPublicClient, http, webSocket } from 'viem';
+import { Address } from 'viem';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/lib/contractConfig';
-import { publicClient as fallbackPublicClient, createWsClient } from '@/lib/viemClient';
-import { env } from '@/lib/env';
-import { usePusher } from '@/lib/pusher-client';
+import { publicClient as fallbackPublicClient } from '@/lib/viemClient';
+import { useMarketEventHub } from '@/services/realtime/marketEventHub';
 
 type OrderBookLiveData = {
   orderBookAddress: Address | null;
@@ -40,12 +39,22 @@ const CORE_VAULT_MIN_ABI = [
   }
 ] as const;
 
-type UseOBOptions = { refreshInterval?: number; orderBookAddress?: Address | string | null; marketIdBytes32?: `0x${string}` | string | null };
+type UseOBOptions = {
+  refreshInterval?: number;
+  orderBookAddress?: Address | string | null;
+  marketIdBytes32?: `0x${string}` | string | null;
+  /** When false, disables polling + RPC reads (useful when a parent provider already fetches this data). */
+  enabled?: boolean;
+  /** Prefer backend aggregator API (reduces browser RPC). Falls back to direct RPC on failure. */
+  source?: 'api' | 'rpc';
+};
 
 export function useOrderBookContractData(symbol: string, _options?: UseOBOptions) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<OrderBookLiveData | null>(null);
+  const [watchAddress, setWatchAddress] = useState<Address | null>(null);
+  const watchAddressRef = useRef<Address | null>(null);
   const fetchNowRef = useRef<null | (() => void)>(null);
   const lastRealtimeRefreshRef = useRef<number>(0);
   const fetchInProgressRef = useRef<boolean>(false);
@@ -54,14 +63,20 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
   const fastPollTimerRef = useRef<any>(null);
   const addressRetryTimerRef = useRef<any>(null);
   const refreshInterval = _options?.refreshInterval ?? 5000;
+  const enabled = _options?.enabled !== false;
+  const source = _options?.source ?? 'api';
   // Cache the resolved address to ensure consistency
   const resolvedAddressRef = useRef<Address | null>(null);
   const resolvedIsFallbackRef = useRef<boolean>(false);
+  const lastSlowReadsAtRef = useRef<number>(0);
+  const fastPollStartAtRef = useRef<number>(0);
   // Reset cache when symbol changes
   useEffect(() => {
     resolvedAddressRef.current = null;
     resolveAttemptsRef.current = 0;
     resolvedIsFallbackRef.current = false;
+    lastSlowReadsAtRef.current = 0;
+    fastPollStartAtRef.current = 0;
     // Allow new fetches after symbol change
     fetchInProgressRef.current = false;
     // Clear any pending address retry timers on symbol change
@@ -72,6 +87,8 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
   useEffect(() => {
     resolvedAddressRef.current = null;
     resolvedIsFallbackRef.current = false;
+    lastSlowReadsAtRef.current = 0;
+    fastPollStartAtRef.current = 0;
     // Allow new fetches after option changes
     fetchInProgressRef.current = false;
     try { if (addressRetryTimerRef.current) { clearTimeout(addressRetryTimerRef.current); addressRetryTimerRef.current = null; } } catch {}
@@ -82,14 +99,7 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
     return fallbackPublicClient;
   }, []);
 
-  const wsClient = useMemo(() => {
-    try {
-      if (!CHAIN_CONFIG.wsRpcUrl) return null as any;
-      return createWsClient();
-    } catch {
-      return null as any;
-    }
-  }, []);
+  // Note: realtime event subscriptions are handled by MarketEventHub.
   // Human-readable scaling using BigInt-safe conversion to avoid overflow/precision loss
   const PRICE_DECIMALS = 6;
   const AMOUNT_DECIMALS = 18;
@@ -319,10 +329,35 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
     }
   };
 
+  // Centralized real-time event bridge (OrderPlaced + TradeExecutionCompleted).
+  // This replaces the previous mix of in-hook WS watchers + Pusher listeners.
+  const hubSubscriber = useMemo(() => {
+    return {
+      dispatchDomEvents: true,
+      onOrdersChanged: () => {
+        fetchNowRef.current?.();
+      },
+      onTradesChanged: () => {
+        fetchNowRef.current?.();
+      },
+    };
+  }, []);
+  useMarketEventHub(symbol, watchAddress, hubSubscriber);
+
   useEffect(() => {
     let cancelled = false;
-    let unwatch: null | (() => void) = null;
-    let resubscribeTimer: any = null;
+
+    if (!enabled) {
+      // Do not poll or do RPC reads when disabled. This allows higher-level providers to own polling.
+      setIsLoading(false);
+      setError(null);
+      return () => {
+        cancelled = true;
+        try { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); } } catch {}
+        try { if (fastPollTimerRef.current) { clearInterval(fastPollTimerRef.current); } } catch {}
+        try { if (addressRetryTimerRef.current) { clearTimeout(addressRetryTimerRef.current); } } catch {}
+      };
+    }
 
     // Enforce per-call timeouts so optional/slow reads don't block UI depth updates
     const withTimeout = async <T,>(p: Promise<T>, ms: number, label?: string): Promise<T> => {
@@ -464,6 +499,75 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
         setIsLoading(true);
         setError(null);
 
+        // Prefer backend aggregator API to avoid browser-side RPC bursts.
+        if (source === 'api') {
+          try {
+            const params = new URLSearchParams();
+            if (normalizedSymbol) params.set('symbol', normalizedSymbol);
+            const explicitAddr = (_options?.orderBookAddress as string | undefined) || '';
+            if (explicitAddr && explicitAddr.startsWith('0x') && explicitAddr.length === 42) params.set('orderBookAddress', explicitAddr);
+            const mid = (_options?.marketIdBytes32 as string | undefined) || '';
+            if (mid && mid.startsWith('0x')) params.set('marketIdBytes32', mid);
+            params.set('levels', '10');
+            const resp = await fetch(`/api/orderbook/live?${params.toString()}`, { method: 'GET' });
+            if (resp.ok) {
+              const json = await resp.json();
+              const ob = (json as any)?.data || null;
+              const addr = (ob?.orderBookAddress as Address | null) || null;
+              if (addr) {
+                try {
+                  if (addr !== watchAddressRef.current) {
+                    watchAddressRef.current = addr;
+                    setWatchAddress(addr);
+                  }
+                } catch {}
+              }
+              if (!cancelled && ob) {
+                setData({
+                  orderBookAddress: addr,
+                  bestBid: typeof ob.bestBid === 'number' ? ob.bestBid : null,
+                  bestAsk: typeof ob.bestAsk === 'number' ? ob.bestAsk : null,
+                  lastTradePrice: typeof ob.lastTradePrice === 'number' ? ob.lastTradePrice : null,
+                  markPrice: typeof ob.markPrice === 'number' ? ob.markPrice : null,
+                  totalTrades: typeof ob.totalTrades === 'number' ? ob.totalTrades : null,
+                  volume24h: typeof ob.volume24h === 'number' ? ob.volume24h : null,
+                  openInterest: typeof ob.openInterest === 'number' ? ob.openInterest : null,
+                  priceChange24h: typeof ob.priceChange24h === 'number' ? ob.priceChange24h : null,
+                  activeBuyOrders: typeof ob.activeBuyOrders === 'number' ? ob.activeBuyOrders : null,
+                  activeSellOrders: typeof ob.activeSellOrders === 'number' ? ob.activeSellOrders : null,
+                  depth: ob.depth || null,
+                  recentTrades: ob.recentTrades || null,
+                  lastUpdated: ob.lastUpdated || new Date().toISOString(),
+                } as OrderBookLiveData);
+                setIsLoading(false);
+              }
+
+              // Polling strategy: keep it light; realtime events will call fetchNowRef anyway.
+              const now = Date.now();
+              const isEmptyBook = !ob?.depth || ((ob?.depth?.bidPrices?.length || 0) === 0 && (ob?.depth?.askPrices?.length || 0) === 0);
+              const MAX_FAST_POLL_WINDOW_MS = 10_000;
+              if (fastPollStartAtRef.current === 0) fastPollStartAtRef.current = now;
+              const withinFastWindow = now - fastPollStartAtRef.current < MAX_FAST_POLL_WINDOW_MS;
+              try { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); } } catch {}
+              pollTimerRef.current = setInterval(() => {
+                fetchNowRef.current?.();
+              }, Math.max(2500, refreshInterval));
+              try { if (fastPollTimerRef.current) { clearInterval(fastPollTimerRef.current); } } catch {}
+              if (isEmptyBook && withinFastWindow) {
+                fastPollTimerRef.current = setInterval(() => {
+                  fetchNowRef.current?.();
+                }, 1500);
+              }
+              // Success path: skip direct RPC
+              fetchInProgressRef.current = false;
+              return;
+            }
+          } catch (apiErr) {
+            // fall through to RPC below
+            console.warn('[OrderBook] API fetch failed, falling back to RPC', apiErr);
+          }
+        }
+
         const address = await resolveOrderBookAddress();
         console.log('The fetchData function', address);
         if (!address) {
@@ -483,6 +587,14 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
           }, delay);
           return;
         }
+
+        // Track resolved address for the centralized event hub (only update on change)
+        try {
+          if (address && address !== watchAddressRef.current) {
+            watchAddressRef.current = address;
+            setWatchAddress(address);
+          }
+        } catch {}
         // If we previously used a fallback, ensure we resubscribe on real address change
         if (resolvedIsFallbackRef.current === true) {
           // Reset flag so subsequent resolves use cache
@@ -531,22 +643,33 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
             lastUpdated: new Date().toISOString(),
           } as OrderBookLiveData));
           setIsLoading(false);
-          // Fast polling until we have depth, then switch to normal interval
+          // Polling: always respect refreshInterval. Optionally do a brief fast-poll window after first resolve.
+          const now = Date.now();
+          const isEmptyBook = !depth || ((depth.bidPrices?.length || 0) === 0 && (depth.askPrices?.length || 0) === 0);
+          const MAX_FAST_POLL_WINDOW_MS = 10_000;
+          if (fastPollStartAtRef.current === 0) fastPollStartAtRef.current = now;
+          const withinFastWindow = now - fastPollStartAtRef.current < MAX_FAST_POLL_WINDOW_MS;
+
+          try { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); } } catch {}
+          pollTimerRef.current = setInterval(() => {
+            fetchNowRef.current?.();
+          }, Math.max(2500, refreshInterval));
+
+          // Only fast-poll briefly, and only if the book is empty (newly deployed / just starting up).
           try { if (fastPollTimerRef.current) { clearInterval(fastPollTimerRef.current); } } catch {}
-          if (!depth || (depth.bidPrices.length === 0 && depth.askPrices.length === 0)) {
+          if (isEmptyBook && withinFastWindow) {
             fastPollTimerRef.current = setInterval(() => {
               fetchNowRef.current?.();
             }, 1500);
-          } else {
-            try { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); } } catch {}
-            pollTimerRef.current = setInterval(() => {
-              fetchNowRef.current?.();
-            }, Math.max(2500, refreshInterval));
-            try { if (fastPollTimerRef.current) { clearInterval(fastPollTimerRef.current); } } catch {}
           }
         }
 
-        // In parallel, fetch prices/stats/counts/trades; don't block UI depth
+        // In parallel, fetch prices quickly; fetch stats/counts/trades on a slower cadence to reduce RPC spam.
+        const now = Date.now();
+        const SLOW_READS_INTERVAL_MS = Math.max(30_000, refreshInterval * 2);
+        const shouldRunSlowReads = lastSlowReadsAtRef.current === 0 || (now - lastSlowReadsAtRef.current >= SLOW_READS_INTERVAL_MS);
+        if (shouldRunSlowReads) lastSlowReadsAtRef.current = now;
+
         const priceReads = (async () => {
           let bestBidRaw: bigint = 0n;
           let bestAskRaw: bigint = 0n;
@@ -591,6 +714,7 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
         })();
 
         const statsReads = (async () => {
+          if (!shouldRunSlowReads) return;
           let volume24h: bigint | null = null,
             openInterest: bigint | null = null,
             totalTrades: bigint | null = null,
@@ -618,6 +742,7 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
         })();
 
         const countsReads = (async () => {
+          if (!shouldRunSlowReads) return;
           let activeBuyOrders: bigint | null = null;
           let activeSellOrders: bigint | null = null;
           try {
@@ -639,6 +764,7 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
         })();
 
         const tradesReads = (async () => {
+          if (!shouldRunSlowReads) return;
           let recentTrades: OrderBookLiveData['recentTrades'] = null;
           try {
             let trades: any = null;
@@ -694,221 +820,13 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
       console.log(`[OrderBook] Read-only mode. HTTP RPC: ${CHAIN_CONFIG.rpcUrl} | WS RPC: ${CHAIN_CONFIG.wsRpcUrl || 'none'}`);
     } catch {}
 
-    // On-chain event subscriptions (WebSocket preferred, fallback to polling)
-    const ensureAddressAndSubscribe = async () => {
-      try {
-        console.log('[EventSubscription] Setting up event subscriptions');
-        console.log('[EventSubscription] Resolving OrderBook address...');
-        const address = await resolveOrderBookAddress();
-        console.log('[EventSubscription] Resolved address:', address, typeof address);
-        
-        if (!address) {
-          console.warn('[EventSubscription] No address resolved, skipping subscriptions');
-          // Schedule a retry with backoff
-          const attempt = Math.min(resolveAttemptsRef.current + 1, 8);
-          const delay = Math.min(2000 * attempt, 10000) + Math.floor(Math.random() * 500);
-          resubscribeTimer = setTimeout(() => {
-            if (!cancelled) void ensureAddressAndSubscribe();
-          }, delay);
-          return;
-        }
-        
-        // Verify the address is valid
-        if (typeof address !== 'string' || !address.startsWith('0x') || address.length !== 42) {
-          console.error('[EventSubscription] Invalid address format:', address);
-          return;
-        }
-        
-        const eventNames = ['OrderPlaced', 'OrderCancelled', 'OrderModified', 'TradeExecutionCompleted', 'PriceUpdated'] as const;
-        const unwatchers: Array<() => void> = [];
-
-      const subscribeWithWsThenPoll = (eventName: typeof eventNames[number]) => {
-        const hasWs = !!wsClient;
-        const firstClient = (hasWs ? wsClient : publicClient) as any;
-
-        let stoppedFirst: null | (() => void) = null;
-        try {
-          stoppedFirst = firstClient.watchContractEvent({
-            address,
-            abi,
-            eventName,
-            poll: hasWs ? undefined : true,
-            pollingInterval: hasWs ? undefined : 3000,
-            onLogs: (logs: any) => {
-              console.log(`[OrderBook] ${String(eventName)} detected (${hasWs ? 'ws' : 'poll'}). logs:`, logs);
-              fetchNowRef.current?.();
-              try {
-                if (typeof window !== 'undefined') {
-                  // Trigger portfolio open-orders refresh on order lifecycle events
-                  if (eventName === 'OrderPlaced' || eventName === 'OrderCancelled' || eventName === 'OrderModified') {
-                    window.dispatchEvent(new Event('ordersUpdated'));
-                  }
-                  // Trigger positions refresh on executed trades
-                  if (eventName === 'TradeExecutionCompleted') {
-                    window.dispatchEvent(new Event('positionsRefreshRequested'));
-                  }
-                }
-              } catch {}
-            },
-            onError: (err: unknown) => {
-              console.error(`[OrderBook] Error on ${String(eventName)} (${hasWs ? 'WebSocket' : 'polling'}) subscription:`, err);
-              // Attempt fallback to polling if WS failed
-              if (hasWs) {
-                try { stoppedFirst?.(); } catch {}
-                try {
-                  const pollStop = (publicClient as any).watchContractEvent({
-                    address,
-                    abi,
-                    eventName,
-                    poll: true,
-                    pollingInterval: 5000,
-                    onLogs: (logs2: any) => {
-                      console.log(`[OrderBook] ${String(eventName)} detected (poll fallback). logs:`, logs2);
-                      fetchNowRef.current?.();
-                      try {
-                        if (typeof window !== 'undefined') {
-                          if (eventName === 'OrderPlaced' || eventName === 'OrderCancelled' || eventName === 'OrderModified') {
-                            window.dispatchEvent(new Event('ordersUpdated'));
-                          }
-                          if (eventName === 'TradeExecutionCompleted') {
-                            window.dispatchEvent(new Event('positionsRefreshRequested'));
-                          }
-                        }
-                      } catch {}
-                    },
-                    onError: (err2: unknown) => {
-                      console.error(`[OrderBook] Error on ${String(eventName)} (poll fallback) subscription:`, err2);
-                    }
-                  });
-                  if (typeof pollStop === 'function') unwatchers.push(pollStop);
-                  console.log(`[OrderBook] Fallback to polling active for ${String(eventName)} at ${address}`);
-                } catch (pollErr) {
-                  console.error(`[OrderBook] Failed to start polling fallback for ${String(eventName)}:`, pollErr);
-                }
-              }
-            }
-          });
-          if (typeof stoppedFirst === 'function') unwatchers.push(stoppedFirst);
-        } catch (subErr) {
-          console.error(`[OrderBook] Subscription setup threw for ${String(eventName)}:`, subErr);
-          // As a last resort, try polling directly
-          try {
-            const pollStop = (publicClient as any).watchContractEvent({
-              address,
-              abi,
-              eventName,
-              poll: true,
-              pollingInterval: 5000,
-              onLogs: (logs3: any) => {
-                console.log(`[OrderBook] ${String(eventName)} detected (direct poll). logs:`, logs3);
-                fetchNowRef.current?.();
-                try {
-                  if (typeof window !== 'undefined') {
-                    if (eventName === 'OrderPlaced' || eventName === 'OrderCancelled' || eventName === 'OrderModified') {
-                      window.dispatchEvent(new Event('ordersUpdated'));
-                    }
-                    if (eventName === 'TradeExecutionCompleted') {
-                      window.dispatchEvent(new Event('positionsRefreshRequested'));
-                    }
-                  }
-                } catch {}
-              },
-              onError: (err3: unknown) => {
-                console.error(`[OrderBook] Error on ${String(eventName)} (direct poll) subscription:`, err3);
-              }
-            });
-            if (typeof pollStop === 'function') unwatchers.push(pollStop);
-            console.log(`[OrderBook] Direct polling active for ${String(eventName)} at ${address}`);
-          } catch (lastErr) {
-            console.error(`[OrderBook] Could not attach any watcher for ${String(eventName)}:`, lastErr);
-          }
-        }
-      };
-
-      try {
-        for (const en of eventNames) {
-          subscribeWithWsThenPoll(en);
-        }
-        unwatch = () => { unwatchers.forEach((u) => { try { u(); } catch {} }); };
-        console.log(`[OrderBook] Event subscriptions initialized for ${address} (ws: ${wsClient ? 'yes' : 'no'})`);
-      } catch (e) {
-        console.error('[OrderBook] Failed to establish event subscriptions:', e);
-      }
-      } catch (outerError) {
-        console.error('[EventSubscription] Failed to setup event subscriptions:', outerError);
-      }
-    };
-
-    void ensureAddressAndSubscribe();
-
     return () => {
       cancelled = true;
-      try { unwatch?.(); } catch {}
-      if (resubscribeTimer) { try { clearTimeout(resubscribeTimer); } catch {} }
       try { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); } } catch {}
       try { if (fastPollTimerRef.current) { clearInterval(fastPollTimerRef.current); } } catch {}
       try { if (addressRetryTimerRef.current) { clearTimeout(addressRetryTimerRef.current); } } catch {}
     };
-  }, [symbol, publicClient, _options?.orderBookAddress, _options?.marketIdBytes32]);
-
-  // Near real-time push: subscribe to server events and trigger fast refresh without on-chain filters
-  const pusher = usePusher();
-  useEffect(() => {
-    if (!pusher) return;
-
-    // Subscribe strictly by metric_id as provided in symbol
-    const metricId = symbol;
-
-    const handlers = {
-      'order-update': () => {
-        console.log(`[OrderBook] Pusher event order-update received for ${metricId}, triggering UI refresh`);
-        fetchNowRef.current?.();
-        try {
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new Event('ordersUpdated'));
-          }
-        } catch {}
-      },
-      'trading-event': () => {
-        console.log(`[OrderBook] Pusher event trading-event received for ${metricId}, triggering UI refresh`);
-        fetchNowRef.current?.();
-        try {
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new Event('positionsRefreshRequested'));
-            window.dispatchEvent(new Event('ordersUpdated'));
-          }
-        } catch {}
-      },
-      'price-update': () => {
-        console.log(`[OrderBook] Pusher event price-update received for ${metricId}, triggering UI refresh`);
-        fetchNowRef.current?.();
-      },
-      'batch-price-update': () => {
-        console.log(`[OrderBook] Pusher event batch-price-update received for ${metricId}, triggering UI refresh`);
-        fetchNowRef.current?.();
-      },
-      'market-data-update': () => {
-        console.log(`[OrderBook] Pusher event market-data-update received for ${metricId}, triggering UI refresh`);
-        fetchNowRef.current?.();
-      },
-    } as Record<string, (data: any) => void>;
-
-    const unsubs: Array<() => void> = [];
-    if (metricId) {
-      try { unsubs.push(pusher.subscribeToChannel(`market-${metricId}`, handlers)); } catch {}
-    }
-    // Optional: listen to global recent transactions to prompt refresh broadly
-    try {
-      unsubs.push(pusher.subscribeToChannel('recent-transactions', { 'new-order': () => {
-        console.log('[OrderBook] Pusher event new-order received on global channel, triggering UI refresh');
-        fetchNowRef.current?.();
-      } }));
-    } catch {}
-
-    return () => {
-      unsubs.forEach((u) => { try { u(); } catch {} });
-    };
-  }, [pusher, symbol]);
+  }, [symbol, publicClient, _options?.orderBookAddress, _options?.marketIdBytes32, enabled, refreshInterval, source]);
 
   return { data, isLoading, error } as const;
 }

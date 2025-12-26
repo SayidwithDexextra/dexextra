@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useMarket } from './useMarket';
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
+import { useMaybeMarketData } from '@/contexts/MarketDataContext';
 
 export interface PriceData {
   price: string;
@@ -22,31 +23,55 @@ function formatUsd(value: number): string {
 
 export function useOrderBookPrice(marketIdentifier?: string) {
   const { market, isLoading: isMarketLoading } = useMarket(marketIdentifier);
+  const ctx = useMaybeMarketData();
   // Use market.market_identifier/symbol/name as lookup key; fallback to marketIdentifier
   const symbolKey = useMemo(() => {
     return market?.market_identifier || market?.symbol || market?.name || marketIdentifier || '';
   }, [market, marketIdentifier]);
 
-  const { data: obLive, isLoading: obLoading, error: obError } = useOrderBookContractData(symbolKey, { refreshInterval: 15000 });
+  const ctxMatches = useMemo(() => {
+    if (!ctx) return false;
+    const a = String(ctx.symbol || '').toLowerCase();
+    const b = String(symbolKey || '').toLowerCase();
+    if (!a || !b) return false;
+    return a === b;
+  }, [ctx, symbolKey]);
 
-  const [priceData, setPriceData] = useState<PriceData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  // If MarketDataProvider is present (ctxMatches), avoid spinning up a second poller.
+  const { data: obLive, isLoading: obLoading, error: obError } = useOrderBookContractData(symbolKey, {
+    refreshInterval: 15000,
+    enabled: !ctxMatches,
+  });
 
-  useEffect(() => {
-    if (isMarketLoading || obLoading) return;
+  const isLoading = ctxMatches ? Boolean(ctx?.isLoading) : (isMarketLoading || obLoading);
+  const error = useMemo(() => {
+    if (ctxMatches) return ctx?.error ? new Error(String(ctx.error)) : null;
+    return obError ? new Error(String(obError)) : null;
+  }, [ctxMatches, ctx?.error, obError]);
 
-    if (!obLive) {
-      setError(obError ? new Error(String(obError)) : new Error('No orderbook data'));
-      setIsLoading(false);
-      return;
+  const priceData: PriceData | null = useMemo(() => {
+    if (isLoading) return null;
+
+    if (ctxMatches && ctx) {
+      const mark = Number((ctx.markPrice ?? ctx.resolvedPrice) || 0);
+      const changePct = Number(ctx.tokenData?.priceChange24h || 0);
+      const changeAbs = mark > 0 ? (mark * changePct) / 100 : 0;
+      return {
+        price: String(mark),
+        priceNumber: mark,
+        formattedPrice: formatUsd(mark),
+        change24h: (changeAbs >= 0 ? '+' : '') + changeAbs.toFixed(2),
+        changePercentage24h: (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%',
+        isPositiveChange: changeAbs >= 0,
+        lastUpdated: ctx.lastUpdated || new Date().toISOString(),
+      };
     }
 
+    if (!obLive) return null;
     const mark = Number(obLive.markPrice || 0);
     const changeAbs = Number(obLive.priceChange24h || 0);
     const changePct = mark > 0 ? (changeAbs / mark) * 100 : 0;
-
-    const pd: PriceData = {
+    return {
       price: String(mark),
       priceNumber: mark,
       formattedPrice: formatUsd(mark),
@@ -55,11 +80,7 @@ export function useOrderBookPrice(marketIdentifier?: string) {
       isPositiveChange: changeAbs >= 0,
       lastUpdated: obLive.lastUpdated,
     };
-
-    setPriceData(pd);
-    setError(null);
-    setIsLoading(false);
-  }, [isMarketLoading, obLoading, obLive, obError]);
+  }, [isLoading, ctxMatches, ctx, obLive]);
 
   return { priceData, isLoading, error };
 }

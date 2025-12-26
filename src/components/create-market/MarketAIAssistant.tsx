@@ -280,6 +280,38 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
         onAccept={() => {
           setState(prev => ({ ...prev, showModal: false, showAcceptedScreenshot: true }));
         }}
+        onDenySuggestedAssetPrice={() => {
+          const bestSource = state.modalData?.data?.sources?.[0];
+          // Keep resolved metric URL + data source, but clear start price so the user can input manually.
+          onMetricResolution({
+            metricUrl: bestSource?.url || state.urls[0] || '',
+            dataSource: bestSource?.url || 'AI Analysis',
+            startPrice: '',
+            sourceLocator: bestSource
+              ? {
+                  url: bestSource.url,
+                  css_selector: bestSource.css_selector,
+                  xpath: bestSource.xpath,
+                  html_snippet: bestSource.html_snippet,
+                  js_extractor: bestSource.js_extractor
+                }
+              : undefined
+          });
+
+          // Keep modal state consistent if reopened
+          setState(prev => ({
+            ...prev,
+            modalData: prev.modalData
+              ? {
+                  ...prev.modalData,
+                  data: {
+                    ...prev.modalData.data,
+                    asset_price_suggestion: ''
+                  }
+                }
+              : prev.modalData
+          }));
+        }}
       />
     </div>
   );
