@@ -4,18 +4,21 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.56.0",
-    "next": "15.3.4",
+    "next": "16.1.1",
     "openai": "^5.10.2",
     "zod": "^3.25.76",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "eslint": "^9.0.0",
+    "eslint-config-next": "16.1.1",
     "typescript": "^5.5.3",
     "@types/react": "^19",
     "@types/node": "^24.0.15"
