@@ -179,8 +179,11 @@
   font-size: 11px;
   color: #A0A0A0;
   margin: 0;
-  line-height: 1.2;
+  line-height: 1.3;
   font-weight: 400;
+  max-width: 320px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* Main Content Area */
@@ -211,13 +214,21 @@
 .tokenIcon {
   width: 32px;
   height: 32px;
-  background: #00b8ff;
+  background: transparent;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.tokenIcon img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  display: block;
 }
 
 .valueSection {
@@ -234,10 +245,13 @@
 }
 
 .value {
-  font-size: 18px;
+  /* Keep values readable, but avoid oversized look on mobile */
+  font-size: clamp(16px, 4.5vw, 20px);
   font-weight: 600;
   color: #FFFFFF;
   line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
 }
 
 .unit {
@@ -559,11 +573,11 @@
   }
   
   .title {
-    font-size: 24px;
+    font-size: 20px;
   }
   
   .value {
-    font-size: 24px;
+    font-size: 18px;
   }
   
   .topHeader {
