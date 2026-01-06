@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
@@ -23,7 +24,8 @@ contract GlobalSessionRegistry is EIP712, Ownable {
     // Session state shared across all markets
     struct Session {
         address trader;
-        address relayer;
+        // Merkle root of allowed relayer EOAs for this session
+        bytes32 relayerSetRoot;
         uint256 expiry;
         uint256 maxNotionalPerTrade;
         uint256 maxNotionalPerSession;
@@ -33,7 +35,7 @@ contract GlobalSessionRegistry is EIP712, Ownable {
     }
     mapping(bytes32 => Session) public sessions;
 
-    event SessionCreated(bytes32 indexed sessionId, address indexed trader, address relayer, uint256 expiry);
+    event SessionCreated(bytes32 indexed sessionId, address indexed trader, bytes32 relayerSetRoot, uint256 expiry);
     event SessionRevoked(bytes32 indexed sessionId, address indexed trader);
     event SessionCharged(bytes32 indexed sessionId, uint256 notionalUsed, uint256 newSessionTotalUsed, uint8 methodBit);
     event OrderbookAllowed(address indexed orderbook, bool allowed);
@@ -41,7 +43,8 @@ contract GlobalSessionRegistry is EIP712, Ownable {
     // EIP-712 typed data
     struct SessionPermit {
         address trader;
-        address relayer;
+        // Merkle root of allowed relayer EOAs for this session
+        bytes32 relayerSetRoot;
         uint256 expiry;
         uint256 maxNotionalPerTrade;
         uint256 maxNotionalPerSession;
@@ -51,15 +54,15 @@ contract GlobalSessionRegistry is EIP712, Ownable {
         uint256 nonce;
     }
     bytes32 private constant TYPEHASH_SESSION_PERMIT =
-        keccak256("SessionPermit(address trader,address relayer,uint256 expiry,uint256 maxNotionalPerTrade,uint256 maxNotionalPerSession,bytes32 methodsBitmap,bytes32 sessionSalt,bytes32[] allowedMarkets,uint256 nonce)");
+        keccak256("SessionPermit(address trader,bytes32 relayerSetRoot,uint256 expiry,uint256 maxNotionalPerTrade,uint256 maxNotionalPerSession,bytes32 methodsBitmap,bytes32 sessionSalt,bytes32[] allowedMarkets,uint256 nonce)");
 
     function setAllowedOrderbook(address orderbook, bool allowed) external onlyOwner {
         allowedOrderbook[orderbook] = allowed;
         emit OrderbookAllowed(orderbook, allowed);
     }
 
-    function _sessionId(address trader, address relayer, bytes32 sessionSalt) internal pure returns (bytes32) {
-        return keccak256(abi.encode(trader, relayer, sessionSalt));
+    function _sessionId(address trader, bytes32 relayerSetRoot, bytes32 sessionSalt) internal pure returns (bytes32) {
+        return keccak256(abi.encode(trader, relayerSetRoot, sessionSalt));
     }
 
     function _hashArray(bytes32[] memory arr) internal pure returns (bytes32) {
@@ -73,7 +76,7 @@ contract GlobalSessionRegistry is EIP712, Ownable {
             abi.encode(
                 TYPEHASH_SESSION_PERMIT,
                 p.trader,
-                p.relayer,
+                p.relayerSetRoot,
                 p.expiry,
                 p.maxNotionalPerTrade,
                 p.maxNotionalPerSession,
@@ -94,28 +97,42 @@ contract GlobalSessionRegistry is EIP712, Ownable {
         }
 
         // Create or replace if expired/revoked
-        sessionId = _sessionId(p.trader, p.relayer, p.sessionSalt);
+        sessionId = _sessionId(p.trader, p.relayerSetRoot, p.sessionSalt);
         Session storage s = sessions[sessionId];
         if (s.trader != address(0)) {
             require(s.revoked || block.timestamp > s.expiry, "session: exists");
         }
         s.trader = p.trader;
-        s.relayer = p.relayer;
+        s.relayerSetRoot = p.relayerSetRoot;
         s.expiry = p.expiry;
         s.maxNotionalPerTrade = p.maxNotionalPerTrade;
         s.maxNotionalPerSession = p.maxNotionalPerSession;
         s.sessionNotionalUsed = 0;
         s.methodsBitmap = p.methodsBitmap;
         s.revoked = false;
-        emit SessionCreated(sessionId, p.trader, p.relayer, p.expiry);
+        emit SessionCreated(sessionId, p.trader, p.relayerSetRoot, p.expiry);
     }
 
-    function revokeSession(bytes32 sessionId) external {
+    function revokeSession(bytes32 sessionId, bytes32[] calldata relayerProof) external {
         Session storage s = sessions[sessionId];
         require(s.trader != address(0), "session: unknown");
-        require(msg.sender == s.trader || msg.sender == s.relayer, "session: not auth");
+        if (msg.sender != s.trader) {
+            // Allow any relayer in the set to revoke (gasless UX); trader can always revoke without proof.
+            require(isRelayerAllowed(sessionId, msg.sender, relayerProof), "session: not auth");
+        }
         s.revoked = true;
         emit SessionRevoked(sessionId, s.trader);
+    }
+
+    function _leafForRelayer(address relayer) internal pure returns (bytes32) {
+        // Leaf = keccak256(abi.encodePacked(relayer))
+        return keccak256(abi.encodePacked(relayer));
+    }
+
+    function isRelayerAllowed(bytes32 sessionId, address relayer, bytes32[] calldata relayerProof) public view returns (bool) {
+        Session storage s = sessions[sessionId];
+        if (s.trader == address(0)) return false;
+        return MerkleProof.verify(relayerProof, s.relayerSetRoot, _leafForRelayer(relayer));
     }
 
     /**
@@ -125,13 +142,21 @@ contract GlobalSessionRegistry is EIP712, Ownable {
      * @param methodBit method bit used for allowlisting
      * @param notional trade notional used for budget checks
      */
-    function chargeSession(bytes32 sessionId, address trader, uint8 methodBit, uint256 notional) external {
+    function chargeSession(
+        bytes32 sessionId,
+        address trader,
+        uint8 methodBit,
+        uint256 notional,
+        address relayer,
+        bytes32[] calldata relayerProof
+    ) external {
         require(allowedOrderbook[msg.sender], "session: caller not allowed");
         Session storage s = sessions[sessionId];
         require(s.trader != address(0), "session: unknown");
         require(!s.revoked, "session: revoked");
         require(block.timestamp <= s.expiry, "session: expired");
         require(trader == s.trader, "session: bad trader");
+        require(isRelayerAllowed(sessionId, relayer, relayerProof), "session: bad relayer");
         require((uint256(s.methodsBitmap) & (uint256(1) << methodBit)) != 0, "session: method denied");
         if (s.maxNotionalPerTrade > 0) {
             require(notional <= s.maxNotionalPerTrade, "session: trade cap");

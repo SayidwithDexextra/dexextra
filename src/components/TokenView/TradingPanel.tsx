@@ -1521,7 +1521,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         onClose={() => setShowWalletModal(false)} 
       />
       
-      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full overflow-y-hidden flex flex-col">
+      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full flex flex-col overflow-hidden">
 
 
         {/* Header section */}
@@ -1588,8 +1588,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           </div>
         </div>
 
-        {/* Trading Content Area - fit content without scrolling */}
-        <div className="flex-1 overflow-y-hidden space-y-1.5 pb-1.5 trading-panel-scroll ${orderType === 'limit' ? 'h-[700px]' : 'h-auto'}">
+        {/* Trading Content Area - scrollable within the panel to avoid cut-offs on large screens */}
+        <div className="flex-1 space-y-1.5 pb-1.5 trading-panel-scroll overflow-y-auto">
           {/* Sell Tab - Current Positions */}
           {activeTab === 'sell' && (
             <div className="space-y-2">
@@ -2400,30 +2400,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         </div>
       </div>
       
-      {/* Custom scrollbar and slider styles */}
+      {/* Custom slider styles (scrollbar uses default browser appearance) */}
       <style jsx>{`
-        :global(.trading-panel-scroll::-webkit-scrollbar) {
-          width: 2px;
-        }
-        
-        :global(.trading-panel-scroll::-webkit-scrollbar-track) {
-          background: transparent;
-        }
-        
-        :global(.trading-panel-scroll::-webkit-scrollbar-thumb) {
-          background: #22C55E;
-          border-radius: 2px;
-        }
-        
-        :global(.trading-panel-scroll::-webkit-scrollbar-thumb:hover) {
-          background: #16A34A;
-        }
-        
-        :global(.trading-panel-scroll) {
-          scrollbar-width: thin;
-          scrollbar-color: #22C55E transparent;
-        }
-        
         input[type="number"]::-webkit-outer-spin-button,
         input[type="number"]::-webkit-inner-spin-button {
           -webkit-appearance: none;

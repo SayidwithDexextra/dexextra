@@ -16,6 +16,9 @@
  *  - sessionRegistry equals SESSION_REGISTRY_ADDRESS
  *  - Registry.allowedOrderbook(orderBook) == true
  *  - Diamond has required session* selectors (loupe facetAddress(bytes4) != 0)
+ *  - Registry supports Merkle relayer set auth (isRelayerAllowed view exists)
+ *  - Relayer set root matches server (/api/gasless/session/relayer-set) and env (RELAYER_PRIVATE_KEYS_JSON)
+ *  - Relayer keys have native gas on hub chain (prevents session init / trade relays from failing)
  *  - setSessionRegistry(address) selector present
  *  - CoreVault roles granted (ORDERBOOK_ROLE, SETTLEMENT_ROLE) [if CORE_VAULT_ADDRESS provided]
  *  - Canonical OrderBook cut (from /api/orderbook/cut) matches diamond selectors/facets
@@ -24,6 +27,8 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { ethers } from 'ethers';
+import { loadRelayerPoolFromEnv } from '../src/lib/relayerKeys';
+import { computeRelayerSetRoot } from '../src/lib/relayerMerkle';
 
 type CheckResult = { name: string; pass: boolean; details?: Record<string, any> | string };
 type FacetCut = { facetAddress: string; action: number; functionSelectors: string[] };
@@ -58,6 +63,13 @@ function selector(signature: string): string {
   return ethers.id(signature).slice(0, 10);
 }
 
+function parseNumEnv(name: string, fallback: number): number {
+  const v = String(process.env[name] || '').trim();
+  if (!v) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 async function main() {
   loadEnv();
   const argv = process.argv.slice(2);
@@ -74,6 +86,9 @@ async function main() {
   if (!ethers.isAddress(registryAddress)) throw new Error('SESSION_REGISTRY_ADDRESS is not a valid address');
   const coreVaultAddress = process.env.CORE_VAULT_ADDRESS;
   const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const minRelayerBalanceEth =
+    Number(getFlag(argv, '--min-relayer-balance-eth')) ||
+    parseNumEnv('MIN_RELAYER_BALANCE_ETH', 0.0003); // default ~0.0003 native (matches recent failure magnitude)
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   try {
@@ -149,21 +164,111 @@ async function main() {
     });
   }
 
+  // Registry Merkle support: isRelayerAllowed(sessionId, relayer, proof) view should exist.
+  try {
+    const reg = new ethers.Contract(
+      registryAddress,
+      ['function isRelayerAllowed(bytes32,address,bytes32[]) view returns (bool)'],
+      provider
+    );
+    // Dummy sessionId; function should return false (or revert only if missing)
+    const dummySession = ethers.keccak256(ethers.toUtf8Bytes('inspect-dummy-session'));
+    const dummyRelayer = ethers.getAddress('0x000000000000000000000000000000000000dEaD');
+    const ok: boolean = await reg.isRelayerAllowed(dummySession, dummyRelayer, []);
+    checks.push({
+      name: 'registry.hasMerkleRelayerSet.isRelayerAllowed',
+      pass: ok === false,
+      details: { returned: ok },
+    });
+  } catch (e: any) {
+    checks.push({
+      name: 'registry.hasMerkleRelayerSet.isRelayerAllowed',
+      pass: false,
+      details: e?.message || String(e),
+    });
+  }
+
+  // Relayer set root checks: compare server endpoint vs env keys
+  try {
+    const keys = loadRelayerPoolFromEnv({
+      pool: 'global',
+      globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+      allowFallbackSingleKey: true,
+    });
+    const relayerAddrsEnv = keys.map((k) => ethers.getAddress(k.address));
+    const rootEnv = computeRelayerSetRoot(relayerAddrsEnv);
+    checks.push({
+      name: 'env.relayerKeys.count>0',
+      pass: relayerAddrsEnv.length > 0,
+      details: { count: relayerAddrsEnv.length, rootEnv },
+    });
+
+    // Server root from API
+    const resp = await fetch(`${appUrl}/api/gasless/session/relayer-set`, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`relayer-set API ${resp.status}`);
+    const data = await resp.json();
+    const apiRoot = String(data?.relayerSetRoot || '');
+    const apiAddrs: string[] = Array.isArray(data?.relayerAddresses) ? data.relayerAddresses : [];
+    checks.push({
+      name: 'api.relayerSet.fetch',
+      pass: !!apiRoot && ethers.isHexString(apiRoot, 32),
+      details: { url: `${appUrl}/api/gasless/session/relayer-set`, apiCount: apiAddrs.length, apiRoot },
+    });
+    checks.push({
+      name: 'relayerSetRoot.matches(env_vs_api)',
+      pass: apiRoot.toLowerCase() === rootEnv.toLowerCase(),
+      details: { env: rootEnv, api: apiRoot },
+    });
+  } catch (e: any) {
+    checks.push({
+      name: 'relayerSetRoot.matches(env_vs_api)',
+      pass: false,
+      details: e?.message || String(e),
+    });
+  }
+
+  // Relayer gas funding readiness: ensure all configured relayers have some native balance.
+  try {
+    const keys = loadRelayerPoolFromEnv({
+      pool: 'global',
+      globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+      allowFallbackSingleKey: true,
+    });
+    const relayerAddrs = keys.map((k) => ethers.getAddress(k.address));
+    const minWei = ethers.parseEther(String(minRelayerBalanceEth));
+    for (const a of relayerAddrs) {
+      const bal = await provider.getBalance(a);
+      checks.push({
+        name: `relayer.nativeBalance>=${minRelayerBalanceEth} (${a.slice(0, 6)}...)`,
+        pass: bal >= minWei,
+        details: { relayer: a, balanceEth: ethers.formatEther(bal), minEth: String(minRelayerBalanceEth) },
+      });
+    }
+  } catch (e: any) {
+    checks.push({
+      name: 'relayer.nativeBalance.check',
+      pass: false,
+      details: e?.message || String(e),
+    });
+  }
+
   // Required session selectors on diamond
   const requiredSessionSigs = [
-    'sessionPlaceLimit(bytes32,address,uint256,uint256,bool)',
-    'sessionPlaceMarginLimit(bytes32,address,uint256,uint256,bool)',
-    'sessionPlaceMarket(bytes32,address,uint256,bool)',
-    'sessionPlaceMarginMarket(bytes32,address,uint256,bool)',
-    'sessionModifyOrder(bytes32,address,uint256,uint256,uint256)',
-    'sessionCancelOrder(bytes32,address,uint256)',
+    'sessionPlaceLimit(bytes32,address,uint256,uint256,bool,bytes32[])',
+    'sessionPlaceMarginLimit(bytes32,address,uint256,uint256,bool,bytes32[])',
+    'sessionPlaceMarket(bytes32,address,uint256,bool,bytes32[])',
+    'sessionPlaceMarginMarket(bytes32,address,uint256,bool,bytes32[])',
+    'sessionModifyOrder(bytes32,address,uint256,uint256,uint256,bytes32[])',
+    'sessionCancelOrder(bytes32,address,uint256,bytes32[])',
     'setSessionRegistry(address)',
   ];
+  const selectorFacets: Record<string, string> = {};
   for (const sig of requiredSessionSigs) {
     try {
       const sel = selector(sig);
       const facet = await loupe.facetAddress(sel);
       const ok = facet && facet !== ethers.ZeroAddress;
+      selectorFacets[sig] = facet || ethers.ZeroAddress;
       checks.push({
         name: `diamond.hasSelector.${sig}`,
         pass: ok === true,
@@ -176,6 +281,25 @@ async function main() {
         details: e?.message || String(e),
       });
     }
+  }
+
+  // Ensure all session* selectors resolve to the same facet (detect partial upgrades).
+  try {
+    const sessionSigsOnly = requiredSessionSigs.filter((s) => s.startsWith('session'));
+    const facets = sessionSigsOnly.map((s) => String(selectorFacets[s] || ethers.ZeroAddress).toLowerCase());
+    const nonZero = facets.filter((f) => f && f !== ethers.ZeroAddress.toLowerCase());
+    const unique = Array.from(new Set(nonZero));
+    checks.push({
+      name: 'diamond.sessionSelectors.singleFacet',
+      pass: unique.length === 1,
+      details: { uniqueFacets: unique, totalSessionSelectors: sessionSigsOnly.length },
+    });
+  } catch (e: any) {
+    checks.push({
+      name: 'diamond.sessionSelectors.singleFacet',
+      pass: false,
+      details: e?.message || String(e),
+    });
   }
 
   // CoreVault role checks (optional)

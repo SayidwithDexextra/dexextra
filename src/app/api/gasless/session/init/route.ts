@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
+import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter';
 
 export async function POST(req: Request) {
   try {
@@ -13,29 +14,27 @@ export async function POST(req: Request) {
       hasPermit: !!permit,
       hasSignature: typeof signature === 'string',
       trader: permit?.trader,
-      relayer: permit?.relayer,
+      relayerSetRoot: permit?.relayerSetRoot,
       expiry: permit?.expiry,
     });
     if (!permit || typeof signature !== 'string') {
       return NextResponse.json({ error: 'missing payload' }, { status: 400 });
     }
     const rpcUrl = process.env.RPC_URL || process.env.RPC_URL_HYPEREVM;
-    const pk = process.env.RELAYER_PRIVATE_KEY;
     const registryAddress = process.env.SESSION_REGISTRY_ADDRESS;
-    if (!rpcUrl || !pk) {
+    if (!rpcUrl) {
       return NextResponse.json({ error: 'server misconfigured' }, { status: 500 });
     }
     if (!registryAddress || !ethers.isAddress(registryAddress)) {
       return NextResponse.json({ error: 'server missing SESSION_REGISTRY_ADDRESS' }, { status: 500 });
     }
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const wallet = new ethers.Wallet(pk, provider);
-    const registry = new ethers.Contract(registryAddress, (GlobalSessionRegistry as any).abi, wallet);
+    const registryRead = new ethers.Contract(registryAddress, (GlobalSessionRegistry as any).abi, provider);
 
     // Optional: compute sessionId locally to return immediately
     const sessionId = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(
-      ['address', 'address', 'bytes32'],
-      [permit.trader, permit.relayer, permit.sessionSalt]
+      ['address', 'bytes32', 'bytes32'],
+      [permit.trader, permit.relayerSetRoot, permit.sessionSalt]
     ));
     console.log('[UpGas][API][session/init] computed sessionId', { sessionId });
 
@@ -46,7 +45,7 @@ export async function POST(req: Request) {
       const types = {
         SessionPermit: [
           { name: 'trader', type: 'address' },
-          { name: 'relayer', type: 'address' },
+          { name: 'relayerSetRoot', type: 'bytes32' },
           { name: 'expiry', type: 'uint256' },
           { name: 'maxNotionalPerTrade', type: 'uint256' },
           { name: 'maxNotionalPerSession', type: 'uint256' },
@@ -61,7 +60,7 @@ export async function POST(req: Request) {
       if (!recovered || recovered.toLowerCase() !== String(permit?.trader).toLowerCase()) {
         return NextResponse.json({ error: 'bad_sig', recovered, expected: permit?.trader }, { status: 400 });
       }
-      const onchainNonce = await registry.metaNonce(permit.trader);
+      const onchainNonce = await registryRead.metaNonce(permit.trader);
       if (onchainNonce?.toString?.() !== String(permit.nonce)) {
         console.log('[UpGas][API][session/init] bad nonce', { expected: onchainNonce?.toString?.(), got: String(permit.nonce) });
         return NextResponse.json({ error: 'bad_nonce', expected: onchainNonce?.toString?.(), got: String(permit.nonce) }, { status: 400 });
@@ -77,41 +76,39 @@ export async function POST(req: Request) {
     }
 
     console.log('[UpGas][API][session/init] calling createSession on registry...');
-    try {
-      const tx = await registry.createSession(permit, signature);
-      console.log('[UpGas][API][session/init] tx submitted', { txHash: tx.hash });
-      const waitConfirms = Number(process.env.GASLESS_SESSION_WAIT_CONFIRMS ?? '1');
-      if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
-        const rc = await tx.wait(waitConfirms);
-        console.log('[UpGas][API][session/init] tx mined', { blockNumber: rc?.blockNumber });
-        return NextResponse.json({ sessionId, txHash: tx.hash, blockNumber: rc?.blockNumber });
-      }
-      console.log('[UpGas][API][session/init] broadcasted', { txHash: tx.hash, waitConfirms });
-      return NextResponse.json({ sessionId, txHash: tx.hash });
-    } catch (e: any) {
-      console.log('[UpGas][API][session/init] createSession failed, attempting raw send with gasLimit', e?.message || e);
-      try {
-        const iface = new ethers.Interface((GlobalSessionRegistry as any).abi);
-        const data = iface.encodeFunctionData('createSession', [permit, signature]);
-        const tx2 = await wallet.sendTransaction({
-          to: registryAddress,
-          data,
-          gasLimit: 1500000n,
+    const tx = await withRelayer({
+      pool: 'hub_trade',
+      provider,
+      stickyKey: permit?.trader,
+      action: async (wallet, meta) => {
+        console.log('[UpGas][API][session/init] selected relayer', {
+          pool: 'hub_trade',
+          relayer: wallet.address,
+          relayerKeyId: meta?.key?.id,
+          relayerKeyAddr: meta?.key?.address,
+          stickyKey: permit?.trader,
         });
-        console.log('[UpGas][API][session/init] raw tx submitted', { txHash: tx2.hash });
-        const waitConfirms = Number(process.env.GASLESS_SESSION_WAIT_CONFIRMS ?? '1');
-        if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
-          const rc2 = await tx2.wait(waitConfirms);
-          console.log('[UpGas][API][session/init] raw tx mined', { blockNumber: rc2?.blockNumber });
-          return NextResponse.json({ sessionId, txHash: tx2.hash, blockNumber: rc2?.blockNumber });
-        }
-        console.log('[UpGas][API][session/init] raw broadcasted', { txHash: tx2.hash, waitConfirms });
-        return NextResponse.json({ sessionId, txHash: tx2.hash });
-      } catch (e2: any) {
-        console.error('[UpGas][API][session/init] raw send failed', e2?.stack || e2?.message || String(e2));
-        throw e2;
+        const registry = new ethers.Contract(registryAddress, (GlobalSessionRegistry as any).abi, wallet);
+        return await sendWithNonceRetry({
+          provider,
+          wallet,
+          contract: registry,
+          method: 'createSession',
+          args: [permit, signature],
+          label: 'session:init:createSession',
+          overrides: { gasLimit: 1500000n },
+        });
       }
+    });
+    console.log('[UpGas][API][session/init] tx submitted', { txHash: tx.hash });
+    const waitConfirms = Number(process.env.GASLESS_SESSION_WAIT_CONFIRMS ?? '1');
+    if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
+      const rc = await tx.wait(waitConfirms);
+      console.log('[UpGas][API][session/init] tx mined', { blockNumber: rc?.blockNumber });
+      return NextResponse.json({ sessionId, txHash: tx.hash, blockNumber: rc?.blockNumber });
     }
+    console.log('[UpGas][API][session/init] broadcasted', { txHash: tx.hash, waitConfirms });
+    return NextResponse.json({ sessionId, txHash: tx.hash });
   } catch (e: any) {
     console.error('[GASLESS][API][session/init] error', e?.message || e);
     console.error('[UpGas][API][session/init] error', e?.stack || e?.message || String(e));

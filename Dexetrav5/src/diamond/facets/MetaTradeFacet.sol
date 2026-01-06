@@ -8,7 +8,14 @@ import "../libraries/LibDiamond.sol";
 import "../libraries/OrderBookStorage.sol";
 
 interface IGlobalSessionRegistry {
-    function chargeSession(bytes32 sessionId, address trader, uint8 methodBit, uint256 notional) external;
+    function chargeSession(
+        bytes32 sessionId,
+        address trader,
+        uint8 methodBit,
+        uint256 notional,
+        address relayer,
+        bytes32[] calldata relayerProof
+    ) external;
 }
 
 /**
@@ -190,10 +197,23 @@ contract MetaTradeFacet is EIP712 {
         return keccak256(abi.encodePacked(markets));
     }
 
-    function _enforceAndChargeSession(bytes32 sessionId, address expectedTrader, uint256 methodBit, uint256 notional) private {
+    function _enforceAndChargeSession(
+        bytes32 sessionId,
+        address expectedTrader,
+        uint256 methodBit,
+        uint256 notional,
+        bytes32[] memory relayerProof
+    ) private {
         // If a global registry is set, delegate enforcement+charge to it
         if (sessionRegistry != address(0)) {
-            IGlobalSessionRegistry(sessionRegistry).chargeSession(sessionId, expectedTrader, uint8(_methodBitIndex(methodBit)), notional);
+            IGlobalSessionRegistry(sessionRegistry).chargeSession(
+                sessionId,
+                expectedTrader,
+                uint8(_methodBitIndex(methodBit)),
+                notional,
+                msg.sender,
+                relayerProof
+            );
             // Note: registry emits SessionCharged
             return;
         }
@@ -374,46 +394,84 @@ contract MetaTradeFacet is EIP712 {
     }
 
     // Direct session dispatchers (no user signature required)
-    function sessionPlaceLimit(bytes32 sessionId, address trader, uint256 price, uint256 amount, bool isBuy) external returns (uint256 orderId) {
+    function sessionPlaceLimit(
+        bytes32 sessionId,
+        address trader,
+        uint256 price,
+        uint256 amount,
+        bool isBuy,
+        bytes32[] calldata relayerProof
+    ) external returns (uint256 orderId) {
         // Compute notional = amount * price / 1e18 (amount in 1e18, price in 6 decimals)
         uint256 notional = Math.mulDiv(amount, price, 1e18);
-        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_LIMIT, notional);
+        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_LIMIT, notional, relayerProof);
         return IOBOrderPlacementBy(address(this)).placeLimitOrderBy(trader, price, amount, isBuy);
     }
 
-    function sessionPlaceMarginLimit(bytes32 sessionId, address trader, uint256 price, uint256 amount, bool isBuy) external returns (uint256 orderId) {
+    function sessionPlaceMarginLimit(
+        bytes32 sessionId,
+        address trader,
+        uint256 price,
+        uint256 amount,
+        bool isBuy,
+        bytes32[] calldata relayerProof
+    ) external returns (uint256 orderId) {
         uint256 notional = Math.mulDiv(amount, price, 1e18);
-        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARGIN_LIMIT, notional);
+        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARGIN_LIMIT, notional, relayerProof);
         return IOBOrderPlacementBy(address(this)).placeMarginLimitOrderBy(trader, price, amount, isBuy);
     }
 
-    function sessionPlaceMarket(bytes32 sessionId, address trader, uint256 amount, bool isBuy) external returns (uint256 filledAmount) {
+    function sessionPlaceMarket(
+        bytes32 sessionId,
+        address trader,
+        uint256 amount,
+        bool isBuy,
+        bytes32[] calldata relayerProof
+    ) external returns (uint256 filledAmount) {
         // Approximate notional using best opposite price
         OrderBookStorage.State storage st = OrderBookStorage.state();
         uint256 refPrice = isBuy ? st.bestAsk : st.bestBid;
         require(refPrice != 0, "OB: no liq");
         uint256 notional = Math.mulDiv(amount, refPrice, 1e18);
-        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARKET, notional);
+        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARKET, notional, relayerProof);
         return IOBOrderPlacementBy(address(this)).placeMarketOrderBy(trader, amount, isBuy);
     }
 
-    function sessionPlaceMarginMarket(bytes32 sessionId, address trader, uint256 amount, bool isBuy) external returns (uint256 filledAmount) {
+    function sessionPlaceMarginMarket(
+        bytes32 sessionId,
+        address trader,
+        uint256 amount,
+        bool isBuy,
+        bytes32[] calldata relayerProof
+    ) external returns (uint256 filledAmount) {
         OrderBookStorage.State storage st = OrderBookStorage.state();
         uint256 refPrice = isBuy ? st.bestAsk : st.bestBid;
         require(refPrice != 0, "OB: no liq");
         uint256 notional = Math.mulDiv(amount, refPrice, 1e18);
-        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARGIN_MARKET, notional);
+        _enforceAndChargeSession(sessionId, trader, MBIT_PLACE_MARGIN_MARKET, notional, relayerProof);
         return IOBOrderPlacementBy(address(this)).placeMarginMarketOrderBy(trader, amount, isBuy);
     }
 
-    function sessionModifyOrder(bytes32 sessionId, address trader, uint256 orderId, uint256 price, uint256 amount) external returns (uint256 newOrderId) {
+    function sessionModifyOrder(
+        bytes32 sessionId,
+        address trader,
+        uint256 orderId,
+        uint256 price,
+        uint256 amount,
+        bytes32[] calldata relayerProof
+    ) external returns (uint256 newOrderId) {
         uint256 notional = Math.mulDiv(amount, price, 1e18);
-        _enforceAndChargeSession(sessionId, trader, MBIT_MODIFY, notional);
+        _enforceAndChargeSession(sessionId, trader, MBIT_MODIFY, notional, relayerProof);
         return IOBOrderPlacementBy(address(this)).modifyOrderBy(trader, orderId, price, amount);
     }
 
-    function sessionCancelOrder(bytes32 sessionId, address trader, uint256 orderId) external {
-        _enforceAndChargeSession(sessionId, trader, MBIT_CANCEL, 0);
+    function sessionCancelOrder(
+        bytes32 sessionId,
+        address trader,
+        uint256 orderId,
+        bytes32[] calldata relayerProof
+    ) external {
+        _enforceAndChargeSession(sessionId, trader, MBIT_CANCEL, 0, relayerProof);
         IOBOrderPlacementBy(address(this)).cancelOrderBy(trader, orderId);
     }
 }

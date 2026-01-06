@@ -110,6 +110,15 @@ export interface OrderBookActions {
   refreshTradeHistory: () => Promise<void>;
 }
 
+type OrdersSessionCachePayload = {
+  version: 1;
+  chainId: string | number;
+  walletAddress: string;
+  marketId: string;
+  ts: number;
+  orders: OrderBookOrder[];
+};
+
 export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActions] {
   // Prefer dynamic market address from DB when available
   const { market: marketRow } = useMarket(marketId as string);
@@ -145,6 +154,77 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
   const lastRealtimeRefreshRef = useRef<number>(0);
   const ENABLE_ORDERBOOK_POLLING = false;
   const [obAddress, setObAddress] = useState<Address | null>(null);
+
+  const ordersSessionHydratedRef = useRef<string | null>(null);
+
+  const getOrdersSessionKey = (addr: string, market: string) => {
+    const chainId = String((CHAIN_CONFIG as any)?.chainId ?? 'unknown');
+    return `orderbook:activeOrders:v1:${chainId}:${String(addr).toLowerCase()}:${String(market).toUpperCase()}`;
+  };
+
+  const hydrateOrdersFromSession = () => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress || !marketId) return;
+    const key = getOrdersSessionKey(walletAddress, marketId);
+    if (ordersSessionHydratedRef.current === key) return;
+    ordersSessionHydratedRef.current = key;
+    try {
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) return;
+      const payload = JSON.parse(raw) as OrdersSessionCachePayload;
+      if (!payload || payload.version !== 1) return;
+      if (String(payload.walletAddress || '').toLowerCase() !== String(walletAddress).toLowerCase()) return;
+      if (String(payload.marketId || '').toUpperCase() !== String(marketId).toUpperCase()) return;
+      if (!Array.isArray(payload.orders)) return;
+      const orders = payload.orders as OrderBookOrder[];
+      setState(prev => ({
+        ...prev,
+        activeOrders: orders
+      }));
+      // eslint-disable-next-line no-console
+      console.log('[RealTimeToken] orderBook:session:hydrate', {
+        marketId,
+        walletAddress,
+        orderCount: orders.length,
+        ageMs: Date.now() - Number(payload.ts || 0)
+      });
+    } catch {
+      // ignore malformed cache
+    }
+  };
+
+  const persistOrdersToSession = (orders: OrderBookOrder[]) => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress || !marketId) return;
+    try {
+      const key = getOrdersSessionKey(walletAddress, marketId);
+      const payload: OrdersSessionCachePayload = {
+        version: 1,
+        chainId: (CHAIN_CONFIG as any)?.chainId ?? 'unknown',
+        walletAddress,
+        marketId,
+        ts: Date.now(),
+        orders
+      };
+      window.sessionStorage.setItem(key, JSON.stringify(payload));
+      // eslint-disable-next-line no-console
+      console.log('[RealTimeToken] orderBook:session:persist', {
+        marketId,
+        walletAddress,
+        orderCount: orders.length
+      });
+    } catch {
+      // ignore persistence failures
+    }
+  };
+
+  // Hydrate optimistic orders from session on first mount for this wallet+market,
+  // then let live contract reads refresh in the background.
+  useEffect(() => {
+    if (!walletAddress || !marketId) return;
+    hydrateOrdersFromSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, marketId]);
 
   // Initialize contracts when wallet is connected and market is resolvable
   useEffect(() => {
@@ -461,6 +541,9 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           isLoading: false,
           error: hydrated.length === 0 && walletAddress && prev.error ? 'No orders found after multiple attempts. Please try again later.' : null
         }));
+        if (walletAddress && marketId) {
+          persistOrdersToSession(hydrated);
+        }
       } catch (error: any) {
         console.error(`[ALTKN] ❌ [RPC] OrderBook market data fetch failed for ${marketId}:`, error);
         setState(prev => ({ ...prev, error: 'Failed to fetch market data. Please try again.', isLoading: false }));
@@ -791,6 +874,9 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           if (mapped.length > 0) {
             console.log('[ALTKN][Dispatch] 🔁 [UI][useOrderBook] Updating activeOrders (fallback)', { count: mapped.length });
             setState(prev => ({ ...prev, activeOrders: mapped, error: null }));
+            if (walletAddress && marketId) {
+              persistOrdersToSession(mapped);
+            }
             try {
               if (typeof window !== 'undefined') {
                 const detail = { marketId, count: mapped.length, source: 'fallback', ts: Date.now() };
@@ -809,6 +895,9 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         activeOrders: hydrated,
         error: null
       }));
+      if (walletAddress && marketId) {
+        persistOrdersToSession(hydrated);
+      }
       try {
         if (typeof window !== 'undefined') {
           const detail = { marketId, count: hydrated.length, source: 'onchain', ts: Date.now() };
@@ -1406,9 +1495,16 @@ export async function getUserActiveOrdersForMarket(
 }
 
 // Cancel a single order on a given market identifier (symbol/metricId)
-export async function cancelOrderForMarket(orderId: string | number | bigint, marketIdentifier: string): Promise<boolean> {
+export async function cancelOrderForMarket(
+  orderId: string | number | bigint,
+  marketIdentifier: string
+): Promise<boolean> {
   try {
     if (!orderId || !marketIdentifier) return false;
+
+    const metric = String(marketIdentifier).trim();
+    if (!metric) return false;
+
     // Resolve signer from injected wallet first
     let signer: ethers.Signer | null = null;
     try {
@@ -1416,17 +1512,74 @@ export async function cancelOrderForMarket(orderId: string | number | bigint, ma
     } catch {
       signer = null;
     }
-    if (!signer) return false;
-    // Initialize contracts for the specific market context
-    const contracts = await initializeContracts({
-      providerOrSigner: signer,
-      marketIdentifier
+    if (!signer) {
+      console.warn('[ALTKN][cancelOrderForMarket] No signer available');
+      return false;
+    }
+
+    // Best-effort ensure MARKET_INFO is populated for this metric
+    try {
+      const initial = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
+      if (!initial.length) {
+        try {
+          await populateMarketInfoClient(metric);
+        } catch {
+          // ignore populate failure here; we'll handle missing market below
+        }
+      }
+    } catch {
+      // ignore MARKET_INFO introspection issues; we'll handle below
+    }
+
+    // Resolve the specific market entry on the current chain
+    const entries: any[] = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {});
+    const lower = metric.toLowerCase();
+    const chainId = CHAIN_CONFIG.chainId;
+    const match = entries.find((m: any) => {
+      if (m?.chainId && String(m.chainId) !== String(chainId)) return false;
+      const candidates = [
+        m?.marketIdentifier?.toLowerCase?.(),
+        m?.symbol?.toLowerCase?.(),
+        m?.name?.toLowerCase?.(),
+      ].filter(Boolean);
+      return candidates.includes(lower);
     });
-    if (!contracts?.obOrderPlacement) return false;
+
+    if (!match || !match.orderBook) {
+      console.warn('[ALTKN][cancelOrderForMarket] No OrderBook address for market', {
+        metric,
+        chainId,
+      });
+      return false;
+    }
+
+    const initOpts: any = {
+      providerOrSigner: signer,
+      orderBookAddressOverride: match.orderBook,
+      marketIdentifier: match.marketIdentifier,
+      marketSymbol: match.symbol,
+      marketIdBytes32: match.marketId,
+      chainId: match.chainId,
+    };
+
+    const contracts = await initializeContracts(initOpts);
+    if (!contracts?.obOrderPlacement) {
+      console.warn('[ALTKN][cancelOrderForMarket] obOrderPlacement facet missing');
+      return false;
+    }
+
     // Normalize order id to bigint
     let idBig: bigint = 0n;
-    try { idBig = typeof orderId === 'bigint' ? orderId : BigInt(orderId as any); } catch { idBig = 0n; }
-    if (idBig === 0n) return false;
+    try {
+      idBig = typeof orderId === 'bigint' ? orderId : BigInt(orderId as any);
+    } catch {
+      idBig = 0n;
+    }
+    if (idBig === 0n) {
+      console.warn('[ALTKN][cancelOrderForMarket] Invalid order id', { orderId });
+      return false;
+    }
+
     const tx = await contracts.obOrderPlacement.cancelOrder(idBig);
     await tx.wait();
     return true;

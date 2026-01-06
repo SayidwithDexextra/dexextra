@@ -595,6 +595,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   };
 
+  const normalizeOrderStatus = (rawStatus: any): Order['status'] => {
+    const s = String(rawStatus || '').trim().toLowerCase();
+    if (!s || s === 'pending' || s === 'open' || s === 'submitted') return 'PENDING';
+    if (s === 'partially_filled' || s === 'partial') return 'PARTIAL';
+    if (s === 'filled') return 'FILLED';
+    if (s === 'cancelled' || s === 'canceled' || s === 'expired' || s === 'rejected') return 'CANCELLED';
+    return 'PENDING';
+  };
+
+  const normalizeQuantity = (qty: number) => {
+    const n = Number.isFinite(qty) ? qty : 0;
+    // Orders often arrive in 1e12 base units; scale down when clearly oversized
+    if (n >= 1_000_000) return n / 1_000_000_000_000;
+    return n;
+  };
+
   // Open Orders sourced from portfolio data hook (aggregates across all markets)
   const flattenOrderBuckets = useCallback((buckets: any[] = []): Order[] => {
     const flat: Order[] = [];
@@ -602,21 +618,24 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
       (bucket?.orders || []).forEach((o: any) => {
         const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
-        const typeStr = String(o?.type || 'limit').toUpperCase();
-        const statusLc = String(o?.status || 'pending').toLowerCase();
-        const status: Order['status'] = statusLc === 'pending'
-          ? 'PENDING'
-          : statusLc === 'partially_filled'
-            ? 'PARTIAL'
-            : statusLc === 'filled'
-              ? 'FILLED'
-              : statusLc === 'cancelled'
-                ? 'CANCELLED'
-                : 'PENDING';
-        let qty = normalizeQuantity(Number(o?.quantity || 0));
-        let filledQty = normalizeQuantity(Number(o?.filledQuantity || 0));
+        const typeStr = String(o?.order_type || o?.type || 'limit').toUpperCase();
+        const status = normalizeOrderStatus(o?.order_status ?? o?.status);
+        const rawQty = Number(
+          o?.quantity !== undefined ? o.quantity : o?.size !== undefined ? o.size : 0
+        );
+        const rawFilled = Number(
+          o?.filled_quantity !== undefined
+            ? o.filled_quantity
+            : o?.filledQuantity !== undefined
+              ? o.filledQuantity
+              : o?.filled !== undefined
+                ? o.filled
+                : 0
+        );
+        const qty = normalizeQuantity(rawQty);
+        const filledQty = normalizeQuantity(rawFilled);
         flat.push({
-          id: String(o?.id || ''),
+          id: String(o?.order_id ?? o?.id ?? ''),
           symbol: symbolUpper,
           side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
           type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
@@ -624,19 +643,55 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           size: qty,
           filled: filledQty,
           status,
-          timestamp: Number(o?.timestamp || Date.now()),
-          metricId: String(o?.metricId || symbolUpper)
+          timestamp: Number(
+            (o?.updated_at && new Date(o.updated_at).getTime()) ||
+            (o?.created_at && new Date(o.created_at).getTime()) ||
+            o?.timestamp ||
+            Date.now()
+          ),
+          metricId: String(o?.market_metric_id || o?.metricId || symbolUpper)
         });
       });
     });
     return flat;
   }, []);
 
+  // Fallback: derive open orders directly from on-chain OrderBook state when Supabase buckets are empty
+  const onchainOpenOrders = useMemo(() => {
+    const symbolUpper = String(metricId || symbol || 'UNKNOWN').toUpperCase();
+    const src = Array.isArray(orderBookState.activeOrders) ? orderBookState.activeOrders : [];
+    return src
+      .filter((o: any) => {
+        const st = normalizeOrderStatus(o?.status);
+        return st !== 'CANCELLED' && st !== 'FILLED';
+      })
+      .map((o: any): Order => {
+        const isBuy = Boolean(o?.isBuy ?? (String(o?.side || '').toLowerCase() === 'buy'));
+        const side: Order['side'] = isBuy ? 'BUY' : 'SELL';
+        const qty = normalizeQuantity(Number(o?.quantity ?? o?.size ?? 0));
+        const filledQty = normalizeQuantity(Number(o?.filledQuantity ?? o?.filled ?? 0));
+        return {
+          id: String(o?.id ?? ''),
+          symbol: symbolUpper,
+          side,
+          type: 'LIMIT',
+          price: Number(o?.price || 0),
+          size: qty,
+          filled: filledQty,
+          status: normalizeOrderStatus(o?.status),
+          timestamp: Number(o?.timestamp || Date.now()),
+          metricId: symbolUpper
+        };
+      });
+  }, [orderBookState.activeOrders, metricId, symbol]);
+
   const openOrders = useMemo(() => {
     const flat = flattenOrderBuckets(ordersBuckets);
+    // Prefer Supabase-backed snapshot when available; otherwise fall back to direct on-chain reads
+    const base = flat.length > 0 ? flat : onchainOpenOrders;
     // Defensive: never render a LIMIT order with non-positive price/size. This usually indicates a stale/partial
     // optimistic/session snapshot, and it matches the "$0 / 0 / 0" ghost rows we've observed after cancels.
-    return flat
+    return base
       .filter((o) => o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(String(o.id)))
       .filter((o) => {
         const sizeOk = Number(o.size) > 0;
@@ -656,7 +711,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         }
         return true;
       });
-  }, [ordersBuckets, flattenOrderBuckets, optimisticallyRemovedOrderIds]);
+  }, [ordersBuckets, flattenOrderBuckets, onchainOpenOrders, optimisticallyRemovedOrderIds]);
   const openOrdersIsLoading = Boolean(isLoadingOrders && activeTab === 'orders');
 
   // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
@@ -830,13 +885,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       minimumFractionDigits: Math.min(decimals, 4),
       maximumFractionDigits: decimals,
     }).format(value);
-  };
-
-  const normalizeQuantity = (qty: number) => {
-    const n = Number.isFinite(qty) ? qty : 0;
-    // Orders often arrive in 1e12 base units; scale down when clearly oversized
-    if (n >= 1_000_000) return n / 1_000_000_000_000;
-    return n;
   };
 
   const renderPositionsTable = () => {

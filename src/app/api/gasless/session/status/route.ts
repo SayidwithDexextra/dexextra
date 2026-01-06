@@ -29,7 +29,7 @@ export async function GET(req: Request) {
       exists,
       active,
       trader: s?.trader || null,
-      relayer: s?.relayer || null,
+      relayerSetRoot: s?.relayerSetRoot || null,
       expiry: s?.expiry?.toString?.() || '0',
       revoked
     });

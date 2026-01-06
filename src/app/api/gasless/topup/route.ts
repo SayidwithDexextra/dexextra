@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import CoreVaultAbi from '@/lib/abis/CoreVault.json';
+import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter';
 
 // Prefer server RPC but fall back to client-exposed value so local dev works
 const rpcUrl =
   process.env.RPC_URL ||
   process.env.HYPERLIQUID_RPC_URL ||
   process.env.NEXT_PUBLIC_RPC_URL;
-const pk = process.env.RELAYER_PRIVATE_KEY;
 
 if (process.env.NODE_ENV !== 'production') {
   console.log('[GASLESS][API][topup] rpcUrl', rpcUrl);
@@ -39,7 +39,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    if (!rpcUrl || !pk) return bad('server misconfigured', 500);
+    if (!rpcUrl) return bad('server misconfigured', 500);
     const { vault, user, marketId, amount, nonce, signature } = await req.json();
     if (!vault || !ethers.isAddress(vault)) return bad('invalid vault');
     if (!user || !ethers.isAddress(user)) return bad('invalid user');
@@ -57,16 +57,22 @@ export async function POST(req: Request) {
 
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const sig = ethers.Signature.from(signature);
-    const wallet = new ethers.Wallet(pk, provider);
-    const cv = new ethers.Contract(vault, CoreVaultAbi.abi, wallet);
-    const tx = await cv.metaTopUpPositionMargin(
-      user,
-      marketId,
-      amountBn,
-      sig.v,
-      sig.r,
-      sig.s
-    );
+    const tx = await withRelayer({
+      pool: 'hub_trade',
+      provider,
+      stickyKey: user,
+      action: async (wallet) => {
+        const cv = new ethers.Contract(vault, CoreVaultAbi.abi, wallet);
+        return await sendWithNonceRetry({
+          provider,
+          wallet,
+          contract: cv,
+          method: 'metaTopUpPositionMargin',
+          args: [user, marketId, amountBn, sig.v, sig.r, sig.s],
+          label: 'topup:metaTopUpPositionMargin',
+        });
+      }
+    });
     const waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
     if (waitConfirms > 0) {
       const rc = await provider.waitForTransaction(tx.hash, waitConfirms);

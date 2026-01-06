@@ -124,6 +124,12 @@ function normalizeRelayErrorBody(body: string): string {
     // ignore JSON parse issues; fall through to raw text
   }
   const lower = (text || '').toLowerCase();
+  if (lower.includes('session: bad relayer') || lower.includes('missing proof') || lower.includes('session: unknown')) {
+    return 'Gasless session is out of date. Please re-enable gasless trading and retry.';
+  }
+  if (lower.includes('session: expired') || lower.includes('expired')) {
+    return 'Gasless session expired. Please re-enable gasless trading and retry.';
+  }
   if (lower.includes('insufficient collateral')) {
     return 'Insufficient collateral for this order. Deposit more or reduce size.';
   }
@@ -420,7 +426,6 @@ export async function signAndSubmitGasless(params: {
 // ----------------- Session-based helpers -----------------
 export async function createGaslessSession(params: {
   trader: string;
-  relayer?: string; // optional relayer allowlist
   expirySec?: number;
   maxNotionalPerTrade?: bigint;
   maxNotionalPerSession?: bigint;
@@ -429,7 +434,6 @@ export async function createGaslessSession(params: {
 }): Promise<SessionCreateResponse> {
   const {
     trader,
-    relayer,
     expirySec,
     maxNotionalPerTrade = 0n,
     maxNotionalPerSession = 0n,
@@ -460,11 +464,22 @@ export async function createGaslessSession(params: {
   const nonce = await fetchRegistryNonce(trader);
   // Build a random salt for session id uniqueness
   const sessionSalt = (ethersRandomHex(32) as `0x${string}`);
-  const relayerAddr = relayer || (process as any)?.env?.NEXT_PUBLIC_RELAYER_ADDRESS || '0x0000000000000000000000000000000000000000';
   const bitmap = methodsBitmap ?? defaultMethodsBitmap();
+
+  // Fetch relayer set root from server so one signature authorizes any configured relayer key.
+  let relayerSetRoot: string = '0x' + '00'.repeat(32);
+  try {
+    const r = await fetch('/api/gasless/session/relayer-set', { method: 'GET' });
+    const j = await r.json();
+    if (j?.relayerSetRoot && typeof j.relayerSetRoot === 'string') relayerSetRoot = j.relayerSetRoot;
+  } catch {}
+  if (!relayerSetRoot || relayerSetRoot === ('0x' + '00'.repeat(32))) {
+    return { success: false, error: 'Relayer set is unavailable. Please try again in a moment.' };
+  }
+
   const message = {
     trader,
-    relayer: relayerAddr,
+    relayerSetRoot,
     expiry: expiry.toString(),
     maxNotionalPerTrade: maxNotionalPerTrade.toString(),
     maxNotionalPerSession: maxNotionalPerSession.toString(),
@@ -477,7 +492,7 @@ export async function createGaslessSession(params: {
   const types = {
     SessionPermit: [
       { name: 'trader', type: 'address' },
-      { name: 'relayer', type: 'address' },
+      { name: 'relayerSetRoot', type: 'bytes32' },
       { name: 'expiry', type: 'uint256' },
       { name: 'maxNotionalPerTrade', type: 'uint256' },
       { name: 'maxNotionalPerSession', type: 'uint256' },

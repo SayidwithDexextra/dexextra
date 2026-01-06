@@ -72,12 +72,12 @@ export async function POST(req: Request) {
     }
     // required selectors
     const required = [
-      'sessionPlaceLimit(bytes32,address,uint256,uint256,bool)',
-      'sessionPlaceMarginLimit(bytes32,address,uint256,uint256,bool)',
-      'sessionPlaceMarket(bytes32,address,uint256,bool)',
-      'sessionPlaceMarginMarket(bytes32,address,uint256,bool)',
-      'sessionModifyOrder(bytes32,address,uint256,uint256,uint256)',
-      'sessionCancelOrder(bytes32,address,uint256)',
+      'sessionPlaceLimit(bytes32,address,uint256,uint256,bool,bytes32[])',
+      'sessionPlaceMarginLimit(bytes32,address,uint256,uint256,bool,bytes32[])',
+      'sessionPlaceMarket(bytes32,address,uint256,bool,bytes32[])',
+      'sessionPlaceMarginMarket(bytes32,address,uint256,bool,bytes32[])',
+      'sessionModifyOrder(bytes32,address,uint256,uint256,uint256,bytes32[])',
+      'sessionCancelOrder(bytes32,address,uint256,bytes32[])',
       'setSessionRegistry(address)',
     ];
     for (const sig of required) {

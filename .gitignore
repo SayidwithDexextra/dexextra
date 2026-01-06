@@ -46,3 +46,6 @@ temp-match-test.ts
 # NOTE: gitignore only prevents *new* files from being added; if this file was
 # already committed, you must untrack it via `git rm --cached ...`.
 AdvancedMarketAutomation/wallets.csv
+relayers.generated.json
+relayers.*.json
+relayers.*.csv

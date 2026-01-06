@@ -713,6 +713,11 @@
           "internalType": "uint256",
           "name": "orderId",
           "type": "uint256"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "relayerProof",
+          "type": "bytes32[]"
         }
       ],
       "name": "sessionCancelOrder",
@@ -746,6 +751,11 @@
           "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "relayerProof",
+          "type": "bytes32[]"
         }
       ],
       "name": "sessionModifyOrder",
@@ -785,6 +795,11 @@
           "internalType": "bool",
           "name": "isBuy",
           "type": "bool"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "relayerProof",
+          "type": "bytes32[]"
         }
       ],
       "name": "sessionPlaceLimit",
@@ -824,6 +839,11 @@
           "internalType": "bool",
           "name": "isBuy",
           "type": "bool"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "relayerProof",
+          "type": "bytes32[]"
         }
       ],
       "name": "sessionPlaceMarginLimit",
@@ -858,6 +878,11 @@
           "internalType": "bool",
           "name": "isBuy",
           "type": "bool"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "relayerProof",
+          "type": "bytes32[]"
         }
       ],
       "name": "sessionPlaceMarginMarket",
@@ -892,6 +917,11 @@
           "internalType": "bool",
           "name": "isBuy",
           "type": "bool"
+        },
+        {
+          "internalType": "bytes32[]",
+          "name": "relayerProof",
+          "type": "bytes32[]"
         }
       ],
       "name": "sessionPlaceMarket",

@@ -9,13 +9,13 @@
  *   HARDHAT_NETWORK=hyperliquid REGISTRY=0x... TRADER=0x... npx hardhat run Dexetrav5/scripts/revoke-session-by-trader.js --network hyperliquid
  *
  * Optional:
- *   RELAYER=0x...         // If provided, only revoke sessions created for this relayer
+ *   RELAYER_SET_ROOT=0x... // If provided, only revoke sessions created for this relayer set root
  *   SESSION_ID=0x...      // If provided, revokes exactly this sessionId (skips discovery)
  *   FROM_BLOCK=0          // Override fromBlock for log scanning (default: 0)
  *   LATEST_ONLY=true      // If set, revoke only the most recent active session
  *
  * Requirements:
- *   - The signer (private key in hardhat config) must be either the trader or the relayer stored in the session (as required by the registry).
+ *   - The signer must be the trader (recommended). Relayer-based revocation requires a Merkle proof and is not supported by this script.
  */
 
 const { ethers, artifacts } = require("hardhat");
@@ -45,7 +45,7 @@ async function main() {
   const registryAddress =
     process.env.REGISTRY || process.env.SESSION_REGISTRY_ADDRESS || "";
   const trader = (process.env.TRADER || "").toLowerCase();
-  const relayerFilter = (process.env.RELAYER || "").toLowerCase();
+  const relayerSetRootFilter = String(process.env.RELAYER_SET_ROOT || "").toLowerCase();
   const directSessionId = process.env.SESSION_ID || "";
   const fromBlock = process.env.FROM_BLOCK ? Number(process.env.FROM_BLOCK) : 0;
   const latestOnly =
@@ -95,7 +95,7 @@ async function main() {
   info("[UpGas][script][revoke-session] Target", {
     registry: registryAddress,
     trader,
-    relayerFilter: relayerFilter || "(any)",
+    relayerSetRootFilter: relayerSetRootFilter || "(any)",
     directSessionId: directSessionId || "(auto-discover)",
   });
 
@@ -112,15 +112,13 @@ async function main() {
       directSessionId
     );
     const s = await registry.sessions(directSessionId);
-    const canRevoke =
-      signerAddr === (s.trader || "").toLowerCase() ||
-      signerAddr === (s.relayer || "").toLowerCase();
+    const canRevoke = signerAddr === (s.trader || "").toLowerCase();
     if (!canRevoke) {
       throw new Error(
-        `Signer ${signerAddr} is not authorized to revoke this session (requires trader or relayer).`
+        `Signer ${signerAddr} is not authorized to revoke this session (requires trader).`
       );
     }
-    const tx = await registry.revokeSession(directSessionId);
+    const tx = await registry.revokeSession(directSessionId, []);
     info("[UpGas][script][revoke-session] tx submitted", { hash: tx.hash });
     const rc = await tx.wait();
     ok("[UpGas][script][revoke-session] tx mined", {
@@ -180,13 +178,13 @@ async function main() {
       );
       const sessionId = parsed.sessionId;
       const evTrader = (parsed.trader || "").toLowerCase();
-      const evRelayer = (parsed.relayer || "").toLowerCase();
+      const evRelayerSetRoot = String(parsed.relayerSetRoot || "").toLowerCase();
       const expiry = parsed.expiry;
       if (evTrader !== trader) continue;
-      if (relayerFilter && evRelayer !== relayerFilter) continue;
+      if (relayerSetRootFilter && evRelayerSetRoot !== relayerSetRootFilter) continue;
       candidates.push({
         sessionId,
-        relayer: evRelayer,
+        relayerSetRoot: evRelayerSetRoot,
         expiry: BigInt(expiry.toString()),
         blockNumber: log.blockNumber,
       });
@@ -208,7 +206,7 @@ async function main() {
     "[UpGas][script][revoke-session] Candidate sessions (newest first):",
     candidates.map((c) => ({
       sessionId: c.sessionId,
-      relayer: c.relayer,
+      relayerSetRoot: c.relayerSetRoot,
       expiry: c.expiry.toString(),
       block: c.blockNumber,
     }))
@@ -219,14 +217,13 @@ async function main() {
   for (const c of candidates) {
     const s = await registry.sessions(c.sessionId);
     const sTrader = (s.trader || "").toLowerCase?.() || "";
-    const sRelayer = (s.relayer || "").toLowerCase?.() || "";
     const sExpiry = BigInt(s.expiry?.toString?.() || s.expiry || 0n);
     const sRevoked = Boolean(s.revoked);
     const active = !sRevoked && sExpiry >= now;
     info("[UpGas][script][revoke-session] Inspect", {
       sessionId: c.sessionId,
       trader: sTrader,
-      relayer: sRelayer,
+      relayerSetRoot: String(s.relayerSetRoot || ""),
       expiry: sExpiry.toString(),
       revoked: sRevoked,
       active,
@@ -235,7 +232,7 @@ async function main() {
     if (!active) {
       continue;
     }
-    const canRevoke = signerAddr === sTrader || signerAddr === sRelayer;
+    const canRevoke = signerAddr === sTrader;
     if (!canRevoke) {
       warn(
         "[UpGas][script][revoke-session] Skipping: signer not authorized for session",
@@ -243,7 +240,6 @@ async function main() {
           sessionId: c.sessionId,
           signer: signerAddr,
           trader: sTrader,
-          relayer: sRelayer,
         }
       );
       continue;
@@ -251,7 +247,7 @@ async function main() {
     info("[UpGas][script][revoke-session] Revoking session", {
       sessionId: c.sessionId,
     });
-    const tx = await registry.revokeSession(c.sessionId);
+    const tx = await registry.revokeSession(c.sessionId, []);
     info("[UpGas][script][revoke-session] tx submitted", { hash: tx.hash });
     const rc = await tx.wait();
     ok("[UpGas][script][revoke-session] tx mined", {

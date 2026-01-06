@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWallet } from './useWallet'
 import { usePositions } from './usePositions'
-import { CHAIN_CONFIG } from '@/lib/contractConfig'
+import { CHAIN_CONFIG, CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/lib/contractConfig'
 
 export interface PortfolioOrdersBucket {
 	symbol: string
@@ -145,11 +145,57 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 		} catch {}
 	}, [getSessionKey])
 
-	// Ensure market info is populated before fetching orders
+	// Ensure market info is populated before fetching orders.
+	// Even though orders come from Supabase, MARKET_INFO is still required for
+	// resolving per-market OrderBook addresses used by gasless/session flows.
 	const ensureMarketInfoPopulated = useCallback(async (): Promise<void> => {
-		// Portfolio orders now come from Supabase-backed API (`/api/orders/active-buckets`),
-		// so we no longer need client-side MARKET_INFO population.
-		return
+		// Fast path: already populated in this runtime
+		if (globalState.marketInfoPopulated) return
+
+		// If another call is already in-flight, wait for it
+		if (globalState.marketInfoPopulating) {
+			try {
+				await globalState.marketInfoPopulating
+			} catch {
+				// ignore populate errors here; MARKET_INFO will simply remain empty
+			}
+			return
+		}
+
+		// If CONTRACT_ADDRESSES already has markets, mark as populated
+		try {
+			const initial = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[]
+			if (initial.length > 0) {
+				globalState.marketInfoPopulated = true
+				return
+			}
+		} catch {
+			// fall through to client-side population attempt
+		}
+
+		// One-time best-effort client-side population from Supabase
+		const populatePromise = (async () => {
+			try {
+				const added = await populateMarketInfoClient()
+				if (DEBUG_PORTFOLIO_LOGS) {
+					console.log('[ALTKN][PortfolioData] populateMarketInfoClient completed', { marketsAdded: added })
+				}
+			} catch (e: any) {
+				if (DEBUG_PORTFOLIO_LOGS) {
+					console.warn('[ALTKN][PortfolioData] populateMarketInfoClient failed', e?.message || e)
+				}
+			} finally {
+				globalState.marketInfoPopulated = true
+				globalState.marketInfoPopulating = null
+			}
+		})()
+
+		globalState.marketInfoPopulating = populatePromise
+		try {
+			await populatePromise
+		} catch {
+			// errors already logged above; callers can proceed with empty MARKET_INFO
+		}
 	}, [])
 
 	// Fetch orders with retry logic
