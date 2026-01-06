@@ -15,10 +15,15 @@
  *   LATEST_ONLY=true      // If set, revoke only the most recent active session
  *
  * Requirements:
- *   - The signer must be the trader (recommended). Relayer-based revocation requires a Merkle proof and is not supported by this script.
+ *   - The signer must be either:
+ *       - the trader (no Merkle proof required), or
+ *       - a relayer address that is part of the session's relayer set (when RELAYER_PRIVATE_KEYS_JSON / RELAYER_PRIVATE_KEY is configured; this script will compute the Merkle proof automatically).
  */
 
 const { ethers, artifacts } = require("hardhat");
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, "../../.env.local") });
+require("dotenv").config();
 
 function sep() {
   console.log("────────────────────────────────────────────────────────────");
@@ -37,6 +42,105 @@ function err(msg, extra) {
 }
 function isAddress(v) {
   return typeof v === "string" && /^0x[a-fA-F0-9]{40}$/.test(v);
+}
+
+// ============ Merkle helpers (mirror src/lib/relayerMerkle.ts) ============
+function merkleLeafForRelayer(address) {
+  const a = ethers.getAddress(address);
+  return ethers.keccak256(ethers.solidityPacked(["address"], [a]));
+}
+
+function hashPair(a, b) {
+  const aa = a.toLowerCase();
+  const bb = b.toLowerCase();
+  const [left, right] = aa <= bb ? [a, b] : [b, a];
+  return ethers.keccak256(ethers.concat([left, right]));
+}
+
+function computeRelayerProof(relayerAddresses, relayerAddress) {
+  const leaves = relayerAddresses.map(merkleLeafForRelayer);
+  const targetLeaf = merkleLeafForRelayer(relayerAddress);
+  if (leaves.length === 0) return [];
+
+  let level = [...leaves].sort((x, y) =>
+    x.toLowerCase().localeCompare(y.toLowerCase())
+  );
+  let idx = level.findIndex(
+    (x) => x.toLowerCase() === targetLeaf.toLowerCase()
+  );
+  if (idx < 0) return [];
+
+  const proof = [];
+  while (level.length > 1) {
+    const isRight = idx % 2 === 1;
+    const pairIdx = isRight ? idx - 1 : idx + 1;
+    const sibling = level[pairIdx] ?? level[idx];
+    proof.push(sibling);
+
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = level[i + 1] ?? level[i];
+      next.push(hashPair(left, right));
+    }
+    level = next;
+    idx = Math.floor(idx / 2);
+  }
+
+  return proof;
+}
+
+function parseJsonArray(json) {
+  try {
+    const v = JSON.parse(json);
+    if (!Array.isArray(v)) return [];
+    return v.map((x) => String(x || "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function normalizePk(pk) {
+  const raw = String(pk || "").trim();
+  if (!raw) return "";
+  const v = raw.startsWith("0x") ? raw : `0x${raw}`;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(v)) return "";
+  return v;
+}
+
+function loadRelayerAddressesForProof(explicitPk) {
+  const addrs = [];
+
+  const json = String(process.env.RELAYER_PRIVATE_KEYS_JSON || "").trim();
+  if (json) {
+    const raw = parseJsonArray(json);
+    for (const pkRaw of raw) {
+      const pk = normalizePk(pkRaw);
+      if (!pk) continue;
+      try {
+        const w = new ethers.Wallet(pk);
+        addrs.push(ethers.getAddress(w.address));
+      } catch {
+        // skip invalid keys
+      }
+    }
+  }
+
+  // Backward-compatible: include single RELAYER_PRIVATE_KEY when provided
+  if (explicitPk) {
+    try {
+      const w = new ethers.Wallet(explicitPk);
+      addrs.push(ethers.getAddress(w.address));
+    } catch {
+      // ignore
+    }
+  }
+
+  // De-duplicate (case-insensitive)
+  const uniq = Array.from(new Set(addrs.map((a) => a.toLowerCase()))).map((a) =>
+    ethers.getAddress(a)
+  );
+  return uniq;
 }
 
 async function main() {
@@ -92,6 +196,30 @@ async function main() {
   }
   const signerAddr = (await signer.getAddress()).toLowerCase();
   info("[UpGas][script][revoke-session] Signer", signerAddr);
+
+  // Derive relayer set (if configured) and Merkle proof for signer when acting as relayer
+  const relayerAddresses = loadRelayerAddressesForProof(relayerPk);
+  const signerInRelayerSet = relayerAddresses.some(
+    (a) => a.toLowerCase() === signerAddr
+  );
+  const relayerProofForSigner = signerInRelayerSet
+    ? computeRelayerProof(relayerAddresses, signerAddr)
+    : [];
+  if (relayerProofForSigner.length) {
+    info("[UpGas][script][revoke-session] Relayer Merkle proof ready for signer", {
+      relayerCount: relayerAddresses.length,
+      proofLength: relayerProofForSigner.length,
+    });
+  } else if (relayerAddresses.length) {
+    info(
+      "[UpGas][script][revoke-session] Signer not found in relayer set; revocation will require trader authority",
+      {
+        signer: signerAddr,
+        relayerCount: relayerAddresses.length,
+      }
+    );
+  }
+
   info("[UpGas][script][revoke-session] Target", {
     registry: registryAddress,
     trader,
@@ -112,13 +240,20 @@ async function main() {
       directSessionId
     );
     const s = await registry.sessions(directSessionId);
-    const canRevoke = signerAddr === (s.trader || "").toLowerCase();
-    if (!canRevoke) {
+    const sTrader = (s.trader || "").toLowerCase();
+    const canRevokeAsTrader = signerAddr === sTrader;
+    const canRevokeAsRelayer =
+      !canRevokeAsTrader && relayerProofForSigner.length > 0;
+    if (!canRevokeAsTrader && !canRevokeAsRelayer) {
       throw new Error(
-        `Signer ${signerAddr} is not authorized to revoke this session (requires trader).`
+        `Signer ${signerAddr} is not authorized to revoke this session (requires trader or relayer with Merkle proof).`
       );
     }
-    const tx = await registry.revokeSession(directSessionId, []);
+    const proofToUse = canRevokeAsTrader ? [] : relayerProofForSigner;
+    info("[UpGas][script][revoke-session] Revoking via", {
+      mode: canRevokeAsTrader ? "trader" : "relayer",
+    });
+    const tx = await registry.revokeSession(directSessionId, proofToUse);
     info("[UpGas][script][revoke-session] tx submitted", { hash: tx.hash });
     const rc = await tx.wait();
     ok("[UpGas][script][revoke-session] tx mined", {
@@ -232,8 +367,10 @@ async function main() {
     if (!active) {
       continue;
     }
-    const canRevoke = signerAddr === sTrader;
-    if (!canRevoke) {
+    const canRevokeAsTrader = signerAddr === sTrader;
+    const canRevokeAsRelayer =
+      !canRevokeAsTrader && relayerProofForSigner.length > 0;
+    if (!canRevokeAsTrader && !canRevokeAsRelayer) {
       warn(
         "[UpGas][script][revoke-session] Skipping: signer not authorized for session",
         {
@@ -244,10 +381,12 @@ async function main() {
       );
       continue;
     }
+    const proofToUse = canRevokeAsTrader ? [] : relayerProofForSigner;
     info("[UpGas][script][revoke-session] Revoking session", {
       sessionId: c.sessionId,
+      as: canRevokeAsTrader ? "trader" : "relayer",
     });
-    const tx = await registry.revokeSession(c.sessionId, []);
+    const tx = await registry.revokeSession(c.sessionId, proofToUse);
     info("[UpGas][script][revoke-session] tx submitted", { hash: tx.hash });
     const rc = await tx.wait();
     ok("[UpGas][script][revoke-session] tx mined", {

@@ -460,12 +460,23 @@ export async function POST(req: Request) {
                 });
               }
 
-              const price = parseBigintish(params?.price, 'price');
+              const isBuy = Boolean(params?.isBuy);
+              let price: bigint;
+              if (method === 'sessionPlaceMarginMarket') {
+                // For market orders, approximate price from top-of-book instead of expecting a client-supplied limit price
+                const bestBid = BigInt(await view.bestBid());
+                const bestAsk = BigInt(await view.bestAsk());
+                const refPrice = isBuy ? bestAsk : bestBid;
+                if (refPrice <= 0n) {
+                  throw new HttpError(400, { error: 'ob_no_liquidity_for_market', side: isBuy ? 'buy' : 'sell' });
+                }
+                price = refPrice;
+              } else {
+                price = parseBigintish(params?.price, 'price');
+              }
               const amount = parseBigintish(params?.amount, 'amount');
               if (price <= 0n) throw new HttpError(400, { error: 'price_must_be_gt_0' });
               if (amount <= 0n) throw new HttpError(400, { error: 'amount_must_be_gt_0' });
-
-              const isBuy = Boolean(params?.isBuy);
 
               // If this margin LIMIT order would immediately cross, ensure the top-of-book opposite order is also margin.
               // Otherwise OBTradeExecutionFacet will revert: "OrderBook: cannot mix margin and spot trades".

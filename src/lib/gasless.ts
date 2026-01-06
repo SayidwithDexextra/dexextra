@@ -130,6 +130,12 @@ function normalizeRelayErrorBody(body: string): string {
   if (lower.includes('session: expired') || lower.includes('expired')) {
     return 'Gasless session expired. Please re-enable gasless trading and retry.';
   }
+  if (lower.includes('crosses_spot_liquidity')) {
+    return 'Cannot execute a margin trade against spot-only liquidity at the top of the book. Cancel any spot orders on this market or place a limit order that does not immediately cross.';
+  }
+  if (lower.includes('closing_loss_exceeds_position_margin')) {
+    return 'Closing this size at the current price would realize more loss than your position margin. Reduce the close size or add collateral, then try again.';
+  }
   if (lower.includes('insufficient collateral')) {
     return 'Insufficient collateral for this order. Deposit more or reduce size.';
   }
@@ -140,6 +146,30 @@ function normalizeRelayErrorBody(body: string): string {
     return text || 'Session error. Please reconnect your wallet.';
   }
   return text || 'Relay request failed.';
+}
+
+// Lightweight classifiers so callers can adjust UX without re-parsing all errors.
+export function isSessionErrorMessage(message: string | undefined | null): boolean {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('session') ||
+    lower.includes('relayer') ||
+    lower.includes('nonce too low')
+  );
+}
+
+export function isBusinessRuleErrorMessage(message: string | undefined | null): boolean {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('crosses_spot_liquidity') ||
+    lower.includes('cannot execute a margin trade against spot-only liquidity') ||
+    lower.includes('closing_loss_exceeds_position_margin') ||
+    lower.includes('closing loss exceeds position margin') ||
+    lower.includes('insufficient collateral') ||
+    lower.includes('insufficient available collateral')
+  );
 }
 
 function normalizeNetworkError(err: any): string {

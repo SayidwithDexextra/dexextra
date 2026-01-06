@@ -3,9 +3,10 @@
 import { useState, useCallback } from 'react';
 import { parseUnits, Address } from 'viem';
 import { useWallet } from './useWallet';
-import { signAndSubmitGasless, createGaslessSession, submitSessionTrade } from '@/lib/gasless';
+import { signAndSubmitGasless, submitSessionTrade, isSessionErrorMessage } from '@/lib/gasless';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { useAluminumOrderBook, useCoreVault, useMockUSDC } from './useContract';
+import { useSession } from '@/contexts/SessionContext';
 
 // Order types
 export interface OrderParams {
@@ -50,6 +51,11 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
   });
   const { contract: coreVaultContract } = useCoreVault();
   const { contract: mockUsdcContract } = useMockUSDC();
+  const {
+    sessionId: globalSessionId,
+    sessionActive: globalSessionActive,
+    clear: clearSession,
+  } = useSession();
 
   /**
    * Check if user has enough collateral for an order
@@ -171,62 +177,35 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
       const sizeWei = parseUnits(params.size, 18); // Size in standard 18 decimals
 
       if (GASLESS && orderBookAddress && walletData.address) {
-        // Prefer session-based if available; fall back to per-action signature
-        const sessionKey = `gasless:session:${walletData.address}`;
-        let sessionId = (typeof window !== 'undefined') ? window.localStorage.getItem(sessionKey) || '' : '';
-        let triedCreate = false;
-        console.log('[UpGas][hook] limit submit: session candidate', { sessionKey, hasSessionId: !!sessionId });
-        const trySessionOnce = async (): Promise<OrderResult | null> => {
-          if (!sessionId) return null;
-          console.log('[UpGas][hook] limit submit: try session trade', { sessionId });
-          const r = await submitSessionTrade({
-            method: 'sessionPlaceMarginLimit',
-            orderBook: orderBookAddress,
-            sessionId,
-            trader: walletData.address as string,
-            priceWei: priceWei as unknown as bigint,
-            amountWei: sizeWei as unknown as bigint,
-            isBuy: params.isBuy,
-          });
-          if (!r.success) return null;
+        const activeSessionId =
+          globalSessionId ||
+          (typeof window !== 'undefined'
+            ? (window.localStorage.getItem(`gasless:session:${walletData.address}`) || '')
+            : '');
+        if (!activeSessionId || globalSessionActive !== true) {
           setIsLoading(false);
-          setLastTransaction(r.txHash || null);
-          console.log('[UpGas][hook] limit submit: success', { txHash: r.txHash });
-          return { success: true, transactionHash: r.txHash };
-        };
-        // 1) try existing session
-        let sessionResult = await trySessionOnce();
-        if (!sessionResult) {
-          // 2) create session once
-          if (!triedCreate) {
-            triedCreate = true;
-            console.log('[UpGas][hook] limit submit: creating session...');
-            const created = await createGaslessSession({
-              trader: walletData.address as string,
-            });
-            console.log('[UpGas][hook] limit submit: session init result', { success: created.success, sessionId: created.sessionId, txHash: created.txHash });
-            if (created.success && created.sessionId) {
-              sessionId = created.sessionId;
-              if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
-              sessionResult = await trySessionOnce();
-            }
-          }
+          return { success: false, error: 'Trading session is not enabled. Click Enable Trading before placing gasless limit orders.' };
         }
-        if (sessionResult) return sessionResult;
-        // 3) fallback to legacy meta
-        const res = await signAndSubmitGasless({
-          method: 'metaPlaceMarginLimit',
+        const r = await submitSessionTrade({
+          method: 'sessionPlaceMarginLimit',
           orderBook: orderBookAddress,
+          sessionId: activeSessionId,
           trader: walletData.address as string,
           priceWei: priceWei as unknown as bigint,
           amountWei: sizeWei as unknown as bigint,
           isBuy: params.isBuy,
-          deadlineSec: Math.floor(Date.now() / 1000) + 300,
         });
         setIsLoading(false);
-        if (!res.success) return { success: false, error: res.error || 'gasless failed' };
-        setLastTransaction(res.txHash || null);
-        return { success: true, transactionHash: res.txHash };
+        if (!r.success) {
+          const msg = r.error || 'Gasless limit order failed';
+          if (isSessionErrorMessage(msg)) {
+            clearSession();
+          }
+          return { success: false, error: msg };
+        }
+        setLastTransaction(r.txHash || null);
+        console.log('[UpGas][hook] limit submit: success', { txHash: r.txHash });
+        return { success: true, transactionHash: r.txHash };
       } else {
         // Place limit order (on-chain)
         const tx = await orderBookContract.write.placeMarginLimitOrder([
@@ -304,56 +283,34 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
       const sizeWei = parseUnits(params.size, 18); // Size in standard 18 decimals
 
       if (GASLESS && orderBookAddress && walletData.address) {
-        const sessionKey = `gasless:session:${walletData.address}`;
-        let sessionId = (typeof window !== 'undefined') ? window.localStorage.getItem(sessionKey) || '' : '';
-        let triedCreate = false;
-        console.log('[UpGas][hook] market submit: session candidate', { sessionKey, hasSessionId: !!sessionId });
-        const trySessionOnce = async (): Promise<OrderResult | null> => {
-          if (!sessionId) return null;
-          console.log('[UpGas][hook] market submit: try session trade', { sessionId });
-          const r = await submitSessionTrade({
-            method: 'sessionPlaceMarginMarket',
-            orderBook: orderBookAddress,
-            sessionId,
-            trader: walletData.address as string,
-            amountWei: sizeWei as unknown as bigint,
-            isBuy: params.isBuy,
-          });
-          if (!r.success) return null;
+        const activeSessionId =
+          globalSessionId ||
+          (typeof window !== 'undefined'
+            ? (window.localStorage.getItem(`gasless:session:${walletData.address}`) || '')
+            : '');
+        if (!activeSessionId || globalSessionActive !== true) {
           setIsLoading(false);
-          setLastTransaction(r.txHash || null);
-        console.log('[UpGas][hook] market submit: success', { txHash: r.txHash });
-          return { success: true, transactionHash: r.txHash };
-        };
-        let sessionResult = await trySessionOnce();
-        if (!sessionResult) {
-          if (!triedCreate) {
-            triedCreate = true;
-            console.log('[UpGas][hook] market submit: creating session...');
-            const created = await createGaslessSession({
-              trader: walletData.address as string,
-            });
-            console.log('[UpGas][hook] market submit: session init result', { success: created.success, sessionId: created.sessionId, txHash: created.txHash });
-            if (created.success && created.sessionId) {
-              sessionId = created.sessionId;
-              if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
-              sessionResult = await trySessionOnce();
+          return { success: false, error: 'Trading session is not enabled. Click Enable Trading before placing gasless market orders.' };
             }
-          }
-        }
-        if (sessionResult) return sessionResult;
-        const res = await signAndSubmitGasless({
-          method: 'metaPlaceMarginMarket',
+        const r = await submitSessionTrade({
+          method: 'sessionPlaceMarginMarket',
           orderBook: orderBookAddress,
+          sessionId: activeSessionId,
           trader: walletData.address as string,
           amountWei: sizeWei as unknown as bigint,
           isBuy: params.isBuy,
-          deadlineSec: Math.floor(Date.now() / 1000) + 300,
         });
         setIsLoading(false);
-        if (!res.success) return { success: false, error: res.error || 'gasless failed' };
-        setLastTransaction(res.txHash || null);
-        return { success: true, transactionHash: res.txHash };
+        if (!r.success) {
+          const msg = r.error || 'Gasless market order failed';
+          if (isSessionErrorMessage(msg)) {
+            clearSession();
+          }
+          return { success: false, error: msg };
+        }
+        setLastTransaction(r.txHash || null);
+        console.log('[UpGas][hook] market submit: success', { txHash: r.txHash });
+        return { success: true, transactionHash: r.txHash };
       } else {
         // Place market order (on-chain)
         const tx = await orderBookContract.write.placeMarginMarketOrder([
@@ -403,54 +360,33 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
       if (GASLESS && orderBookAddress && walletData.address) {
         let oid: bigint;
         try { oid = BigInt(orderId); } catch { oid = BigInt(orderId as any); }
-        const sessionKey = `gasless:session:${walletData.address}`;
-        let sessionId = (typeof window !== 'undefined') ? window.localStorage.getItem(sessionKey) || '' : '';
-        let triedCreate = false;
-        console.log('[UpGas][hook] cancel: session candidate', { sessionKey, hasSessionId: !!sessionId });
-        const trySessionOnce = async (): Promise<OrderResult | null> => {
-          if (!sessionId) return null;
-          console.log('[UpGas][hook] cancel: try session trade', { sessionId });
-          const r = await submitSessionTrade({
-            method: 'sessionCancelOrder',
-            orderBook: orderBookAddress,
-            sessionId,
-            trader: walletData.address as string,
-            orderId: oid as unknown as bigint,
-          });
-          if (!r.success) return null;
+        const activeSessionId =
+          globalSessionId ||
+          (typeof window !== 'undefined'
+            ? (window.localStorage.getItem(`gasless:session:${walletData.address}`) || '')
+            : '');
+        if (!activeSessionId || globalSessionActive !== true) {
           setIsLoading(false);
-          setLastTransaction(r.txHash || null);
-          console.log('[UpGas][hook] cancel: success', { txHash: r.txHash });
-          return { success: true, transactionHash: r.txHash };
-        };
-        let sessionResult = await trySessionOnce();
-        if (!sessionResult) {
-          if (!triedCreate) {
-            triedCreate = true;
-            console.log('[UpGas][hook] cancel: creating session...');
-            const created = await createGaslessSession({
-              trader: walletData.address as string,
-            });
-            console.log('[UpGas][hook] cancel: session init result', { success: created.success, sessionId: created.sessionId, txHash: created.txHash });
-            if (created.success && created.sessionId) {
-              sessionId = created.sessionId;
-              if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
-              sessionResult = await trySessionOnce();
+          return { success: false, error: 'Trading session is not enabled. Click Enable Trading before using gasless cancel.' };
             }
-          }
-        }
-        if (sessionResult) return sessionResult;
-        const res = await signAndSubmitGasless({
-          method: 'metaCancelOrder',
+        const r = await submitSessionTrade({
+          method: 'sessionCancelOrder',
           orderBook: orderBookAddress,
+          sessionId: activeSessionId,
           trader: walletData.address as string,
-          orderId: oid,
-          deadlineSec: Math.floor(Date.now() / 1000) + 300,
+          orderId: oid as unknown as bigint,
         });
         setIsLoading(false);
-        if (!res.success) return { success: false, error: res.error || 'gasless failed' };
-        setLastTransaction(res.txHash || null);
-        return { success: true, transactionHash: res.txHash };
+        if (!r.success) {
+          const msg = r.error || 'Gasless cancel failed';
+          if (isSessionErrorMessage(msg)) {
+            clearSession();
+          }
+          return { success: false, error: msg };
+        }
+        setLastTransaction(r.txHash || null);
+        console.log('[UpGas][hook] cancel: success', { txHash: r.txHash });
+        return { success: true, transactionHash: r.txHash };
       } else {
         const tx = await orderBookContract.write.cancelOrder([orderId as `0x${string}`]);
         await tx.wait();

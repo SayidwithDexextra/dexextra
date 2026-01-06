@@ -11,10 +11,11 @@ import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
 import { usePortfolioData } from '@/hooks/usePortfolioData';
 import type { Address } from 'viem';
-import { signAndSubmitGasless, createGaslessSession, submitSessionTrade } from '@/lib/gasless';
+import { signAndSubmitGasless, submitSessionTrade, isSessionErrorMessage } from '@/lib/gasless';
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { gaslessTopUpPosition } from '@/lib/gaslessTopup';
 import { parseUnits } from 'viem';
+import { useSession } from '@/contexts/SessionContext';
 
 // Public USDC icon (fallback to Circle's official)
 const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
@@ -131,6 +132,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
     return map;
   }, [markets]);
+  const {
+    sessionId: globalSessionId,
+    sessionActive: globalSessionActive,
+    clear: clearSession,
+  } = useSession();
   
   // Optimistic overlay for positions on trade events (prevents "revert" when vault reads lag a block).
   // We keep small deltas for a short TTL and render basePositions + deltas.
@@ -536,34 +542,31 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         const obAddress = resolveOrderBookAddress(closeSymbol || pos?.symbol);
         if (!obAddress) throw new Error('OrderBook not found for market');
         const amountWei = parseUnits(closeSize, 18);
-        // session flow
-        const sessionKey = `gasless:session:${walletAddress}`;
-        let sessionId = (typeof window !== 'undefined') ? window.localStorage.getItem(sessionKey) || '' : '';
-        const trySessionOnce = async (): Promise<string | null> => {
-          if (!sessionId) return null;
+        // session flow (no auto session creation)
+        const activeSessionId =
+          globalSessionId ||
+          (typeof window !== 'undefined'
+            ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+            : '');
+        if (!activeSessionId || globalSessionActive !== true) {
+          throw new Error('Trading session is not enabled. Click Enable Trading before closing positions gaslessly.');
+        }
           const r = await submitSessionTrade({
             method: 'sessionPlaceMarginMarket',
             orderBook: obAddress,
-            sessionId,
+          sessionId: activeSessionId,
             trader: walletAddress as string,
             amountWei: amountWei as unknown as bigint,
             isBuy,
           });
-          if (!r.success) return null;
-          return r.txHash || null;
-        };
-        let txHash = await trySessionOnce();
-        if (!txHash) {
-          const created = await createGaslessSession({
-            trader: walletAddress as string,
-          });
-          if (created.success && created.sessionId) {
-            sessionId = created.sessionId;
-            if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
-            txHash = await trySessionOnce();
+        if (!r.success) {
+          const msg = r.error || 'Gasless close failed';
+          if (isSessionErrorMessage(msg)) {
+            clearSession();
+            throw new Error(msg || 'Trading session expired. Click Enable Trading to re-enable gasless trading.');
           }
+          throw new Error(msg);
         }
-        if (!txHash) throw new Error('Gasless close failed');
         try {
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('ordersUpdated', { detail: { symbol: metricId, reason: 'close', timestamp: Date.now() } }));
@@ -1209,33 +1212,30 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 let oid: bigint;
                                                 try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
                                                 if (oid === 0n) throw new Error('Invalid order id');
-                                                // session-based cancel
-                                                const sessionKey = `gasless:session:${walletAddress}`;
-                                                let sessionId = (typeof window !== 'undefined') ? window.localStorage.getItem(sessionKey) || '' : '';
-                                                const trySessionCancel = async (): Promise<string | null> => {
-                                                  if (!sessionId) return null;
+                                                // session-based cancel (no auto session creation)
+                                                const activeSessionId =
+                                                  globalSessionId ||
+                                                  (typeof window !== 'undefined'
+                                                    ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+                                                    : '');
+                                                if (!activeSessionId || globalSessionActive !== true) {
+                                                  throw new Error('Trading session is not enabled. Click Enable Trading before using gasless cancel.');
+                                                }
                                                   const r = await submitSessionTrade({
                                                     method: 'sessionCancelOrder',
                                                     orderBook: obAddress,
-                                                    sessionId,
+                                                  sessionId: activeSessionId,
                                                     trader: walletAddress as string,
                                                     orderId: oid as unknown as bigint,
                                                   });
-                                                  if (!r.success) return null;
-                                                  return r.txHash || null;
-                                                };
-                                                let txHash = await trySessionCancel();
-                                                if (!txHash) {
-                                                  const created = await createGaslessSession({
-                                                    trader: walletAddress as string,
-                                                  });
-                                                  if (created.success && created.sessionId) {
-                                                    sessionId = created.sessionId;
-                                                    if (typeof window !== 'undefined') window.localStorage.setItem(sessionKey, sessionId);
-                                                    txHash = await trySessionCancel();
+                                                if (!r.success) {
+                                                  const msg = r.error || 'Gasless cancel failed';
+                                                  if (isSessionErrorMessage(msg)) {
+                                                    clearSession();
+                                                    throw new Error(msg || 'Trading session expired. Click Enable Trading to re-enable gasless trading.');
                                                   }
+                                                  throw new Error(msg);
                                                 }
-                                                if (!txHash) throw new Error('Gasless cancel failed');
                                                 showSuccess('Order cancelled successfully');
                                                 setOptimisticallyRemovedOrderIds(prev => {
                                                   const next = new Set(prev);
