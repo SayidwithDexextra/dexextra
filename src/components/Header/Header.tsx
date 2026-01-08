@@ -19,6 +19,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
 import DepositModal from '../DepositModal/DepositModal'
@@ -273,7 +274,11 @@ export default function Header() {
       >
         {/* Brand + Search Section */}
         <div className="flex items-center flex-1 max-w-xl gap-3">
-          <div className="flex items-center gap-2 pr-3 border-r border-[#2f2f2f]">
+          <Link 
+            href="/" 
+            className="flex items-center gap-2 pr-3 border-r border-[#2f2f2f]"
+            aria-label="Go to Dexetera home"
+          >
             <Image
               src="/Dexicon/LOGO-Dexetera-02.svg" // Transparent mark
               alt="Dexetera"
@@ -288,7 +293,7 @@ export default function Header() {
             >
               Dexetera
             </span>
-          </div>
+          </Link>
           <div className="relative w-full max-w-sm">
             <div 
               className="absolute left-3 top-1/2 transform -translate-y-1/2 z-10 pointer-events-none"
