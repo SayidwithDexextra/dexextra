@@ -11,10 +11,13 @@ import MarketTickerCardContainer from '@/components/MarketTickerCard/MarketTicke
 import { MarketTickerCardData } from '@/components/MarketTickerCard/types';
 import { useMarketOverview } from '@/hooks/useMarketOverview';
 import { transformOverviewToCards, sortMarketsByPriority } from '@/lib/marketTransformers';
+import { MarketToolbar } from '@/components/MarketToolbar';
 
 export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductCardData | null>(null);
+  const [selectedFilter, setSelectedFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const router = useRouter();
 
   // Fetch active markets from the materialized view with latest mark prices
@@ -33,8 +36,64 @@ export default function Home() {
   // Memoize sorted markets and card data to prevent unnecessary recalculations
   const sortedMarkets = useMemo(() => sortMarketsByPriority(overview as any), [overview]);
   
+  // Extract unique categories from markets for filter options
+  const marketFilters = useMemo(() => {
+    const categories = new Set<string>();
+    (sortedMarkets as any[]).forEach((market) => {
+      if (market.category) {
+        categories.add(market.category);
+      }
+    });
+    
+    // Format category labels: capitalize only first letter of each word
+    const formatCategoryLabel = (category: string): string => {
+      if (!category) return '';
+      return category
+        .split(' ')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+    };
+
+    const filters = [
+      { id: 'all', label: 'All' },
+      ...Array.from(categories).map((cat) => ({
+        id: cat.toLowerCase().replace(/\s+/g, '-'),
+        label: formatCategoryLabel(cat),
+        category: cat,
+      })),
+    ];
+    
+    return filters;
+  }, [sortedMarkets]);
+
+  // Filter and search markets
+  const filteredMarkets = useMemo(() => {
+    let filtered = sortedMarkets as any[];
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter((market) => {
+        const name = (market.name || market.symbol || market.market_identifier || '').toLowerCase();
+        const category = (market.category || '').toLowerCase();
+        const description = (market.description || '').toLowerCase();
+        return name.includes(query) || category.includes(query) || description.includes(query);
+      });
+    }
+    
+    // Apply category filter (if not 'all')
+    if (selectedFilter !== 'all') {
+      filtered = filtered.filter((market) => {
+        const category = (market.category || '').toLowerCase().replace(/\s+/g, '-');
+        return category === selectedFilter.toLowerCase();
+      });
+    }
+    
+    return filtered;
+  }, [sortedMarkets, searchQuery, selectedFilter]);
+  
   // Transform markets to card data format using the new transformer
-  const marketCardData = useMemo(() => transformOverviewToCards(sortedMarkets as any), [sortedMarkets]);
+  const marketCardData = useMemo(() => transformOverviewToCards(filteredMarkets as any), [filteredMarkets]);
   
   const recentEvents: any[] = []
   const eventsLoading = false
@@ -150,33 +209,32 @@ export default function Home() {
                 Retry
               </button>
             </div>
-          ) : marketsLoading && !marketCardData.length ? (
-            <div className="space-y-4">
-              <div className="h-8 bg-gray-700/50 rounded-md animate-pulse w-48" />
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-48 bg-gray-700/50 rounded-lg animate-pulse" />
-                ))}
-              </div>
-            </div>
-          ) : marketCardData.length > 0 ? (
+          ) : (
             <MarketTickerCardContainer
               title="Active Markets"
-              cards={marketCardData}
+              variant="inline"
+              cards={marketCardData.length > 0 ? marketCardData : []}
               onCardLongPosition={handleMarketCardLongPosition}
               onCardShortPosition={handleMarketCardShortPosition}
-              isLoading={marketsLoading} // Pass loading state to show refresh indicators
+              isLoading={marketsLoading}
+              toolbar={
+                <MarketToolbar
+                  filters={marketFilters}
+                  selectedFilter={selectedFilter}
+                  onFilterChange={setSelectedFilter}
+                  onSearch={setSearchQuery}
+                  onFilterClick={() => {
+                    // TODO: Implement filter modal/dropdown
+                    console.log('Filter clicked');
+                  }}
+                  onSavedClick={() => {
+                    // TODO: Implement saved markets view
+                    console.log('Saved markets clicked');
+                  }}
+                  savedCount={0}
+                />
+              }
             />
-          ) : (
-            <div className="text-center py-12">
-              <p className="text-gray-400 mb-4">No markets found</p>
-              <button 
-                onClick={() => refetchMarkets()}
-                className="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 rounded-md text-blue-500"
-              >
-                Refresh Markets
-              </button>
-            </div>
           )}
         </div>
       </div>

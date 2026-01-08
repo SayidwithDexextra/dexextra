@@ -177,6 +177,11 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       if (String(payload.marketId || '').toUpperCase() !== String(marketId).toUpperCase()) return;
       if (!Array.isArray(payload.orders)) return;
       const orders = payload.orders as OrderBookOrder[];
+      if (orders.length === 0) {
+        // Drop stale empty cache to avoid persisting blanks for markets without orders
+        window.sessionStorage.removeItem(key);
+        return;
+      }
       setState(prev => ({
         ...prev,
         activeOrders: orders
@@ -198,6 +203,11 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     if (!walletAddress || !marketId) return;
     try {
       const key = getOrdersSessionKey(walletAddress, marketId);
+      if (!orders?.length) {
+        // Do not persist empty markets; clean up any stale cache
+        window.sessionStorage.removeItem(key);
+        return;
+      }
       const payload: OrdersSessionCachePayload = {
         version: 1,
         chainId: (CHAIN_CONFIG as any)?.chainId ?? 'unknown',

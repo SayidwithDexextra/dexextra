@@ -15,6 +15,8 @@ export interface MarketTickerCardProps {
   totalVolume?: number;
   totalTrades?: number;
   settlementDate?: string;
+  // Percentage change for inline card design
+  priceChangePercent?: number;
 }
 
 export interface MarketTickerCardData {
@@ -32,4 +34,6 @@ export interface MarketTickerCardData {
   settlementDate?: string;
   metricId?: string;
   description?: string;
+  // Percentage change for inline card design
+  priceChangePercent?: number;
 } 

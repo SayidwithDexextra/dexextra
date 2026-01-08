@@ -20,11 +20,12 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
 }) => {
   const formattedPrice = (() => {
     const safePrice = Number.isFinite(price) ? price : 0;
+    const resolvedCurrency = currency && currency.trim() ? currency : '$';
     // If currency looks like an ISO code (e.g. "USD"), let Intl handle symbol + separators.
-    if (/^[A-Z]{3}$/.test(currency)) {
+    if (/^[A-Z]{3}$/.test(resolvedCurrency)) {
       return new Intl.NumberFormat('en-US', {
         style: 'currency',
-        currency,
+        currency: resolvedCurrency,
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       }).format(safePrice);
@@ -35,7 +36,7 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(safePrice);
-    return `${currency}${numberPart}`;
+    return `${resolvedCurrency}${numberPart}`;
   })();
 
   const handleLongPosition = () => {
@@ -80,7 +81,10 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
         {/* Header with Title and Price */}
         <div className={styles.header}>
           <h3 className={styles.title}>{title}</h3>
-          <span className={styles.price}>{formattedPrice}</span>
+          <div className={styles.priceRow}>
+            <span className={styles.priceIcon} aria-hidden="true">$</span>
+            <span className={styles.price}>{formattedPrice}</span>
+          </div>
         </div>
 
         {/* Categories */}

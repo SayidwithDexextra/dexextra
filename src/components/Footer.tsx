@@ -7,6 +7,8 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useWallet } from '@/hooks/useWallet';
 
 const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED']);
+const ORDERBOOK_PREFIX = 'orderbook:activeOrders:';
+const PORTFOLIO_PREFIX = 'portfolio:orders:';
 
 function isActiveOrderStatus(status: unknown): boolean {
   const normalized = String(status || '').trim().toUpperCase();
@@ -53,12 +55,10 @@ const Footer: React.FC = () => {
       for (let i = 0; i < window.sessionStorage.length; i++) {
         const key = window.sessionStorage.key(i);
         if (!key) continue;
-        if (
-          !key.startsWith('portfolio:orders:') &&
-          !key.startsWith('orderbook:activeOrders:')
-        ) {
-          continue;
-        }
+
+        const isPortfolioKey = key.startsWith(PORTFOLIO_PREFIX);
+        const isOrderbookKey = key.startsWith(ORDERBOOK_PREFIX);
+        if (!isPortfolioKey && !isOrderbookKey) continue;
 
         const raw = window.sessionStorage.getItem(key);
         if (!raw) continue;
@@ -73,17 +73,26 @@ const Footer: React.FC = () => {
         const payloadWallet = String(payload?.walletAddress || '').toLowerCase();
         if (!payloadWallet || payloadWallet !== lowerWallet) continue;
 
-        if (key.startsWith('portfolio:orders:')) {
+        if (isPortfolioKey) {
+          const version = Number((payload as any)?.version || 0);
+          if (version && version !== 1) continue;
           const buckets = Array.isArray(payload?.buckets) ? payload.buckets : [];
           for (const bucket of buckets) {
             const orders = Array.isArray(bucket?.orders) ? bucket.orders : [];
             if (!orders.length) continue;
-            pushSymbol(bucket?.symbol || bucket?.token || bucket?.metricId || bucket?.marketId);
+            pushSymbol(
+              bucket?.symbol ||
+                bucket?.token ||
+                bucket?.metricId ||
+                bucket?.marketId
+            );
           }
           continue;
         }
 
-        if (key.startsWith('orderbook:activeOrders:')) {
+        if (isOrderbookKey) {
+          const version = Number((payload as any)?.version || 0);
+          if (version && version !== 1) continue;
           const orders = Array.isArray(payload?.orders) ? payload.orders : [];
           const hasActive = orders.some((o) => isActiveOrderStatus((o as any)?.status));
           if (!hasActive) continue;
@@ -146,7 +155,10 @@ const Footer: React.FC = () => {
       return sym !== String(currentTokenSymbol).toUpperCase();
     });
 
-    return filtered.slice(0, 3).map((sym) => ({
+    const symbolsForLinks =
+      filtered.length > 0 ? filtered.slice(0, 3) : combinedActiveSymbols.slice(0, 3);
+
+    return symbolsForLinks.map((sym) => ({
       label: sym,
       href: `/token/${encodeURIComponent(sym)}`,
       title: 'Your active market',
@@ -159,7 +171,7 @@ const Footer: React.FC = () => {
     { label: 'Portfolio', href: '/portfolio', title: 'View portfolio' },
   ]), []);
 
-  const showActiveMarketShortcuts = activeMarketLinks.length > 0;
+  const showActiveMarketShortcuts = combinedActiveSymbols.length > 0;
   const footerNavLinks = showActiveMarketShortcuts ? activeMarketLinks : secondaryNavLinks;
   
   // Create tooltip text for ETH price
