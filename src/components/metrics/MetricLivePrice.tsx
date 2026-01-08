@@ -123,14 +123,21 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
       try {
         const { data, error } = await supabase
           .from('markets')
-          .select('market_config, proposed_settlement_value, settlement_window_expires_at, market_address, chain_id')
+          .select('market_config, initial_order, proposed_settlement_value, settlement_window_expires_at, market_address, chain_id')
           .eq('id', resolvedId)
           .maybeSingle();
         if (cancelled) return;
         if (error) { setSourceUrl(null); return; }
-        const loc = (data as any)?.market_config?.ai_source_locator || null;
-        const url = loc?.url || loc?.primary_source_url || null;
-        setSourceUrl(url || null);
+        // Check for metric URL in initial_order first (primary source)
+        const initialOrderMetricUrl = (data as any)?.initial_order?.metricUrl || (data as any)?.initial_order?.metric_url || null;
+        if (initialOrderMetricUrl) {
+          setSourceUrl(initialOrderMetricUrl);
+        } else {
+          // Fallback to market_config.ai_source_locator
+          const loc = (data as any)?.market_config?.ai_source_locator || null;
+          const url = loc?.url || loc?.primary_source_url || null;
+          setSourceUrl(url || null);
+        }
 
         // Store market address for on-chain reads (preferred source of truth)
         const addr = (data as any)?.market_address as string | undefined;

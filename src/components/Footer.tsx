@@ -1,9 +1,18 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useETHPrice } from '../hooks/useETHPrice';
 import { useActiveMarkets } from '@/contexts/ActiveMarketsContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useWallet } from '@/hooks/useWallet';
+
+const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED']);
+
+function isActiveOrderStatus(status: unknown): boolean {
+  const normalized = String(status || '').trim().toUpperCase();
+  if (!normalized) return true;
+  return !INACTIVE_ORDER_STATUSES.has(normalized);
+}
 
 const Footer: React.FC = () => {
   const pathname = usePathname();
@@ -19,6 +28,89 @@ const Footer: React.FC = () => {
 
   const { rankedSymbols } = useActiveMarkets();
   const { theme } = useTheme();
+  const { walletData } = useWallet() as any;
+  const walletAddress: string | null = walletData?.address || null;
+  const [sessionOrderSymbols, setSessionOrderSymbols] = useState<string[]>([]);
+
+  const hydrateSessionOrderSymbols = useCallback(() => {
+    if (typeof window === 'undefined' || !walletAddress) {
+      setSessionOrderSymbols([]);
+      return;
+    }
+
+    try {
+      const lowerWallet = walletAddress.toLowerCase();
+      const dedup = new Set<string>();
+      const next: string[] = [];
+
+      const pushSymbol = (value: unknown) => {
+        const symbol = String(value || '').toUpperCase();
+        if (!symbol || dedup.has(symbol)) return;
+        dedup.add(symbol);
+        next.push(symbol);
+      };
+
+      for (let i = 0; i < window.sessionStorage.length; i++) {
+        const key = window.sessionStorage.key(i);
+        if (!key) continue;
+        if (
+          !key.startsWith('portfolio:orders:') &&
+          !key.startsWith('orderbook:activeOrders:')
+        ) {
+          continue;
+        }
+
+        const raw = window.sessionStorage.getItem(key);
+        if (!raw) continue;
+
+        let payload: any;
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+
+        const payloadWallet = String(payload?.walletAddress || '').toLowerCase();
+        if (!payloadWallet || payloadWallet !== lowerWallet) continue;
+
+        if (key.startsWith('portfolio:orders:')) {
+          const buckets = Array.isArray(payload?.buckets) ? payload.buckets : [];
+          for (const bucket of buckets) {
+            const orders = Array.isArray(bucket?.orders) ? bucket.orders : [];
+            if (!orders.length) continue;
+            pushSymbol(bucket?.symbol || bucket?.token || bucket?.metricId || bucket?.marketId);
+          }
+          continue;
+        }
+
+        if (key.startsWith('orderbook:activeOrders:')) {
+          const orders = Array.isArray(payload?.orders) ? payload.orders : [];
+          const hasActive = orders.some((o) => isActiveOrderStatus((o as any)?.status));
+          if (!hasActive) continue;
+          pushSymbol(payload?.marketId || payload?.symbol);
+        }
+      }
+
+      setSessionOrderSymbols(next);
+    } catch {
+      setSessionOrderSymbols([]);
+    }
+  }, [walletAddress]);
+
+  useEffect(() => {
+    hydrateSessionOrderSymbols();
+  }, [hydrateSessionOrderSymbols]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler: EventListener = () => {
+      hydrateSessionOrderSymbols();
+    };
+    window.addEventListener('ordersUpdated', handler);
+    return () => {
+      window.removeEventListener('ordersUpdated', handler);
+    };
+  }, [hydrateSessionOrderSymbols]);
 
   const currentTokenSymbol = useMemo(() => {
     const path = String(pathname || '');
@@ -32,26 +124,43 @@ const Footer: React.FC = () => {
     }
   }, [pathname]);
 
-  const topMarketLinks = useMemo(() => {
-    const ranked = Array.isArray(rankedSymbols) ? rankedSymbols : [];
-    const filtered = ranked.filter(s => !currentTokenSymbol || String(s).toUpperCase() !== currentTokenSymbol);
-    const top3 = filtered.slice(0, 3);
+  const combinedActiveSymbols = useMemo(() => {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    const push = (value: unknown) => {
+      const symbol = String(value || '').toUpperCase();
+      if (!symbol || seen.has(symbol)) return;
+      seen.add(symbol);
+      ordered.push(symbol);
+    };
 
-    if (top3.length > 0) {
-      return top3.map((sym) => ({
-        label: sym,
-        href: `/token/${encodeURIComponent(sym)}`,
-        title: 'Your active market',
-      }));
-    }
+    (rankedSymbols || []).forEach(push);
+    sessionOrderSymbols.forEach(push);
+    return ordered;
+  }, [rankedSymbols, sessionOrderSymbols]);
 
-    // Fallback (no wallet involvement yet)
-    return [
-      { label: 'Explore', href: '/explore', title: 'Explore markets' },
-      { label: 'Markets', href: '/markets', title: 'Browse markets' },
-      { label: 'Portfolio', href: '/portfolio', title: 'View portfolio' },
-    ];
-  }, [rankedSymbols, currentTokenSymbol]);
+  const activeMarketLinks = useMemo(() => {
+    const filtered = combinedActiveSymbols.filter((sym) => {
+      if (!sym) return false;
+      if (!currentTokenSymbol) return true;
+      return sym !== String(currentTokenSymbol).toUpperCase();
+    });
+
+    return filtered.slice(0, 3).map((sym) => ({
+      label: sym,
+      href: `/token/${encodeURIComponent(sym)}`,
+      title: 'Your active market',
+    }));
+  }, [combinedActiveSymbols, currentTokenSymbol]);
+
+  const secondaryNavLinks = useMemo(() => ([
+    { label: 'Explore', href: '/explore', title: 'Explore markets' },
+    { label: 'Markets', href: '/markets', title: 'Browse markets' },
+    { label: 'Portfolio', href: '/portfolio', title: 'View portfolio' },
+  ]), []);
+
+  const showActiveMarketShortcuts = activeMarketLinks.length > 0;
+  const footerNavLinks = showActiveMarketShortcuts ? activeMarketLinks : secondaryNavLinks;
   
   // Create tooltip text for ETH price
   const getETHPriceTooltip = () => {
@@ -444,6 +553,7 @@ const Footer: React.FC = () => {
             fontSize: '12px',
             fontWeight: '500',
             color: '#FFFFFF',
+            flexWrap: 'wrap',
           }}
         >
           <span
@@ -456,34 +566,40 @@ const Footer: React.FC = () => {
               whiteSpace: 'nowrap',
             }}
           >
-            Active Markets:
+            {showActiveMarketShortcuts ? 'Active Markets:' : 'Quick Links:'}
           </span>
-          {topMarketLinks.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              title={l.title}
-              style={{
-                padding: '2px 6px',
-                border: '1px solid #333333',
-                borderRadius: '4px',
-                color: '#FFFFFF',
-                textDecoration: 'none',
-                cursor: 'pointer',
-                transition: 'opacity 0.2s ease, border-color 0.2s ease',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.opacity = '0.9';
-                e.currentTarget.style.borderColor = '#444444';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = '1';
-                e.currentTarget.style.borderColor = '#333333';
-              }}
-            >
-              {l.label}
-            </Link>
-          ))}
+          {footerNavLinks.map((l) => {
+            const isActive = showActiveMarketShortcuts;
+            const baseBorder = isActive ? '#333333' : '#2A2A2A';
+            const hoverBorder = isActive ? '#444444' : '#3A3A3A';
+            const keyPrefix = isActive ? 'active' : 'nav';
+            return (
+              <Link
+                key={`${keyPrefix}-${l.href}`}
+                href={l.href}
+                title={l.title}
+                style={{
+                  padding: '2px 6px',
+                  border: `1px solid ${baseBorder}`,
+                  borderRadius: '4px',
+                  color: '#FFFFFF',
+                  textDecoration: 'none',
+                  cursor: 'pointer',
+                  transition: 'opacity 0.2s ease, border-color 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.opacity = '0.9';
+                  e.currentTarget.style.borderColor = hoverBorder;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.opacity = '1';
+                  e.currentTarget.style.borderColor = baseBorder;
+                }}
+              >
+                {l.label}
+              </Link>
+            );
+          })}
         </div>
 
         {/* Volume Control */}

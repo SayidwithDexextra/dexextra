@@ -5,6 +5,8 @@ import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { useMarginSummary } from '@/hooks/useMarginSummary';
+import { usePortfolioData, type PortfolioOrdersBucket } from '@/hooks/usePortfolioData';
+import type { OrderBookOrder } from '@/hooks/useOrderBook';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
@@ -29,6 +31,110 @@ interface TradingPanelProps {
     lastUpdated?: string;
   };
 }
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
+
+const normalizeOrderStatusForPanel = (rawStatus: any): OrderBookOrder['status'] => {
+  const status = String(rawStatus || '').trim().toLowerCase();
+  if (!status || status === 'pending' || status === 'open' || status === 'submitted') return 'pending';
+  if (status === 'partial' || status === 'partially_filled') return 'partially_filled';
+  if (status === 'filled') return 'filled';
+  if (status === 'expired') return 'expired';
+  if (status === 'cancelled' || status === 'canceled' || status === 'rejected') return 'cancelled';
+  return 'pending';
+};
+
+const normalizeQuantityForPanel = (qty: number): number => {
+  const n = Number.isFinite(qty) ? Math.abs(qty) : 0;
+  if (n >= 1_000_000) return n / 1_000_000_000_000;
+  return n;
+};
+
+const parseTimestamp = (value: any): number => {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1_000_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === 'string' && value) {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+};
+
+const mapBucketOrderToOrderBookOrder = (
+  rawOrder: any,
+  symbolUpper: string,
+  traderAddress?: string | null
+): OrderBookOrder | null => {
+  if (!rawOrder) return null;
+  const id = String(rawOrder?.order_id ?? rawOrder?.id ?? '').trim();
+  if (!id) return null;
+
+  const qty = normalizeQuantityForPanel(Number(rawOrder?.quantity ?? rawOrder?.size ?? 0));
+  if (!(qty > 0)) return null;
+
+  const filledQty = normalizeQuantityForPanel(
+    Number(rawOrder?.filled_quantity ?? rawOrder?.filledQuantity ?? rawOrder?.filled ?? 0)
+  );
+
+  const status = normalizeOrderStatusForPanel(rawOrder?.order_status ?? rawOrder?.status);
+  if (status === 'filled' || status === 'cancelled' || status === 'expired') return null;
+
+  const sideStr = String(rawOrder?.side ?? (rawOrder?.isBuy ? 'buy' : 'sell')).toLowerCase();
+  const isBuy = sideStr !== 'sell';
+  const priceRaw = rawOrder?.price ?? 0;
+  const price =
+    typeof priceRaw === 'string'
+      ? parseFloat(priceRaw)
+      : Number.isFinite(priceRaw)
+        ? Number(priceRaw)
+        : 0;
+
+  const expiryCandidate = rawOrder?.expiry_time ?? rawOrder?.expiry_ts ?? rawOrder?.expiry;
+  const expiryTime = expiryCandidate ? parseTimestamp(expiryCandidate) : undefined;
+
+  return {
+    id,
+    trader: (traderAddress ?? ZERO_ADDRESS) as Address,
+    price: Number.isFinite(price) ? price : 0,
+    size: qty,
+    quantity: qty,
+    filledQuantity: filledQty,
+    filled: filledQty,
+    isBuy,
+    side: isBuy ? 'buy' : 'sell',
+    status,
+    timestamp: parseTimestamp(rawOrder?.updated_at ?? rawOrder?.created_at ?? rawOrder?.timestamp),
+    ...(expiryTime ? { expiryTime } : {}),
+  };
+};
+
+const deriveOrdersForSymbolFromBuckets = (
+  buckets: PortfolioOrdersBucket[] | undefined,
+  symbolUpper: string | null,
+  traderAddress?: string | null
+): OrderBookOrder[] => {
+  if (!symbolUpper || !Array.isArray(buckets)) return [];
+  const bucket = buckets.find(
+    (b) => String(b?.symbol || '').toUpperCase() === symbolUpper
+  );
+  if (!bucket) return [];
+
+  const results = (bucket?.orders || [])
+    .map((order: any) => mapBucketOrderToOrderBookOrder(order, symbolUpper, traderAddress))
+    .filter((order): order is OrderBookOrder => Boolean(order))
+    .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+
+  return results;
+};
+
+const SESSION_STORAGE_PREFIX = 'orderbook:activeOrders:v1:';
+const isActiveOrder = (order: OrderBookOrder | null | undefined): order is OrderBookOrder => {
+  if (!order || !order.id) return false;
+  const status = String(order.status || '').toLowerCase();
+  return status !== 'filled' && status !== 'cancelled' && status !== 'canceled' && status !== 'expired';
+};
 
 export default function TradingPanel({ tokenData, initialAction, marketData }: TradingPanelProps) {
   const wallet = useWallet() as any;
@@ -68,7 +174,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     markPrice,
     indexPrice,
     fundingRate,
-    activeOrders,
+    activeOrders: orderBookActiveOrders,
     isLoading: orderBookLoading,
     error: orderBookError
   } = orderBookState;
@@ -78,12 +184,113 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     placeMarketOrder,
     placeLimitOrder,
     cancelOrder,
-    refreshOrders,
+    refreshOrders: refreshOrderBookData,
     getOrderBookDepth
   } = orderBookActions;
 
+  // Portfolio-level orders (Supabase-backed)
+  const {
+    ordersBuckets,
+    isLoadingOrders: portfolioOrdersLoading,
+    refreshOrders: refreshPortfolioOrders,
+    error: portfolioOrdersError
+  } = usePortfolioData({ enabled: Boolean(isConnected), refreshInterval: 0 });
+
+  const normalizedSymbol = useMemo(() => (metricId ? metricId.toUpperCase() : null), [metricId]);
+
+  const [sessionOrders, setSessionOrders] = useState<OrderBookOrder[]>([]);
+
+  const hydrateSessionOrders = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (!address || !normalizedSymbol) {
+      setSessionOrders([]);
+      return;
+    }
+
+    const lowerAddress = address.toLowerCase();
+    const results: OrderBookOrder[] = [];
+
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (!key || !key.startsWith(SESSION_STORAGE_PREFIX)) continue;
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const payload = JSON.parse(raw);
+        if (!payload || Number(payload.version) !== 1) continue;
+        if (String(payload.walletAddress || '').toLowerCase() !== lowerAddress) continue;
+        const payloadSymbol = String(payload.marketId || '').toUpperCase();
+        if (payloadSymbol !== normalizedSymbol) continue;
+        const orders = Array.isArray(payload.orders) ? payload.orders : [];
+        orders.forEach((order: OrderBookOrder) => {
+          if (isActiveOrder(order)) {
+            results.push(order);
+          }
+        });
+      } catch (err) {
+        console.warn('[TradingPanel] session hydrate failed', err);
+      }
+    }
+
+    setSessionOrders(results);
+  }, [address, normalizedSymbol]);
+
+  useEffect(() => {
+    hydrateSessionOrders();
+  }, [hydrateSessionOrders]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = () => {
+      hydrateSessionOrders();
+    };
+    window.addEventListener('ordersUpdated', handler as EventListener);
+    return () => {
+      window.removeEventListener('ordersUpdated', handler as EventListener);
+    };
+  }, [hydrateSessionOrders]);
+
+  const bucketOrdersForMarket = useMemo(
+    () => deriveOrdersForSymbolFromBuckets(ordersBuckets, normalizedSymbol, address),
+    [ordersBuckets, normalizedSymbol, address]
+  );
+
+  const activeOrders = useMemo(() => {
+    const map = new Map<string, OrderBookOrder>();
+    const addOrder = (order: OrderBookOrder | null | undefined, preferOverwrite = false) => {
+      if (!isActiveOrder(order)) return;
+      if (preferOverwrite || !map.has(order.id)) {
+        map.set(order.id, order);
+      }
+    };
+
+    bucketOrdersForMarket.forEach((order) => addOrder(order, false));
+    (orderBookActiveOrders || []).forEach((order) => addOrder(order, false));
+    sessionOrders.forEach((order) => addOrder(order, true));
+    return Array.from(map.values());
+  }, [bucketOrdersForMarket, orderBookActiveOrders, sessionOrders]);
+
+  const ordersLoading = isConnected ? portfolioOrdersLoading : orderBookLoading;
+  const ordersError = activeOrders.length === 0 ? portfolioOrdersError : null;
+
   // Filled orders from active orders history
   const filledOrdersForThisMarket = activeOrders.filter(order => order.filled > 0);
+
+  const refreshOrders = useCallback(async () => {
+    const tasks: Promise<unknown>[] = [];
+    if (typeof refreshOrderBookData === 'function') {
+      tasks.push(refreshOrderBookData());
+    }
+    if (typeof refreshPortfolioOrders === 'function') {
+      tasks.push(refreshPortfolioOrders());
+    }
+    if (tasks.length === 0) {
+      hydrateSessionOrders();
+      return;
+    }
+    await Promise.allSettled(tasks);
+    hydrateSessionOrders();
+  }, [refreshOrderBookData, refreshPortfolioOrders, hydrateSessionOrders]);
 
   // Trading validation
   const canPlaceOrder = useCallback(() => {
@@ -949,7 +1156,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           );
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Market order relayed', { txHash });
           console.log('[UpGas][UI] market submit: success', { txHash });
-          await orderBookActions.refreshOrders();
+          await refreshOrders();
           setAmount(0);
           setAmountInput('');
           return;
@@ -988,7 +1195,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       );
       
       // Refresh orders after successful placement
-      await orderBookActions.refreshOrders();
+      await refreshOrders();
       
       // Clear input fields after successful order
       setAmount(0);
@@ -1287,7 +1494,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           );
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Limit order relayed', { txHash });
           console.log('[UpGas][UI] limit submit: success', { txHash });
-          await orderBookActions.refreshOrders();
+          await refreshOrders();
           setAmount(0);
           setAmountInput('');
           setTriggerPrice(0);
@@ -1330,7 +1537,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       
       // Refresh orders after successful placement
       console.log('[Dispatch] 🔄 [UI][TradingPanel] Calling refreshOrders after limit order placement');
-      await orderBookActions.refreshOrders();
+      await refreshOrders();
       console.log('[Dispatch] ✅ [UI][TradingPanel] refreshOrders complete');
       
       // Clear input fields after successful order
@@ -1420,7 +1627,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           const txHash = r.txHash || null;
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Cancel relayed', { txHash });
           console.log('[UpGas][UI] cancel: success', { txHash });
-          await orderBookActions.refreshOrders();
+          await refreshOrders();
           showSuccess('Order cancelled successfully', 'Order Cancelled');
           return true;
         } catch (gerr: any) {
@@ -1441,7 +1648,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       
       if (success) {
         showSuccess('Order cancelled successfully', 'Order Cancelled');
-        await orderBookActions.refreshOrders();
+        await refreshOrders();
         return true;
       } else {
         throw new Error('Failed to cancel order');
@@ -1625,15 +1832,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   onClick={() => {
                     refreshOrders();
                   }}
-                  disabled={orderBookLoading}
+                  disabled={ordersLoading}
                   className="text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-500 disabled:cursor-not-allowed"
                 >
-                  {orderBookLoading ? '⟳ Loading...' : '⟳ Refresh'}
+                  {ordersLoading ? '⟳ Loading...' : '⟳ Refresh'}
                 </button>
               </div>
               
               {/* Filled Orders Summary (Positions) */}
-              {!orderBookLoading && filledOrdersForThisMarket.length > 0 && (
+              {!ordersLoading && filledOrdersForThisMarket.length > 0 && (
                 <div className="mb-3 p-2 bg-[#1A1A1A] rounded-lg border border-[#333333]">
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="flex justify-between">
@@ -1662,7 +1869,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                 </div>
               )}
               
-              {orderBookLoading && (
+              {ordersLoading && (
                 <div className="space-y-1.5 mb-3">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Trade History</h4>
@@ -1714,7 +1921,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                 </div>
               )}
               
-              {!orderBookLoading && filledOrdersForThisMarket.length > 0 && (
+              {!ordersLoading && filledOrdersForThisMarket.length > 0 && (
                 <div className="space-y-1.5 mb-3">
                   {/* Section Header */}
                   <div className="flex items-center justify-between mb-2">
@@ -1771,7 +1978,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               )}
 
               {/* Sell Tab - No Orders Message */}
-              {!orderBookLoading && filledOrdersForThisMarket.length === 0 && (
+              {!ordersLoading && filledOrdersForThisMarket.length === 0 && (
                 <div className="space-y-1.5 mb-3">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Trade History</h4>
@@ -1833,23 +2040,23 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                     onClick={() => {
                       refreshOrders();
                     }}
-                    disabled={orderBookLoading}
+                    disabled={ordersLoading}
                     className="text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-500 disabled:cursor-not-allowed"
                   >
-                    {orderBookLoading ? '⟳ Loading...' : '⟳ Refresh'}
+                    {ordersLoading ? '⟳ Loading...' : '⟳ Refresh'}
                   </button>
                 </div>
               </div>
               
-              {orderBookError && (
+              {ordersError && (
                 <div className="text-center py-4 text-red-400 bg-[#1A1A1A] rounded-lg border border-red-900/30 mb-3">
                   <div className="text-sm font-medium">Error Fetching Orders</div>
-                  <div className="text-xs mt-1 max-w-[90%] mx-auto">{orderBookError}</div>
+                  <div className="text-xs mt-1 max-w-[90%] mx-auto">{ordersError}</div>
                   <button
                     onClick={() => {
                       refreshOrders();
                     }}
-                    disabled={orderBookLoading}
+                    disabled={ordersLoading}
                     className="mt-2 px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs rounded border border-blue-800/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                   >
                     Retry Now
@@ -1857,17 +2064,17 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                 </div>
               )}
 
-              {activeOrders.length === 0 && !orderBookError ? (
+              {activeOrders.length === 0 && !ordersError ? (
                 <div className="text-center py-4 text-[#606060]">
                   <div className="text-sm">No active orders</div>
                   <div className="text-xs mt-1">
-                    {orderBookLoading ? 'Loading orders...' : 
+                    {ordersLoading ? 'Loading orders...' : 
                      !isConnected ? 'Wallet not connected' :
                      !metricId ? 'No market selected' :
                      'No active orders for this market'}
                   </div>
                 </div>
-              ) : !orderBookError ? (
+              ) : !ordersError ? (
                 activeOrders.map((order) => (
                   <div key={order.id} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
                     {/* Main order row - compact single line */}
@@ -1925,7 +2132,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                             setIsCancelingOrder(false);
                           }
                         }}
-                        disabled={orderBookLoading || isCancelingOrder}
+                        disabled={ordersLoading || isCancelingOrder}
                         className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-red-500/10 rounded text-red-400 hover:text-red-300 disabled:opacity-50"
                         title="Cancel order"
                       >
@@ -1962,12 +2169,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               ) : (
                 <div className="text-center py-4 text-red-400 bg-[#1A1A1A] rounded-lg border border-red-900/30 mb-3">
                   <div className="text-sm font-medium">Error Fetching Orders</div>
-                  <div className="text-xs mt-1 max-w-[90%] mx-auto">{orderBookError}</div>
+                  <div className="text-xs mt-1 max-w-[90%] mx-auto">{ordersError}</div>
                   <button
                     onClick={() => {
                       refreshOrders();
                     }}
-                    disabled={orderBookLoading}
+                    disabled={ordersLoading}
                     className="mt-2 px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs rounded border border-blue-800/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                   >
                     Retry Now

@@ -89,9 +89,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
   const [optimisticallyRemovedOrderIds, setOptimisticallyRemovedOrderIds] = useState<Set<string>>(new Set());
+  const [sessionOrders, setSessionOrders] = useState<Order[]>([]);
   const wallet = useWallet() as any;
   const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
   const GASLESS = typeof process !== 'undefined' && (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+  const getOrderCompositeKey = (symbol?: string | null, id?: string | number | bigint) =>
+    `${String(symbol || '').toUpperCase()}::${typeof id === 'bigint' ? id.toString() : String(id ?? '')}`;
   // Ensure we consistently use metricId (aligned with TradingPanel)
   console.log('symbol MarketActivityTabs', symbol);
   const metricId = symbol;
@@ -187,6 +190,112 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions, posOverlayTick]);
 
+  const hydrateSessionOrders = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress) {
+      setSessionOrders([]);
+      return;
+    }
+
+    const lowerWallet = walletAddress.toLowerCase();
+    const aggregated: Order[] = [];
+
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (!key || !key.startsWith('orderbook:activeOrders:v1:')) continue;
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) continue;
+
+      try {
+        const payload = JSON.parse(raw);
+        if (!payload || Number(payload.version) !== 1) continue;
+        if (String(payload.walletAddress || '').toLowerCase() !== lowerWallet) continue;
+        const marketIdValue = String(payload.marketId || '').toUpperCase();
+        if (!marketIdValue) continue;
+        const orders = Array.isArray(payload.orders) ? payload.orders : [];
+        orders.forEach((o: any) => {
+          if (o === null || o === undefined) return;
+          if (o.id === undefined || o.id === null) return;
+          const status = normalizeOrderStatus(o.status);
+          if (status === 'CANCELLED' || status === 'FILLED') return;
+          const isBuy = o.isBuy !== undefined ? Boolean(o.isBuy) : String(o.side || '').toLowerCase() !== 'sell';
+          aggregated.push({
+            id: String(o.id),
+            symbol: marketIdValue,
+            side: isBuy ? 'BUY' : 'SELL',
+            type: 'LIMIT',
+            price: Number(o.price || 0),
+            size: normalizeQuantity(Number(o.quantity ?? o.size ?? 0)),
+            filled: normalizeQuantity(Number(o.filledQuantity ?? o.filled ?? 0)),
+            status,
+            timestamp: Number(o.timestamp || payload.ts || Date.now()),
+            metricId: marketIdValue
+          });
+        });
+      } catch (err) {
+        console.warn('[RealTimeToken] ui:openOrders:session-hydrate-failed', err);
+      }
+    }
+
+    aggregated.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+    setSessionOrders(aggregated);
+  }, [walletAddress]);
+
+  useEffect(() => {
+    hydrateSessionOrders();
+  }, [hydrateSessionOrders]);
+
+  const removeOrderFromSessionCache = useCallback(
+    (targetOrderId?: string | number | bigint, marketSymbol?: string | null) => {
+      if (typeof window === 'undefined') return;
+      if (!walletAddress) return;
+      const orderIdStr =
+        targetOrderId === undefined || targetOrderId === null ? '' : String(targetOrderId);
+      if (!orderIdStr) return;
+
+      const walletLower = walletAddress.toLowerCase();
+      const symbolUpper = marketSymbol ? String(marketSymbol).toUpperCase() : undefined;
+      const keys: string[] = [];
+      for (let i = 0; i < window.sessionStorage.length; i++) {
+        const key = window.sessionStorage.key(i);
+        if (key) keys.push(key);
+      }
+
+      let mutated = false;
+      for (const key of keys) {
+        if (!key.startsWith('orderbook:activeOrders:v1:')) continue;
+        const raw = window.sessionStorage.getItem(key);
+        if (!raw) continue;
+        try {
+          const payload = JSON.parse(raw);
+          if (!payload || Number(payload.version) !== 1) continue;
+          if (String(payload.walletAddress || '').toLowerCase() !== walletLower) continue;
+          const payloadSymbol = String(payload.marketId || '').toUpperCase();
+          if (symbolUpper && payloadSymbol !== symbolUpper) continue;
+
+          const orders = Array.isArray(payload.orders) ? payload.orders : [];
+          const nextOrders = orders.filter((o: any) => String(o?.id ?? '') !== orderIdStr);
+          if (nextOrders.length === orders.length) continue;
+
+          mutated = true;
+          if (nextOrders.length === 0) {
+            window.sessionStorage.removeItem(key);
+          } else {
+            const nextPayload = { ...payload, orders: nextOrders, ts: Date.now() };
+            window.sessionStorage.setItem(key, JSON.stringify(nextPayload));
+          }
+        } catch (err) {
+          console.warn('[RealTimeToken] ui:openOrders:session-delete-failed', err);
+        }
+      }
+
+      if (mutated) {
+        hydrateSessionOrders();
+      }
+    },
+    [walletAddress, hydrateSessionOrders]
+  );
+
   // Immediate optimistic UI patch for Open Orders on `ordersUpdated`.
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -213,25 +322,29 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       const orderId = detail?.orderId !== undefined ? String(detail.orderId) : '';
       const ttlMs = 8_000;
 
+      const isPlacementEvent = eventType === 'OrderPlaced' || eventType === 'order-placed';
+      let shouldRefreshSessionOrders = false;
+
       if (eventType === 'OrderCancelled' || eventType === 'cancel') {
         if (orderId) {
+          const overlayKey = getOrderCompositeKey(sym, orderId);
           // Ensure a cancel can't leave behind a stale optimistic "added" order (which can render as 0/0/0).
-          openOrdersOverlayRef.current.removed.set(orderId, now + ttlMs);
-          openOrdersOverlayRef.current.added.delete(orderId);
+          openOrdersOverlayRef.current.removed.set(overlayKey, now + ttlMs);
+          openOrdersOverlayRef.current.added.delete(overlayKey);
         }
         setOpenOrdersOverlayTick((x) => x + 1);
         // eslint-disable-next-line no-console
         console.log('[RealTimeToken] ui:openOrders:patched', { traceId, symbol: sym, eventType, orderId, action: 'remove' });
-        return;
+        shouldRefreshSessionOrders = true;
       }
 
       // Treat as an order placement only when we have enough fields to render a real row.
       // IMPORTANT: don't treat empty eventType as "placed" (it can be a partial/unknown payload) or we may add 0/0/0 rows.
-      const isPlacementEvent = eventType === 'OrderPlaced' || eventType === 'order-placed';
-      if (isPlacementEvent) {
+      if (!shouldRefreshSessionOrders && isPlacementEvent) {
         if (!orderId) return;
+        const overlayKey = getOrderCompositeKey(sym, orderId);
         // If we already marked this id removed, don't re-add it (race between cancel + stale updates).
-        if (openOrdersOverlayRef.current.removed.has(orderId)) return;
+        if (openOrdersOverlayRef.current.removed.has(overlayKey)) return;
 
         let priceNum = 0;
         let sizeNum = 0;
@@ -269,16 +382,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           metricId: sym,
         };
 
-        openOrdersOverlayRef.current.added.set(orderId, { order: optimistic, expiresAt: now + ttlMs });
+        openOrdersOverlayRef.current.added.set(overlayKey, { order: optimistic, expiresAt: now + ttlMs });
         setOpenOrdersOverlayTick((x) => x + 1);
         // eslint-disable-next-line no-console
         console.log('[RealTimeToken] ui:openOrders:patched', { traceId, symbol: sym, eventType: 'OrderPlaced', orderId, action: 'add' });
+        shouldRefreshSessionOrders = true;
+      }
+
+      if (shouldRefreshSessionOrders) {
+        hydrateSessionOrders();
       }
     };
 
     window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
     return () => window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
-  }, [walletAddress]);
+  }, [walletAddress, hydrateSessionOrders]);
 
   // Immediate UI patch for positions on trade events (no waiting on contract reads).
   useEffect(() => {
@@ -598,21 +716,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   };
 
-  const normalizeOrderStatus = (rawStatus: any): Order['status'] => {
+  function normalizeOrderStatus(rawStatus: any): Order['status'] {
     const s = String(rawStatus || '').trim().toLowerCase();
     if (!s || s === 'pending' || s === 'open' || s === 'submitted') return 'PENDING';
     if (s === 'partially_filled' || s === 'partial') return 'PARTIAL';
     if (s === 'filled') return 'FILLED';
     if (s === 'cancelled' || s === 'canceled' || s === 'expired' || s === 'rejected') return 'CANCELLED';
     return 'PENDING';
-  };
+  }
 
-  const normalizeQuantity = (qty: number) => {
+  function normalizeQuantity(qty: number) {
     const n = Number.isFinite(qty) ? qty : 0;
     // Orders often arrive in 1e12 base units; scale down when clearly oversized
     if (n >= 1_000_000) return n / 1_000_000_000_000;
     return n;
-  };
+  }
 
   // Open Orders sourced from portfolio data hook (aggregates across all markets)
   const flattenOrderBuckets = useCallback((buckets: any[] = []): Order[] => {
@@ -692,10 +810,27 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     const flat = flattenOrderBuckets(ordersBuckets);
     // Prefer Supabase-backed snapshot when available; otherwise fall back to direct on-chain reads
     const base = flat.length > 0 ? flat : onchainOpenOrders;
+    const dedup = new Map<string, Order>();
+
+    const appendOrder = (order: Order) => {
+      if (!order || order.id === undefined || order.id === null) return;
+      const key = getOrderCompositeKey(order.symbol, order.id);
+      if (!key) return;
+      if (!dedup.has(key)) {
+        dedup.set(key, order);
+      }
+    };
+
+    base.forEach(appendOrder);
+    sessionOrders.forEach(appendOrder);
+
     // Defensive: never render a LIMIT order with non-positive price/size. This usually indicates a stale/partial
     // optimistic/session snapshot, and it matches the "$0 / 0 / 0" ghost rows we've observed after cancels.
-    return base
-      .filter((o) => o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(String(o.id)))
+    return Array.from(dedup.values())
+      .filter((o) => {
+        const removalKey = getOrderCompositeKey(o.symbol, o.id);
+        return o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(removalKey);
+      })
       .filter((o) => {
         const sizeOk = Number(o.size) > 0;
         const priceOk = o.type === 'LIMIT' ? Number(o.price) > 0 : true;
@@ -714,7 +849,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         }
         return true;
       });
-  }, [ordersBuckets, flattenOrderBuckets, onchainOpenOrders, optimisticallyRemovedOrderIds]);
+  }, [ordersBuckets, flattenOrderBuckets, onchainOpenOrders, optimisticallyRemovedOrderIds, sessionOrders]);
   const openOrdersIsLoading = Boolean(isLoadingOrders && activeTab === 'orders');
 
   // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
@@ -739,12 +874,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       if (rec.expiresAt <= now) overlay.added.delete(id);
     }
 
-    const next = base.filter((o) => !overlay.removed.has(String(o.id)));
-    for (const rec of overlay.added.values()) {
-      const id = String(rec.order.id);
+    const next = base.filter((o) => !overlay.removed.has(getOrderCompositeKey(o.symbol, o.id)));
+    for (const [key, rec] of overlay.added.entries()) {
       // Never show an optimistic "added" order if we've also marked it removed (race safety).
-      if (overlay.removed.has(id)) continue;
-      const exists = next.some((o) => String(o.id) === id);
+      if (overlay.removed.has(key)) continue;
+      const exists = next.some((o) => getOrderCompositeKey(o.symbol, o.id) === key);
       if (!exists) next.push(rec.order);
     }
     // Stable ordering: newest first
@@ -1237,11 +1371,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   throw new Error(msg);
                                                 }
                                                 showSuccess('Order cancelled successfully');
-                                                setOptimisticallyRemovedOrderIds(prev => {
-                                                  const next = new Set(prev);
-                                                  next.add(String(order.id));
-                                                  return next;
-                                                });
+                                              const removalKey = getOrderCompositeKey(order.symbol, order.id);
+                                              setOptimisticallyRemovedOrderIds(prev => {
+                                                const next = new Set(prev);
+                                                next.add(removalKey);
+                                                return next;
+                                              });
+                                              removeOrderFromSessionCache(order.id, metric);
                                                 try {
                                                   if (typeof window !== 'undefined') {
                                                     const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
@@ -1271,11 +1407,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   showError('Failed to cancel order. Please try again.');
                                                 } else {
                                                   showSuccess('Order cancelled successfully');
+                                                  const removalKey = getOrderCompositeKey(order.symbol, order.id);
                                                   setOptimisticallyRemovedOrderIds(prev => {
                                                     const next = new Set(prev);
-                                                    next.add(String(order.id));
+                                                    next.add(removalKey);
                                                     return next;
                                                   });
+                                                  removeOrderFromSessionCache(order.id, metric);
                                                   try {
                                                     if (typeof window !== 'undefined') {
                                                       const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
