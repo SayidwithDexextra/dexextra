@@ -417,7 +417,7 @@ export async function POST(req: NextRequest) {
           `- value can include context or units if needed; asset_price_suggestion must be numeric only.`,
           `- You must output ONLY the final numeric price for asset_price_suggestion.`,
           `- The final numeric price MUST have exactly 5 significant figures (use standard rounding).`,
-          `- You may use digits, an optional decimal point, and optional thousands separators (commas).`,
+          `- You may must use decimal points, and optional thousands separators (commas).`,
           `- Do NOT output units.`,
           `PRICE RULES:`,
           `- If financial quote (USD per BTC/oz/barrel/etc) use as-is; else rescale large metrics to natural human units.`,
