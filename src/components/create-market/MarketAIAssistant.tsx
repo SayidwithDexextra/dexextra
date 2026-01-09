@@ -198,8 +198,8 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
           />
         </div>
         <div>
-          <h5 className="text-xs font-medium text-white">AI Market Assistant</h5>
-          <p className="text-[11px] text-[#808080]">Add URLs for AI to analyze market data</p>
+          <h5 className="text-xs font-medium text-white">Market Metric Validator          </h5>
+          <p className="text-[11px] text-[#808080]">Add URLs to analyze metric data</p>
         </div>
       </div>
 

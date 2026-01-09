@@ -13,6 +13,7 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
   currency = '$',
   imageUrl,
   imageAlt,
+  onCardClick,
   onLongPosition,
   onShortPosition,
   className,
@@ -39,13 +40,28 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
     return `${resolvedCurrency}${numberPart}`;
   })();
 
-  const handleLongPosition = () => {
+  const handleCardClick = () => {
+    if (isDisabled) return;
+    onCardClick?.();
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isDisabled) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onCardClick?.();
+    }
+  };
+
+  const handleLongPosition = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     if (!isDisabled && onLongPosition) {
       onLongPosition();
     }
   };
 
-  const handleShortPosition = () => {
+  const handleShortPosition = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     if (!isDisabled && onShortPosition) {
       onShortPosition();
     }
@@ -58,7 +74,14 @@ const MarketTickerCard: React.FC<MarketTickerCardProps> = ({
   ].filter(Boolean).join(' ');
 
   return (
-    <div className={cardClasses}>
+    <div
+      className={cardClasses}
+      role="button"
+      tabIndex={isDisabled ? -1 : 0}
+      aria-disabled={isDisabled}
+      onClick={handleCardClick}
+      onKeyDown={handleKeyDown}
+    >
       {/* Image Container */}
       <div className={styles.imageContainer}>
         {imageUrl ? (

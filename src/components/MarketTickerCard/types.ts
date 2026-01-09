@@ -6,6 +6,7 @@ export interface MarketTickerCardProps {
   currency?: string;
   imageUrl?: string;
   imageAlt?: string;
+  onCardClick?: () => void;
   onLongPosition?: () => void;
   onShortPosition?: () => void;
   className?: string;

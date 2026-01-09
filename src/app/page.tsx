@@ -183,6 +183,13 @@ export default function Home() {
     }
   };
 
+  const handleMarketCardNavigate = (cardId: string) => {
+    const market = (overview || []).find((m: any) => m.market_id === cardId || m.id === cardId);
+    if (market) {
+      router.push(`/token/${(market as any).market_identifier || (market as any).symbol}`);
+    }
+  };
+
   return (
     <>
       {/* Crypto Market Ticker with proper container */}
@@ -214,6 +221,7 @@ export default function Home() {
               title="Active Markets"
               variant="inline"
               cards={marketCardData.length > 0 ? marketCardData : []}
+              onCardClick={handleMarketCardNavigate}
               onCardLongPosition={handleMarketCardLongPosition}
               onCardShortPosition={handleMarketCardShortPosition}
               isLoading={marketsLoading}

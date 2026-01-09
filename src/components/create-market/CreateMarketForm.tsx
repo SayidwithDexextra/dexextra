@@ -255,9 +255,9 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
 
             {/* AI Assistant for Metric URL */}
             <div>
-              <label className="block text-[11px] font-medium text-[#808080] mb-2">
-                AI Market Assistant
-              </label>
+              {/* <label className="block text-[11px] font-medium text-[#808080] mb-2">
+               Market Metric Validator
+              </label> */}
               <MarketAIAssistant
                 ref={assistantRef}
                 metric={formData.symbol || formData.metric}

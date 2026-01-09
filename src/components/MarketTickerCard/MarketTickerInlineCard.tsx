@@ -12,6 +12,7 @@ const MarketTickerInlineCard: React.FC<MarketTickerCardProps> = ({
   currency = '$',
   imageUrl,
   imageAlt,
+  onCardClick,
   onLongPosition,
   onShortPosition,
   className,
@@ -62,13 +63,29 @@ const MarketTickerInlineCard: React.FC<MarketTickerCardProps> = ({
         .join(' ')
     : '';
 
-  const handleLong = () => {
+  const handleCardClick = () => {
+    if (!isDisabled) {
+      onCardClick?.();
+    }
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (isDisabled) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onCardClick?.();
+    }
+  };
+
+  const handleLong = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     if (!isDisabled) {
       onLongPosition?.();
     }
   };
 
-  const handleShort = () => {
+  const handleShort = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     if (!isDisabled) {
       onShortPosition?.();
     }
@@ -83,7 +100,14 @@ const MarketTickerInlineCard: React.FC<MarketTickerCardProps> = ({
     .join(' ');
 
   return (
-    <article className={cardClasses}>
+    <article
+      className={cardClasses}
+      role="button"
+      tabIndex={isDisabled ? -1 : 0}
+      aria-disabled={isDisabled}
+      onClick={handleCardClick}
+      onKeyDown={handleKeyDown}
+    >
       {/* Full height square image on the left */}
       <div className={styles.media}>
         {imageUrl ? (

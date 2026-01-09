@@ -10,6 +10,7 @@ import styles from './MarketTickerCard.module.css';
 interface MarketTickerCardContainerProps {
   title?: string;
   cards: MarketTickerCardData[];
+  onCardClick?: (cardId: string) => void;
   onCardLongPosition?: (cardId: string) => void;
   onCardShortPosition?: (cardId: string) => void;
   isLoading?: boolean;
@@ -21,6 +22,7 @@ interface MarketTickerCardContainerProps {
 const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
   title = 'Latest Drops',
   cards,
+  onCardClick,
   onCardLongPosition,
   onCardShortPosition,
   isLoading = false,
@@ -67,6 +69,7 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
         <div className={cardsWrapperClass}>
           <AnimatePresence mode="popLayout">
             {cardsWithStatic.map((card) => {
+              const handleCardClick = () => onCardClick?.(card.id);
               const handleLong = () => onCardLongPosition?.(card.id);
               const handleShort = () => onCardShortPosition?.(card.id);
 
@@ -88,6 +91,7 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
                     currency={card.currency}
                     imageUrl={card.imageUrl}
                     imageAlt={card.imageAlt}
+                    onCardClick={handleCardClick}
                     onLongPosition={handleLong}
                     onShortPosition={handleShort}
                     marketStatus={card.marketStatus}

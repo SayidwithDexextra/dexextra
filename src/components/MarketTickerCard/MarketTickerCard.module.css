@@ -75,6 +75,7 @@
   max-width: 400px;
   min-height: 330px;
   overflow: hidden;
+  cursor: pointer;
 }
 
 .card:hover {
