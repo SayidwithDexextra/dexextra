@@ -423,6 +423,20 @@ async function getHubProvider(): Promise<ethers.JsonRpcProvider> {
   return new ethers.JsonRpcProvider(hubRpc)
 }
 
+function getDepositRelayerWallet(provider: ethers.JsonRpcProvider, label: string): ethers.Wallet {
+  const raw = String(process.env.RELAYER_PRIVATE_KEY || '').trim()
+  if (!raw) {
+    throw new Error('[alchemy-deposits] RELAYER_PRIVATE_KEY is not set; cannot relay gasless deposits')
+  }
+  const pk = raw.startsWith('0x') ? raw : `0x${raw}`
+  if (!/^0x[0-9a-fA-F]{64}$/.test(pk)) {
+    throw new Error('[alchemy-deposits] RELAYER_PRIVATE_KEY must be a 32-byte hex string (0x...)')
+  }
+  const wallet = new ethers.Wallet(pk, provider)
+  console.log('[alchemy-deposits] using single deposit relayer', { label, address: wallet.address })
+  return wallet
+}
+
 async function sendDepositOnSpoke(params: {
   user: string
   token: string
@@ -441,27 +455,21 @@ async function sendDepositOnSpoke(params: {
   }
   const dstDomain = Number(process.env.BRIDGE_DOMAIN_HUB || '999')
   const provider = await getSpokeProviderForChain(params.chainId)
+  const wallet = getDepositRelayerWallet(provider, `spoke:${cfg.name}`)
 
   const OutboxIface = new ethers.Interface([
     'function sendDeposit(uint64 dstDomain, address user, address token, uint256 amount, bytes32 depositId) external',
     'function hasRole(bytes32 role, address account) view returns (bool)',
   ])
-  const outboxRead = new ethers.Contract(outboxAddr, OutboxIface, provider)
+  const outbox = new ethers.Contract(outboxAddr, OutboxIface, wallet)
 
   const network = await provider.getNetwork()
   const chainId = Number(network.chainId)
   const depositId = encodeDepositIdFromTx(chainId, params.txHash, params.logIndex)
 
-  const spokePool =
-    chainId === 42161 || String(cfg.name) === 'arbitrum'
-      ? 'spoke_outbox_arbitrum'
-      : chainId === 137 || String(cfg.name) === 'polygon'
-      ? 'spoke_outbox_polygon'
-      : 'spoke_outbox_arbitrum'
-
   // Optional simulate to catch reverts
   try {
-    await outboxRead.sendDeposit.staticCall(
+    await outbox.sendDeposit.staticCall(
       Number(dstDomain),
       params.user,
       params.token,
@@ -543,36 +551,28 @@ async function sendDepositOnSpoke(params: {
     })
   } catch {}
 
-  const tx = await withRelayer({
-    pool: spokePool as any,
-    provider,
-    stickyKey: params.user,
-    action: async (wallet) => {
-      const outbox = new ethers.Contract(outboxAddr, OutboxIface, wallet)
-      // Optional role check per selected key (best-effort)
-      try {
-        const DEPOSIT_SENDER_ROLE = ethers.keccak256(ethers.toUtf8Bytes('DEPOSIT_SENDER_ROLE'))
-        const has = await outbox.hasRole(DEPOSIT_SENDER_ROLE, wallet.address)
-        console.log('[alchemy-deposits] outbox config', {
-          outbox: outboxAddr,
-          dstDomain,
-          relayer: wallet.address,
-          depositId,
-          hasRole: has,
-        })
-        if (!has) console.warn('[alchemy-deposits] relayer missing DEPOSIT_SENDER_ROLE on outbox')
-      } catch {}
+  // Optional role check per selected key (best-effort)
+  try {
+    const DEPOSIT_SENDER_ROLE = ethers.keccak256(ethers.toUtf8Bytes('DEPOSIT_SENDER_ROLE'))
+    const has = await outbox.hasRole(DEPOSIT_SENDER_ROLE, wallet.address)
+    console.log('[alchemy-deposits] outbox config', {
+      outbox: outboxAddr,
+      dstDomain,
+      relayer: wallet.address,
+      depositId,
+      hasRole: has,
+    })
+    if (!has) console.warn('[alchemy-deposits] relayer missing DEPOSIT_SENDER_ROLE on outbox')
+  } catch {}
 
-      return await sendWithNonceRetry({
-        provider,
-        wallet,
-        contract: outbox as any,
-        method: 'sendDeposit',
-        args: [Number(dstDomain), params.user, params.token, params.amount, depositId],
-        overrides: { gasLimit, maxFeePerGas, maxPriorityFeePerGas },
-        label: `deposit:outbox:${cfg.name}`,
-      })
-    },
+  const tx = await sendWithNonceRetry({
+    provider,
+    wallet,
+    contract: outbox as any,
+    method: 'sendDeposit',
+    args: [Number(dstDomain), params.user, params.token, params.amount, depositId],
+    overrides: { gasLimit, maxFeePerGas, maxPriorityFeePerGas },
+    label: `deposit:outbox:${cfg.name}`,
   })
   const rc = await tx.wait()
   return { txHash: tx.hash, blockNumber: rc?.blockNumber, depositId }
@@ -604,6 +604,7 @@ async function deliverToHub(params: {
     throw new Error('Missing chain-specific remote app or outbox to derive srcApp')
   }
   const provider = await getHubProvider()
+  const wallet = getDepositRelayerWallet(provider, 'hub_inbox')
 
   const HubInboxIface = new ethers.Interface([
     'function receiveMessage(uint64 srcDomain, bytes32 srcApp, bytes payload) external',
@@ -611,6 +612,7 @@ async function deliverToHub(params: {
     'function remoteAppByDomain(uint64) view returns (bytes32)',
   ])
   const hubRead = new ethers.Contract(hubInbox, HubInboxIface, provider)
+  const hub = new ethers.Contract(hubInbox, HubInboxIface, wallet)
 
   const TYPE_DEPOSIT = 1
   const payload = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -643,9 +645,9 @@ async function deliverToHub(params: {
   } catch (e: any) {
     console.warn('[alchemy-deposits] remoteAppByDomain read failed:', e?.message || e)
   }
-  // Preflight simulate
+  // Preflight simulate (as the relayer address so AccessControl checks see the correct sender)
   try {
-    await hubRead.receiveMessage.staticCall(Number(srcDomain), srcApp, payload)
+    await hub.receiveMessage.staticCall(Number(srcDomain), srcApp, payload)
     console.log('[alchemy-deposits] ✅ hub.receiveMessage simulate OK')
   } catch (simErr: any) {
     const simMsg = simErr?.reason || simErr?.shortMessage || simErr?.message || String(simErr)
@@ -685,33 +687,25 @@ async function deliverToHub(params: {
     })
   } catch {}
 
-  // Standard contract call (mirror send-deposit.js) using the hub inbox relayer pool
-  const tx = await withRelayer({
-    pool: 'hub_inbox',
+  // Standard contract call (mirror send-deposit.js) using the single deposit relayer
+  // Optional role check per selected key
+  try {
+    const has = await hub.hasRole(BRIDGE_ENDPOINT_ROLE, wallet.address)
+    console.log('[alchemy-deposits] BRIDGE_ENDPOINT_ROLE check', { relayer: wallet.address, hasRole: has })
+    if (!has) {
+      console.error('[alchemy-deposits] ❌ CRITICAL: hub relayer missing BRIDGE_ENDPOINT_ROLE - delivery will fail')
+    }
+  } catch (e: any) {
+    console.warn('[alchemy-deposits] role check failed:', e?.message || e)
+  }
+  const tx = await sendWithNonceRetry({
     provider,
-    stickyKey: params.user,
-    action: async (wallet) => {
-      const hub = new ethers.Contract(hubInbox, HubInboxIface, wallet)
-      // Optional role check per selected key
-      try {
-        const has = await hub.hasRole(BRIDGE_ENDPOINT_ROLE, wallet.address)
-        console.log('[alchemy-deposits] BRIDGE_ENDPOINT_ROLE check', { relayer: wallet.address, hasRole: has })
-        if (!has) {
-          console.error('[alchemy-deposits] ❌ CRITICAL: hub relayer missing BRIDGE_ENDPOINT_ROLE - delivery will fail')
-        }
-      } catch (e: any) {
-        console.warn('[alchemy-deposits] role check failed:', e?.message || e)
-      }
-      return await sendWithNonceRetry({
-        provider,
-        wallet,
-        contract: hub as any,
-        method: 'receiveMessage',
-        args: [Number(srcDomain), srcApp, payload],
-        overrides: { gasLimit, maxFeePerGas, maxPriorityFeePerGas },
-        label: 'deposit:hub:receiveMessage',
-      })
-    },
+    wallet,
+    contract: hub as any,
+    method: 'receiveMessage',
+    args: [Number(srcDomain), srcApp, payload],
+    overrides: { gasLimit, maxFeePerGas, maxPriorityFeePerGas },
+    label: 'deposit:hub:receiveMessage',
   })
   const rc = await tx.wait()
   return { txHash: tx.hash, blockNumber: rc?.blockNumber }
