@@ -39,6 +39,41 @@ const FALLBACK_PRICES: Record<string, TokenPriceData> = {
   'TRX': { symbol: 'TRX', price: 0.11, price_change_percentage_24h: 0.9 }
 };
 
+// Mapping from ticker symbol to CoinGecko slug for direct asset links
+const COINGECKO_SLUGS: Record<string, string> = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  XRP: 'ripple',
+  BNB: 'binancecoin',
+  SOL: 'solana',
+  USDC: 'usd-coin',
+  ADA: 'cardano',
+  AVAX: 'avalanche-2',
+  DOGE: 'dogecoin',
+  TRX: 'tron',
+  LINK: 'chainlink',
+  DOT: 'polkadot',
+  MATIC: 'polygon-ecosystem-token',
+  UNI: 'uniswap',
+  LTC: 'litecoin',
+  BCH: 'bitcoin-cash',
+  NEAR: 'near',
+  ATOM: 'cosmos',
+  FTM: 'fantom',
+  ALGO: 'algorand',
+  GOLD: 'tether-gold',
+};
+
+const getCoinGeckoUrl = (symbol: string): string => {
+  const upper = symbol.toUpperCase();
+  const slug = COINGECKO_SLUGS[upper];
+  if (slug) {
+    return `https://www.coingecko.com/en/coins/${slug}`;
+  }
+  // Fallback to search page if we don't have an exact slug mapping
+  return `https://www.coingecko.com/en/search?query=${encodeURIComponent(symbol)}`;
+};
+
 // Cache configuration
 const CACHE_KEY = 'crypto_ticker_prices';
 const CACHE_TIMESTAMP_KEY = 'crypto_ticker_timestamp';
@@ -342,14 +377,20 @@ export default function CryptoMarketTicker({
         onMouseLeave={handleMouseLeave}
       >
         {validTokens.concat(validTokens).map((token, index) => (
-          <div key={`${token.symbol}-${index}`} className={styles.tickerItem}>
+          <a
+            key={`${token.symbol}-${index}`}
+            href={getCoinGeckoUrl(token.symbol)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.tickerItem}
+          >
             <span className={styles.symbol}>{token.symbol}</span>
             <span className={styles.separator}>•</span>
             <span className={styles.price}>${formatPrice(token.price)}</span>
             <span className={`${styles.change} ${getChangeColorClass(token.price_change_percentage_24h)}`}>
               {formatPercentage(token.price_change_percentage_24h)}
             </span>
-          </div>
+          </a>
         ))}
       </div>
     </div>
