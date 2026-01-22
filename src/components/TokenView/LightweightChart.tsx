@@ -951,7 +951,7 @@ export default function LightweightChart({
   // Set up Pusher subscription for real-time chart updates
   useEffect(() => {
     if (!CHART_BACKEND_ENABLED) return;
-    if (!pusher || !symbol) return;
+    if (!pusher || !marketId) return;
 
      // console.log(`🚀 Setting up Pusher chart subscription for ${symbol}-${selectedTimeframe}`);
      // console.log('Pusher instance:', pusher);
@@ -960,7 +960,7 @@ export default function LightweightChart({
 
     // Subscribe to chart data updates
     const unsubscribeChart = pusher.subscribeToChartData(
-      symbol,
+      marketId,
       selectedTimeframe,
       handleChartDataUpdate
     );

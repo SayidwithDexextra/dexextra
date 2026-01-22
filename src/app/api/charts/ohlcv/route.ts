@@ -80,14 +80,27 @@ export async function GET(request: NextRequest) {
     // Fetch OHLCV data using dynamic aggregation
     let candles: Array<any> = [];
     try {
+      // Prefer canonical market_uuid filtering. Symbol is meta only.
       candles = await clickhouse.getOHLCVCandles(
-        symbol,
+        undefined,
         timeframe,
         limit,
         startTime,
         endTime,
         marketId || undefined
       );
+
+      // Back-compat fallback: if market_uuid data isn't present yet, fall back to symbol-only.
+      if (candles.length === 0 && symbol) {
+        candles = await clickhouse.getOHLCVCandles(
+          symbol,
+          timeframe,
+          limit,
+          startTime,
+          endTime,
+          undefined
+        );
+      }
     } catch (queryError) {
       // Degrade gracefully if ClickHouse is unreachable/misconfigured
       console.error('⚠️ ClickHouse query failed; returning empty dataset for charts:', queryError);
@@ -221,7 +234,7 @@ export async function POST(request: NextRequest) {
     }
     const symbol = String(m.symbol).toUpperCase();
 
-    // Only 1m is accepted for direct inserts; higher TFs are aggregated from 1m
+    // Only 1m is accepted for writes; higher TFs must be aggregated from 1m.
     if (timeframe && timeframe !== '1m') {
       return NextResponse.json({ error: 'Only 1m timeframe is accepted for writes' }, { status: 400 });
     }
@@ -249,53 +262,85 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
-    if (!url) {
+    // 🚨 Important: do NOT write directly to ohlcv_1m.
+    // We persist raw ticks into market_ticks and let ClickHouse MV build ohlcv_1m properly.
+    const pipeline = getClickHouseDataPipeline();
+    if (!pipeline.isConfigured()) {
       return NextResponse.json({ error: 'ClickHouse not configured' }, { status: 503 });
     }
 
-    const client = createClient({
-      url,
-      username: process.env.CLICKHOUSE_USER || 'default',
-      password: process.env.CLICKHOUSE_PASSWORD,
-      database: process.env.CLICKHOUSE_DATABASE || 'default',
-      request_timeout: 30000
-    });
+    // Convert each 1m candle into 4 deterministic synthetic ticks.
+    // Preserve total volume without inflating trades count.
+    const ticks = rows.flatMap((c) => {
+      const base = new Date(c.time instanceof Date ? c.time.getTime() : new Date(c.time as any).getTime());
+      const candleKey = `${symbol}:${base.toISOString()}`;
+      const openSize = Number(c.volume) || 0;
+      return [
+        {
+          symbol,
+          ts: base,
+          price: Number(c.open),
+          size: openSize,
+          event_type: 'open',
+          is_long: true,
+          event_id: `candle:${candleKey}:open`,
+          trade_count: Number.isFinite(Number(c.trades)) ? Number(c.trades) : 0,
+          market_id: 0,
+          contract_address: '',
+          market_uuid: marketId
+        },
+        {
+          symbol,
+          ts: new Date(base.getTime() + 15000),
+          price: Number(c.high),
+          size: 0,
+          event_type: 'high',
+          is_long: true,
+          event_id: `candle:${candleKey}:high`,
+          trade_count: 0,
+          market_id: 0,
+          contract_address: '',
+          market_uuid: marketId
+        },
+        {
+          symbol,
+          ts: new Date(base.getTime() + 30000),
+          price: Number(c.low),
+          size: 0,
+          event_type: 'low',
+          is_long: false,
+          event_id: `candle:${candleKey}:low`,
+          trade_count: 0,
+          market_id: 0,
+          contract_address: '',
+          market_uuid: marketId
+        },
+        {
+          symbol,
+          ts: new Date(base.getTime() + 45000),
+          price: Number(c.close),
+          size: 0,
+          event_type: 'close',
+          is_long: true,
+          event_id: `candle:${candleKey}:close`,
+          trade_count: 0,
+          market_id: 0,
+          contract_address: '',
+          market_uuid: marketId
+        }
+      ];
+    }).filter((t) => Number.isFinite(t.price));
 
-    const insertRows = rows
-      .map((c) => ({
-        symbol,
-        ts: toUtcChTs(c.time),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: Number(c.volume),
-        trades: Number.isFinite(Number(c.trades)) ? Number(c.trades) : 0,
-        market_uuid: marketId
-      }))
-      .filter((r) =>
-        Number.isFinite(r.open) &&
-        Number.isFinite(r.high) &&
-        Number.isFinite(r.low) &&
-        Number.isFinite(r.close) &&
-        Number.isFinite(r.volume)
-      );
-
-    if (insertRows.length === 0) {
-      return NextResponse.json({ error: 'No valid candles to insert' }, { status: 400 });
+    if (ticks.length === 0) {
+      return NextResponse.json({ error: 'No valid candles to convert into ticks' }, { status: 400 });
     }
 
-    await client.insert({
-      table: 'ohlcv_1m',
-      values: insertRows,
-      format: 'JSONEachRow'
-    });
+    await (pipeline as any).insertTickImmediate(ticks);
 
     return NextResponse.json({
       success: true,
-      inserted: insertRows.length,
-      meta: { symbol, marketId: marketId || null, timeframe: '1m', table: 'ohlcv_1m', source: 'clickhouse' }
+      inserted: ticks.length,
+      meta: { symbol, marketId: marketId || null, timeframe: '1m', table: 'market_ticks', source: 'clickhouse' }
     });
   } catch (error) {
     console.error('❌ OHLCV save API error:', error);

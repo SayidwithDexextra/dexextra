@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseClient } from '../lib/supabase-browser';
 
 export interface UseMetricLivePriceOptions {
@@ -13,6 +13,7 @@ export interface UseMetricLivePriceResult {
   updatedAt: string | null;
   isLoading: boolean;
   error: string | null;
+  retryStartWorker: () => Promise<boolean>;
 }
 
 export function useMetricLivePrice(marketId: string, options?: UseMetricLivePriceOptions): UseMetricLivePriceResult {
@@ -32,6 +33,31 @@ export function useMetricLivePrice(marketId: string, options?: UseMetricLivePric
   );
 
   const canRun = useMemo(() => enabled && typeof marketId === 'string' && marketId.length > 0, [enabled, marketId]);
+
+  const startWorkerOnce = useCallback(async (): Promise<boolean> => {
+    if (!canRun) return false;
+    try {
+      // NOTE:
+      // Calling Supabase Edge Functions directly from the browser can fail due to CORS.
+      // Proxy via our Next.js API route (same-origin) to avoid CORS issues.
+      try { console.log('[useMetricLivePrice] invoking startMetricWorker (via API proxy)', { marketId }); } catch {}
+      const res = await fetch('/api/metric-worker/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marketId }),
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(`startMetricWorker failed: HTTP ${res.status}${txt ? ` - ${txt}` : ''}`);
+      }
+      setError(null);
+      return true;
+    } catch (e: any) {
+      setError(e?.message || 'Failed to start worker');
+      return false;
+    }
+  }, [canRun, marketId]);
 
   useEffect(() => {
     if (!canRun) return;
@@ -58,17 +84,25 @@ export function useMetricLivePrice(marketId: string, options?: UseMetricLivePric
       .subscribe();
 
     const loadInitial = async () => {
-      const { data, error: e } = await supabase
-        .from('metrics')
-        .select('market_id, value, updated_at')
-        .eq('market_id', marketId)
-        .maybeSingle();
-      if (!e && data) {
-        const n = typeof data.value === 'number' ? data.value : Number(data.value as any);
-        if (Number.isFinite(n)) setValue(n);
-        setUpdatedAt(data.updated_at || null);
+      try {
+        const { data, error: e } = await supabase
+          .from('metrics')
+          .select('market_id, value, updated_at')
+          .eq('market_id', marketId)
+          .maybeSingle();
+        if (e) throw e;
+        if (data) {
+          const n = typeof data.value === 'number' ? data.value : Number(data.value as any);
+          if (Number.isFinite(n)) setValue(n);
+          setUpdatedAt(data.updated_at || null);
+        }
+      } catch (e: any) {
+        // Non-fatal: the UI can still show fallback value and/or the source URL.
+        // We keep the error surface for debug/telemetry, but don't throw.
+        setError((prev) => prev || (e?.message || 'Failed to load initial metric'));
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
     void loadInitial();
 
@@ -101,10 +135,10 @@ export function useMetricLivePrice(marketId: string, options?: UseMetricLivePric
       try {
         await upsertHeartbeat();
         heartbeatTimer = setInterval(() => { void upsertHeartbeat(); }, heartbeatMs);
-        try { console.log('[useMetricLivePrice] invoking startMetricWorker', { marketId }); } catch {}
-        await supabase.functions.invoke('startMetricWorker', { body: { marketId } });
+        // Best-effort: worker start is helpful for live updates, but the UI should not hard-fail if it can't start.
+        void startWorkerOnce();
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to start worker');
+        if (!cancelled) setError((prev) => prev || (e?.message || 'Failed to start worker'));
       }
     };
     void start();
@@ -114,9 +148,9 @@ export function useMetricLivePrice(marketId: string, options?: UseMetricLivePric
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       void supabase.from('metric_subscriptions').delete().eq('market_id', marketId).eq('client_id', clientIdRef.current);
     };
-  }, [canRun, heartbeatMs, supabase, marketId]);
+  }, [canRun, heartbeatMs, supabase, marketId, startWorkerOnce]);
 
-  return { value, updatedAt, isLoading, error };
+  return { value, updatedAt, isLoading, error, retryStartWorker: startWorkerOnce };
 }
 
 export default useMetricLivePrice;

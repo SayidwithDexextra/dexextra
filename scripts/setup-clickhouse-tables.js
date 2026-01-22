@@ -109,6 +109,80 @@ async function setupClickHouseTables() {
 		await clickhouse.query({ query: createScatterMV });
 		console.log("✅ mv_scatter_points_to_dedup created");
 
+		// ===============================
+		// Metric Time-series Storage (Optimized for SMA / overlay lines)
+		// ===============================
+		// Why a separate schema from scatter?
+		// - Scatter is designed for multiple points per timestamp (ts,x,y).
+		// - SMA-style overlay lines want ONE value per time bucket.
+		// - We store raw metric observations, then maintain a 1m bucketed table for fast reads.
+		console.log("📉 Creating metric time-series tables...");
+
+		const createMetricRaw = `
+			CREATE TABLE IF NOT EXISTS metric_series_raw (
+				market_id LowCardinality(String),
+				metric_name LowCardinality(String),
+				ts DateTime64(3, 'UTC') DEFAULT now64(3),
+				value Float64,
+				source LowCardinality(String) DEFAULT 'frontend',
+				point_uid UUID DEFAULT generateUUIDv4(),
+				point_key UInt64 MATERIALIZED cityHash64(
+					concat(coalesce(market_id, ''), '|', coalesce(metric_name, ''), '|', toString(ts))
+				),
+				version UInt32 DEFAULT 1
+			)
+			ENGINE = ReplacingMergeTree(version)
+			PARTITION BY toYYYYMM(ts)
+			ORDER BY (market_id, metric_name, ts, point_key)
+			SETTINGS index_granularity = 8192
+		`;
+		await clickhouse.query({ query: createMetricRaw });
+		console.log("✅ metric_series_raw created");
+
+		// Bucketed 1m table using aggregate states (fast finalize + window SMA queries)
+		await clickhouse.query({ query: `DROP VIEW IF EXISTS mv_metric_series_to_1m` });
+		await clickhouse.query({ query: `DROP TABLE IF EXISTS metric_series_1m` });
+
+		const createMetric1m = `
+			CREATE TABLE metric_series_1m (
+				market_id LowCardinality(String),
+				metric_name LowCardinality(String),
+				ts DateTime64(3, 'UTC'),
+				latest_value AggregateFunction(argMax, Float64, UInt32),
+				avg_value AggregateFunction(avg, Float64),
+				min_value AggregateFunction(min, Float64),
+				max_value AggregateFunction(max, Float64),
+				sample_count AggregateFunction(count, UInt64)
+			)
+			ENGINE = AggregatingMergeTree()
+			PARTITION BY toYYYYMM(ts)
+			ORDER BY (market_id, metric_name, ts)
+			SETTINGS index_granularity = 8192
+		`;
+		await clickhouse.query({ query: createMetric1m });
+		console.log("✅ metric_series_1m created");
+
+		const createMetric1mMV = `
+			CREATE MATERIALIZED VIEW IF NOT EXISTS mv_metric_series_to_1m
+			TO metric_series_1m
+			AS
+			SELECT
+				assumeNotNull(market_id) AS market_id,
+				assumeNotNull(metric_name) AS metric_name,
+				toDateTime64(toStartOfMinute(ts), 3, 'UTC') AS ts,
+				argMaxState(value, version) AS latest_value,
+				avgState(value) AS avg_value,
+				minState(value) AS min_value,
+				maxState(value) AS max_value,
+				countState() AS sample_count
+			FROM metric_series_raw
+			WHERE market_id IS NOT NULL AND market_id != ''
+			GROUP BY
+				market_id, metric_name, ts
+		`;
+		await clickhouse.query({ query: createMetric1mMV });
+		console.log("✅ mv_metric_series_to_1m created");
+
     console.log("\n🎉 All ClickHouse tables created successfully!");
     console.log("📝 Ready to insert sample data...");
 		console.log("ℹ️  Scatter insert hint:");
@@ -117,6 +191,18 @@ async function setupClickHouseTables() {
 		);
 		console.log(
 			"Reads: SELECT market_identifier, timeframe, ts, x, argMaxMerge(latest_y) AS y FROM scatter_points_dedup GROUP BY ALL ORDER BY ts, x"
+		);
+		console.log("ℹ️  Metric series insert hint:");
+		console.log(
+			"INSERT INTO metric_series_raw (market_id, metric_name, ts, value, source, version) VALUES ('<market_uuid>', 'my_metric', now64(3), 123.45, 'worker', 1)"
+		);
+		console.log("ℹ️  Metric series read (1m finalized, last value):");
+		console.log(
+			"SELECT ts, argMaxMerge(latest_value) AS v FROM metric_series_1m WHERE market_id='<market_uuid>' AND metric_name='my_metric' GROUP BY ts ORDER BY ts"
+		);
+		console.log("ℹ️  Metric SMA example (SMA-20 over 1m finalized values):");
+		console.log(
+			"WITH s AS (SELECT ts, argMaxMerge(latest_value) AS v FROM metric_series_1m WHERE market_id='<market_uuid>' AND metric_name='my_metric' GROUP BY ts ORDER BY ts) SELECT ts, avg(v) OVER (ORDER BY ts ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS sma20 FROM s ORDER BY ts"
 		);
   } catch (error) {
     console.error("❌ Failed to create ClickHouse tables:", error);

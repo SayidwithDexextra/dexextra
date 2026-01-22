@@ -1,8 +1,8 @@
 # OHLCV Edge Function Design (Market‑ID centric)
 
-Purpose: ingest on‑chain trade execution events from Alchemy webhooks, resolve markets by on‑chain orderBook (contract) address, persist trades with market identifiers into ClickHouse, and serve OHLCV derived strictly from market ids (not symbols).
+Purpose: ingest on‑chain trade execution events from Alchemy webhooks, resolve markets by on‑chain orderBook (contract) address, persist **raw tick/trade events** with market identifiers into ClickHouse, and serve OHLCV derived strictly from market ids (not symbols).
 
-Environment note: The ClickHouse `trades` table already exists in our environment. Treat the `trades` DDL below as reference only. If `ohlcv_1m` and `mv_trades_to_1m` also exist, no action is required.
+Environment note: In our current architecture, **`market_ticks` is the canonical raw stream**, and `ohlcv_1m` is derived from it via a ClickHouse materialized view. Do **not** write trades directly into `ohlcv_1m`.
 
 ## 1) Ingestion sources
 - Alchemy webhooks
@@ -102,27 +102,51 @@ TTL ts + INTERVAL 90 DAY DELETE
 SETTINGS index_granularity = 8192;
 ```
 
-### MV trades → ohlcv_1m (market‑id aware)
+### MV market_ticks → ohlcv_1m (market‑id aware, deterministic open/close)
 ```
-CREATE MATERIALIZED VIEW mv_trades_to_1m
+CREATE MATERIALIZED VIEW mv_ticks_to_1m
 TO ohlcv_1m AS
 SELECT
-  anyLast(market_uuid) AS market_uuid,
-  anyLast(market_id)   AS market_id,
+  market_uuid,
   anyLast(symbol)      AS symbol,
   toStartOfInterval(ts, INTERVAL 1 MINUTE, 'UTC') AS ts,
-  argMin(price, ts) AS open,
+  argMin(price, (ts, event_id)) AS open,
   max(price)        AS high,
   min(price)        AS low,
-  argMax(price, ts) AS close,
+  argMax(price, (ts, event_id)) AS close,
   sum(size)         AS volume,
-  count()           AS trades
-FROM trades
-GROUP BY market_uuid, ts;
+  sum(trade_count)  AS trades
+FROM market_ticks
+GROUP BY market_uuid, symbol, ts;
 ```
 Notes:
-- If `market_uuid` column is absent, fall back to symbol‑based variant (legacy).
-- If both `market_uuid` and `market_id` are present, prefer `market_uuid` in ORDER BY and GROUP BY.
+- `event_id` should be unique when possible (e.g. `txHash:logIndex`) so open/close is deterministic even when multiple events share the same second.
+- `trade_count` should be `1` for real trades; `0` for synthetic candle-derived ticks.
+
+### Cleanup: UUID accidentally stored in `symbol`
+
+In realtime mode, some codepaths may use the **market UUID as the subscription key** (e.g. Pusher/TradingView channels). If that UUID is accidentally persisted as `symbol`, you'll see rows like:
+
+- `ohlcv_1m.symbol = <uuid>`
+- `ohlcv_1m.market_uuid = ''` (empty)
+
+The app now guards against this (UUID-like symbols are treated as `market_uuid` and the true symbol is resolved), but you may want to delete already-written bad rows.
+
+Run in ClickHouse (adjust database name if not `default`):
+
+```sql
+-- Delete derived candles that used UUID as symbol
+ALTER TABLE default.ohlcv_1m
+DELETE WHERE match(symbol, '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
+  AND (market_uuid = '' OR market_uuid IS NULL);
+
+-- Delete the underlying ticks that created those candles
+ALTER TABLE default.market_ticks
+DELETE WHERE match(symbol, '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')
+  AND (market_uuid = '' OR market_uuid IS NULL);
+```
+
+Note: ClickHouse deletes are **eventually consistent**; the rows may disappear a bit later.
 
 ## 5) Edge Function behavior
 1) Auth
@@ -136,8 +160,8 @@ Notes:
    - `market = SELECT id FROM markets WHERE market_address = :address LIMIT 1`
    - If not found → drop or queue for later (configurable)
 4) Persist
-   - Insert normalized trades into `trades` with `market_uuid` (and numeric `market_id` if tracked)
-   - Optionally accept `candles[]` to write directly to `ohlcv_1m` (bypass MV)
+   - Insert normalized events into `market_ticks` with `market_uuid`
+   - Let the MV build `ohlcv_1m` (no direct writes to `ohlcv_1m`)
 5) Idempotency
    - Deduplicate by (`transactionHash`, `logIndex`) within a short time window (optional)
 6) Logging (minimal)

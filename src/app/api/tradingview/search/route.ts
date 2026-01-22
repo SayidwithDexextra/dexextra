@@ -16,12 +16,13 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type') || '';
     const exchange = searchParams.get('exchange') || '';
 
-    console.log(`🔍 TradingView search: "${query}" (limit: ${limit})`);
+    // Avoid spamming dev logs: this endpoint is called frequently by the charting library
 
     // Build Supabase query for active orderbook markets (unified view)
     let supabaseQuery = supabase
       .from('orderbook_markets_view')
-      .select('metric_id, description, category, market_address, central_vault_address, last_trade_price, created_at')
+      // IMPORTANT: include `id` so TradingView can use market UUID as the canonical symbol id
+      .select('id, metric_id, description, category, market_address, central_vault_address, last_trade_price, created_at')
       .eq('is_active', true)
       .eq('deployment_status', 'DEPLOYED')
       .not('market_address', 'is', null);
@@ -57,11 +58,17 @@ export async function GET(request: NextRequest) {
       else if (cat.includes('index')) marketType = 'index';
       else if (cat.includes('commodity')) marketType = 'commodity';
 
-      const symbol = market.metric_id;
+      // Canonical TradingView symbol id should be the market UUID for stability.
+      // Keep the human label in full_name/description.
+      const marketUuid = market.id ? String(market.id) : null;
+      const metricId = market.metric_id ? String(market.metric_id) : '';
+      const symbol = marketUuid || metricId || '';
       return {
         symbol,
-        full_name: `ORDERBOOK:${symbol}`,
-        description: market.description || `${symbol} Orderbook Market`,
+        // Make the displayed name human-friendly while keeping `symbol` as the canonical id.
+        full_name: `ORDERBOOK:${metricId || symbol}`,
+        // Keep description human-friendly even if symbol is a UUID
+        description: market.description || `${metricId || symbol} Orderbook Market`,
         exchange: 'ORDERBOOK',
         ticker: symbol,
         type: marketType,
@@ -69,11 +76,13 @@ export async function GET(request: NextRequest) {
         market_address: market.market_address,
         vault_address: market.central_vault_address,
         initial_price: market.last_trade_price,
-        created_at: market.created_at
+        created_at: market.created_at,
+        // Not part of standard UDF, but useful for clients
+        market_id: marketUuid
       };
     });
 
-    console.log(`✅ Found ${symbols.length} orderbook markets for query: "${query}"`);
+    // Avoid spamming dev logs
 
     return NextResponse.json({
       symbols,

@@ -11,6 +11,29 @@ function ensureUrl(value?: string): string {
   return `https://${raw}:8443`;
 }
 
+const TF_MS: Record<string, number> = {
+  '1m': 60_000,
+  '5m': 5 * 60_000,
+  '15m': 15 * 60_000,
+  '30m': 30 * 60_000,
+  '1h': 60 * 60_000,
+  '4h': 4 * 60 * 60_000,
+  '1d': 24 * 60 * 60_000,
+};
+
+function isDevSeedEnabled(): boolean {
+  // Keep these endpoints safe by default. If you need to allow seeding in a prod-like env,
+  // set CHARTS_DEV_SEED=1 explicitly.
+  if (process.env.CHARTS_DEV_SEED === '1') return true;
+  return process.env.NODE_ENV !== 'production';
+}
+
+function formatDateTime64Ms(input: string | number | Date | undefined): string {
+  const d = input instanceof Date ? input : new Date(input ?? Date.now());
+  // 'YYYY-MM-DD HH:MM:SS.mmm'
+  return d.toISOString().replace('T', ' ').replace('Z', '');
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -19,6 +42,9 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '1000', 10);
     const startTime = searchParams.get('startTime');
     const endTime = searchParams.get('endTime');
+    const metricDebug =
+      searchParams.get('metricDebug') === '1' ||
+      searchParams.get('seed') === '1';
 
     if (!marketId) {
       return NextResponse.json({ error: 'marketId is required' }, { status: 400 });
@@ -39,6 +65,53 @@ export async function GET(request: NextRequest) {
       database: process.env.CLICKHOUSE_DATABASE || 'default',
       request_timeout: 30000
     });
+
+    // Dev-only: seed scatter points so the metric overlay line has data to draw.
+    // This is intentionally opt-in via `?metricDebug=1` and disabled in production by default.
+    if (metricDebug && isDevSeedEnabled()) {
+      const tfMs = TF_MS[timeframe] ?? TF_MS['5m'];
+      const debugPointsRaw = parseInt(searchParams.get('debugPoints') || '', 10);
+      const debugPoints =
+        Number.isFinite(debugPointsRaw) && debugPointsRaw > 0
+          ? Math.min(debugPointsRaw, 2000)
+          : Math.min(Math.max(limit, 1), 500);
+      const baseYRaw = Number(searchParams.get('debugBaseY') || '');
+      const baseY = Number.isFinite(baseYRaw) ? baseYRaw : 50_000;
+      const ampRaw = Number(searchParams.get('debugAmp') || '');
+      const amp = Number.isFinite(ampRaw) ? ampRaw : Math.max(1, baseY * 0.005);
+
+      const endMs = endTime ? new Date(endTime).getTime() : Date.now();
+      const startMs = startTime ? new Date(startTime).getTime() : endMs - (debugPoints - 1) * tfMs;
+      const startAligned = Math.floor(startMs / tfMs) * tfMs;
+
+      const rows: Array<Record<string, any>> = [];
+      for (let i = 0; i < debugPoints; i++) {
+        const ts = startAligned + i * tfMs;
+        const phase = i / 8;
+        const y = baseY + Math.sin(phase) * amp + (Math.cos(phase / 2) * amp) / 4;
+        rows.push({
+          market_identifier: 'DEBUG',
+          market_id: marketId,
+          metric_name: 'MetricOverlay Debug',
+          timeframe,
+          ts: formatDateTime64Ms(ts),
+          x: i, // stable, strictly increasing for easier debugging
+          y: Number(y.toFixed(6)),
+          source: 'debug_seed',
+          version: Date.now() % 2_147_483_647,
+        });
+      }
+
+      try {
+        await client.insert({
+          table: 'scatter_points_raw',
+          values: rows,
+          format: 'JSONEachRow',
+        });
+      } catch (e) {
+        console.warn('⚠️ Scatter debug seed insert failed:', e instanceof Error ? e.message : e);
+      }
+    }
 
   const where: string[] = [`timeframe = '${timeframe}'`, `market_id = '${marketId}'`];
   const startEpochSec = startTime ? Math.floor(new Date(startTime).getTime() / 1000) : undefined;
@@ -68,7 +141,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: rows ?? [],
-      meta: { marketId, timeframe, count: rows?.length || 0, source: 'clickhouse' }
+      meta: { marketId, timeframe, count: rows?.length || 0, source: 'clickhouse', metricDebug: metricDebug ? 1 : 0 }
     });
   } catch (error) {
     console.error('❌ Scatter API error:', error);
@@ -80,12 +153,6 @@ export async function GET(request: NextRequest) {
 }
 
 // --- Helpers for POST ---
-function formatDateTime64Ms(input: string | number | Date | undefined): string {
-  const d = input instanceof Date ? input : new Date(input ?? Date.now());
-  // 'YYYY-MM-DD HH:MM:SS.mmm'
-  return d.toISOString().replace('T', ' ').replace('Z', '');
-}
-
 const ALLOWED_TFS = new Set(['1m','5m','15m','30m','1h','4h','1d']);
 
 function authOk(req: NextRequest): boolean {

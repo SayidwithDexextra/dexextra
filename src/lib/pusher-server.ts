@@ -46,6 +46,39 @@ export interface ChartDataEvent {
   close: number;
   volume: number;
   timestamp: number;
+  // Optional: canonical Supabase markets.id (UUID). Realtime subscriptions may use UUID as symbol.
+  marketUuid?: string;
+}
+
+export interface BroadcastChartOptions {
+  /** Persist to ClickHouse via `processChartData()` (default: true) */
+  persist?: boolean;
+  /** Cache latest candle in Redis for API fallback (default: true) */
+  cache?: boolean;
+  /** Trigger analytics hooks (default: true) */
+  analytics?: boolean;
+}
+
+function looksLikeUuid(value: string): boolean {
+  const v = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function normalizeTimeframe(tf: string): string {
+  const t = String(tf || '').trim();
+  if (!t) return '1m';
+  // TradingView numeric resolutions → our suffix format
+  if (/^\d+$/.test(t)) {
+    const n = parseInt(t, 10);
+    if (n === 1) return '1m';
+    if (n === 5) return '5m';
+    if (n === 15) return '15m';
+    if (n === 30) return '30m';
+    if (n === 60) return '1h';
+    if (n === 240) return '4h';
+    return `${n}m`;
+  }
+  return t;
 }
 
 /**
@@ -241,22 +274,44 @@ export class PusherServerService {
   /**
    * Broadcast chart data updates
    */
-  async broadcastChartData(data: ChartDataEvent): Promise<void> {
+  async broadcastChartData(data: ChartDataEvent, options?: BroadcastChartOptions): Promise<void> {
     if (!this.isInitialized) {
        console.log('❌ Pusher server not initialized, cannot broadcast chart data');
       return;
     }
 
     try {
-      const channel = `chart-${data.symbol}-${data.timeframe}`;
-      const event = 'chart-update';
+      const shouldPersist = options?.persist !== false;
+      const shouldCache = options?.cache !== false;
+      const shouldAnalytics = options?.analytics !== false;
 
-       console.log(`📡 Broadcasting chart data to channel: ${channel}`);
+      const event = 'chart-update';
+      const timeframe = normalizeTimeframe(data.timeframe);
+
+      // Canonical realtime key:
+      // - TradingView + LightweightChart subscribe by market UUID when available.
+      // - `symbol` should remain a human label (e.g. BITCOIN) for storage + UI.
+      const channelKey =
+        (data.marketUuid ? String(data.marketUuid).trim() : '') ||
+        String(data.symbol || '').trim();
+      const primaryChannel = `chart-${channelKey}-${timeframe}`;
+
+      // Backward compatibility: also broadcast to `chart-${symbol}-${tf}` when symbol is human
+      // and differs from marketUuid.
+      const channels = new Set<string>([primaryChannel]);
+      const sym = String(data.symbol || '').trim();
+      const mu = data.marketUuid ? String(data.marketUuid).trim() : '';
+      if (sym && mu && sym !== mu && !looksLikeUuid(sym)) {
+        channels.add(`chart-${sym}-${timeframe}`);
+      }
+
+       console.log(`📡 Broadcasting chart data to channel(s): ${Array.from(channels).join(', ')}`);
        console.log(`🎯 Event name: ${event}`);
        console.log(`📊 Chart data:`, data);
 
       const broadcastData = {
         ...data,
+        timeframe,
         timestamp: data.timestamp || Date.now(),
       };
 
@@ -265,21 +320,36 @@ export class PusherServerService {
       // Development debug - show outgoing payload
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
-         console.log('🔴 WILL-BROADCAST', channel, JSON.stringify(broadcastData, null, 2));
+         console.log('🔴 WILL-BROADCAST', Array.from(channels), JSON.stringify(broadcastData, null, 2));
       }
 
       // 1️⃣ BROADCAST TO CLIENTS (Real-time)
-      await this.pusher.trigger(channel, event, broadcastData);
-       console.log(`📈 Chart data broadcasted successfully for ${data.symbol} (${data.timeframe})`);
+      const triggers = Array.from(channels).map(channel => ({
+        channel,
+        name: event,
+        data: broadcastData,
+      }));
+      if (triggers.length === 1) {
+        await this.pusher.trigger(triggers[0]!.channel, triggers[0]!.name, triggers[0]!.data);
+      } else {
+        await this.pusher.triggerBatch(triggers);
+      }
+       console.log(`📈 Chart data broadcasted successfully for ${data.symbol} (${timeframe})`);
 
       // 2️⃣ PERSIST TO CLICKHOUSE (Data pipeline)
-      await this.persistChartDataToClickHouse(broadcastData);
+      if (shouldPersist) {
+        await this.persistChartDataToClickHouse(broadcastData);
+      }
 
       // 3️⃣ CACHE FOR API FALLBACK (Performance)
-      await this.cacheChartData(broadcastData);
+      if (shouldCache) {
+        await this.cacheChartData(broadcastData);
+      }
 
       // 4️⃣ TRIGGER ANALYTICS PROCESSING (Background)
-      await this.triggerAnalyticsProcessing(broadcastData);
+      if (shouldAnalytics) {
+        await this.triggerAnalyticsProcessing(broadcastData);
+      }
 
     } catch (error) {
       console.error('❌ Error broadcasting chart data:', error);
@@ -315,6 +385,7 @@ export class PusherServerService {
          close: data.close,
          volume: data.volume,
          timestamp: data.timestamp,
+         marketUuid: data.marketUuid,
        });
 
        console.log(`✅ Chart data persisted to ClickHouse: ${data.symbol}`);
@@ -331,19 +402,34 @@ export class PusherServerService {
     if (!this.redis) return;
 
     try {
-      // Cache latest price for this symbol/timeframe
-      const cacheKey = `chart:${data.symbol}:${data.timeframe}:latest`;
-      await this.redis.setex(cacheKey, 300, JSON.stringify(data)); // 5min TTL
+      // Cache latest candle for:
+      // - symbol key (human label)
+      // - marketUuid key (canonical id) when available
+      const tf = normalizeTimeframe(data.timeframe);
+      const cacheKeys = new Set<string>();
+      if (data.symbol) cacheKeys.add(`chart:${data.symbol}:${tf}:latest`);
+      if (data.marketUuid) cacheKeys.add(`chart:${data.marketUuid}:${tf}:latest`);
+      await Promise.all(
+        Array.from(cacheKeys).map(k => this.redis!.setex(k, 300, JSON.stringify({ ...data, timeframe: tf })))
+      ); // 5min TTL
 
       // Cache in price lookup for fast API responses
-      const priceKey = `price:${data.symbol}:latest`;
-      await this.redis.setex(priceKey, 60, JSON.stringify({
+      const pricePayload = JSON.stringify({
         symbol: data.symbol,
         price: data.close,
-        timestamp: data.timestamp
-      })); // 1min TTL
+        timestamp: data.timestamp,
+        marketUuid: data.marketUuid,
+      });
+      if (data.symbol) {
+        const priceKey = `price:${data.symbol}:latest`;
+        await this.redis.setex(priceKey, 60, pricePayload); // 1min TTL
+      }
+      if (data.marketUuid) {
+        const priceKeyById = `price:${data.marketUuid}:latest`;
+        await this.redis.setex(priceKeyById, 60, pricePayload); // 1min TTL
+      }
 
-       console.log(`📱 Chart data cached: ${data.symbol}-${data.timeframe}`);
+       console.log(`📱 Chart data cached: ${data.symbol}-${tf}`);
     } catch (error) {
       console.error('❌ Failed to cache chart data:', error);
     }

@@ -40,6 +40,23 @@ export class PusherClientService {
   private isConnected = false;
   private connectionStateCallbacks: ((state: string) => void)[] = [];
 
+  private normalizeTimeframe(tf: string): string {
+    const t = String(tf || '').trim();
+    if (!t) return '1m';
+    // TradingView numeric resolutions → our channel suffix format
+    if (/^\d+$/.test(t)) {
+      const n = parseInt(t, 10);
+      if (n === 1) return '1m';
+      if (n === 5) return '5m';
+      if (n === 15) return '15m';
+      if (n === 30) return '30m';
+      if (n === 60) return '1h';
+      if (n === 240) return '4h';
+      return `${n}m`;
+    }
+    return t;
+  }
+
   constructor(options: PusherClientOptions = {}) {
     // Validate environment variables
     this.validateEnvironment();
@@ -377,10 +394,14 @@ export class PusherClientService {
     timeframe: string,
     callback: (data: ChartDataEvent) => void
   ): () => void {
-    const channelName = `chart-${symbol}-${timeframe}`;
+    const tf = this.normalizeTimeframe(timeframe);
+    const channelName = `chart-${symbol}-${tf}`;
     const eventName = 'chart-update';
 
      console.log(`🔗 Attempting to subscribe to chart channel: ${channelName}`);
+     if (tf !== String(timeframe || '').trim()) {
+       console.log(`🕒 Normalized timeframe: "${timeframe}" → "${tf}"`);
+     }
      console.log(`🎯 Event name: ${eventName}`);
 
     if (this.subscriptions.has(channelName)) {
@@ -404,7 +425,7 @@ export class PusherClientService {
     });
     
     channel.bind(eventName, (data: ChartDataEvent) => {
-       console.log(`📈 Chart update received for ${symbol} (${timeframe}):`, data);
+       console.log(`📈 Chart update received for ${symbol} (${tf}):`, data);
        console.log(`🎯 Calling callback function...`);
       try {
         callback(data);
@@ -422,7 +443,7 @@ export class PusherClientService {
     };
 
     this.subscriptions.set(channelName, { channel, unsubscribe });
-     console.log(`✅ Subscribed to chart data for ${symbol} (${timeframe})`);
+     console.log(`✅ Subscribed to chart data for ${symbol} (${tf})`);
 
     return unsubscribe;
   }

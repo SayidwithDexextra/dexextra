@@ -3,11 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMarkets } from '@/hooks/useMarkets';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
-import { getMetricAIWorkerBaseUrl } from '@/lib/metricAiWorker';
 
 type SettleState = {
   marketId: string | null;
-  priceInput: string;
   confirming: boolean;
   isSubmitting: boolean;
   txHash: string | null;
@@ -16,6 +14,8 @@ type SettleState = {
   isAnalyzing: boolean;
   waybackUrl?: string | null;
   waybackTs?: string | null;
+  aiPrice?: number;
+  aiResolution?: any;
 };
 
 export default function SettlementPage() {
@@ -23,7 +23,6 @@ export default function SettlementPage() {
 
   const [state, setState] = useState<SettleState>({
     marketId: null,
-    priceInput: '',
     confirming: false,
     isSubmitting: false,
     txHash: null,
@@ -56,7 +55,7 @@ export default function SettlementPage() {
   };
 
   const handleOpenSettle = (marketId: string) => {
-    setState(prev => ({ ...prev, marketId, priceInput: '', confirming: false, txHash: null }));
+    setState(prev => ({ ...prev, marketId, confirming: false, txHash: null }));
   };
 
   const handleConfirmToggle = () => {
@@ -65,22 +64,17 @@ export default function SettlementPage() {
 
   const handleSettle = async () => {
     if (!selectedMarket) return;
-    const price = (state.priceInput || '').trim();
-    if (!price || Number(price) <= 0 || !Number.isFinite(Number(price))) {
-      setState(prev => ({ ...prev, error: 'Enter a valid positive settlement price.' }));
-      return;
-    }
 
     try {
       setState(prev => ({ ...prev, isSubmitting: true, error: null, success: null, txHash: null }));
 
-      // Start the 24h settlement window via API (no on-chain tx)
+      // Start the automated settlement window via API (AI determines price)
       const resp = await fetch('/api/settlements/propose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          market_id: selectedMarket.id,
-          price: Number(price)
+          market_id: selectedMarket.id
+          // No manual price - AI system determines it automatically
         })
       });
       if (!resp.ok) {
@@ -89,6 +83,8 @@ export default function SettlementPage() {
       }
       const j = await resp.json();
       const updated = j?.market || null;
+      const aiPrice = j?.ai_price;
+      const aiResolution = j?.ai_resolution;
 
       // Best-effort: archive primary metric source via Wayback and capture URL
       let waybackUrl: string | null = null;
@@ -132,125 +128,22 @@ export default function SettlementPage() {
 
       setState(prev => ({
         ...prev,
-        success: `Settlement window started. ${updated?.settlement_window_expires_at ? `Expires ${new Date(updated.settlement_window_expires_at).toLocaleString()}` : ''}${waybackUrl ? `\nArchived snapshot: ${waybackUrl}` : ''}`,
+        success: `Automated settlement window started with AI-proposed price: $${aiPrice?.toFixed(4) || 'N/A'}. ${updated?.settlement_window_expires_at ? `Expires ${new Date(updated.settlement_window_expires_at).toLocaleString()}` : ''}${waybackUrl ? `\nArchived snapshot: ${waybackUrl}` : ''}`,
         isSubmitting: false,
         confirming: false,
+        aiPrice,
+        aiResolution
       }));
 
     } catch (e: any) {
       setState(prev => ({
         ...prev,
         isSubmitting: false,
-        error: e?.message || 'Failed to start settlement window. Please try again.',
+        error: e?.message || 'Failed to start automated settlement window. Please try again.',
       }));
     }
   };
 
-  const proposeSettlementPrice = async () => {
-    if (!selectedMarket) return;
-    try {
-      const urls: string[] = [];
-      const metricUrl = (selectedMarket as any)?.initial_order?.metricUrl || (selectedMarket as any)?.initial_order?.metric_url || null;
-      const aiSourceUrl = (selectedMarket as any)?.market_config?.ai_source_locator?.url || null;
-      if (metricUrl && typeof metricUrl === 'string') urls.push(metricUrl);
-      if (aiSourceUrl && typeof aiSourceUrl === 'string' && !urls.includes(aiSourceUrl)) urls.push(aiSourceUrl);
-
-      if (urls.length === 0) {
-        setState(prev => ({ ...prev, error: 'No metric URL configured for this market.' }));
-        return;
-      }
-
-      setState(prev => ({ ...prev, isAnalyzing: true, error: null }));
-
-      // Fire-and-forget: Attempt to archive the primary URL during AI analysis (with light retries)
-      try {
-        const primaryUrl = (typeof metricUrl === 'string' && metricUrl) || (typeof aiSourceUrl === 'string' && aiSourceUrl) || null;
-        if (primaryUrl) {
-          (async () => {
-            try {
-              const attempt = async () => {
-                const resp = await fetch('/api/archives/save', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ url: primaryUrl, captureScreenshot: false, skipIfRecentlyArchived: true })
-                });
-                const j = await resp.json().catch(() => ({} as any));
-                return { ok: resp.ok && j?.success, data: j } as const;
-              };
-
-              for (let i = 0; i < 3; i++) {
-                const res = await attempt();
-                if (res.ok && res.data?.waybackUrl) {
-                  setState(prev => ({ ...prev, waybackUrl: res.data.waybackUrl, waybackTs: res.data.timestamp || null }));
-                  break;
-                }
-                // backoff: 3s, 5s
-                await new Promise(r => setTimeout(r, i === 0 ? 3000 : 5000));
-              }
-            } catch {}
-          })();
-        }
-      } catch {}
-
-      const metric = selectedMarket.market_identifier || selectedMarket.symbol;
-      // Use external worker with polling to avoid blocking
-      let workerUrl = '';
-      try {
-        workerUrl = getMetricAIWorkerBaseUrl();
-      } catch {
-        workerUrl = '';
-      }
-      let resolution: any = null;
-      if (workerUrl) {
-        try {
-          const resStart = await fetch(`${workerUrl}/api/metric-ai`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              metric,
-              description: `Propose final settlement price for ${selectedMarket.symbol}`,
-              urls,
-              related_market_id: selectedMarket.id,
-              context: 'settlement',
-            }),
-          });
-          if (resStart.status !== 202) {
-            const j = await resStart.json().catch(() => ({} as any));
-            throw new Error(j?.error || 'Worker start failed');
-          }
-          const startJson = await resStart.json().catch(() => ({} as any));
-          const jobId = String(startJson?.jobId || '');
-          const startTs = Date.now();
-          const timeoutMs = 15000;
-          while (Date.now() - startTs < timeoutMs) {
-            await new Promise(r => setTimeout(r, 1500));
-            const resStatus = await fetch(`${workerUrl}/api/metric-ai?jobId=${encodeURIComponent(jobId)}`, { cache: 'no-store' });
-            const st = await resStatus.json().catch(() => ({} as any));
-            if (st?.status === 'completed' && st?.result) {
-              resolution = st.result;
-              break;
-            }
-            if (st?.status === 'failed') {
-              break;
-            }
-          }
-        } catch (e: any) {
-          // fallback keeps resolution null
-          console.warn('[settlement] worker analysis failed', e?.message || String(e));
-        }
-      }
-      if (!resolution) {
-        throw new Error('AI analysis did not return a result in time');
-      }
-      const suggestion = resolution?.asset_price_suggestion || resolution?.value;
-      if (!suggestion || isNaN(Number(suggestion))) {
-        throw new Error('AI did not return a valid price suggestion');
-      }
-      setState(prev => ({ ...prev, priceInput: String(suggestion), isAnalyzing: false }));
-    } catch (e: any) {
-      setState(prev => ({ ...prev, error: e?.message || 'Failed to propose price', isAnalyzing: false }));
-    }
-  };
 
   const MarketRow = (m: any) => {
     const ready = isReady(m.settlement_date);
@@ -276,14 +169,7 @@ export default function SettlementPage() {
                 Window Active
               </div>
             )}
-            <button
-              onClick={() => handleOpenSettle(m.id)}
-              disabled={!m.market_address || state.isSubmitting || windowActive}
-              className="text-xs text-red-400 hover:text-red-300 disabled:text-[#404040]"
-              title={!m.market_address ? 'Missing market address' : (windowActive ? 'Window active' : 'Start 24h Window')}
-            >
-              {windowActive ? 'Window Active' : 'Start Window'}
-            </button>
+            {/* Settlement is now fully automatic - no manual trigger needed */}
           </div>
         </div>
         <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
@@ -406,20 +292,6 @@ export default function SettlementPage() {
           </div>
           <div className="px-2.5 pb-3 border-t border-[#1A1A1A]">
             <div className="flex items-center gap-2">
-              <input
-                value={state.priceInput}
-                onChange={e => setState(prev => ({ ...prev, priceInput: e.target.value }))}
-                placeholder="Final price (USDC, 6d)"
-                inputMode="decimal"
-                className="bg-[#0F0F0F] text-white text-[10px] border border-[#222222] rounded px-2 py-1 outline-none focus:border-[#333333] min-w-[180px]"
-              />
-              <button
-                onClick={proposeSettlementPrice}
-                disabled={state.isAnalyzing || state.isSubmitting}
-                className="text-xs text-blue-400 hover:text-blue-300 disabled:text-[#404040]"
-              >
-                {state.isAnalyzing ? 'Analyzing…' : 'AI Propose'}
-              </button>
               <button
                 onClick={handleConfirmToggle}
                 className="text-xs text-red-400 hover:text-red-300"
@@ -431,7 +303,7 @@ export default function SettlementPage() {
                 disabled={!state.confirming || state.isSubmitting}
                 className="text-xs text-red-400 hover:text-red-300 disabled:text-[#404040]"
               >
-                {state.isSubmitting ? 'Starting…' : 'Start 24h Window'}
+                {state.isSubmitting ? 'Starting…' : 'Start AI Settlement'}
               </button>
             </div>
             <div className="mt-2 text-[9px] text-[#606060]">

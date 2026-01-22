@@ -360,9 +360,21 @@ export async function POST(req: Request) {
     const clientCutArg = Array.isArray(body?.cutArg) ? body.cutArg : (Array.isArray(body?.cut) ? body.cut : null);
     const iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
     const aiSourceLocator = body?.aiSourceLocator || null;
-    const settlementTs = typeof body?.settlementDate === 'number' && body.settlementDate > 0
-      ? Math.floor(body.settlementDate)
-      : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+    // Validate settlement date is required and in the future
+    if (!body?.settlementDate || typeof body.settlementDate !== 'number' || body.settlementDate <= 0) {
+      return NextResponse.json({
+        error: 'settlementDate is required and must be a valid future Unix timestamp'
+      }, { status: 400 });
+    }
+
+    const settlementTs = Math.floor(body.settlementDate);
+    const now = Math.floor(Date.now() / 1000);
+
+    if (settlementTs <= now) {
+      return NextResponse.json({
+        error: 'settlementDate must be in the future'
+      }, { status: 400 });
+    }
 
     // One comprehensive, machine-readable env/config snapshot for Vercel vs localhost comparisons.
     // IMPORTANT: keep secrets masked; prefer presence + length over raw values.
@@ -1333,7 +1345,7 @@ export async function POST(req: Request) {
           minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
           tick_size: Number(process.env.DEFAULT_TICK_SIZE || 0.01),
           requires_kyc: false,
-          settlement_date: settlementTs ? new Date(settlementTs * 1000).toISOString() : null,
+          settlement_date: new Date(settlementTs * 1000).toISOString(),
           trading_end_date: null,
           data_request_window_seconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
           auto_settle: true,

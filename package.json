@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "read:marks": "tsx scripts/interactive-read-mark-prices.ts",
     "backfill:scatter:nickel": "node scripts/backfill-scatter.js --market NICKEL --metric Nickel --timeframe 5m --points 288 --source backfill --version 1",
     "test:price": "tsx scripts/test-price-validation.ts",
     "test:order": "tsx scripts/test-order-pipeline.ts",

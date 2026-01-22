@@ -12,6 +12,10 @@ export interface MarketTick {
   size: number;
   event_type: string;
   is_long: boolean;
+  // Optional tie-breaker for deterministic open/close (e.g. txHash:logIndex or synthetic id)
+  event_id?: string;
+  // Optional: 1 for real trades, 0 for synthetic candle-derived ticks
+  trade_count?: number;
   market_id: number;
   contract_address: string;
   // Optional Supabase market UUID tag for cross-system lineage
@@ -67,7 +71,15 @@ const TIMEFRAME_MAP: Record<string, TimeframeConfig> = {
   '1h': { interval: '1h', clickhouseInterval: 'INTERVAL 1 HOUR' },
   '4h': { interval: '4h', clickhouseInterval: 'INTERVAL 4 HOUR' },
   '1d': { interval: '1d', clickhouseInterval: 'INTERVAL 1 DAY' },
+  '1w': { interval: '1w', clickhouseInterval: 'INTERVAL 1 WEEK' },
+  '1mo': { interval: '1mo', clickhouseInterval: 'INTERVAL 1 MONTH' },
 };
+
+function looksLikeUuid(value: string): boolean {
+  const v = String(value || '').trim();
+  // Canonical UUID v1-v5 shape
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
 
 export class ClickHouseDataPipeline {
   private client: ClickHouseClient | null = null;
@@ -78,9 +90,8 @@ export class ClickHouseDataPipeline {
   private readonly BUFFER_SIZE = 100;
   private readonly FLUSH_INTERVAL_MS = 5000; // 5 seconds
   private initialized: boolean = false;
-  // Cached feature detection for optional columns
-  private supportsTradeMarketUuid: boolean | null = null;
-  private supportsTickMarketUuid: boolean | null = null;
+  // Cached feature detection for optional columns (table -> column -> supported)
+  private columnSupportCache: Map<string, Map<string, boolean>> = new Map();
   // Lazy Supabase admin client for market lookups
   private supabase: SupabaseClient | null = null;
 
@@ -143,17 +154,101 @@ export class ClickHouseDataPipeline {
   private async resolveMarketBySymbol(symbol: string): Promise<{ marketUuid?: string; contractAddress?: string } | null> {
     const sb = this.ensureSupabase();
     if (!sb) return null;
+    const sym = String(symbol || '').trim();
+    if (!sym) return null;
     try {
+      // Prefer orderbook markets view (canonical for TradingView + realtime)
+      try {
+        const { data: ob } = await sb
+          .from('orderbook_markets_view')
+          .select('id, metric_id, symbol, market_address, is_active, deployment_status')
+          .or(`ilike.metric_id.${sym},ilike.symbol.${sym}`)
+          .eq('is_active', true)
+          .eq('deployment_status', 'DEPLOYED')
+          .not('market_address', 'is', null)
+          .limit(1)
+          .maybeSingle();
+        if (ob?.id) {
+          return { marketUuid: String((ob as any).id), contractAddress: (ob as any).market_address || undefined };
+        }
+      } catch {
+        // ignore and fall back
+      }
+
+      // Fallback to legacy `markets` table (vAMM / non-orderbook deployments)
       const { data, error } = await sb
         .from('markets')
         .select('id, symbol, market_address, market_status')
-        .ilike('symbol', symbol)
+        .ilike('symbol', sym)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (error) return null;
-      if (!data) return null;
-      return { marketUuid: String(data.id), contractAddress: data.market_address || undefined };
+      if (error || !data) return null;
+      return { marketUuid: String((data as any).id), contractAddress: (data as any).market_address || undefined };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve Supabase market metadata by market UUID (markets.id)
+   */
+  private async resolveMarketByUuid(marketUuid: string): Promise<{ symbol?: string; contractAddress?: string } | null> {
+    const sb = this.ensureSupabase();
+    if (!sb) return null;
+    const id = String(marketUuid || '').trim();
+    if (!id) return null;
+    try {
+      // Prefer orderbook markets view (this is what TradingView resolves + uses as UUID)
+      try {
+        const { data: ob } = await sb
+          .from('orderbook_markets_view')
+          .select('id, metric_id, symbol, market_address')
+          .eq('id', id)
+          .limit(1)
+          .maybeSingle();
+        if (ob) {
+          const sym = (ob as any).metric_id || (ob as any).symbol;
+          return {
+            symbol: sym ? String(sym).toUpperCase() : undefined,
+            contractAddress: (ob as any).market_address || undefined
+          };
+        }
+      } catch {
+        // ignore and fall back
+      }
+
+      // Fallback: resolved orderbook table (if present in a given env)
+      try {
+        const { data: r } = await sb
+          .from('orderbook_markets_resolved')
+          .select('id, metric_id, symbol, market_address')
+          .eq('id', id)
+          .limit(1)
+          .maybeSingle();
+        if (r) {
+          const sym = (r as any).metric_id || (r as any).symbol;
+          return {
+            symbol: sym ? String(sym).toUpperCase() : undefined,
+            contractAddress: (r as any).market_address || undefined
+          };
+        }
+      } catch {
+        // ignore and fall back
+      }
+
+      // Fallback to legacy `markets` table
+      const { data, error } = await sb
+        .from('markets')
+        .select('id, symbol, market_address')
+        .eq('id', id)
+        .limit(1)
+        .maybeSingle();
+      if (error || !data) return null;
+      return {
+        symbol: (data as any).symbol ? String((data as any).symbol).toUpperCase() : undefined,
+        contractAddress: (data as any).market_address || undefined
+      };
     } catch {
       return null;
     }
@@ -171,9 +266,13 @@ export class ClickHouseDataPipeline {
    * Detect if a table contains a specific column; cache the result.
    */
   private async supportsColumn(table: 'trades' | 'market_ticks', column: string): Promise<boolean> {
-    const cacheKey = table === 'trades' ? 'supportsTradeMarketUuid' : 'supportsTickMarketUuid';
-    const cached = this[cacheKey as keyof this] as boolean | null;
-    if (cached !== null) return cached;
+    let tCache = this.columnSupportCache.get(table);
+    if (!tCache) {
+      tCache = new Map<string, boolean>();
+      this.columnSupportCache.set(table, tCache);
+    }
+    const cached = tCache.get(column);
+    if (typeof cached === 'boolean') return cached;
     try {
       const result = await this.ensureClient().query({
         query: `DESCRIBE TABLE ${table}`,
@@ -181,12 +280,10 @@ export class ClickHouseDataPipeline {
       });
       const rows = (await result.json()) as Array<{ name: string }>;
       const ok = Array.isArray(rows) && rows.some(r => String(r.name) === column);
-      if (table === 'trades') this.supportsTradeMarketUuid = ok;
-      if (table === 'market_ticks') this.supportsTickMarketUuid = ok;
+      tCache.set(column, ok);
       return ok;
     } catch {
-      if (table === 'trades') this.supportsTradeMarketUuid = false;
-      if (table === 'market_ticks') this.supportsTickMarketUuid = false;
+      tCache.set(column, false);
       return false;
     }
   }
@@ -223,9 +320,19 @@ export class ClickHouseDataPipeline {
     const values = Array.isArray(tickOrTicks) ? tickOrTicks : [tickOrTicks];
     if (values.length === 0) return;
     const allowMarketUuid = await this.supportsColumn('market_ticks', 'market_uuid');
-    const mapped = allowMarketUuid
-      ? values
-      : values.map(({ market_uuid, ...rest }) => rest);
+    const allowEventId = await this.supportsColumn('market_ticks', 'event_id');
+    const allowTradeCount = await this.supportsColumn('market_ticks', 'trade_count');
+    const mapped = values.map((v) => {
+      const { market_uuid, event_id, trade_count, ...rest } = v as any;
+      const row: any = { ...rest };
+      if (allowMarketUuid) {
+        // Last-line defense: if someone accidentally passes UUID as symbol, keep market_uuid coherent.
+        row.market_uuid = market_uuid || (looksLikeUuid(String(row.symbol || '')) ? String(row.symbol) : undefined);
+      }
+      if (allowEventId) row.event_id = event_id || '';
+      if (allowTradeCount) row.trade_count = Number.isFinite(Number(trade_count)) ? Number(trade_count) : 1;
+      return row;
+    });
     await this.ensureClient().insert({
       table: 'market_ticks',
       values: mapped,
@@ -253,6 +360,49 @@ export class ClickHouseDataPipeline {
           trades
         FROM ohlcv_1m
         WHERE symbol = '${symbol}'
+        ORDER BY ts DESC
+        LIMIT 1
+      `,
+      format: 'JSONEachRow'
+    });
+    const rows = (await result.json()) as any[];
+    if (!rows || rows.length === 0) return null;
+    const row = rows[0];
+    return {
+      symbol: String(row.symbol),
+      time: Number(row.time),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: Number(row.volume),
+      trades: Number(row.trades)
+    };
+  }
+
+  /**
+   * Fetch the most recent 1m candle for a market UUID (Supabase markets.id).
+   * This is the canonical path for realtime streaming, since symbols are not guaranteed stable.
+   */
+  async fetchLatestOhlcv1mByMarketUuid(marketUuid: string): Promise<OHLCVCandle | null> {
+    if (!this.isConfigured()) {
+      return null;
+    }
+    const id = String(marketUuid || '').replace(/'/g, "\\'");
+    if (!id) return null;
+    const result = await this.ensureClient().query({
+      query: `
+        SELECT
+          symbol,
+          toUnixTimestamp(ts) AS time,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          trades
+        FROM ohlcv_1m
+        WHERE market_uuid = '${id}'
         ORDER BY ts DESC
         LIMIT 1
       `,
@@ -322,9 +472,18 @@ export class ClickHouseDataPipeline {
 
     try {
       const allowMarketUuid = await this.supportsColumn('market_ticks', 'market_uuid');
-      const mapped = allowMarketUuid
-        ? ticksToFlush
-        : ticksToFlush.map(({ market_uuid, ...rest }) => rest);
+      const allowEventId = await this.supportsColumn('market_ticks', 'event_id');
+      const allowTradeCount = await this.supportsColumn('market_ticks', 'trade_count');
+      const mapped = ticksToFlush.map((v) => {
+        const { market_uuid, event_id, trade_count, ...rest } = v as any;
+        const row: any = { ...rest };
+        if (allowMarketUuid) {
+          row.market_uuid = market_uuid || (looksLikeUuid(String(row.symbol || '')) ? String(row.symbol) : undefined);
+        }
+        if (allowEventId) row.event_id = event_id || '';
+        if (allowTradeCount) row.trade_count = Number.isFinite(Number(trade_count)) ? Number(trade_count) : 1;
+        return row;
+      });
       await this.ensureClient().insert({
         // Legacy vAMM raw events table (kept for backward compatibility)
         table: 'market_ticks',
@@ -407,63 +566,97 @@ export class ClickHouseDataPipeline {
     close: number;
     volume: number;
     timestamp: number;
+    marketUuid?: string;
   }): Promise<void> {
-    // Convert OHLCV to representative ticks for storage
+    // Convert OHLCV candle to a small set of synthetic ticks for storage.
+    // NOTE: This preserves candle shape, but is not a replacement for real trade-level ticks.
     const baseTime = new Date(data.timestamp);
-    const volumePerTick = data.volume / 4;
-    // Best effort market lookup (Supabase UUID)
-    let marketUuid: string | undefined;
+    // Preserve volume without inflating "trade count": attribute full volume to the open tick only.
+    const openSize = Number(data.volume) || 0;
+    const incomingSymbol = String(data.symbol || '').trim();
+    let marketUuid: string | undefined = data.marketUuid ? String(data.marketUuid).trim() : undefined;
     let contractAddressHint: string | undefined;
+    let symbolForStorage = incomingSymbol ? incomingSymbol.toUpperCase() : 'UNKNOWN';
+
+    // If realtime pipelines use market UUID as the subscription "symbol",
+    // treat it as market_uuid for ClickHouse and resolve the human symbol.
+    const incomingIsUuid = looksLikeUuid(incomingSymbol);
+    if (incomingIsUuid && !marketUuid) {
+      marketUuid = incomingSymbol;
+    }
+
     try {
-      const resolved = await this.resolveMarketBySymbol(String(data.symbol).toUpperCase());
-      marketUuid = resolved?.marketUuid;
-      contractAddressHint = resolved?.contractAddress;
+      if (marketUuid) {
+        const resolvedById = await this.resolveMarketByUuid(marketUuid);
+        if (resolvedById?.symbol) symbolForStorage = resolvedById.symbol;
+        if (resolvedById?.contractAddress) contractAddressHint = resolvedById.contractAddress;
+      } else if (incomingSymbol) {
+        // Best effort market lookup (Supabase UUID) by symbol
+        const resolved = await this.resolveMarketBySymbol(symbolForStorage);
+        marketUuid = resolved?.marketUuid;
+        contractAddressHint = resolved?.contractAddress;
+      }
     } catch {}
 
+    if (incomingIsUuid && !marketUuid) {
+      // We can still store the UUID as the market_uuid if we couldn't resolve it above
+      // (e.g. Supabase not configured), which keeps queries market-centric.
+      marketUuid = incomingSymbol;
+    }
+
+    const candleKey = `${symbolForStorage}:${baseTime.toISOString()}`;
     const ticks: MarketTick[] = [
       {
-        symbol: data.symbol,
+        symbol: symbolForStorage,
         ts: new Date(baseTime.getTime()),
         price: data.open,
-        size: volumePerTick,
+        size: openSize,
         event_type: 'open',
         is_long: true,
         market_id: 0,
         contract_address: contractAddressHint || '',
-        market_uuid: marketUuid
+        market_uuid: marketUuid,
+        event_id: `candle:${candleKey}:open`,
+        trade_count: 0
       },
       {
-        symbol: data.symbol,
+        symbol: symbolForStorage,
         ts: new Date(baseTime.getTime() + 15000), // +15s
         price: data.high,
-        size: volumePerTick,
+        size: 0,
         event_type: 'high',
         is_long: true,
         market_id: 0,
         contract_address: contractAddressHint || '',
-        market_uuid: marketUuid
+        market_uuid: marketUuid,
+        event_id: `candle:${candleKey}:high`,
+        trade_count: 0
       },
       {
-        symbol: data.symbol,
+        symbol: symbolForStorage,
         ts: new Date(baseTime.getTime() + 30000), // +30s
         price: data.low,
-        size: volumePerTick,
+        size: 0,
         event_type: 'low',
         is_long: false,
         market_id: 0,
         contract_address: contractAddressHint || '',
-        market_uuid: marketUuid
+        market_uuid: marketUuid,
+        event_id: `candle:${candleKey}:low`,
+        trade_count: 0
       },
       {
-        symbol: data.symbol,
+        symbol: symbolForStorage,
         ts: new Date(baseTime.getTime() + 45000), // +45s
         price: data.close,
-        size: volumePerTick,
+        size: 0,
         event_type: 'close',
         is_long: true,
         market_id: 0,
         contract_address: contractAddressHint || '',
-        market_uuid: marketUuid
+        market_uuid: marketUuid,
+        event_id: `candle:${candleKey}:close`,
+        trade_count: 0
       }
     ];
 
@@ -525,26 +718,31 @@ export class ClickHouseDataPipeline {
 
     let query: string;
     const whereConditions: string[] = [];
-    if (symbol) {
-      whereConditions.push(`symbol = '${symbol}'`);
+
+    const safeSymbol = symbol ? escapeSqlString(String(symbol)) : undefined;
+    const safeMarketUuid = marketUuid ? escapeSqlString(String(marketUuid)) : undefined;
+
+    if (safeSymbol) {
+      whereConditions.push(`symbol = '${safeSymbol}'`);
     }
-    if (marketUuid) {
-      whereConditions.push(`market_uuid = '${marketUuid}'`);
+    if (safeMarketUuid) {
+      whereConditions.push(`market_uuid = '${safeMarketUuid}'`);
     }
-    // Use a safe default WHERE clause when no filters are provided
-    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
-    // Normalize optional time range to epoch seconds to avoid timezone ambiguity
+
+    // Normalize optional time range to epoch seconds (UTC).
     const startEpochSec = startTime ? Math.floor(startTime.getTime() / 1000) : undefined;
     const endEpochSec = endTime ? Math.floor(endTime.getTime() / 1000) : undefined;
 
     if (timeframe === '1m') {
       // Direct query from ohlcv_1m table
       if (typeof startEpochSec === 'number') {
-        whereConditions.push(`toUnixTimestamp(ts) >= ${startEpochSec}`);
+        whereConditions.push(`ts >= toDateTime(${startEpochSec})`);
       }
       if (typeof endEpochSec === 'number') {
-        whereConditions.push(`toUnixTimestamp(ts) <= ${endEpochSec}`);
+        whereConditions.push(`ts <= toDateTime(${endEpochSec})`);
       }
+      // IMPORTANT: compute whereClause after adding time constraints (otherwise we ignore from/to)
+      const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
 
       query = `
         SELECT
@@ -564,37 +762,27 @@ export class ClickHouseDataPipeline {
     } else {
       // Dynamic aggregation from ohlcv_1m for higher timeframes
       if (typeof startEpochSec === 'number') {
-        whereConditions.push(`toUnixTimestamp(ts) >= ${startEpochSec}`);
+        whereConditions.push(`ts >= toDateTime(${startEpochSec})`);
       }
       if (typeof endEpochSec === 'number') {
-        whereConditions.push(`toUnixTimestamp(ts) <= ${endEpochSec}`);
+        whereConditions.push(`ts <= toDateTime(${endEpochSec})`);
       }
+      // IMPORTANT: compute whereClause after adding time constraints (otherwise we ignore from/to)
+      const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '1=1';
 
       query = `
         SELECT
           symbol,
+          toStartOfInterval(ts, ${config.clickhouseInterval}, 'UTC') AS bucket_ts,
           toUnixTimestamp(bucket_ts) AS time,
-          any(open) AS open,
+          argMin(open, ts) AS open,
           max(high) AS high,
           min(low) AS low,
-          anyLast(close) AS close,
+          argMax(close, ts) AS close,
           sum(volume) AS volume,
           sum(trades) AS trades
-        FROM (
-          SELECT
-            symbol,
-            toStartOfInterval(ts, ${config.clickhouseInterval}, 'UTC') AS bucket_ts,
-            open,
-            high,
-            low,
-            close,
-            volume,
-            trades,
-            ts
-          FROM ohlcv_1m
-          WHERE ${whereClause}
-          ORDER BY ts ASC
-        )
+        FROM ohlcv_1m
+        WHERE ${whereClause}
         GROUP BY symbol, bucket_ts
         ORDER BY bucket_ts DESC
         LIMIT ${limit}
@@ -625,7 +813,7 @@ export class ClickHouseDataPipeline {
       // Return in chronological order (oldest first)
       return mapped.reverse();
     } catch (error) {
-      console.error(`❌ Failed to fetch ${timeframe} candles for ${symbol}:`, error);
+      console.error(`❌ Failed to fetch ${timeframe} candles for ${symbol || safeMarketUuid || 'unknown'}:`, error);
       throw error;
     }
   }
@@ -920,4 +1108,10 @@ function ensureUrl(value?: string): string {
   if (!raw) return '';
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
   return `https://${raw}:8443`;
+}
+
+function escapeSqlString(value: string): string {
+  // Minimal defensive escaping for single-quoted ClickHouse string literals.
+  // (We control the inputs, but this also prevents accidental quote-breaks.)
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }

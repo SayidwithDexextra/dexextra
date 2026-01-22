@@ -59,7 +59,7 @@ async function setupOrderbookClickHouse() {
       `Applied TTL to ${db}.trades (180d)`
     );
 
-    // 1b) Legacy/compat: raw vAMM ticks table used by some ingestion paths
+    // 1b) Raw ticks/trades table (canonical raw stream for OHLCV)
     await exec(
       `CREATE TABLE IF NOT EXISTS ${db}.market_ticks (
         symbol LowCardinality(String),
@@ -68,15 +68,27 @@ async function setupOrderbookClickHouse() {
         size Float64,
         event_type LowCardinality(String),
         is_long UInt8 DEFAULT 1,
+        event_id String DEFAULT '',              -- txHash:logIndex, or synthetic id (used for deterministic open/close)
+        trade_count UInt32 DEFAULT 1,            -- 1 for real trades, 0 for synthetic candle-derived ticks
         market_id UInt32 DEFAULT 0,
         contract_address LowCardinality(String) DEFAULT '',
         market_uuid LowCardinality(String) DEFAULT ''     -- Supabase markets.id linkage
       )
       ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
-      ORDER BY (symbol, ts)
+      ORDER BY (symbol, ts, event_id)
       SETTINGS index_granularity = 8192`,
       `Ensured ${db}.market_ticks table`
+    );
+
+    // Ensure new optional columns exist even if the table was created previously
+    await exec(
+      `ALTER TABLE ${db}.market_ticks ADD COLUMN IF NOT EXISTS event_id String DEFAULT ''`,
+      `Ensured ${db}.market_ticks.event_id column`
+    );
+    await exec(
+      `ALTER TABLE ${db}.market_ticks ADD COLUMN IF NOT EXISTS trade_count UInt32 DEFAULT 1`,
+      `Ensured ${db}.market_ticks.trade_count column`
     );
 
     // Apply TTL retention to market_ticks (180 days)
@@ -124,28 +136,28 @@ async function setupOrderbookClickHouse() {
       `Ensured ${db}.ohlcv_1m table`
     );
 
-    // 4) Materialized view from trades -> 1m candles
+    // 4) Materialized view from market_ticks -> 1m candles (deterministic open/close)
     await exec(
-      `DROP VIEW IF EXISTS ${db}.mv_trades_to_1m`,
-      `Dropped existing ${db}.mv_trades_to_1m (if any)`
+      `DROP VIEW IF EXISTS ${db}.mv_ticks_to_1m`,
+      `Dropped existing ${db}.mv_ticks_to_1m (if any)`
     );
 
     await exec(
-      `CREATE MATERIALIZED VIEW ${db}.mv_trades_to_1m
+      `CREATE MATERIALIZED VIEW ${db}.mv_ticks_to_1m
         TO ${db}.ohlcv_1m AS
       SELECT
         symbol,
         toStartOfInterval(ts, INTERVAL 1 MINUTE, 'UTC') AS ts,
-        any(price) AS open,
+        argMin(price, (ts, event_id)) AS open,
         max(price) AS high,
         min(price) AS low,
-        anyLast(price) AS close,
+        argMax(price, (ts, event_id)) AS close,
         sum(size) AS volume,
-        count() AS trades,
-        anyLast(market_uuid) AS market_uuid
-      FROM ${db}.trades
-      GROUP BY symbol, ts`,
-      `Created ${db}.mv_trades_to_1m (trades → ohlcv_1m)`
+        sum(trade_count) AS trades,
+        market_uuid
+      FROM ${db}.market_ticks
+      GROUP BY market_uuid, symbol, ts`,
+      `Created ${db}.mv_ticks_to_1m (market_ticks → ohlcv_1m)`
     );
 
     console.log("🎉 Order-book ClickHouse schema setup complete!");

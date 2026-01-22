@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 
 // TradingView Advanced Charts types
 declare global {
@@ -315,7 +314,7 @@ const AdvancedChart: React.FC<AdvancedChartProps> = ({
     return () => clearTimeout(globalTimeout);
   }, [isLoading]);
 
-  // Load TradingView library script
+  // Load TradingView Charting Library script (self-hosted)
   useEffect(() => {
     const loadTradingViewScript = () => {
       // Check if window is available (client-side)
@@ -331,31 +330,31 @@ const AdvancedChart: React.FC<AdvancedChartProps> = ({
         return;
       }
 
-      console.log('Loading TradingView script...');
+      console.log('Loading TradingView Charting Library...');
       const script = document.createElement('script');
-      script.src = 'https://s3.tradingview.com/tv.js';
+      script.src = '/charting_library/charting_library.min.js';
       script.async = true;
       
       let timeoutId: NodeJS.Timeout;
       
       script.onload = () => {
         clearTimeout(timeoutId);
-        console.log('TradingView script loaded successfully');
-        
+        console.log('TradingView Charting Library loaded successfully');
+
         // Double-check that TradingView object is available
-        if ((window as any).TradingView) {
+        if ((window as any).TradingView?.widget) {
           setScriptLoaded(true);
           setError(null);
         } else {
-          console.error('TradingView script loaded but object not available');
-          setError('TradingView library not properly initialized');
+          console.error('TradingView library loaded but widget not available');
+          setError('TradingView library not properly initialized. Ensure charting_library is hosted under /public.');
         }
       };
       
       script.onerror = (err) => {
         clearTimeout(timeoutId);
         console.error('Failed to load TradingView script:', err);
-        setError('Failed to load charting library. Using fallback chart...');
+        setError('Failed to load charting library. Ensure /public/charting_library is present.');
         setIsLoading(false);
       };
 

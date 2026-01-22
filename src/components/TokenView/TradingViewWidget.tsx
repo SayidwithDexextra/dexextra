@@ -20,7 +20,7 @@ interface TradingViewWidgetProps {
 // Placeholder component to maintain compatibility
 export default function TradingViewWidget(props: TradingViewWidgetProps) {
   return (
-    <div className="p-4 bg-gray-900 rounded border border-gray-700 text-center text-gray-400">
+    <div className="p-4 bg-[#18181a] rounded border border-gray-700 text-center text-gray-400">
       <div className="text-lg mb-2">📈 TradingView Widget</div>
       <div className="text-sm">This component has been replaced with LightweightChart</div>
       <div className="text-xs mt-2 text-gray-500">

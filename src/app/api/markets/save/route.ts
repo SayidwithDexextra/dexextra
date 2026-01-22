@@ -231,6 +231,20 @@ export async function POST(req: Request) {
       aiSourceLocator,
     } = body || {};
 
+    // Validate settlement date is required and in the future
+    if (!settlementDate || typeof settlementDate !== 'number' || settlementDate <= 0) {
+      return NextResponse.json({
+        error: 'settlementDate is required and must be a valid future Unix timestamp'
+      }, { status: 400 });
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (settlementDate <= now) {
+      return NextResponse.json({
+        error: 'settlementDate must be in the future'
+      }, { status: 400 });
+    }
+
     // Attempt to create or resolve a Wayback snapshot for the metric URL (server-side, robust)
     let archivedWaybackUrl: string | null = null;
     let archivedWaybackTs: string | null = null;
@@ -335,7 +349,7 @@ export async function POST(req: Request) {
         minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
         tick_size: 0.01,
         requires_kyc: Boolean(requiresKyc),
-        settlement_date: settlementDate ? new Date(settlementDate * 1000).toISOString() : null,
+        settlement_date: new Date(settlementDate * 1000).toISOString(),
         trading_end_date: tradingEndDate || null,
         data_request_window_seconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
         auto_settle: autoSettle ?? true,

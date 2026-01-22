@@ -1,6 +1,8 @@
-# AdvancedChart Component
+# TradingView Charting Components
 
-A fully-featured TradingView Advanced Charts implementation for custom vAMM markets. This component provides professional-grade charting with real-time data integration specifically designed for user-created vAMM contracts.
+The charting UI has been rebuilt around the TradingView Charting Library using a single component:
+
+- `TradingViewChart` for all layouts (desktop and mobile)
 
 ## Features
 
@@ -17,16 +19,11 @@ A fully-featured TradingView Advanced Charts implementation for custom vAMM mark
 ### 1. Basic Usage
 
 ```tsx
-import { AdvancedChart } from '@/components/TokenView';
+import { TradingViewChart } from '@/components/TradingView';
 
 function MyChartComponent() {
   return (
-    <AdvancedChart
-      symbol="MYGOLD"  // Your custom vAMM market symbol
-      interval="15"
-      theme="dark"
-      height={600}
-    />
+    <TradingViewChart symbol="MYGOLD" interval="15" theme="dark" height={600} />
   );
 }
 ```
@@ -34,7 +31,7 @@ function MyChartComponent() {
 ### 2. Advanced Configuration
 
 ```tsx
-<AdvancedChart
+<TradingViewChart
   symbol="MYBTC"
   interval="1D"
   theme="dark"
@@ -44,7 +41,7 @@ function MyChartComponent() {
   hideTopToolbar={false}
   hideSideToolbar={false}
   hideVolumePanel={false}
-  studies={['Volume', 'RSI', 'MACD']}
+  studies={['Volume@tv-basicstudies', 'RSI@tv-basicstudies', 'MACD@tv-basicstudies']}
   drawingsAccess={true}
   savingEnabled={false}
   onSymbolChange={(symbol) => console.log('Changed to:', symbol)}
@@ -78,16 +75,13 @@ function MyChartComponent() {
 
 The TradingView charting library is required but not included. You need to:
 
-1. **Option A: Host Library Locally**
+1. **Host Library Locally**
    ```bash
    # Download TradingView library and place in public/charting_library/
+   # Required files:
+   # public/charting_library/charting_library.min.js
+   # public/charting_library/
    # Contact TradingView for library access
-   ```
-
-2. **Option B: Use CDN** (if available)
-   ```tsx
-   // Update library_path in AdvancedChart.tsx
-   library_path: 'https://your-cdn.com/charting_library/'
    ```
 
 ### 2. Environment Variables
@@ -128,7 +122,7 @@ CREATE TABLE vamm_markets (
 
 ## API Integration
 
-The component automatically integrates with these API endpoints:
+The components automatically integrate with these API endpoints:
 
 ### Required Endpoints
 - `GET /api/tradingview/config` - Chart configuration

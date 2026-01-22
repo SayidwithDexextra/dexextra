@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState, useEffect, useMemo } from 'react';
+import { use, useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { 
   TokenHeader, 
@@ -10,8 +10,7 @@ import {
   ThreadPanel,
   MarketActivityTabs
 } from '@/components/TokenView';
-import LightweightChart from '@/components/TokenView/LightweightChart';
-import ScatterPlotChart from '@/components/TokenView/ScatterPlotChart';
+import { TradingViewChart } from '@/components/TradingView';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
 import NetworkSelector from '@/components/NetworkSelector';
@@ -60,6 +59,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const md = useMarketData();
   const sp = useSearchParams();
   const isDeploying = sp.get('deploying') === '1';
+  const metricDebug = sp.get('metricDebug') === '1' && process.env.NODE_ENV !== 'production';
   const [isSettlementView, setIsSettlementView] = useState(false);
 
   const tokenData = md.tokenData;
@@ -103,6 +103,119 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const currentSymbol = symbol;
   const { pair } = useActivePairByMarketId(currentMarketId);
   const { markets: seriesMkts } = useSeriesMarkets(pair?.seriesId);
+
+  // Metric overlay config for TradingView charts
+  const metricOverlay = useMemo(() => {
+    if (!currentMarketId) return undefined;
+    const metricId = (md.market as any)?.market_identifier || symbol;
+    // IMPORTANT: metricName is the ClickHouse key. Use the route symbol by default so
+    // `/token/BITCOIN` fetches metric_name=BITCOIN even if `market_identifier` is BTC.
+    const metricName = String(symbol || '').toUpperCase();
+
+    // DEBUG-only: allow forcing the plotted value via URL when metricDebug is enabled.
+    // This is useful for quickly detecting price-scale vs data-mapping issues.
+    // Example: /token/BITCOIN?metricDebug=1&metricConst=45000
+    let metricConst: number | undefined = undefined;
+    if (metricDebug) {
+      const raw = sp.get('metricConst');
+      if (raw !== null && String(raw).trim() !== '') {
+        const n = Number(raw);
+        if (Number.isFinite(n)) metricConst = n;
+      }
+    }
+    return {
+      marketId: currentMarketId,
+      metricName,
+      timeframe: '5m',
+      lineColor: '#A78BFA',
+      lineWidth: 1,
+      displayName: String(metricId).toUpperCase(),
+      metricConst,
+      enabled: true,
+    };
+  }, [currentMarketId, md.market, symbol, metricDebug, sp]);
+
+  // Dev-only helper: seed ClickHouse scatter data so the metric overlay has something to draw.
+  const [scatterInfo, setScatterInfo] = useState<{ loading: boolean; count?: number; error?: string } | null>(null);
+  const metricTimeframe = metricOverlay?.timeframe || '5m';
+
+  const refreshScatterInfo = useCallback(async () => {
+    if (!metricDebug || !currentMarketId) return;
+    setScatterInfo({ loading: true });
+    try {
+      const res = await fetch(
+        `/api/charts/scatter?marketId=${encodeURIComponent(currentMarketId)}&timeframe=${encodeURIComponent(metricTimeframe)}&limit=5`,
+        { cache: 'no-store' }
+      );
+      const body = await res.json().catch(() => null);
+      const count = Number(body?.meta?.count ?? (Array.isArray(body?.data) ? body.data.length : 0));
+      setScatterInfo({ loading: false, count: Number.isFinite(count) ? count : 0 });
+    } catch (e: any) {
+      setScatterInfo({ loading: false, error: String(e?.message || e || 'Failed to check scatter') });
+    }
+  }, [metricDebug, currentMarketId, metricTimeframe]);
+
+  const seedScatter = useCallback(async () => {
+    if (!metricDebug || !currentMarketId) return;
+    setScatterInfo({ loading: true });
+    try {
+      const tfSeconds: Record<string, number> = {
+        '1m': 60,
+        '5m': 300,
+        '15m': 900,
+        '30m': 1800,
+        '1h': 3600,
+        '4h': 14400,
+        '1d': 86400,
+      };
+      const sec = tfSeconds[metricTimeframe] || 300;
+      const now = Date.now();
+      const pointsCount = 2 * 24 * (60 / (sec / 60)); // ~2 days worth
+      const n = Math.max(50, Math.min(3000, Math.floor(pointsCount)));
+      const startMs = now - n * sec * 1000;
+
+      // Seed values near current BTC price so it actually overlays on the candle price scale.
+      const base = Number(currentPrice || 0) || 65000;
+      const amp = Math.max(50, base * 0.0025); // ~0.25% wiggle (min $50)
+
+      const points = Array.from({ length: n }, (_, i) => {
+        const ts = startMs + i * sec * 1000;
+        const idx = Math.floor(ts / (sec * 1000));
+        const wave = Math.sin(i / 10) + 0.5 * Math.sin(i / 33);
+        const drift = (i / n - 0.5) * amp * 0.5;
+        const y = base + wave * amp + drift;
+        return { ts, x: idx, y };
+      });
+
+      const payload = {
+        marketId: currentMarketId,
+        timeframe: metricTimeframe,
+        metricName: String((md.market as any)?.name || symbol || ''),
+        source: 'dev_seed',
+        version: 1,
+        points,
+      };
+
+      const res = await fetch('/api/charts/scatter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(`Seed failed: ${res.status} ${t}`);
+      }
+      await refreshScatterInfo();
+    } catch (e: any) {
+      setScatterInfo({ loading: false, error: String(e?.message || e || 'Seed failed') });
+    }
+  }, [metricDebug, currentMarketId, metricTimeframe, currentPrice, md.market, symbol, refreshScatterInfo]);
+
+  useEffect(() => {
+    if (!metricDebug || !currentMarketId) return;
+    void refreshScatterInfo();
+  }, [metricDebug, currentMarketId, refreshScatterInfo]);
 
   if (shouldShowLoading) {
     return (
@@ -177,22 +290,55 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
             )}
             <div className="flex md:hidden flex-col gap-1">
-              <div className="w-full mt-1">
+              <div className="w-full mt-1 h-[70svh] min-h-[520px] relative">
                 {currentMarketId ? (
-                  <LightweightChart 
+                  <TradingViewChart
                     symbol={symbol}
-                    marketId={currentMarketId}
-                    height={399}
-                    defaultPrice={tokenData?.price || currentPrice || 100}
+                    autosize
+                    className="h-full"
+                    interval="5"
+                    metricOverlay={metricOverlay}
                   />
                 ) : (
                   <div className="w-full h-[399px] rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
                     Loading market…
                   </div>
                 )}
+                {metricDebug && currentMarketId && (
+                  <div className="absolute top-2 right-2 z-10 rounded border border-gray-800 bg-black/70 px-3 py-2 text-[11px] text-gray-200">
+                    <div className="font-medium">Metric overlay debug</div>
+                    <div className="text-[10px] text-gray-400">tf: {metricTimeframe}</div>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                        onClick={() => void seedScatter()}
+                        disabled={scatterInfo?.loading}
+                      >
+                        Seed scatter
+                      </button>
+                      <button
+                        className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                        onClick={() => void refreshScatterInfo()}
+                        disabled={scatterInfo?.loading}
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                    <div className="mt-2 text-[10px] text-gray-400">
+                      {scatterInfo?.loading
+                        ? 'checking…'
+                        : scatterInfo?.error
+                          ? `error: ${scatterInfo.error}`
+                          : `ClickHouse points: ${scatterInfo?.count ?? '—'}`}
+                    </div>
+                    <div className="mt-2 text-[10px] text-gray-500">
+                      After seeding, reload to force the indicator to refetch.
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="w-full">
-                <MarketActivityTabs symbol={symbol} />
+                <MarketActivityTabs symbol={symbol} className="h-[320px]" />
               </div>
               <div className="w-full">
                 {tokenData ? (
@@ -219,37 +365,58 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
             <div className="hidden md:flex gap-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem + 27px)' }}>
               <div className="flex-1 flex flex-col gap-0.5 h-full overflow-hidden">
-                <div className="flex-shrink-0 overflow-hidden" style={{ height: '60%' }}>
-                  <div className="flex flex-col h-full">
-                    <div className="flex-1 min-h-0">
-                      {currentMarketId ? (
-                        <LightweightChart 
-                          symbol={symbol}
-                          marketId={currentMarketId}
-                          height="100%"
-                          seriesType="candlestick"
-                          defaultTimeframe="5m"
-                          defaultPrice={tokenData?.price || currentPrice || 100}
-                        />
-                      ) : (
-                        <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
-                          Loading market…
-                        </div>
-                      )}
+                <div className="flex-1 min-h-0 overflow-hidden relative">
+                  {currentMarketId ? (
+                    <TradingViewChart
+                      symbol={symbol}
+                      autosize
+                      className="h-full"
+                      interval="5"
+                      metricOverlay={metricOverlay}
+                    />
+                  ) : (
+                    <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                      Loading market…
                     </div>
-                    <div className="flex-1 min-h-0">
-                      <ScatterPlotChart 
-                        symbol={symbol}
-                        height="100%"
-                      />
+                  )}
+                  {metricDebug && currentMarketId && (
+                    <div className="absolute top-2 right-2 z-10 rounded border border-gray-800 bg-black/70 px-3 py-2 text-[11px] text-gray-200">
+                      <div className="font-medium">Metric overlay debug</div>
+                      <div className="text-[10px] text-gray-400">tf: {metricTimeframe}</div>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                          onClick={() => void seedScatter()}
+                          disabled={scatterInfo?.loading}
+                        >
+                          Seed scatter
+                        </button>
+                        <button
+                          className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                          onClick={() => void refreshScatterInfo()}
+                          disabled={scatterInfo?.loading}
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                      <div className="mt-2 text-[10px] text-gray-400">
+                        {scatterInfo?.loading
+                          ? 'checking…'
+                          : scatterInfo?.error
+                            ? `error: ${scatterInfo.error}`
+                            : `ClickHouse points: ${scatterInfo?.count ?? '—'}`}
+                      </div>
+                      <div className="mt-2 text-[10px] text-gray-500">
+                        After seeding, reload to force the indicator to refetch.
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
-                <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="min-h-[240px] h-[320px] max-h-[40%] overflow-hidden">
                   <MarketActivityTabs symbol={symbol} className="h-full" />
                 </div>
               </div>
-              <div className="w-77 h-full">
+              <div className="w-[280px] h-full shrink-0">
                 <TransactionTable 
                   marketId={(md.market as any)?.id}
                   marketIdentifier={(md.market as any)?.market_identifier || symbol}
@@ -280,6 +447,8 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                         htmlSnippet={htmlSnippet || undefined}
                         pollIntervalMs={10000}
                         onOpenSettlement={() => setIsSettlementView(true)}
+                        // This card is primarily to show the source URL; live worker is optional.
+                        enableLiveMetric={false}
                       />
                     );
                   })()}

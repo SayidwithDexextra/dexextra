@@ -165,47 +165,65 @@ async function generateTradeFromOrderbookEvent(event: SmartContractEvent): Promi
       return;
     }
 
-    // Insert immediately for serverless safety
-    const tradePayload = {
-      symbol: String(symbol).toUpperCase(),
-      price,
-      size,
-      side: isBuy ? 'buy' : 'sell',
-      timestamp: event.timestamp,
-      tradeId: params.tradeId?.toString?.() || undefined,
-      orderId: params.orderId?.toString?.() || undefined,
-      marketId: params.marketId ? Number(params.marketId) : undefined,
-      contractAddress: event.contractAddress,
-      maker: params.maker === true || params.isMaker === true,
-    };
+    const contractAddress = String(event.contractAddress || '').toLowerCase();
+    const eventId = `${event.transactionHash}:${event.logIndex}`;
+
+    // Resolve Supabase market UUID by contract address (canonical), fall back to symbol lookup.
+    let marketUuid: string | undefined;
+    let resolvedSymbol: string | undefined;
+    try {
+      const sb = getSupabase();
+      if (sb && contractAddress) {
+        const { data: m1 } = await sb
+          .from('orderbook_markets_resolved')
+          .select('id, symbol')
+          .eq('market_address', contractAddress)
+          .limit(1)
+          .maybeSingle();
+        if (m1?.id) marketUuid = String(m1.id);
+        if ((m1 as any)?.symbol) resolvedSymbol = String((m1 as any).symbol).toUpperCase();
+      }
+    } catch {}
+
+    const finalSymbol = String(resolvedSymbol || symbol).toUpperCase();
 
     const pipeline = getClickHousePipeline();
     if (!pipeline.isConfigured()) {
       console.warn('⚠️ ClickHouse not configured, skipping trade generation');
       return;
     }
-    if ((pipeline as any).insertTradeImmediate) {
-      await (pipeline as any).insertTradeImmediate({
-        symbol: tradePayload.symbol,
-        ts: new Date(tradePayload.timestamp),
-        price: tradePayload.price,
-        size: tradePayload.size,
-        side: tradePayload.side,
-        maker: tradePayload.maker ? 1 : 0,
-        trade_id: tradePayload.tradeId,
-        order_id: tradePayload.orderId,
-        market_id: tradePayload.marketId,
-        contract_address: tradePayload.contractAddress,
-      });
+    // ✅ Canonical raw ingestion: write trade events into market_ticks.
+    // The ClickHouse MV (market_ticks → ohlcv_1m) constructs OHLCV properly.
+    const tickPayload = {
+      symbol: finalSymbol,
+      ts: event.timestamp instanceof Date ? event.timestamp : new Date(event.timestamp as any),
+      price,
+      size,
+      event_type: 'trade',
+      is_long: isBuy,
+      event_id: eventId,
+      trade_count: 1,
+      market_id: 0,
+      contract_address: contractAddress,
+      market_uuid: marketUuid
+    };
+
+    if ((pipeline as any).insertTickImmediate) {
+      await (pipeline as any).insertTickImmediate(tickPayload);
     } else {
-      await (pipeline as any).insertTrade(tradePayload);
+      await (pipeline as any).insertTick(tickPayload);
     }
 
     // Broadcast latest 1m candle to lightweight chart
-    const latest = await pipeline.fetchLatestOhlcv1m(String(symbol).toUpperCase());
+    const latest =
+      marketUuid && (pipeline as any).fetchLatestOhlcv1mByMarketUuid
+        ? await (pipeline as any).fetchLatestOhlcv1mByMarketUuid(marketUuid)
+        : await pipeline.fetchLatestOhlcv1m(finalSymbol);
     if (latest) {
       await pusherServer.broadcastChartData({
-        symbol: latest.symbol,
+        // Keep `symbol` human-readable; use `marketUuid` for canonical realtime routing.
+        symbol: String(latest.symbol || finalSymbol || 'UNKNOWN').toUpperCase(),
+        marketUuid,
         timeframe: '1m',
         open: latest.open,
         high: latest.high,
@@ -216,7 +234,7 @@ async function generateTradeFromOrderbookEvent(event: SmartContractEvent): Promi
       });
     }
 
-     console.log(`📊 Generated trade: ${symbol} ${isBuy ? 'BUY' : 'SELL'} ${size} @ $${price}`);
+     console.log(`📊 Generated trade tick: ${finalSymbol} ${isBuy ? 'BUY' : 'SELL'} ${size} @ $${price}`);
   } catch (error) {
     console.error('❌ Failed to generate trade from order-book event:', error);
   }
@@ -340,10 +358,15 @@ async function generateTickFromVAMMEvent(event: SmartContractEvent): Promise<voi
     }
 
     // Broadcast latest 1m candle to lightweight chart
-    const latest = await pipeline.fetchLatestOhlcv1m(symbol.toUpperCase());
+    const latest =
+      marketUuid && (pipeline as any).fetchLatestOhlcv1mByMarketUuid
+        ? await (pipeline as any).fetchLatestOhlcv1mByMarketUuid(marketUuid)
+        : await pipeline.fetchLatestOhlcv1m(symbol.toUpperCase());
     if (latest) {
       await pusherServer.broadcastChartData({
-        symbol: latest.symbol,
+        // Keep `symbol` human-readable; use `marketUuid` for canonical realtime routing.
+        symbol: String(latest.symbol || symbol || 'UNKNOWN').toUpperCase(),
+        marketUuid,
         timeframe: '1m',
         open: latest.open,
         high: latest.high,

@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import LightweightChart from './LightweightChart';
-import TradingViewWidget from './TradingViewWidget';
+import { TradingViewChart } from '../TradingView';
 
 interface ChartSelectorProps {
   symbol: string;
@@ -23,7 +22,6 @@ export default function ChartSelector({
 }: ChartSelectorProps) {
   const [selectedChart, setSelectedChart] = useState<ChartType>(defaultChart);
 
-  // Using only LightweightChart - TradingViewWidget commented out
   const chartOptions: Array<{
     id: ChartType;
     label: string;
@@ -32,22 +30,19 @@ export default function ChartSelector({
   }> = [
     {
       id: 'lightweight',
-      label: 'Area Chart',
-      description: 'Real-time price visualization with backend data',
+      label: 'Advanced Chart',
+      description: 'TradingView charting library with full tooling',
       icon: '📈'
     }
   ];
 
-  const renderSelectedChart = () => {
-    // Only LightweightChart available - TradingViewWidget commented out
-    return (
-      <LightweightChart
-        symbol={symbol}
-        width={width}
-        height={height}
-      />
-    );
-  };
+  const renderSelectedChart = () => (
+    <TradingViewChart
+      symbol={symbol}
+      height={typeof height === 'number' ? height : 500}
+      autosize={typeof height !== 'number'}
+    />
+  );
 
   return (
     <div className={`space-y-2 ${className}`}>
@@ -55,9 +50,7 @@ export default function ChartSelector({
       <div className="bg-[#000000] rounded-lg border border-[#1a1a1a] p-3">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium text-[#AAA] uppercase tracking-wider">{symbol}/USD</h3>
-          <div className="text-xs text-[#666]">
-            Real-time Area Chart
-          </div>
+          <div className="text-xs text-[#666]">TradingView Advanced Chart</div>
         </div>
 
         {/* Chart Info */}
@@ -65,12 +58,12 @@ export default function ChartSelector({
           <span className="text-xl">📈</span>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <span className="font-semibold text-white">Area Chart</span>
+              <span className="font-semibold text-white">Advanced Chart</span>
               <div className="w-1.5 h-1.5 bg-[#8B5CF6] rounded-full"></div>
               <span className="text-xs text-[#8B5CF6] uppercase tracking-wider">Active</span>
             </div>
             <p className="text-sm text-[#CCCCCC]">
-              Real-time price visualization with backend data
+              TradingView charting library with full tools + indicators
             </p>
           </div>
         </div>
@@ -80,18 +73,18 @@ export default function ChartSelector({
           <div className="text-xs text-[#666] mb-2 uppercase tracking-wider">Chart Features</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <div className="space-y-1">
-              <div className="text-[#AAA] font-medium">📈 Area Visualization</div>
-              <div className="text-[#666]">• Real-time backend integration</div>
-              <div className="text-[#666]">• Lightning-fast performance</div>
-              <div className="text-[#666]">• Purple gradient styling</div>
+              <div className="text-[#AAA] font-medium">📈 Advanced Charting</div>
+              <div className="text-[#666]">• Full TradingView tooling</div>
+              <div className="text-[#666]">• Indicator & drawing suite</div>
+              <div className="text-[#666]">• Professional candles</div>
               <div className="text-[#666]">• Multi-timeframe support</div>
             </div>
             <div className="space-y-1">
               <div className="text-[#AAA] font-medium">⚡ Live Data</div>
-              <div className="text-[#666]">• ClickHouse integration</div>
-              <div className="text-[#666]">• 30-second auto-refresh</div>
-              <div className="text-[#666]">• Professional dark theme</div>
-              <div className="text-[#666]">• Responsive timeframes</div>
+              <div className="text-[#666]">• TradingView UDF feed</div>
+              <div className="text-[#666]">• Real-time streaming</div>
+              <div className="text-[#666]">• Pro dark theme</div>
+              <div className="text-[#666]">• Responsive layout</div>
             </div>
           </div>
         </div>
@@ -108,7 +101,7 @@ export default function ChartSelector({
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-[#8B5CF6]"></div>
-              <span className="uppercase tracking-wider">Live Area Chart</span>
+              <span className="uppercase tracking-wider">Live Advanced Chart</span>
             </div>
             <span className="text-[#8B5CF6]">● Streaming</span>
           </div>
@@ -116,7 +109,7 @@ export default function ChartSelector({
           <div className="flex items-center gap-3 text-[#AAA]">
             <span>{symbol}/USD</span>
             <span>·</span>
-            <span>Real-time Backend</span>
+            <span>TradingView Datafeed</span>
           </div>
         </div>
       </div>

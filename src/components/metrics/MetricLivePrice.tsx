@@ -28,6 +28,11 @@ export interface MetricLivePriceProps {
   jsExtractor?: string;
   htmlSnippet?: string;
   pollIntervalMs?: number;
+  /**
+   * When true, attempts to subscribe to live metric values and start the worker.
+   * Default false because most UIs only need to display the source URL.
+   */
+  enableLiveMetric?: boolean;
 }
 
 export function MetricLivePrice(props: MetricLivePriceProps) {
@@ -44,6 +49,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     value: initialValue,
     isSettlementWindow,
     onOpenSettlement,
+    enableLiveMetric = false,
   } = props;
 
   const router = useRouter();
@@ -95,7 +101,9 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     return () => { cancelled = true; };
   }, [supabase, marketId, token, marketIdentifier]);
 
-  const { value: liveValue, updatedAt, isLoading, error } = useMetricLivePrice(resolvedId || '');
+  const live = useMetricLivePrice(resolvedId || '', { enabled: Boolean(enableLiveMetric && resolvedId) });
+  const { value: liveValue, updatedAt, isLoading, error, retryStartWorker } = live;
+  const [retrying, setRetrying] = React.useState(false);
 
   const displayValue = React.useMemo(() => {
     const v = liveValue as any;
@@ -104,12 +112,20 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     return null;
   }, [liveValue]);
 
+  const fallbackValue = React.useMemo(() => {
+    const v = initialValue as any;
+    const n = typeof v === 'number' ? v : (v != null ? Number(v) : NaN);
+    return Number.isFinite(n) ? n : null;
+  }, [initialValue]);
+
+  const valueToShow = displayValue ?? fallbackValue;
+
   const formattedValue = React.useMemo(() => {
-    if (displayValue == null) return '—';
-    const abs = Math.abs(displayValue);
+    if (valueToShow == null) return '—';
+    const abs = Math.abs(valueToShow);
     const decimals = abs >= 100 ? 2 : abs >= 1 ? 3 : 6;
-    return `${displayValue.toFixed(decimals)}`;
-  }, [displayValue]);
+    return `${valueToShow.toFixed(decimals)}`;
+  }, [valueToShow]);
 
   const valueText = React.useMemo(() => {
     return formattedValue === '—' ? '—' : `${prefix}${formattedValue}${suffix}`;
@@ -216,7 +232,18 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     };
   }, [marketAddress]);
 
-  if (error) return <div className={className}>Error</div>;
+  const hasError = Boolean(enableLiveMetric && error);
+  const isUsingFallback = displayValue == null && fallbackValue != null;
+  const handleRetry = async () => {
+    if (!resolvedId) return;
+    if (!enableLiveMetric) return;
+    setRetrying(true);
+    try {
+      await retryStartWorker();
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   // Compute conditional rendering precedence:
   // 1) Explicit prop override (if provided)
@@ -236,6 +263,8 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
             isLoading
               ? 'bg-blue-400 animate-pulse'
+              : hasError
+                ? 'bg-red-400'
               : settlementUIActive
                 ? 'bg-yellow-400'
                 : (isLive ? 'bg-green-400' : 'bg-[#404040]')
@@ -258,8 +287,13 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
                 </svg>
               </button>
             </div>
-          ) : displayValue != null ? (
-            <span className="text-[10px] text-white font-mono leading-none">{valueText}</span>
+          ) : valueToShow != null ? (
+            <span
+              className={`text-[10px] font-mono leading-none ${isUsingFallback ? 'text-[#CBD5E1]' : 'text-white'}`}
+              title={isUsingFallback ? 'Showing fallback price (live metric unavailable)' : undefined}
+            >
+              {valueText}
+            </span>
           ) : (
             <span className="text-[9px] text-[#8a8a8a] leading-none truncate max-w-[180px]">
               {sourceUrl ? (
@@ -269,6 +303,30 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
               ) : '—'}
             </span>
           )}
+
+          {hasError && !settlementUIActive && (
+            <>
+              <span
+                className="text-[10px] text-red-400 leading-none"
+                title={error || 'Live metric unavailable'}
+              >
+                ⚠
+              </span>
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className={`h-5 w-5 box-border flex items-center justify-center rounded-md border transition-all ${
+                  retrying
+                    ? 'border-blue-400/30 text-blue-300 bg-blue-500/10'
+                    : 'border-[#333333] text-[#CBD5E1] hover:text-white hover:bg-[#1A1A1A]'
+                }`}
+                title={retrying ? 'Retrying…' : 'Retry live metric worker'}
+              >
+                <span className={`text-[11px] ${retrying ? 'animate-spin' : ''}`}>⟳</span>
+              </button>
+            </>
+          )}
+
           {isLoading && !settlementUIActive && (
             <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
               <div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
@@ -279,7 +337,11 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
       <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
         <div className={`${compact ? 'px-2' : 'px-2.5'} pb-2 border-t border-[#1A1A1A]`}>
           <div className="text-[9px] pt-1.5">
-            <span className="text-[#606060]">{updatedAt ? `Updated ${new Date(updatedAt).toLocaleString()}` : 'No update yet'}</span>
+            <span className="text-[#606060]">
+              {hasError
+                ? `Live metric unavailable — showing fallback.`
+                : (updatedAt ? `Updated ${new Date(updatedAt).toLocaleString()}` : 'No update yet')}
+            </span>
           </div>
         </div>
       </div>

@@ -108,6 +108,11 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
   const router = useRouter()
   const pathname = usePathname()
 
+  // Token page: shrink navbar to give more room to charts/tables
+  const isTokenPage = pathname?.startsWith('/token/')
+  const collapsedWidth = isTokenPage ? 52 : 60
+  const expandedWidth = isTokenPage ? 208 : 240
+
   // Determine active item based on current pathname
   const getActiveItem = () => {
     const currentItem = navigationItems.find(item => {
@@ -123,7 +128,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                 <nav 
           className="fixed left-0 top-0 h-full bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333] transition-all duration-300 ease-in-out"
           style={{
-            width: isOpen ? '240px' : '60px',
+            width: isOpen ? `${expandedWidth}px` : `${collapsedWidth}px`,
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             overflowX: 'hidden',
             overflowY: 'auto',
@@ -136,7 +141,9 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
           <div 
             className="h-full flex flex-col"
             style={{
-              padding: isOpen ? '20px 12px' : '20px 8px',
+              padding: isOpen
+                ? (isTokenPage ? '16px 10px' : '20px 12px')
+                : (isTokenPage ? '16px 6px' : '20px 8px'),
               minWidth: 0, // Prevents flex items from growing beyond container
               width: '100%'
             }}
