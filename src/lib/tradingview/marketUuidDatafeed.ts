@@ -137,6 +137,8 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       // Track 1m bars inside the current requested-resolution bucket to avoid double-counting
       minuteBars: Map<number, TvBar>;
       currentBucketMs: number | null;
+      onResetCacheNeededCallback?: () => void;
+      didAutoResetAfterNoData?: boolean;
     }
   >();
 
@@ -222,7 +224,13 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
     };
   }
 
-  const subscribeBars: SubscribeBarsFn = (symbolInfo, resolution, onRealtimeCallback, subscriberUID) => {
+  const subscribeBars: SubscribeBarsFn = (
+    symbolInfo,
+    resolution,
+    onRealtimeCallback,
+    subscriberUID,
+    onResetCacheNeededCallback
+  ) => {
     const ticker = String(symbolInfo?.ticker || '');
     // Prefer canonical UUID in `ticker` (we return this from /api/tradingview/symbols).
     // Fall back to custom.market_id if present; then to whatever ticker is.
@@ -273,6 +281,22 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
 
       const entry = subs.get(subscriberUID);
       if (!entry) return;
+
+      // IMPORTANT:
+      // If the chart initially loaded with `no_data`, TradingView can keep showing an empty pane until
+      // something forces a history refetch (like changing resolution). When the first realtime candle
+      // arrives, proactively ask TradingView to reset its cache so it will immediately call `getBars`
+      // again and render candles — without the user switching timeframes.
+      try {
+        if (!entry.didAutoResetAfterNoData && entry.lastBar == null) {
+          entry.didAutoResetAfterNoData = true;
+          if (typeof entry.onResetCacheNeededCallback === 'function') {
+            entry.onResetCacheNeededCallback();
+          }
+        }
+      } catch {
+        // ignore
+      }
 
       try {
         if (typeof window !== 'undefined' && (window as any).PUSHER_DBG) {
@@ -340,6 +364,8 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       ticker: idForRealtime,
       minuteBars: new Map(),
       currentBucketMs: null,
+      onResetCacheNeededCallback,
+      didAutoResetAfterNoData: false,
     });
   };
 

@@ -475,7 +475,19 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                     key={market.id}
                     className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
                   >
-                    <div className="flex items-center justify-between p-2.5">
+                    <div
+                      className="flex items-center justify-between p-2.5 cursor-pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open market ${market.symbol}`}
+                      onClick={() => handleMarketSelect(market)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          handleMarketSelect(market)
+                        }
+                      }}
+                    >
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${market.deployment_status === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -492,9 +504,9 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                             </div>
                           )}
                           <div className="min-w-0 flex-1">
-                            <button onClick={() => handleMarketSelect(market)} className="text-left text-[11px] font-medium text-white hover:underline">
+                            <div className="text-left text-[11px] font-medium text-white group-hover:underline">
                               {market.symbol}
-                            </button>
+                            </div>
                             <div className="text-[10px] text-[#606060] truncate max-w-[200px]">
                               {market.description}
                             </div>

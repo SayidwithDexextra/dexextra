@@ -444,20 +444,28 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // IMPORTANT:
+      // Do NOT cache `no_data` responses.
+      //
+      // When a market has no history at initial load, TradingView can repeatedly request the same
+      // time range. If we cache `no_data` (in-memory or CDN), then when ticks start arriving a moment
+      // later the UI appears "stuck" until the user changes resolution (different cache key) or reloads.
+      //
+      // Instead, return `no_data` with `Cache-Control: no-store` and a future `nextTime` hint so
+      // TradingView will re-query soon and pick up newly-ingested candles without user interaction.
       const body = {
         s: 'no_data',
-        nextTime: Math.floor(endTime.getTime() / 1000)
+        nextTime: Math.floor(endTime.getTime() / 1000) + tfSec,
       };
       const headers = {
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=30',
+        'Cache-Control': 'no-store',
         'Server-Timing': [
           `supabase;dur=${tResolve1 - tResolve0}`,
           `clickhouse;dur=${tCh1 - tCh0}`,
           `total;dur=${Date.now() - t0}`,
         ].join(', '),
       };
-      HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + HISTORY_CACHE_TTL_MS, body, headers });
       return NextResponse.json(body, { headers });
     }
 
