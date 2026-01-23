@@ -156,6 +156,11 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
   const [obAddress, setObAddress] = useState<Address | null>(null);
 
   const ordersSessionHydratedRef = useRef<string | null>(null);
+  const opOrdersLogRef = useRef<{
+    key: string;
+    mode: 'no_session' | 'has_session';
+    didLogFetchedOrders: boolean;
+  } | null>(null);
 
   const getOrdersSessionKey = (addr: string, market: string) => {
     const chainId = String((CHAIN_CONFIG as any)?.chainId ?? 'unknown');
@@ -170,7 +175,12 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     ordersSessionHydratedRef.current = key;
     try {
       const raw = window.sessionStorage.getItem(key);
-      if (!raw) return;
+      if (!raw) {
+        // eslint-disable-next-line no-console
+        console.log('[OPorders] Fetching orders');
+        opOrdersLogRef.current = { key, mode: 'no_session', didLogFetchedOrders: false };
+        return;
+      }
       const payload = JSON.parse(raw) as OrdersSessionCachePayload;
       if (!payload || payload.version !== 1) return;
       if (String(payload.walletAddress || '').toLowerCase() !== String(walletAddress).toLowerCase()) return;
@@ -182,6 +192,9 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         window.sessionStorage.removeItem(key);
         return;
       }
+      // eslint-disable-next-line no-console
+      console.log('[OPorders] Skip skipping fetching orders');
+      opOrdersLogRef.current = { key, mode: 'has_session', didLogFetchedOrders: false };
       setState(prev => ({
         ...prev,
         activeOrders: orders
@@ -242,16 +255,27 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       try {
         // Strictly resolve OrderBook by marketId on current chain
         const currentChain = CHAIN_CONFIG.chainId;
-        const entries = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
+        let entries = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
+        // MARKET_INFO is populated at runtime; if empty, try a best-effort client-side population.
+        if ((!entries || entries.length === 0) && marketId) {
+          try {
+            await populateMarketInfoClient(marketId);
+          } catch {}
+          entries = Object.values((CONTRACT_ADDRESSES as any).MARKET_INFO || {}) as any[];
+        }
+
+        const rawSearch = String(marketId || '').trim();
+        const searchKey = rawSearch.toLowerCase();
+        const prefixKey = (rawSearch.split('-')[0] || rawSearch).toLowerCase();
+        const candidates = Array.from(new Set([searchKey, prefixKey].filter(Boolean)));
+
         const match = entries.find((m: any) => {
-          if (!m?.chainId || m.chainId !== currentChain) return false;
-          const marketMatches = [
-            m?.symbol?.toLowerCase?.(),
-            m?.name?.toLowerCase?.(),
-            m?.marketIdentifier?.toLowerCase?.()
-          ].filter(Boolean);
-          const searchKey = marketId?.toLowerCase?.() || '';
-          return marketMatches.includes(searchKey);
+          // Filter to current chain when present
+          if (m?.chainId && String(m.chainId) !== String(currentChain)) return false;
+          const mSymbol = String(m?.symbol || '').toLowerCase();
+          const mName = String(m?.name || '').toLowerCase();
+          const mId = String(m?.marketIdentifier || '').toLowerCase();
+          return candidates.some((c) => mSymbol === c || mName === c || mId === c || mSymbol.startsWith(`${c}-`));
         });
         
         // If we cannot resolve a market yet, skip initialization quietly and wait for later
@@ -259,18 +283,13 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           return;
         }
 
+        // If MARKET_INFO doesn't have this market but DB does, proceed using DB data.
         if (!match && marketRow) {
-          console.warn(`[ALTKN][useOrderBook] No market found for ${marketId} on chain ${currentChain}`);
-          setState(prev => ({ 
-            ...prev, 
-            error: `Market ${marketId} not available on current network (chain ${currentChain})`,
-            isLoading: false 
-          }));
-          return;
+          console.warn(`[ALTKN][useOrderBook] No MARKET_INFO entry for ${marketId} on chain ${currentChain}; using DB market row`);
         }
         
         // Prefer DB-sourced OrderBook address when available, fallback to static mapping
-        const orderBookAddressOverride = (marketRow as any)?.market_address || match.orderBook;
+        const orderBookAddressOverride = (marketRow as any)?.market_address || match?.orderBook;
         if (!orderBookAddressOverride) {
           console.warn(`[ALTKN][useOrderBook] No OrderBook address for ${marketId} on chain ${currentChain}`);
           setState(prev => ({ 
@@ -326,7 +345,10 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           }
         }
         // Prefer bytes32 market id when available for CoreVault mapping resolution
-        let marketBytes32 = (marketRow as any)?.market_identifier_bytes32 || (marketRow as any)?.market_id_bytes32 || (match?.marketId as string | undefined);
+        let marketBytes32 =
+          (marketRow as any)?.market_identifier_bytes32 ||
+          (marketRow as any)?.market_id_bytes32 ||
+          (match?.marketId as string | undefined);
         const contractInstances = await initializeContracts({ 
           providerOrSigner: runner, 
           orderBookAddressOverride,
@@ -342,7 +364,10 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         setContracts(contractInstances);
 
       // Use market's bytes32 ID for CoreVault mapping
-      marketBytes32 = (marketRow as any)?.market_identifier_bytes32 || (marketRow as any)?.market_id_bytes32 || (match.marketId as string | undefined);
+      marketBytes32 =
+        (marketRow as any)?.market_identifier_bytes32 ||
+        (marketRow as any)?.market_id_bytes32 ||
+        (match?.marketId as string | undefined);
       if (marketBytes32 && contractInstances.vault?.marketToOrderBook) {
         try {
           const resolved = await contractInstances.vault.marketToOrderBook(marketBytes32);
@@ -392,61 +417,83 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           try {
             // Ensure the OrderBook contract code exists on current network before calling
             try {
-              const provider: any = (contracts.obView as any)?.runner?.provider || (contracts.obView as any)?.provider;
+              // ethers v6: Contract.runner is Provider | Signer (Contract doesn't reliably expose .provider)
+              const runner: any = (contracts.obView as any)?.runner;
+              const provider: any = runner?.provider ?? runner;
               const obAddr = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
-              const code = provider && obAddr ? await provider.getCode(obAddr) : '0x';
-              if (!code || code === '0x') {
-                console.warn('[ALTKN][useOrderBook] OrderBook contract code not found on current network. Skipping on-chain order fetch.');
-                setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network', isLoading: false }));
-                return;
+              if (provider && typeof provider.getCode === 'function' && obAddr) {
+                const code = await provider.getCode(obAddr);
+                if (!code || code === '0x') {
+                  console.warn('[ALTKN][useOrderBook] OrderBook contract code not found on current network. Skipping on-chain order fetch.');
+                  setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network', isLoading: false }));
+                  return;
+                }
               }
             } catch (codeErr) {
               // Proceed; any decode errors will be caught below
             }
             console.log(`[ALTKN] 📡 [RPC] Fetching user orders via getUserOrders for ${walletAddress}`);
-            const startTimeOrders = Date.now();
-            const orderIds: bigint[] = await contracts.obView.getUserOrders(walletAddress);
-            const durationOrders = Date.now() - startTimeOrders;
-            console.log(`[ALTKN] ✅ [RPC] User orders fetched in ${durationOrders}ms`, { orderCount: orderIds.length });
-            console.log('[ALTKN][useOrderBook] getUserOrders count =', orderIds.length);
-            for (const id of orderIds) {
-              try {
-                console.log(`[ALTKN] 📡 [RPC] Fetching order details for order ID ${id}`);
-                const startTimeOrder = Date.now();
-                const order = await contracts.obView.getOrder(id);
-                const filled = await contracts.obView.getFilledAmount(id);
-                const durationOrder = Date.now() - startTimeOrder;
-                console.log(`[ALTKN] ✅ [RPC] Order ${id} details fetched in ${durationOrder}ms`);
-
-                const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
-                const orderIdRaw = getField(order, 'orderId', 0) as bigint;
-                const traderRaw = getField(order, 'trader', 1) as Address;
-                const priceRaw = getField(order, 'price', 2) as bigint;
-                const amountRaw = getField(order, 'amount', 3) as bigint;
-                const isBuyRaw = getField(order, 'isBuy', 4) as boolean;
-                const timestampRaw = getField(order, 'timestamp', 5) as bigint;
-                const priceNum = Number(formatUnits(priceRaw ?? 0n, 6));
-                const sizeNum = Number(formatUnits(amountRaw ?? 0n, 18));
-                const filledNum = Number(formatUnits(filled, 18));
-                hydrated.push({
-                  id: (orderIdRaw ?? id).toString(),
-                  trader: traderRaw as Address,
-                  price: priceNum,
-                  size: sizeNum,
-                  quantity: sizeNum,
-                  filledQuantity: filledNum,
-                  isBuy: Boolean(isBuyRaw),
-                  side: isBuyRaw ? 'buy' : 'sell',
-                  status: (amountRaw && filled >= amountRaw) ? 'filled' : filled > 0n ? 'partially_filled' : 'pending',
-                  filled: filledNum,
-                  timestamp: timestampRaw ? Number(timestampRaw) * 1000 : Date.now(),
-                  expiryTime: undefined
-                });
-              } catch (e) {
-                console.warn(`[ALTKN] ⚠️ [RPC] Failed to hydrate order ${id}:`, e);
+            let orderIds: bigint[] = [];
+            let getUserOrdersErr: any = null;
+            try {
+              const startTimeOrders = Date.now();
+              orderIds = await contracts.obView.getUserOrders(walletAddress);
+              const durationOrders = Date.now() - startTimeOrders;
+              console.log(`[ALTKN] ✅ [RPC] User orders fetched in ${durationOrders}ms`, { orderCount: orderIds.length });
+              console.log('[ALTKN][useOrderBook] getUserOrders count =', orderIds.length);
+            } catch (e: any) {
+              getUserOrdersErr = e;
+              const msg = e?.message || '';
+              const code = e?.code || '';
+              const isMissingSelector = msg.includes('missing revert data') || code === 'CALL_EXCEPTION';
+              if (isMissingSelector) {
+                console.warn('[ALTKN][useOrderBook] getUserOrders not available on this OrderBook (facet missing). Will use fallback.', e);
+              } else {
+                console.warn('[ALTKN][useOrderBook] getUserOrders failed. Will attempt fallback.', e);
               }
             }
-            // Fallback via orderService if contract returned empty but we expect orders
+
+            if (Array.isArray(orderIds) && orderIds.length > 0) {
+              for (const id of orderIds) {
+                try {
+                  console.log(`[ALTKN] 📡 [RPC] Fetching order details for order ID ${id}`);
+                  const startTimeOrder = Date.now();
+                  const order = await contracts.obView.getOrder(id);
+                  const filled = await contracts.obView.getFilledAmount(id);
+                  const durationOrder = Date.now() - startTimeOrder;
+                  console.log(`[ALTKN] ✅ [RPC] Order ${id} details fetched in ${durationOrder}ms`);
+
+                  const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
+                  const orderIdRaw = getField(order, 'orderId', 0) as bigint;
+                  const traderRaw = getField(order, 'trader', 1) as Address;
+                  const priceRaw = getField(order, 'price', 2) as bigint;
+                  const amountRaw = getField(order, 'amount', 3) as bigint;
+                  const isBuyRaw = getField(order, 'isBuy', 4) as boolean;
+                  const timestampRaw = getField(order, 'timestamp', 5) as bigint;
+                  const priceNum = Number(formatUnits(priceRaw ?? 0n, 6));
+                  const sizeNum = Number(formatUnits(amountRaw ?? 0n, 18));
+                  const filledNum = Number(formatUnits(filled, 18));
+                  hydrated.push({
+                    id: (orderIdRaw ?? id).toString(),
+                    trader: traderRaw as Address,
+                    price: priceNum,
+                    size: sizeNum,
+                    quantity: sizeNum,
+                    filledQuantity: filledNum,
+                    isBuy: Boolean(isBuyRaw),
+                    side: isBuyRaw ? 'buy' : 'sell',
+                    status: (amountRaw && filled >= amountRaw) ? 'filled' : filled > 0n ? 'partially_filled' : 'pending',
+                    filled: filledNum,
+                    timestamp: timestampRaw ? Number(timestampRaw) * 1000 : Date.now(),
+                    expiryTime: undefined
+                  });
+                } catch (e) {
+                  console.warn(`[ALTKN] ⚠️ [RPC] Failed to hydrate order ${id}:`, e);
+                }
+              }
+            }
+
+            // Fallback via orderService when on-chain path yields nothing (or getUserOrders is missing/broken)
             if (hydrated.length === 0) {
               try {
                 const metricHint = marketId || 'ALUMINUM';
@@ -468,24 +515,36 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
                 if (mapped.length > 0) {
                   console.log('[ALTKN][useOrderBook] Fallback orderService returned', mapped.length, 'orders');
                   hydrated = mapped;
+                } else if (getUserOrdersErr) {
+                  // Preserve a helpful error when both on-chain + fallback fail
+                  setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
                 }
               } catch (svcErr) {
                 console.warn('[ALTKN][useOrderBook] orderService fallback failed', svcErr);
+                if (getUserOrdersErr) {
+                  setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
+                }
               }
             }
             // No cross-market fallbacks - each market uses its own OrderBook only
           } catch (e: any) {
-            const msg = e?.message || '';
-            const code = e?.code || '';
-            const isMissingSelector = msg.includes('missing revert data') || code === 'CALL_EXCEPTION';
-            if (isMissingSelector) {
-              console.warn('[ALTKN][useOrderBook] getUserOrders not available on this OrderBook (facet missing). Falling back.', e);
-              // Proceed to fallbacks below without setting a hard error
-            } else {
-              console.error('[ALTKN][useOrderBook] Failed to fetch user order IDs', e);
-              setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
+            console.error('[ALTKN][useOrderBook] Failed to fetch user orders', e);
+            setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
+          }
+        }
+        // If we didn't have session orders, log the fetched on-chain result once (pairs with "[OPorders] Fetching orders").
+        try {
+          if (walletAddress && marketId) {
+            const key = getOrdersSessionKey(walletAddress, marketId);
+            const ref = opOrdersLogRef.current;
+            if (ref && ref.key === key && ref.mode === 'no_session' && !ref.didLogFetchedOrders) {
+              // eslint-disable-next-line no-console
+              console.log('[OPorders]', hydrated);
+              ref.didLogFetchedOrders = true;
             }
           }
+        } catch {
+          // ignore log issues
         }
 
         // Market data (best prices, mark/index/funding) - resilient defaults
@@ -815,51 +874,63 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       console.log('[ALTKN][Dispatch] 🔄 [RPC] Refreshing orders for', marketId, `(wallet: ${walletAddress.slice(0, 6)}...)`);
       // Guard against calling into non-existent code which yields BAD_DATA decode errors
       try {
-        const provider: any = (contracts.obView as any)?.runner?.provider || (contracts.obView as any)?.provider;
+        const runner: any = (contracts.obView as any)?.runner;
+        const provider: any = runner?.provider ?? runner;
         const obAddr = (contracts.orderBookAddress || (await (contracts.obView as any)?.getAddress?.())) as string | undefined;
-        const code = provider && obAddr ? await provider.getCode(obAddr) : '0x';
-        if (!code || code === '0x') {
-          console.warn('[ALTKN][useOrderBook] OrderBook contract code not found on current network. Skipping refresh.');
-          setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network' }));
-          return;
+        if (provider && typeof provider.getCode === 'function' && obAddr) {
+          const code = await provider.getCode(obAddr);
+          if (!code || code === '0x') {
+            console.warn('[ALTKN][useOrderBook] OrderBook contract code not found on current network. Skipping refresh.');
+            setState(prev => ({ ...prev, error: 'OrderBook not deployed on current network' }));
+            return;
+          }
         }
       } catch {}
       console.log('[ALTKN][Dispatch] 📡 [RPC] Fetching user orders for refresh');
-      const startTimeRefresh = Date.now();
-      const orderIds: bigint[] = await contracts.obView.getUserOrders(walletAddress);
-      const durationRefresh = Date.now() - startTimeRefresh;
-      console.log('[ALTKN][Dispatch] ✅ [RPC] Orders refresh fetched in', durationRefresh, 'ms', { orderCount: orderIds.length });
+      let orderIds: bigint[] = [];
+      let getUserOrdersErr: any = null;
+      try {
+        const startTimeRefresh = Date.now();
+        orderIds = await contracts.obView.getUserOrders(walletAddress);
+        const durationRefresh = Date.now() - startTimeRefresh;
+        console.log('[ALTKN][Dispatch] ✅ [RPC] Orders refresh fetched in', durationRefresh, 'ms', { orderCount: orderIds.length });
+      } catch (e: any) {
+        getUserOrdersErr = e;
+        console.warn('[ALTKN][Dispatch] getUserOrders failed during refresh. Will attempt fallback.', e);
+      }
       const hydrated: OrderBookOrder[] = [];
-      for (const id of orderIds) {
-        try {
-          const order = await contracts.obView.getOrder(id);
-          const filled = await contracts.obView.getFilledAmount(id);
-          const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
-          const orderIdRaw = getField(order, 'orderId', 0) as bigint;
-          const traderRaw = getField(order, 'trader', 1) as Address;
-          const priceRaw = getField(order, 'price', 2) as bigint;
-          const amountRaw = getField(order, 'amount', 3) as bigint;
-          const isBuyRaw = getField(order, 'isBuy', 4) as boolean;
-          const timestampRaw = getField(order, 'timestamp', 5) as bigint;
-          const priceNum = Number(formatUnits(priceRaw ?? 0n, 6));
-          const sizeNum = Number(formatUnits(amountRaw ?? 0n, 18));
-          const filledNum = Number(formatUnits(filled, 18));
-          hydrated.push({
-            id: (orderIdRaw ?? id).toString(),
-            trader: traderRaw as Address,
-            price: priceNum,
-            size: sizeNum,
-            quantity: sizeNum,
-            filledQuantity: filledNum,
-            isBuy: Boolean(isBuyRaw),
-            side: isBuyRaw ? 'buy' : 'sell',
-            status: (amountRaw && filled >= amountRaw) ? 'filled' : filled > 0n ? 'partially_filled' : 'pending',
-            filled: filledNum,
-            timestamp: timestampRaw ? Number(timestampRaw) * 1000 : Date.now(),
-            expiryTime: undefined
-          });
-        } catch (e) {
-          // Skip bad order decode
+      if (Array.isArray(orderIds) && orderIds.length > 0) {
+        for (const id of orderIds) {
+          try {
+            const order = await contracts.obView.getOrder(id);
+            const filled = await contracts.obView.getFilledAmount(id);
+            const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
+            const orderIdRaw = getField(order, 'orderId', 0) as bigint;
+            const traderRaw = getField(order, 'trader', 1) as Address;
+            const priceRaw = getField(order, 'price', 2) as bigint;
+            const amountRaw = getField(order, 'amount', 3) as bigint;
+            const isBuyRaw = getField(order, 'isBuy', 4) as boolean;
+            const timestampRaw = getField(order, 'timestamp', 5) as bigint;
+            const priceNum = Number(formatUnits(priceRaw ?? 0n, 6));
+            const sizeNum = Number(formatUnits(amountRaw ?? 0n, 18));
+            const filledNum = Number(formatUnits(filled, 18));
+            hydrated.push({
+              id: (orderIdRaw ?? id).toString(),
+              trader: traderRaw as Address,
+              price: priceNum,
+              size: sizeNum,
+              quantity: sizeNum,
+              filledQuantity: filledNum,
+              isBuy: Boolean(isBuyRaw),
+              side: isBuyRaw ? 'buy' : 'sell',
+              status: (amountRaw && filled >= amountRaw) ? 'filled' : filled > 0n ? 'partially_filled' : 'pending',
+              filled: filledNum,
+              timestamp: timestampRaw ? Number(timestampRaw) * 1000 : Date.now(),
+              expiryTime: undefined
+            });
+          } catch (e) {
+            // Skip bad order decode
+          }
         }
       }
       // Fallback via orderService if empty
@@ -897,6 +968,9 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
             return;
           }
         } catch {}
+        if (getUserOrdersErr) {
+          setState(prev => ({ ...prev, error: 'Failed to fetch orders from blockchain. Please try again.' }));
+        }
       }
 
       console.log('[ALTKN][Dispatch] 🔁 [UI][useOrderBook] Updating activeOrders', { count: hydrated.length });
