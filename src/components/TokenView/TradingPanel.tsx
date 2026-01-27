@@ -895,8 +895,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     if (orderType === 'limit') {
       if (triggerPrice <= 0) {
         errors.push('Set trigger price for limit orders');
-      } else if (triggerPrice < 0.01 || triggerPrice > 100000) {
-        errors.push('Price appears unreasonable');
       }
       
       // Check tick size compliance if available
@@ -1285,9 +1283,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         throw new Error('Invalid order quantity. Please enter a valid amount.');
       }
       
-      if (triggerPrice < 0.01 || triggerPrice > 100000) {
-        throw new Error('Invalid limit price. Please enter a reasonable price.');
-      }
       // Prepare signer and contracts for pre-trade checks and placement
       if (typeof window === 'undefined' || !(window as any).ethereum) {
         throw new Error('No wallet provider available. Please install a wallet.');

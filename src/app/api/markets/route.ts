@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { metricSourceFromMarket } from '@/lib/metricSource';
 
 // Initialize Supabase client with service role key for full access
 const supabase = createClient(
@@ -135,6 +136,17 @@ export async function GET(request: NextRequest) {
         });
       }
     }
+
+    // Always compute metric source display fields (even if ticker enrichment failed).
+    enrichedMarkets = (enrichedMarkets || []).map((m: any) => {
+      const metricSource = metricSourceFromMarket(m);
+      return {
+        ...m,
+        metric_source_url: metricSource.url,
+        metric_source_host: metricSource.host,
+        metric_source_label: metricSource.label,
+      };
+    });
 
     console.log(`✅ Retrieved ${markets?.length || 0} markets`);
 

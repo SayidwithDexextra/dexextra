@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import searchModalDesign from '../../design/searchModal.json'
 import { getSupabaseClient } from '@/lib/supabase-browser'
 import MarketPairBadge from './Series/MarketPairBadge'
+import { metricSourceFromMarket } from '@/lib/metricSource'
 
 interface SearchModalProps {
   isOpen: boolean
@@ -13,21 +14,25 @@ interface SearchModalProps {
 // Import types for real data structures
 interface Market {
   id: string;
+  market_identifier?: string;
   symbol: string;
   description: string;
-  category: string[];
-  oracle_address: string;
+  category: string | string[];
   initial_price: number;
   price_decimals: number;
   banner_image_url?: string;
   icon_image_url?: string;
   supporting_photo_urls?: string[];
-  deployment_fee: number;
   is_active: boolean;
   market_id?: string;
   deployment_status: string;
   created_at: string;
   user_address?: string;
+  initial_order?: any;
+  market_config?: any;
+  metric_source_url?: string | null;
+  metric_source_host?: string | null;
+  metric_source_label?: string | null;
 }
 
 interface UserProfileSearchResult {
@@ -186,7 +191,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
             // Fetch minimal info for paired markets not already in results
             const { data: extraMkts, error: eMkts } = await supabase
               .from('markets')
-              .select('id, symbol, description, icon_image_url, deployment_status, decimals, minimum_order_size, tick_size, category')
+              .select('id, symbol, description, icon_image_url, deployment_status, decimals, minimum_order_size, tick_size, category, initial_order, market_config')
               .in('id', Array.from(pairedIds));
             if (!eMkts && extraMkts) {
               extraMkts.forEach((m: any) => {
@@ -196,13 +201,11 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   symbol: m.symbol,
                   description: m.description || '',
                   category: Array.isArray(m.category) ? m.category : (m.category ? [m.category] : []),
-                  oracle_address: '', // not used in search UI
                   initial_price: 0,
                   price_decimals: Number(m.decimals || 6),
                   banner_image_url: undefined,
                   icon_image_url: m.icon_image_url || undefined,
                   supporting_photo_urls: [],
-                  deployment_fee: 0,
                   is_active: true,
                   market_id: m.id,
                   deployment_status: (m.deployment_status || '').toLowerCase(),
@@ -331,7 +334,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       {/* Modal */}
       <div 
         ref={modalRef}
-        className={`group relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
+        className={`relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
         style={{
           maxWidth: '720px',
           maxHeight: '800px',
@@ -471,6 +474,12 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
               
               <div className="space-y-1">
                 {searchResults.markets.map((market) => (
+                  (() => {
+                    const deploymentStatus = String(market.deployment_status || '').toLowerCase();
+                    const metricSource = metricSourceFromMarket(market);
+                    const metricSourceText =
+                      metricSource.label || metricSource.host || (metricSource.url ? metricSource.url : '—');
+                    return (
                   <div
                     key={market.id}
                     className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
@@ -489,7 +498,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       }}
                     >
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${market.deployment_status === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${deploymentStatus === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
                         <div className="flex items-center gap-1.5 min-w-0 flex-1">
                           {market.icon_image_url ? (
                             <div 
@@ -498,7 +507,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                             />
                           ) : (
                             <div className={`flex items-center justify-center rounded text-[9px] font-medium w-6 h-6 ${
-                              market.deployment_status === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
+                              deploymentStatus === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
                             }`}>
                               {market.symbol.charAt(0).toUpperCase()}
                             </div>
@@ -513,29 +522,48 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <div className="text-right">
+                      <div className="flex items-center gap-3">
+                        <div className="text-right min-w-[92px]">
                           <div className="text-[10px] text-white font-mono">
                             {formatUsdNumber(market.initial_price, market.price_decimals ?? 4)}
                           </div>
                           <div className={`text-[9px] ${
-                            market.deployment_status === 'deployed' ? 'text-green-400' : 'text-yellow-400'
+                            deploymentStatus === 'deployed' ? 'text-green-400' : 'text-yellow-400'
                           }`}>
-                            {market.deployment_status}
+                            {deploymentStatus || '—'}
                           </div>
                         </div>
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+                        <div className="w-px h-6 bg-[#222222]" />
+                        <div className="text-right min-w-[110px] max-w-[160px]">
+                          <div
+                            className="text-[10px] text-[#8a8a8a] leading-none truncate"
+                            title={metricSource.url || undefined}
+                          >
+                            {metricSource.url ? (
+                              <a
+                                href={metricSource.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="hover:underline"
+                              >
+                                {metricSourceText}
+                              </a>
+                            ) : (
+                              '—'
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    {/* Expandable Details */}
+                    {/* Expandable Details (only expands for this row on hover) */}
                     <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
                       <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
                         <div className="text-[9px] pt-1.5">
                           <div className="flex flex-wrap gap-1">
                             {(() => {
                               // Convert category to array if it's a string
-                              const categories = Array.isArray(market.category) 
-                                ? market.category 
+                              const categories = Array.isArray(market.category)
+                                ? market.category
                                 : typeof market.category === 'string'
                                   ? market.category.split(',').map(c => c.trim())
                                   : [];
@@ -583,6 +611,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       </div>
                     </div>
                   </div>
+                    );
+                  })()
                 ))}
               </div>
             </div>

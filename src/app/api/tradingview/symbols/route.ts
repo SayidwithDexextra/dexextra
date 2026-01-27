@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { metricSourceFromMarket } from '@/lib/metricSource';
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -158,6 +159,30 @@ export async function GET(request: NextRequest) {
         metric_id: metricId || null
       }
     };
+
+    // Override description to: SYMBOL (SourceLabel)
+    // - SYMBOL comes from `markets.symbol` (unified markets table)
+    // - SourceLabel comes from the trimmed metric URL host (e.g. TradingView / Worldometers)
+    try {
+      if (marketUuid) {
+        const { data: row, error: mErr } = await supabase
+          .from('markets')
+          .select('symbol, market_config, initial_order')
+          .eq('id', marketUuid)
+          .maybeSingle();
+        if (!mErr && row) {
+          const sym =
+            typeof (row as any)?.symbol === 'string' && String((row as any).symbol).trim()
+              ? String((row as any).symbol).trim()
+              : displayName;
+          const src = metricSourceFromMarket(row as any);
+          const label = src.label || src.host || null;
+          symbolInfo.description = label ? `${sym} (${label})` : sym;
+        }
+      }
+    } catch {
+      // non-fatal; keep existing description
+    }
 
     // Avoid spamming dev logs
 

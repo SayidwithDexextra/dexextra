@@ -36,11 +36,23 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
   } = props;
 
   const supabase = getSupabaseClient();
-  const [sourceUrl, setSourceUrl] = React.useState<string | null>(url || null);
+  const [source, setSource] = React.useState<{
+    kind: 'url' | 'script' | 'none';
+    value: string | null;
+    url: string | null;
+  }>(() => ({
+    kind: url ? 'url' : 'none',
+    value: url || null,
+    url: url || null,
+  }));
 
   React.useEffect(() => {
-    // Keep `sourceUrl` in sync with `props.url`.
-    setSourceUrl(url || null);
+    // Keep `source` in sync with `props.url`.
+    if (url) {
+      setSource({ kind: 'url', value: url, url });
+    } else {
+      setSource((prev) => (prev.kind === 'url' ? { kind: 'none', value: null, url: null } : prev));
+    }
   }, [url]);
 
   // If `url` is not provided, attempt to load it from the `markets` table.
@@ -52,7 +64,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
 
       const t = token || marketIdentifier;
       if (!marketId && !t) {
-        setSourceUrl(null);
+        setSource({ kind: 'none', value: null, url: null });
         return;
       }
 
@@ -63,22 +75,39 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
         const { data, error } = await query.maybeSingle();
         if (cancelled) return;
         if (error || !data) {
-          setSourceUrl(null);
+          setSource({ kind: 'none', value: null, url: null });
           return;
         }
 
-        // Prefer initial_order metric url (if present), fallback to ai_source_locator url.
-        const initialOrderMetricUrl =
-          (data as any)?.initial_order?.metricUrl ||
-          (data as any)?.initial_order?.metric_url ||
-          null;
+        const cfg = (data as any)?.market_config || null;
+        const initial = (data as any)?.initial_order || null;
 
-        const loc = (data as any)?.market_config?.ai_source_locator || null;
-        const locatorUrl = loc?.url || loc?.primary_source_url || null;
+        const clean = (v: any) => {
+          const s = String(v ?? '').trim();
+          return s ? s : null;
+        };
 
-        setSourceUrl(initialOrderMetricUrl || locatorUrl || null);
+        // Required resolution:
+        // 1) Prefer `market_config.source_url`
+        // 2) Fall back to `initial_order.metricUrl`
+        // In current Supabase data, `source_url` may live nested under `wayback_snapshot.source_url`
+        // (and/or `ai_source_locator.url`). We treat those as equivalent "source_url" inputs.
+        const marketConfigSourceUrl = clean(
+          cfg?.source_url ??
+            cfg?.sourceUrl ??
+            cfg?.sourceURL ??
+            cfg?.wayback_snapshot?.source_url ??
+            cfg?.wayback_snapshot?.sourceUrl ??
+            cfg?.ai_source_locator?.url ??
+            cfg?.ai_source_locator?.primary_source_url
+        );
+        const initialOrderMetricUrl = clean(initial?.metricUrl ?? initial?.metric_url ?? initial?.metricurl);
+
+        const resolvedUrl = marketConfigSourceUrl || initialOrderMetricUrl;
+        if (resolvedUrl) setSource({ kind: 'url', value: resolvedUrl, url: resolvedUrl });
+        else setSource({ kind: 'none', value: null, url: null });
       } catch {
-        if (!cancelled) setSourceUrl(null);
+        if (!cancelled) setSource({ kind: 'none', value: null, url: null });
       }
     };
 
@@ -89,13 +118,15 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
   }, [supabase, url, marketId, token, marketIdentifier]);
 
   const displayText = React.useMemo(() => {
-    if (!sourceUrl) return '—';
+    if (!source.value) return '—';
+    if (source.kind === 'script') return source.value;
+    // url-kind
     try {
-      return new URL(sourceUrl).hostname;
+      return new URL(source.value).hostname;
     } catch {
-      return sourceUrl.length > 64 ? `${sourceUrl.slice(0, 64)}…` : sourceUrl;
+      return source.value.length > 64 ? `${source.value.slice(0, 64)}…` : source.value;
     }
-  }, [sourceUrl]);
+  }, [source.kind, source.value]);
 
   return (
     <div
@@ -103,11 +134,16 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     >
       <div className="flex items-center justify-between p-2">
         <span className="text-[11px] font-medium text-[#808080] leading-none">{label}</span>
-        <span className="text-[9px] text-[#8a8a8a] leading-none truncate max-w-[180px]" title={sourceUrl || undefined}>
-          {sourceUrl ? (
-            <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">
+        <span
+          className="text-[9px] text-[#8a8a8a] leading-none truncate max-w-[180px]"
+          title={source.value || undefined}
+        >
+          {source.kind === 'url' && source.url ? (
+            <a href={source.url} target="_blank" rel="noopener noreferrer" className="underline">
               {displayText}
             </a>
+          ) : source.kind === 'script' && source.value ? (
+            <span>{displayText}</span>
           ) : (
             '—'
           )}

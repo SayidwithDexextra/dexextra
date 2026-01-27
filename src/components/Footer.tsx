@@ -238,10 +238,11 @@ const Footer: React.FC = () => {
           Live
         </div>
 
-        {/* How it works - placeholder docs link */}
+        {/* How it works */}
         <Link
-          href="#"
-          onClick={(e) => e.preventDefault()}
+          href="https://doc.dexetera.win/docs/how-it-works"
+          target="_blank"
+          rel="noopener noreferrer"
           title="How it works: markets are created on-chain, users place orders on the OrderBook, and positions/settlement are handled by smart contracts."
           style={{
             display: 'flex',

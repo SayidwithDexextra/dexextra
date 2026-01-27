@@ -24,6 +24,8 @@ import { MetricLivePrice } from '@/components';
 import SeriesMarketToggle from '@/components/Series/SeriesMarketToggle';
 import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRouting';
 import { SettlementInterface } from '@/components/SettlementInterface';
+import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAiWorker';
+import { getSupabaseClient } from '@/lib/supabase-browser';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -112,6 +114,12 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     // `/token/BITCOIN` fetches metric_name=BITCOIN even if `market_identifier` is BTC.
     const metricName = String(symbol || '').toUpperCase();
 
+    // For the "live metric tracker" we want the latest value, not a lagging long SMA.
+    // Allow overriding via `?metricSma=<n>` for debugging/tuning.
+    const smaRaw = Number(sp.get('metricSma') || '');
+    const smaLength =
+      Number.isFinite(smaRaw) && smaRaw >= 0 ? Math.max(1, Math.min(5000, Math.floor(smaRaw))) : 1;
+
     // DEBUG-only: allow forcing the plotted value via URL when metricDebug is enabled.
     // This is useful for quickly detecting price-scale vs data-mapping issues.
     // Example: /token/BITCOIN?metricDebug=1&metricConst=45000
@@ -129,11 +137,203 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       timeframe: '5m',
       lineColor: '#A78BFA',
       lineWidth: 1,
+      smaLength,
       displayName: String(metricId).toUpperCase(),
       metricConst,
       enabled: true,
     };
   }, [currentMarketId, md.market, symbol, metricDebug, sp]);
+
+  // Re-enable "on token view after downtime" metric ingestion:
+  // - If ClickHouse metric-series is stale (or missing), resolve current metric via the Metric AI worker
+  // - POST the value into ClickHouse metric_series_raw via /api/charts/metric
+  useEffect(() => {
+    const marketId = currentMarketId;
+    const metricName = String(metricOverlay?.metricName || '').trim();
+    if (!marketId || !metricName) return;
+
+    // Ensure worker is configured; if not, silently skip.
+    // NOTE: in local dev on localhost, getMetricAIWorkerBaseUrl() defaults to NEXT_PUBLIC_METRIC_AI_WORKER_URL_LOCAL
+    // (or http://localhost:3001). If you aren't running the worker locally, set
+    // NEXT_PUBLIC_METRIC_AI_WORKER_URL_LOCAL=https://metric-ai-worker.vercel.app
+    try {
+      void getMetricAIWorkerBaseUrl();
+    } catch {
+      return;
+    }
+
+    const ttlMsRaw = Number(
+      (process as any)?.env?.NEXT_PUBLIC_METRIC_SERIES_INGEST_TTL_MS ||
+        (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_SERIES_INGEST_TTL_MS
+    );
+    const ttlMs = Number.isFinite(ttlMsRaw) && ttlMsRaw > 0 ? Math.floor(ttlMsRaw) : 5 * 60_000; // 5 minutes
+
+    const staleMsRaw = Number(
+      (process as any)?.env?.NEXT_PUBLIC_METRIC_SERIES_STALE_MS ||
+        (globalThis as any)?.process?.env?.NEXT_PUBLIC_METRIC_SERIES_STALE_MS
+    );
+    const staleMs = Number.isFinite(staleMsRaw) && staleMsRaw > 0 ? Math.floor(staleMsRaw) : 30 * 60_000; // 30 minutes
+
+    const storageKey = `metric-series-ingest:last:${marketId}:${metricName}`;
+
+    // Only run when the page is visible (avoid background tab spam).
+    try {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    } catch {}
+
+    let cancelled = false;
+
+    const parseNumeric = (raw: unknown): number => {
+      const s = String(raw ?? '').trim();
+      if (!s) return NaN;
+      // allow commas (e.g. "4,470.50")
+      const n = Number(s.replace(/,/g, ''));
+      return Number.isFinite(n) ? n : NaN;
+    };
+
+    const parseClickhouseTsMs = (input: any): number => {
+      try {
+        if (typeof input === 'number') return input > 1e12 ? input : input * 1000;
+        const s = String(input || '').trim();
+        // ClickHouse usually returns 'YYYY-MM-DD HH:MM:SS.mmm'
+        const iso = s.includes('T') ? s : s.replace(' ', 'T');
+        const ms = Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`);
+        return Number.isFinite(ms) ? ms : 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    const resolveMetricUrl = async (): Promise<string | null> => {
+      // 1) Try from md.market (some envs may include these fields)
+      try {
+        const aiLocator = (md?.market as any)?.market_config?.ai_source_locator || null;
+        const fromLocator = aiLocator && (aiLocator.url || aiLocator.primary_source_url) ? String(aiLocator.url || aiLocator.primary_source_url) : '';
+        const fromInit = (md?.market as any)?.initial_order?.metricUrl ? String((md?.market as any)?.initial_order?.metricUrl) : '';
+        if (fromInit) return fromInit;
+        if (fromLocator) return fromLocator;
+      } catch {}
+
+      // 2) Fallback: fetch from `markets` table (this is what `MetricLivePrice` does)
+      try {
+        const sb = getSupabaseClient();
+        const { data, error } = await sb
+          .from('markets')
+          .select('market_config, initial_order')
+          .eq('id', marketId)
+          .maybeSingle();
+        if (error || !data) return null;
+        const initialOrderMetricUrl =
+          (data as any)?.initial_order?.metricUrl ||
+          (data as any)?.initial_order?.metric_url ||
+          null;
+        const loc = (data as any)?.market_config?.ai_source_locator || null;
+        const locatorUrl = loc?.url || loc?.primary_source_url || null;
+        return initialOrderMetricUrl || locatorUrl || null;
+      } catch {
+        return null;
+      }
+    };
+
+    const run = async () => {
+      try {
+        const metricUrl = await resolveMetricUrl();
+        if (!metricUrl) {
+          if (metricDebug) console.warn('[MetricSeriesIngest] skip: no metricUrl', { marketId, metricName });
+          return;
+        }
+
+        // TTL throttle per-market (only after we have a metricUrl).
+        try {
+          const last = Number.parseInt(String(localStorage.getItem(storageKey) || ''), 10) || 0;
+          const now = Date.now();
+          if (now - last < ttlMs) {
+            if (metricDebug) console.warn('[MetricSeriesIngest] ttl skip', { marketId, metricName, ttlMs, last });
+            return;
+          }
+          localStorage.setItem(storageKey, String(now));
+        } catch {
+          // If localStorage fails, continue with a best-effort single run.
+        }
+
+        // 1) Check ClickHouse freshness (metric-series)
+        try {
+          const checkUrl =
+            `/api/charts/metric?marketId=${encodeURIComponent(marketId)}` +
+            `&metricName=${encodeURIComponent(metricName)}` +
+            `&timeframe=1m&agg=last&limit=1&sma=0`;
+          const res = await fetch(checkUrl, { cache: 'no-store' });
+          if (res.ok) {
+            const body = await res.json().catch(() => null);
+            const rows = Array.isArray(body?.data) ? body.data : [];
+            const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
+            const lastTsMs = parseClickhouseTsMs(lastRow?.ts);
+            if (lastTsMs > 0 && Date.now() - lastTsMs < staleMs) {
+              if (metricDebug) console.warn('[MetricSeriesIngest] skip: fresh', { lastTsMs, ageMs: Date.now() - lastTsMs, staleMs });
+              return; // fresh enough; no need to call the worker
+            }
+          }
+        } catch {
+          // If freshness check fails, proceed (best effort) to worker fetch.
+        }
+
+        if (cancelled) return;
+
+        // 2) Resolve current metric via worker
+        const ai = await runMetricAIWithPolling(
+          {
+            metric: metricName,
+            urls: [metricUrl],
+            related_market_id: marketId,
+            context: 'settlement',
+          },
+          { intervalMs: 1500, timeoutMs: 12_000 }
+        ).catch(() => null);
+
+        if (cancelled || !ai) {
+          if (metricDebug) console.warn('[MetricSeriesIngest] worker returned no result');
+          return;
+        }
+
+        const value = parseNumeric(ai.asset_price_suggestion ?? ai.value);
+        if (!Number.isFinite(value)) {
+          if (metricDebug) console.warn('[MetricSeriesIngest] worker returned non-numeric', { raw: ai.asset_price_suggestion ?? ai.value });
+          return;
+        }
+
+        // 3) Insert into ClickHouse metric_series_raw via our API
+        const nowMs = Date.now();
+        const insertRes = await fetch('/api/charts/metric', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({
+            marketId,
+            metricName,
+            source: 'metric_ai_worker',
+            version: nowMs % 2_147_483_647,
+            points: { ts: nowMs, value },
+          }),
+        });
+        if (!insertRes.ok) {
+          // best-effort; keep quiet unless in debug
+          if (metricDebug) {
+            const t = await insertRes.text().catch(() => '');
+            console.warn('[MetricSeriesIngest] insert failed', { status: insertRes.status, t });
+          }
+        } else {
+          if (metricDebug) console.warn('[MetricSeriesIngest] inserted', { marketId, metricName, value, ts: nowMs });
+        }
+      } catch (e) {
+        if (metricDebug) console.warn('[MetricSeriesIngest] failed', e);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMarketId, metricOverlay?.metricName, md?.market, metricDebug]);
 
   // Dev-only helper: seed ClickHouse scatter data so the metric overlay has something to draw.
   const [scatterInfo, setScatterInfo] = useState<{ loading: boolean; count?: number; error?: string } | null>(null);

@@ -13,6 +13,7 @@ const networkAccounts = process.env.PRIVATE_KEY_USERD
       process.env.PRIVATE_KEY_USER3,
       process.env.PRIVATE_KEY_USER2,
       process.env.PRIVATE_KEY_USER5,
+      process.env.ADMIN_PRIVATE_KEY_3,
     ]
   : [];
 

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Image from 'next/image';
 import styles from './styles/Widget.module.css';
 
 interface TokenListItemProps {
@@ -13,12 +14,25 @@ interface TokenListItemProps {
 }
 
 const TokenListItem: React.FC<TokenListItemProps> = ({ icon, name, price, change, isPositive }) => {
+  const isIconUrl = typeof icon === 'string' && (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('/'));
   return (
-    <div className="flex justify-between items-center py-1.5 hover:bg-white hover:bg-opacity-[0.02] rounded transition-colors duration-200">
+    <div className="flex justify-between items-center py-1.5 rounded transition-colors duration-200 hover:bg-black/20">
       <div className="flex items-center gap-1.5">
-        <div className="w-4 h-4 rounded-full flex items-center justify-center text-xs">
-          {icon}
-        </div>
+        {isIconUrl ? (
+          <div style={{ width: 16, height: 16, position: 'relative' }}>
+            <Image
+              src={icon}
+              alt=""
+              fill
+              sizes="16px"
+              style={{ objectFit: 'cover', borderRadius: 999 }}
+            />
+          </div>
+        ) : (
+          <div className="w-4 h-4 flex items-center justify-center text-xs" style={{ opacity: 0.85 }}>
+            {icon}
+          </div>
+        )}
         <span className={styles.tokenNameTiny}>{name}</span>
       </div>
       

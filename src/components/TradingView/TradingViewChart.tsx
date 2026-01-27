@@ -66,6 +66,13 @@ export interface TradingViewChartProps {
   hideTopToolbar?: boolean;
   hideSideToolbar?: boolean;
   /**
+   * If true, visually hides the main OHLC series so only overlays (like metricOverlay) show.
+   *
+   * If omitted, the chart will auto-enable this mode when `/api/tradingview/history` is serving
+   * metric-derived bars (i.e. OHLC is missing, but metric-series exists).
+   */
+  metricOnly?: boolean;
+  /**
    * If true (default), prevents TradingView from showing/creating any Volume study by default.
    * Volume can still be added explicitly by callers via `studies` (unless you also keep it removed in code).
    */
@@ -117,6 +124,7 @@ export default function TradingViewChart({
   allowSymbolChange = true,
   hideTopToolbar = false,
   hideSideToolbar = false,
+  metricOnly,
   // Most users expect the candle pane only; volume can be added explicitly as a study if desired.
   hideVolumePanel = true,
   studies = [],
@@ -134,6 +142,7 @@ export default function TradingViewChart({
   const [debugStep, setDebugStep] = useState<string>('boot');
   const [hasWidget, setHasWidget] = useState(false);
   const [displaySymbol, setDisplaySymbol] = useState<string>(symbol);
+  const [metricOnlyAuto, setMetricOnlyAuto] = useState<boolean>(false);
 
   // Expose a throttled "kick" function to the TradingView same-origin iframe.
   // Our custom indicator fetches data asynchronously, but the PineJS context has no public "requestUpdate".
@@ -231,6 +240,37 @@ export default function TradingViewChart({
     () => (metricConfig ? JSON.stringify(metricConfig) : ''),
     [metricConfig]
   );
+
+  const metricOnlyResolved = typeof metricOnly === 'boolean' ? metricOnly : metricOnlyAuto;
+
+  // Auto-enable metricOnly when the datafeed is forced to serve metric-derived bars (no OHLC available).
+  // We probe the same history endpoint TradingView uses, but with symbol = market UUID so we don't depend on search/resolve.
+  useEffect(() => {
+    if (typeof metricOnly === 'boolean') return; // explicit override
+    if (!metricConfig?.marketId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const to = Math.floor(Date.now() / 1000);
+        const from = to - 24 * 60 * 60;
+        const url =
+          `/api/tradingview/history?symbol=${encodeURIComponent(metricConfig.marketId)}` +
+          `&resolution=${encodeURIComponent(String(interval || '5'))}` +
+          `&from=${encodeURIComponent(String(from))}` +
+          `&to=${encodeURIComponent(String(to))}` +
+          `&countback=50`;
+        const res = await fetch(url, { cache: 'no-store' });
+        const body = await res.json().catch(() => null);
+        const arch = body?.meta?.architecture ? String(body.meta.architecture) : '';
+        if (!cancelled) setMetricOnlyAuto(arch === 'metric_series_fallback');
+      } catch {
+        if (!cancelled) setMetricOnlyAuto(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [metricOnly, metricConfig?.marketId, interval]);
 
   // If the incoming symbol is a market UUID, resolve to a human-friendly metric_id for display.
   // The datafeed will still use `ticker` (UUID) internally for history + realtime.
@@ -383,12 +423,14 @@ export default function TradingViewChart({
         'scalesProperties.textColor': theme === 'dark' ? '#d1d5db' : '#374151',
         // Keep scales aligned with the pane's primary background (prevents a "different colored strip").
         'scalesProperties.backgroundColor': theme === 'dark' ? '#18181a' : '#ffffff',
-        'mainSeriesProperties.candleStyle.upColor': '#0d9980',
-        'mainSeriesProperties.candleStyle.downColor': '#f23646',
-        'mainSeriesProperties.candleStyle.borderUpColor': '#0d9980',
-        'mainSeriesProperties.candleStyle.borderDownColor': '#f23646',
-        'mainSeriesProperties.candleStyle.wickUpColor': '#0d9980',
-        'mainSeriesProperties.candleStyle.wickDownColor': '#f23646'
+        // If metricOnly is enabled, make the candle series fully transparent so overlays can render alone.
+        // (TradingView still needs a time series to compute `context.symbol.time` for studies.)
+        'mainSeriesProperties.candleStyle.upColor': metricOnlyResolved ? 'rgba(0,0,0,0)' : '#0d9980',
+        'mainSeriesProperties.candleStyle.downColor': metricOnlyResolved ? 'rgba(0,0,0,0)' : '#f23646',
+        'mainSeriesProperties.candleStyle.borderUpColor': metricOnlyResolved ? 'rgba(0,0,0,0)' : '#0d9980',
+        'mainSeriesProperties.candleStyle.borderDownColor': metricOnlyResolved ? 'rgba(0,0,0,0)' : '#f23646',
+        'mainSeriesProperties.candleStyle.wickUpColor': metricOnlyResolved ? 'rgba(0,0,0,0)' : '#0d9980',
+        'mainSeriesProperties.candleStyle.wickDownColor': metricOnlyResolved ? 'rgba(0,0,0,0)' : '#f23646'
       },
       // Add custom indicators getter for metric overlay
       ...(customIndicatorsGetter ? { custom_indicators_getter: customIndicatorsGetter } : {})
@@ -633,6 +675,7 @@ export default function TradingViewChart({
     allowSymbolChange,
     hideTopToolbar,
     hideSideToolbar,
+    metricOnlyResolved,
     hideVolumePanel,
     studiesKey,
     onSymbolChange,

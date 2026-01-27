@@ -6,6 +6,22 @@ pragma solidity ^0.8.20;
  * @dev Handy for wiring external pipelines (Alchemy webhook, Supabase ingest, etc).
  */
 contract MockOrderBookEvents {
+    // ---- Core pipeline events (topic0 matches production facets) ----
+    // From OBOrderPlacementFacet
+    event OrderPlaced(
+        uint256 indexed orderId,
+        address indexed trader,
+        uint256 price,
+        uint256 amount,
+        bool isBuy,
+        bool isMarginOrder
+    );
+    // From OBOrderPlacementFacet / OBSettlementFacet (same signature)
+    event OrderCancelled(uint256 indexed orderId, address indexed trader);
+    // From OBTradeExecutionFacet
+    event TradeExecutionCompleted(address indexed buyer, address indexed seller, uint256 price, uint256 amount);
+    event PriceUpdated(uint256 lastTradePrice, uint256 currentMarkPrice);
+
     event LiquidationCompleted(
         address indexed trader,
         uint256 liquidationsTriggered,
@@ -26,7 +42,25 @@ contract MockOrderBookEvents {
         uint256 liquidationPrice
     );
 
-    event PriceUpdated(uint256 lastTradePrice, uint256 currentMarkPrice);
+    // ---- Emitters for core pipeline events ----
+    function emitOrderPlaced(
+        uint256 orderId,
+        address trader,
+        uint256 price,
+        uint256 amount,
+        bool isBuy,
+        bool isMarginOrder
+    ) external {
+        emit OrderPlaced(orderId, trader, price, amount, isBuy, isMarginOrder);
+    }
+
+    function emitOrderCancelled(uint256 orderId, address trader) external {
+        emit OrderCancelled(orderId, trader);
+    }
+
+    function emitTradeExecutionCompleted(address buyer, address seller, uint256 price, uint256 amount) external {
+        emit TradeExecutionCompleted(buyer, seller, price, amount);
+    }
 
     function emitLiquidationCompleted(
         address trader,

@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { useWallet } from '@/hooks/useWallet';
 import { usePortfolioData } from '@/hooks/usePortfolioData';
 import { useMarkets } from '@/hooks/useMarkets';
+import { normalizeBytes32Hex } from '@/lib/hex';
 
 type ActiveMarketsState = {
   // Ranked symbols based on user involvement (positions first, then orders).
@@ -35,7 +36,7 @@ export function ActiveMarketsProvider({ children }: { children: React.ReactNode 
   const marketIdToSymbol = useMemo(() => {
     const map = new Map<string, string>();
     for (const m of markets || []) {
-      const key = String((m as any)?.market_id_bytes32 || '').toLowerCase();
+      const key = normalizeBytes32Hex(String((m as any)?.market_id_bytes32 || ''));
       if (!key) continue;
       const sym = String((m as any)?.symbol || '').toUpperCase();
       if (sym) map.set(key, sym);
@@ -75,7 +76,7 @@ export function ActiveMarketsProvider({ children }: { children: React.ReactNode 
 
     // Positions (highest priority)
     for (const p of positions || []) {
-      const keyHex = String((p as any)?.marketId || '').toLowerCase();
+      const keyHex = normalizeBytes32Hex(String((p as any)?.marketId || ''));
       const mapped = keyHex ? marketIdToSymbol.get(keyHex) : null;
       const fallbackSym = String((p as any)?.symbol || '');
       const symbol = (mapped || fallbackSym || '').toUpperCase();

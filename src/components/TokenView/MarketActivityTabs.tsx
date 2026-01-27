@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import Link from 'next/link';
 import { ethers } from 'ethers';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
@@ -16,6 +17,7 @@ import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { gaslessTopUpPosition } from '@/lib/gaslessTopup';
 import { parseUnits } from 'viem';
 import { useSession } from '@/contexts/SessionContext';
+import { normalizeBytes32Hex } from '@/lib/hex';
 
 // Public USDC icon (fallback to Circle's official)
 const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
@@ -116,7 +118,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const marketIdMap = useMemo(() => {
     const map = new Map<string, { symbol: string; name: string }>();
     for (const m of markets || []) {
-      const key = (m?.market_id_bytes32 || '').toLowerCase();
+      const key = normalizeBytes32Hex((m as any)?.market_id_bytes32);
       if (key) {
         map.set(key, {
           symbol: (m?.symbol || '').toUpperCase(),
@@ -140,6 +142,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     sessionActive: globalSessionActive,
     clear: clearSession,
   } = useSession();
+
+  const getTokenHref = useCallback((sym?: string | null) => {
+    const s = String(sym || '').trim();
+    if (!s) return '/';
+    return `/token/${encodeURIComponent(s)}`;
+  }, []);
   
   // Optimistic overlay for positions on trade events (prevents "revert" when vault reads lag a block).
   // We keep small deltas for a short TTL and render basePositions + deltas.
@@ -486,7 +494,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
     try {
       const mapped = (allPositions || []).map((p: any) => {
-        const keyHex = String(p?.marketId || '').toLowerCase();
+        const keyHex = normalizeBytes32Hex(String(p?.marketId || ''));
         const meta = marketIdMap.get(keyHex);
         const symbolDisplay = (meta?.symbol || p?.symbol || 'UNKNOWN').toUpperCase();
         return {
@@ -1063,29 +1071,47 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               }`} style={{ animationDelay: `${index * 50}ms` }}>
                           <td className="pl-2 pr-1 py-1.5">
                               <div className="flex items-center gap-1">
-                              <div className="relative w-5 h-5">
+                              <Link
+                                href={getTokenHref(position.symbol)}
+                                className="group/link flex items-center gap-1 hover:opacity-90 transition-opacity"
+                                title={`Open ${position.symbol} market`}
+                              >
                                 <img
                                   src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
-                                  alt={`${position.symbol} icon`}
-                                  className="absolute top-0 left-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-10"
+                                  alt={`${position.symbol} logo`}
+                                  className="w-4 h-4 rounded-full border border-[#333333] object-cover"
                                 />
-                                <img
-                                  src={USDC_ICON_URL}
-                                  alt="USDC icon"
-                                  className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-0"
-                                />
-                              </div>
-                              <div className="flex items-center gap-0.5">
                                 <span className="text-[11px] font-medium text-white">
                                   {marketSymbolMap.get(position.symbol)?.name || position.symbol}
                                 </span>
                                 <span className="text-[10px] text-[#CBD5E1]">{position.symbol}</span>
+                                <svg
+                                  aria-hidden="true"
+                                  viewBox="0 0 24 24"
+                                  className="ml-0.5 h-3 w-3 text-[#6B7280] opacity-80 transition-opacity group-hover/link:opacity-100"
+                                  fill="none"
+                                >
+                                  <path
+                                    d="M14 3h7v7m0-7L10 14"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                  <path
+                                    d="M10 7H7a4 4 0 0 0-4 4v6a4 4 0 0 0 4 4h6a4 4 0 0 0 4-4v-3"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
                                 {position.isUnderLiquidation && (
                                   <div className="px-1 py-0.5 bg-yellow-400/10 rounded">
                                     <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
                                   </div>
                                 )}
-                              </div>
+                              </Link>
                             </div>
                           </td>
                           <td className="pl-1 pr-2 py-1.5">
@@ -1265,27 +1291,45 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     <tbody>
                       {displayedOpenOrders.map((order, index) => (
                         <React.Fragment key={`${order.id}-${index}`}>
-                          <tr className={`mat-slide-rtl hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
+                          <tr className={`mat-slide-rtl group/row hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
                             <td className="pl-2 pr-1 py-1.5">
                               <div className="flex items-center gap-1">
-                                <div className="relative w-5 h-5">
+                                <Link
+                                  href={getTokenHref(order.symbol)}
+                                  className="group/link flex items-center gap-1 hover:opacity-90 transition-opacity"
+                                  title={`Open ${order.symbol} market`}
+                                >
                                   <img
                                     src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
-                                    alt={`${order.symbol} icon`}
-                                    className="absolute top-0 left-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-10"
+                                    alt={`${order.symbol} logo`}
+                                    className="w-4 h-4 rounded-full border border-[#333333] object-cover"
                                   />
-                                  <img
-                                    src={USDC_ICON_URL}
-                                    alt="USDC icon"
-                                    className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border border-[#333333] object-cover z-0"
-                                  />
-                                </div>
-                                <div className="flex items-center gap-0.5">
                                   <span className="text-[11px] font-medium text-white">
                                     {marketSymbolMap.get(order.symbol)?.name || order.symbol}
                                   </span>
                                   <span className="text-[10px] text-[#CBD5E1]">{order.symbol}</span>
-                                </div>
+                                  <svg
+                                    aria-hidden="true"
+                                    viewBox="0 0 24 24"
+                                    className="ml-0.5 h-3 w-3 text-[#6B7280] opacity-80 transition-opacity group-hover/link:opacity-100"
+                                    fill="none"
+                                  >
+                                    <path
+                                      d="M14 3h7v7m0-7L10 14"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                    <path
+                                      d="M10 7H7a4 4 0 0 0-4 4v6a4 4 0 0 0 4 4h6a4 4 0 0 0 4-4v-3"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </Link>
                               </div>
                             </td>
                             <td className="pl-1 pr-2 py-1.5">
@@ -1309,7 +1353,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <td className="px-2 py-1.5 text-right">
                               <button
                                 onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
+                                className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
                               >
                                 {expandedOrderId === order.id ? 'Hide' : 'Manage'}
                               </button>

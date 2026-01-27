@@ -584,6 +584,22 @@ function escapeSqlString(v: string): string {
   return String(v || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
+function safePreviewText(text: string | undefined, limit = 1200): string | undefined {
+  if (!text) return text;
+  const t = String(text);
+  return t.length > limit ? t.slice(0, limit) + "…[truncated]" : t;
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort("timeout"), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function chInsertJsonEachRow(
   table: string,
   rows: object[],
@@ -600,9 +616,15 @@ async function chInsertJsonEachRow(
   if (user) headers["X-ClickHouse-User"] = user;
   if (password) headers["X-ClickHouse-Key"] = password;
   const body = rows.map((r) => JSON.stringify(r)).join("\n");
-  const resp = await fetch(url, { method: "POST", headers, body });
-  const text = await resp.text().catch(() => undefined);
-  return { ok: resp.ok, status: resp.status, text, url };
+  try {
+    const timeoutMs = parseInt(Deno.env.get("CLICKHOUSE_HTTP_TIMEOUT_MS") || "15000", 10);
+    const resp = await fetchWithTimeout(url, { method: "POST", headers, body }, Number.isFinite(timeoutMs) ? timeoutMs : 15000);
+    const text = await resp.text().catch(() => undefined);
+    return { ok: resp.ok, status: resp.status, text: safePreviewText(text), url };
+  } catch (e) {
+    // Represent timeouts/network errors in the same shape as HTTP failures.
+    return { ok: false, status: 0, text: safePreviewText(String(e)), url };
+  }
 }
 
 async function chQueryJsonEachRow(query: string): Promise<{ ok: boolean; status: number; text?: string; url: string; rows: any[] }> {
@@ -615,9 +637,15 @@ async function chQueryJsonEachRow(query: string): Promise<{ ok: boolean; status:
   };
   if (user) headers["X-ClickHouse-User"] = user;
   if (password) headers["X-ClickHouse-Key"] = password;
-  const resp = await fetch(url, { method: "POST", headers, body: query });
+  let resp: Response;
+  try {
+    const timeoutMs = parseInt(Deno.env.get("CLICKHOUSE_HTTP_TIMEOUT_MS") || "15000", 10);
+    resp = await fetchWithTimeout(url, { method: "POST", headers, body: query }, Number.isFinite(timeoutMs) ? timeoutMs : 15000);
+  } catch (e) {
+    return { ok: false, status: 0, text: safePreviewText(String(e)), url, rows: [] };
+  }
   const text = await resp.text().catch(() => "");
-  if (!resp.ok) return { ok: false, status: resp.status, text, url, rows: [] };
+  if (!resp.ok) return { ok: false, status: resp.status, text: safePreviewText(text), url, rows: [] };
   const lines = String(text || "").split("\n").map((l) => l.trim()).filter(Boolean);
   const rows = lines.map((l) => {
     try {
@@ -626,7 +654,7 @@ async function chQueryJsonEachRow(query: string): Promise<{ ok: boolean; status:
       return null;
     }
   }).filter(Boolean);
-  return { ok: true, status: resp.status, text, url, rows };
+  return { ok: true, status: resp.status, text: safePreviewText(text), url, rows };
 }
 
 async function fetchLatest1mCandleFromMarketTicks(opts: { marketUuid: string; bucketStartSec: number }) {
@@ -764,6 +792,7 @@ function aggregateTo1m(trades: NormalizedTrade[]): CHCandle1mRow[] {
 }
 
 Deno.serve(async (req: Request) => {
+  const requestId = crypto.randomUUID();
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" } });
   }
@@ -776,7 +805,7 @@ Deno.serve(async (req: Request) => {
   try {
     body = rawBody ? JSON.parse(rawBody) : {};
   } catch (_e) {
-    console.log("[Step 1] Received payload (invalid JSON)", { rawBodySnippet: rawBody.slice(0, 2048) });
+    console.log("[Step 1] Received payload (invalid JSON)", { requestId, rawBodySnippet: rawBody.slice(0, 2048) });
     return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
   }
 
@@ -784,6 +813,7 @@ Deno.serve(async (req: Request) => {
   const inferredType = detectType(body);
 
   console.log("[Step 1] Received payload", {
+    requestId,
     type: inferredType,
     headers: {
       "content-type": req.headers.get("content-type"),
@@ -793,7 +823,7 @@ Deno.serve(async (req: Request) => {
   });
 
   const isValid = await verifyAlchemySignature(rawBody, alchemySig);
-  console.log("[Step 2] Signature verification", { valid: isValid });
+  console.log("[Step 2] Signature verification", { requestId, valid: isValid });
   if (!isValid) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
   }
@@ -814,10 +844,10 @@ Deno.serve(async (req: Request) => {
   }
 
   const uniqueAddresses = Array.from(new Set(trades.map((t) => t.contract_address)));
-  console.log("[Step 3] Market resolution", { uniqueAddresses });
+  console.log("[Step 3] Market resolution", { requestId, uniqueAddressesCount: uniqueAddresses.length, uniqueAddresses });
 
   const { rowsByAddress, fetchInfo } = await fetchMarketsByAddressBatch(uniqueAddresses);
-  console.log("[Step 3a] Supabase fetch info", fetchInfo);
+  console.log("[Step 3a] Supabase fetch info", { requestId, ...fetchInfo });
 
   for (const t of trades) {
     const row = rowsByAddress[t.contract_address];
@@ -826,7 +856,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const fetchedItems = Object.values(rowsByAddress);
-  console.log("[Step 5] Supabase markets fetched", { count: fetchedItems.length, items: fetchedItems });
+  console.log("[Step 5] Supabase markets fetched", { requestId, count: fetchedItems.length, items: fetchedItems });
 
   // For broadcast labeling (keep human-readable symbols when available)
   const symbolByMarketUuid: Record<string, string> = {};
@@ -839,15 +869,39 @@ Deno.serve(async (req: Request) => {
   // ✅ Canonical raw ingestion path: market_ticks only.
   const chTicks = toMarketTickRows(trades);
   const chCfg = getCHConfig();
-  let chInsertInfo: any = { configured: Boolean(chCfg.host) };
+  const unresolved = trades.filter((t) => !t.market_uuid).slice(0, 10).map((t) => t.contract_address);
+  if (unresolved.length > 0) {
+    console.log("[Step 5b] Unresolved trades (no market_uuid)", { requestId, sampleContractAddresses: unresolved, total: trades.filter((t) => !t.market_uuid).length });
+  }
+
+  let chInsertInfo: any = { requestId, configured: Boolean(chCfg.host), database: chCfg.database, hostConfigured: Boolean(chCfg.host) };
 
   if (chTicks.length > 0 && chCfg.host) {
-    console.log("[Step 6.0] ClickHouse ticks payload", { table: "market_ticks", rows: chTicks });
+    const uniqMarkets = Array.from(new Set(chTicks.map((r) => r.market_uuid))).length;
+    console.log("[Step 6.0] ClickHouse ticks insert start", {
+      requestId,
+      table: "market_ticks",
+      ticks: chTicks.length,
+      uniqueMarkets: uniqMarkets,
+      sample: chTicks[0] || null,
+    });
     try {
       const res = await chInsertJsonEachRow("market_ticks", chTicks);
-      chInsertInfo = { ...chInsertInfo, url: res.url, ok: res.ok, status: res.status, text: res.text, inserted: chTicks.length };
+      chInsertInfo = {
+        ...chInsertInfo,
+        url: res.url,
+        ok: res.ok,
+        status: res.status,
+        text: res.text,
+        inserted: res.ok ? chTicks.length : 0,
+        attempted: chTicks.length,
+      };
+      if (!res.ok) {
+        console.log("[Step 6.1] ClickHouse insert failed", { requestId, status: res.status, url: res.url, text: res.text });
+      }
     } catch (e) {
-      chInsertInfo = { ...chInsertInfo, error: String(e) };
+      chInsertInfo = { ...chInsertInfo, error: String(e), attempted: chTicks.length };
+      console.log("[Step 6.1] ClickHouse insert exception", { requestId, error: String(e) });
     }
   } else if (!chCfg.host) {
     chInsertInfo = { ...chInsertInfo, reason: "CLICKHOUSE_URL/CLICKHOUSE_HOST not set" };

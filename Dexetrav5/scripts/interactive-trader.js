@@ -239,6 +239,26 @@ function formatWithAutoDecimalDetection(
   }
 }
 
+// Normalize hex bytes32 IDs for consistent comparisons/logging.
+// Some parts of the stack historically produced unpadded 0x-prefixed hex strings,
+// which breaks MARKET_INFO lookups and causes "UNKNOWN" markets.
+function normalizeBytes32Hex(value) {
+  try {
+    if (value === null || value === undefined) return "";
+    const raw = String(value).trim();
+    if (!raw) return "";
+    const hex = raw.toLowerCase().startsWith("0x") ? raw.slice(2) : raw;
+    // Keep only hex chars (defensive)
+    const cleaned = hex.replace(/[^0-9a-f]/gi, "").toLowerCase();
+    if (!cleaned) return "";
+    // Left-pad to 32 bytes (64 hex chars)
+    const padded = cleaned.length >= 64 ? cleaned.padStart(64, "0") : cleaned.padStart(64, "0");
+    return "0x" + padded.slice(-64);
+  } catch {
+    return "";
+  }
+}
+
 // Helper function to safely decode marketId bytes32
 async function safeDecodeMarketId(marketId, contracts) {
   try {
@@ -246,18 +266,20 @@ async function safeDecodeMarketId(marketId, contracts) {
     return ethers.decodeBytes32String(marketId);
   } catch (decodeError) {
     // Check cache first
-    if (marketSymbolCache.has(marketId)) {
-      return marketSymbolCache.get(marketId);
+    const normKey = normalizeBytes32Hex(marketId) || String(marketId);
+    if (marketSymbolCache.has(normKey)) {
+      return marketSymbolCache.get(normKey);
     }
 
     // Try to resolve via MARKET_INFO by marketId match (preferred)
     try {
-      const idHex = String(marketId).toLowerCase();
+      const idHex = normalizeBytes32Hex(marketId).toLowerCase();
       const entries = Object.values(MARKET_INFO || {});
       for (const info of entries) {
         if (!info || !info.marketId) continue;
-        if (String(info.marketId).toLowerCase() === idHex) {
-          marketSymbolCache.set(marketId, info.symbol || "");
+        const infoHex = normalizeBytes32Hex(info.marketId).toLowerCase();
+        if (infoHex && infoHex === idHex) {
+          marketSymbolCache.set(normKey, info.symbol || "");
           if (info.symbol) return info.symbol;
         }
       }
@@ -269,7 +291,7 @@ async function safeDecodeMarketId(marketId, contracts) {
         const marketData = await contracts.factory.getMarket(marketId);
         if (marketData && marketData.marketSymbol) {
           const symbol = marketData.marketSymbol;
-          marketSymbolCache.set(marketId, symbol);
+          marketSymbolCache.set(normKey, symbol);
           return symbol;
         }
       }
@@ -5486,7 +5508,8 @@ ${colors.brightRed}└───────────────────�
   getMarketDisplayName(marketId) {
     // Convert marketId (bytes32) to string for display
     try {
-      const hexString = marketId.toString();
+      const hexStringRaw = marketId.toString();
+      const hexString = normalizeBytes32Hex(hexStringRaw) || hexStringRaw;
       // Try to decode as UTF-8 string first, fallback to hex display
       if (hexString.startsWith("0x")) {
         const bytes = ethers.getBytes(hexString);

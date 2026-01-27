@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { metricSourceFromMarket } from '@/lib/metricSource';
 
 // Initialize Supabase client
 const supabase = createClient(
@@ -48,6 +49,32 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Metric source enrichment (used for the right-side "exchange" column in TradingView symbol search).
+    const marketIds = (markets || [])
+      .map((m: any) => (m?.id ? String(m.id) : null))
+      .filter(Boolean) as string[];
+    const idToSourceLabel = new Map<string, string>();
+    const idToMarketSymbol = new Map<string, string>();
+    if (marketIds.length > 0) {
+      const { data: sourceRows, error: sErr } = await supabase
+        .from('markets')
+        .select('id, symbol, market_config, initial_order')
+        .in('id', marketIds);
+      if (sErr) {
+        console.warn('⚠️ metric source enrichment failed:', sErr.message);
+      } else {
+        (sourceRows || []).forEach((row: any) => {
+          const id = row?.id ? String(row.id) : null;
+          if (!id) return;
+          const sym = typeof row?.symbol === 'string' && row.symbol.trim() ? row.symbol.trim() : null;
+          if (sym) idToMarketSymbol.set(id, sym);
+          const src = metricSourceFromMarket(row);
+          const label = src.label || src.host || null;
+          if (label) idToSourceLabel.set(id, label);
+        });
+      }
+    }
+
     // Transform markets to TradingView format
     const symbols = (markets || []).map((market: any) => {
       // Determine market type from category string
@@ -63,13 +90,19 @@ export async function GET(request: NextRequest) {
       const marketUuid = market.id ? String(market.id) : null;
       const metricId = market.metric_id ? String(market.metric_id) : '';
       const symbol = marketUuid || metricId || '';
+      const sourceLabel = marketUuid ? idToSourceLabel.get(marketUuid) : undefined;
+      const marketSymbol = marketUuid ? idToMarketSymbol.get(marketUuid) : undefined;
+      const baseName = marketSymbol || metricId || symbol;
+      const description = sourceLabel ? `${baseName} (${sourceLabel})` : (market.description || `${baseName} Orderbook Market`);
       return {
         symbol,
         // Make the displayed name human-friendly while keeping `symbol` as the canonical id.
         full_name: `ORDERBOOK:${metricId || symbol}`,
         // Keep description human-friendly even if symbol is a UUID
-        description: market.description || `${metricId || symbol} Orderbook Market`,
-        exchange: 'ORDERBOOK',
+        description,
+        // TradingView shows this on the far-right column in the search UI.
+        // We surface the metric source (e.g. "TradingView") when available.
+        exchange: sourceLabel || 'ORDERBOOK',
         ticker: symbol,
         type: marketType,
         category: cat,

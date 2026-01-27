@@ -522,6 +522,7 @@ const MarketToolbar: React.FC<MarketToolbarProps> = ({
                 <label key={toggle.key} className={styles.filterToggle}>
                   <span>{toggle.label}</span>
                   <input
+                    suppressHydrationWarning
                     type="checkbox"
                     className={styles.filterToggleInput}
                     checked={activeAdvancedFilters[toggle.key]}

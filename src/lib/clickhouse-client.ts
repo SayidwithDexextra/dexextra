@@ -48,6 +48,29 @@ export interface OHLCVCandle {
   trades: number;
 }
 
+export interface TopVolumeMarketRow {
+  marketUuid: string;
+  symbol: string | null;
+  baseVolume: number;
+  notionalVolume: number;
+  trades: number;
+}
+
+export interface TrendingMarketRow extends TopVolumeMarketRow {
+  base1h: number;
+  notional1h: number;
+  notionalPrev1h: number;
+  trades1h: number;
+  open1h: number | null;
+  close1h: number | null;
+  priceChange1hPct: number;
+  open24h: number | null;
+  close24h: number | null;
+  priceChange24hPct: number;
+  accel1h: number;
+  score: number;
+}
+
 export interface HealthStats {
   tickCount: number; // legacy vAMM ticks or trades fallback
   symbolCount: number;
@@ -260,6 +283,188 @@ export class ClickHouseDataPipeline {
   isConfigured(): boolean {
     const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
     return !!url;
+  }
+
+  /**
+   * Top-volume markets over a time window.
+   *
+   * - baseVolume = sum(size)
+   * - notionalVolume = sum(price * size)
+   * - trades = sum(trade_count) when available, else count()
+   *
+   * NOTE: We compute from `market_ticks` (canonical). This is more reliable than `ohlcv_1m`
+   * for ranking queries because `ohlcv_1m` can contain partial MV rows per minute when ticks
+   * are inserted in separate batches.
+   */
+  async getTopVolumeMarkets(opts?: {
+    windowHours?: number;
+    limit?: number;
+    minTrades?: number;
+    minNotional?: number;
+  }): Promise<TopVolumeMarketRow[]> {
+    if (!this.isConfigured()) return [];
+
+    const windowHours = Math.max(1, Math.min(24 * 30, Number(opts?.windowHours ?? 24)));
+    const limit = Math.max(1, Math.min(500, Number(opts?.limit ?? 50)));
+    const minTrades = Math.max(0, Number(opts?.minTrades ?? 0));
+    const minNotional = Math.max(0, Number(opts?.minNotional ?? 0));
+
+    const allowEventId = await this.supportsColumn('market_ticks', 'event_id');
+    const allowTradeCount = await this.supportsColumn('market_ticks', 'trade_count');
+    const tradesExpr = allowTradeCount ? 'sum(trade_count)' : 'count()';
+
+    // Keep `event_id` detection for parity with other queries; top volume doesn't need it today,
+    // but we intentionally probe it once so callers have consistent behavior across deployments.
+    void allowEventId;
+
+    const result = await this.ensureClient().query({
+      query: `
+        SELECT
+          market_uuid,
+          anyLast(symbol) AS symbol,
+          sum(size) AS baseVolume,
+          sum(price * size) AS notionalVolume,
+          ${tradesExpr} AS trades
+        FROM market_ticks
+        WHERE market_uuid != ''
+          AND ts >= now() - INTERVAL ${windowHours} HOUR
+        GROUP BY market_uuid
+        HAVING trades >= ${minTrades}
+          AND notionalVolume >= ${minNotional}
+        ORDER BY notionalVolume DESC
+        LIMIT ${limit}
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const rows = (await result.json()) as any[];
+    return (rows || []).map((r: any) => ({
+      marketUuid: String(r.market_uuid),
+      symbol: r.symbol != null ? String(r.symbol) : null,
+      baseVolume: Number(r.baseVolume) || 0,
+      notionalVolume: Number(r.notionalVolume) || 0,
+      trades: Number(r.trades) || 0,
+    }));
+  }
+
+  /**
+   * Trending markets using a hybrid score:
+   * - volume/notional (1h + 24h)
+   * - trade count (1h)
+   * - momentum (abs % change 1h + 24h)
+   * - acceleration (1h notional vs previous 1h)
+   *
+   * Derived from `market_ticks` only (canonical), using `event_id` tie-breaker when available
+   * to compute deterministic open/close.
+   */
+  async getTrendingMarkets(opts?: {
+    limit?: number;
+    minTrades24h?: number;
+    minNotional24h?: number;
+    /** Window for the “24h” aggregates (default: 24). */
+    windowHours?: number;
+    weights?: Partial<{
+      notional1h: number;
+      notional24h: number;
+      trades1h: number;
+      absPriceChange1hPct: number;
+      absPriceChange24hPct: number;
+      accel1h: number;
+    }>;
+  }): Promise<TrendingMarketRow[]> {
+    if (!this.isConfigured()) return [];
+
+    const limit = Math.max(1, Math.min(500, Number(opts?.limit ?? 50)));
+    const minTrades24h = Math.max(0, Number(opts?.minTrades24h ?? 0));
+    const minNotional24h = Math.max(0, Number(opts?.minNotional24h ?? 0));
+    const windowHours = Math.max(1, Math.min(24 * 30, Number(opts?.windowHours ?? 24)));
+
+    const w = {
+      notional1h: 0.35,
+      notional24h: 0.15,
+      trades1h: 0.2,
+      absPriceChange1hPct: 0.15,
+      absPriceChange24hPct: 0.1,
+      accel1h: 0.05,
+      ...(opts?.weights || {}),
+    };
+
+    const allowEventId = await this.supportsColumn('market_ticks', 'event_id');
+    const allowTradeCount = await this.supportsColumn('market_ticks', 'trade_count');
+    const tradesExpr24h = allowTradeCount ? 'sumIf(trade_count, ts >= t_24h)' : 'countIf(ts >= t_24h)';
+    const tradesExpr1h = allowTradeCount ? 'sumIf(trade_count, ts >= t_1h)' : 'countIf(ts >= t_1h)';
+    const eventWeight = allowEventId ? '(ts, event_id)' : 'ts';
+
+    const result = await this.ensureClient().query({
+      query: `
+        WITH
+          now() AS t_now,
+          (t_now - INTERVAL 1 HOUR) AS t_1h,
+          (t_now - INTERVAL 2 HOUR) AS t_2h,
+          (t_now - INTERVAL ${windowHours} HOUR) AS t_24h
+        SELECT
+          market_uuid,
+          anyLast(symbol) AS symbol,
+
+          sumIf(size, ts >= t_24h) AS baseVolume,
+          sumIf(price * size, ts >= t_24h) AS notionalVolume,
+          ${tradesExpr24h} AS trades,
+
+          sumIf(size, ts >= t_1h) AS base1h,
+          sumIf(price * size, ts >= t_1h) AS notional1h,
+          sumIf(price * size, ts >= t_2h AND ts < t_1h) AS notionalPrev1h,
+          ${tradesExpr1h} AS trades1h,
+
+          argMinIf(price, ${eventWeight}, ts >= t_1h) AS open1h,
+          argMaxIf(price, ${eventWeight}, ts >= t_1h) AS close1h,
+          if(open1h > 0, (close1h - open1h) / open1h * 100, 0) AS priceChange1hPct,
+
+          argMinIf(price, ${eventWeight}, ts >= t_24h) AS open24h,
+          argMaxIf(price, ${eventWeight}, ts >= t_24h) AS close24h,
+          if(open24h > 0, (close24h - open24h) / open24h * 100, 0) AS priceChange24hPct,
+
+          notional1h / greatest(notionalPrev1h, 1e-9) AS accel1h,
+
+          (
+            ${Number(w.notional1h)} * log1p(notional1h)
+            + ${Number(w.notional24h)} * log1p(notionalVolume)
+            + ${Number(w.trades1h)} * log1p(trades1h)
+            + ${Number(w.absPriceChange1hPct)} * abs(priceChange1hPct)
+            + ${Number(w.absPriceChange24hPct)} * abs(priceChange24hPct)
+            + ${Number(w.accel1h)} * log1p(accel1h)
+          ) AS score
+        FROM market_ticks
+        WHERE market_uuid != ''
+          AND ts >= t_24h
+        GROUP BY market_uuid
+        HAVING trades >= ${minTrades24h}
+          AND notionalVolume >= ${minNotional24h}
+        ORDER BY score DESC
+        LIMIT ${limit}
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const rows = (await result.json()) as any[];
+    return (rows || []).map((r: any) => ({
+      marketUuid: String(r.market_uuid),
+      symbol: r.symbol != null ? String(r.symbol) : null,
+      baseVolume: Number(r.baseVolume) || 0,
+      notionalVolume: Number(r.notionalVolume) || 0,
+      trades: Number(r.trades) || 0,
+      base1h: Number(r.base1h) || 0,
+      notional1h: Number(r.notional1h) || 0,
+      notionalPrev1h: Number(r.notionalPrev1h) || 0,
+      trades1h: Number(r.trades1h) || 0,
+      open1h: r.open1h != null ? Number(r.open1h) : null,
+      close1h: r.close1h != null ? Number(r.close1h) : null,
+      priceChange1hPct: Number(r.priceChange1hPct) || 0,
+      open24h: r.open24h != null ? Number(r.open24h) : null,
+      close24h: r.close24h != null ? Number(r.close24h) : null,
+      priceChange24hPct: Number(r.priceChange24hPct) || 0,
+      accel1h: Number(r.accel1h) || 0,
+      score: Number(r.score) || 0,
+    }));
   }
 
   /**

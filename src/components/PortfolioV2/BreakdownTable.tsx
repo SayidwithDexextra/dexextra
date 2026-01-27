@@ -8,6 +8,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { cancelOrderForMarket } from '@/hooks/useOrderBook'
 import React, { useEffect, useRef, useState } from 'react'
 import ClosedPositionModal from './ClosedPositionModal'
+import { normalizeBytes32Hex } from '@/lib/hex'
 
 type Row = {
 	token: string
@@ -66,7 +67,9 @@ export default function BreakdownTable() {
 		const map = new Map<string, { symbol: string; name: string }>()
 		for (const m of markets || []) {
 			if (m?.market_id_bytes32) {
-				map.set(String(m.market_id_bytes32).toLowerCase(), {
+				const key = normalizeBytes32Hex(String(m.market_id_bytes32))
+				if (!key) continue
+				map.set(key, {
 					symbol: (m.symbol || '').toUpperCase(),
 					name: m.name || m.symbol || ''
 				})
@@ -81,7 +84,7 @@ export default function BreakdownTable() {
 		const notionals = positions.map(p => Math.abs(p.size) * (p.markPrice || p.entryPrice || 0))
 		const totalNotional = notionals.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0)
 		const rows: Row[] = positions.map((p, idx) => {
-			const keyHex = String(p.marketId || '').toLowerCase()
+			const keyHex = normalizeBytes32Hex(String(p.marketId || ''))
 			const meta = marketIdMap.get(keyHex)
 			const symbol = (meta?.symbol || p.symbol || keyHex.slice(2, 6)).toUpperCase()
 			const token = meta?.name || symbol

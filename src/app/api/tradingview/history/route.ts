@@ -56,6 +56,9 @@ const TIMEFRAME_SECONDS: Record<string, number> = {
   '1mo': 30 * 24 * 60 * 60,
 };
 
+// Metric-series only supports these canonical buckets.
+const METRIC_TF_ALLOWED = new Set(['1m', '5m', '15m', '30m', '1h', '4h', '1d']);
+
 function clampInt(n: number, min: number, max: number): number {
   if (!Number.isFinite(n)) return min;
   return Math.max(min, Math.min(max, Math.trunc(n)));
@@ -70,6 +73,169 @@ function ensureClickHouseUrl(value?: string): string {
   if (!raw) return '';
   if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
   return `https://${raw}:8443`;
+}
+
+function escapeSqlString(value: string): string {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+type MetricOhlcv = {
+  t: number[];
+  o: number[];
+  h: number[];
+  l: number[];
+  c: number[];
+  v: number[];
+  count: number;
+};
+
+async function resolveMetricNameForMarketUuid(marketUuid: string, fallbackSymbol: string): Promise<string> {
+  const id = String(marketUuid || '').trim();
+  if (!id) return String(fallbackSymbol || '').toUpperCase();
+  try {
+    // Prefer orderbook markets view (this is what TradingView uses).
+    const { data: ob } = await supabase
+      .from('orderbook_markets_view')
+      .select('metric_id, symbol')
+      .eq('id', id)
+      .limit(1)
+      .maybeSingle();
+    const m = (ob as any)?.metric_id || (ob as any)?.symbol;
+    if (m) return String(m).toUpperCase();
+  } catch {
+    // ignore
+  }
+  try {
+    // Fallback: legacy markets table
+    const { data: m } = await supabase.from('markets').select('market_identifier, symbol').eq('id', id).limit(1).maybeSingle();
+    const sym = (m as any)?.market_identifier || (m as any)?.symbol;
+    if (sym) return String(sym).toUpperCase();
+  } catch {
+    // ignore
+  }
+  return String(fallbackSymbol || '').toUpperCase();
+}
+
+async function fetchMetricSeriesAsOhlcv(params: {
+  marketUuid: string;
+  metricName: string;
+  timeframe: string;
+  limit: number;
+  startTime: Date;
+  endTime: Date;
+}): Promise<MetricOhlcv | null> {
+  const { marketUuid, metricName, timeframe, limit, startTime, endTime } = params;
+  if (!METRIC_TF_ALLOWED.has(timeframe)) return null;
+
+  const url = ensureClickHouseUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
+  if (!url) return null;
+
+  const client = createClickHouseClient({
+    url,
+    username: process.env.CLICKHOUSE_USER || 'default',
+    password: process.env.CLICKHOUSE_PASSWORD,
+    database: process.env.CLICKHOUSE_DATABASE || 'default',
+    request_timeout: 30000,
+  });
+
+  const safeMarketId = escapeSqlString(marketUuid);
+  const safeMetricName = escapeSqlString(metricName);
+
+  const startEpochSec = Math.floor(startTime.getTime() / 1000);
+  const endEpochSec = Math.floor(endTime.getTime() / 1000);
+
+  // Finalize 1m values (last) then optionally roll up to the requested bucket.
+  const baseSeries = `
+    SELECT
+      ts,
+      argMaxMerge(latest_value) AS v
+    FROM metric_series_1m
+    WHERE market_id = '${safeMarketId}'
+      AND metric_name = '${safeMetricName}'
+      AND ts >= toDateTime(${startEpochSec})
+      AND ts <= toDateTime(${endEpochSec})
+    GROUP BY ts
+    ORDER BY ts ASC
+  `;
+
+  const tfMinutes =
+    timeframe === '1m'
+      ? 1
+      : timeframe === '5m'
+        ? 5
+        : timeframe === '15m'
+          ? 15
+          : timeframe === '30m'
+            ? 30
+            : timeframe === '1h'
+              ? 60
+              : timeframe === '4h'
+                ? 240
+                : 1440; // 1d
+
+  const rolled =
+    timeframe === '1m'
+      ? `(${baseSeries})`
+      : `
+        (
+          SELECT
+            toDateTime64(toStartOfInterval(ts, INTERVAL ${tfMinutes} MINUTE, 'UTC'), 3, 'UTC') AS ts,
+            avg(v) AS v
+          FROM (${baseSeries})
+          GROUP BY ts
+          ORDER BY ts ASC
+        )
+      `;
+
+  const query = `
+    SELECT
+      toUnixTimestamp(ts) AS time,
+      v AS open,
+      v AS high,
+      v AS low,
+      v AS close,
+      0 AS volume
+    FROM (${rolled})
+    ORDER BY ts DESC
+    LIMIT ${Math.max(1, Math.min(limit, 2000))}
+  `;
+
+  try {
+    const result = await client.query({ query, format: 'JSONEachRow' });
+    const rows = (await result.json()) as Array<{
+      time: number;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+    }>;
+    await client.close();
+
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const ordered = rows.slice().reverse(); // oldest -> newest
+
+    const t: number[] = [];
+    const o: number[] = [];
+    const h: number[] = [];
+    const l: number[] = [];
+    const c: number[] = [];
+    const v: number[] = [];
+
+    for (const r of ordered) {
+      t.push(Number(r.time));
+      o.push(Number(r.open));
+      h.push(Number(r.high));
+      l.push(Number(r.low));
+      c.push(Number(r.close));
+      v.push(Number(r.volume));
+    }
+
+    return { t, o, h, l, c, v, count: ordered.length };
+  } catch (e) {
+    try { await client.close(); } catch {}
+    return null;
+  }
 }
 
 function generateSeedCandles1m(params: {
@@ -311,6 +477,60 @@ export async function GET(request: NextRequest) {
 
     // Handle no data case
     if (candles.length === 0 || (debugSeed && looksLikeAllZero)) {
+      // If OHLCV is empty, attempt to synthesize bars from ClickHouse metric-series.
+      // This enables "metric-only" charts (indicator without candles) while still giving TradingView
+      // a time axis for studies (`context.symbol.time`).
+      if (marketUuid && clickhouse.isConfigured() && METRIC_TF_ALLOWED.has(timeframe)) {
+        try {
+          const metricName = await resolveMetricNameForMarketUuid(marketUuid, symbol);
+          const metricBars = await fetchMetricSeriesAsOhlcv({
+            marketUuid,
+            metricName,
+            timeframe,
+            limit,
+            startTime: effectiveStartTime,
+            endTime,
+          });
+          if (metricBars && metricBars.count > 0) {
+            const body = {
+              s: 'ok',
+              t: metricBars.t,
+              o: metricBars.o,
+              h: metricBars.h,
+              l: metricBars.l,
+              c: metricBars.c,
+              v: metricBars.v,
+              meta: {
+                count: metricBars.count,
+                symbol,
+                resolution,
+                timeframe,
+                architecture: 'metric_series_fallback',
+                marketUuid,
+                metricName,
+              },
+            };
+
+            const headers: Record<string, string> = {
+              'Access-Control-Allow-Origin': '*',
+              // Short cache like normal history responses; safe because metric-series changes are frequent but not per-request.
+              'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=30',
+              'Server-Timing': [
+                `supabase;dur=${tResolve1 - tResolve0}`,
+                `clickhouse;dur=${tCh1 - tCh0}`,
+                `total;dur=${Date.now() - t0}`,
+              ].join(', '),
+              'X-Cache': 'MISS',
+              'X-Metric-Bars': '1',
+            };
+            HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + HISTORY_CACHE_TTL_MS, body, headers });
+            return NextResponse.json(body, { headers });
+          }
+        } catch {
+          // ignore and fall through to debug seed / no_data
+        }
+      }
+
       // Dev-only: seed synthetic 1m ticks into ClickHouse so BTC chart can render and we can
       // visually verify the metric overlay line even when a market has no real trading history.
       if (debugSeed && marketUuid && clickhouse.isConfigured()) {
