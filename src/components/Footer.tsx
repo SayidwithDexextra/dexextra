@@ -5,10 +5,28 @@ import { useETHPrice } from '../hooks/useETHPrice';
 import { useActiveMarkets } from '@/contexts/ActiveMarketsContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useWallet } from '@/hooks/useWallet';
+import { useMarkets } from '@/hooks/useMarkets';
+import { normalizeBytes32Hex } from '@/lib/hex';
 
 const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED']);
 const ORDERBOOK_PREFIX = 'orderbook:activeOrders:';
 const PORTFOLIO_PREFIX = 'portfolio:orders:';
+
+function isEvmAddress(value: string): boolean {
+  const v = String(value || '').trim();
+  return /^0x[a-fA-F0-9]{40}$/i.test(v);
+}
+
+function isBytes32Hex(value: string): boolean {
+  const v = String(value || '').trim();
+  return /^0x[a-fA-F0-9]{64}$/i.test(v);
+}
+
+function shortAddress(value: string): string {
+  const v = String(value || '').trim();
+  if (!isEvmAddress(v)) return v;
+  return `${v.slice(0, 6)}…${v.slice(-4)}`.toUpperCase();
+}
 
 function isActiveOrderStatus(status: unknown): boolean {
   const normalized = String(status || '').trim().toUpperCase();
@@ -33,6 +51,57 @@ const Footer: React.FC = () => {
   const { walletData } = useWallet() as any;
   const walletAddress: string | null = walletData?.address || null;
   const [sessionOrderSymbols, setSessionOrderSymbols] = useState<string[]>([]);
+  const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 });
+
+  const symbolByMarketAddress = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of markets || []) {
+      const addr = String((m as any)?.market_address || '').trim().toLowerCase();
+      if (!addr || !isEvmAddress(addr)) continue;
+      const sym = String((m as any)?.symbol || '').trim().toUpperCase();
+      if (!sym) continue;
+      map.set(addr, sym);
+    }
+    return map;
+  }, [markets]);
+
+  const symbolByMarketIdBytes32 = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of markets || []) {
+      const key = normalizeBytes32Hex(String((m as any)?.market_id_bytes32 || ''));
+      if (!key) continue;
+      const sym = String((m as any)?.symbol || '').trim().toUpperCase();
+      if (!sym) continue;
+      map.set(key, sym);
+    }
+    return map;
+  }, [markets]);
+
+  const normalizeActiveMarketCandidate = useCallback((raw: unknown): { hrefId: string; key: string; label: string } | null => {
+    const v = String(raw || '').trim();
+    if (!v) return null;
+
+    // If we received a market address, prefer resolving to the canonical symbol.
+    if (isEvmAddress(v)) {
+      const sym = symbolByMarketAddress.get(v.toLowerCase());
+      if (sym) return { hrefId: sym, key: sym, label: sym };
+      // Unknown address: keep href usable, but display a short label.
+      return { hrefId: v, key: v.toUpperCase(), label: shortAddress(v) };
+    }
+
+    // If we received a bytes32 market id, resolve to symbol when possible.
+    if (isBytes32Hex(v)) {
+      const key = normalizeBytes32Hex(v);
+      const sym = key ? symbolByMarketIdBytes32.get(key) : null;
+      if (!sym) return null;
+      // bytes32 itself isn't a stable route; prefer symbol.
+      return { hrefId: sym, key: sym, label: sym };
+    }
+
+    // Otherwise treat as a symbol-like identifier.
+    const sym = v.toUpperCase();
+    return { hrefId: sym, key: sym, label: sym };
+  }, [symbolByMarketAddress, symbolByMarketIdBytes32]);
 
   const hydrateSessionOrderSymbols = useCallback(() => {
     if (typeof window === 'undefined' || !walletAddress) {
@@ -127,43 +196,52 @@ const Footer: React.FC = () => {
     if (!match) return null;
     const raw = match[1] || '';
     try {
-      return decodeURIComponent(raw).toUpperCase();
+      return decodeURIComponent(raw);
     } catch {
-      return raw.toUpperCase();
+      return raw;
     }
   }, [pathname]);
 
-  const combinedActiveSymbols = useMemo(() => {
-    const ordered: string[] = [];
+  // Normalize current route market id to a stable symbol (prevents address->symbol flicker).
+  const currentTokenKey = useMemo(() => {
+    if (!currentTokenSymbol) return null;
+    const normalized = normalizeActiveMarketCandidate(currentTokenSymbol);
+    return normalized?.key ? String(normalized.key).toUpperCase() : String(currentTokenSymbol || '').toUpperCase();
+  }, [currentTokenSymbol, normalizeActiveMarketCandidate]);
+
+  const combinedActiveMarkets = useMemo(() => {
+    const ordered: Array<{ hrefId: string; key: string; label: string }> = [];
     const seen = new Set<string>();
     const push = (value: unknown) => {
-      const symbol = String(value || '').toUpperCase();
-      if (!symbol || seen.has(symbol)) return;
-      seen.add(symbol);
-      ordered.push(symbol);
+      const normalized = normalizeActiveMarketCandidate(value);
+      if (!normalized) return;
+      const k = String(normalized.key || '').toUpperCase();
+      if (!k || seen.has(k)) return;
+      seen.add(k);
+      ordered.push({ ...normalized, key: k });
     };
 
     (rankedSymbols || []).forEach(push);
     sessionOrderSymbols.forEach(push);
     return ordered;
-  }, [rankedSymbols, sessionOrderSymbols]);
+  }, [rankedSymbols, sessionOrderSymbols, normalizeActiveMarketCandidate]);
 
   const activeMarketLinks = useMemo(() => {
-    const filtered = combinedActiveSymbols.filter((sym) => {
-      if (!sym) return false;
-      if (!currentTokenSymbol) return true;
-      return sym !== String(currentTokenSymbol).toUpperCase();
+    const filtered = combinedActiveMarkets.filter((m) => {
+      if (!m?.key) return false;
+      if (!currentTokenKey) return true;
+      return String(m.key).toUpperCase() !== String(currentTokenKey).toUpperCase();
     });
 
-    const symbolsForLinks =
-      filtered.length > 0 ? filtered.slice(0, 3) : combinedActiveSymbols.slice(0, 3);
+    const marketsForLinks =
+      filtered.length > 0 ? filtered.slice(0, 3) : combinedActiveMarkets.slice(0, 3);
 
-    return symbolsForLinks.map((sym) => ({
-      label: sym,
-      href: `/token/${encodeURIComponent(sym)}`,
+    return marketsForLinks.map((m) => ({
+      label: m.label,
+      href: `/token/${encodeURIComponent(m.hrefId)}`,
       title: 'Your active market',
     }));
-  }, [combinedActiveSymbols, currentTokenSymbol]);
+  }, [combinedActiveMarkets, currentTokenKey]);
 
   const secondaryNavLinks = useMemo(() => ([
     { label: 'Explore', href: '/explore', title: 'Explore markets' },
@@ -171,7 +249,7 @@ const Footer: React.FC = () => {
     { label: 'Portfolio', href: '/portfolio', title: 'View portfolio' },
   ]), []);
 
-  const showActiveMarketShortcuts = combinedActiveSymbols.length > 0;
+  const showActiveMarketShortcuts = combinedActiveMarkets.length > 0;
   const footerNavLinks = showActiveMarketShortcuts ? activeMarketLinks : secondaryNavLinks;
   
   // Create tooltip text for ETH price

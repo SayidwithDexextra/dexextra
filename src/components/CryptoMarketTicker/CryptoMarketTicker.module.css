@@ -131,6 +131,17 @@
   letter-spacing: 0px;
 }
 
+/* Market name styling (from Supabase) */
+.name {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ticker-text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Separator styling */
 .separator {
   font-size: 13px;

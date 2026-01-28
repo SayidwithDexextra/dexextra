@@ -32,24 +32,73 @@ async function enrichWithMarketIcons(rows: any[]): Promise<any[]> {
         .filter(Boolean)
     )
   );
-  if (ids.length === 0) return rows;
+  const symbols = Array.from(
+    new Set(
+      (rows || [])
+        .map((r: any) => String(r?.symbol || r?.market_identifier || '').trim())
+        .filter(Boolean)
+    )
+  );
+  const symbolsUpper = Array.from(new Set(symbols.map((s) => s.toUpperCase())));
+  if (ids.length === 0 && symbols.length === 0) return rows;
 
   try {
-    const { data, error } = await supabaseAdmin
-      .from('markets')
-      .select('id, icon_image_url')
-      .in('id', ids);
-    if (error || !data) return rows;
     const byId = new Map<string, string | null>();
-    (data as any[]).forEach((m: any) => {
-      const id = m?.id ? String(m.id) : null;
-      if (!id) return;
-      const url = typeof m?.icon_image_url === 'string' && m.icon_image_url.trim() ? m.icon_image_url.trim() : null;
-      byId.set(id, url);
-    });
+    const bySymbol = new Map<string, string | null>();
+    const byIdentifier = new Map<string, string | null>();
+
+    if (ids.length > 0) {
+      const { data, error } = await supabaseAdmin
+        .from('markets')
+        .select('id, symbol, market_identifier, icon_image_url')
+        .in('id', ids);
+      if (!error && data) {
+        (data as any[]).forEach((m: any) => {
+          const id = m?.id ? String(m.id) : null;
+          const sym = m?.symbol ? String(m.symbol) : null;
+          const ident = m?.market_identifier ? String(m.market_identifier) : null;
+          const url = typeof m?.icon_image_url === 'string' && m.icon_image_url.trim() ? m.icon_image_url.trim() : null;
+          if (id) byId.set(id, url);
+          if (sym) bySymbol.set(sym, url);
+          if (ident) byIdentifier.set(ident, url);
+        });
+      }
+    }
+
+    // If ClickHouse rows don't include marketUuid, fall back to mapping via symbol/market_identifier.
+    if (symbols.length > 0) {
+      // Some parts of the stack use `symbol` while others use `market_identifier` as the canonical token route key.
+      // We query BOTH so that ClickHouse "symbol" can still match Supabase `market_identifier` (and vice-versa).
+      const symbolKeys = Array.from(new Set([...symbols, ...symbolsUpper]));
+
+      const [{ data: bySymData }, { data: byIdentData }] = await Promise.all([
+        supabaseAdmin.from('markets').select('id, symbol, market_identifier, icon_image_url').in('symbol', symbolKeys),
+        supabaseAdmin.from('markets').select('id, symbol, market_identifier, icon_image_url').in('market_identifier', symbolKeys),
+      ]);
+
+      const merged = ([] as any[]).concat((bySymData as any[]) || [], (byIdentData as any[]) || []);
+      if (merged.length) {
+        merged.forEach((m: any) => {
+          const sym = m?.symbol ? String(m.symbol) : null;
+          const ident = m?.market_identifier ? String(m.market_identifier) : null;
+          const url = typeof m?.icon_image_url === 'string' && m.icon_image_url.trim() ? m.icon_image_url.trim() : null;
+          if (sym) bySymbol.set(sym, url);
+          if (ident) byIdentifier.set(ident, url);
+        });
+      }
+    }
+
     return (rows || []).map((r: any) => {
       const id = String(r?.marketUuid || r?.market_uuid || '').trim();
-      const iconUrl = id ? (byId.get(id) ?? null) : null;
+      const sym = String(r?.symbol || '').trim();
+      const ident = String(r?.market_identifier || '').trim();
+      const iconUrl =
+        (id && byId.has(id) ? byId.get(id) : null) ??
+        (sym && bySymbol.has(sym) ? bySymbol.get(sym) : null) ??
+        // ClickHouse "symbol" sometimes corresponds to Supabase `market_identifier`
+        (sym && byIdentifier.has(sym) ? byIdentifier.get(sym) : null) ??
+        (ident && byIdentifier.has(ident) ? byIdentifier.get(ident) : null) ??
+        null;
       return { ...r, iconUrl };
     });
   } catch {

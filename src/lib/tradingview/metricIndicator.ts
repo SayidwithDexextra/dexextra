@@ -28,6 +28,105 @@ export interface MetricIndicatorConfig {
 const metricDataCache = new Map<string, { data: Array<{ ts: number; y: number }>; fetchedAt: number }>();
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
+// Try to reuse the app-level Pusher client singleton across the TradingView same-origin iframe.
+// If not available (early init), we'll retry a few times before falling back to polling.
+const PUSHER_SINGLETON_KEY = '__DEXEXTRA_PUSHER_CLIENT_SINGLETON__';
+
+type MetricSeriesEvent = {
+  marketId: string;
+  metricName: string;
+  ts: number;
+  value: number;
+  source?: string;
+  version?: number;
+};
+
+const REALTIME_METRIC_PREFIX = '[REALTIME_METRIC]';
+const rtMetricLog = (...args: any[]) => {
+  // eslint-disable-next-line no-console
+  console.log(REALTIME_METRIC_PREFIX, ...args);
+};
+const rtMetricWarn = (...args: any[]) => {
+  // eslint-disable-next-line no-console
+  console.warn(REALTIME_METRIC_PREFIX, ...args);
+};
+
+function getSharedPusherClient(): any | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    try {
+      const p = (window as any).parent;
+      const shared = p && p !== window ? (p as any)[PUSHER_SINGLETON_KEY] : null;
+      if (shared) return shared;
+    } catch {}
+    try {
+      const t = (window as any).top;
+      const shared = t && t !== window ? (t as any)[PUSHER_SINGLETON_KEY] : null;
+      if (shared) return shared;
+    } catch {}
+  } catch {}
+  return null;
+}
+
+function upsertPointSorted(
+  series: Array<{ ts: number; y: number }>,
+  point: { ts: number; y: number }
+): Array<{ ts: number; y: number }> {
+  const ts = Number(point.ts);
+  const y = Number(point.y);
+  if (!Number.isFinite(ts) || !Number.isFinite(y)) return series;
+  if (!Array.isArray(series) || series.length === 0) return [{ ts, y }];
+
+  // Replace if exact timestamp exists (common when writers update the latest bucket).
+  const idx = series.findIndex((p) => Number(p.ts) === ts);
+  if (idx >= 0) {
+    const next = series.slice();
+    next[idx] = { ts, y };
+    return next;
+  }
+
+  // Insert, keeping ascending order by ts.
+  const next = series.slice();
+  // Fast path: append
+  if (ts > next[next.length - 1]!.ts) {
+    next.push({ ts, y });
+    return next;
+  }
+  // Slow path: binary insertion
+  let lo = 0;
+  let hi = next.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (next[mid]!.ts < ts) lo = mid + 1;
+    else hi = mid;
+  }
+  next.splice(lo, 0, { ts, y });
+  return next;
+}
+
+function mergePreferRecentLocal(
+  fetched: Array<{ ts: number; y: number }>,
+  local: Array<{ ts: number; y: number }>,
+  keepLocalAfterMs: number
+): Array<{ ts: number; y: number }> {
+  const now = Date.now();
+  const base = Array.isArray(fetched) ? fetched : [];
+  const extra = Array.isArray(local) ? local : [];
+  let out = base.slice();
+
+  for (const p of extra) {
+    const ts = Number((p as any)?.ts);
+    const y = Number((p as any)?.y);
+    if (!Number.isFinite(ts) || !Number.isFinite(y)) continue;
+    if (now - ts > keepLocalAfterMs) continue;
+    // Only keep local points that the fetched series doesn't have yet.
+    if (!out.some((q) => Number((q as any)?.ts) === ts)) {
+      out = upsertPointSorted(out, { ts, y });
+    }
+  }
+  return out;
+}
+
 /**
  * TradingView Charting Library doesn't always auto-recalculate a custom study after async init work.
  * If `main()` returned NaN during initial calculations (because data wasn't loaded yet),
@@ -161,14 +260,18 @@ function devSeedRequested(): boolean {
  * Fetch metric scatter data from ClickHouse API
  */
 async function fetchMetricData(
-  params: { marketId: string; metricName: string; timeframe: string; smaLength: number }
+  params: { marketId: string; metricName: string; timeframe: string; smaLength: number; force?: boolean }
 ): Promise<Array<{ ts: number; y: number }>> {
-  const { marketId, metricName, timeframe, smaLength } = params;
+  const { marketId, metricName, timeframe, smaLength, force } = params;
   const cacheKey = `${marketId}:${metricName}:${timeframe}:sma=${smaLength}`;
   const cached = metricDataCache.get(cacheKey);
   
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+  if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return cached.data;
+  }
+
+  if (force) {
+    rtMetricLog('fetchMetricData(force)', { marketId, metricName, timeframe, smaLength });
   }
 
   try {
@@ -487,6 +590,10 @@ export function createMetricIndicatorDefinition(config: MetricIndicatorConfig) {
       this._fetchInFlight = null as Promise<void> | null;
       this._warnedEmpty = false as boolean;
       this._debugMainLogged = false as boolean;
+      this._metricUnsubscribe = null as (() => void) | null;
+      this._lastRealtimeRefreshMs = 0 as number;
+      this._pendingRealtimeRefresh = false as boolean;
+      this._reconcileTimer = null as any;
 
       this.init = async function (context: any, inputCallback: any) {
         this._context = context;
@@ -531,7 +638,142 @@ export function createMetricIndicatorDefinition(config: MetricIndicatorConfig) {
         this._fetchInFlight = doFetch().finally(() => {
           this._fetchInFlight = null;
         });
+
+        // Real-time metric updates (Pusher):
+        // When a new point is inserted into ClickHouse via POST /api/charts/metric, the API broadcasts:
+        // - channel: `metric-${marketId}`
+        // - event: `metric-update`
+        //
+        // On receiving it, we force-refresh metric data and request a study update.
+        try {
+          // Clean up any prior subscription (defensive; studies can be re-init'd in some builds).
+          if (typeof this._metricUnsubscribe === 'function') {
+            try { this._metricUnsubscribe(); } catch {}
+            this._metricUnsubscribe = null;
+          }
+
+          const attach = (shared: any) => {
+            if (!shared || typeof shared.subscribeToMetricSeries !== 'function') return false;
+            rtMetricLog('indicator attached to shared pusher', {
+              marketId: String(this._marketId),
+              metricName: String(this._metricName),
+              timeframe: String(this._timeframe),
+            });
+            this._metricUnsubscribe = shared.subscribeToMetricSeries(this._marketId, (evt: MetricSeriesEvent) => {
+              try {
+                const mId = String((evt as any)?.marketId || '').trim();
+                if (!mId || mId !== String(this._marketId)) return;
+
+                const incomingMetricName = String((evt as any)?.metricName || '').trim();
+                if (incomingMetricName && String(this._metricName).trim()) {
+                  if (incomingMetricName.toLowerCase() !== String(this._metricName).trim().toLowerCase()) return;
+                }
+
+                rtMetricLog('indicator event received', {
+                  marketId: mId,
+                  metricName: incomingMetricName || String(this._metricName),
+                  ts: Number((evt as any)?.ts),
+                  value: Number((evt as any)?.value),
+                  source: (evt as any)?.source,
+                });
+
+                // 1) Immediate UI reflect: apply the inserted point directly.
+                const ts = Number((evt as any)?.ts);
+                const value = Number((evt as any)?.value);
+                if (Number.isFinite(ts) && Number.isFinite(value)) {
+                  this._metricData = upsertPointSorted(this._metricData || [], { ts, y: value });
+                  this._dataLoaded = true;
+                  this._lastFetchMs = Date.now(); // treat as fresh to avoid immediate polling overwrite
+                  this._warnedEmpty = false;
+                  requestStudyUpdate(this._context);
+                  kickParentChartOnce();
+                  rtMetricLog('indicator applied point', { marketId: mId, ts, value, seriesLen: (this._metricData || []).length });
+                }
+
+                // 2) Reconcile with ClickHouse read path shortly after (handles SMA/rollup + MV timing).
+                // We delay a bit so materialized views have time to incorporate metric_series_raw → metric_series_1m.
+                try {
+                  if (this._reconcileTimer) return;
+                  rtMetricLog('indicator schedule reconcile', { marketId: mId, inMs: 1250 });
+                  this._reconcileTimer = setTimeout(() => {
+                    this._reconcileTimer = null;
+                    const doReconcile = async () => {
+                      rtMetricLog('indicator reconcile begin', { marketId: String(this._marketId), metricName: String(this._metricName) });
+                      const pts = await fetchMetricData({
+                        marketId: this._marketId,
+                        metricName: this._metricName,
+                        timeframe: this._timeframe,
+                        smaLength: this._smaLength,
+                        force: true,
+                      });
+                      // Keep very recent local points if ClickHouse rollup hasn't caught up yet.
+                      this._metricData = mergePreferRecentLocal(pts, this._metricData || [], 5 * 60_000);
+                      this._dataLoaded = true;
+                      this._lastFetchMs = Date.now();
+                      if ((this._metricData || []).length > 0) this._warnedEmpty = false;
+                      requestStudyUpdate(this._context);
+                      rtMetricLog('indicator reconcile complete', { marketId: String(this._marketId), points: (this._metricData || []).length });
+                    };
+                    if (!this._fetchInFlight) {
+                      this._fetchInFlight = doReconcile()
+                        .catch(() => {})
+                        .finally(() => {
+                          this._fetchInFlight = null;
+                        });
+                    }
+                  }, 1250);
+                } catch {
+                  // ignore
+                }
+              } catch {
+                // ignore
+              }
+            });
+            return Boolean(this._metricUnsubscribe);
+          };
+
+          // Try immediately, then retry briefly if the app singleton isn't visible yet.
+          const sharedNow = getSharedPusherClient();
+          if (!attach(sharedNow)) {
+            rtMetricWarn('indicator could not access shared pusher yet; retrying', {
+              marketId: String(this._marketId),
+              metricName: String(this._metricName),
+            });
+            let attempts = 0;
+            const tryLater = () => {
+              attempts++;
+              if (attempts > 10) return;
+              try {
+                const shared = getSharedPusherClient();
+                if (attach(shared)) return;
+              } catch {}
+              try {
+                setTimeout(tryLater, 300);
+              } catch {}
+            };
+            tryLater();
+          }
+        } catch {
+          // ignore (realtime disabled/unavailable)
+        }
       };
+
+      // Best-effort cleanup hook (method name varies across Charting Library builds).
+      const cleanupRealtime = () => {
+        try {
+          if (this._reconcileTimer) {
+            try { clearTimeout(this._reconcileTimer); } catch {}
+          }
+          this._reconcileTimer = null;
+          if (typeof this._metricUnsubscribe === 'function') this._metricUnsubscribe();
+        } catch {
+          // ignore
+        }
+        this._metricUnsubscribe = null;
+        rtMetricLog('indicator realtime cleanup', { marketId: String(this._marketId), metricName: String(this._metricName) });
+      };
+      this.onDestroy = cleanupRealtime;
+      this.destroy = cleanupRealtime;
 
       this.main = function (context: any, inputCallback: any) {
         // Refresh in the background when cache TTL is exceeded

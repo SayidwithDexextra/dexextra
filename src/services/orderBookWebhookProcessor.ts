@@ -764,11 +764,11 @@ export class OrderBookWebhookProcessor {
         explanation: price ? `${quantity} units × $${price}/unit = $${usdcValue} USDC` : 'Market order - price determined at execution'
       });
 
-      console.log(`📝 [DEBUG] Appending user_order_event and updating snapshot`);
+      console.log(`📝 [DEBUG] Appending user order history event and updating snapshot`);
 
       // Append immutable event
       const { error: evtError } = await this.supabase
-        .from('user_order_events')
+        .from('userOrderHistory')
         .insert([{
           trader_wallet_address: orderEvent.trader,
           market_metric_id: marketId,
@@ -783,7 +783,7 @@ export class OrderBookWebhookProcessor {
           quantity: quantity,
           filled_quantity: orderStatus === 'FILLED' ? quantity : 0,
           status: orderStatus
-        }]);
+        }], { returning: 'minimal' });
 
       if (evtError) {
         console.error(`❌ Supabase insert event error: ${evtError.message}`);
@@ -1326,7 +1326,7 @@ export class OrderBookWebhookProcessor {
 
       // Update the order
       const { error } = await this.supabase
-        .from('user_order_events')
+        .from('userOrderHistory')
         .insert([{
           trader_wallet_address: orderEvent.trader,
           market_metric_id: marketId,
@@ -1341,7 +1341,7 @@ export class OrderBookWebhookProcessor {
           quantity: filledQuantity,
           filled_quantity: filledQuantity,
           status: 'FILLED'
-        }]);
+        }], { returning: 'minimal' });
 
       if (error) {
         console.error(`❌ Failed to update order execution: ${error.message}`);
@@ -1541,12 +1541,12 @@ export class OrderBookWebhookProcessor {
   }
 
   /**
-   * Record an order cancellation into user_order_events without relying on legacy orders table
+   * Record an order cancellation into userOrderHistory without relying on legacy orders table
    */
   private async recordOrderCancellation(orderEvent: ProcessedOrderEvent, marketId: string): Promise<boolean> {
     try {
       const { error } = await this.supabase
-        .from('user_order_events')
+        .from('userOrderHistory')
         .insert([{
           trader_wallet_address: orderEvent.trader,
           market_metric_id: marketId,
@@ -1558,7 +1558,7 @@ export class OrderBookWebhookProcessor {
           side: orderEvent.side === 0 ? 'BUY' : 'SELL',
           order_type: this.getOrderTypeString(orderEvent.orderType),
           status: 'CANCELLED'
-        }]);
+        }], { returning: 'minimal' });
 
       if (error) {
         console.error(`❌ Failed to record cancellation: ${error.message}`);

@@ -1154,6 +1154,28 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           );
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Market order relayed', { txHash });
           console.log('[UpGas][UI] market submit: success', { txHash });
+          try {
+            if (typeof window !== 'undefined' && txHash) {
+              const now = Date.now();
+              // Trigger immediate Order History refresh (Supabase write happens server-side before this returns)
+              window.dispatchEvent(new CustomEvent('orderHistoryRefreshRequested', { detail: { trader: address, txHash, timestamp: now } }));
+              // Also reuse existing realtime plumbing (open orders/history listeners)
+              window.dispatchEvent(new CustomEvent('ordersUpdated', {
+                detail: {
+                  traceId: `gasless:${txHash}`,
+                  symbol: String(metricId || '').toUpperCase(),
+                  trader: address,
+                  txHash,
+                  timestamp: now,
+                  eventType: 'order-placed',
+                  orderId: `tx:${txHash}`,
+                  amount: (sizeWei as unknown as bigint)?.toString?.(),
+                  isBuy,
+                  isMarginOrder: true,
+                }
+              }));
+            }
+          } catch {}
           await refreshOrders();
           setAmount(0);
           setAmountInput('');
@@ -1489,6 +1511,27 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           );
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Limit order relayed', { txHash });
           console.log('[UpGas][UI] limit submit: success', { txHash });
+          try {
+            if (typeof window !== 'undefined' && txHash) {
+              const now = Date.now();
+              window.dispatchEvent(new CustomEvent('orderHistoryRefreshRequested', { detail: { trader: address, txHash, timestamp: now } }));
+              window.dispatchEvent(new CustomEvent('ordersUpdated', {
+                detail: {
+                  traceId: `gasless:${txHash}`,
+                  symbol: String(metricId || '').toUpperCase(),
+                  trader: address,
+                  txHash,
+                  timestamp: now,
+                  eventType: 'order-placed',
+                  orderId: `tx:${txHash}`,
+                  price: (priceWei as unknown as bigint)?.toString?.(),
+                  amount: (sizeWei as unknown as bigint)?.toString?.(),
+                  isBuy,
+                  isMarginOrder: true,
+                }
+              }));
+            }
+          } catch {}
           await refreshOrders();
           setAmount(0);
           setAmountInput('');

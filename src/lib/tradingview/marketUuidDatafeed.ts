@@ -6,7 +6,7 @@
 // NOTE: This module is intended to run in the browser ("use client" components).
 
 import type { ChartDataEvent } from '@/lib/pusher-server';
-import { PusherClientService } from '@/lib/pusher-client';
+import { getPusherClient, type PusherClientService } from '@/lib/pusher-client';
 
 type TvResolution = string; // e.g. '1', '5', '60', '1D', '1W', '1M'
 
@@ -46,12 +46,24 @@ type UdfCompatibleDatafeed = {
   getServerTime?: (cb: (time: number) => void) => void;
 };
 
+// Prevent infinite subscribe/unsubscribe loops when TradingView keeps reporting `no_data`.
+// We allow at most one auto-reset per (marketUuid,resolution) in a short window.
+const resetCacheGuard = new Map<string, number>();
+const RESET_CACHE_GUARD_TTL_MS = 60_000;
+
+// Track whether the most recent history response was `noData` for a given (marketUuid,resolution).
+// TradingView will often call subscribeBars after getBars; we use this to avoid forcing cache resets
+// on the first realtime tick when history already had data (which can cause immediate unsubscribe).
+const historyNoDataByKey = new Map<string, { noData: boolean; at: number }>();
+const HISTORY_NO_DATA_TTL_MS = 2 * 60_000;
+
 // Singleton Pusher client (avoid reconnecting per widget recreation)
 let pusherSingleton: PusherClientService | null = null;
 function getPusher(): PusherClientService | null {
   if (pusherSingleton) return pusherSingleton;
   try {
-    pusherSingleton = new PusherClientService();
+    // Reuse the app-wide singleton to avoid multiple socket connections / duplicate lifecycles.
+    pusherSingleton = getPusherClient();
     return pusherSingleton;
   } catch (e) {
     // If Pusher isn't configured, disable realtime rather than crashing the chart.
@@ -139,8 +151,14 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       currentBucketMs: number | null;
       onResetCacheNeededCallback?: () => void;
       didAutoResetAfterNoData?: boolean;
+      pendingUnsubscribeTimer?: any;
     }
   >();
+
+  // TradingView can briefly call `unsubscribeBars()` during internal refreshes.
+  // To prevent markets from "prematurely" losing realtime, delay cleanup and cancel it if the same
+  // subscriberUID continues to be used.
+  const UNSUBSCRIBE_GRACE_MS = 30_000;
 
   // Dev-only helper: optionally seed OHLCV + scatter for empty markets so debugging is possible
   // on charts like /token/BITCOIN without needing a configured upstream feed.
@@ -158,6 +176,22 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       try {
         if (window.localStorage?.getItem('tvSeed') === '1') return true;
       } catch {}
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  function tvResetCacheOnFirstRealtimeEnabled(): boolean {
+    // IMPORTANT:
+    // Triggering TradingView's `onResetCacheNeededCallback()` can cause the library to
+    // tear down/recreate realtime subscriptions. For some markets this ends up dropping
+    // the realtime stream entirely. So this behavior is opt-in only.
+    try {
+      if (typeof window === 'undefined') return false;
+      const qs = new URLSearchParams(window.location.search);
+      if (qs.get('tvResetCache') === '1') return true;
+      if ((window as any).TV_RESET_CACHE === true) return true;
       return false;
     } catch {
       return false;
@@ -220,7 +254,22 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
         }
       }
 
-      return originalGetBars(symbolInfo, resolution, periodParams, onHistoryCallback, onErrorCallback);
+      // Wrap the callback so we can detect `no_data` and avoid unnecessary resetCache loops.
+      const wrappedOnHistory = (bars: any[], meta?: any) => {
+        try {
+          if (marketUuid) {
+            const key = `${marketUuid}|${String(resolution)}`;
+            const metaNoData = Boolean(meta?.noData === true || meta?.no_data === true);
+            const noData = metaNoData || !Array.isArray(bars) || bars.length === 0;
+            historyNoDataByKey.set(key, { noData, at: Date.now() });
+          }
+        } catch {
+          // ignore
+        }
+        onHistoryCallback(bars, meta);
+      };
+
+      return originalGetBars(symbolInfo, resolution, periodParams, wrappedOnHistory, onErrorCallback);
     };
   }
 
@@ -231,6 +280,17 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
     subscriberUID,
     onResetCacheNeededCallback
   ) => {
+    // Cancel any pending unsubscribe for this subscriberUID (flapping protection).
+    const existing = subs.get(subscriberUID);
+    if (existing?.pendingUnsubscribeTimer) {
+      try {
+        clearTimeout(existing.pendingUnsubscribeTimer);
+      } catch {
+        // ignore
+      }
+      existing.pendingUnsubscribeTimer = null;
+    }
+
     const ticker = String(symbolInfo?.ticker || '');
     // Prefer canonical UUID in `ticker` (we return this from /api/tradingview/symbols).
     // Fall back to custom.market_id if present; then to whatever ticker is.
@@ -252,18 +312,25 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       }
     } catch {}
 
-    // Robust realtime routing:
-    // - Prefer UUID channel (canonical)
-    // - Also subscribe to human symbol channel as a fallback (some server paths may still broadcast by symbol)
-    const humanCandidateRaw =
-      String((symbolInfo as any)?.custom?.metric_id || symbolInfo?.name || '').trim();
-    const humanCandidate = humanCandidateRaw ? humanCandidateRaw.toUpperCase() : '';
-
+    // UUID-only realtime routing (canonical).
+    // We intentionally do NOT subscribe to symbol-based channels to avoid split streams.
     const realtimeKeys = new Set<string>();
-    realtimeKeys.add(idForRealtime);
-    if (humanCandidate && !looksLikeUuid(humanCandidate) && humanCandidate !== idForRealtime) {
-      realtimeKeys.add(humanCandidate);
+    if (looksLikeUuid(idForRealtime)) {
+      realtimeKeys.add(idForRealtime);
+    } else if (looksLikeUuid(customMarketId)) {
+      realtimeKeys.add(customMarketId);
+    } else {
+      // Can't safely subscribe without a UUID; history will still work.
+      return;
     }
+
+    // Determine whether the latest history call returned no data for this market/resolution.
+    // Only in that case do we trigger `onResetCacheNeededCallback()` on first realtime tick.
+    const marketUuidForKey = looksLikeUuid(idForRealtime) ? idForRealtime : customMarketId;
+    const historyKey = `${marketUuidForKey}|${String(resolution)}`;
+    const hist = historyNoDataByKey.get(historyKey);
+    const historyWasNoData =
+      Boolean(hist?.noData) && typeof hist?.at === 'number' && Date.now() - hist.at < HISTORY_NO_DATA_TTL_MS;
 
     const onEvt = (evt: ChartDataEvent) => {
       const tsMs = toMs(Number((evt as any).timestamp || Date.now()));
@@ -281,6 +348,16 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
 
       const entry = subs.get(subscriberUID);
       if (!entry) return;
+      // If TradingView called `unsubscribeBars` transiently, but we're still receiving realtime ticks,
+      // cancel the pending unsubscribe so the chart doesn't lose realtime updates.
+      if (entry.pendingUnsubscribeTimer) {
+        try {
+          clearTimeout(entry.pendingUnsubscribeTimer);
+        } catch {
+          // ignore
+        }
+        entry.pendingUnsubscribeTimer = null;
+      }
 
       // IMPORTANT:
       // If the chart initially loaded with `no_data`, TradingView can keep showing an empty pane until
@@ -288,10 +365,21 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       // arrives, proactively ask TradingView to reset its cache so it will immediately call `getBars`
       // again and render candles — without the user switching timeframes.
       try {
-        if (!entry.didAutoResetAfterNoData && entry.lastBar == null) {
+        if (
+          historyWasNoData &&
+          tvResetCacheOnFirstRealtimeEnabled() &&
+          !entry.didAutoResetAfterNoData &&
+          entry.lastBar == null
+        ) {
           entry.didAutoResetAfterNoData = true;
-          if (typeof entry.onResetCacheNeededCallback === 'function') {
-            entry.onResetCacheNeededCallback();
+          const key = `${idForRealtime}|${String(resolution)}`;
+          const last = resetCacheGuard.get(key) || 0;
+          const now = Date.now();
+          if (now - last > RESET_CACHE_GUARD_TTL_MS) {
+            resetCacheGuard.set(key, now);
+            if (typeof entry.onResetCacheNeededCallback === 'function') {
+              entry.onResetCacheNeededCallback();
+            }
           }
         }
       } catch {
@@ -366,14 +454,24 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       currentBucketMs: null,
       onResetCacheNeededCallback,
       didAutoResetAfterNoData: false,
+      pendingUnsubscribeTimer: null,
     });
   };
 
   const unsubscribeBars: UnsubscribeBarsFn = (subscriberUID) => {
     const entry = subs.get(subscriberUID);
     if (!entry) return;
-    entry.unsubscribe();
-    subs.delete(subscriberUID);
+    // Delay actual unsubscribe to prevent transient TV refreshes from killing realtime.
+    if (entry.pendingUnsubscribeTimer) return;
+    entry.pendingUnsubscribeTimer = setTimeout(() => {
+      const latest = subs.get(subscriberUID);
+      if (!latest) return;
+      try {
+        latest.unsubscribe();
+      } finally {
+        subs.delete(subscriberUID);
+      }
+    }, UNSUBSCRIBE_GRACE_MS);
   };
 
   udfAny.subscribeBars = subscribeBars;

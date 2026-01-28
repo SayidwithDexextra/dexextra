@@ -72,11 +72,13 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
   const formatUsdNumber = useCallback((value: number, decimals?: number) => {
     const safe = Number.isFinite(value) ? value : 0
     const dRaw = typeof decimals === 'number' && Number.isFinite(decimals) ? Math.floor(decimals) : 4
-    const d = Math.max(0, Math.min(dRaw, 8))
+    const maxD = Math.max(0, Math.min(dRaw, 8))
+    const minD = Math.min(2, maxD) // keep 2dp when available, trim extra trailing zeros
+    const rounded = Number(safe.toFixed(maxD))
     return `$${new Intl.NumberFormat('en-US', {
-      minimumFractionDigits: d,
-      maximumFractionDigits: d,
-    }).format(safe)}`
+      minimumFractionDigits: minD,
+      maximumFractionDigits: maxD,
+    }).format(rounded)}`
   }, [])
 
   // Load recent searches from localStorage
@@ -377,7 +379,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         </div>
 
         {/* Content Sections */}
-        <div className="overflow-y-auto" style={{ maxHeight: '680px' }}>
+        <div className="search-modal-scroll overflow-y-auto" style={{ maxHeight: '680px' }}>
           {/* Error Message */}
           {searchResults.error && (
             <div className="bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5 mb-3">
@@ -513,10 +515,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                             </div>
                           )}
                           <div className="min-w-0 flex-1">
-                            <div className="text-left text-[11px] font-medium text-white group-hover:underline">
+                            <div className="text-left text-[13px] font-medium text-white group-hover:underline">
                               {market.symbol}
                             </div>
-                            <div className="text-[10px] text-[#606060] truncate max-w-[200px]">
+                            <div className="text-[11px] text-[#606060] truncate max-w-[200px]">
                               {market.description}
                             </div>
                           </div>
@@ -524,10 +526,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       </div>
                       <div className="flex items-center gap-3">
                         <div className="text-right min-w-[92px]">
-                          <div className="text-[10px] text-white font-mono">
+                          <div className="text-[11px] text-white font-mono">
                             {formatUsdNumber(market.initial_price, market.price_decimals ?? 4)}
                           </div>
-                          <div className={`text-[9px] ${
+                          <div className={`text-[10px] ${
                             deploymentStatus === 'deployed' ? 'text-green-400' : 'text-yellow-400'
                           }`}>
                             {deploymentStatus || '—'}
@@ -536,7 +538,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                         <div className="w-px h-6 bg-[#222222]" />
                         <div className="text-right min-w-[110px] max-w-[160px]">
                           <div
-                            className="text-[10px] text-[#8a8a8a] leading-none truncate"
+                            className="text-[11px] text-[#8a8a8a] leading-none truncate"
                             title={metricSource.url || undefined}
                           >
                             {metricSource.url ? (
@@ -736,6 +738,17 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
             </div>
           )}
         </div>
+        <style jsx>{`
+          .search-modal-scroll {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+          }
+
+          .search-modal-scroll::-webkit-scrollbar {
+            width: 0px;
+            height: 0px;
+          }
+        `}</style>
       </div>
     </div>
   )

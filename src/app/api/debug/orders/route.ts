@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
 
     // Events (latest)
     const eventsQuery = supabaseAdmin
-      .from('user_order_events')
+      .from('userOrderHistory')
       .select('*', { count: 'exact' })
       .eq('market_metric_id', metricId)
       .order('created_at', { ascending: false })

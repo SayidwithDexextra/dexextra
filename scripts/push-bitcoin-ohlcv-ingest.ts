@@ -3,7 +3,7 @@
  * which writes raw ticks into ClickHouse `market_ticks` and broadcasts 1m candles to Pusher.
  *
  * This is meant to mirror the feel of:
- *   tsx scripts/push-bitcoin-market-ticks.ts --count 200 --intervalMs 300
+ *   tsx scripts/push-market-ticks.ts --count 200 --intervalMs 300
  *
  * Usage:
  *   # required (signing key used by ohlcv-ingest signature verification)

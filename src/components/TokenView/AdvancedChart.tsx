@@ -248,12 +248,58 @@ class TradingViewDatafeed {
   private subscribeToRealtimeData(symbol: string, resolution: string, onTick: (bar: any) => void) {
     // Use Pusher for real-time updates as specified in the design document
     if (typeof window !== 'undefined' && (window as any).Pusher) {
+      const rtLog = (...args: any[]) => {
+        // eslint-disable-next-line no-console
+        console.log('[REALTIME]', ...args);
+      };
+      const rtWarn = (...args: any[]) => {
+        // eslint-disable-next-line no-console
+        console.warn('[REALTIME]', ...args);
+      };
+      const rtErr = (...args: any[]) => {
+        // eslint-disable-next-line no-console
+        console.error('[REALTIME]', ...args);
+      };
+
       const pusher = new (window as any).Pusher(process.env.NEXT_PUBLIC_PUSHER_KEY, {
         cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER,
         enabledTransports: ['ws', 'wss']
       });
 
-      const channel = pusher.subscribe(`market-${symbol}`);
+      const channelName = `market-${symbol}`;
+
+      try {
+        pusher.connection?.bind?.('connected', () => {
+          rtLog('connection established', {
+            state: pusher.connection?.state,
+            socketId: pusher.connection?.socket_id,
+            symbol,
+            resolution,
+          });
+        });
+        pusher.connection?.bind?.('state_change', (s: any) => {
+          rtLog('connection state change', { previous: s?.previous, current: s?.current, symbol, resolution });
+        });
+        pusher.connection?.bind?.('error', (error: any) => rtErr('connection error', { symbol, resolution, error }));
+        pusher.connection?.bind?.('unavailable', () => rtWarn('connection unavailable', { symbol, resolution }));
+      } catch (e) {
+        rtWarn('failed to bind connection handlers', { symbol, resolution, error: e });
+      }
+
+      const channel = pusher.subscribe(channelName);
+
+      // Log every event received on this channel (including ones we don't explicitly bind)
+      try {
+        channel.bind_global?.((eventName: string, data: any) => {
+          rtLog('signal received', { channel: channelName, event: eventName, data });
+        });
+        channel.bind?.('pusher:subscription_succeeded', () => rtLog('subscription succeeded', { channel: channelName }));
+        channel.bind?.('pusher:subscription_error', (error: any) =>
+          rtErr('subscription error', { channel: channelName, error })
+        );
+      } catch (e) {
+        rtWarn('failed to bind channel handlers', { channel: channelName, error: e });
+      }
       
       channel.bind('price-update', (data: any) => {
         const bar = {

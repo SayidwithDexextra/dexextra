@@ -153,16 +153,39 @@ export default function TradingViewChart({
       try {
         const w = widgetRef.current;
         if (!w) return;
-        // Per TradingView docs, call resetCache before resetData.
-        try {
-          if (typeof w.resetCache === 'function') w.resetCache();
-        } catch {
-          // noop
-        }
         const chart = typeof w.activeChart === 'function' ? w.activeChart() : null;
         if (!chart) return;
+
+        // IMPORTANT:
+        // Do NOT call `resetCache()` / `resetData()` here.
+        // Those can cause TradingView to tear down/recreate realtime subscriptions (unsubscribeBars),
+        // which shows up as `[REALTIME] unsubscribing...` and can break realtime updates for some markets.
+        //
+        // Instead, force a lightweight recalculation by toggling the MetricOverlay study visibility.
         try {
-          if (typeof chart.resetData === 'function') chart.resetData();
+          const studies = typeof chart.getAllStudies === 'function' ? chart.getAllStudies() : [];
+          if (Array.isArray(studies) && studies.length) {
+            const metricStudies = studies.filter((s: any) =>
+              String(s?.name ?? s?.title ?? '')
+                .toLowerCase()
+                .includes('metricoverlay')
+            );
+            for (const s of metricStudies) {
+              const id = (s as any)?.id;
+              if (!id) continue;
+              if (typeof chart.setEntityVisibility === 'function') {
+                chart.setEntityVisibility(id, false);
+                // next tick: re-show
+                window.setTimeout(() => {
+                  try {
+                    chart.setEntityVisibility(id, true);
+                  } catch {
+                    // noop
+                  }
+                }, 0);
+              }
+            }
+          }
         } catch {
           // noop
         }
@@ -242,6 +265,32 @@ export default function TradingViewChart({
   );
 
   const metricOnlyResolved = typeof metricOnly === 'boolean' ? metricOnly : metricOnlyAuto;
+
+  // Apply `metricOnlyResolved` without recreating the widget (recreating can drop realtime subs).
+  useEffect(() => {
+    const w = widgetRef.current;
+    if (!w) return;
+    const transparent = metricOnlyResolved ? 'rgba(0,0,0,0)' : undefined;
+    const o: Record<string, any> = {
+      'mainSeriesProperties.candleStyle.upColor': transparent ?? '#0d9980',
+      'mainSeriesProperties.candleStyle.downColor': transparent ?? '#f23646',
+      'mainSeriesProperties.candleStyle.borderUpColor': transparent ?? '#0d9980',
+      'mainSeriesProperties.candleStyle.borderDownColor': transparent ?? '#f23646',
+      'mainSeriesProperties.candleStyle.wickUpColor': transparent ?? '#0d9980',
+      'mainSeriesProperties.candleStyle.wickDownColor': transparent ?? '#f23646',
+    };
+    try {
+      if (typeof w.applyOverrides === 'function') w.applyOverrides(o);
+    } catch {
+      // noop
+    }
+    try {
+      const chart = typeof w.activeChart === 'function' ? w.activeChart() : null;
+      if (chart && typeof chart.applyOverrides === 'function') chart.applyOverrides(o);
+    } catch {
+      // noop
+    }
+  }, [metricOnlyResolved]);
 
   // Auto-enable metricOnly when the datafeed is forced to serve metric-derived bars (no OHLC available).
   // We probe the same history endpoint TradingView uses, but with symbol = market UUID so we don't depend on search/resolve.
@@ -381,8 +430,9 @@ export default function TradingViewChart({
     });
 
     const widgetOptions: any = {
-      // Use human-friendly symbol for display. ResolveSymbol will map it to ticker=UUID.
-      symbol: displaySymbol,
+      // Keep the widget symbol stable to avoid re-creating the TradingView widget (which drops realtime subs).
+      // If callers pass a market UUID, the symbols endpoint will still provide a human `name`/`description`.
+      symbol,
       datafeed: udf,
       interval,
       container: containerRef.current,
@@ -664,7 +714,6 @@ export default function TradingViewChart({
   }, [
     scriptReady,
     symbol,
-    displaySymbol,
     interval,
     theme,
     autosize,
@@ -675,7 +724,6 @@ export default function TradingViewChart({
     allowSymbolChange,
     hideTopToolbar,
     hideSideToolbar,
-    metricOnlyResolved,
     hideVolumePanel,
     studiesKey,
     onSymbolChange,

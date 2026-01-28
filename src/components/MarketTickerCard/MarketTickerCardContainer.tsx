@@ -13,6 +13,10 @@ interface MarketTickerCardContainerProps {
   onCardClick?: (cardId: string) => void;
   onCardLongPosition?: (cardId: string) => void;
   onCardShortPosition?: (cardId: string) => void;
+  onWatchlistToggle?: (card: MarketTickerCardData) => void;
+  watchlistIds?: string[];
+  watchlistPendingIds?: string[];
+  isWatchlistDisabled?: boolean;
   isLoading?: boolean;
   className?: string;
   variant?: 'stacked' | 'inline';
@@ -25,6 +29,10 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
   onCardClick,
   onCardLongPosition,
   onCardShortPosition,
+  onWatchlistToggle,
+  watchlistIds,
+  watchlistPendingIds,
+  isWatchlistDisabled = false,
   isLoading = false,
   className,
   variant = 'stacked',
@@ -72,6 +80,10 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
               const handleCardClick = () => onCardClick?.(card.id);
               const handleLong = () => onCardLongPosition?.(card.id);
               const handleShort = () => onCardShortPosition?.(card.id);
+              const handleWatchlist = () => onWatchlistToggle?.(card);
+              const watchlistKey = card.id;
+              const isWatchlisted = watchlistIds?.includes(watchlistKey) ?? false;
+              const isWatchlistLoading = watchlistPendingIds?.includes(watchlistKey) ?? false;
 
               return (
                 <motion.div
@@ -94,11 +106,16 @@ const MarketTickerCardContainer: React.FC<MarketTickerCardContainerProps> = ({
                     onCardClick={handleCardClick}
                     onLongPosition={handleLong}
                     onShortPosition={handleShort}
+                    onWatchlistToggle={handleWatchlist}
+                    isWatchlisted={isWatchlisted}
+                    isWatchlistLoading={isWatchlistLoading}
+                    isWatchlistDisabled={isWatchlistDisabled}
                     marketStatus={card.marketStatus}
                     settlementDate={card.settlementDate}
                     totalTrades={card.totalTrades}
                     totalVolume={card.totalVolume}
                     priceChangePercent={card.priceChangePercent}
+                    metricId={card.metricId}
                   />
                 </motion.div>
               );

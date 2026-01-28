@@ -2,6 +2,11 @@ import Pusher from 'pusher';
 import { Redis } from '@upstash/redis';
 import { getClickHouseDataPipeline } from './clickhouse-client';
 
+const REALTIME_METRIC_PREFIX = '[REALTIME_METRIC]';
+const rtMetricLog = (...args: any[]) => console.log(REALTIME_METRIC_PREFIX, ...args);
+const rtMetricWarn = (...args: any[]) => console.warn(REALTIME_METRIC_PREFIX, ...args);
+const rtMetricErr = (...args: any[]) => console.error(REALTIME_METRIC_PREFIX, ...args);
+
 // Types for real-time events
 export interface PriceUpdateEvent {
   symbol: string;
@@ -48,6 +53,22 @@ export interface ChartDataEvent {
   timestamp: number;
   // Optional: canonical Supabase markets.id (UUID). Realtime subscriptions may use UUID as symbol.
   marketUuid?: string;
+}
+
+// Metric-series realtime point update (used by TradingView Live Metric Tracker overlay)
+export interface MetricSeriesEvent {
+  /** Canonical Supabase markets.id (UUID) */
+  marketId: string;
+  /** ClickHouse metric_name */
+  metricName: string;
+  /** Epoch milliseconds for the point */
+  ts: number;
+  /** Metric value at ts */
+  value: number;
+  /** Optional source label (worker/api/debug_seed/etc) */
+  source?: string;
+  /** Optional version used by writers (monotonic-ish) */
+  version?: number;
 }
 
 export interface BroadcastChartOptions {
@@ -288,22 +309,18 @@ export class PusherServerService {
       const event = 'chart-update';
       const timeframe = normalizeTimeframe(data.timeframe);
 
-      // Canonical realtime key:
-      // - TradingView + LightweightChart subscribe by market UUID when available.
-      // - `symbol` should remain a human label (e.g. BITCOIN) for storage + UI.
-      const channelKey =
-        (data.marketUuid ? String(data.marketUuid).trim() : '') ||
-        String(data.symbol || '').trim();
-      const primaryChannel = `chart-${channelKey}-${timeframe}`;
-
-      // Backward compatibility: also broadcast to `chart-${symbol}-${tf}` when symbol is human
-      // and differs from marketUuid.
-      const channels = new Set<string>([primaryChannel]);
-      const sym = String(data.symbol || '').trim();
+      // UUID-only realtime routing (canonical).
+      // We intentionally do NOT broadcast to symbol-based channels to avoid split streams.
       const mu = data.marketUuid ? String(data.marketUuid).trim() : '';
-      if (sym && mu && sym !== mu && !looksLikeUuid(sym)) {
-        channels.add(`chart-${sym}-${timeframe}`);
+      if (!mu || !looksLikeUuid(mu)) {
+        console.warn('⚠️ Skipping chart realtime broadcast: missing/invalid marketUuid', {
+          marketUuid: data.marketUuid,
+          symbol: data.symbol,
+          timeframe,
+        });
+        return;
       }
+      const channels = new Set<string>([`chart-${mu}-${timeframe}`]);
 
        console.log(`📡 Broadcasting chart data to channel(s): ${Array.from(channels).join(', ')}`);
        console.log(`🎯 Event name: ${event}`);
@@ -358,6 +375,52 @@ export class PusherServerService {
         errorStack: error instanceof Error ? error.stack : 'No stack trace',
         data
       });
+    }
+  }
+
+  /**
+   * Broadcast a metric-series point update (real-time)
+   *
+   * Channel: `metric-${marketId}`
+   * Event: `metric-update`
+   */
+  async broadcastMetricSeries(data: MetricSeriesEvent): Promise<void> {
+    if (!this.isInitialized) return;
+
+    try {
+      const marketId = String((data as any)?.marketId || '').trim();
+      const metricName = String((data as any)?.metricName || '').trim();
+      if (!marketId || !looksLikeUuid(marketId) || !metricName) {
+        rtMetricWarn('skip broadcast: invalid marketId/metricName', {
+          marketId,
+          metricName,
+        });
+        return;
+      }
+
+      const channel = `metric-${marketId}`;
+      const event = 'metric-update';
+
+      const payload = {
+        marketId,
+        metricName,
+        ts: Number((data as any)?.ts) || Date.now(),
+        value: Number((data as any)?.value),
+        source: (data as any)?.source,
+        version: (data as any)?.version,
+      };
+
+      if (!Number.isFinite(payload.ts)) payload.ts = Date.now();
+      if (!Number.isFinite(payload.value)) {
+        rtMetricWarn('skip broadcast: non-finite value', payload);
+        return;
+      }
+
+      rtMetricLog('pusher trigger', { channel, event, marketId, metricName, ts: payload.ts, value: payload.value });
+      await this.pusher.trigger(channel, event, payload);
+      rtMetricLog('pusher trigger complete', { channel, event, marketId, metricName });
+    } catch (error) {
+      rtMetricErr('pusher trigger failed', { error });
     }
   }
 
@@ -564,6 +627,9 @@ export const broadcastTokenTicker = (tokens: TokenTickerEvent[]) =>
 
 export const broadcastChartData = (data: ChartDataEvent) => 
   getPusherServer().broadcastChartData(data);
+
+export const broadcastMetricSeries = (data: MetricSeriesEvent) =>
+  getPusherServer().broadcastMetricSeries(data);
 
 export const broadcastBatchPriceUpdates = (updates: PriceUpdateEvent[]) => 
   getPusherServer().broadcastBatchPriceUpdates(updates); 

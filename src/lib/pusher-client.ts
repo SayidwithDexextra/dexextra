@@ -4,8 +4,33 @@ import {
   MarketDataEvent, 
   TradingEvent, 
   TokenTickerEvent, 
-  ChartDataEvent 
+  ChartDataEvent,
+  MetricSeriesEvent
 } from './pusher-server';
+
+const REALTIME_PREFIX = '[REALTIME]';
+const rtLog = (...args: any[]) => {
+  // eslint-disable-next-line no-console
+  console.log(REALTIME_PREFIX, ...args);
+};
+const rtWarn = (...args: any[]) => {
+  // eslint-disable-next-line no-console
+  console.warn(REALTIME_PREFIX, ...args);
+};
+const rtErr = (...args: any[]) => {
+  // eslint-disable-next-line no-console
+  console.error(REALTIME_PREFIX, ...args);
+};
+
+const REALTIME_METRIC_PREFIX = '[REALTIME_METRIC]';
+const rtMetricLog = (...args: any[]) => {
+  // eslint-disable-next-line no-console
+  console.log(REALTIME_METRIC_PREFIX, ...args);
+};
+const rtMetricWarn = (...args: any[]) => {
+  // eslint-disable-next-line no-console
+  console.warn(REALTIME_METRIC_PREFIX, ...args);
+};
 
 // Types for client-side subscriptions
 export interface PusherSubscription {
@@ -39,6 +64,72 @@ export class PusherClientService {
   private maxReconnectionAttempts = 5;
   private isConnected = false;
   private connectionStateCallbacks: ((state: string) => void)[] = [];
+  private chartUnsubscribeGraceMs = 15_000;
+
+  private attachChannelSignalLogging(channelName: string) {
+    const sub = this.subscriptions.get(channelName);
+    if (!sub?.channel) return;
+    if (sub.__realtimeSignalLoggingAttached) return;
+
+    const channel = sub.channel;
+
+    const globalCb = (eventName: string, data: any) => {
+      rtLog('signal received', { channel: channelName, event: eventName, data });
+    };
+    const succeededCb = () => {
+      rtLog('subscription succeeded', { channel: channelName });
+    };
+    const errorCb = (error: any) => {
+      rtErr('subscription error', { channel: channelName, error });
+    };
+
+    try {
+      if (typeof channel.bind_global === 'function') {
+        channel.bind_global(globalCb);
+      }
+    } catch (e) {
+      rtWarn('failed to bind channel global handler', { channel: channelName, error: e });
+    }
+
+    // These are emitted by PusherJS per-channel; useful to see if we ever subscribe successfully.
+    try {
+      channel.bind('pusher:subscription_succeeded', succeededCb);
+      channel.bind('pusher:subscription_error', errorCb);
+    } catch (e) {
+      rtWarn('failed to bind subscription lifecycle handlers', { channel: channelName, error: e });
+    }
+
+    sub.__realtimeSignalLoggingAttached = true;
+    sub.__realtimeSignalLogging = { globalCb, succeededCb, errorCb };
+  }
+
+  private detachChannelSignalLogging(channelName: string) {
+    const sub = this.subscriptions.get(channelName);
+    if (!sub?.channel) return;
+    if (!sub.__realtimeSignalLoggingAttached) return;
+
+    const channel = sub.channel;
+    const bindings = sub.__realtimeSignalLogging;
+
+    try {
+      if (typeof channel.unbind_global === 'function') {
+        if (bindings?.globalCb) channel.unbind_global(bindings.globalCb);
+        else channel.unbind_global();
+      }
+    } catch {
+      // best-effort
+    }
+
+    try {
+      if (bindings?.succeededCb) channel.unbind('pusher:subscription_succeeded', bindings.succeededCb);
+      if (bindings?.errorCb) channel.unbind('pusher:subscription_error', bindings.errorCb);
+    } catch {
+      // best-effort
+    }
+
+    sub.__realtimeSignalLoggingAttached = false;
+    sub.__realtimeSignalLogging = null;
+  }
 
   private normalizeTimeframe(tf: string): string {
     const t = String(tf || '').trim();
@@ -98,22 +189,15 @@ export class PusherClientService {
     this.maxReconnectionAttempts = options.maxReconnectionAttempts || 5;
     this.setupConnectionHandlers();
 
-    // Extra debug for connection state
-    if (typeof globalThis !== 'undefined') {
-      const isDebug = (globalThis as any).PUSHER_DBG || process.env.NODE_ENV === 'development';
-      if (isDebug) {
-        this.pusher.connection.bind('state_change', (s: any) => {
-          // eslint-disable-next-line no-console
-           console.log('Pusher-STATE', s.previous + '→' + s.current);
-        });
-        this.pusher.bind_global((eventName: string, data: any) => {
-          // eslint-disable-next-line no-console
-           console.log('GLOBAL-EVENT', eventName, data);
-        });
-      }
-    }
+    // Helpful for debugging "stuck until refresh" cases.
+    this.pusher.connection.bind('state_change', (s: any) => {
+      rtLog('connection state change', { previous: s?.previous, current: s?.current });
+    });
 
-     console.log('📱 PusherClientService initialized successfully');
+    rtLog('PusherClientService initialized', {
+      cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER || 'us2',
+      keyPrefix: String(process.env.NEXT_PUBLIC_PUSHER_KEY || '').slice(0, 8),
+    });
   }
 
   private validateEnvironment() {
@@ -126,23 +210,32 @@ export class PusherClientService {
     this.pusher.connection.bind('connected', () => {
       this.isConnected = true;
       this.reconnectionAttempts = 0;
-       console.log('🟢 Pusher connected successfully');
+      rtLog('connection established', {
+        state: this.pusher.connection.state,
+        socketId: this.pusher.connection.socket_id,
+      });
       this.notifyConnectionState('connected');
     });
 
     this.pusher.connection.bind('disconnected', () => {
       this.isConnected = false;
-       console.log('🔴 Pusher disconnected');
+      rtWarn('connection disconnected', {
+        state: this.pusher.connection.state,
+        socketId: this.pusher.connection.socket_id,
+      });
       this.notifyConnectionState('disconnected');
     });
 
     this.pusher.connection.bind('error', (error: any) => {
-      console.error('❌ Pusher connection error:', error);
+      rtErr('connection error', error);
       this.notifyConnectionState('error');
     });
 
     this.pusher.connection.bind('unavailable', () => {
-      console.warn('⚠️ Pusher connection unavailable');
+      rtWarn('connection unavailable', {
+        state: this.pusher.connection.state,
+        socketId: this.pusher.connection.socket_id,
+      });
       this.notifyConnectionState('unavailable');
     });
   }
@@ -177,26 +270,27 @@ export class PusherClientService {
     const eventName = 'price-update';
 
     if (this.subscriptions.has(channelName)) {
-       console.log(`Already subscribed to ${channelName}`);
+      rtLog('already subscribed', { channel: channelName });
       return this.subscriptions.get(channelName).unsubscribe;
     }
 
     const channel = this.pusher.subscribe(channelName);
     
     channel.bind(eventName, (data: PriceUpdateEvent) => {
-       console.log(`📈 Price update received for ${symbol}:`, data);
       callback(data);
     });
 
     const unsubscribe = () => {
+      this.detachChannelSignalLogging(channelName);
       channel.unbind(eventName);
       this.pusher.unsubscribe(channelName);
       this.subscriptions.delete(channelName);
-       console.log(`🔌 Unsubscribed from ${channelName}`);
+      rtLog('unsubscribed', { channel: channelName });
     };
 
     this.subscriptions.set(channelName, { channel, unsubscribe });
-     console.log(`✅ Subscribed to price updates for ${symbol}`);
+    this.attachChannelSignalLogging(channelName);
+    rtLog('subscribed', { channel: channelName, event: eventName });
 
     return unsubscribe;
   }
@@ -210,7 +304,7 @@ export class PusherClientService {
     const channelName = 'global-prices';
 
     if (this.subscriptions.has(channelName)) {
-       console.log(`Already subscribed to ${channelName}`);
+      rtLog('already subscribed', { channel: channelName });
       return this.subscriptions.get(channelName).unsubscribe;
     }
 
@@ -227,15 +321,17 @@ export class PusherClientService {
     });
 
     const unsubscribe = () => {
+      this.detachChannelSignalLogging(channelName);
       channel.unbind('price-update');
       channel.unbind('batch-price-update');
       this.pusher.unsubscribe(channelName);
       this.subscriptions.delete(channelName);
-       console.log(`🔌 Unsubscribed from ${channelName}`);
+      rtLog('unsubscribed', { channel: channelName });
     };
 
     this.subscriptions.set(channelName, { channel, unsubscribe });
-     console.log(`✅ Subscribed to global price updates`);
+    this.attachChannelSignalLogging(channelName);
+    rtLog('subscribed', { channel: channelName });
 
     return unsubscribe;
   }
@@ -250,25 +346,26 @@ export class PusherClientService {
     const eventName = 'market-data-update';
 
     if (this.subscriptions.has(channelName)) {
-       console.log(`Already subscribed to ${channelName}`);
+      rtLog('already subscribed', { channel: channelName });
       return this.subscriptions.get(channelName).unsubscribe;
     }
 
     const channel = this.pusher.subscribe(channelName);
     
     channel.bind(eventName, (data: MarketDataEvent) => {
-       console.log('📊 Market data update received:', data);
       callback(data);
     });
 
     const unsubscribe = () => {
+      this.detachChannelSignalLogging(channelName);
       channel.unbind(eventName);
       this.pusher.unsubscribe(channelName);
       this.subscriptions.delete(channelName);
     };
 
     this.subscriptions.set(channelName, { channel, unsubscribe });
-     console.log(`✅ Subscribed to market data updates`);
+    this.attachChannelSignalLogging(channelName);
+    rtLog('subscribed', { channel: channelName, event: eventName });
 
     return unsubscribe;
   }
@@ -291,23 +388,27 @@ export class PusherClientService {
         channel, 
         events: new Set(),
         unsubscribe: () => {
+          this.detachChannelSignalLogging(channelName);
           this.pusher.unsubscribe(channelName);
           this.subscriptions.delete(channelName);
         }
       };
       this.subscriptions.set(channelName, subscription);
+      this.attachChannelSignalLogging(channelName);
+    } else {
+      // Ensure we always log signals even if channel was created earlier by a different subscription method.
+      this.attachChannelSignalLogging(channelName);
     }
 
     // Bind to trading events if not already bound
     if (!subscription.events.has(eventName)) {
       subscription.channel.bind(eventName, (data: TradingEvent) => {
-         console.log(`⚡ Trading event received for ${symbol}:`, data);
         callback(data);
       });
       subscription.events.add(eventName);
     }
 
-     console.log(`✅ Subscribed to trading events for ${symbol}`);
+    rtLog('subscribed', { channel: channelName, event: eventName });
 
     return () => {
       subscription.channel.unbind(eventName);
@@ -331,25 +432,26 @@ export class PusherClientService {
     const eventName = 'position-update';
 
     if (this.subscriptions.has(channelName)) {
-       console.log(`Already subscribed to ${channelName}`);
+      rtLog('already subscribed', { channel: channelName });
       return this.subscriptions.get(channelName).unsubscribe;
     }
 
     const channel = this.pusher.subscribe(channelName);
     
     channel.bind(eventName, (data: TradingEvent) => {
-       console.log(`👤 Position update received for ${userAddress}:`, data);
       callback(data);
     });
 
     const unsubscribe = () => {
+      this.detachChannelSignalLogging(channelName);
       channel.unbind(eventName);
       this.pusher.unsubscribe(channelName);
       this.subscriptions.delete(channelName);
     };
 
     this.subscriptions.set(channelName, { channel, unsubscribe });
-     console.log(`✅ Subscribed to position updates for ${userAddress}`);
+    this.attachChannelSignalLogging(channelName);
+    rtLog('subscribed', { channel: channelName, event: eventName });
 
     return unsubscribe;
   }
@@ -364,7 +466,7 @@ export class PusherClientService {
     const eventName = 'ticker-update';
 
     if (this.subscriptions.has(channelName)) {
-       console.log(`Already subscribed to ${channelName}`);
+      rtLog('already subscribed', { channel: channelName });
       return this.subscriptions.get(channelName).unsubscribe;
     }
 
@@ -375,13 +477,15 @@ export class PusherClientService {
     });
 
     const unsubscribe = () => {
+      this.detachChannelSignalLogging(channelName);
       channel.unbind(eventName);
       this.pusher.unsubscribe(channelName);
       this.subscriptions.delete(channelName);
     };
 
     this.subscriptions.set(channelName, { channel, unsubscribe });
-     console.log(`✅ Subscribed to token ticker updates`);
+    this.attachChannelSignalLogging(channelName);
+    rtLog('subscribed', { channel: channelName, event: eventName });
 
     return unsubscribe;
   }
@@ -398,54 +502,183 @@ export class PusherClientService {
     const channelName = `chart-${symbol}-${tf}`;
     const eventName = 'chart-update';
 
-     console.log(`🔗 Attempting to subscribe to chart channel: ${channelName}`);
-     if (tf !== String(timeframe || '').trim()) {
-       console.log(`🕒 Normalized timeframe: "${timeframe}" → "${tf}"`);
-     }
-     console.log(`🎯 Event name: ${eventName}`);
+    rtLog('subscribing to chart channel', { channel: channelName, event: eventName, symbol, timeframe, normalizedTimeframe: tf });
 
-    if (this.subscriptions.has(channelName)) {
-       console.log(`Already subscribed to ${channelName}`);
-      return this.subscriptions.get(channelName).unsubscribe;
+    let subscription = this.subscriptions.get(channelName);
+    if (!subscription) {
+      const channel = this.pusher.subscribe(channelName);
+
+      // Store chart handlers keyed by the original callback function, so we can unbind precisely.
+      subscription = {
+        channel,
+        chartHandlers: new Map<Function, Function>(),
+        pendingUnsubTimer: null as any,
+        unsubscribe: () => {
+          rtLog('unsubscribing (all handlers)', { channel: channelName });
+          try {
+            const handlers: Function[] = Array.from(subscription.chartHandlers.values());
+            for (const h of handlers) channel.unbind(eventName, h as any);
+          } catch {
+            // best-effort
+          }
+          try {
+            subscription.chartHandlers.clear();
+          } catch {
+            // best-effort
+          }
+          this.detachChannelSignalLogging(channelName);
+          this.pusher.unsubscribe(channelName);
+          this.subscriptions.delete(channelName);
+        },
+      };
+
+      this.subscriptions.set(channelName, subscription);
+      this.attachChannelSignalLogging(channelName);
+      rtLog('subscribed (channel)', { channel: channelName, event: eventName });
+    } else {
+      // Ensure logging is attached even if this channel was created earlier.
+      this.attachChannelSignalLogging(channelName);
     }
 
-     console.log(`📡 Creating Pusher subscription for ${channelName}`);
-    const channel = this.pusher.subscribe(channelName);
-    
-     console.log(`🎪 Channel object:`, channel);
-     console.log(`🎪 Channel state:`, channel.subscribed);
+    // If an unsubscribe was scheduled (e.g. transient TradingView resubscribe), cancel it.
+    try {
+      if (subscription.pendingUnsubTimer) {
+        clearTimeout(subscription.pendingUnsubTimer);
+        subscription.pendingUnsubTimer = null;
+        rtLog('cancelled scheduled unsubscribe', { channel: channelName });
+      }
+    } catch {
+      // ignore
+    }
 
-    // Add channel state event listeners for debugging
-    channel.bind('pusher:subscription_succeeded', () => {
-       console.log(`✅ Successfully subscribed to channel: ${channelName}`);
-    });
+    // If we already bound this exact callback, return an idempotent unsubscriber for it.
+    if (subscription.chartHandlers?.has(callback)) {
+      rtLog('already subscribed (handler)', { channel: channelName, event: eventName });
+      return () => {
+        const existingHandler = subscription.chartHandlers?.get(callback);
+        if (!existingHandler) return;
+        subscription.channel.unbind(eventName, existingHandler as any);
+        subscription.chartHandlers.delete(callback);
+        if (subscription.chartHandlers.size === 0) {
+          // Delay full channel unsubscribe to avoid flapping during widget rebuilds.
+          subscription.pendingUnsubTimer = setTimeout(() => {
+            try {
+              if (subscription.chartHandlers.size === 0) subscription.unsubscribe();
+            } catch {
+              // ignore
+            }
+          }, this.chartUnsubscribeGraceMs);
+          rtLog('scheduled unsubscribe', { channel: channelName, inMs: this.chartUnsubscribeGraceMs });
+        }
+      };
+    }
 
-    channel.bind('pusher:subscription_error', (error: any) => {
-      console.error(`❌ Subscription error for channel ${channelName}:`, error);
-    });
-    
-    channel.bind(eventName, (data: ChartDataEvent) => {
-       console.log(`📈 Chart update received for ${symbol} (${tf}):`, data);
-       console.log(`🎯 Calling callback function...`);
+    const handler = (data: ChartDataEvent) => {
       try {
         callback(data);
-         console.log(`✅ Callback executed successfully`);
       } catch (error) {
-        console.error(`❌ Error in chart data callback:`, error);
+        rtErr('error in chart data callback', { channel: channelName, error });
       }
-    });
-
-    const unsubscribe = () => {
-       console.log(`🧹 Unsubscribing from ${channelName}`);
-      channel.unbind(eventName);
-      this.pusher.unsubscribe(channelName);
-      this.subscriptions.delete(channelName);
     };
 
-    this.subscriptions.set(channelName, { channel, unsubscribe });
-     console.log(`✅ Subscribed to chart data for ${symbol} (${tf})`);
+    subscription.channel.bind(eventName, handler);
+    subscription.chartHandlers?.set(callback, handler);
+    rtLog('subscribed (handler)', { channel: channelName, event: eventName, handlerCount: subscription.chartHandlers?.size || 0 });
 
-    return unsubscribe;
+    return () => {
+      const existingHandler = subscription.chartHandlers?.get(callback);
+      if (!existingHandler) return;
+      subscription.channel.unbind(eventName, existingHandler as any);
+      subscription.chartHandlers.delete(callback);
+      rtLog('unsubscribed (handler)', { channel: channelName, event: eventName, handlerCount: subscription.chartHandlers.size });
+
+      // If no more handlers are interested, fully unsubscribe from the Pusher channel.
+      if (subscription.chartHandlers.size === 0) {
+        try {
+          const dbg = (globalThis as any).REALTIME_DBG || process.env.NODE_ENV === 'development';
+          if (dbg) {
+            rtLog('unsubscribe triggered from', { channel: channelName, stack: new Error().stack });
+          }
+        } catch {
+          // ignore
+        }
+        // Delay full channel unsubscribe to avoid flapping during widget rebuilds.
+        subscription.pendingUnsubTimer = setTimeout(() => {
+          try {
+            if (subscription.chartHandlers.size === 0) subscription.unsubscribe();
+          } catch {
+            // ignore
+          }
+        }, this.chartUnsubscribeGraceMs);
+        rtLog('scheduled unsubscribe', { channel: channelName, inMs: this.chartUnsubscribeGraceMs });
+      }
+    };
+  }
+
+  /**
+   * Subscribe to metric-series point updates for a market (used by TradingView metric overlay).
+   *
+   * Channel: `metric-${marketId}`
+   * Event: `metric-update`
+   */
+  subscribeToMetricSeries(
+    marketId: string,
+    callback: (data: MetricSeriesEvent) => void
+  ): () => void {
+    const id = String(marketId || '').trim();
+    if (!id) return () => {};
+
+    const channelName = `metric-${id}`;
+    const eventName = 'metric-update';
+
+    rtMetricLog('subscribe request', { channel: channelName, event: eventName, marketId: id });
+
+    let subscription = this.subscriptions.get(channelName);
+    if (!subscription) {
+      const channel = this.pusher.subscribe(channelName);
+      subscription = {
+        channel,
+        events: new Set(),
+        unsubscribe: () => {
+          this.detachChannelSignalLogging(channelName);
+          try {
+            subscription.events?.forEach((evt: string) => channel.unbind(evt));
+          } catch {
+            // best-effort
+          }
+          this.pusher.unsubscribe(channelName);
+          this.subscriptions.delete(channelName);
+          rtMetricLog('unsubscribed (channel)', { channel: channelName });
+        }
+      };
+      this.subscriptions.set(channelName, subscription);
+      this.attachChannelSignalLogging(channelName);
+      rtMetricLog('subscribed (channel)', { channel: channelName });
+    } else {
+      this.attachChannelSignalLogging(channelName);
+    }
+
+    // Bind handler (dedupe by function identity like chart handlers, but simpler:
+    // metric updates are low-volume and we typically have 0-1 listeners per chart).
+    subscription.channel.bind(eventName, (data: MetricSeriesEvent) => {
+      rtMetricLog('event received', { channel: channelName, event: eventName, marketId: data?.marketId, metricName: data?.metricName, ts: (data as any)?.ts, value: (data as any)?.value });
+      callback(data);
+    });
+    subscription.events.add(eventName);
+    rtMetricLog('subscribed (handler)', { channel: channelName, event: eventName, handlerCount: subscription.events.size });
+
+    return () => {
+      try {
+        subscription.channel.unbind(eventName);
+      } catch {
+        // ignore
+      }
+      subscription.events.delete(eventName);
+      rtMetricLog('unsubscribed (handler)', { channel: channelName, event: eventName, handlerCount: subscription.events.size });
+      if (subscription.events.size === 0) {
+        subscription.unsubscribe();
+      }
+    };
   }
 
   /**
@@ -455,10 +688,10 @@ export class PusherClientService {
     channelName: string,
     eventHandlers: Record<string, (data: any) => void>
   ): () => void {
-    console.log(`📡 [GENERIC] Subscribing to channel: ${channelName}`);
+    rtLog('subscribing (generic)', { channel: channelName });
     
     if (this.subscriptions.has(channelName)) {
-      console.log(`Already subscribed to ${channelName}`);
+      rtLog('already subscribed', { channel: channelName });
       return this.subscriptions.get(channelName).unsubscribe;
     }
 
@@ -468,14 +701,14 @@ export class PusherClientService {
     // Bind all event handlers
     Object.entries(eventHandlers).forEach(([eventName, handler]) => {
       channel.bind(eventName, (data: any) => {
-        console.log(`📨 [${channelName}] ${eventName}:`, data);
         handler(data);
       });
       boundEvents.add(eventName);
     });
 
     const unsubscribe = () => {
-      console.log(`🔌 [GENERIC] Unsubscribing from ${channelName}`);
+      rtLog('unsubscribing (generic)', { channel: channelName });
+      this.detachChannelSignalLogging(channelName);
       // Unbind all events
       boundEvents.forEach(eventName => {
         channel.unbind(eventName);
@@ -485,7 +718,8 @@ export class PusherClientService {
     };
 
     this.subscriptions.set(channelName, { channel, unsubscribe, events: boundEvents });
-    console.log(`✅ [GENERIC] Subscribed to ${channelName} with ${boundEvents.size} events`);
+    this.attachChannelSignalLogging(channelName);
+    rtLog('subscribed (generic)', { channel: channelName, events: Array.from(boundEvents) });
 
     return unsubscribe;
   }
@@ -497,7 +731,7 @@ export class PusherClientService {
     const subscription = this.subscriptions.get(channelName);
     if (subscription && subscription.unsubscribe) {
       subscription.unsubscribe();
-      console.log(`🔌 Unsubscribed from ${channelName}`);
+      rtLog('unsubscribed', { channel: channelName });
     }
   }
 
@@ -518,7 +752,7 @@ export class PusherClientService {
    * Disconnect from Pusher and clean up all subscriptions
    */
   disconnect() {
-     console.log('🔌 Disconnecting from Pusher...');
+    rtLog('disconnecting');
     
     // Unsubscribe from all channels
     this.subscriptions.forEach((subscription, channelName) => {
@@ -533,7 +767,7 @@ export class PusherClientService {
     // Disconnect from Pusher
     this.pusher.disconnect();
     
-     console.log('✅ Pusher disconnected and cleaned up');
+    rtLog('disconnected and cleaned up');
   }
 
   /**
@@ -541,28 +775,49 @@ export class PusherClientService {
    */
   reconnect() {
     if (this.reconnectionAttempts >= this.maxReconnectionAttempts) {
-      console.error('❌ Max reconnection attempts reached');
+      rtErr('max reconnection attempts reached', {
+        reconnectionAttempts: this.reconnectionAttempts,
+        maxReconnectionAttempts: this.maxReconnectionAttempts,
+      });
       return;
     }
 
     this.reconnectionAttempts++;
-     console.log(`🔄 Attempting to reconnect (${this.reconnectionAttempts}/${this.maxReconnectionAttempts})...`);
+    rtLog('attempting reconnect', {
+      reconnectionAttempts: this.reconnectionAttempts,
+      maxReconnectionAttempts: this.maxReconnectionAttempts,
+    });
     
     this.pusher.connect();
   }
 }
 
 // Singleton instance
+const GLOBAL_PUSHER_SINGLETON_KEY = '__DEXEXTRA_PUSHER_CLIENT_SINGLETON__';
 let pusherClientInstance: PusherClientService | null = null;
 
 /**
  * Get the singleton PusherClientService instance
  */
 export function getPusherClient(options?: PusherClientOptions): PusherClientService {
-  if (!pusherClientInstance && typeof globalThis !== 'undefined') {
+  // Only initialize in the browser; PusherJS depends on DOM globals.
+  if (typeof window === 'undefined') {
+    throw new Error('Pusher client can only be initialized in the browser.');
+  }
+
+  // Ensure singleton even if the module is loaded more than once (Next.js dev/HMR, duplicate bundles).
+  const g = globalThis as any;
+  const existing = g[GLOBAL_PUSHER_SINGLETON_KEY] as PusherClientService | undefined;
+  if (existing) {
+    pusherClientInstance = existing;
+    return existing;
+  }
+
+  if (!pusherClientInstance) {
     pusherClientInstance = new PusherClientService(options);
   }
-  return pusherClientInstance!;
+  g[GLOBAL_PUSHER_SINGLETON_KEY] = pusherClientInstance;
+  return pusherClientInstance;
 }
 
 /**
@@ -570,7 +825,7 @@ export function getPusherClient(options?: PusherClientOptions): PusherClientServ
  */
 export function usePusher(options?: PusherClientOptions) {
   // Only initialize on client-side
-  if (typeof globalThis === 'undefined') {
+  if (typeof window === 'undefined') {
     return null;
   }
   

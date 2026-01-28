@@ -687,6 +687,16 @@ export default function LightweightChart({
     }
   }, [symbol]);
 
+  // Keep realtime handlers stable across renders to prevent subscription churn and stale callbacks.
+  const chartUpdateHandlerRef = useRef<(data: ChartDataEvent) => void>(() => {});
+  const connectionStateHandlerRef = useRef<(state: string) => void>(() => {});
+  useEffect(() => {
+    chartUpdateHandlerRef.current = handleChartDataUpdate;
+  }, [handleChartDataUpdate]);
+  useEffect(() => {
+    connectionStateHandlerRef.current = handleConnectionStateChange;
+  }, [handleConnectionStateChange]);
+
   // Initialize chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -962,7 +972,7 @@ export default function LightweightChart({
     const unsubscribeChart = pusher.subscribeToChartData(
       marketId,
       selectedTimeframe,
-      handleChartDataUpdate
+      (data) => chartUpdateHandlerRef.current?.(data)
     );
 
      // console.log('🚀 Pusher chart subscription setup complete');
@@ -974,7 +984,7 @@ export default function LightweightChart({
 
     // Subscribe to connection state changes
     const unsubscribeConnection = pusher.onConnectionStateChange(
-      handleConnectionStateChange
+      (state) => connectionStateHandlerRef.current?.(state)
     );
 
      // console.log('🔌 Connection state handler setup complete');
@@ -994,7 +1004,7 @@ export default function LightweightChart({
         unsubscribeRef.current = null;
       }
     };
-  }, [pusher, symbol, selectedTimeframe, handleChartDataUpdate, handleConnectionStateChange]);
+  }, [pusher, marketId, selectedTimeframe, CHART_BACKEND_ENABLED]);
 
   // Subscribe to mark price events emitted from TokenHeader
   useEffect(() => {

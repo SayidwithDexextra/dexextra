@@ -5,6 +5,7 @@ import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
 import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter';
 import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
 import { computeRelayerProof } from '@/lib/relayerMerkle';
+import { supabaseAdmin } from '@/lib/supabase-admin';
 
 class HttpError extends Error {
   status: number;
@@ -111,6 +112,157 @@ const ALLOWED: Record<string, string> = {
   sessionModifyOrder: 'sessionModifyOrder',
   sessionCancelOrder: 'sessionCancelOrder',
 };
+
+const PLACE_METHODS = new Set([
+  'metaPlaceLimit',
+  'metaPlaceMarginLimit',
+  'metaPlaceMarket',
+  'metaPlaceMarginMarket',
+  'sessionPlaceLimit',
+  'sessionPlaceMarginLimit',
+  'sessionPlaceMarket',
+  'sessionPlaceMarginMarket',
+]);
+
+function normalizeSide(isBuy?: boolean): 'BUY' | 'SELL' | null {
+  if (typeof isBuy !== 'boolean') return null;
+  return isBuy ? 'BUY' : 'SELL';
+}
+
+function normalizeOrderType(method: string): 'LIMIT' | 'MARKET' | null {
+  if (method.includes('Limit')) return 'LIMIT';
+  if (method.includes('Market')) return 'MARKET';
+  return null;
+}
+
+function safeBigInt(v: any): bigint | null {
+  try {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'bigint') return v;
+    if (typeof v === 'number' && Number.isFinite(v)) return BigInt(Math.trunc(v));
+    if (typeof v === 'string' && v.trim()) return BigInt(v.trim());
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePriceHuman(priceRaw: any): string | null {
+  const bn = safeBigInt(priceRaw);
+  if (bn === null) return null;
+  try {
+    // Prices are sent in USDC 6 decimals from the UI (see TradingPanel: parseUnits(..., 6))
+    return ethers.formatUnits(bn, 6);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeQtyHuman(amountRaw: any): string | null {
+  const bn = safeBigInt(amountRaw);
+  if (bn === null) return null;
+  try {
+    // Amounts are sent in 18 decimals base units from the UI (see TradingPanel: parseUnits(..., 18))
+    return ethers.formatUnits(bn, 18);
+  } catch {
+    return null;
+  }
+}
+
+async function resolveMarketMetricId(orderBook: string): Promise<string | null> {
+  const addr = orderBook.toLowerCase();
+  const lookup = async (table: 'orderbook_markets_resolved' | 'orderbook_markets_view') => {
+    const { data, error } = await supabaseAdmin
+      .from(table)
+      .select('metric_id')
+      // market_address is checksum-cased in views; match case-insensitively
+      .ilike('market_address', addr)
+      .single();
+    if (!error && data?.metric_id) return String(data.metric_id);
+    return null;
+  };
+
+  const fromResolved = await lookup('orderbook_markets_resolved');
+  if (fromResolved) return fromResolved;
+  const fromView = await lookup('orderbook_markets_view');
+  if (fromView) return fromView;
+  return null;
+}
+
+async function saveGaslessOrderHistory(payload: {
+  method: string;
+  orderBook: string;
+  txHash: string;
+  blockNumber?: number | null;
+  isSession: boolean;
+  sessionId?: string;
+  message?: any;
+  params?: any;
+}): Promise<void> {
+  const { method, orderBook, txHash, blockNumber, isSession, sessionId, message, params } = payload;
+  if (!PLACE_METHODS.has(method)) return;
+
+  const trader =
+    (params?.trader && ethers.isAddress(params.trader) ? params.trader : null) ||
+    (message?.trader && ethers.isAddress(message.trader) ? message.trader : null);
+
+  if (!trader) {
+    console.warn('[GASLESS][API][trade] unable to persist history: missing trader', { method, orderBook });
+    return;
+  }
+
+  const marketMetricId = (await resolveMarketMetricId(orderBook)) || orderBook.toLowerCase();
+  const orderType = normalizeOrderType(method);
+  const side = normalizeSide(params?.isBuy);
+  const orderId = params?.orderId ? String(params.orderId) : `tx:${txHash}`;
+
+  const priceHuman = normalizePriceHuman(params?.price);
+  const qtyHuman = normalizeQtyHuman(params?.amount);
+
+  const historyPayload = {
+    method,
+    orderBook,
+    isSession,
+    sessionId,
+    params: {
+      trader,
+      price: params?.price ?? null,
+      amount: params?.amount ?? null,
+      isBuy: typeof params?.isBuy === 'boolean' ? params.isBuy : null,
+      orderId: params?.orderId ?? null,
+    },
+    message: message ? { trader: message?.trader } : null,
+    normalized: {
+      // stored as strings to avoid JS float rounding; Postgres numeric accepts strings
+      price: priceHuman,
+      quantity: qtyHuman,
+    },
+  };
+
+  const { error } = await supabaseAdmin
+    .from('userOrderHistory')
+    .insert([{
+      trader_wallet_address: trader,
+      market_metric_id: marketMetricId,
+      order_id: orderId,
+      tx_hash: txHash,
+      block_number: blockNumber ?? 0,
+      log_index: 0,
+      event_type: 'SUBMITTED',
+      side: side ?? undefined,
+      order_type: orderType ?? undefined,
+      price: priceHuman,
+      quantity: qtyHuman,
+      filled_quantity: 0,
+      status: 'SUBMITTED',
+      payload: historyPayload,
+      occurred_at: new Date().toISOString(),
+    }], { returning: 'minimal' });
+
+  if (error) {
+    console.error('[GASLESS][API][trade] failed to persist history', error);
+  }
+}
 
 function selectorFor(method: string): string | null {
   switch (method) {
@@ -744,6 +896,20 @@ export async function POST(req: Request) {
         }
       }
     });
+    try {
+      await saveGaslessOrderHistory({
+        method,
+        orderBook,
+        txHash: tx.hash,
+        blockNumber: null,
+        isSession,
+        sessionId,
+        message,
+        params,
+      });
+    } catch (err) {
+      console.error('[GASLESS][API][trade] history persist exception', err);
+    }
     // Configurable wait policy to reduce perceived latency
     const waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
     if (Number.isFinite(waitConfirms) && waitConfirms > 0) {

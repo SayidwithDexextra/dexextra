@@ -15,8 +15,12 @@ const MarketTickerInlineCard: React.FC<MarketTickerCardProps> = ({
   onCardClick,
   onLongPosition,
   onShortPosition,
+  onWatchlistToggle,
   className,
   isDisabled = false,
+  isWatchlisted = false,
+  isWatchlistLoading = false,
+  isWatchlistDisabled = false,
   marketStatus,
   settlementDate,
   priceChangePercent,
@@ -91,6 +95,13 @@ const MarketTickerInlineCard: React.FC<MarketTickerCardProps> = ({
     }
   };
 
+  const handleWatchlistToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!isDisabled && !isWatchlistDisabled) {
+      onWatchlistToggle?.();
+    }
+  };
+
   const cardClasses = [
     styles.card,
     isDisabled && styles.disabled,
@@ -108,6 +119,31 @@ const MarketTickerInlineCard: React.FC<MarketTickerCardProps> = ({
       onClick={handleCardClick}
       onKeyDown={handleKeyDown}
     >
+      <button
+        type="button"
+        className={`${styles.watchlistButton} ${
+          isWatchlisted ? styles.watchlistButtonActive : ''
+        } ${isWatchlistLoading ? styles.watchlistButtonLoading : ''}`}
+        onClick={handleWatchlistToggle}
+        aria-pressed={isWatchlisted}
+        aria-label={isWatchlisted ? 'Remove from watchlist' : 'Add to watchlist'}
+        disabled={isDisabled || isWatchlistDisabled || isWatchlistLoading}
+      >
+        <svg
+          className={styles.watchlistIcon}
+          viewBox="0 0 24 24"
+          fill={isWatchlisted ? 'currentColor' : 'none'}
+          aria-hidden="true"
+        >
+          <path
+            d="M6 4h12a1 1 0 0 1 1 1v16l-7-4-7 4V5a1 1 0 0 1 1-1Z"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+
       {/* Full height square image on the left */}
       <div className={styles.media}>
         {imageUrl ? (

@@ -29,6 +29,7 @@ export interface MarketToolbarProps {
   onFilterClick?: () => void;
   onSavedClick?: () => void;
   savedCount?: number;
+  savedActive?: boolean;
   className?: string;
   advancedFilters?: Partial<MarketToolbarFilterSettings>;
   onAdvancedFiltersChange?: (filters: MarketToolbarFilterSettings) => void;
@@ -100,7 +101,7 @@ const frequencyOptions: DropdownOption<MarketToolbarFrequencyOption>[] = [
 const statusOptions: DropdownOption<MarketToolbarStatusOption>[] = [
   { label: 'All', value: 'all' },
   { label: 'Active', value: 'active' },
-  { label: 'Paused', value: 'paused' },
+  { label: 'Pause', value: 'paused' },
   { label: 'Settled', value: 'settled' },
 ];
 
@@ -214,6 +215,7 @@ const MarketToolbar: React.FC<MarketToolbarProps> = ({
   onFilterClick,
   onSavedClick,
   savedCount = 0,
+  savedActive = false,
   className,
   advancedFilters,
   onAdvancedFiltersChange,
@@ -458,9 +460,10 @@ const MarketToolbar: React.FC<MarketToolbarProps> = ({
 
         {/* Bookmark icon */}
         <button
-          className={styles.iconButton}
+          className={`${styles.iconButton} ${savedActive ? styles.iconButtonActive : ''}`}
           onClick={onSavedClick}
           aria-label="Saved markets"
+          aria-pressed={savedActive}
           type="button"
         >
           {savedCount > 0 && (

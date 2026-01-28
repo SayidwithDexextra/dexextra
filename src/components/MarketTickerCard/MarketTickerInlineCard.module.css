@@ -1,6 +1,7 @@
 .card {
   width: 320px;
   min-width: 320px;
+  position: relative;
   display: flex;
   align-items: stretch;
   gap: 0;
@@ -12,6 +13,47 @@
   transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   height: 100px;
   cursor: pointer;
+}
+
+.watchlistButton {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: rgba(229, 231, 235, 0.85);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+  z-index: 2;
+}
+
+.watchlistButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+  color: #ffffff;
+}
+
+.watchlistButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.watchlistButtonActive {
+  color: #fbbf24;
+}
+
+.watchlistButtonLoading {
+  opacity: 0.6;
+}
+
+.watchlistIcon {
+  width: 16px;
+  height: 16px;
 }
 
 .card:hover {

@@ -126,6 +126,14 @@
   color: #ffffff;
 }
 
+.iconButtonActive {
+  color: #fbbf24;
+}
+
+.iconButtonActive:hover {
+  color: #fcd34d;
+}
+
 .actionIcon {
   width: 20px;
   height: 20px;

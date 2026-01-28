@@ -106,10 +106,26 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const { pair } = useActivePairByMarketId(currentMarketId);
   const { markets: seriesMkts } = useSeriesMarkets(pair?.seriesId);
 
+  // Only mount a single TradingViewChart instance at a time.
+  // Rendering both the mobile + desktop charts and hiding one via CSS still mounts both React trees,
+  // which creates duplicate realtime subscriptions and confusing subscribe/unsubscribe logs.
+  const [isDesktop, setIsDesktop] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 768px)'); // Tailwind md breakpoint
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener?.('change', update);
+    return () => mq.removeEventListener?.('change', update);
+  }, []);
+
   // Metric overlay config for TradingView charts
   const metricOverlay = useMemo(() => {
     if (!currentMarketId) return undefined;
-    const metricId = (md.market as any)?.market_identifier || symbol;
+    // IMPORTANT: avoid depending on the full `md.market` object (it can be re-created frequently),
+    // otherwise TradingViewChart can be torn down + recreated, which drops realtime subscriptions.
+    const marketIdentifier = String((md.market as any)?.market_identifier || symbol || '').trim();
+    const metricId = marketIdentifier || String(symbol || '').trim();
     // IMPORTANT: metricName is the ClickHouse key. Use the route symbol by default so
     // `/token/BITCOIN` fetches metric_name=BITCOIN even if `market_identifier` is BTC.
     const metricName = String(symbol || '').toUpperCase();
@@ -142,7 +158,15 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       metricConst,
       enabled: true,
     };
-  }, [currentMarketId, md.market, symbol, metricDebug, sp]);
+  }, [
+    currentMarketId,
+    // Depend on stable primitives only.
+    String((md.market as any)?.market_identifier || ''),
+    symbol,
+    metricDebug,
+    sp.get('metricSma'),
+    sp.get('metricConst'),
+  ]);
 
   // Re-enable "on token view after downtime" metric ingestion:
   // - If ClickHouse metric-series is stale (or missing), resolve current metric via the Metric AI worker
@@ -492,13 +516,19 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             <div className="flex md:hidden flex-col gap-1">
               <div className="w-full mt-1 h-[70svh] min-h-[520px] relative">
                 {currentMarketId ? (
-                  <TradingViewChart
-                    symbol={symbol}
-                    autosize
-                    className="h-full"
-                    interval="5"
-                    metricOverlay={metricOverlay}
-                  />
+                  isDesktop === false ? (
+                    <TradingViewChart
+                      symbol={symbol}
+                      autosize
+                      className="h-full"
+                      interval="5"
+                      metricOverlay={metricOverlay}
+                    />
+                  ) : (
+                    <div className="w-full h-[399px] rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                      Loading chart…
+                    </div>
+                  )
                 ) : (
                   <div className="w-full h-[399px] rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
                     Loading market…
@@ -567,13 +597,19 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               <div className="flex-1 flex flex-col gap-0.5 h-full overflow-hidden">
                 <div className="flex-1 min-h-0 overflow-hidden relative">
                   {currentMarketId ? (
-                    <TradingViewChart
-                      symbol={symbol}
-                      autosize
-                      className="h-full"
-                      interval="5"
-                      metricOverlay={metricOverlay}
-                    />
+                    isDesktop === true ? (
+                      <TradingViewChart
+                        symbol={symbol}
+                        autosize
+                        className="h-full"
+                        interval="5"
+                        metricOverlay={metricOverlay}
+                      />
+                    ) : (
+                      <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                        Loading chart…
+                      </div>
+                    )
                   ) : (
                     <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
                       Loading market…

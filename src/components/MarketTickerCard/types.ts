@@ -9,13 +9,18 @@ export interface MarketTickerCardProps {
   onCardClick?: () => void;
   onLongPosition?: () => void;
   onShortPosition?: () => void;
+  onWatchlistToggle?: () => void;
   className?: string;
   isDisabled?: boolean;
+  isWatchlisted?: boolean;
+  isWatchlistLoading?: boolean;
+  isWatchlistDisabled?: boolean;
   // Additional props for orderbook markets
   marketStatus?: string;
   totalVolume?: number;
   totalTrades?: number;
   settlementDate?: string;
+  metricId?: string;
   // Percentage change for inline card design
   priceChangePercent?: number;
 }

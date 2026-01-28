@@ -1,11 +1,11 @@
 # CryptoMarketTicker Component
 
-A professional cryptocurrency market ticker component that displays live price data with seamless scrolling animation. Built using the design system extracted from `CryptomarketTicker.json` and integrated with the `tokenService.ts` for real-time data.
+A professional market ticker component that displays **Dexextra in-house markets** with seamless scrolling animation. Market metadata is sourced from **Supabase (`markets`)**, and market performance is sourced from **ClickHouse** via internal API routes.
 
 ## Features
 
-- 🔄 **Live Data**: Fetches real-time cryptocurrency prices from CoinGecko API
-- ⚡ **Auto Updates**: Refreshes price data every 60 seconds automatically  
+- 🔄 **In-house Data**: No CoinGecko dependency (no external price augmentation)
+- ⚡ **Auto Updates**: Refreshes market performance periodically  
 - 🎯 **Seamless Scrolling**: Infinite horizontal scroll with duplicate content
 - 📱 **Responsive Design**: Adapts to mobile, tablet, and desktop breakpoints
 - ♿ **Accessibility**: ARIA labels and reduced motion support
@@ -84,13 +84,10 @@ Based on `CryptomarketTicker.json`, the component implements:
 
 ## Data Source
 
-The component fetches live data for these cryptocurrencies:
+The component renders **in-house markets**:
 
-- **Major**: BTC, ETH, XRP, BNB, SOL, USDC, ADA, AVAX, DOGE, TRX
-- **DeFi**: LINK, DOT, MATIC, UNI, AAVE, COMP, CRV, SUSHI  
-- **Others**: LTC, BCH, NEAR, ATOM, FTM, ALGO, VET, ICP, FLOW
-- **Gaming/NFT**: SAND, MANA, ENJ, CHZ
-- **Infrastructure**: THETA, FIL, GRT
+- **Market names/symbols**: Supabase `markets`
+- **Price + 24h change**: ClickHouse via `/api/market-rankings?kind=trending`
 
 ## Responsive Behavior
 
@@ -117,14 +114,10 @@ The component fetches live data for these cryptocurrencies:
 - **Reduced Motion**: Respects `prefers-reduced-motion` setting
 - **Fallback**: Static horizontal scroll for accessibility
 
-## Integration with TokenService
+## Performance Notes
 
-The component uses `@/lib/tokenService.ts` for:
-
-1. **Initial Data Load**: `fetchTokenPrices()`
-2. **Periodic Updates**: `createTokenPriceUpdater()`
-3. **Rate Limiting**: Built-in API call throttling
-4. **Error Handling**: Graceful fallbacks for API failures
+- The ticker uses a cached snapshot in `localStorage` to render immediately while refreshing.
+- The live snapshot is refreshed from internal APIs so the UI never depends on CoinGecko.
 
 ## Styling
 

@@ -18,6 +18,7 @@ export interface MarketOverviewRow {
   decimals: number;
   is_active: boolean;
   market_status: string;
+  settlement_date?: string | null;
   total_volume?: number | null;
   total_trades?: number | null;
   mark_price?: number | null;

@@ -139,8 +139,34 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           title={source.value || undefined}
         >
           {source.kind === 'url' && source.url ? (
-            <a href={source.url} target="_blank" rel="noopener noreferrer" className="underline">
-              {displayText}
+            <a
+              href={source.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group inline-flex items-center gap-1 underline"
+            >
+              <span>{displayText}</span>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                className="h-3 w-3 text-[#6B7280] opacity-80 transition-opacity group-hover:opacity-100"
+                fill="none"
+              >
+                <path
+                  d="M14 3h7v7m0-7L10 14"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M10 7H7a4 4 0 0 0-4 4v6a4 4 0 0 0 4 4h6a4 4 0 0 0 4-4v-3"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </a>
           ) : source.kind === 'script' && source.value ? (
             <span>{displayText}</span>

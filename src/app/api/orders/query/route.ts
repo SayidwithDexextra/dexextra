@@ -6,7 +6,7 @@ import { env } from '@/lib/env';
 /**
  * GET /api/orders/query - Fetch orders from Supabase
  * Query parameters:
- * - metricId: Market identifier (can be metric_id or symbol)
+ * - metricId: Optional market identifier (can be metric_id or symbol). If omitted, returns all orders for `trader`.
  * - limit: Number of orders to fetch (default: 100)
  * - trader: Optional trader address to filter by
  * - status: Optional status filter (PENDING, FILLED, PARTIAL, etc.)
@@ -26,7 +26,8 @@ async function resolveMarketIdFrom(table: 'orderbook_markets_resolved' | 'orderb
     const byAddr = await supabaseAdmin
       .from(table)
       .select('metric_id')
-      .eq('market_address', input.toLowerCase())
+      // market_address is often checksum-cased; match case-insensitively
+      .ilike('market_address', input)
       .single();
     if (!byAddr.error && byAddr.data?.metric_id) return byAddr.data.metric_id as string;
   }
@@ -77,21 +78,20 @@ export async function GET(request: NextRequest) {
     const trader = searchParams.get('trader');
     const status = searchParams.get('status');
 
-    if (!metricId) {
-      return NextResponse.json(
-        { error: 'metricId parameter is required' },
-        { status: 400 }
-      );
+    if (!metricId && !trader) {
+      return NextResponse.json({ error: 'metricId or trader parameter is required' }, { status: 400 });
     }
 
-    // Resolve to market_id dynamically from DB
-    const resolvedMarketId = await resolveMarketIdDynamic(metricId);
-    console.log(`🔍 [ORDERS_API] Resolved market identifier: "${metricId}" → "${resolvedMarketId}"`);
+    // Resolve to market_id dynamically from DB (only when metricId is provided)
+    const resolvedMarketId = metricId ? await resolveMarketIdDynamic(metricId) : null;
+    if (metricId) {
+      console.log(`🔍 [ORDERS_API] Resolved market identifier: "${metricId}" → "${resolvedMarketId}"`);
+    }
 
     // Build query using resolved market_id
     // Build base query function so we can retry with a fallback client if needed
     const buildQuery = (client: any) => client
-      .from('user_orders_snapshot')
+      .from('userOrderHistory')
       .select(`
         order_id,
         market_metric_id,
@@ -101,23 +101,28 @@ export async function GET(request: NextRequest) {
         price,
         quantity,
         filled_quantity,
-        order_status,
-        first_seen_at,
-        last_update_at
+        tx_hash,
+        status,
+        event_type,
+        created_at,
+        occurred_at
       `)
-      .eq('market_metric_id', resolvedMarketId)
-      .order('last_update_at', { ascending: false })
+      .order('occurred_at', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(limit);
 
     // Add optional filters
     let query = buildQuery(supabaseAdmin);
+    if (resolvedMarketId) {
+      query = query.eq('market_metric_id', resolvedMarketId);
+    }
     if (trader) {
       // Case-insensitive match for wallet address
       query = query.ilike('trader_wallet_address', trader);
     }
 
     if (status) {
-      query = query.eq('order_status', status.toUpperCase());
+      query = query.eq('status', status.toUpperCase());
     }
 
     let ordersRes;
@@ -148,15 +153,17 @@ export async function GET(request: NextRequest) {
     // Transform Supabase orders to match expected frontend format
     const transformedOrders = orders?.map((order: any) => ({
       order_id: order.order_id,
+      market_metric_id: order.market_metric_id,
       trader_wallet_address: order.trader_wallet_address,
       order_type: order.order_type,
       side: order.side,
-      quantity: parseFloat(order.quantity),
+      quantity: parseFloat(order.quantity || '0'),
       price: order.price ? parseFloat(order.price) : null,
-      filled_quantity: parseFloat(order.filled_quantity || 0),
-      created_at: order.first_seen_at,
-      updated_at: order.last_update_at,
-      order_status: order.order_status,
+      filled_quantity: parseFloat(order.filled_quantity || '0'),
+      tx_hash: order.tx_hash || null,
+      created_at: order.occurred_at || order.created_at,
+      updated_at: order.occurred_at || order.created_at,
+      order_status: order.status || order.event_type,
       time_in_force: 'GTC',
       stop_price: null,
       iceberg_quantity: null,
@@ -164,7 +171,11 @@ export async function GET(request: NextRequest) {
       expiry_time: null
     })) || [];
 
-    console.log(`✅ Successfully fetched ${transformedOrders.length} orders for metricId: ${metricId} (resolved to: ${resolvedMarketId})`);
+    console.log(
+      `✅ Successfully fetched ${transformedOrders.length} orders` +
+        (metricId ? ` for metricId: ${metricId} (resolved to: ${resolvedMarketId})` : '') +
+        (trader ? ` trader: ${trader}` : '')
+    );
 
     const res = NextResponse.json({
       success: true,

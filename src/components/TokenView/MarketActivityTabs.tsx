@@ -52,6 +52,7 @@ interface Order {
   status: 'PENDING' | 'PARTIAL' | 'FILLED' | 'CANCELLED';
   timestamp: number;
   metricId?: string;
+  txHash?: string;
 }
 
 interface Trade {
@@ -82,6 +83,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [orderHistory, setOrderHistory] = useState<Order[]>([]);
   const isMountedRef = useRef(true);
   useEffect(() => {
+    // In React 18 StrictMode (dev), effects mount/cleanup/mount without reinitializing refs.
+    // Ensure the ref is reset on (re)mount so async fetches can update state.
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
@@ -304,6 +308,68 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     [walletAddress, hydrateSessionOrders]
   );
 
+  // Throttle and in-flight guards for order history (must be declared before realtime effects that reference them)
+  const isFetchingHistoryRef = useRef(false);
+  const lastHistoryFetchTsRef = useRef(0);
+
+  const fetchOrderHistory = useCallback(
+    async (opts?: { force?: boolean; silent?: boolean }) => {
+      if (!walletAddress) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden' && !opts?.force) return;
+      if (isFetchingHistoryRef.current) return;
+
+      const now = Date.now();
+      const cooldownMs = opts?.force ? 750 : 10_000;
+      if (now - lastHistoryFetchTsRef.current < cooldownMs) return;
+
+      isFetchingHistoryRef.current = true;
+      if (!opts?.silent) setIsLoading(true);
+      try {
+        console.log('[Dispatch] 📡 [API][MarketActivityTabs] /api/orders/query request', { trader: walletAddress });
+        const params = new URLSearchParams({
+          trader: walletAddress,
+          limit: '50'
+        });
+        const res = await fetch(`/api/orders/query?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          console.log('[Dispatch] ✅ [API][MarketActivityTabs] /api/orders/query response', { total: data?.orders?.length, resolvedMarketId: data?.resolvedMarketId });
+          const hist = (data.orders || []).map((o: any) => ({
+            id: o.order_id,
+            symbol: String(o.market_metric_id || metricId || 'UNKNOWN').toUpperCase(),
+            side: (o.side || 'BUY') as 'BUY' | 'SELL',
+            type: (o.order_type || 'LIMIT') as 'MARKET' | 'LIMIT',
+            price: typeof o.price === 'number' ? o.price : (o.price ? parseFloat(o.price) : 0),
+            size: typeof o.quantity === 'number' ? o.quantity : parseFloat(o.quantity || '0'),
+            filled: typeof o.filled_quantity === 'number' ? o.filled_quantity : parseFloat(o.filled_quantity || '0'),
+            status: (o.order_status || 'PENDING').replace('PARTIAL','PARTIAL') as any,
+            timestamp: new Date(o.updated_at || o.created_at).getTime(),
+            txHash: typeof o.tx_hash === 'string' ? o.tx_hash : undefined,
+          }));
+          if (isMountedRef.current) setOrderHistory(hist);
+        } else {
+          console.warn('[Dispatch] ⚠️ [API][MarketActivityTabs] /api/orders/query non-200', res.status);
+        }
+      } catch (e) {
+        console.error('[Dispatch] ❌ [API][MarketActivityTabs] /api/orders/query exception', e);
+        // keep existing orderHistory on error
+      } finally {
+        lastHistoryFetchTsRef.current = Date.now();
+        isFetchingHistoryRef.current = false;
+        if (!opts?.silent && isMountedRef.current) setIsLoading(false);
+      }
+    },
+    [walletAddress, metricId]
+  );
+
+  // Prefetch history count as soon as wallet connects so the tab badge is correct
+  // even before the user clicks into the Order History tab.
+  useEffect(() => {
+    if (!walletAddress) return;
+    // Silent fetch to avoid flashing the global "Loading..." indicator on initial page load.
+    fetchOrderHistory({ force: true, silent: true });
+  }, [walletAddress, fetchOrderHistory]);
+
   // Immediate optimistic UI patch for Open Orders on `ordersUpdated`.
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -332,6 +398,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
       const isPlacementEvent = eventType === 'OrderPlaced' || eventType === 'order-placed';
       let shouldRefreshSessionOrders = false;
+      const isHistoryEvent = isPlacementEvent || eventType === 'OrderCancelled' || eventType === 'cancel';
 
       if (eventType === 'OrderCancelled' || eventType === 'cancel') {
         if (orderId) {
@@ -400,11 +467,36 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       if (shouldRefreshSessionOrders) {
         hydrateSessionOrders();
       }
+
+      // Refresh Order History whenever we see an order lifecycle event.
+      // Silent when not on the History tab to avoid flashing the global loading indicator.
+      try {
+        if (isHistoryEvent) {
+          fetchOrderHistory({ force: true, silent: activeTab !== 'history' });
+        }
+      } catch {}
     };
 
     window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
     return () => window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
-  }, [walletAddress, hydrateSessionOrders]);
+  }, [walletAddress, hydrateSessionOrders, activeTab, metricId, fetchOrderHistory]);
+
+  // Explicit Order History refresh hook (used by gasless flows right after the Supabase row is created).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress) return;
+
+    const onHistoryRefresh = (e: any) => {
+      const detail = (e as CustomEvent)?.detail as any;
+      const trader = String(detail?.trader || '').toLowerCase();
+      const me = String(walletAddress || '').toLowerCase();
+      if (trader && me && trader !== me) return;
+      fetchOrderHistory({ force: true, silent: activeTab !== 'history' });
+    };
+
+    window.addEventListener('orderHistoryRefreshRequested', onHistoryRefresh as EventListener);
+    return () => window.removeEventListener('orderHistoryRefreshRequested', onHistoryRefresh as EventListener);
+  }, [walletAddress, activeTab, fetchOrderHistory]);
 
   // Immediate UI patch for positions on trade events (no waiting on contract reads).
   useEffect(() => {
@@ -449,13 +541,18 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       // eslint-disable-next-line no-console
       console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
       setPosOverlayTick((x) => x + 1);
+
+      // If viewing Order History, refresh after trade events (fills) land.
+      try {
+        fetchOrderHistory({ force: true, silent: activeTab !== 'history' });
+      } catch {}
     };
 
     window.addEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
     return () => {
       window.removeEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
     };
-  }, [walletAddress]);
+  }, [walletAddress, activeTab, metricId, fetchOrderHistory]);
 
   // Resolve per-market OrderBook address from symbol/metricId using populated CONTRACT_ADDRESSES.MARKET_INFO
   const resolveOrderBookAddress = useCallback((symbolOrMetricId?: string | null): string | null => {
@@ -482,10 +579,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   }, []);
   
-  // Throttle and in-flight guards for order history
-  const isFetchingHistoryRef = useRef(false);
-  const lastHistoryFetchTsRef = useRef(0);
-
   // Positions: show ALL user positions across markets (reuse portfolio hook)
   useEffect(() => {
     if (!walletAddress) {
@@ -919,64 +1012,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       hiddenOptimisticCount: optimisticallyRemovedOrderIds.size,
     });
   }, [walletAddress, activeTab, ordersBuckets.length, displayedOpenOrders.length, optimisticallyRemovedOrderIds.size]);
-  // Fetch order history ONLY when History tab is active, throttle and skip when hidden
+  // Fetch order history ONLY when History tab is active. Refreshes are also triggered by realtime events.
   useEffect(() => {
     if (activeTab !== 'history') return;
     if (!walletAddress) return;
 
-    let isMounted = true;
-
-    const fetchHistory = async () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-      if (isFetchingHistoryRef.current) return;
-      const now = Date.now();
-      if (now - lastHistoryFetchTsRef.current < 10000) return; // 10s cooldown
-
-      isFetchingHistoryRef.current = true;
-      setIsLoading(true);
-      try {
-        console.log('[Dispatch] 📡 [API][MarketActivityTabs] /api/orders/query request', { metricId, trader: walletAddress });
-        const params = new URLSearchParams({
-          metricId, // use metric_id consistently
-          trader: walletAddress,
-          limit: '50'
-        });
-        const res = await fetch(`/api/orders/query?${params.toString()}`);
-        if (res.ok) {
-          const data = await res.json();
-          console.log('[Dispatch] ✅ [API][MarketActivityTabs] /api/orders/query response', { total: data?.orders?.length, resolvedMarketId: data?.resolvedMarketId });
-          const symbolUpper = metricId.toUpperCase();
-          const hist = (data.orders || []).map((o: any) => ({
-            id: o.order_id,
-            symbol: symbolUpper,
-            side: (o.side || 'BUY') as 'BUY' | 'SELL',
-            type: (o.order_type || 'LIMIT') as 'MARKET' | 'LIMIT',
-            price: typeof o.price === 'number' ? o.price : (o.price ? parseFloat(o.price) : 0),
-            size: typeof o.quantity === 'number' ? o.quantity : parseFloat(o.quantity || '0'),
-            filled: typeof o.filled_quantity === 'number' ? o.filled_quantity : parseFloat(o.filled_quantity || '0'),
-            status: (o.order_status || 'PENDING').replace('PARTIAL','PARTIAL') as any,
-            timestamp: new Date(o.updated_at || o.created_at).getTime(),
-          }));
-          if (isMounted) setOrderHistory(hist);
-        }
-        else {
-          console.warn('[Dispatch] ⚠️ [API][MarketActivityTabs] /api/orders/query non-200', res.status);
-        }
-      } catch (e) {
-        console.error('[Dispatch] ❌ [API][MarketActivityTabs] /api/orders/query exception', e);
-        // keep existing orderHistory on error
-      } finally {
-        lastHistoryFetchTsRef.current = Date.now();
-        isFetchingHistoryRef.current = false;
-        if (isMounted) setIsLoading(false);
-      }
-    };
-
-    fetchHistory();
+    fetchOrderHistory({ force: true });
 
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        fetchHistory();
+        fetchOrderHistory({ force: true });
       }
     };
 
@@ -985,12 +1030,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
 
     return () => {
-      isMounted = false;
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisibility);
       }
     };
-  }, [activeTab, walletAddress, metricId]);
+  }, [activeTab, walletAddress, fetchOrderHistory]);
 
   const tabs = [
     { id: 'positions' as TabType, label: 'Positions', count: displayedPositions.length },
@@ -1030,6 +1074,34 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       minimumFractionDigits: Math.min(decimals, 4),
       maximumFractionDigits: decimals,
     }).format(value);
+  };
+
+  // Like SearchModal price formatting: keep 2dp for readability,
+  // but allow more decimals for small position sizes so they don't render as 0.00.
+  const formatSize = (value: number) => {
+    const safe = Number.isFinite(value) ? value : 0;
+    const abs = Math.abs(safe);
+    if (abs === 0) return '0';
+
+    // For sizes < 1, increase max decimals until we show a meaningful non-zero digit.
+    // Cap at 12 to avoid extremely long UI strings.
+    const maxD =
+      abs >= 1 ? 2 : Math.max(2, Math.min(12, Math.ceil(-Math.log10(abs)) + 2));
+    const minD = Math.min(2, maxD);
+
+    const rounded = Number(safe.toFixed(maxD));
+    const nf = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: minD,
+      maximumFractionDigits: maxD,
+    });
+
+    // If rounding still collapses to 0, show a floor indicator.
+    if (rounded === 0) {
+      const floor = 1 / 10 ** maxD;
+      return `<${nf.format(floor)}`;
+    }
+
+    return nf.format(rounded);
   };
 
   const renderPositionsTable = () => {
@@ -1085,27 +1157,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   {marketSymbolMap.get(position.symbol)?.name || position.symbol}
                                 </span>
                                 <span className="text-[10px] text-[#CBD5E1]">{position.symbol}</span>
-                                <svg
-                                  aria-hidden="true"
-                                  viewBox="0 0 24 24"
-                                  className="ml-0.5 h-3 w-3 text-[#6B7280] opacity-80 transition-opacity group-hover/link:opacity-100"
-                                  fill="none"
-                                >
-                                  <path
-                                    d="M14 3h7v7m0-7L10 14"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                  <path
-                                    d="M10 7H7a4 4 0 0 0-4 4v6a4 4 0 0 0 4 4h6a4 4 0 0 0 4-4v-3"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
                                 {position.isUnderLiquidation && (
                                   <div className="px-1 py-0.5 bg-yellow-400/10 rounded">
                                     <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
@@ -1122,7 +1173,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             </span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-white font-mono">{position.size.toFixed(2)}</span>
+                            <span className="text-[11px] text-white font-mono">{formatSize(position.size)}</span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
                             <span className="text-[11px] text-white font-mono">${formatPrice(position.markPrice)}</span>
@@ -1308,27 +1359,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     {marketSymbolMap.get(order.symbol)?.name || order.symbol}
                                   </span>
                                   <span className="text-[10px] text-[#CBD5E1]">{order.symbol}</span>
-                                  <svg
-                                    aria-hidden="true"
-                                    viewBox="0 0 24 24"
-                                    className="ml-0.5 h-3 w-3 text-[#6B7280] opacity-80 transition-opacity group-hover/link:opacity-100"
-                                    fill="none"
-                                  >
-                                    <path
-                                      d="M14 3h7v7m0-7L10 14"
-                                      stroke="currentColor"
-                                      strokeWidth="2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                    <path
-                                      d="M10 7H7a4 4 0 0 0-4 4v6a4 4 0 0 0 4 4h6a4 4 0 0 0 4-4v-3"
-                                      stroke="currentColor"
-                                      strokeWidth="2"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    />
-                                  </svg>
                                 </Link>
                               </div>
                             </td>
@@ -1781,6 +1811,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
+                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
                         <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
                         <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
                         <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
@@ -1793,6 +1824,58 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     <tbody>
                       {orderHistory.map((order, index) => (
                         <tr key={`${order.id}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
+                          <td className="px-2.5 py-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <Link
+                                href={getTokenHref(order.symbol)}
+                                className="group/link flex min-w-0 items-center gap-1 hover:opacity-90 transition-opacity"
+                                title={`Open ${order.symbol} market`}
+                              >
+                                <img
+                                  src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
+                                  alt={`${order.symbol} logo`}
+                                  className="w-4 h-4 rounded-full border border-[#333333] object-cover"
+                                />
+                                <span className="truncate text-[11px] font-medium text-white">
+                                  {marketSymbolMap.get(order.symbol)?.name || order.symbol}
+                                </span>
+                                <span className="text-[10px] text-[#CBD5E1]">{order.symbol}</span>
+                              </Link>
+
+                              {order.txHash && (
+                                <a
+                                  href={`https://hyperevmscan.io/tx/${encodeURIComponent(order.txHash)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0 inline-flex items-center justify-center rounded border border-[#333333] bg-[#141414] px-1 py-0.5 text-[#6B7280] hover:text-[#E5E7EB] hover:border-[#4B5563] transition-colors"
+                                  title="View transaction on HyperEVMScan"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <svg
+                                    aria-hidden="true"
+                                    viewBox="0 0 24 24"
+                                    className="h-3 w-3"
+                                    fill="none"
+                                  >
+                                    <path
+                                      d="M14 3h7v7m0-7L10 14"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                    <path
+                                      d="M10 7H7a4 4 0 0 0-4 4v6a4 4 0 0 0 4 4h6a4 4 0 0 0 4-4v-3"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </a>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-2.5 py-2.5">
                             <span className={`text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                           </td>
@@ -1970,7 +2053,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded">
                 <span className="text-[10px] text-[#E5E7EB]">Position Size</span>
                 <span className="text-[11px] font-medium text-white font-mono">
-                  {maxSize.toFixed(2)}
+                  {formatSize(maxSize)}
                 </span>
               </div>
               

@@ -2,6 +2,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@clickhouse/client';
+import { broadcastMetricSeries } from '@/lib/pusher-server';
+
+const REALTIME_METRIC_PREFIX = '[REALTIME_METRIC]';
+const rtMetricLog = (...args: any[]) => console.log(REALTIME_METRIC_PREFIX, ...args);
+const rtMetricWarn = (...args: any[]) => console.warn(REALTIME_METRIC_PREFIX, ...args);
+const rtMetricErr = (...args: any[]) => console.error(REALTIME_METRIC_PREFIX, ...args);
 
 function ensureUrl(value?: string): string {
   const raw = String(value || '').trim();
@@ -473,6 +479,7 @@ type IncomingMetricPoint = { ts?: string | number | Date; value: number };
 
 export async function POST(request: NextRequest) {
   try {
+    const t0 = Date.now();
     const body = await request.json();
     const { marketId, metricName, points, source, version } = body || {};
 
@@ -488,6 +495,7 @@ export async function POST(request: NextRequest) {
 
     const url = ensureUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
     if (!url) {
+      rtMetricWarn('insert skipped: clickhouse unconfigured', { marketId, metricName });
       return NextResponse.json({ success: true, inserted: 0, meta: { marketId, metricName, source: 'unconfigured' } });
     }
 
@@ -521,11 +529,65 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No valid points to insert' }, { status: 400 });
     }
 
+    rtMetricLog('insert begin', {
+      marketId,
+      metricName,
+      nPoints: rows.length,
+      source: typeof source === 'string' ? source : 'api',
+    });
+
     await client.insert({
       table: 'metric_series_raw',
       values: rows,
       format: 'JSONEachRow',
     });
+    rtMetricLog('insert complete', { marketId, metricName, inserted: rows.length, ms: Date.now() - t0 });
+
+    // Best-effort realtime: broadcast the latest inserted point so chart overlays can update immediately.
+    // Never fail the write if realtime is not configured.
+    try {
+      if (process.env.PUSHER_APP_ID && process.env.PUSHER_KEY && process.env.PUSHER_SECRET) {
+        const lastRow = rows[rows.length - 1] as any;
+        const lastPoint = arr[arr.length - 1] as any;
+        const rawTs = lastPoint?.ts ?? lastRow?.ts;
+        const tsMs =
+          rawTs instanceof Date
+            ? rawTs.getTime()
+            : typeof rawTs === 'number'
+              ? (rawTs > 1e12 ? rawTs : rawTs * 1000)
+              : Date.parse(String(rawTs || '').replace(' ', 'T') + 'Z') || Date.now();
+        rtMetricLog('broadcast begin', {
+          channel: `metric-${marketId}`,
+          event: 'metric-update',
+          marketId,
+          metricName,
+          ts: Number.isFinite(tsMs) ? tsMs : Date.now(),
+          value: Number(lastRow?.value),
+        });
+        await broadcastMetricSeries({
+          marketId,
+          metricName,
+          ts: Number.isFinite(tsMs) ? tsMs : Date.now(),
+          value: Number(lastRow?.value),
+          source: typeof source === 'string' ? source : 'api',
+          version: Number.isFinite(Number(version)) ? Number(version) : undefined,
+        });
+        rtMetricLog('broadcast complete', { marketId, metricName, ms: Date.now() - t0 });
+      } else {
+        rtMetricWarn('broadcast skipped: pusher env missing', {
+          hasAppId: Boolean(process.env.PUSHER_APP_ID),
+          hasKey: Boolean(process.env.PUSHER_KEY),
+          hasSecret: Boolean(process.env.PUSHER_SECRET),
+        });
+      }
+    } catch (e: any) {
+      // Never fail the write if realtime is not configured or broadcast fails.
+      rtMetricErr('broadcast failed (non-fatal)', {
+        marketId,
+        metricName,
+        error: String(e?.message || e || 'unknown'),
+      });
+    }
 
     return NextResponse.json({
       success: true,

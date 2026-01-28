@@ -1,14 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './CryptoMarketTicker.module.css';
-import { usePusher } from '@/lib/pusher-client';
-import { TokenTickerEvent } from '@/lib/pusher-server';
-import { fetchTokenPrices } from '@/lib/tokenService';
-import { createTokenPriceUpdater } from '@/lib/tokenService';
 
-interface TokenPriceData {
+interface MarketTickerItem {
+  marketId: string;
   symbol: string;
+  name: string;
   price: number;
   price_change_percentage_24h: number;
 }
@@ -19,87 +17,25 @@ interface CryptoMarketTickerProps {
   pauseOnHover?: boolean;
 }
 
-// Default tokens to display
-const DEFAULT_TOKENS = [
-  'BTC', 'ETH', 'XRP', 'BNB', 'SOL', 'USDC', 'ADA', 'AVAX', 'DOGE', 'TRX',
-  'LINK', 'DOT', 'MATIC', 'UNI', 'LTC', 'BCH', 'NEAR', 'ATOM', 'FTM', 'ALGO', 'GOLD'
-];
-
-// Fallback prices in case of API failure
-const FALLBACK_PRICES: Record<string, TokenPriceData> = {
-  'BTC': { symbol: 'BTC', price: 43500, price_change_percentage_24h: 1.2 },
-  'ETH': { symbol: 'ETH', price: 2650, price_change_percentage_24h: -0.8 },
-  'XRP': { symbol: 'XRP', price: 0.52, price_change_percentage_24h: 2.1 },
-  'BNB': { symbol: 'BNB', price: 315, price_change_percentage_24h: 0.5 },
-  'SOL': { symbol: 'SOL', price: 65, price_change_percentage_24h: 3.2 },
-  'USDC': { symbol: 'USDC', price: 1.00, price_change_percentage_24h: 0.0 },
-  'ADA': { symbol: 'ADA', price: 0.48, price_change_percentage_24h: 1.8 },
-  'AVAX': { symbol: 'AVAX', price: 28, price_change_percentage_24h: -1.5 },
-  'DOGE': { symbol: 'DOGE', price: 0.085, price_change_percentage_24h: 4.2 },
-  'TRX': { symbol: 'TRX', price: 0.11, price_change_percentage_24h: 0.9 }
-};
-
-// Mapping from ticker symbol to CoinGecko slug for direct asset links
-const COINGECKO_SLUGS: Record<string, string> = {
-  BTC: 'bitcoin',
-  ETH: 'ethereum',
-  XRP: 'ripple',
-  BNB: 'binancecoin',
-  SOL: 'solana',
-  USDC: 'usd-coin',
-  ADA: 'cardano',
-  AVAX: 'avalanche-2',
-  DOGE: 'dogecoin',
-  TRX: 'tron',
-  LINK: 'chainlink',
-  DOT: 'polkadot',
-  MATIC: 'polygon-ecosystem-token',
-  UNI: 'uniswap',
-  LTC: 'litecoin',
-  BCH: 'bitcoin-cash',
-  NEAR: 'near',
-  ATOM: 'cosmos',
-  FTM: 'fantom',
-  ALGO: 'algorand',
-  GOLD: 'tether-gold',
-};
-
-const getCoinGeckoUrl = (symbol: string): string => {
-  const upper = symbol.toUpperCase();
-  const slug = COINGECKO_SLUGS[upper];
-  if (slug) {
-    return `https://www.coingecko.com/en/coins/${slug}`;
-  }
-  // Fallback to search page if we don't have an exact slug mapping
-  return `https://www.coingecko.com/en/search?query=${encodeURIComponent(symbol)}`;
-};
+// Old CoinGecko ticker used ~20 symbols; now we render ALL in-house markets (even if 0% change).
+// (We keep ClickHouse-ranked ones at the front when available.)
 
 // Cache configuration
-const CACHE_KEY = 'crypto_ticker_prices';
-const CACHE_TIMESTAMP_KEY = 'crypto_ticker_timestamp';
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const CACHE_KEY = 'dexextra_market_ticker_v1';
+const CACHE_TIMESTAMP_KEY = 'dexextra_market_ticker_ts_v1';
+const CACHE_DURATION = 60 * 1000; // 60 seconds
 
 export default function CryptoMarketTicker({ 
   className = '', 
   speed = 60,
   pauseOnHover = true 
 }: CryptoMarketTickerProps) {
-  // Pusher integration
-  const pusher = usePusher({ enableLogging: false });
-  
   // State management
-  const [tokenPrices, setTokenPrices] = useState<Record<string, TokenPriceData>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
-  const [dataSource, setDataSource] = useState<'live' | 'cached' | 'fallback' | 'pusher'>('live');
-  const [retryCount, setRetryCount] = useState(0);
-  const [isConnected, setIsConnected] = useState(false);
-  
+  const [items, setItems] = useState<MarketTickerItem[]>([]);
+
   // Refs
-  const tickerRef = useRef<HTMLDivElement>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
-  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
   const isMountedRef = useRef(true);
 
   // Cleanup on unmount
@@ -109,19 +45,22 @@ export default function CryptoMarketTicker({
     };
   }, []);
 
+  const fmtUsd = useMemo(
+    () =>
+      new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 8,
+      }),
+    []
+  );
+
   // Format price with appropriate decimals
   const formatPrice = (price: number): string => {
-    if (price >= 1000) {
-      return price.toLocaleString('en-US', { 
-        minimumFractionDigits: 2, 
-        maximumFractionDigits: 2 
-      });
-    } else if (price >= 1) {
-      return price.toFixed(4);
-    } else if (price >= 0.0001) {
-      return price.toFixed(6);
-    } else {
-      return price.toExponential(2);
+    try {
+      return fmtUsd.format(Number(price) || 0);
+    } catch {
+      return `$${Number(price) || 0}`;
     }
   };
 
@@ -137,7 +76,7 @@ export default function CryptoMarketTicker({
   };
 
   // Save data to localStorage cache
-  const saveToCache = useCallback((data: Record<string, TokenPriceData>) => {
+  const saveToCache = useCallback((data: MarketTickerItem[]) => {
     if (typeof window === 'undefined' || !window.localStorage) return;
     
     try {
@@ -149,7 +88,7 @@ export default function CryptoMarketTicker({
   }, []);
 
   // Load data from localStorage cache
-  const loadFromCache = useCallback((): Record<string, TokenPriceData> | null => {
+  const loadFromCache = useCallback((): MarketTickerItem[] | null => {
     if (typeof window === 'undefined' || !window.localStorage) return null;
     
     try {
@@ -168,175 +107,154 @@ export default function CryptoMarketTicker({
     return null;
   }, []);
 
-  // Handle Pusher ticker updates
-  const handleTickerUpdate = useCallback((data: TokenTickerEvent) => {
-    if (!isMountedRef.current) return;
-
-     console.log(`📊 Ticker update via Pusher: ${data.symbol} = $${data.price}`);
-
-    const tokenData: TokenPriceData = {
-      symbol: data.symbol,
-      price: data.price,
-      price_change_percentage_24h: data.priceChange24h,
-    };
-
-    setTokenPrices(prev => {
-      const newPrices = { ...prev, [data.symbol]: tokenData };
-      saveToCache(newPrices);
-      return newPrices;
-    });
-
-    setDataSource('pusher');
-    setRetryCount(0);
-  }, [saveToCache]);
-
-  // Handle Pusher connection state changes
-  const handleConnectionStateChange = useCallback((state: string) => {
-    const connected = state === 'connected';
-    setIsConnected(connected);
-
-    if (!connected) {
-       console.log('🔴 Pusher disconnected, falling back to polling');
-      // Don't immediately fall back, give Pusher a chance to reconnect
-      setTimeout(() => {
-        if (!connected && isMountedRef.current) {
-          startFallbackPolling();
-        }
-      }, 5000);
-    } else {
-       console.log('🟢 Pusher connected, stopping fallback polling');
-      stopFallbackPolling();
-    }
-  }, []);
-
-  // Fallback polling for when Pusher is not available
-  const startFallbackPolling = useCallback(() => {
-    if (cleanupRef.current) return; // Already polling
-
-     console.log('🔄 Starting fallback polling for token prices');
-
-    const cleanup = createTokenPriceUpdater((updatedPrices) => {
+  /**
+   * Load our in-house market ticker:
+   * - Market performance (price + 24h change) comes from ClickHouse via `/api/market-rankings`.
+   * - Market metadata (name/symbol + fallback price) comes from Supabase `markets` via `/api/markets`.
+   */
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
       if (!isMountedRef.current) return;
 
-      if (Object.keys(updatedPrices).length > 0) {
-        setTokenPrices(prev => {
-          const newPrices = { ...prev, ...updatedPrices };
-          saveToCache(newPrices);
-          return newPrices;
+      try {
+        // 1) Pull ALL markets (paged) for full coverage.
+        const fetchAllMarkets = async (): Promise<any[]> => {
+          const pageSize = 200;
+          const all: any[] = [];
+          let offset = 0;
+          let total: number | null = null;
+
+          while (true) {
+            const url = `/api/markets?limit=${pageSize}&offset=${offset}`;
+            const res = await fetch(url, { signal });
+            const json = await res.json().catch(() => null);
+            if (!res.ok || !json?.success) throw new Error('markets_fetch_failed');
+
+            const page: any[] = Array.isArray(json.markets) ? json.markets : [];
+            const t = Number(json?.pagination?.total);
+            if (Number.isFinite(t) && t >= 0) total = t;
+
+            all.push(...page);
+            offset += pageSize;
+
+            if (page.length < pageSize) break;
+            if (total != null && all.length >= total) break;
+            if (signal?.aborted) break;
+          }
+
+          return all;
+        };
+
+        const markets = await fetchAllMarkets();
+
+        const byId = new Map<string, any>();
+        markets.forEach((m: any) => {
+          if (m?.id) byId.set(String(m.id), m);
         });
-        setDataSource('live');
-        setRetryCount(0);
-      }
-    }, DEFAULT_TOKENS);
 
-    cleanupRef.current = cleanup;
-  }, [saveToCache]);
+        // 2) Overlay clickhouse ranking data when available (but do not require it).
+        const qs = new URLSearchParams();
+        qs.set('kind', 'trending');
+        qs.set('windowHours', '168');
+        // Pull more than we display so we can still show 21 after filtering/joins.
+        qs.set('limit', '100');
 
-  const stopFallbackPolling = useCallback(() => {
-    if (cleanupRef.current) {
-       console.log('🛑 Stopping fallback polling');
-      cleanupRef.current();
-      cleanupRef.current = null;
-    }
-  }, []);
+        const rankRes = await fetch(`/api/market-rankings?${qs.toString()}`, { signal });
+        const rankJson = await rankRes.json().catch(() => null);
+        const rows: any[] =
+          rankRes.ok && rankJson?.success && Array.isArray(rankJson.rows) ? rankJson.rows : [];
 
-  // Initial data loading
-  const loadInitialData = useCallback(async () => {
-    if (!isMountedRef.current) return;
+        const seen = new Set<string>();
+        const out: MarketTickerItem[] = [];
 
-    try {
-      setIsLoading(true);
+        const pushMarket = (marketId: string, opts?: { price?: number; changePct24h?: number }) => {
+          const m = byId.get(marketId);
+          if (!m) return;
+          if (seen.has(marketId)) return;
 
-      // Try cached data first
-      const cached = loadFromCache();
-      if (cached && Object.keys(cached).length > 0) {
-         console.log('📱 Using cached token prices');
-        setTokenPrices(cached);
-        setDataSource('cached');
+          const symbol = String(m?.symbol || m?.market_identifier || marketId).toUpperCase();
+          const name =
+            typeof m?.name === 'string' && m.name.trim()
+              ? m.name.trim()
+              : typeof m?.market_identifier === 'string' && m.market_identifier.trim()
+                ? m.market_identifier.trim()
+                : symbol;
+
+          const fallbackPrice = Number(m?.initial_price ?? m?.last_trade_price ?? 0) || 0;
+          const price = Number.isFinite(Number(opts?.price)) ? (Number(opts?.price) as number) : fallbackPrice;
+          const change = Number.isFinite(Number(opts?.changePct24h))
+            ? (Number(opts?.changePct24h) as number)
+            : 0;
+
+          seen.add(marketId);
+          out.push({
+            marketId,
+            symbol,
+            name,
+            price,
+            price_change_percentage_24h: change,
+          });
+        };
+
+        // Prefer ClickHouse-ranked markets first (when present).
+        for (const r of rows) {
+          const id = String(r?.marketUuid || r?.market_uuid || '').trim();
+          if (!id) continue;
+          const lastPriceRaw = r?.close1h ?? r?.close_1h ?? r?.close24h ?? r?.close_24h ?? null;
+          const price = Number(lastPriceRaw);
+          const change = Number(r?.priceChange24hPct ?? r?.price_change_24h_pct ?? 0);
+          pushMarket(id, {
+            price: Number.isFinite(price) ? price : undefined,
+            changePct24h: Number.isFinite(change) ? change : 0,
+          });
+        }
+
+        // Fill the rest from Supabase markets so we render ALL markets, even with 0% change.
+        for (const m of markets) {
+          const id = String(m?.id || '').trim();
+          if (!id) continue;
+          pushMarket(id);
+        }
+
+        const finalItems = out;
+
+        if (!isMountedRef.current) return;
+        setItems(finalItems);
         setIsLoading(false);
+        saveToCache(finalItems);
+      } catch (e) {
+        // Keep whatever we already have on screen.
+        if (!isMountedRef.current) return;
+        setIsLoading(false);
+        // eslint-disable-next-line no-console
+        console.warn('Market ticker refresh failed:', e);
       }
+    },
+    [saveToCache]
+  );
 
-      // Fetch fresh data
-       console.log('🔍 Fetching fresh token prices');
-      const prices = await fetchTokenPrices(DEFAULT_TOKENS);
-
-      if (Object.keys(prices).length > 0) {
-         console.log('✅ Successfully loaded fresh price data');
-        setTokenPrices(prices);
-        setDataSource('live');
-        saveToCache(prices);
-      } else if (!cached) {
-        // No cached data and no fresh data - use fallback
-         console.log('⚠️ No price data available, using fallback');
-        setTokenPrices(FALLBACK_PRICES);
-        setDataSource('fallback');
-      }
-
-      setIsLoading(false);
-    } catch (error) {
-      console.error('❌ Error loading initial token data:', error);
-      
-      // Try cached data
-      const cached = loadFromCache();
-      if (cached && Object.keys(cached).length > 0) {
-        setTokenPrices(cached);
-        setDataSource('cached');
-      } else {
-        setTokenPrices(FALLBACK_PRICES);
-        setDataSource('fallback');
-      }
-      setIsLoading(false);
-    }
-  }, [loadFromCache, saveToCache]);
-
-  // Set up Pusher subscription
-  useEffect(() => {
-    if (!pusher) return;
-
-     console.log('🚀 Setting up Pusher ticker subscription');
-
-    // Subscribe to token ticker updates
-    const unsubscribeTicker = pusher.subscribeToTokenTicker(handleTickerUpdate);
-    const unsubscribeConnection = pusher.onConnectionStateChange(handleConnectionStateChange);
-
-    unsubscribeRef.current = () => {
-      unsubscribeTicker();
-      unsubscribeConnection();
-    };
-
-    return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
-    };
-  }, [pusher, handleTickerUpdate, handleConnectionStateChange]);
-
-  // Initialize data loading and fallback logic
+  // Load from cache immediately, then refresh from ClickHouse + Supabase.
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Load initial data
-    loadInitialData();
+    const cached = loadFromCache();
+    if (cached && cached.length > 0) {
+      setItems(cached);
+      setIsLoading(false);
+    }
 
-    // Start fallback polling after a delay if Pusher doesn't connect
-    const fallbackTimer = setTimeout(() => {
-      if (!isConnected && isMountedRef.current) {
-         console.log('⏰ Pusher not connected, starting fallback polling');
-        startFallbackPolling();
-      }
-    }, 10000); // Wait 10 seconds for Pusher connection
+    const ctrl = new AbortController();
+    refresh(ctrl.signal);
+
+    const interval = setInterval(() => {
+      refresh();
+    }, 30_000);
 
     return () => {
-      clearTimeout(fallbackTimer);
-      stopFallbackPolling();
-      
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-        retryTimeoutRef.current = null;
-      }
+      ctrl.abort();
+      clearInterval(interval);
     };
-  }, [isConnected, loadInitialData, startFallbackPolling, stopFallbackPolling]);
+  }, [loadFromCache, refresh]);
 
   // Handle hover events for pause on hover
   const handleMouseEnter = () => {
@@ -351,13 +269,16 @@ export default function CryptoMarketTicker({
     }
   };
 
-  // Convert tokenPrices object to array and filter valid entries
-  const validTokens = Object.values(tokenPrices).filter(token => 
-    token && token.symbol && typeof token.price === 'number' && token.price > 0
+  const validItems = useMemo(
+    () =>
+      (items || []).filter(
+        (m) => m && m.marketId && m.symbol && Number.isFinite(m.price) && m.price >= 0
+      ),
+    [items]
   );
 
   // Show loading state only briefly
-  if (isLoading && validTokens.length === 0) {
+  if (isLoading && validItems.length === 0) {
     return (
       <div className={`${styles.container} ${className}`}>
         <div className={styles.loading}>
@@ -370,28 +291,37 @@ export default function CryptoMarketTicker({
   return (
     <div className={`${styles.container} ${className}`}>
       <div 
-        ref={tickerRef}
         className={`${styles.ticker} ${isPaused ? styles.paused : ''}`}
         style={{ '--ticker-duration': `${speed}s` } as React.CSSProperties}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        role="marquee"
+        aria-label="Dexextra market ticker"
       >
-        {validTokens.concat(validTokens).map((token, index) => (
-          <a
-            key={`${token.symbol}-${index}`}
-            href={getCoinGeckoUrl(token.symbol)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.tickerItem}
-          >
-            <span className={styles.symbol}>{token.symbol}</span>
-            <span className={styles.separator}>•</span>
-            <span className={styles.price}>${formatPrice(token.price)}</span>
-            <span className={`${styles.change} ${getChangeColorClass(token.price_change_percentage_24h)}`}>
-              {formatPercentage(token.price_change_percentage_24h)}
-            </span>
-          </a>
-        ))}
+        {validItems.concat(validItems).map((m, index) => {
+          const href = m.symbol ? `/token/${encodeURIComponent(m.symbol)}` : '#';
+          return (
+            <a
+              key={`${m.marketId}-${index}`}
+              href={href}
+              className={styles.tickerItem}
+              aria-disabled={!m.symbol}
+              tabIndex={m.symbol ? 0 : -1}
+              onClick={(e) => {
+                if (!m.symbol) e.preventDefault();
+              }}
+              title={m.name}
+              aria-label={`${m.symbol} ${formatPrice(m.price)} ${formatPercentage(m.price_change_percentage_24h)}`}
+            >
+              <span className={styles.symbol}>{m.symbol}</span>
+              <span className={styles.separator}>•</span>
+              <span className={styles.price}>{formatPrice(m.price)}</span>
+              <span className={`${styles.change} ${getChangeColorClass(m.price_change_percentage_24h)}`}>
+                {formatPercentage(m.price_change_percentage_24h)}
+              </span>
+            </a>
+          );
+        })}
       </div>
     </div>
   );
