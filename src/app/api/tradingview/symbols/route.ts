@@ -8,6 +8,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// In-memory cache for symbol info (reduces Supabase queries on rapid navigation)
+type CachedSymbolInfo = { expiresAt: number; data: any };
+const SYMBOL_CACHE = new Map<string, CachedSymbolInfo>();
+const SYMBOL_CACHE_TTL_MS = 60_000; // 1 minute cache
+const SYMBOL_CACHE_MAX_KEYS = 500;
+
 function clampInt(n: number, min: number, max: number): number {
   if (!Number.isFinite(n)) return min;
   return Math.max(min, Math.min(max, Math.trunc(n)));
@@ -79,6 +85,23 @@ export async function GET(request: NextRequest) {
 
     // TradingView sometimes passes `EXCHANGE:SYMBOL`. Our canonical id is the UUID (SYMBOL part).
     const symbol = rawSymbol.includes(':') ? rawSymbol.split(':').pop()! : rawSymbol;
+
+    // Check in-memory cache first (dramatically speeds up TradingView's frequent symbol lookups)
+    const cacheKey = `sym:${symbol.toLowerCase()}`;
+    const cached = SYMBOL_CACHE.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return NextResponse.json(cached.data, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Content-Type': 'application/json',
+          'X-Cache': 'HIT',
+          // CDN cache for faster subsequent requests
+          'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
+        }
+      });
+    }
 
     // Avoid spamming dev logs: this endpoint is called frequently by the charting library
 
@@ -186,12 +209,22 @@ export async function GET(request: NextRequest) {
 
     // Avoid spamming dev logs
 
+    // Cache the result for subsequent requests
+    if (SYMBOL_CACHE.size > SYMBOL_CACHE_MAX_KEYS) {
+      // Best-effort safety valve
+      SYMBOL_CACHE.clear();
+    }
+    SYMBOL_CACHE.set(cacheKey, { data: symbolInfo, expiresAt: Date.now() + SYMBOL_CACHE_TTL_MS });
+
     return NextResponse.json(symbolInfo, {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Cache': 'MISS',
+        // CDN cache for faster subsequent requests
+        'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60',
       }
     });
 

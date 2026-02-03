@@ -21,6 +21,16 @@ const MARKET_UUID_CACHE = new Map<string, CachedMarketUuid>();
 const MARKET_UUID_CACHE_TTL_MS = 5 * 60_000;
 const MARKET_UUID_CACHE_MAX_KEYS = 1000;
 
+// Cache for metric name resolution (avoids repeated Supabase queries for the same market)
+type CachedMetricName = { expiresAt: number; name: string };
+const METRIC_NAME_CACHE = new Map<string, CachedMetricName>();
+const METRIC_NAME_CACHE_TTL_MS = 5 * 60_000;
+
+// Cache for "no metric data" results to avoid repeated ClickHouse queries for sparse markets
+type CachedNoMetricData = { expiresAt: number };
+const NO_METRIC_DATA_CACHE = new Map<string, CachedNoMetricData>();
+const NO_METRIC_DATA_CACHE_TTL_MS = 30_000; // 30 seconds - short TTL so new data is picked up quickly
+
 function isDevSeedEnabled(): boolean {
   // Safety: disable by default in production. You can explicitly allow it with CHARTS_DEV_SEED=1.
   if (process.env.CHARTS_DEV_SEED === '1') return true;
@@ -92,6 +102,13 @@ type MetricOhlcv = {
 async function resolveMetricNameForMarketUuid(marketUuid: string, fallbackSymbol: string): Promise<string> {
   const id = String(marketUuid || '').trim();
   if (!id) return String(fallbackSymbol || '').toUpperCase();
+  
+  // Check cache first to avoid repeated Supabase queries
+  const cached = METRIC_NAME_CACHE.get(id);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.name;
+  }
+  
   try {
     // Prefer orderbook markets view (this is what TradingView uses).
     const { data: ob } = await supabase
@@ -101,7 +118,11 @@ async function resolveMetricNameForMarketUuid(marketUuid: string, fallbackSymbol
       .limit(1)
       .maybeSingle();
     const m = (ob as any)?.metric_id || (ob as any)?.symbol;
-    if (m) return String(m).toUpperCase();
+    if (m) {
+      const name = String(m).toUpperCase();
+      METRIC_NAME_CACHE.set(id, { name, expiresAt: Date.now() + METRIC_NAME_CACHE_TTL_MS });
+      return name;
+    }
   } catch {
     // ignore
   }
@@ -109,11 +130,17 @@ async function resolveMetricNameForMarketUuid(marketUuid: string, fallbackSymbol
     // Fallback: legacy markets table
     const { data: m } = await supabase.from('markets').select('market_identifier, symbol').eq('id', id).limit(1).maybeSingle();
     const sym = (m as any)?.market_identifier || (m as any)?.symbol;
-    if (sym) return String(sym).toUpperCase();
+    if (sym) {
+      const name = String(sym).toUpperCase();
+      METRIC_NAME_CACHE.set(id, { name, expiresAt: Date.now() + METRIC_NAME_CACHE_TTL_MS });
+      return name;
+    }
   } catch {
     // ignore
   }
-  return String(fallbackSymbol || '').toUpperCase();
+  const fallback = String(fallbackSymbol || '').toUpperCase();
+  METRIC_NAME_CACHE.set(id, { name: fallback, expiresAt: Date.now() + METRIC_NAME_CACHE_TTL_MS });
+  return fallback;
 }
 
 async function fetchMetricSeriesAsOhlcv(params: {
@@ -481,53 +508,66 @@ export async function GET(request: NextRequest) {
       // This enables "metric-only" charts (indicator without candles) while still giving TradingView
       // a time axis for studies (`context.symbol.time`).
       if (marketUuid && clickhouse.isConfigured() && METRIC_TF_ALLOWED.has(timeframe)) {
-        try {
-          const metricName = await resolveMetricNameForMarketUuid(marketUuid, symbol);
-          const metricBars = await fetchMetricSeriesAsOhlcv({
-            marketUuid,
-            metricName,
-            timeframe,
-            limit,
-            startTime: effectiveStartTime,
-            endTime,
-          });
-          if (metricBars && metricBars.count > 0) {
-            const body = {
-              s: 'ok',
-              t: metricBars.t,
-              o: metricBars.o,
-              h: metricBars.h,
-              l: metricBars.l,
-              c: metricBars.c,
-              v: metricBars.v,
-              meta: {
-                count: metricBars.count,
-                symbol,
-                resolution,
-                timeframe,
-                architecture: 'metric_series_fallback',
-                marketUuid,
-                metricName,
-              },
-            };
+        // OPTIMIZATION: Check if we recently determined this market has no metric data
+        // This avoids repeated expensive ClickHouse queries for sparse markets
+        const noDataCacheKey = `noMetric:${marketUuid}:${timeframe}`;
+        const cachedNoData = NO_METRIC_DATA_CACHE.get(noDataCacheKey);
+        const skipMetricFallback = cachedNoData && cachedNoData.expiresAt > Date.now();
+        
+        if (!skipMetricFallback) {
+          try {
+            const metricName = await resolveMetricNameForMarketUuid(marketUuid, symbol);
+            const metricBars = await fetchMetricSeriesAsOhlcv({
+              marketUuid,
+              metricName,
+              timeframe,
+              limit,
+              startTime: effectiveStartTime,
+              endTime,
+            });
+            if (metricBars && metricBars.count > 0) {
+              const body = {
+                s: 'ok',
+                t: metricBars.t,
+                o: metricBars.o,
+                h: metricBars.h,
+                l: metricBars.l,
+                c: metricBars.c,
+                v: metricBars.v,
+                meta: {
+                  count: metricBars.count,
+                  symbol,
+                  resolution,
+                  timeframe,
+                  architecture: 'metric_series_fallback',
+                  marketUuid,
+                  metricName,
+                },
+              };
 
-            const headers: Record<string, string> = {
-              'Access-Control-Allow-Origin': '*',
-              // Short cache like normal history responses; safe because metric-series changes are frequent but not per-request.
-              'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=30',
-              'Server-Timing': [
-                `supabase;dur=${tResolve1 - tResolve0}`,
-                `clickhouse;dur=${tCh1 - tCh0}`,
-                `total;dur=${Date.now() - t0}`,
-              ].join(', '),
-              'X-Cache': 'MISS',
-              'X-Metric-Bars': '1',
-            };
-            HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + HISTORY_CACHE_TTL_MS, body, headers });
-            return NextResponse.json(body, { headers });
+              const headers: Record<string, string> = {
+                'Access-Control-Allow-Origin': '*',
+                // Short cache like normal history responses; safe because metric-series changes are frequent but not per-request.
+                'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=30',
+                'Server-Timing': [
+                  `supabase;dur=${tResolve1 - tResolve0}`,
+                  `clickhouse;dur=${tCh1 - tCh0}`,
+                  `total;dur=${Date.now() - t0}`,
+                ].join(', '),
+                'X-Cache': 'MISS',
+                'X-Metric-Bars': '1',
+              };
+              HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + HISTORY_CACHE_TTL_MS, body, headers });
+              return NextResponse.json(body, { headers });
+            } else {
+              // Cache that this market has no metric data to avoid repeated queries
+              NO_METRIC_DATA_CACHE.set(noDataCacheKey, { expiresAt: Date.now() + NO_METRIC_DATA_CACHE_TTL_MS });
+            }
+          } catch {
+            // Cache the failure to avoid repeated attempts
+            NO_METRIC_DATA_CACHE.set(noDataCacheKey, { expiresAt: Date.now() + NO_METRIC_DATA_CACHE_TTL_MS });
+            // ignore and fall through to debug seed / no_data
           }
-        } catch {
-          // ignore and fall through to debug seed / no_data
         }
       }
 
@@ -664,20 +704,15 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // IMPORTANT:
-      // Do NOT cache `no_data` responses.
-      //
-      // When a market has no history at initial load, TradingView can repeatedly request the same
-      // time range. If we cache `no_data` (in-memory or CDN), then when ticks start arriving a moment
-      // later the UI appears "stuck" until the user changes resolution (different cache key) or reloads.
-      //
-      // Instead, return `no_data` with `Cache-Control: no-store` and a future `nextTime` hint so
-      // TradingView will re-query soon and pick up newly-ingested candles without user interaction.
+      // OPTIMIZATION: Use a short in-memory cache for `no_data` responses (5 seconds).
+      // This prevents rapid-fire requests from hammering the database while still allowing
+      // new data to be picked up reasonably quickly. CDN cache is still disabled to ensure
+      // freshness across server instances.
       const body = {
         s: 'no_data',
         nextTime: Math.floor(endTime.getTime() / 1000) + tfSec,
       };
-      const headers = {
+      const headers: Record<string, string> = {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-store',
         'Server-Timing': [
@@ -685,7 +720,10 @@ export async function GET(request: NextRequest) {
           `clickhouse;dur=${tCh1 - tCh0}`,
           `total;dur=${Date.now() - t0}`,
         ].join(', '),
+        'X-No-Data': '1',
       };
+      // Short in-memory cache to prevent hammering DB on repeated no_data requests
+      HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + 5_000, body, headers });
       return NextResponse.json(body, { headers });
     }
 

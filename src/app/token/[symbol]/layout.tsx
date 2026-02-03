@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import Script from 'next/script';
 
 interface TokenLayoutProps {
   params: Promise<{ symbol: string }>;
@@ -15,5 +16,20 @@ export async function generateMetadata({ params }: { params: Promise<{ symbol: s
 }
 
 export default function TokenLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return (
+    <>
+      {/* Preload TradingView scripts for faster chart initialization */}
+      <Script
+        id="tradingview-charting-library-preload"
+        src="/charting_library/charting_library.js"
+        strategy="beforeInteractive"
+      />
+      <Script
+        id="tradingview-udf-datafeed-preload"
+        src="/charting_library/datafeeds/udf/dist/bundle.js"
+        strategy="beforeInteractive"
+      />
+      {children}
+    </>
+  );
 } 
