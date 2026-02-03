@@ -324,7 +324,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                  {/* Create Market Button - Only show when open */}
          {isOpen && (
            <button
-             onClick={() => router.push('/markets/create')}
+             onClick={() => router.push('/new-market')}
              className="flex items-center justify-center text-white font-semibold text-base transition-all duration-200 hover:opacity-80 cursor-pointer"
              style={{
                height: '50px',
@@ -335,14 +335,14 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                width: '100%',
              }}
            >
-             <span>➕ Create Market</span>
+             <span>➕ New Market</span>
            </button>
          )}
 
          {/* Create Market Icon - Only show when collapsed */}
          {!isOpen && (
            <button
-             onClick={() => router.push('/create-market')}
+             onClick={() => router.push('/new-market')}
              className="flex items-center justify-center text-white font-semibold transition-all duration-200 hover:opacity-80 cursor-pointer"
              style={{
                height: '40px',
@@ -352,7 +352,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                margin: '0 auto',
                border: 'none',
              }}
-             title="Create Market"
+             title="New Market"
            >
              <span>➕</span>
            </button>

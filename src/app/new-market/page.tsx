@@ -2,11 +2,11 @@ import React from 'react';
 import { CreateMarketV2Page } from '@/components/create-market-v2';
 
 export const metadata = {
-  title: 'Create Market (V2) | Dexextra',
-  description: 'Preview the redesigned create market experience',
+  title: 'New Market | Dexextra',
+  description: 'Create a new prediction market',
 };
 
-export default function CreateMarketV2Route() {
+export default function NewMarketRoute() {
   return <CreateMarketV2Page />;
 }
 
