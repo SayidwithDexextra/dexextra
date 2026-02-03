@@ -388,7 +388,9 @@ const Footer: React.FC = () => {
         }}
       >
         <Link 
-          href="/terms"
+          href="https://dexetera.win/dexetera-tos.html"
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
             padding: '4px 8px',
             fontSize: '14px',
@@ -405,7 +407,9 @@ const Footer: React.FC = () => {
         </Link>
         
         <Link 
-          href="/privacy"
+          href="https://dexetera.win/dexetera-privacy.html"
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
             padding: '4px 8px',
             fontSize: '14px',

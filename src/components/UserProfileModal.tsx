@@ -214,7 +214,7 @@ export default function UserProfileModal({
               e.currentTarget.style.backgroundColor = 'transparent'
             }}
             onClick={() => {
-              // Handle watchlist navigation
+              router.push('/watchlist')
               onClose()
             }}
           >

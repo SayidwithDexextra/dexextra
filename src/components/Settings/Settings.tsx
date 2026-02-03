@@ -227,7 +227,7 @@ export default function Settings({ className }: SettingsProps) {
   }
 
   return (
-    <div className={`min-h-screen bg-[#0F0F0F] text-white font-sans ${className || ''}`}>
+    <div className={`dex-page-enter-up min-h-screen bg-[#0F0F0F] text-white font-sans ${className || ''}`}>
       <div className="max-w-2xl mx-auto p-6">
         {/* Header Section */}
         <div className="mb-8">

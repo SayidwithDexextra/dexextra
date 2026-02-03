@@ -31,3 +31,7 @@ export { useTrading } from './useTrading';
 
 // USDC Deposit hook
 export { useUSDCDeposit } from './useUSDCDeposit';
+
+// Performance detection
+export { useDevicePerformance, usePerformanceTier } from './useDevicePerformance';
+export type { PerformanceTier, DevicePerformanceInfo } from './useDevicePerformance';

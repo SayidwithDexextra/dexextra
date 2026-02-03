@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from './CryptoMarketTicker.module.css';
+import { Tooltip } from '../ui/Tooltip';
 
 interface MarketTickerItem {
   marketId: string;
   symbol: string;
   name: string;
+  description?: string;
   price: number;
   price_change_percentage_24h: number;
 }
@@ -167,7 +169,7 @@ export default function CryptoMarketTicker({
         const seen = new Set<string>();
         const out: MarketTickerItem[] = [];
 
-        const pushMarket = (marketId: string, opts?: { price?: number; changePct24h?: number }) => {
+        const pushMarket = (marketId: string, opts?: { changePct24h?: number }) => {
           const m = byId.get(marketId);
           if (!m) return;
           if (seen.has(marketId)) return;
@@ -179,9 +181,12 @@ export default function CryptoMarketTicker({
               : typeof m?.market_identifier === 'string' && m.market_identifier.trim()
                 ? m.market_identifier.trim()
                 : symbol;
+          const description =
+            typeof m?.description === 'string' && m.description.trim() ? m.description.trim() : undefined;
 
-          const fallbackPrice = Number(m?.initial_price ?? m?.last_trade_price ?? 0) || 0;
-          const price = Number.isFinite(Number(opts?.price)) ? (Number(opts?.price) as number) : fallbackPrice;
+          // Price should always reflect Supabase `market_tickers.mark_price` (via /api/markets `initial_price`)
+          // regardless of any "stale" flags elsewhere.
+          const price = Number(m?.initial_price ?? m?.last_trade_price ?? 0) || 0;
           const change = Number.isFinite(Number(opts?.changePct24h))
             ? (Number(opts?.changePct24h) as number)
             : 0;
@@ -191,6 +196,7 @@ export default function CryptoMarketTicker({
             marketId,
             symbol,
             name,
+            description,
             price,
             price_change_percentage_24h: change,
           });
@@ -200,11 +206,8 @@ export default function CryptoMarketTicker({
         for (const r of rows) {
           const id = String(r?.marketUuid || r?.market_uuid || '').trim();
           if (!id) continue;
-          const lastPriceRaw = r?.close1h ?? r?.close_1h ?? r?.close24h ?? r?.close_24h ?? null;
-          const price = Number(lastPriceRaw);
           const change = Number(r?.priceChange24hPct ?? r?.price_change_24h_pct ?? 0);
           pushMarket(id, {
-            price: Number.isFinite(price) ? price : undefined,
             changePct24h: Number.isFinite(change) ? change : 0,
           });
         }
@@ -279,10 +282,46 @@ export default function CryptoMarketTicker({
 
   // Show loading state only briefly
   if (isLoading && validItems.length === 0) {
+    const skeleton = [
+      { symbolW: 42, priceW: 78, changeW: 52 },
+      { symbolW: 34, priceW: 64, changeW: 46 },
+      { symbolW: 50, priceW: 84, changeW: 56 },
+      { symbolW: 38, priceW: 72, changeW: 48 },
+      { symbolW: 46, priceW: 80, changeW: 54 },
+      { symbolW: 36, priceW: 66, changeW: 44 },
+      { symbolW: 54, priceW: 90, changeW: 58 },
+    ];
+
     return (
       <div className={`${styles.container} ${className}`}>
-        <div className={styles.loading}>
-          Loading market data...
+        <div
+          className={styles.loading}
+          role="status"
+          aria-live="polite"
+          aria-label="Loading market data"
+        >
+          <div
+            className={styles.loadingTicker}
+            style={{ '--loading-duration': '18s' } as React.CSSProperties}
+          >
+            {skeleton.concat(skeleton).map((s, index) => (
+              <div key={index} className={styles.loadingItem} aria-hidden="true">
+                <span
+                  className={styles.skeletonBar}
+                  style={{ '--w': `${s.symbolW}px` } as React.CSSProperties}
+                />
+                <span className={styles.skeletonDot} />
+                <span
+                  className={styles.skeletonBar}
+                  style={{ '--w': `${s.priceW}px` } as React.CSSProperties}
+                />
+                <span
+                  className={styles.skeletonBar}
+                  style={{ '--w': `${s.changeW}px` } as React.CSSProperties}
+                />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -300,26 +339,58 @@ export default function CryptoMarketTicker({
       >
         {validItems.concat(validItems).map((m, index) => {
           const href = m.symbol ? `/token/${encodeURIComponent(m.symbol)}` : '#';
+          const tooltipTitle = m.symbol || 'Market';
+          const tooltipDescription =
+            typeof m.description === 'string' && m.description.trim()
+              ? m.description.trim().length > 220
+                ? `${m.description.trim().slice(0, 220)}…`
+                : m.description.trim()
+              : '';
+          const tooltipContent = (
+            <div className="space-y-1">
+              <div className="text-white">{m.name}</div>
+              {tooltipDescription ? (
+                <div className="text-[#808080] leading-snug">{tooltipDescription}</div>
+              ) : null}
+              <div className="flex items-center gap-3 pt-1 border-t border-[#1A1A1A] text-[9px]">
+                <div className="flex items-center gap-1">
+                  <span className="text-[#606060]">Price:</span>
+                  <span className="text-white">{formatPrice(m.price)}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[#606060]">24h:</span>
+                  <span className={m.price_change_percentage_24h >= 0 ? 'text-[#00C851]' : 'text-[#FF4444]'}>
+                    {formatPercentage(m.price_change_percentage_24h)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
           return (
-            <a
+            <Tooltip
               key={`${m.marketId}-${index}`}
-              href={href}
-              className={styles.tickerItem}
-              aria-disabled={!m.symbol}
-              tabIndex={m.symbol ? 0 : -1}
-              onClick={(e) => {
-                if (!m.symbol) e.preventDefault();
-              }}
-              title={m.name}
-              aria-label={`${m.symbol} ${formatPrice(m.price)} ${formatPercentage(m.price_change_percentage_24h)}`}
+              title={tooltipTitle}
+              content={tooltipContent}
+              maxWidth={360}
             >
-              <span className={styles.symbol}>{m.symbol}</span>
-              <span className={styles.separator}>•</span>
-              <span className={styles.price}>{formatPrice(m.price)}</span>
-              <span className={`${styles.change} ${getChangeColorClass(m.price_change_percentage_24h)}`}>
-                {formatPercentage(m.price_change_percentage_24h)}
-              </span>
-            </a>
+              <a
+                href={href}
+                className={styles.tickerItem}
+                aria-disabled={!m.symbol}
+                tabIndex={m.symbol ? 0 : -1}
+                onClick={(e) => {
+                  if (!m.symbol) e.preventDefault();
+                }}
+                aria-label={`${m.symbol} ${formatPrice(m.price)} ${formatPercentage(m.price_change_percentage_24h)}`}
+              >
+                <span className={styles.symbol}>{m.symbol}</span>
+                <span className={styles.separator}>•</span>
+                <span className={styles.price}>{formatPrice(m.price)}</span>
+                <span className={`${styles.change} ${getChangeColorClass(m.price_change_percentage_24h)}`}>
+                  {formatPercentage(m.price_change_percentage_24h)}
+                </span>
+              </a>
+            </Tooltip>
           );
         })}
       </div>

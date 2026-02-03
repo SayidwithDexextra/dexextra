@@ -86,8 +86,9 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     if (obLive?.lastTradePrice && obLive.lastTradePrice > 0) {
       return obLive.lastTradePrice;
     }
-    // 3) Use DB ticker mark price if not stale (stored with 1e6 precision)
-    if (dbTicker?.mark_price && dbTicker.mark_price > 0 && !dbTicker.is_stale) {
+    // 3) Use DB ticker mark price (stored with 1e6 precision)
+    // Per requirement: ignore stale state; if the table has a price, render it.
+    if (dbTicker?.mark_price && dbTicker.mark_price > 0) {
       return dbTicker.mark_price / 1_000_000;
     }
     // 4) Use tick_size as base for new markets
@@ -95,7 +96,7 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       return (market as any).tick_size as number;
     }
     return 1.0;
-  }, [obLive?.bestBid, obLive?.bestAsk, obLive?.lastTradePrice, dbTicker?.mark_price, dbTicker?.is_stale, (market as any)?.tick_size]);
+  }, [obLive?.bestBid, obLive?.bestAsk, obLive?.lastTradePrice, dbTicker?.mark_price, (market as any)?.tick_size]);
 
   // Compose token data
   const tokenData: TokenData | null = useMemo(() => {

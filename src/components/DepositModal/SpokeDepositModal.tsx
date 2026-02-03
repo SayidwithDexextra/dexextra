@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Wallet } from 'lucide-react'
 
 interface SpokeDepositModalProps {
   isOpen: boolean
@@ -188,6 +189,7 @@ export default function SpokeDepositModal({
                   />
                 </div>
                 <span className="tracking-wide">Deposit</span>
+                <Wallet className="h-4 w-4 text-white" aria-hidden="true" />
               </>
             )}
           </button>

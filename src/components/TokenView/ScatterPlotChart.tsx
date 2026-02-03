@@ -152,7 +152,7 @@ export default function ScatterPlotChart({
     const postedIndexRef = { current: -1 as number };
     // Defaults: run at most once per view per timeframe every 5 minutes; wait up to 10s for worker
     const ttlMsEnv = 300000; // 5 minutes
-    const workerTimeoutMs = 10000; // 10 seconds
+    const workerTimeoutMs = 60000; // 60 seconds - increased for screenshot + vision analysis
     const storageKey = `ai-ingest:last:${marketId}:${selectedTimeframe}`;
     try {
       console.log('[ScatterIngest] candidate', { marketId, tf: selectedTimeframe, metricUrl, ttlMs: ttlMsEnv, storageKey });

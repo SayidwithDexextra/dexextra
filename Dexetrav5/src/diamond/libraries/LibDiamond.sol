@@ -6,6 +6,15 @@ import "../interfaces/IDiamondCut.sol";
 library LibDiamond {
     bytes32 internal constant DIAMOND_STORAGE_POSITION = keccak256("diamond.standard.diamond.storage");
 
+    // ============ Custom Errors (smaller than revert strings) ============
+    error NotContractOwner();
+    error FacetAddressZero();
+    error SelectorExists();
+    error SelectorDoesNotExist();
+    error IncorrectFacetCutAction();
+    error InitIsZeroButCalldataNotEmpty();
+    error InitializationFunctionReverted();
+
     struct FacetAddressAndSelectorPosition {
         address facetAddress;
         uint16 selectorPosition;
@@ -40,16 +49,16 @@ library LibDiamond {
     }
 
     function enforceIsContractOwner() internal view {
-        require(msg.sender == diamondStorage().contractOwner, "LibDiamond: Must be contract owner");
+        if (msg.sender != diamondStorage().contractOwner) revert NotContractOwner();
     }
 
     function addFunctions(address _facet, bytes4[] memory _selectors) internal {
-        require(_facet != address(0), "LibDiamond: Add facet can't be address(0)");
+        if (_facet == address(0)) revert FacetAddressZero();
         DiamondStorage storage ds = diamondStorage();
         uint16 selectorCount = uint16(ds.selectors.length);
         for (uint256 i = 0; i < _selectors.length; i++) {
             bytes4 selector = _selectors[i];
-            require(ds.selectorToFacetAndPosition[selector].facetAddress == address(0), "LibDiamond: Selector exists");
+            if (ds.selectorToFacetAndPosition[selector].facetAddress != address(0)) revert SelectorExists();
             ds.selectorToFacetAndPosition[selector] = FacetAddressAndSelectorPosition({
                 facetAddress: _facet,
                 selectorPosition: selectorCount
@@ -61,12 +70,12 @@ library LibDiamond {
     }
 
     function replaceFunctions(address _facet, bytes4[] memory _selectors) internal {
-        require(_facet != address(0), "LibDiamond: Replace facet can't be address(0)");
+        if (_facet == address(0)) revert FacetAddressZero();
         DiamondStorage storage ds = diamondStorage();
         for (uint256 i = 0; i < _selectors.length; i++) {
             bytes4 selector = _selectors[i];
             address old = ds.selectorToFacetAndPosition[selector].facetAddress;
-            require(old != address(0), "LibDiamond: Selector does not exist");
+            if (old == address(0)) revert SelectorDoesNotExist();
             if (old == _facet) continue;
             ds.selectorToFacetAndPosition[selector].facetAddress = _facet;
             ds.facetFunctionCount[_facet]++;
@@ -81,7 +90,7 @@ library LibDiamond {
             bytes4 selector = _selectors[i];
             FacetAddressAndSelectorPosition memory entry = ds.selectorToFacetAndPosition[selector];
             address facet = entry.facetAddress;
-            require(facet != address(0), "LibDiamond: Selector does not exist");
+            if (facet == address(0)) revert SelectorDoesNotExist();
             // swap and pop in selectors array
             uint16 pos = entry.selectorPosition;
             bytes4 lastSelector = ds.selectors[selectorsLen - 1];
@@ -106,7 +115,7 @@ library LibDiamond {
             } else if (action == IDiamondCut.FacetCutAction.Remove) {
                 removeFunctions(selectors);
             } else {
-                revert("LibDiamond: Incorrect FacetCutAction");
+                revert IncorrectFacetCutAction();
             }
         }
         emit DiamondCut(_diamondCut, _init, _calldata);
@@ -115,7 +124,7 @@ library LibDiamond {
 
     function initializeDiamondCut(address _init, bytes memory _calldata) internal {
         if (_init == address(0)) {
-            require(_calldata.length == 0, "LibDiamond: _init is address(0) but_calldata is not empty");
+            if (_calldata.length != 0) revert InitIsZeroButCalldataNotEmpty();
         } else {
             (bool success, bytes memory error) = _init.delegatecall(_calldata);
             if (!success) {
@@ -124,7 +133,7 @@ library LibDiamond {
                         revert(add(error, 32), mload(error))
                     }
                 } else {
-                    revert("LibDiamond: Initialization function reverted");
+                    revert InitializationFunctionReverted();
                 }
             }
         }

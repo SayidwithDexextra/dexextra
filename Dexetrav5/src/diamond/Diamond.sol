@@ -9,6 +9,9 @@ import "./libraries/LibDiamond.sol";
 contract Diamond is IDiamondCut, IDiamondLoupe, IERC173 {
     using LibDiamond for LibDiamond.DiamondStorage;
 
+    error NewOwnerIsZero();
+    error FunctionDoesNotExist();
+
     constructor(address _contractOwner, FacetCut[] memory _cut, address _init, bytes memory _calldata) {
         LibDiamond.setContractOwner(_contractOwner);
         LibDiamond.diamondCut(_cut, _init, _calldata);
@@ -77,7 +80,7 @@ contract Diamond is IDiamondCut, IDiamondLoupe, IERC173 {
 
     function transferOwnership(address _newOwner) external override {
         LibDiamond.enforceIsContractOwner();
-        require(_newOwner != address(0), "Diamond: new owner is zero");
+        if (_newOwner == address(0)) revert NewOwnerIsZero();
         LibDiamond.setContractOwner(_newOwner);
     }
 
@@ -88,7 +91,7 @@ contract Diamond is IDiamondCut, IDiamondLoupe, IERC173 {
             ds.slot := position
         }
         address facet = ds.selectorToFacetAndPosition[msg.sig].facetAddress;
-        require(facet != address(0), "Diamond: Function does not exist");
+        if (facet == address(0)) revert FunctionDoesNotExist();
         assembly {
             calldatacopy(0, 0, calldatasize())
             let result := delegatecall(gas(), facet, 0, calldatasize(), 0, 0)

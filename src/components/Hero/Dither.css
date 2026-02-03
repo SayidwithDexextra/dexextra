@@ -4,10 +4,18 @@
   left: 0;
   right: 0;
   bottom: 0;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
   overflow: hidden;
   pointer-events: none;
+}
+
+/* Constrain R3F wrapper div */
+.dither-container > div {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Constrain the canvas element */
+.dither-container canvas {
+  max-width: 100% !important;
+  max-height: 100% !important;
 }

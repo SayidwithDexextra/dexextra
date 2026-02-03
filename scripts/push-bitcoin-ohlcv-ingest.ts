@@ -273,9 +273,9 @@ async function fetchLatestPriceFromSupabaseTicker(opts: {
   if (!tResp || !tResp.ok) return null;
   const tJson = (await tResp.json().catch(() => null)) as any;
   const row = Array.isArray(tJson) ? tJson[0] : null;
-  const isStale = Boolean(row?.is_stale);
-  const p = Number(row?.mark_price);
-  if (isStale) return null;
+  // Supabase stores mark_price with USDC precision (1e6). Ignore is_stale per requirement.
+  const pScaled = Number(row?.mark_price);
+  const p = Number.isFinite(pScaled) ? pScaled / 1_000_000 : NaN;
   return Number.isFinite(p) && p > 0 ? p : null;
 }
 

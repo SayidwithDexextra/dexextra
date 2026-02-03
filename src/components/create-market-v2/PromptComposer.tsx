@@ -3,8 +3,8 @@
 import React from 'react';
 import { IconAspectRatio, IconImage, IconShuffle, IconSliders, IconSparkles } from './icons';
 import { MetricDiscoveryResponse } from '@/types/metricDiscovery';
-import { MetricDefinitionCard } from './MetricDefinitionCard';
-import { SourceList } from './SourceList';
+import { MetricSourceBubble } from './MetricSourceBubble';
+import { MarketExamplesCarousel } from './MarketExamplesCarousel';
 
 type DiscoveryState = 'idle' | 'discovering' | 'success' | 'rejected' | 'error';
 
@@ -14,6 +14,24 @@ export function PromptComposer() {
   const [discoveryState, setDiscoveryState] = React.useState<DiscoveryState>('idle');
   const [discoveryResult, setDiscoveryResult] = React.useState<MetricDiscoveryResponse | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  const resizeTextarea = React.useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // Ensure there is never a visible scrollbar (even with OS "always show scrollbars").
+    textarea.style.overflowY = 'hidden';
+
+    // Reset to measure correctly, then grow to fit content.
+    textarea.style.height = '0px';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, []);
+
+  // Auto-resize before paint to avoid scrollbar flicker.
+  React.useLayoutEffect(() => {
+    resizeTextarea();
+  }, [prompt, resizeTextarea]);
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -25,7 +43,8 @@ export function PromptComposer() {
       const response = await fetch('/api/metric-discovery', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: prompt }),
+        // Only define the metric here. URL discovery happens later in Create Market V2 (Step 3).
+        body: JSON.stringify({ description: prompt, mode: 'define_only' }),
       });
 
       const data = await response.json();
@@ -63,30 +82,34 @@ export function PromptComposer() {
   };
 
   return (
-    <div className="w-full max-w-[90vw] sm:max-w-[600px] md:max-w-[720px]">
+    <div className="w-full max-w-[90vw] sm:w-[702px] sm:max-w-[702px]">
       <div 
-        className={`rounded-2xl border-2 bg-[#2A2A2A]/90 backdrop-blur-md shadow-[0_10px_40px_rgba(0,0,0,0.5)] transition-colors duration-200 ${
-          isFocused ? 'border-blue-500' : 'border-white/10'
+        className={`relative space-y-1 rounded-3xl border-[0.5px] bg-[#2A2A2A] p-3 pt-1.5 shadow-lg transition-shadow duration-200 ease-out ${
+          isFocused 
+            ? 'shadow-[0px_0px_0px_3px_rgb(55,55,55)] border-white/20' 
+            : 'border-white/10'
         }`}
       >
         {/* Input area */}
-        <div className="px-4 py-3 sm:px-5 sm:py-4">
+        <div className="px-1 py-2">
           <textarea
+            ref={textareaRef}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            onInput={resizeTextarea}
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             placeholder="Describe your metric (e.g., Current price of Bitcoin in USD)"
-            className="w-full resize-none border-0 bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus:border-0 sm:text-base"
-            style={{ outline: 'none', boxShadow: 'none' }}
-            rows={2}
+            className="scrollbar-none w-full resize-none border-0 bg-transparent text-sm text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 focus:border-0 sm:text-base leading-relaxed overflow-y-hidden"
+            style={{ outline: 'none', boxShadow: 'none', minHeight: '7.5rem' }}
+            rows={3}
             disabled={discoveryState === 'discovering'}
           />
         </div>
 
         {/* Bottom toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1 py-1.5 sm:gap-3">
           <div className="flex items-center gap-2 text-xs text-white/70 sm:gap-3">
             {discoveryState === 'idle' && (
               <>
@@ -123,10 +146,17 @@ export function PromptComposer() {
                 >
                   <IconShuffle className="h-3.5 w-3.5 text-white/70 sm:h-4 sm:w-4" />
                 </button>
+
+                {/* Development-only: Load dummy data button */}
               </>
             )}
             {discoveryState === 'discovering' && (
-              <span className="text-white/70 text-sm">Discovering metric sources...</span>
+              <div className="flex items-center gap-1.5" aria-live="polite" aria-label="Loading">
+                <span className="sr-only">Loading</span>
+                <span className="h-1.5 w-1.5 rounded-full bg-white/45 animate-bounce" />
+                <span className="h-1.5 w-1.5 rounded-full bg-white/45 animate-bounce [animation-delay:120ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-white/45 animate-bounce [animation-delay:240ms]" />
+              </div>
             )}
             {(discoveryState === 'success' || discoveryState === 'rejected' || discoveryState === 'error') && (
               <button
@@ -145,52 +175,31 @@ export function PromptComposer() {
             disabled={!prompt.trim() || discoveryState === 'discovering'}
             className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-1.5 text-xs font-medium text-black shadow-sm transition-all hover:bg-white/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:opacity-50 disabled:cursor-not-allowed sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
           >
-            <IconSparkles className="h-3.5 w-3.5 text-black sm:h-4 sm:w-4" />
-            <span>{discoveryState === 'discovering' ? 'Discovering...' : 'Discover'}</span>
+            {discoveryState === 'discovering' ? (
+              <span
+                className="h-4 w-4 animate-spin rounded-full border border-black/20 border-t-black"
+                aria-hidden="true"
+              />
+            ) : (
+              <IconSparkles className="h-3.5 w-3.5 text-black sm:h-4 sm:w-4" />
+            )}
+            <span>Create</span>
           </button>
         </div>
       </div>
 
-      {/* Discovery Results */}
+      {/* Discovery Results - Source Selection Tiles */}
       {discoveryState === 'success' && discoveryResult && discoveryResult.metric_definition && (
-        <div className="mt-4 space-y-4">
-          <MetricDefinitionCard
-            definition={discoveryResult.metric_definition}
-            confidence={discoveryResult.sources?.primary_source.confidence}
-            processingTime={discoveryResult.processing_time_ms}
-          />
-
-          {discoveryResult.sources && (
-            <div className="rounded-2xl border border-white/10 bg-[#2A2A2A]/90 p-4 sm:p-6">
-              <SourceList
-                primarySource={discoveryResult.sources.primary_source}
-                secondarySources={discoveryResult.sources.secondary_sources}
-              />
-            </div>
-          )}
-
-          {discoveryResult.assumptions && discoveryResult.assumptions.length > 0 && (
-            <div className="rounded-2xl border border-white/10 bg-[#2A2A2A]/90 p-4 sm:p-6">
-              <div className="text-sm text-white/60 mb-2">Assumptions</div>
-              <ul className="text-sm text-white/80 space-y-1.5">
-                {discoveryResult.assumptions.map((assumption, idx) => (
-                  <li key={idx} className="flex items-start gap-2">
-                    <span className="text-blue-400 mt-0.5">•</span>
-                    <span>{assumption}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <button
-            type="button"
-            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-3 text-sm font-medium text-white shadow-lg transition-all hover:bg-blue-600 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
-          >
-            <IconSparkles className="h-4 w-4" />
-            <span>Continue to Market Creation</span>
-          </button>
-        </div>
+        <MetricSourceBubble
+          primarySource={discoveryResult?.sources?.primary_source ?? null}
+          secondarySources={discoveryResult?.sources?.secondary_sources ?? []}
+          metricName={discoveryResult.metric_definition.metric_name}
+          isVisible={true}
+          onSelectSource={(source) => {
+            console.log('Selected source:', source);
+            // TODO: Handle source selection
+          }}
+        />
       )}
 
       {/* Rejection Notice */}
@@ -210,6 +219,11 @@ export function PromptComposer() {
           <h3 className="text-lg font-medium text-red-400 mb-3">✗ Discovery Failed</h3>
           <p className="text-sm text-white/80">{errorMessage || 'An unexpected error occurred'}</p>
         </div>
+      )}
+
+      {/* Market examples carousel - only shown in idle state */}
+      {discoveryState === 'idle' && (
+        <MarketExamplesCarousel />
       )}
     </div>
   );

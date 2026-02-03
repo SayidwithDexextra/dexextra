@@ -138,7 +138,7 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
           urls: state.urls,
           context: 'create',
         },
-        { intervalMs: 1500, timeoutMs: 15000 }
+        { intervalMs: 2000, timeoutMs: 60000 } // Increased for screenshot + vision analysis
       );
 
       if (!ai) throw new Error('AI analysis did not return a result in time');

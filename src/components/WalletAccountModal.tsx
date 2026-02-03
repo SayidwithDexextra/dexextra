@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import useWallet from '@/hooks/useWallet'
 import { TokenBalance } from '@/types/wallet'
@@ -15,7 +14,6 @@ interface WalletAccountModalProps {
 
 
 export default function WalletAccountModal({ isOpen, onClose }: WalletAccountModalProps) {
-  const router = useRouter()
   const { walletData, portfolio, refreshPortfolio, formatAddress } = useWallet()
   const [activeTab, setActiveTab] = useState<'crypto' | 'items'>('crypto')
   const [isClosing, setIsClosing] = useState(false)
@@ -54,31 +52,6 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
       onClose()
       setIsClosing(false)
     }, 200)
-  }
-
-  const handleActionClick = (action: string) => {
-    console.log(`${action} clicked`)
-    handleClose()
-    
-    // Navigation logic with Next.js router
-    setTimeout(() => {
-      switch (action) {
-        case 'send':
-          router.push('/send')
-          break
-        case 'swap':
-          router.push('/swap')
-          break
-        case 'deposit':
-          // Could open a deposit modal or navigate to deposit page
-          break
-        case 'buy':
-          // Could open a buy modal or navigate to buy page
-          break
-        default:
-          break
-      }
-    }, 300)
   }
 
 
@@ -250,90 +223,8 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
           </div>
         </div>
 
-        {/* Sophisticated Action Buttons */}
-        <div className="px-6 py-4 border-b border-[#1A1A1A]">
-          <div className="grid grid-cols-4 gap-3">
-            {[
-              { 
-                icon: (
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                    <path d="M7 17L17 7M17 7H7M17 7V17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                ), 
-                label: 'Send', 
-                action: 'send',
-                color: 'red'
-              },
-              { 
-                icon: (
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                    <path d="M7 4V2A1 1 0 018 1H16A1 1 0 0117 2V4M7 4H5A2 2 0 003 6V20A2 2 0 005 22H19A2 2 0 0021 20V6A2 2 0 0019 4H17M7 4H17M9 9L12 12L15 9M12 12V16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                ), 
-                label: 'Swap', 
-                action: 'swap',
-                color: 'blue'
-              },
-              { 
-                icon: (
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 2L12 22M19 9L12 2L5 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                ), 
-                label: 'Deposit', 
-                action: 'deposit',
-                color: 'green'
-              },
-              { 
-                icon: (
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 5V19M5 12L19 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                ), 
-                label: 'Buy', 
-                action: 'buy',
-                color: 'yellow'
-              }
-            ].map((button) => (
-              <button
-                key={button.action}
-                onClick={() => handleActionClick(button.action)}
-                className={`group relative flex flex-col items-center justify-center gap-2 p-3 rounded-lg border transition-all duration-200 hover:scale-105 active:scale-95 ${
-                  button.color === 'red' ? 'border-[#222222] hover:border-red-500/30 hover:bg-red-500/5' :
-                  button.color === 'blue' ? 'border-[#222222] hover:border-blue-500/30 hover:bg-blue-500/5' :
-                  button.color === 'green' ? 'border-[#222222] hover:border-green-500/30 hover:bg-green-500/5' :
-                  'border-[#222222] hover:border-yellow-500/30 hover:bg-yellow-500/5'
-                } bg-[#1A1A1A] hover:bg-[#2A2A2A]`}
-              >
-                {/* Status Indicator */}
-                <div className={`absolute top-2 right-2 w-1.5 h-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${
-                  button.color === 'red' ? 'bg-red-400' :
-                  button.color === 'blue' ? 'bg-blue-400' :
-                  button.color === 'green' ? 'bg-green-400' :
-                  'bg-yellow-400'
-                }`} />
-                
-                {/* Icon */}
-                <div className={`transition-colors duration-200 ${
-                  button.color === 'red' ? 'text-[#808080] group-hover:text-red-400' :
-                  button.color === 'blue' ? 'text-[#808080] group-hover:text-blue-400' :
-                  button.color === 'green' ? 'text-[#808080] group-hover:text-green-400' :
-                  'text-[#808080] group-hover:text-yellow-400'
-                }`}>
-                  {button.icon}
-                </div>
-                
-                {/* Label */}
-                <span className="text-[10px] font-medium text-[#808080] group-hover:text-white transition-colors duration-200">
-                  {button.label}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Sophisticated Content Section */}
-        <div className="px-6 pb-6">
+        <div className="px-6 pb-6 pt-4 border-t border-[#1A1A1A]">
           {activeTab === 'crypto' ? (
             <div className="space-y-3">
               {/* Content Header */}

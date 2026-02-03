@@ -1,0 +1,22 @@
+.beams-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* React Three Fiber wraps the canvas; make sure every layer stretches */
+.beams-container,
+.beams-container > div {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.beams-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: block;
+}

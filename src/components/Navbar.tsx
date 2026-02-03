@@ -41,6 +41,41 @@ const FavoritesIcon = () => (
   </svg>
 )
 
+const WatchlistIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M6 4h12a1 1 0 0 1 1 1v16l-7-4-7 4V5a1 1 0 0 1 1-1Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinejoin="round"
+    />
+  </svg>
+)
+
+const PortfolioIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M9 6V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M3 8h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M12 12v2"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
+  </svg>
+)
+
 const SendIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" strokeWidth="2"/>
@@ -86,6 +121,8 @@ interface NavItem {
 
 const navigationItems: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: OverviewIcon, route: '/' },
+  { id: 'portfolio', label: 'Portfolio', icon: PortfolioIcon, route: '/portfolio' },
+  { id: 'watchlist', label: 'Watchlist', icon: WatchlistIcon, route: '/watchlist' },
   // { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
   { id: 'rewards', label: 'Rewards', icon: RewardsIcon, route: '/rewards' },
   // { id: 'favorites', label: 'Favorites', icon: FavoritesIcon, route: '/favorites' },

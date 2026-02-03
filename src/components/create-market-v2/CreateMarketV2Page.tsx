@@ -1,10 +1,9 @@
 'use client';
 
 import React from 'react';
-import { PromptComposer } from './PromptComposer';
+import { InteractiveMarketCreation } from './InteractiveMarketCreation';
 import { GenerateTiles } from './GenerateTiles';
 import { LatestFeatures } from './LatestFeatures';
-import { MarketExamplesCarousel } from './MarketExamplesCarousel';
 import CryptoMarketTicker from '@/components/CryptoMarketTicker';
 
 export function CreateMarketV2Page() {
@@ -20,12 +19,12 @@ export function CreateMarketV2Page() {
         <div className="w-full overflow-hidden">
           <CryptoMarketTicker />
         </div>
-        <div className="relative flex min-h-[calc(100vh-144px)] w-full items-center justify-center bg-[#1a1a1a] text-white">
-          <div className="relative w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="relative min-h-[calc(100vh-144px)] w-full bg-[#1a1a1a] text-white">
+          <div className="relative mx-auto w-full max-w-5xl px-4 pt-24 pb-8 sm:px-6 sm:pt-32 lg:px-8 lg:pt-40">
             <div className="flex flex-col items-center text-center">
-              <h1 className="text-xl font-medium text-white sm:text-2xl">
+              <h2 className="text-xl font-normal text-white text-center">
                 What do you want to create today?
-              </h1>
+              </h2>
             </div>
           </div>
         </div>
@@ -38,21 +37,18 @@ export function CreateMarketV2Page() {
       <div className="w-full overflow-hidden">
         <CryptoMarketTicker />
       </div>
-      <div className="relative flex min-h-[calc(100vh-144px)] w-full items-center justify-center bg-[#1a1a1a] text-white">
-        <div className="relative w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Main content - Vertically and horizontally centered */}
+      <div className="relative min-h-[calc(100vh-144px)] w-full bg-[#1a1a1a] text-white">
+        <div className="relative mx-auto w-full max-w-5xl px-4 pt-24 pb-8 sm:px-6 sm:pt-32 lg:px-8 lg:pt-40">
+        {/* Main content - Fixed position from top */}
         <div className="flex flex-col items-center text-center">
-          <h1 className="text-xl font-medium text-white sm:text-2xl">
+          <h2 className="text-xl font-normal text-white text-center">
             What do you want to create today?
-          </h1>
+          </h2>
           <div className="mt-8 w-full sm:mt-10">
             <div className="flex justify-center">
-              <PromptComposer />
+              <InteractiveMarketCreation />
             </div>
           </div>
-
-          {/* Market examples carousel */}
-          <MarketExamplesCarousel />
         </div>
 
         {/* Lower content - commented out for now */}

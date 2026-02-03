@@ -30,6 +30,7 @@ import DecryptedText from './DecryptedText';
 // Removed NetworkStatus import (only used in commented code)
 // Removed direct contract config imports
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { Wallet } from 'lucide-react'
 
 // Search Icon Component
 const SearchIcon = () => (
@@ -482,7 +483,7 @@ export default function Header() {
 
             {/* Deposit Button */}
             <button 
-              className="px-4 py-1.5 rounded-md transition-all duration-200 font-medium"
+              className="px-4 py-1.5 rounded-md transition-all duration-200 font-medium inline-flex items-center justify-center gap-2"
               style={{
                 backgroundColor: '#4a9eff',
                 color: '#ffffff',
@@ -505,7 +506,13 @@ export default function Header() {
                 setIsDepositModalOpen(true);
               }}
             >
-              Deposit
+              <span>Deposit</span>
+              <span
+                className="flex items-center justify-center w-6 h-6 rounded-md border border-white/25 bg-white/10"
+                aria-hidden="true"
+              >
+                <Wallet className="w-4 h-4 text-white" aria-hidden="true" />
+              </span>
             </button>
           </div>
 

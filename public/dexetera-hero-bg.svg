@@ -1,0 +1,115 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Radial gradient - lighter red center, darker edges -->
+    <radialGradient id="bgRadial" cx="50%" cy="50%" r="70%" fx="50%" fy="50%">
+      <stop offset="0%" stop-color="#8B1A1A" />
+      <stop offset="50%" stop-color="#6B1515" />
+      <stop offset="100%" stop-color="#3D0C0C" />
+    </radialGradient>
+
+    <!-- Vignette for darker edges -->
+    <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0" />
+      <stop offset="70%" stop-color="#000000" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.5" />
+    </radialGradient>
+
+    <!-- Dexetera logo mark -->
+    <symbol id="dexMark" viewBox="0 0 1340 1340">
+      <path d="M670 220C789.347 220 903.807 267.41 988.198 351.802C1072.59 436.193 1120 550.653 1120 670C1120 789.347 1072.59 903.807 988.198 988.198C903.807 1072.59 789.347 1120 670 1120V1119.99C669.667 1120 669.334 1120 669 1120C635.863 1120 609 1093.14 609 1060V865C609 831.863 635.863 805 669 805C702.137 805 729 831.863 729 865V994.684C794.597 982.763 855.548 951.144 903.346 903.346C965.233 841.459 1000 757.522 1000 670C1000 582.478 965.233 498.541 903.346 436.654C855.791 389.099 795.216 357.559 730 345.5V475C730 508.137 703.137 535 670 535C636.863 535 610 508.137 610 475V280C610 246.863 636.863 220 670 220ZM280 610C313.137 610 340 636.863 340 670C340 703.137 313.137 730 280 730C246.863 730 220 703.137 220 670C220 636.863 246.863 610 280 610ZM475 610C508.137 610 535 636.863 535 670C535 703.137 508.137 730 475 730C441.863 730 415 703.137 415 670C415 636.863 441.863 610 475 610ZM670 610C703.137 610 730 636.863 730 670C730 703.137 703.137 730 670 730C636.863 730 610 703.137 610 670C610 636.863 636.863 610 670 610Z" fill="currentColor"/>
+    </symbol>
+  </defs>
+
+  <!-- Base gradient background -->
+  <rect width="1920" height="1080" fill="url(#bgRadial)" />
+
+  <!-- Logo pattern - brick layout (offset rows) -->
+  <g opacity="0.15" fill="#2A0808">
+    <!-- Row 1 (y=0) -->
+    <use href="#dexMark" x="-30" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="170" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="370" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="570" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="770" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="970" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="1170" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="1370" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="1570" y="-30" width="120" height="120" />
+    <use href="#dexMark" x="1770" y="-30" width="120" height="120" />
+
+    <!-- Row 2 (y=140) - offset by 100px -->
+    <use href="#dexMark" x="70" y="140" width="120" height="120" />
+    <use href="#dexMark" x="270" y="140" width="120" height="120" />
+    <use href="#dexMark" x="470" y="140" width="120" height="120" />
+    <use href="#dexMark" x="670" y="140" width="120" height="120" />
+    <use href="#dexMark" x="870" y="140" width="120" height="120" />
+    <use href="#dexMark" x="1070" y="140" width="120" height="120" />
+    <use href="#dexMark" x="1270" y="140" width="120" height="120" />
+    <use href="#dexMark" x="1470" y="140" width="120" height="120" />
+    <use href="#dexMark" x="1670" y="140" width="120" height="120" />
+    <use href="#dexMark" x="1870" y="140" width="120" height="120" />
+
+    <!-- Row 3 (y=310) -->
+    <use href="#dexMark" x="-30" y="310" width="120" height="120" />
+    <use href="#dexMark" x="170" y="310" width="120" height="120" />
+    <use href="#dexMark" x="370" y="310" width="120" height="120" />
+    <use href="#dexMark" x="570" y="310" width="120" height="120" />
+    <use href="#dexMark" x="770" y="310" width="120" height="120" />
+    <use href="#dexMark" x="970" y="310" width="120" height="120" />
+    <use href="#dexMark" x="1170" y="310" width="120" height="120" />
+    <use href="#dexMark" x="1370" y="310" width="120" height="120" />
+    <use href="#dexMark" x="1570" y="310" width="120" height="120" />
+    <use href="#dexMark" x="1770" y="310" width="120" height="120" />
+
+    <!-- Row 4 (y=480) - offset -->
+    <use href="#dexMark" x="70" y="480" width="120" height="120" />
+    <use href="#dexMark" x="270" y="480" width="120" height="120" />
+    <use href="#dexMark" x="470" y="480" width="120" height="120" />
+    <use href="#dexMark" x="670" y="480" width="120" height="120" />
+    <use href="#dexMark" x="870" y="480" width="120" height="120" />
+    <use href="#dexMark" x="1070" y="480" width="120" height="120" />
+    <use href="#dexMark" x="1270" y="480" width="120" height="120" />
+    <use href="#dexMark" x="1470" y="480" width="120" height="120" />
+    <use href="#dexMark" x="1670" y="480" width="120" height="120" />
+    <use href="#dexMark" x="1870" y="480" width="120" height="120" />
+
+    <!-- Row 5 (y=650) -->
+    <use href="#dexMark" x="-30" y="650" width="120" height="120" />
+    <use href="#dexMark" x="170" y="650" width="120" height="120" />
+    <use href="#dexMark" x="370" y="650" width="120" height="120" />
+    <use href="#dexMark" x="570" y="650" width="120" height="120" />
+    <use href="#dexMark" x="770" y="650" width="120" height="120" />
+    <use href="#dexMark" x="970" y="650" width="120" height="120" />
+    <use href="#dexMark" x="1170" y="650" width="120" height="120" />
+    <use href="#dexMark" x="1370" y="650" width="120" height="120" />
+    <use href="#dexMark" x="1570" y="650" width="120" height="120" />
+    <use href="#dexMark" x="1770" y="650" width="120" height="120" />
+
+    <!-- Row 6 (y=820) - offset -->
+    <use href="#dexMark" x="70" y="820" width="120" height="120" />
+    <use href="#dexMark" x="270" y="820" width="120" height="120" />
+    <use href="#dexMark" x="470" y="820" width="120" height="120" />
+    <use href="#dexMark" x="670" y="820" width="120" height="120" />
+    <use href="#dexMark" x="870" y="820" width="120" height="120" />
+    <use href="#dexMark" x="1070" y="820" width="120" height="120" />
+    <use href="#dexMark" x="1270" y="820" width="120" height="120" />
+    <use href="#dexMark" x="1470" y="820" width="120" height="120" />
+    <use href="#dexMark" x="1670" y="820" width="120" height="120" />
+    <use href="#dexMark" x="1870" y="820" width="120" height="120" />
+
+    <!-- Row 7 (y=990) -->
+    <use href="#dexMark" x="-30" y="990" width="120" height="120" />
+    <use href="#dexMark" x="170" y="990" width="120" height="120" />
+    <use href="#dexMark" x="370" y="990" width="120" height="120" />
+    <use href="#dexMark" x="570" y="990" width="120" height="120" />
+    <use href="#dexMark" x="770" y="990" width="120" height="120" />
+    <use href="#dexMark" x="970" y="990" width="120" height="120" />
+    <use href="#dexMark" x="1170" y="990" width="120" height="120" />
+    <use href="#dexMark" x="1370" y="990" width="120" height="120" />
+    <use href="#dexMark" x="1570" y="990" width="120" height="120" />
+    <use href="#dexMark" x="1770" y="990" width="120" height="120" />
+  </g>
+
+  <!-- Vignette overlay -->
+  <rect width="1920" height="1080" fill="url(#vignette)" />
+</svg>

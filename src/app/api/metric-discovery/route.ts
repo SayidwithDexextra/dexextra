@@ -11,7 +11,43 @@ const InputSchema = z.object({
   description: z.string().min(3).max(1000),
   context: z.string().optional(),
   user_address: z.string().optional(),
+  mode: z.enum(['full', 'define_only']).optional(),
 });
+
+const METRIC_DEFINE_ONLY_SYSTEM_PROMPT = `You are a Metric Definition Agent.
+
+Users provide a free-form description of what they want their metric to be based on.
+
+Your job is to:
+1) Determine if the metric is objectively measurable using public data
+2) Define the metric in a precise, machine-stable way
+3) List assumptions required to interpret the metric
+
+Return structured JSON only. No prose.
+
+Return ONE JSON object with this shape:
+{
+  "measurable": boolean,
+  "metric_definition": {
+    "metric_name": string,
+    "unit": string,
+    "scope": string,
+    "time_basis": string,
+    "measurement_method": string
+  } | null,
+  "assumptions": string[],
+  "sources": null,
+  "rejection_reason": string | null
+}
+
+Rules:
+- Be conservative. If unclear or subjective, set measurable=false and explain why in rejection_reason.
+- Do NOT include or invent URLs in this mode.
+- Treat this as settlement-critical.`;
+
+function buildDefineOnlyUserMessage(description: string): string {
+  return `METRIC DESCRIPTION:\n${description}\n\nReturn JSON only.`;
+}
 
 /**
  * Metric Discovery Agent System Prompt
@@ -171,8 +207,46 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const input = InputSchema.parse(body);
 
+    // Default to define_only so SERP is only used when explicitly requested (mode: 'full').
+    // In Create Market V2, we only request 'full' at Step 3 (URL discovery).
+    const mode = input.mode || 'define_only';
+
+    // Mode: define only (no SERP)
+    if (mode === 'define_only') {
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const response = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: METRIC_DEFINE_ONLY_SYSTEM_PROMPT },
+          { role: 'user', content: buildDefineOnlyUserMessage(input.description) },
+        ],
+        temperature: 0.1,
+        max_tokens: 1200,
+      });
+
+      let aiContent = response.choices[0]?.message?.content?.trim() || '{}';
+      aiContent = aiContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const aiResponse = JSON.parse(aiContent);
+
+      const result: MetricDiscoveryResponse = {
+        measurable: Boolean(aiResponse.measurable),
+        metric_definition: aiResponse.metric_definition || null,
+        assumptions: Array.isArray(aiResponse.assumptions) ? aiResponse.assumptions : [],
+        sources: null,
+        rejection_reason: aiResponse.rejection_reason || null,
+        search_results: [],
+        processing_time_ms: Date.now() - startTime,
+      };
+
+      return NextResponse.json(result, { status: 200 });
+    }
+
     // Step 1: Search for candidate data sources
-    console.log('[MetricDiscovery] Searching for sources:', input.description.slice(0, 100));
+    console.log('[MetricDiscovery] SerpApi search starting:', {
+      description_preview: input.description.slice(0, 200),
+      max_results: 10,
+    });
     
     let searchResults: SearchResult[];
     try {
@@ -187,6 +261,16 @@ export async function POST(req: NextRequest) {
         { status: 503 }
       );
     }
+
+    console.log('[MetricDiscovery] SerpApi search complete:', {
+      result_count: searchResults.length,
+      sample: searchResults.slice(0, 3).map((r) => ({
+        title: (r.title || '').slice(0, 120),
+        url: r.url,
+        domain: r.domain,
+        source: r.source,
+      })),
+    });
 
     if (searchResults.length === 0) {
       return NextResponse.json(

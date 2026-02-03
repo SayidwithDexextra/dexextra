@@ -227,7 +227,7 @@ export const CreateMarketPage = () => {
               related_market_identifier: String(symbol || '').toUpperCase(),
               context: 'create',
             },
-            { intervalMs: 1500, timeoutMs: 12000 }
+            { intervalMs: 2000, timeoutMs: 60000 } // Increased for screenshot + vision analysis
           );
           if (ai) {
             const suggested = ai.asset_price_suggestion || ai.value;

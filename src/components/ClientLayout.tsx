@@ -44,10 +44,12 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                       marginTop: '48px', // Account for fixed header
                       minHeight: 'calc(100vh - 96px)', // Subtract header and footer height
                       marginBottom: '48px', // Account for fixed footer
-                      backgroundColor: '#1a1a1a' 
+                      backgroundColor: '#1a1a1a',
+                      minWidth: 0, // Prevent flex child from overflowing
+                      overflow: 'hidden', // Contain any overflowing content
                     }}
                   >
-                    <div style={{ backgroundColor: '#1a1a1a' }}>
+                    <div style={{ backgroundColor: '#1a1a1a', width: '100%', overflow: 'hidden' }}>
                       {children}
                     </div>
                   </main>

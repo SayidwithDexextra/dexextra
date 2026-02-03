@@ -38,6 +38,12 @@ interface IPriceOracle {
     function requestPriceUpdate(bytes32 identifier, string memory metricUrl) external;
 }
 
+// Market bond manager hook (deployed separately)
+interface IMarketBondManager {
+    function onMarketCreate(bytes32 marketId, address creator) external;
+    function onMarketDeactivate(bytes32 marketId, address orderBook, address caller) external;
+}
+
 // ============ Custom Errors (reduce bytecode vs long revert strings) ============
 error OnlyAdmin();
 error MarketCreationRestricted();
@@ -88,6 +94,7 @@ contract FuturesMarketFactory is EIP712 {
     CoreVault public vault;
     address admin;
     address feeRecipient;
+    address public bondManager;
     mapping(address => uint256) public metaCreateNonce;
     
     // Default trading parameters - Conservative defaults (1:1 margin, no leverage)
@@ -272,12 +279,9 @@ contract FuturesMarketFactory is EIP712 {
         uint256 nonce,
         uint256 deadline
     ) external pure returns (bytes32) {
-        bytes32 TYPEHASH_META_CREATE_LOCAL = keccak256(
-            "MetaCreate(string marketSymbol,string metricUrl,uint256 settlementDate,uint256 startPrice,string dataSource,bytes32 tagsHash,address diamondOwner,bytes32 cutHash,address initFacet,address creator,uint256 nonce,uint256 deadline)"
-        );
         return keccak256(
             abi.encode(
-                TYPEHASH_META_CREATE_LOCAL,
+                TYPEHASH_META_CREATE,
                 keccak256(bytes(marketSymbol)),
                 keccak256(bytes(metricUrl)),
                 settlementDate,
@@ -354,6 +358,12 @@ contract FuturesMarketFactory is EIP712 {
         
         marketId = keccak256(abi.encodePacked(marketSymbol, metricUrl, msg.sender, block.timestamp, block.number));
         if (marketExists[marketId]) revert MarketIdCollision();
+
+        // Bond requirement enforced by an external manager contract.
+        // Use InvalidInput() to avoid introducing new custom errors (bytecode size).
+        address bm = bondManager;
+        if (bm == address(0)) revert InvalidInput();
+        IMarketBondManager(bm).onMarketCreate(marketId, msg.sender);
 
         // Deploy Diamond with factory-computed initializer that includes the computed marketId
         if (initFacet == address(0)) revert ZeroAddress();
@@ -447,6 +457,11 @@ contract FuturesMarketFactory is EIP712 {
         marketId = keccak256(abi.encodePacked(marketSymbol, metricUrl, creator, block.timestamp, block.number));
         if (marketExists[marketId]) revert MarketIdCollision();
 
+        // Bond requirement enforced by an external manager contract.
+        address bm = bondManager;
+        if (bm == address(0)) revert InvalidInput();
+        IMarketBondManager(bm).onMarketCreate(marketId, creator);
+
         // Deploy Diamond with initializer identical to direct create
         bytes4 initSel = bytes4(keccak256("obInitialize(address,bytes32,address)"));
         bytes memory initData = abi.encodeWithSelector(initSel, address(vault), marketId, feeRecipient);
@@ -484,6 +499,11 @@ contract FuturesMarketFactory is EIP712 {
         
         // Only admin or market creator can deactivate
         if (!(msg.sender == admin || msg.sender == marketCreators[marketId])) revert NotAuthorized();
+
+        // Enforce deactivation safety + bond refund in the external manager.
+        address bm = bondManager;
+        if (bm == address(0)) revert InvalidInput();
+        IMarketBondManager(bm).onMarketDeactivate(marketId, orderBook, msg.sender);
         
         // Deregister from vault
         vault.deregisterOrderBook(orderBook);
@@ -697,6 +717,15 @@ contract FuturesMarketFactory is EIP712 {
         if (newFeeRecipient == address(0)) revert ZeroAddress();
         
         feeRecipient = newFeeRecipient;
+        // event omitted to reduce bytecode size
+    }
+
+    /**
+     * @dev Configure bond manager contract. Admin-only.
+     *      Setting to address(0) effectively disables market creation (bond required).
+     */
+    function setBondManager(address newBondManager) external onlyAdmin {
+        bondManager = newBondManager;
         // event omitted to reduce bytecode size
     }
     

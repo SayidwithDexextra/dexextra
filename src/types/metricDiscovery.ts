@@ -7,6 +7,12 @@ export interface SearchResult {
   url: string;
   snippet: string;
   domain: string;
+  /** Optional favicon URL from SerpApi (if provided). */
+  favicon?: string;
+  /** Optional source/brand name from SerpApi (if provided). */
+  source?: string;
+  /** Optional displayed_link from SerpApi (if provided). */
+  displayed_link?: string;
 }
 
 export interface MetricSource {

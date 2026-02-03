@@ -179,12 +179,74 @@
 .loading {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   height: 100%;
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--ticker-text-muted);
-  font-family: monospace, 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', sans-serif;
+  width: 100%;
+  overflow: hidden;
+  padding: 0 12px;
+}
+
+/* Loading skeleton ticker (production-ready shimmer) */
+.loadingTicker {
+  display: flex;
+  align-items: center;
+  gap: var(--ticker-gap);
+  white-space: nowrap;
+  width: max-content;
+  animation: loadingMarquee linear infinite;
+  animation-duration: var(--loading-duration, 18s);
+  will-change: transform;
+}
+
+.loadingItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.skeletonBar {
+  height: 12px;
+  width: var(--w, 64px);
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.35s ease-in-out infinite;
+}
+
+.skeletonDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes loadingMarquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 /* Error state */
@@ -297,5 +359,14 @@
   
   .container {
     overflow-x: auto;
+  }
+
+  .loadingTicker {
+    animation: none;
+  }
+
+  .skeletonBar {
+    animation: none;
+    background: rgba(255, 255, 255, 0.10);
   }
 } 

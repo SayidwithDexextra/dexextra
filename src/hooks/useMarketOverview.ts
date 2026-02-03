@@ -1,7 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import {
+  getFromCacheOrStorage,
+  setCache,
+  isDataStale,
+  CACHE_KEYS,
+} from '@/lib/dataCache';
 
 export interface MarketOverviewRow {
   market_id: string;
@@ -45,10 +51,6 @@ export function useMarketOverview({
   realtime?: boolean;
   realtimeDebounce?: number;
 }) {
-  const [data, setData] = useState<MarketOverviewRow[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   // Create a stable, serialized representation of status to avoid effect loops
   const serializedStatus = useMemo(() => {
     if (!status) return '';
@@ -63,9 +65,40 @@ export function useMarketOverview({
     return status;
   }, [Array.isArray(status) ? [...(status as string[])].sort().join(',') : status]);
 
+  // Generate cache key based on params
+  const cacheKey = useMemo(() => {
+    const parts = [CACHE_KEYS.MARKET_OVERVIEW, limit, serializedStatus, category, search].filter(Boolean);
+    return parts.join(':');
+  }, [limit, serializedStatus, category, search]);
+
+  /**
+   * IMPORTANT (Next.js SSR hydration):
+   * Do NOT read from sessionStorage during the initial render.
+   *
+   * If we initialize state from sessionStorage, the server render (no access)
+   * will produce "loading/empty", while the client can synchronously render
+   * cached markets during hydration, causing a hydration mismatch.
+   *
+   * Instead: start with a deterministic empty/loading state, then load cache
+   * after mount in an effect (SWR-style).
+   */
+  const [data, setData] = useState<MarketOverviewRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const hasMountedRef = useRef(false);
+
   async function fetchOverview() {
     try {
-      setIsLoading(true);
+      // Only show loading on first fetch if no cache
+      if (!hasMountedRef.current) {
+        const cached = getFromCacheOrStorage<MarketOverviewRow[]>(cacheKey);
+        if (!cached) {
+          setIsLoading(true);
+        }
+      } else {
+        setIsLoading(true);
+      }
+
       const params = new URLSearchParams();
       params.set('limit', String(limit));
       if (serializedStatus) params.set('status', serializedStatus);
@@ -75,8 +108,14 @@ export function useMarketOverview({
       const res = await fetch(`/api/market-overview?${params.toString()}`);
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to load market overview');
-      setData(json.markets || []);
+      
+      const markets = json.markets || [];
+      setData(markets);
       setError(null);
+
+      // Cache the data
+      setCache<MarketOverviewRow[]>(cacheKey, markets);
+      hasMountedRef.current = true;
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -85,9 +124,17 @@ export function useMarketOverview({
   }
 
   useEffect(() => {
+    // Load cached data for new params after mount (safe for SSR hydration)
+    const cached = getFromCacheOrStorage<MarketOverviewRow[]>(cacheKey);
+    if (cached) {
+      setData(cached);
+      // Only skip loading if cache is fresh
+      if (!isDataStale(cacheKey)) setIsLoading(false);
+    }
+
     fetchOverview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [limit, serializedStatus, category, search]);
+  }, [cacheKey]);
 
   useEffect(() => {
     if (!autoRefresh) return;

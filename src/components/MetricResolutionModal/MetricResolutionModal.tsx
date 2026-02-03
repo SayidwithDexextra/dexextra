@@ -35,10 +35,9 @@ const LoadingSpinner = () => (
   <div className={styles.loadingContainer}>
     <div className={styles.loadingSpinner} />
     <div className={styles.loadingText}>
-      Analyzing Metric Data...
-      <br />
+      Validating metric source
       <span className={styles.loadingSubtext}>
-        Please wait while our AI processes your sources
+        AI is analyzing the data to confirm accuracy
       </span>
     </div>
   </div>
@@ -190,20 +189,20 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
   return createPortal(
     <div className={styles.overlay} onClick={handleBackdropClick}>
       <div className={styles.modal}>
-        {/* Top Header Bar - Black bar with back button and title */}
+        {/* Top Header Bar */}
         <div className={styles.topHeader}>
-          <button className={styles.backButton} onClick={onClose}>
+          <button className={styles.backButton} onClick={onClose} aria-label="Close">
             <BackArrowIcon />
           </button>
-          <h1 className={styles.topTitle}>AI Analysis</h1>
+          <h1 className={styles.topTitle}>Source Validation</h1>
         </div>
 
-        {/* Header - Approve Section */}
+        {/* Header - Metric Info */}
         <div className={styles.header}>
           <div className={styles.approveContainer}>
-            <h2 className={styles.title}>{isLoading ? 'Processing' : 'Approve'}</h2>
+            <h2 className={styles.title}>{isLoading ? 'Analyzing...' : 'Confirm Metric'}</h2>
             <p className={styles.subtitle}>
-              {isLoading ? 'AI Metric Analysis' : data?.metric || 'Loading...'}
+              {isLoading ? 'Validating data source accuracy' : data?.metric || 'Loading...'}
             </p>
           </div>
         </div>
@@ -214,10 +213,14 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
             <LoadingSpinner />
           ) : (
             <>
-              {/* Value Display - Similar to token display in screenshot */}
+              {/* Value Display */}
               <div className={styles.valueDisplay}>
                 <div className={styles.tokenIcon}>
-                    <img src="https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/market-images/markets/icon/1752533860128-u5ftbhnqk3.gif" alt="AI Icon" />
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                    <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                    <path d="M2 17l10 5 10-5" />
+                    <path d="M2 12l10 5 10-5" />
+                  </svg>
                 </div>
                 <div className={styles.valueSection}>
                   <div className={styles.mainValue}>

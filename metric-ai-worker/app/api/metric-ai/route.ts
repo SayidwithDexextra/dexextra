@@ -3,6 +3,9 @@ import { after } from 'next/server';
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
+import { captureScreenshot, ScreenshotResult } from '../../../lib/captureScreenshot';
+import { uploadScreenshot, UploadResult } from '../../../lib/uploadScreenshot';
+import { analyzeScreenshotWithVision, VisionAnalysisResult } from '../../../lib/visionAnalysis';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -23,6 +26,17 @@ const MAX_SOURCES_JOIN_CHARS = Number(process.env.METRIC_AI_MAX_SOURCES_JOIN_CHA
 const MAX_KEY_LINES = Number(process.env.METRIC_AI_MAX_KEY_LINES || 60);
 const MAX_CHART_SNIPPETS = Number(process.env.METRIC_AI_MAX_CHART_SNIPPETS || 8);
 const MAX_NUMERIC_CANDIDATES = Number(process.env.METRIC_AI_MAX_NUMERIC_CANDIDATES || 30);
+
+// Screenshot and vision analysis feature flag
+const ENABLE_VISION_ANALYSIS = process.env.ENABLE_VISION_ANALYSIS !== 'false';
+
+// Type for tracking screenshot and vision data per URL
+interface SourceScreenshotData {
+  url: string;
+  screenshotResult?: ScreenshotResult;
+  uploadResult?: UploadResult;
+  visionResult?: VisionAnalysisResult;
+}
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -342,14 +356,54 @@ export async function POST(req: NextRequest) {
       try {
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const texts: string[] = [];
-        for (const url of input.urls) {
+        const screenshotDataMap = new Map<string, SourceScreenshotData>();
+
+        // Phase 1: Fetch HTML and capture screenshots in parallel for each URL
+        const urlProcessingPromises = input.urls.map(async (url) => {
+          const screenshotData: SourceScreenshotData = { url };
+          
           try {
             const fetchedAt = new Date().toISOString();
-            const r = await fetch(url, {
-              headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` }
-            });
-            const contentType = r.headers.get('content-type') || '';
-            const htmlRaw = (await r.text()).slice(0, MAX_RAW_HTML_CHARS);
+            
+            // Wrap screenshot capture in its own try-catch to prevent uncaught exceptions
+            const safeScreenshotCapture = async (): Promise<ScreenshotResult | null> => {
+              if (!ENABLE_VISION_ANALYSIS) return null;
+              try {
+                return await captureScreenshot(url, {
+                  width: 1280,
+                  height: 800,
+                  waitForNetworkIdle: true,
+                  additionalWaitMs: 1500, // Extra wait for JS-rendered content
+                  timeoutMs: 25000,
+                  retryAttempts: 2,
+                });
+              } catch (err) {
+                // Catch any uncaught exceptions from Puppeteer/Chromium
+                const message = err instanceof Error ? err.message : String(err);
+                console.error(`Screenshot capture exception for ${url}:`, message);
+                return {
+                  success: false,
+                  error: `Uncaught exception: ${message}`,
+                  captureTimeMs: 0,
+                };
+              }
+            };
+
+            // Fetch HTML and capture screenshot in parallel
+            const [htmlResponse, screenshotResult] = await Promise.all([
+              fetch(url, {
+                headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` }
+              }),
+              safeScreenshotCapture()
+            ]);
+
+            // Store screenshot result
+            if (screenshotResult) {
+              screenshotData.screenshotResult = screenshotResult;
+            }
+
+            const contentType = htmlResponse.headers.get('content-type') || '';
+            const htmlRaw = (await htmlResponse.text()).slice(0, MAX_RAW_HTML_CHARS);
 
             const meta = extractMetaTags(htmlRaw);
             const textLines = stripTagsToLines(htmlRaw);
@@ -364,7 +418,7 @@ export async function POST(req: NextRequest) {
             const digestParts: string[] = [];
             digestParts.push(`URL: ${url}`);
             digestParts.push(`FETCHED_AT: ${fetchedAt}`);
-            digestParts.push(`HTTP_STATUS: ${r.status}`);
+            digestParts.push(`HTTP_STATUS: ${htmlResponse.status}`);
             if (contentType) digestParts.push(`CONTENT_TYPE: ${contentType}`);
             if (meta.title) digestParts.push(`TITLE: ${meta.title}`);
             if (meta.description) digestParts.push(`META_DESCRIPTION: ${meta.description}`);
@@ -396,8 +450,74 @@ export async function POST(req: NextRequest) {
             for (const line of keyLines) digestParts.push(`- ${line.slice(0, 500)}`);
 
             const digest = digestParts.join('\n').slice(0, MAX_SOURCE_DIGEST_CHARS);
-            texts.push(`SOURCE:\n${digest}`);
-          } catch { /* skip bad sources */ }
+            return { url, digest, screenshotData };
+          } catch {
+            return { url, digest: null, screenshotData };
+          }
+        });
+
+        const urlResults = await Promise.all(urlProcessingPromises);
+
+        // Collect digests and screenshot data
+        for (const result of urlResults) {
+          if (result.digest) {
+            texts.push(`SOURCE:\n${result.digest}`);
+          }
+          screenshotDataMap.set(result.url, result.screenshotData);
+        }
+
+        // Phase 2: Upload screenshots and run vision analysis in parallel
+        if (ENABLE_VISION_ANALYSIS) {
+          const screenshotsToProcess = Array.from(screenshotDataMap.values())
+            .filter(data => data.screenshotResult?.success && data.screenshotResult.base64);
+
+          // Upload all screenshots in parallel
+          const uploadPromises = screenshotsToProcess.map(async (data) => {
+            if (!data.screenshotResult?.base64) return;
+            try {
+              data.uploadResult = await uploadScreenshot(
+                data.screenshotResult.base64,
+                jobId,
+                data.url
+              );
+            } catch { /* ignore upload errors */ }
+          });
+          await Promise.all(uploadPromises);
+
+          // Run vision analysis on all screenshots in parallel
+          const visionPromises = screenshotsToProcess.map(async (data) => {
+            if (!data.screenshotResult?.base64) return;
+            try {
+              data.visionResult = await analyzeScreenshotWithVision(
+                data.screenshotResult.base64,
+                input.metric,
+                { description: input.description }
+              );
+            } catch { /* ignore vision errors */ }
+          });
+          await Promise.all(visionPromises);
+        }
+
+        // Build vision evidence section for the prompt
+        const visionEvidenceParts: string[] = [];
+        if (ENABLE_VISION_ANALYSIS) {
+          for (const [url, data] of screenshotDataMap) {
+            if (data.visionResult?.success) {
+              visionEvidenceParts.push(`VISION_ANALYSIS (${url}):`);
+              if (data.visionResult.value) {
+                visionEvidenceParts.push(`- Extracted Value: ${data.visionResult.value}`);
+              }
+              if (data.visionResult.numericValue) {
+                visionEvidenceParts.push(`- Numeric Value: ${data.visionResult.numericValue}`);
+              }
+              visionEvidenceParts.push(`- Confidence: ${data.visionResult.confidence?.toFixed(2) || 'N/A'}`);
+              if (data.visionResult.visualQuote) {
+                visionEvidenceParts.push(`- Visual Quote: ${data.visionResult.visualQuote.slice(0, 300)}`);
+              }
+            } else if (data.visionResult?.error) {
+              visionEvidenceParts.push(`VISION_ANALYSIS (${url}): Failed - ${data.visionResult.error.slice(0, 100)}`);
+            }
+          }
         }
         const prompt = [
           `METRIC: ${input.metric}`,
@@ -405,9 +525,15 @@ export async function POST(req: NextRequest) {
           `TASK: Determine the current numeric value and a tradable asset_price_suggestion.`,
           `Return JSON: { "value": "...",  "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
           `EVIDENCE PRIORITY (use the best available evidence; cite it):`,
+          `- You have TWO types of evidence: HTML-extracted data (SOURCES) and screenshot vision analysis (VISION_ANALYSIS).`,
+          `- VISION_ANALYSIS is from actual screenshots of the rendered pages - use this as PRIMARY evidence when available, especially for JS-rendered sites.`,
           `- Prefer explicit quotes/fields that clearly refer to the metric (e.g., "last/price/close/settle") over unrelated numbers.`,
-          `- Prefer structured pricing where available: JSON_LD_PRICE_CANDIDATES, then explicit KEY_LINES, then NUMERIC_CANDIDATES with strong context.`,
+          `- Prefer structured pricing where available: VISION_ANALYSIS > JSON_LD_PRICE_CANDIDATES > KEY_LINES > NUMERIC_CANDIDATES.`,
           `- For chart pages, if CHART_DERIVED_LAST_CLOSE/OHLC is present, prefer the latest CLOSE as the asset_price_suggestion and cite it.`,
+          `CROSS-VALIDATION (IMPORTANT):`,
+          `- When VISION_ANALYSIS and HTML evidence AGREE on the value, boost confidence significantly (e.g., +0.1-0.2).`,
+          `- When they DISAGREE, prefer VISION_ANALYSIS (it sees the rendered page) but reduce confidence and explain the discrepancy.`,
+          `- If only one source type has data, use it but note in reasoning that cross-validation was not possible.`,
           `DISAMBIGUATION RULES (important on busy pages):`,
           `- Ignore numbers that look like axis ticks, timestamps, percent changes, volumes, page counters, or unrelated KPIs.`,
           `- If multiple plausible candidates exist, choose the one most consistent with the metric name/description and any unit hints; reduce confidence and explain.`,
@@ -426,8 +552,11 @@ export async function POST(req: NextRequest) {
           `- Candlestick charts: use CLOSE, not OPEN, unless the chart is explicitly "current/open".`,
           `- If you use chart-derived pricing, cite the relevant CHART_DERIVED_* or CHART_SNIPPETS in source_quotes.`,
           `MISSING / JS-RENDERED PAGES:`,
-          `- If you cannot find any credible numeric value in the provided SOURCES (e.g., page is JS-rendered and raw HTML lacks the quote), return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2, and explain what evidence was missing.`,
-          `SOURCES:`,
+          `- If HTML extraction failed but VISION_ANALYSIS succeeded, use the vision data with appropriate confidence.`,
+          `- If both fail, return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2, and explain what evidence was missing.`,
+          // Include vision evidence if available
+          visionEvidenceParts.length > 0 ? `\nVISION EVIDENCE:\n${visionEvidenceParts.join('\n')}` : '',
+          `\nHTML SOURCES:`,
           texts.join('\n\n').slice(0, MAX_SOURCES_JOIN_CHARS)
         ].filter(Boolean).join('\n');
 
@@ -445,6 +574,22 @@ export async function POST(req: NextRequest) {
         try { content = content.replace(/```json|```/g, '').trim(); } catch {}
         const json = JSON.parse(content);
 
+        // Build sources with screenshot URLs
+        const sourcesWithScreenshots = Array.isArray(json.source_quotes) ? json.source_quotes.map((q: any) => {
+          const sourceUrl = String(q.url || '');
+          const screenshotData = screenshotDataMap.get(sourceUrl);
+          return {
+            url: sourceUrl,
+            screenshot_url: screenshotData?.uploadResult?.publicUrl || '',
+            quote: String(q.quote || '').slice(0, 800),
+            match_score: typeof q.match_score === 'number' ? q.match_score : 0.5,
+            // Include vision analysis results if available
+            vision_value: screenshotData?.visionResult?.numericValue || '',
+            vision_confidence: screenshotData?.visionResult?.confidence || 0,
+            vision_quote: screenshotData?.visionResult?.visualQuote?.slice(0, 300) || ''
+          };
+        }) : [];
+
         const resolution = {
           metric: input.metric,
           value: json.value || 'N/A',
@@ -453,12 +598,11 @@ export async function POST(req: NextRequest) {
           confidence: typeof json.confidence === 'number' ? Math.min(Math.max(json.confidence, 0), 1) : 0.5,
           asset_price_suggestion: json.asset_price_suggestion || json.value || '50.00',
           reasoning: json.reasoning || '',
-          sources: Array.isArray(json.source_quotes) ? json.source_quotes.map((q: any) => ({
-            url: String(q.url || ''),
-            screenshot_url: '',
-            quote: String(q.quote || '').slice(0, 800),
-            match_score: typeof q.match_score === 'number' ? q.match_score : 0.5
-          })) : []
+          sources: sourcesWithScreenshots,
+          // Include aggregated vision analysis metadata
+          vision_analysis_enabled: ENABLE_VISION_ANALYSIS,
+          vision_sources_analyzed: Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length,
+          screenshots_captured: Array.from(screenshotDataMap.values()).filter(d => d.screenshotResult?.success).length
         };
 
         let resolutionId: string | null = null;

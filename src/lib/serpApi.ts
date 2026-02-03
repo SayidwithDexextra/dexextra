@@ -11,6 +11,8 @@ interface SerpApiResult {
     link?: string;
     snippet?: string;
     displayed_link?: string;
+    source?: string;
+    favicon?: string;
   }>;
 }
 
@@ -41,6 +43,15 @@ export async function searchMetricSources(
     url.searchParams.set('num', String(maxResults));
     url.searchParams.set('hl', 'en');
 
+    // Backend log: request created (never log the api_key).
+    const sanitizedUrl = new URL(url.toString());
+    sanitizedUrl.searchParams.delete('api_key');
+    console.log('[SerpApi] Request created:', {
+      url: sanitizedUrl.toString(),
+      q_preview: searchQuery.slice(0, 220),
+      num: maxResults,
+    });
+
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
@@ -67,9 +78,23 @@ export async function searchMetricSources(
           url,
           snippet: result.snippet || '',
           domain,
+          favicon: result.favicon || undefined,
+          source: result.source || undefined,
+          displayed_link: result.displayed_link || undefined,
         };
       })
       .filter((result) => result.url && result.title); // Filter out invalid results
+
+    // Backend log: return data (summary + small sample).
+    console.log('[SerpApi] Response received:', {
+      result_count: results.length,
+      sample: results.slice(0, 3).map((r) => ({
+        title: r.title.slice(0, 120),
+        url: r.url,
+        domain: r.domain,
+        source: r.source,
+      })),
+    });
 
     return results;
   } catch (error) {
@@ -138,7 +163,10 @@ export async function searchMetricSourcesCached(
   // Check cache
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    console.log('[SerpApi] Cache hit for:', metricDescription.slice(0, 50));
+    console.log('[SerpApi] Cache hit:', {
+      description_preview: metricDescription.slice(0, 120),
+      result_count: cached.results.length,
+    });
     return cached.results;
   }
 

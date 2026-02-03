@@ -311,7 +311,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             related_market_id: marketId,
             context: 'settlement',
           },
-          { intervalMs: 1500, timeoutMs: 12_000 }
+          { intervalMs: 2000, timeoutMs: 60_000 } // Increased for screenshot + vision analysis
         ).catch(() => null);
 
         if (cancelled || !ai) {

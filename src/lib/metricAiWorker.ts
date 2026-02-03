@@ -151,8 +151,8 @@ export async function runMetricAIWithPolling(
   input: JobStartInput,
   opts: { intervalMs?: number; timeoutMs?: number } = {}
 ): Promise<MetricAIResult | null> {
-  const intervalMs = typeof opts.intervalMs === 'number' ? opts.intervalMs : 1500;
-  const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 12000;
+  const intervalMs = typeof opts.intervalMs === 'number' ? opts.intervalMs : 2000;
+  const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 60000; // Increased for screenshot + vision analysis
   const started = Date.now();
   const { jobId } = await startMetricAIJob(input);
   try { console.log('[MetricAIWorker] poll start', { jobId, intervalMs, timeoutMs }); } catch {}

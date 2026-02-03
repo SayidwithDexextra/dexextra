@@ -3,6 +3,7 @@
 import { createPortal } from 'react-dom'
 import { env } from '@/lib/env'
 import { useMemo, useState, useEffect } from 'react'
+import { Wallet } from 'lucide-react'
 
 type ExternalDepositToken = { symbol: string; icon: string; name?: string; chain?: string }
 
@@ -313,6 +314,7 @@ export default function DepositExternalInput({
                               />
                             </div>
                             <span className="tracking-wide">{functionDepositCtaLabel}</span>
+                            <Wallet className="h-4 w-4 text-white" aria-hidden="true" />
                           </>
                         )}
                       </button>
