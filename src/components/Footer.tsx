@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useETHPrice } from '../hooks/useETHPrice';
@@ -53,6 +53,32 @@ const Footer: React.FC = () => {
   const walletAddress: string | null = walletData?.address || null;
   const [sessionOrderSymbols, setSessionOrderSymbols] = useState<string[]>([]);
   const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
+  const watchlistCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleWatchlistMouseEnter = useCallback(() => {
+    // Clear any pending close timeout
+    if (watchlistCloseTimeoutRef.current) {
+      clearTimeout(watchlistCloseTimeoutRef.current);
+      watchlistCloseTimeoutRef.current = null;
+    }
+    setIsWatchlistOpen(true);
+  }, []);
+
+  const handleWatchlistMouseLeave = useCallback(() => {
+    // Delay closing to give user time to move to popup
+    watchlistCloseTimeoutRef.current = setTimeout(() => {
+      setIsWatchlistOpen(false);
+    }, 200); // 200ms delay before closing
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (watchlistCloseTimeoutRef.current) {
+        clearTimeout(watchlistCloseTimeoutRef.current);
+      }
+    };
+  }, []);
   const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 });
 
   const symbolByMarketAddress = useMemo(() => {
@@ -363,8 +389,8 @@ const Footer: React.FC = () => {
           style={{
             position: 'relative',
           }}
-          onMouseEnter={() => setIsWatchlistOpen(true)}
-          onMouseLeave={() => setIsWatchlistOpen(false)}
+          onMouseEnter={handleWatchlistMouseEnter}
+          onMouseLeave={handleWatchlistMouseLeave}
         >
           <button 
             onClick={() => setIsWatchlistOpen(!isWatchlistOpen)}
