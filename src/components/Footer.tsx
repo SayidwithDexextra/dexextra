@@ -7,6 +7,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarkets } from '@/hooks/useMarkets';
 import { normalizeBytes32Hex } from '@/lib/hex';
+import { FooterWatchlistPopup } from './FooterWatchlistPopup';
 
 const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED']);
 const ORDERBOOK_PREFIX = 'orderbook:activeOrders:';
@@ -51,6 +52,7 @@ const Footer: React.FC = () => {
   const { walletData } = useWallet() as any;
   const walletAddress: string | null = walletData?.address || null;
   const [sessionOrderSymbols, setSessionOrderSymbols] = useState<string[]>([]);
+  const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
   const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 });
 
   const symbolByMarketAddress = useMemo(() => {
@@ -356,26 +358,39 @@ const Footer: React.FC = () => {
           How it works
         </Link>
 
-        {/* Networks */}
+        {/* Watchlist */}
         <div 
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '4px 8px',
-            fontSize: '12px',
-            fontWeight: '400',
-            color: '#FFFFFF',
+            position: 'relative',
           }}
+          onMouseEnter={() => setIsWatchlistOpen(true)}
+          onMouseLeave={() => setIsWatchlistOpen(false)}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="12" r="3"/>
-            <circle cx="12" cy="3" r="1"/>
-            <circle cx="12" cy="21" r="1"/>
-            <circle cx="3" cy="12" r="1"/>
-            <circle cx="21" cy="12" r="1"/>
-          </svg>
-          Networks
+          <button 
+            onClick={() => setIsWatchlistOpen(!isWatchlistOpen)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 8px',
+              fontSize: '12px',
+              fontWeight: '400',
+              color: isWatchlistOpen ? '#CCCCCC' : '#FFFFFF',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'color 0.2s ease',
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+            Watchlist
+          </button>
+          <FooterWatchlistPopup 
+            isOpen={isWatchlistOpen} 
+            onClose={() => setIsWatchlistOpen(false)} 
+          />
         </div>
       </div>
 
