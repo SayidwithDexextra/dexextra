@@ -460,6 +460,82 @@ async function main() {
       contracts.FUTURES_MARKET_FACTORY
     );
 
+    // 5a) Deploy MarketBondManager (bonded market creation)
+    // NOTE: FuturesMarketFactory requires bondManager to be set for create/deactivate flows.
+    const ENABLE_MARKET_BONDS =
+      String(process.env.ENABLE_MARKET_BONDS || "true").toLowerCase() === "true";
+    if (ENABLE_MARKET_BONDS) {
+      console.log("  5️⃣a Deploying MarketBondManager (bonds)...");
+
+      const toUInt = (name, fallback) => {
+        const raw = process.env[name];
+        const v = raw == null || String(raw).trim() === "" ? fallback : String(raw).trim();
+        // Only allow integers
+        if (!String(v).match(/^\d+$/)) {
+          throw new Error(`Invalid ${name} (expected integer, got: ${String(v)})`);
+        }
+        return BigInt(v);
+      };
+
+      // All bond amounts are in CoreVault's 6-decimal accounting (USDC precision)
+      const bondDefault = toUInt("MARKET_BOND_DEFAULT_AMOUNT", "100000000"); // 100 USDC
+      const bondMin = toUInt("MARKET_BOND_MIN_AMOUNT", "1000000"); // 1 USDC
+      const bondMax = toUInt("MARKET_BOND_MAX_AMOUNT", "0"); // 0 = no max
+      const penaltyBpsRaw = process.env.MARKET_BOND_PENALTY_BPS || "0";
+      const penaltyBps = Number(String(penaltyBpsRaw).trim() || "0");
+      if (!Number.isFinite(penaltyBps) || penaltyBps < 0 || penaltyBps > 10000) {
+        throw new Error("Invalid MARKET_BOND_PENALTY_BPS (expected 0..10000)");
+      }
+      const penaltyRecipient =
+        process.env.MARKET_BOND_PENALTY_RECIPIENT || TREASURY_ADDRESS;
+
+      // Deploy with owner = deployer so we can configure, then optionally transfer.
+      const MarketBondManager = await ethers.getContractFactory("MarketBondManager");
+      const bondManager = await MarketBondManager.deploy(
+        contracts.CORE_VAULT,
+        contracts.FUTURES_MARKET_FACTORY,
+        deployer.address,
+        bondDefault,
+        bondMin,
+        bondMax
+      );
+      await bondManager.waitForDeployment();
+      contracts.MARKET_BOND_MANAGER = await bondManager.getAddress();
+      console.log(
+        "     ✅ MarketBondManager deployed at:",
+        contracts.MARKET_BOND_MANAGER
+      );
+
+      // Configure penalty (bps) + recipient
+      if (penaltyBps > 0) {
+        console.log(
+          `     🔧 Configuring bond penalty: ${penaltyBps} bps → ${penaltyRecipient}...`
+        );
+        await bondManager.setPenaltyConfig(penaltyBps, penaltyRecipient);
+      } else {
+        // Still set recipient for clarity (0 bps means no fee)
+        await bondManager.setPenaltyConfig(0, penaltyRecipient);
+      }
+
+      // Wire manager into factory (required for create/deactivate)
+      console.log("     🔗 Wiring MarketBondManager into FuturesMarketFactory...");
+      await factory.setBondManager(contracts.MARKET_BOND_MANAGER);
+      console.log("     ✅ Factory.bondManager set");
+
+      // Optional: transfer ownership to treasury/operator
+      const finalOwner = process.env.MARKET_BOND_MANAGER_OWNER || TREASURY_ADDRESS;
+      if (
+        finalOwner &&
+        finalOwner !== deployer.address &&
+        finalOwner !== ethers.ZeroAddress
+      ) {
+        console.log("     🔐 Transferring MarketBondManager ownership to:", finalOwner);
+        await bondManager.setOwner(finalOwner);
+      }
+    } else {
+      console.log("  ⏭️  Skipped MarketBondManager deployment (ENABLE_MARKET_BONDS=false)");
+    }
+
     // 5b) Deploy Diamond facets and prepare cut
     console.log("  5️⃣b Deploying Diamond facets for OrderBook...");
     const OrderBookInitFacet = await ethers.getContractFactory(
@@ -563,6 +639,11 @@ async function main() {
     console.log("  🔧 Setting up modular contract roles...");
     console.log("     → Granting FACTORY_ROLE to FuturesMarketFactory...");
     await coreVault.grantRole(FACTORY_ROLE, contracts.FUTURES_MARKET_FACTORY);
+
+    if (contracts.MARKET_BOND_MANAGER) {
+      console.log("     → Granting FACTORY_ROLE to MarketBondManager...");
+      await coreVault.grantRole(FACTORY_ROLE, contracts.MARKET_BOND_MANAGER);
+    }
 
     console.log("     → Granting SETTLEMENT_ROLE to FuturesMarketFactory...");
     await coreVault.grantRole(
@@ -762,6 +843,44 @@ async function main() {
       action: FacetCutAction.Add,
       functionSelectors: selectors(lifecycleFacet.interface),
     });
+
+    // If bonded market creation is enabled, ensure the creator has enough CoreVault available balance
+    // BEFORE calling createFuturesMarketDiamond (bond is charged via CoreVault ledger).
+    if (contracts.MARKET_BOND_MANAGER) {
+      try {
+        const bondMgr = await ethers.getContractAt(
+          "MarketBondManager",
+          contracts.MARKET_BOND_MANAGER
+        );
+        const bondAmount = await bondMgr.defaultBondAmount(); // gross bond (6 decimals)
+        const available = await coreVault.getAvailableCollateral(deployer.address);
+        if (available < bondAmount) {
+          const needed = bondAmount - available;
+          console.log(
+            `  💳 Pre-funding deployer for bond: need ${ethers.formatUnits(
+              bondAmount,
+              6
+            )} USDC, available ${ethers.formatUnits(
+              available,
+              6
+            )} → depositing ${ethers.formatUnits(needed, 6)}...`
+          );
+          await mockUSDC.mint(deployer.address, needed);
+          await mockUSDC.approve(contracts.CORE_VAULT, needed);
+          await coreVault.depositCollateral(needed);
+          const afterAvail = await coreVault.getAvailableCollateral(deployer.address);
+          console.log(
+            "     ✅ Deployer available collateral after top-up:",
+            ethers.formatUnits(afterAvail, 6)
+          );
+        }
+      } catch (e) {
+        console.log(
+          "     ⚠️  Bond pre-funding step failed (market create may revert):",
+          e?.message || e
+        );
+      }
+    }
 
     const createTx = await factory.createFuturesMarketDiamond(
       marketSymbol,

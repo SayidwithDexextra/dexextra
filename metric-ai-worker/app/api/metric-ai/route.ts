@@ -366,15 +366,18 @@ export async function POST(req: NextRequest) {
             const fetchedAt = new Date().toISOString();
             
             // Wrap screenshot capture in its own try-catch to prevent uncaught exceptions
-            const safeScreenshotCapture = async (): Promise<ScreenshotResult | null> => {
+              const safeScreenshotCapture = async (): Promise<ScreenshotResult | null> => {
               if (!ENABLE_VISION_ANALYSIS) return null;
               try {
+                // Some sites (Finviz, TradingView) never reach networkidle due to streaming data.
+                // Use networkidle2 (<=2 connections) with a longer timeout for chart-heavy pages.
+                const isChartHeavySite = /finviz|tradingview|investing\.com|barchart/i.test(url);
                 return await captureScreenshot(url, {
                   width: 1280,
                   height: 800,
-                  waitForNetworkIdle: true,
-                  additionalWaitMs: 1500, // Extra wait for JS-rendered content
-                  timeoutMs: 25000,
+                  waitForNetworkIdle: !isChartHeavySite, // Use 'load' for chart sites
+                  additionalWaitMs: isChartHeavySite ? 3000 : 1500, // Extra wait for JS charts
+                  timeoutMs: isChartHeavySite ? 45000 : 25000,
                   retryAttempts: 2,
                 });
               } catch (err) {
@@ -500,8 +503,16 @@ export async function POST(req: NextRequest) {
 
         // Build vision evidence section for the prompt
         const visionEvidenceParts: string[] = [];
+        const screenshotFailures: string[] = [];
         if (ENABLE_VISION_ANALYSIS) {
           for (const [url, data] of screenshotDataMap) {
+            // Track screenshot capture failures separately
+            if (data.screenshotResult && !data.screenshotResult.success) {
+              const failReason = data.screenshotResult.error || 'Unknown error';
+              screenshotFailures.push(`${url}: ${failReason.slice(0, 150)}`);
+              console.warn(`[MetricAI] Screenshot failed for ${url}: ${failReason}`);
+            }
+            
             if (data.visionResult?.success) {
               visionEvidenceParts.push(`VISION_ANALYSIS (${url}):`);
               if (data.visionResult.value) {
@@ -518,6 +529,14 @@ export async function POST(req: NextRequest) {
               visionEvidenceParts.push(`VISION_ANALYSIS (${url}): Failed - ${data.visionResult.error.slice(0, 100)}`);
             }
           }
+        }
+        
+        // Log summary of data collection
+        const successfulScreenshots = Array.from(screenshotDataMap.values()).filter(d => d.screenshotResult?.success).length;
+        const totalUrls = input.urls.length;
+        console.log(`[MetricAI] Data collection: ${texts.length}/${totalUrls} HTML sources, ${successfulScreenshots}/${totalUrls} screenshots`);
+        if (screenshotFailures.length > 0) {
+          console.warn(`[MetricAI] Screenshot failures: ${screenshotFailures.length}/${totalUrls}`);
         }
         const prompt = [
           `METRIC: ${input.metric}`,
@@ -553,7 +572,11 @@ export async function POST(req: NextRequest) {
           `- If you use chart-derived pricing, cite the relevant CHART_DERIVED_* or CHART_SNIPPETS in source_quotes.`,
           `MISSING / JS-RENDERED PAGES:`,
           `- If HTML extraction failed but VISION_ANALYSIS succeeded, use the vision data with appropriate confidence.`,
-          `- If both fail, return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2, and explain what evidence was missing.`,
+          `- If VISION_ANALYSIS failed but HTML extraction succeeded, use HTML data with appropriate confidence (reduce by ~0.1-0.2 since you cannot cross-validate).`,
+          `- IMPORTANT: You MUST still return a result even if screenshots/vision failed. Use HTML-extracted data (NUMERIC_CANDIDATES, KEY_LINES, CHART_DERIVED_*, JSON_LD) as your evidence.`,
+          `- If both fail completely (no HTML data AND no vision data), return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2, and explain what evidence was missing.`,
+          // Include screenshot failure info if any
+          screenshotFailures.length > 0 ? `\nSCREENSHOT FAILURES (${screenshotFailures.length} of ${totalUrls} URLs):\n${screenshotFailures.map(f => `- ${f}`).join('\n')}\nNote: Proceed with HTML-extracted data only for these URLs.` : '',
           // Include vision evidence if available
           visionEvidenceParts.length > 0 ? `\nVISION EVIDENCE:\n${visionEvidenceParts.join('\n')}` : '',
           `\nHTML SOURCES:`,
@@ -602,7 +625,11 @@ export async function POST(req: NextRequest) {
           // Include aggregated vision analysis metadata
           vision_analysis_enabled: ENABLE_VISION_ANALYSIS,
           vision_sources_analyzed: Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length,
-          screenshots_captured: Array.from(screenshotDataMap.values()).filter(d => d.screenshotResult?.success).length
+          screenshots_captured: successfulScreenshots,
+          screenshots_failed: screenshotFailures.length,
+          screenshot_failure_reasons: screenshotFailures.length > 0 ? screenshotFailures : undefined,
+          html_sources_extracted: texts.length,
+          data_sources_summary: `HTML: ${texts.length}/${totalUrls}, Screenshots: ${successfulScreenshots}/${totalUrls}, Vision: ${Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length}/${totalUrls}`
         };
 
         let resolutionId: string | null = null;
