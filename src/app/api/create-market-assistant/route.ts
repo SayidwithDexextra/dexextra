@@ -42,6 +42,9 @@ Rules:
 - If the current step is clarify_metric and the metric is not measurable, ask exactly ONE clarifying question (no more than one question mark).
 - If the current step is name, include suggestions.marketName (one concise suggested market name).
 - If the current step is description, include suggestions.marketDescription (1-2 sentences describing the continuously evolving metric).
+- If the current step is select_source:
+  - If context.discovery.sources is empty but context.discovery.search_results has items, tell the user to pick one of the discovered candidate sources.
+  - If both are empty, ask if they know a specific dataset/organization and suggest they paste a public URL.
 - Do NOT output the final Market Summary Block yet.
 - Do NOT invent URLs.
 - Return JSON only with shape: { "message": string, "suggestions"?: { "marketName"?: string, "marketDescription"?: string } }.
@@ -96,6 +99,19 @@ const InputSchema = z.object({
                 .optional(),
             })
             .nullable()
+            .optional(),
+          search_results: z
+            .array(
+              z.object({
+                title: z.string(),
+                url: z.string(),
+                snippet: z.string(),
+                domain: z.string(),
+                favicon: z.string().optional(),
+                source: z.string().optional(),
+                displayed_link: z.string().optional(),
+              })
+            )
             .optional(),
         })
         .nullable()

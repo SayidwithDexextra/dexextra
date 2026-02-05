@@ -12,6 +12,10 @@ const InputSchema = z.object({
   context: z.string().optional(),
   user_address: z.string().optional(),
   mode: z.enum(['full', 'define_only']).optional(),
+  /** Search variation index (0-5) for finding different sources on retry */
+  searchVariation: z.number().int().min(0).max(10).optional(),
+  /** URLs to exclude from search results (e.g., previously denied sources) */
+  excludeUrls: z.array(z.string().url()).optional(),
 });
 
 const METRIC_DEFINE_ONLY_SYSTEM_PROMPT = `You are a Metric Definition Agent.
@@ -242,15 +246,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result, { status: 200 });
     }
 
+    // Extract search parameters
+    const searchVariation = input.searchVariation ?? 0;
+    const excludeUrls = input.excludeUrls ?? [];
+    
     // Step 1: Search for candidate data sources
     console.log('[MetricDiscovery] SerpApi search starting:', {
       description_preview: input.description.slice(0, 200),
       max_results: 10,
+      searchVariation,
+      excludeUrls_count: excludeUrls.length,
     });
     
     let searchResults: SearchResult[];
     try {
-      searchResults = await searchMetricSourcesCached(input.description, 10);
+      searchResults = await searchMetricSourcesCached(input.description, {
+        maxResults: 10,
+        variation: searchVariation,
+        excludeUrls,
+      });
     } catch (searchError) {
       console.error('[MetricDiscovery] Search failed:', searchError);
       return NextResponse.json(

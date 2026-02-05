@@ -28,6 +28,8 @@ interface MetricSourceBubbleProps {
   fetchState?: 'idle' | 'loading' | 'success' | 'error';
   onRetry?: () => void;
   isVisible: boolean;
+  /** If provided, marks a previously validated URL with a small badge. */
+  validatedSourceUrl?: string | null;
 }
 
 function normalizeUrl(url: string) {
@@ -74,6 +76,35 @@ function reliabilityFromConfidence(confidence: number) {
   if (pct >= 85) return `High (${pct}%)`;
   if (pct >= 70) return `Medium (${pct}%)`;
   return `Low (${pct}%)`;
+}
+
+function heuristicConfidenceFromDomain(domainOrHost: string) {
+  const d = (domainOrHost || '').toLowerCase();
+  if (!d) return 0.6;
+
+  // Prefer official / institutional sources.
+  if (d.endsWith('.gov') || d.includes('.gov.')) return 0.92;
+  if (d.endsWith('.edu') || d.includes('.edu.')) return 0.85;
+  if (d.endsWith('.int') || d.includes('.int.')) return 0.88;
+
+  // Well-known public data aggregators / institutions.
+  if (
+    d.includes('worldbank.org') ||
+    d.includes('imf.org') ||
+    d.includes('oecd.org') ||
+    d.includes('un.org') ||
+    d.includes('eia.gov') ||
+    d.includes('noaa.gov') ||
+    d.includes('fred.stlouisfed.org')
+  ) {
+    return 0.88;
+  }
+
+  // Common low-signal / paywall-ish sources.
+  if (d.includes('scribd.com')) return 0.35;
+  if (d.includes('medium.com') || d.includes('substack.com')) return 0.4;
+
+  return 0.6;
 }
 
 const ICON_BACKGROUNDS = [
@@ -160,8 +191,11 @@ export function MetricSourceBubble({
   fetchState = 'idle',
   onRetry,
   isVisible,
+  validatedSourceUrl = null,
 }: MetricSourceBubbleProps) {
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  // "Focused" is the extra step: user clicks a bubble to inspect it,
+  // then explicitly hits Select to validate/continue.
+  const [focusedSource, setFocusedSource] = React.useState<MetricSourceOption | null>(null);
   const [hasAnimated, setHasAnimated] = React.useState(false);
   const [customMode, setCustomMode] = React.useState(false);
   const [customUrl, setCustomUrl] = React.useState('');
@@ -175,13 +209,45 @@ export function MetricSourceBubble({
       if (s?.url) ordered.push({ source: s, isPrimary: false });
     }
 
-    // Never fall back to hard-coded sources; Step 3 should be driven by discovery results.
-    if (!ordered.length) return [];
-
     const map = new Map<string, SearchResult>();
     for (const r of searchResults || []) {
       if (!r?.url) continue;
       map.set(normalizeUrl(r.url), r);
+    }
+
+    // If the AI did not select any sources, fall back to raw SERP results.
+    // This lets the user pick a candidate source even when the model is conservative.
+    if (!ordered.length) {
+      const candidates = (searchResults || [])
+        .filter((r) => Boolean(r?.url))
+        .slice(0, 10);
+
+      return candidates.map((r, idx) => {
+        const domain = r.domain || getHostname(r.url);
+        const label = r.source?.trim() || domain || 'Candidate';
+        const sublabel = domain && domain !== label ? domain : undefined;
+        const faviconUrl = makeFaviconUrl({ favicon: r.favicon, domain });
+        const iconBg = ICON_BACKGROUNDS[hashToIndex(domain || label, ICON_BACKGROUNDS.length)];
+        const confidence = heuristicConfidenceFromDomain(domain);
+
+        return {
+          id: `candidate-${idx}-${domain || label}`.toLowerCase(),
+          icon: makeIconNode({ faviconUrl, label }),
+          label,
+          sublabel,
+          url: r.url,
+          confidence,
+          authority: r.source?.trim() || label,
+          badge: 'Candidate',
+          iconBg,
+          tooltip: buildTooltip({
+            authority: r.source?.trim() || label,
+            confidence,
+            url: r.url,
+            searchResult: r,
+          }),
+        };
+      });
     }
 
     return ordered.map(({ source, isPrimary }, idx) => {
@@ -212,6 +278,11 @@ export function MetricSourceBubble({
     });
   }, [primarySource, secondarySources, searchResults]);
 
+  const validatedKey = React.useMemo(
+    () => (validatedSourceUrl ? normalizeUrl(validatedSourceUrl) : null),
+    [validatedSourceUrl]
+  );
+
   // Trigger animations after mount
   React.useEffect(() => {
     if (isVisible && !hasAnimated) {
@@ -225,6 +296,7 @@ export function MetricSourceBubble({
   React.useEffect(() => {
     if (!isVisible) {
       setHasAnimated(false);
+      setFocusedSource(null);
     }
   }, [isVisible]);
 
@@ -235,10 +307,31 @@ export function MetricSourceBubble({
     return () => window.clearTimeout(t);
   }, [customMode]);
 
-  const handleSelect = (source: MetricSourceOption) => {
-    setSelectedId(source.id);
-    onSelectSource?.(source);
-  };
+  const focusedId = focusedSource?.id ?? null;
+  const isFocused = Boolean(focusedSource);
+  const isValidatedUrl = React.useCallback(
+    (url: string) => Boolean(validatedKey) && normalizeUrl(url) === validatedKey,
+    [validatedKey]
+  );
+
+  // If options change (re-search), clear an invalid focus (but keep custom URL focus).
+  React.useEffect(() => {
+    if (!focusedSource) return;
+    if (focusedSource.id === 'custom-url') return;
+    const updated = sourceOptions.find((s) => s.id === focusedSource.id) ?? null;
+    setFocusedSource(updated);
+  }, [focusedSource?.id, sourceOptions]); // intentionally only track the id
+
+  const handleFocus = React.useCallback((source: MetricSourceOption) => {
+    setFocusedSource(source);
+    setCustomMode(false);
+    setCustomError(null);
+  }, []);
+
+  const handleConfirmSelect = React.useCallback(() => {
+    if (!focusedSource) return;
+    onSelectSource?.(focusedSource);
+  }, [focusedSource, onSelectSource]);
 
   const submitCustomUrl = React.useCallback(() => {
     const normalized = normalizeHttpUrl(customUrl);
@@ -256,7 +349,7 @@ export function MetricSourceBubble({
       dataType: isApiLikeUrl(normalized) ? 'API' : 'Web',
     };
 
-    handleSelect({
+    setFocusedSource({
       id: 'custom-url',
       icon: makeIconNode({ label: 'C' }),
       label: 'Custom URL',
@@ -270,7 +363,7 @@ export function MetricSourceBubble({
 
     setCustomError(null);
     setCustomMode(false);
-  }, [customUrl, handleSelect]);
+  }, [customUrl]);
 
   if (!isVisible) return null;
 
@@ -279,21 +372,115 @@ export function MetricSourceBubble({
 
   return (
     <div className="mt-8 w-[calc(100%+320px)] max-w-[calc(100vw-120px)] -ml-[280px]">
-      {/* Section Header */}
-      <div 
-        className="mb-4 text-left"
-        style={{
-          opacity: hasAnimated ? 1 : 0,
-          transform: hasAnimated ? 'translateY(0)' : 'translateY(20px)',
-          transition: 'opacity 0.4s ease-out, transform 0.4s ease-out',
-        }}
+
+      {/* Focused source details (extra step) */}
+      <div
+        className={[
+          'overflow-hidden transition-all duration-300 ease-out',
+          // Shift only the focused UI upward (not the whole component).
+          isFocused ? 'mt-0 max-h-[520px] opacity-100 translate-y-0' : 'max-h-0 opacity-0 -translate-y-2 pointer-events-none',
+        ].join(' ')}
       >
-        <h2 className="text-base font-medium text-white/90">Select Data Source</h2>
-        {metricName && (
-          <p className="mt-1 text-sm text-white/50">
-            for {metricName}
-          </p>
-        )}
+        {focusedSource ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setFocusedSource(null)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/85 hover:bg-white/7 transition-colors"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                  <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                </svg>
+                Back
+              </button>
+
+              <div className="text-[12px] text-white/45">
+                Review this source before continuing
+              </div>
+            </div>
+
+            {/* Selected bubble */}
+            <div className="flex items-start">
+              <DataSourceTooltip data={focusedSource.tooltip} position="bottom" delay={250}>
+                <div
+                  className="group flex items-center gap-3 rounded-xl bg-white/10 ring-1 ring-white/20 px-3 py-2"
+                  aria-label={`Selected source ${focusedSource.label}`}
+                >
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-lg ${focusedSource.iconBg}`}>
+                    {focusedSource.icon}
+                  </div>
+
+                  <div className="min-w-0 flex-1 text-left">
+                    <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 items-baseline gap-1">
+                        <div className="shrink-0 text-sm font-medium text-white">{focusedSource.label}</div>
+                        {focusedSource.sublabel ? (
+                          <div className="min-w-0 truncate text-sm font-medium text-white/60">
+                            {focusedSource.sublabel}
+                          </div>
+                        ) : null}
+                      </div>
+                      {focusedSource.badge ? (
+                        <span className="ml-auto shrink-0 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-medium text-white pointer-events-none">
+                          {focusedSource.badge}
+                        </span>
+                      ) : null}
+                      {isValidatedUrl(focusedSource.url) ? (
+                        <span className="shrink-0 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-medium text-emerald-200 pointer-events-none">
+                          Validated
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="text-xs text-white/40 mt-0.5">
+                      {focusedSource.tooltip.reliability}
+                    </div>
+                  </div>
+                </div>
+              </DataSourceTooltip>
+            </div>
+
+            {/* Description + actions */}
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+              <div className="text-sm text-white/80 line-clamp-3">
+                {focusedSource.tooltip.description}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/55">
+                <span className="rounded-full bg-white/5 px-2 py-1">
+                  {focusedSource.tooltip.dataType}
+                </span>
+                <span className="rounded-full bg-white/5 px-2 py-1">
+                  {focusedSource.tooltip.updateFrequency}
+                </span>
+                {focusedSource.url ? (
+                  <span className="rounded-full bg-white/5 px-2 py-1">
+                    {getHostname(focusedSource.url) || 'Source URL'}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <a
+                  href={focusedSource.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 text-sm font-medium text-white/90 hover:bg-white/7 transition-colors"
+                >
+                  View
+                </a>
+                <button
+                  type="button"
+                  onClick={handleConfirmSelect}
+                  className="inline-flex h-9 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={fetchState === 'loading'}
+                >
+                  Select
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Source Options Grid - matching Generate panel style */}
@@ -303,7 +490,9 @@ export function MetricSourceBubble({
         <div
           className={[
             'overflow-hidden transition-all duration-300 ease-out',
-            customMode ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none' : 'max-h-[900px] opacity-100 translate-y-0',
+            customMode || isFocused
+              ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none'
+              : 'max-h-[900px] opacity-100 translate-y-0',
           ].join(' ')}
         >
           <div className="flex flex-wrap items-start gap-4">
@@ -315,39 +504,45 @@ export function MetricSourceBubble({
                 delay={400}
               >
                 <button
-                  onClick={() => handleSelect(source)}
-                  className={`group relative flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200 ${
-                    selectedId === source.id
-                      ? 'bg-white/10 ring-1 ring-white/20'
-                      : 'hover:bg-white/5'
-                  }`}
+                  onClick={() => handleFocus(source)}
+                  className={[
+                    'group relative flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200',
+                    focusedId === source.id ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5',
+                  ].join(' ')}
                   style={{
                     opacity: hasAnimated ? 1 : 0,
                     transform: hasAnimated ? 'translateY(0)' : 'translateY(24px)',
                     transition: `opacity 0.5s ease-out ${getStaggerDelay(index) + 100}ms, transform 0.5s ease-out ${getStaggerDelay(index) + 100}ms`,
                   }}
                 >
-                  {/* Badge */}
-                  {source.badge && (
-                  <span className="absolute top-2 right-2 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-medium text-white">
-                      {source.badge}
-                    </span>
-                  )}
-                  
                   {/* Icon */}
                   <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-lg ${source.iconBg}`}>
                     {source.icon}
                   </div>
                   
                   {/* Label */}
-                  <div className="text-left">
-                    <div className="text-sm font-medium text-white">
-                      {source.label}
-                      {source.sublabel && (
-                        <span className="ml-1 text-white/60">{source.sublabel}</span>
-                      )}
+                  <div className="min-w-0 flex-1 text-left">
+                    <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 items-baseline gap-1">
+                        <div className="shrink-0 text-sm font-medium text-white">{source.label}</div>
+                        {source.sublabel ? (
+                          <div className="min-w-0 truncate text-sm font-medium text-white/60">
+                            {source.sublabel}
+                          </div>
+                        ) : null}
+                      </div>
+                      {source.badge ? (
+                        <span className="ml-auto shrink-0 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-medium text-white pointer-events-none">
+                          {source.badge}
+                        </span>
+                      ) : null}
+                      {isValidatedUrl(source.url) ? (
+                        <span className="shrink-0 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-medium text-emerald-200 pointer-events-none">
+                          Validated
+                        </span>
+                      ) : null}
                     </div>
-                    {selectedId === source.id && (
+                    {focusedId === source.id && (
                       <div className="text-xs text-white/40 mt-0.5">
                         {Math.round(source.confidence * 100)}% confidence
                       </div>
@@ -373,10 +568,11 @@ export function MetricSourceBubble({
                 type="button"
                 onClick={() => {
                   setCustomMode(true);
+                  setFocusedSource(null);
                   setCustomError(null);
                 }}
                 className={`group relative flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200 ${
-                  selectedId === 'custom-url' ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5'
+                  focusedId === 'custom-url' ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5'
                 }`}
                 style={{
                   opacity: hasAnimated ? 1 : 0,

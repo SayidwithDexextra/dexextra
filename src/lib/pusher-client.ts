@@ -65,6 +65,7 @@ export class PusherClientService {
   private isConnected = false;
   private connectionStateCallbacks: ((state: string) => void)[] = [];
   private chartUnsubscribeGraceMs = 15_000;
+  private metricCallbacks = new Map<string, Set<(data: MetricSeriesEvent) => void>>();
 
   private attachChannelSignalLogging(channelName: string) {
     const sub = this.subscriptions.get(channelName);
@@ -633,12 +634,55 @@ export class PusherClientService {
 
     rtMetricLog('subscribe request', { channel: channelName, event: eventName, marketId: id });
 
+    // Track callbacks per channel so we only bind ONE Pusher handler per channel.
+    let callbacks = this.metricCallbacks.get(channelName);
+    if (!callbacks) {
+      callbacks = new Set();
+      this.metricCallbacks.set(channelName, callbacks);
+    }
+    callbacks.add(callback);
+
     let subscription = this.subscriptions.get(channelName);
     if (!subscription) {
       const channel = this.pusher.subscribe(channelName);
+
+      const masterHandler = (data: MetricSeriesEvent) => {
+        rtMetricLog('event received', {
+          channel: channelName,
+          event: eventName,
+          marketId: data?.marketId,
+          metricName: data?.metricName,
+          ts: (data as any)?.ts,
+          value: (data as any)?.value,
+          callbackCount: this.metricCallbacks.get(channelName)?.size || 0,
+        });
+
+        // IMPORTANT: kick the chart from the main app window.
+        // This avoids relying on the indicator iframe realm to force redraws.
+        try {
+          if (typeof window !== 'undefined') {
+            const kick = (window as any).__DEXEXTRA_TV_METRIC_OVERLAY_KICK__;
+            if (typeof kick === 'function') kick();
+          }
+        } catch {
+          // ignore
+        }
+
+        const cbs = this.metricCallbacks.get(channelName);
+        if (!cbs) return;
+        for (const cb of cbs) {
+          try {
+            cb(data);
+          } catch {
+            // ignore
+          }
+        }
+      };
+
       subscription = {
         channel,
         events: new Set(),
+        masterHandler,
         unsubscribe: () => {
           this.detachChannelSignalLogging(channelName);
           try {
@@ -648,35 +692,31 @@ export class PusherClientService {
           }
           this.pusher.unsubscribe(channelName);
           this.subscriptions.delete(channelName);
+          this.metricCallbacks.delete(channelName);
           rtMetricLog('unsubscribed (channel)', { channel: channelName });
         }
       };
       this.subscriptions.set(channelName, subscription);
       this.attachChannelSignalLogging(channelName);
       rtMetricLog('subscribed (channel)', { channel: channelName });
+
+      // Bind only once per channel.
+      channel.bind(eventName, masterHandler);
+      subscription.events.add(eventName);
     } else {
       this.attachChannelSignalLogging(channelName);
     }
 
-    // Bind handler (dedupe by function identity like chart handlers, but simpler:
-    // metric updates are low-volume and we typically have 0-1 listeners per chart).
-    subscription.channel.bind(eventName, (data: MetricSeriesEvent) => {
-      rtMetricLog('event received', { channel: channelName, event: eventName, marketId: data?.marketId, metricName: data?.metricName, ts: (data as any)?.ts, value: (data as any)?.value });
-      callback(data);
-    });
-    subscription.events.add(eventName);
-    rtMetricLog('subscribed (handler)', { channel: channelName, event: eventName, handlerCount: subscription.events.size });
+    rtMetricLog('subscribed (handler)', { channel: channelName, event: eventName, callbackCount: callbacks.size });
 
     return () => {
-      try {
-        subscription.channel.unbind(eventName);
-      } catch {
-        // ignore
-      }
-      subscription.events.delete(eventName);
-      rtMetricLog('unsubscribed (handler)', { channel: channelName, event: eventName, handlerCount: subscription.events.size });
-      if (subscription.events.size === 0) {
-        subscription.unsubscribe();
+      const cbs = this.metricCallbacks.get(channelName);
+      if (cbs) {
+        cbs.delete(callback);
+        rtMetricLog('unsubscribed (handler)', { channel: channelName, event: eventName, callbackCount: cbs.size });
+        if (cbs.size === 0) {
+          subscription.unsubscribe();
+        }
       }
     };
   }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import path from 'path';
+import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 import { archivePage } from '@/lib/archivePage';
 import {
@@ -231,9 +232,9 @@ function loadFacetAbi(contractName: string, fallbackAbi: any[]): any[] {
       `${contractName}.sol`,
       `${contractName}.json`
     );
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const artifact = require(artifactPath);
-    if (artifact && Array.isArray(artifact.abi)) return artifact.abi;
+    const raw = readFileSync(artifactPath, 'utf8');
+    const artifact = JSON.parse(raw);
+    if (artifact && Array.isArray((artifact as any).abi)) return (artifact as any).abi;
   } catch {}
   return fallbackAbi;
 }
@@ -356,9 +357,12 @@ export async function POST(req: Request) {
       : ethers.parseUnits(startPrice, 6);
     const dataSource = String(body?.dataSource || 'User Provided');
     const tags = Array.isArray(body?.tags) ? body.tags.slice(0, 10).map((t: any) => String(t)) : [];
+    const providedName = typeof body?.name === 'string' ? String(body.name).trim() : '';
+    const providedDescription = typeof body?.description === 'string' ? String(body.description).trim() : '';
     const creatorWalletAddress = (body?.creatorWalletAddress && ethers.isAddress(body.creatorWalletAddress)) ? body.creatorWalletAddress : null;
     const clientCutArg = Array.isArray(body?.cutArg) ? body.cutArg : (Array.isArray(body?.cut) ? body.cut : null);
     const iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
+    const bannerImageUrl = body?.bannerImageUrl ? String(body.bannerImageUrl).trim() : null;
     const aiSourceLocator = body?.aiSourceLocator || null;
     // Validate settlement date is required and in the future
     if (!body?.settlementDate || typeof body.settlementDate !== 'number' || body.settlementDate <= 0) {
@@ -510,6 +514,12 @@ export async function POST(req: Request) {
 
     logS('validate_input', 'start');
     if (!symbol) return NextResponse.json({ error: 'Symbol is required' }, { status: 400 });
+    if (symbol.length > 100) {
+      return NextResponse.json(
+        { error: `Symbol too long (${symbol.length}/100). Choose a shorter symbol.` },
+        { status: 400 }
+      );
+    }
     if (!metricUrl) return NextResponse.json({ error: 'Metric URL is required' }, { status: 400 });
     try {
       const startPriceBn = BigInt(startPrice6);
@@ -1335,11 +1345,17 @@ export async function POST(req: Request) {
         } catch (e: any) {
           try { console.warn('[markets/create] Wayback archive error', e?.message || String(e)); } catch {}
         }
+        const derivedName = `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`;
+        const networkNameRaw = String(process.env.NEXT_PUBLIC_NETWORK_NAME || process.env.NETWORK_NAME || '');
+        const safeName =
+          (providedName ? providedName : derivedName).slice(0, 100);
+        const safeDescription =
+          (providedDescription ? providedDescription : `OrderBook market for ${symbol}`).slice(0, 280);
         const insertPayload: any = {
           market_identifier: symbol,
           symbol,
-          name: `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`,
-          description: `OrderBook market for ${symbol}`,
+          name: safeName,
+          description: safeDescription,
           category: Array.isArray(tags) && tags.length ? tags[0] : 'CUSTOM',
           decimals: 6,
           minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
@@ -1356,9 +1372,10 @@ export async function POST(req: Request) {
             wayback_snapshot: archivedWaybackUrl ? { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: metricUrl } : null,
           },
           chain_id: Number(network.chainId),
-          network: String(process.env.NEXT_PUBLIC_NETWORK_NAME || process.env.NETWORK_NAME || ''),
+          // DB column `network` is varchar(50); keep it safe for local chain names.
+          network: networkNameRaw.length > 50 ? networkNameRaw.slice(0, 50) : networkNameRaw,
           creator_wallet_address: creatorWalletAddress,
-          banner_image_url: null,
+          banner_image_url: bannerImageUrl || iconImageUrl || null,
           icon_image_url: iconImageUrl,
           supporting_photo_urls: [],
           market_address: orderBook,
@@ -1397,7 +1414,16 @@ export async function POST(req: Request) {
       logS('save_market', 'success');
     } catch (e: any) {
       logS('save_market', 'error', { error: e?.message || String(e) });
-      return NextResponse.json({ error: 'Save market failed', details: e?.message || String(e) }, { status: 500 });
+      return NextResponse.json({
+        error: 'Save market failed',
+        details: e?.message || String(e),
+        // Include on-chain identifiers so a user can re-run /api/markets/save manually
+        // without redeploying if the DB write fails.
+        symbol,
+        orderBook,
+        marketId,
+        transactionHash: receipt?.hash || tx.hash,
+      }, { status: 500 });
     }
 
     // Respond

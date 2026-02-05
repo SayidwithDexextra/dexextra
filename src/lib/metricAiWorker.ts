@@ -78,13 +78,26 @@ export type MetricAIResult = {
 
 export async function startMetricAIJob(input: JobStartInput): Promise<{ jobId: string }> {
   const baseUrl = getMetricAIWorkerBaseUrl();
-  try { console.log('[MetricAIWorker] POST /api/metric-ai start', { url: baseUrl, metric: input.metric, urls: input.urls?.length }); } catch {}
+  const startTime = Date.now();
+  
+  console.log('[Metric-AI] ▶ Starting job request', {
+    baseUrl,
+    metric: input.metric,
+    urls: input.urls,
+    urlCount: input.urls?.length,
+    context: input.context,
+    relatedMarketId: input.related_market_id,
+  });
+  
   const res = await fetch(`${baseUrl}/api/metric-ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
     cache: 'no-store',
   });
+  
+  const requestDurationMs = Date.now() - startTime;
+  
   if (res.status !== 202) {
     const j = await res.json().catch(() => ({} as any));
     const details =
@@ -92,23 +105,29 @@ export async function startMetricAIJob(input: JobStartInput): Promise<{ jobId: s
       (Array.isArray(j?.issues) ? JSON.stringify(j.issues) : '') ||
       j?.error ||
       '';
-    try {
-      console.log('[MetricAIWorker] POST /api/metric-ai failed', {
-        url: baseUrl,
-        status: res.status,
-        error: j?.error,
-        message: j?.message,
-        issues: j?.issues
-      });
-    } catch {}
+    console.error('[Metric-AI] ✖ Job start FAILED', {
+      baseUrl,
+      status: res.status,
+      requestDurationMs,
+      error: j?.error,
+      message: j?.message,
+      issues: j?.issues
+    });
     throw new Error(details ? `${details}` : `Worker start failed (${res.status})`);
   }
+  
   const data = await res.json().catch(() => ({} as any));
   if (!data?.jobId) {
-    try { console.log('[MetricAIWorker] POST /api/metric-ai missing jobId', { data }); } catch {}
+    console.error('[Metric-AI] ✖ Job start returned no jobId', { data, requestDurationMs });
     throw new Error('Worker did not return jobId');
   }
-  try { console.log('[MetricAIWorker] POST /api/metric-ai ok', { jobId: data.jobId }); } catch {}
+  
+  console.log('[Metric-AI] ✓ Job started successfully', {
+    jobId: data.jobId,
+    requestDurationMs,
+    statusUrl: data.statusUrl,
+  });
+  
   return { jobId: String(data.jobId) };
 }
 
@@ -119,11 +138,17 @@ export async function getMetricAIJobStatus(jobId: string): Promise<{
 }> {
   const baseUrl = getMetricAIWorkerBaseUrl();
   const url = `${baseUrl}/api/metric-ai?jobId=${encodeURIComponent(jobId)}`;
-  try { console.log('[MetricAIWorker] GET', { url }); } catch {}
+  const startTime = Date.now();
+  
+  console.log('[Metric-AI] 🔄 Polling job status', { jobId });
+  
   const res = await fetch(url, {
     method: 'GET',
     cache: 'no-store',
   });
+  
+  const pollDurationMs = Date.now() - startTime;
+  
   if (!res.ok) {
     const j = await res.json().catch(() => ({} as any));
     const details =
@@ -131,19 +156,26 @@ export async function getMetricAIJobStatus(jobId: string): Promise<{
       (Array.isArray(j?.issues) ? JSON.stringify(j.issues) : '') ||
       j?.error ||
       '';
-    try {
-      console.log('[MetricAIWorker] GET status failed', {
-        url,
-        status: res.status,
-        error: j?.error,
-        message: j?.message,
-        issues: j?.issues
-      });
-    } catch {}
+    console.error('[Metric-AI] ✖ Poll request FAILED', {
+      jobId,
+      httpStatus: res.status,
+      pollDurationMs,
+      error: j?.error,
+      message: j?.message,
+    });
     throw new Error(details ? `${details}` : `Worker status failed (${res.status})`);
   }
+  
   const data = await res.json();
-  try { console.log('[MetricAIWorker] GET status ok', { status: data?.status }); } catch {}
+  
+  console.log('[Metric-AI] 📊 Poll response', {
+    jobId,
+    status: data?.status,
+    pollDurationMs,
+    hasResult: !!data?.result,
+    hasError: !!data?.error,
+  });
+  
   return data;
 }
 
@@ -154,22 +186,83 @@ export async function runMetricAIWithPolling(
   const intervalMs = typeof opts.intervalMs === 'number' ? opts.intervalMs : 2000;
   const timeoutMs = typeof opts.timeoutMs === 'number' ? opts.timeoutMs : 60000; // Increased for screenshot + vision analysis
   const started = Date.now();
+  let pollCount = 0;
+  
+  console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+  console.log('[Metric-AI] 🚀 STARTING METRIC AI WORKFLOW', {
+    metric: input.metric,
+    urls: input.urls,
+    intervalMs,
+    timeoutMs,
+    context: input.context,
+    timestamp: new Date().toISOString(),
+  });
+  console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+  
   const { jobId } = await startMetricAIJob(input);
-  try { console.log('[MetricAIWorker] poll start', { jobId, intervalMs, timeoutMs }); } catch {}
+  
+  console.log('[Metric-AI] ⏳ Beginning polling loop', {
+    jobId,
+    intervalMs,
+    maxPolls: Math.ceil(timeoutMs / intervalMs),
+  });
+  
   while (Date.now() - started < timeoutMs) {
     await new Promise(r => setTimeout(r, intervalMs));
+    pollCount++;
+    
+    const elapsedMs = Date.now() - started;
+    console.log(`[Metric-AI] 🔄 Poll #${pollCount}`, {
+      jobId,
+      elapsedMs,
+      remainingMs: timeoutMs - elapsedMs,
+    });
+    
     const status = await getMetricAIJobStatus(jobId);
-    try { console.log('[MetricAIWorker] poll tick', { jobId, status: status.status }); } catch {}
+    
     if (status.status === 'completed' && status.result) {
-      try { console.log('[MetricAIWorker] poll completed'); } catch {}
+      const totalDurationMs = Date.now() - started;
+      console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+      console.log('[Metric-AI] ✅ WORKFLOW COMPLETED SUCCESSFULLY', {
+        jobId,
+        totalDurationMs,
+        pollCount,
+        value: status.result.value,
+        assetPriceSuggestion: status.result.asset_price_suggestion,
+        confidence: status.result.confidence,
+        sourcesCount: status.result.sources?.length,
+      });
+      console.log('[Metric-AI] 📋 Full result:', status.result);
+      console.log('[Metric-AI] ═══════════════════════════════════════════════════');
       return status.result;
     }
+    
     if (status.status === 'failed') {
-      try { console.log('[MetricAIWorker] poll failed', { error: status.error }); } catch {}
+      const totalDurationMs = Date.now() - started;
+      console.error('[Metric-AI] ═══════════════════════════════════════════════════');
+      console.error('[Metric-AI] ❌ WORKFLOW FAILED', {
+        jobId,
+        totalDurationMs,
+        pollCount,
+        error: status.error,
+      });
+      console.error('[Metric-AI] ═══════════════════════════════════════════════════');
       return null;
     }
+    
+    // Still processing - log progress
+    console.log(`[Metric-AI] ⏳ Still processing... (poll #${pollCount}, ${Math.round(elapsedMs / 1000)}s elapsed)`);
   }
-  try { console.log('[MetricAIWorker] poll timeout', { waitedMs: Date.now() - started }); } catch {}
+  
+  const totalDurationMs = Date.now() - started;
+  console.error('[Metric-AI] ═══════════════════════════════════════════════════');
+  console.error('[Metric-AI] ⏰ WORKFLOW TIMED OUT', {
+    jobId,
+    totalDurationMs,
+    pollCount,
+    timeoutMs,
+  });
+  console.error('[Metric-AI] ═══════════════════════════════════════════════════');
   return null;
 }
 

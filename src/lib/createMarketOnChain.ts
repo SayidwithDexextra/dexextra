@@ -58,6 +58,16 @@ export async function createMarketOnChain(params: {
   startPrice: string | number;
   dataSource?: string;
   tags?: string[];
+  /** Optional human-readable market name (DB only). */
+  name?: string;
+  /** Optional human-readable market description (DB only). */
+  description?: string;
+  /** Optional banner image URL to persist in DB. */
+  bannerImageUrl?: string | null;
+  /** Optional icon image URL to persist in DB. */
+  iconImageUrl?: string | null;
+  /** Optional AI source locator metadata to persist in DB. */
+  aiSourceLocator?: any;
   feeRecipient?: string; // optional override; defaults to connected wallet
   onProgress?: (event: ProgressEvent) => void;
   pipelineId?: string; // optional: used for server push progress via Pusher
@@ -66,10 +76,29 @@ export async function createMarketOnChain(params: {
     throw new Error('No injected wallet found. Please install MetaMask or a compatible wallet.');
   }
 
-  const { symbol, metricUrl, startPrice, dataSource = 'User Provided', tags = [], feeRecipient, onProgress, pipelineId } = params;
+  const {
+    symbol,
+    metricUrl,
+    startPrice,
+    dataSource = 'User Provided',
+    tags = [],
+    name,
+    description,
+    bannerImageUrl,
+    iconImageUrl,
+    aiSourceLocator,
+    feeRecipient,
+    onProgress,
+    pipelineId,
+  } = params;
   if (!symbol || !metricUrl) throw new Error('Symbol and metricUrl are required');
   const symbolNormalized = String(symbol).trim().toUpperCase();
   const metricUrlNormalized = String(metricUrl).trim();
+  // DB constraint guard (Supabase markets.symbol). Prevent wasting an on-chain deploy
+  // only to fail at the final "save market" step.
+  if (symbolNormalized.length > 100) {
+    throw new Error(`Symbol too long (${symbolNormalized.length}/100). Shorten the market name / symbol.`);
+  }
 
   // Build cutArg and initFacet from server (source of truth, compiled artifacts)
   let initFacet: string | null = null;
@@ -341,6 +370,11 @@ export async function createMarketOnChain(params: {
         startPrice6: startPrice6.toString(), // send scaled value to keep hashing aligned
         dataSource,
         tags,
+        name: typeof name === 'string' ? name : undefined,
+        description: typeof description === 'string' ? description : undefined,
+        bannerImageUrl: bannerImageUrl ?? null,
+        iconImageUrl: iconImageUrl ?? null,
+        aiSourceLocator: aiSourceLocator ?? null,
         creatorWalletAddress: signerAddress,
         settlementDate: settlementTs,
         signature,

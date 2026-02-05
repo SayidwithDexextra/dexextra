@@ -156,13 +156,29 @@ export default function TradingViewChart({
         const chart = typeof w.activeChart === 'function' ? w.activeChart() : null;
         if (!chart) return;
 
-        // IMPORTANT:
-        // Do NOT call `resetCache()` / `resetData()` here.
-        // Those can cause TradingView to tear down/recreate realtime subscriptions (unsubscribeBars),
-        // which shows up as `[REALTIME] unsubscribing...` and can break realtime updates for some markets.
+        // Force a study redraw for realtime metric updates.
         //
-        // Instead, force a lightweight recalculation by toggling the MetricOverlay study visibility.
+        // We previously avoided `resetData()` because some Charting Library builds briefly call
+        // `unsubscribeBars()` during internal refresh. Our datafeed now has a grace period to
+        // handle that flapping safely, and `resetData()` is the most reliable way to force
+        // custom-indicator `main()` to be re-evaluated immediately (without requiring a page reload).
         try {
+          // Most reliable: full chart data reset (forces studies to recalc).
+          if (typeof (chart as any).resetData === 'function') {
+            (chart as any).resetData();
+            return;
+          }
+          // Some builds expose reset on the widget itself.
+          if (typeof (w as any).resetData === 'function') {
+            (w as any).resetData();
+            return;
+          }
+          // Fallback: reset cache if available.
+          if (typeof (chart as any).resetCache === 'function') {
+            (chart as any).resetCache();
+            return;
+          }
+
           const studies = typeof chart.getAllStudies === 'function' ? chart.getAllStudies() : [];
           if (Array.isArray(studies) && studies.length) {
             const metricStudies = studies.filter((s: any) =>
@@ -198,7 +214,7 @@ export default function TradingViewChart({
     (window as any).__DEXEXTRA_TV_METRIC_OVERLAY_KICK__ = () => {
       const now = Date.now();
       const last = Number((window as any).__DEXEXTRA_TV_METRIC_OVERLAY_KICKED_AT__ || 0);
-      if (now - last < 10_000) return;
+      if (now - last < 350) return;
       (window as any).__DEXEXTRA_TV_METRIC_OVERLAY_KICKED_AT__ = now;
       fn();
     };
@@ -517,6 +533,8 @@ export default function TradingViewChart({
 
     try {
       widgetRef.current = new (window as any).TradingView.widget(widgetOptions);
+      // Store widget globally so metric indicator can access it for forced redraws
+      (window as any).tvWidget = widgetRef.current;
       setHasWidget(true);
       registerMetricOverlayKick();
     } catch (e: any) {

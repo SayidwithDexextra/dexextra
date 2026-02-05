@@ -332,12 +332,28 @@ export async function OPTIONS(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const requestStartTime = Date.now();
+  
   try {
     const body = await req.json();
     const input = InputSchema.parse(body);
 
+    console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+    console.log('[Metric-AI] 📥 INCOMING REQUEST', {
+      metric: input.metric,
+      description: input.description?.slice(0, 100),
+      urls: input.urls,
+      urlCount: input.urls.length,
+      context: input.context,
+      relatedMarketId: input.related_market_id,
+      timestamp: new Date().toISOString(),
+    });
+    console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+
     const supabase = getSupabase();
     const jobId = `metric_ai_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    console.log('[Metric-AI] 📝 Creating job in database', { jobId });
 
     await supabase.from('metric_oracle_jobs').insert([{
       job_id: jobId,
@@ -351,12 +367,18 @@ export async function POST(req: NextRequest) {
       created_at: new Date()
     }]);
 
+    console.log('[Metric-AI] ✓ Job created, starting background processing', { jobId });
+
     after(async () => {
       const started = Date.now();
+      console.log('[Metric-AI] ▶ Background worker started', { jobId, timestamp: new Date().toISOString() });
+      
       try {
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const texts: string[] = [];
         const screenshotDataMap = new Map<string, SourceScreenshotData>();
+
+        console.log('[Metric-AI] 🌐 Phase 1: Fetching HTML and capturing screenshots', { urlCount: input.urls.length });
 
         // Phase 1: Fetch HTML and capture screenshots in parallel for each URL
         const urlProcessingPromises = input.urls.map(async (url) => {
@@ -366,24 +388,34 @@ export async function POST(req: NextRequest) {
             const fetchedAt = new Date().toISOString();
             
             // Wrap screenshot capture in its own try-catch to prevent uncaught exceptions
-              const safeScreenshotCapture = async (): Promise<ScreenshotResult | null> => {
+            const safeScreenshotCapture = async (): Promise<ScreenshotResult | null> => {
               if (!ENABLE_VISION_ANALYSIS) return null;
               try {
-                // Some sites (Finviz, TradingView) never reach networkidle due to streaming data.
-                // Use networkidle2 (<=2 connections) with a longer timeout for chart-heavy pages.
-                const isChartHeavySite = /finviz|tradingview|investing\.com|barchart/i.test(url);
-                return await captureScreenshot(url, {
+                console.log(`[Metric-AI] 📸 Starting screenshot capture for ${url}`);
+                
+                // captureScreenshot now handles site-specific logic internally
+                // via getSiteConfig() - see lib/captureScreenshot.ts for site configs
+                const result = await captureScreenshot(url, {
                   width: 1280,
-                  height: 800,
-                  waitForNetworkIdle: !isChartHeavySite, // Use 'load' for chart sites
-                  additionalWaitMs: isChartHeavySite ? 3000 : 1500, // Extra wait for JS charts
-                  timeoutMs: isChartHeavySite ? 45000 : 25000,
-                  retryAttempts: 2,
+                  height: 900,
+                  waitForNetworkIdle: true, // Will be overridden by site config if needed
+                  additionalWaitMs: 2000,   // Extra safety margin after site-specific waits
+                  timeoutMs: 45000,         // Overall timeout including element waits
+                  retryAttempts: 1,
                 });
+                
+                console.log(`[Metric-AI] 📸 Screenshot result for ${url}:`, {
+                  success: result.success,
+                  captureTimeMs: result.captureTimeMs,
+                  hasDimensions: !!result.dimensions,
+                  error: result.error?.slice(0, 100),
+                });
+                
+                return result;
               } catch (err) {
                 // Catch any uncaught exceptions from Puppeteer/Chromium
                 const message = err instanceof Error ? err.message : String(err);
-                console.error(`Screenshot capture exception for ${url}:`, message);
+                console.error(`[Metric-AI] ❌ Screenshot capture exception for ${url}:`, message);
                 return {
                   success: false,
                   error: `Uncaught exception: ${message}`,
@@ -460,6 +492,7 @@ export async function POST(req: NextRequest) {
         });
 
         const urlResults = await Promise.all(urlProcessingPromises);
+        const phase1DurationMs = Date.now() - started;
 
         // Collect digests and screenshot data
         for (const result of urlResults) {
@@ -469,8 +502,21 @@ export async function POST(req: NextRequest) {
           screenshotDataMap.set(result.url, result.screenshotData);
         }
 
+        const htmlSuccessCount = texts.length;
+        const screenshotSuccessCount = Array.from(screenshotDataMap.values()).filter(d => d.screenshotResult?.success).length;
+        
+        console.log('[Metric-AI] ✓ Phase 1 complete', {
+          jobId,
+          phase1DurationMs,
+          htmlSourcesExtracted: htmlSuccessCount,
+          screenshotsCaptured: screenshotSuccessCount,
+          totalUrls: input.urls.length,
+        });
+
         // Phase 2: Upload screenshots and run vision analysis in parallel
         if (ENABLE_VISION_ANALYSIS) {
+          console.log('[Metric-AI] 🖼️ Phase 2: Processing screenshots and vision analysis', { jobId });
+          
           const screenshotsToProcess = Array.from(screenshotDataMap.values())
             .filter(data => data.screenshotResult?.success && data.screenshotResult.base64);
 
@@ -487,7 +533,12 @@ export async function POST(req: NextRequest) {
           });
           await Promise.all(uploadPromises);
 
+          const uploadsComplete = Array.from(screenshotDataMap.values()).filter(d => d.uploadResult?.publicUrl).length;
+          console.log('[Metric-AI] ✓ Screenshots uploaded', { jobId, uploadsComplete });
+
           // Run vision analysis on all screenshots in parallel
+          console.log('[Metric-AI] 👁️ Running vision analysis', { jobId, screenshotsToAnalyze: screenshotsToProcess.length });
+          
           const visionPromises = screenshotsToProcess.map(async (data) => {
             if (!data.screenshotResult?.base64) return;
             try {
@@ -499,6 +550,9 @@ export async function POST(req: NextRequest) {
             } catch { /* ignore vision errors */ }
           });
           await Promise.all(visionPromises);
+          
+          const visionSuccessCount = Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length;
+          console.log('[Metric-AI] ✓ Vision analysis complete', { jobId, visionSuccessCount });
         }
 
         // Build vision evidence section for the prompt
@@ -583,8 +637,20 @@ export async function POST(req: NextRequest) {
           texts.join('\n\n').slice(0, MAX_SOURCES_JOIN_CHARS)
         ].filter(Boolean).join('\n');
 
+        const openaiModel = process.env.OPENAI_MODEL || 'gpt-4.1';
+        const openaiStartTime = Date.now();
+        
+        console.log('[Metric-AI] 🤖 Phase 3: Calling OpenAI', {
+          jobId,
+          model: openaiModel,
+          promptLength: prompt.length,
+          htmlSourcesIncluded: texts.length,
+          visionEvidenceIncluded: visionEvidenceParts.length > 0,
+          screenshotFailuresReported: screenshotFailures.length,
+        });
+
         const resp = await openai.chat.completions.create({
-          model: process.env.OPENAI_MODEL || 'gpt-4.1',
+          model: openaiModel,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: 'You are an expert metric analyst. Return strict JSON only.' },
@@ -593,9 +659,29 @@ export async function POST(req: NextRequest) {
           max_tokens: 1400
         });
 
+        const openaiDurationMs = Date.now() - openaiStartTime;
+        
+        console.log('[Metric-AI] ✓ OpenAI response received', {
+          jobId,
+          openaiDurationMs,
+          finishReason: resp.choices[0]?.finish_reason,
+          promptTokens: resp.usage?.prompt_tokens,
+          completionTokens: resp.usage?.completion_tokens,
+          totalTokens: resp.usage?.total_tokens,
+        });
+
         let content = resp.choices[0]?.message?.content?.trim() || '{}';
         try { content = content.replace(/```json|```/g, '').trim(); } catch {}
         const json = JSON.parse(content);
+        
+        console.log('[Metric-AI] 📋 Parsed AI response', {
+          jobId,
+          value: json.value,
+          assetPriceSuggestion: json.asset_price_suggestion,
+          confidence: json.confidence,
+          hasReasoning: !!json.reasoning,
+          sourceQuotesCount: json.source_quotes?.length || 0,
+        });
 
         // Build sources with screenshot URLs
         const sourcesWithScreenshots = Array.isArray(json.source_quotes) ? json.source_quotes.map((q: any) => {
@@ -661,17 +747,45 @@ export async function POST(req: NextRequest) {
             } else {
               await supabase.from('markets').update(update).eq('market_identifier', input.related_market_identifier);
             }
+            console.log('[Metric-AI] ✓ Market linked to resolution', { jobId, resolutionId });
           } catch {}
         }
 
+        const totalProcessingTimeMs = Date.now() - started;
+        
         await supabase.from('metric_oracle_jobs').update({
           status: 'completed',
           progress: 100,
           result: resolution,
-          processing_time_ms: Date.now() - started,
+          processing_time_ms: totalProcessingTimeMs,
           completed_at: new Date()
         }).eq('job_id', jobId);
+
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        console.log('[Metric-AI] ✅ JOB COMPLETED SUCCESSFULLY', {
+          jobId,
+          totalProcessingTimeMs,
+          metric: input.metric,
+          value: resolution.value,
+          assetPriceSuggestion: resolution.asset_price_suggestion,
+          confidence: resolution.confidence,
+          dataSources: resolution.data_sources_summary,
+          resolutionId,
+        });
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        
       } catch (err: any) {
+        const totalProcessingTimeMs = Date.now() - started;
+        
+        console.error('[Metric-AI] ═══════════════════════════════════════════════════');
+        console.error('[Metric-AI] ❌ JOB FAILED', {
+          jobId,
+          totalProcessingTimeMs,
+          error: err?.message || 'unknown',
+          stack: err?.stack?.slice(0, 500),
+        });
+        console.error('[Metric-AI] ═══════════════════════════════════════════════════');
+        
         await supabase.from('metric_oracle_jobs').update({
           status: 'failed',
           progress: 100,
@@ -679,6 +793,14 @@ export async function POST(req: NextRequest) {
           completed_at: new Date()
         }).eq('job_id', jobId);
       }
+    });
+
+    const requestDurationMs = Date.now() - requestStartTime;
+    
+    console.log('[Metric-AI] 📤 Returning 202 Accepted', {
+      jobId,
+      requestDurationMs,
+      statusUrl: `/api/metric-ai?jobId=${jobId}`,
     });
 
     return NextResponse.json(
@@ -691,9 +813,19 @@ export async function POST(req: NextRequest) {
       { status: 202, headers: corsHeaders(req.headers.get('origin') || undefined) }
     );
   } catch (e: any) {
+    const requestDurationMs = Date.now() - requestStartTime;
+    
     // Provide structured validation details for easier debugging (esp. local dev).
     const isZod = e && typeof e === 'object' && (e as any).name === 'ZodError';
     const issues = isZod ? (e as any).issues : undefined;
+    
+    console.error('[Metric-AI] ✖ Request validation FAILED', {
+      requestDurationMs,
+      error: e?.message,
+      isZodError: isZod,
+      issues,
+    });
+    
     return NextResponse.json(
       { error: 'Invalid input', message: e?.message || 'Unknown error', ...(issues ? { issues } : {}) },
       { status: 400, headers: corsHeaders(req.headers.get('origin') || undefined) }

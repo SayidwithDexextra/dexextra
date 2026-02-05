@@ -260,27 +260,53 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     };
 
     const run = async () => {
+      const runStartTime = Date.now();
+      
       try {
+        console.log('[Metric-AI] 🔍 Checking if metric ingestion needed', {
+          marketId,
+          metricName,
+          timestamp: new Date().toISOString(),
+        });
+        
         const metricUrl = await resolveMetricUrl();
         if (!metricUrl) {
-          if (metricDebug) console.warn('[MetricSeriesIngest] skip: no metricUrl', { marketId, metricName });
+          console.log('[Metric-AI] ⏭️ Skipped: No metric URL configured for this market', { marketId, metricName });
           return;
         }
+        
+        console.log('[Metric-AI] 📍 Resolved metric URL', { metricUrl, marketId, metricName });
 
         // TTL throttle per-market (only after we have a metricUrl).
-        try {
-          const last = Number.parseInt(String(localStorage.getItem(storageKey) || ''), 10) || 0;
-          const now = Date.now();
-          if (now - last < ttlMs) {
-            if (metricDebug) console.warn('[MetricSeriesIngest] ttl skip', { marketId, metricName, ttlMs, last });
-            return;
+        // FORCE RESTART: Bypass TTL throttle for testing - remove this block when done testing
+        const forceRestart = true; // Set to false to re-enable TTL throttle
+        if (!forceRestart) {
+          try {
+            const last = Number.parseInt(String(localStorage.getItem(storageKey) || ''), 10) || 0;
+            const now = Date.now();
+            if (now - last < ttlMs) {
+              const remainingMs = ttlMs - (now - last);
+              console.log('[Metric-AI] ⏭️ Skipped: TTL throttle active', {
+                marketId,
+                metricName,
+                lastFetchedMs: now - last,
+                ttlMs,
+                remainingMs,
+                nextEligibleIn: `${Math.round(remainingMs / 1000)}s`,
+              });
+              return;
+            }
+            localStorage.setItem(storageKey, String(now));
+          } catch {
+            // If localStorage fails, continue with a best-effort single run.
           }
-          localStorage.setItem(storageKey, String(now));
-        } catch {
-          // If localStorage fails, continue with a best-effort single run.
+        } else {
+          console.log('[Metric-AI] 🔧 FORCE RESTART ENABLED - TTL throttle bypassed for testing');
         }
 
         // 1) Check ClickHouse freshness (metric-series)
+        console.log('[Metric-AI] 📊 Checking ClickHouse data freshness', { marketId, metricName, staleMs });
+        
         try {
           const checkUrl =
             `/api/charts/metric?marketId=${encodeURIComponent(marketId)}` +
@@ -293,17 +319,44 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
             const lastTsMs = parseClickhouseTsMs(lastRow?.ts);
             if (lastTsMs > 0 && Date.now() - lastTsMs < staleMs) {
-              if (metricDebug) console.warn('[MetricSeriesIngest] skip: fresh', { lastTsMs, ageMs: Date.now() - lastTsMs, staleMs });
+              const ageMs = Date.now() - lastTsMs;
+              console.log('[Metric-AI] ⏭️ Skipped: ClickHouse data is fresh', {
+                marketId,
+                metricName,
+                lastDataAgeMs: ageMs,
+                lastDataAge: `${Math.round(ageMs / 1000)}s ago`,
+                staleThresholdMs: staleMs,
+              });
               return; // fresh enough; no need to call the worker
+            } else {
+              console.log('[Metric-AI] ⚠️ ClickHouse data is stale or missing, will fetch from worker', {
+                marketId,
+                metricName,
+                lastTsMs: lastTsMs || 'none',
+                ageMs: lastTsMs ? Date.now() - lastTsMs : 'N/A',
+              });
             }
           }
         } catch {
           // If freshness check fails, proceed (best effort) to worker fetch.
+          console.log('[Metric-AI] ⚠️ ClickHouse freshness check failed, proceeding to worker fetch');
         }
 
         if (cancelled) return;
 
         // 2) Resolve current metric via worker
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        console.log('[Metric-AI] 🚀 TRIGGERING METRIC AI WORKER', {
+          metric: metricName,
+          url: metricUrl,
+          marketId,
+          context: 'settlement',
+          timestamp: new Date().toISOString(),
+        });
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        
+        const workerStartTime = Date.now();
+        
         const ai = await runMetricAIWithPolling(
           {
             metric: metricName,
@@ -312,20 +365,56 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             context: 'settlement',
           },
           { intervalMs: 2000, timeoutMs: 60_000 } // Increased for screenshot + vision analysis
-        ).catch(() => null);
+        ).catch((err) => {
+          console.error('[Metric-AI] ❌ Worker call threw exception', { error: err?.message || err });
+          return null;
+        });
+        
+        const workerDurationMs = Date.now() - workerStartTime;
 
-        if (cancelled || !ai) {
-          if (metricDebug) console.warn('[MetricSeriesIngest] worker returned no result');
+        if (cancelled) {
+          console.log('[Metric-AI] ⏹️ Cancelled during worker call');
+          return;
+        }
+        
+        if (!ai) {
+          console.warn('[Metric-AI] ⚠️ Worker returned no result', {
+            marketId,
+            metricName,
+            workerDurationMs,
+          });
           return;
         }
 
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+        console.log('[Metric-AI] ✅ WORKER RETURNED DATA', {
+          marketId,
+          metricName,
+          workerDurationMs,
+          value: ai.value,
+          assetPriceSuggestion: ai.asset_price_suggestion,
+          confidence: ai.confidence,
+          reasoning: ai.reasoning?.slice(0, 200),
+          sourcesCount: ai.sources?.length,
+        });
+        console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+
         const value = parseNumeric(ai.asset_price_suggestion ?? ai.value);
         if (!Number.isFinite(value)) {
-          if (metricDebug) console.warn('[MetricSeriesIngest] worker returned non-numeric', { raw: ai.asset_price_suggestion ?? ai.value });
+          console.warn('[Metric-AI] ⚠️ Worker returned non-numeric value', {
+            raw: ai.asset_price_suggestion ?? ai.value,
+            parsed: value,
+          });
           return;
         }
 
         // 3) Insert into ClickHouse metric_series_raw via our API
+        console.log('[Metric-AI] 💾 Inserting value into ClickHouse', {
+          marketId,
+          metricName,
+          value,
+        });
+        
         const nowMs = Date.now();
         const insertRes = await fetch('/api/charts/metric', {
           method: 'POST',
@@ -339,17 +428,37 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             points: { ts: nowMs, value },
           }),
         });
+        
+        const totalDurationMs = Date.now() - runStartTime;
+        
         if (!insertRes.ok) {
-          // best-effort; keep quiet unless in debug
-          if (metricDebug) {
-            const t = await insertRes.text().catch(() => '');
-            console.warn('[MetricSeriesIngest] insert failed', { status: insertRes.status, t });
-          }
+          const t = await insertRes.text().catch(() => '');
+          console.error('[Metric-AI] ❌ ClickHouse insert failed', {
+            status: insertRes.status,
+            response: t?.slice(0, 200),
+            marketId,
+            metricName,
+          });
         } else {
-          if (metricDebug) console.warn('[MetricSeriesIngest] inserted', { marketId, metricName, value, ts: nowMs });
+          console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+          console.log('[Metric-AI] ✅ METRIC INGESTION COMPLETE', {
+            marketId,
+            metricName,
+            value,
+            totalDurationMs,
+            workerDurationMs,
+            timestamp: new Date().toISOString(),
+          });
+          console.log('[Metric-AI] ═══════════════════════════════════════════════════');
         }
       } catch (e) {
-        if (metricDebug) console.warn('[MetricSeriesIngest] failed', e);
+        const totalDurationMs = Date.now() - runStartTime;
+        console.error('[Metric-AI] ❌ Metric ingestion failed', {
+          error: e instanceof Error ? e.message : e,
+          marketId,
+          metricName,
+          totalDurationMs,
+        });
       }
     };
 

@@ -16,16 +16,31 @@ interface SerpApiResult {
   }>;
 }
 
+export interface SearchOptions {
+  maxResults?: number;
+  variation?: number;
+  excludeUrls?: string[];
+}
+
 /**
  * Search for data sources related to a metric description
  * @param metricDescription User's metric description
- * @param maxResults Maximum number of results to return (default: 10)
+ * @param options Search options including maxResults, variation, and excludeUrls
  * @returns Array of search results
  */
 export async function searchMetricSources(
   metricDescription: string,
-  maxResults: number = 10
+  options: SearchOptions | number = {}
 ): Promise<SearchResult[]> {
+  // Support legacy call signature with just maxResults as number
+  const opts: SearchOptions = typeof options === 'number' 
+    ? { maxResults: options } 
+    : options;
+  
+  const maxResults = opts.maxResults ?? 10;
+  const variation = opts.variation ?? 0;
+  const excludeUrls = opts.excludeUrls ?? [];
+  
   const apiKey = process.env.SERPAPI_KEY;
   
   if (!apiKey) {
@@ -33,7 +48,7 @@ export async function searchMetricSources(
   }
 
   // Build search query optimized for finding authoritative data sources
-  const searchQuery = buildSearchQuery(metricDescription);
+  const searchQuery = buildSearchQuery(metricDescription, variation, excludeUrls);
 
   try {
     const url = new URL('https://serpapi.com/search');
@@ -108,25 +123,67 @@ export async function searchMetricSources(
 }
 
 /**
+ * Search variation strategies for finding alternative sources
+ * Each variation uses different modifiers to get different search results
+ */
+const SEARCH_VARIATIONS: Array<string[]> = [
+  // Variation 0: Default - official/authoritative sources
+  ['official data', 'statistics', 'API', 'source'],
+  // Variation 1: Focus on live/real-time data
+  ['live data', 'real-time', 'current', 'tracker'],
+  // Variation 2: Focus on government/institutional sources
+  ['government', 'institution', 'official report', 'database'],
+  // Variation 3: Focus on APIs and developer resources
+  ['API endpoint', 'developer', 'data feed', 'JSON'],
+  // Variation 4: Focus on financial/market data
+  ['market data', 'price feed', 'exchange', 'trading'],
+  // Variation 5: Generic alternative
+  ['data source', 'metrics', 'dashboard', 'monitor'],
+];
+
+/**
  * Build optimized search query from metric description
  * Adds keywords to find official data sources
+ * @param metricDescription User's metric description
+ * @param variation Index of search variation to use (0-5)
+ * @param excludeUrls Optional list of URLs to exclude from search
  */
-function buildSearchQuery(metricDescription: string): string {
+function buildSearchQuery(
+  metricDescription: string, 
+  variation: number = 0,
+  excludeUrls: string[] = []
+): string {
   // Extract key terms and add search modifiers for finding data sources
   const baseQuery = metricDescription.trim();
   
-  // Add terms to prioritize official/authoritative sources
-  const modifiers = [
-    'official data',
-    'statistics',
-    'API',
-    'source',
-  ];
+  // Get modifiers for this variation (cycle through if out of range)
+  const variationIndex = Math.abs(variation) % SEARCH_VARIATIONS.length;
+  const modifiers = SEARCH_VARIATIONS[variationIndex];
 
   // Use OR logic to find any of these authoritative indicators
   const modifierQuery = modifiers.map(m => `"${m}"`).join(' OR ');
   
-  return `${baseQuery} (${modifierQuery})`;
+  // Build exclusion query for denied URLs (exclude their domains)
+  let exclusionQuery = '';
+  if (excludeUrls.length > 0) {
+    const domains = excludeUrls
+      .map(url => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return null;
+        }
+      })
+      .filter((d): d is string => d !== null);
+    
+    // Dedupe domains
+    const uniqueDomains = [...new Set(domains)];
+    if (uniqueDomains.length > 0) {
+      exclusionQuery = ' ' + uniqueDomains.map(d => `-site:${d}`).join(' ');
+    }
+  }
+  
+  return `${baseQuery} (${modifierQuery})${exclusionQuery}`;
 }
 
 /**
@@ -150,28 +207,46 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Search with caching to reduce API calls
+ * @param metricDescription User's metric description
+ * @param options Search options or legacy maxResults number
  */
 export async function searchMetricSourcesCached(
   metricDescription: string,
-  maxResults: number = 10
+  options: SearchOptions | number = {}
 ): Promise<SearchResult[]> {
-  // Simple hash of description for cache key
-  const cacheKey = Buffer.from(metricDescription.toLowerCase().trim())
+  // Support legacy call signature with just maxResults as number
+  const opts: SearchOptions = typeof options === 'number' 
+    ? { maxResults: options } 
+    : options;
+  
+  const maxResults = opts.maxResults ?? 10;
+  const variation = opts.variation ?? 0;
+  const excludeUrls = opts.excludeUrls ?? [];
+  
+  // Build cache key including variation and excluded URLs for uniqueness
+  const cacheKeyData = JSON.stringify({
+    desc: metricDescription.toLowerCase().trim(),
+    var: variation,
+    excl: excludeUrls.sort(),
+  });
+  const cacheKey = Buffer.from(cacheKeyData)
     .toString('base64')
-    .slice(0, 64);
+    .slice(0, 128);
 
   // Check cache
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     console.log('[SerpApi] Cache hit:', {
       description_preview: metricDescription.slice(0, 120),
+      variation,
+      excludeUrls_count: excludeUrls.length,
       result_count: cached.results.length,
     });
     return cached.results;
   }
 
   // Fetch fresh results
-  const results = await searchMetricSources(metricDescription, maxResults);
+  const results = await searchMetricSources(metricDescription, opts);
 
   // Update cache
   searchCache.set(cacheKey, {

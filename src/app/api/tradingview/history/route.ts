@@ -11,6 +11,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// === TIMEOUT CONFIGURATION ===
+// Aggressive timeouts to fail fast and avoid blocking the UI
+const CLICKHOUSE_QUERY_TIMEOUT_MS = 8_000; // 8 seconds max for any ClickHouse query
+const SUPABASE_QUERY_TIMEOUT_MS = 3_000; // 3 seconds max for Supabase lookups
+const METRIC_SERIES_TIMEOUT_MS = 5_000; // 5 seconds for metric series fallback
+
 type CachedHistory = { expiresAt: number; body: any; headers: Record<string, string> };
 const HISTORY_CACHE = new Map<string, CachedHistory>();
 const HISTORY_CACHE_TTL_MS = 15_000;
@@ -29,7 +35,37 @@ const METRIC_NAME_CACHE_TTL_MS = 5 * 60_000;
 // Cache for "no metric data" results to avoid repeated ClickHouse queries for sparse markets
 type CachedNoMetricData = { expiresAt: number };
 const NO_METRIC_DATA_CACHE = new Map<string, CachedNoMetricData>();
-const NO_METRIC_DATA_CACHE_TTL_MS = 30_000; // 30 seconds - short TTL so new data is picked up quickly
+const NO_METRIC_DATA_CACHE_TTL_MS = 60_000; // 60 seconds - increased to reduce repeated expensive queries
+
+// Cache for failed/slow market queries to prevent hammering
+type CachedFailedQuery = { expiresAt: number; reason: string };
+const FAILED_QUERY_CACHE = new Map<string, CachedFailedQuery>();
+const FAILED_QUERY_CACHE_TTL_MS = 30_000; // 30 seconds backoff for failed queries
+
+/**
+ * Race a promise against a timeout. Returns null on timeout.
+ */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label?: string
+): Promise<T | null> {
+  let timeoutId: NodeJS.Timeout;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timeoutId = setTimeout(() => {
+      if (label) console.warn(`⚠️ Timeout after ${timeoutMs}ms: ${label}`);
+      resolve(null);
+    }, timeoutMs);
+  });
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (e) {
+    clearTimeout(timeoutId!);
+    throw e;
+  }
+}
 
 function isDevSeedEnabled(): boolean {
   // Safety: disable by default in production. You can explicitly allow it with CHARTS_DEV_SEED=1.
@@ -111,13 +147,18 @@ async function resolveMetricNameForMarketUuid(marketUuid: string, fallbackSymbol
   
   try {
     // Prefer orderbook markets view (this is what TradingView uses).
-    const { data: ob } = await supabase
-      .from('orderbook_markets_view')
-      .select('metric_id, symbol')
-      .eq('id', id)
-      .limit(1)
-      .maybeSingle();
-    const m = (ob as any)?.metric_id || (ob as any)?.symbol;
+    // Wrap in timeout to fail fast
+    const result = await withTimeout(
+      supabase
+        .from('orderbook_markets_view')
+        .select('metric_id, symbol')
+        .eq('id', id)
+        .limit(1)
+        .maybeSingle(),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      `metric name lookup for ${id}`
+    );
+    const m = (result?.data as any)?.metric_id || (result?.data as any)?.symbol;
     if (m) {
       const name = String(m).toUpperCase();
       METRIC_NAME_CACHE.set(id, { name, expiresAt: Date.now() + METRIC_NAME_CACHE_TTL_MS });
@@ -127,9 +168,13 @@ async function resolveMetricNameForMarketUuid(marketUuid: string, fallbackSymbol
     // ignore
   }
   try {
-    // Fallback: legacy markets table
-    const { data: m } = await supabase.from('markets').select('market_identifier, symbol').eq('id', id).limit(1).maybeSingle();
-    const sym = (m as any)?.market_identifier || (m as any)?.symbol;
+    // Fallback: legacy markets table with timeout
+    const result = await withTimeout(
+      supabase.from('markets').select('market_identifier, symbol').eq('id', id).limit(1).maybeSingle(),
+      SUPABASE_QUERY_TIMEOUT_MS,
+      `legacy market lookup for ${id}`
+    );
+    const sym = (result?.data as any)?.market_identifier || (result?.data as any)?.symbol;
     if (sym) {
       const name = String(sym).toUpperCase();
       METRIC_NAME_CACHE.set(id, { name, expiresAt: Date.now() + METRIC_NAME_CACHE_TTL_MS });
@@ -143,6 +188,38 @@ async function resolveMetricNameForMarketUuid(marketUuid: string, fallbackSymbol
   return fallback;
 }
 
+/**
+ * Reusable ClickHouse client for metric series queries (singleton pattern).
+ * Avoids creating new connections for each request.
+ */
+let metricSeriesClient: ReturnType<typeof createClickHouseClient> | null = null;
+
+function getMetricSeriesClient() {
+  if (metricSeriesClient) return metricSeriesClient;
+  
+  const url = ensureClickHouseUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
+  if (!url) return null;
+
+  metricSeriesClient = createClickHouseClient({
+    url,
+    username: process.env.CLICKHOUSE_USER || 'default',
+    password: process.env.CLICKHOUSE_PASSWORD,
+    database: process.env.CLICKHOUSE_DATABASE || 'default',
+    request_timeout: METRIC_SERIES_TIMEOUT_MS,
+    // Keep connections alive for reuse
+    keep_alive: { enabled: true },
+    // Enable compression for faster data transfer
+    compression: { request: true, response: true },
+    // ClickHouse settings for faster queries
+    clickhouse_settings: {
+      max_threads: 4,
+      optimize_move_to_prewhere: 1,
+    },
+  });
+  
+  return metricSeriesClient;
+}
+
 async function fetchMetricSeriesAsOhlcv(params: {
   marketUuid: string;
   metricName: string;
@@ -154,16 +231,8 @@ async function fetchMetricSeriesAsOhlcv(params: {
   const { marketUuid, metricName, timeframe, limit, startTime, endTime } = params;
   if (!METRIC_TF_ALLOWED.has(timeframe)) return null;
 
-  const url = ensureClickHouseUrl(process.env.CLICKHOUSE_URL || process.env.CLICKHOUSE_HOST);
-  if (!url) return null;
-
-  const client = createClickHouseClient({
-    url,
-    username: process.env.CLICKHOUSE_USER || 'default',
-    password: process.env.CLICKHOUSE_PASSWORD,
-    database: process.env.CLICKHOUSE_DATABASE || 'default',
-    request_timeout: 30000,
-  });
+  const client = getMetricSeriesClient();
+  if (!client) return null;
 
   const safeMarketId = escapeSqlString(marketUuid);
   const safeMetricName = escapeSqlString(metricName);
@@ -172,17 +241,19 @@ async function fetchMetricSeriesAsOhlcv(params: {
   const endEpochSec = Math.floor(endTime.getTime() / 1000);
 
   // Finalize 1m values (last) then optionally roll up to the requested bucket.
+  // Use PREWHERE for indexed columns (market_id, ts) for faster filtering
   const baseSeries = `
     SELECT
       ts,
       argMaxMerge(latest_value) AS v
     FROM metric_series_1m
-    WHERE market_id = '${safeMarketId}'
-      AND metric_name = '${safeMetricName}'
+    PREWHERE market_id = '${safeMarketId}'
       AND ts >= toDateTime(${startEpochSec})
       AND ts <= toDateTime(${endEpochSec})
+    WHERE metric_name = '${safeMetricName}'
     GROUP BY ts
     ORDER BY ts ASC
+    SETTINGS max_threads = 4, optimize_read_in_order = 1
   `;
 
   const tfMinutes =
@@ -214,6 +285,7 @@ async function fetchMetricSeriesAsOhlcv(params: {
         )
       `;
 
+  // Query with optimized settings for fast retrieval
   const query = `
     SELECT
       toUnixTimestamp(ts) AS time,
@@ -224,22 +296,27 @@ async function fetchMetricSeriesAsOhlcv(params: {
       0 AS volume
     FROM (${rolled})
     ORDER BY ts DESC
-    LIMIT ${Math.max(1, Math.min(limit, 2000))}
+    LIMIT ${Math.max(1, Math.min(limit, 500))}
+    SETTINGS max_execution_time = 5, max_threads = 4
   `;
 
   try {
-    const result = await client.query({ query, format: 'JSONEachRow' });
-    const rows = (await result.json()) as Array<{
-      time: number;
-      open: number;
-      high: number;
-      low: number;
-      close: number;
-      volume: number;
-    }>;
-    await client.close();
-
-    if (!Array.isArray(rows) || rows.length === 0) return null;
+    // Wrap in timeout for additional safety
+    const queryPromise = async () => {
+      const result = await client.query({ query, format: 'JSONEachRow' });
+      return (await result.json()) as Array<{
+        time: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+      }>;
+    };
+    
+    const rows = await withTimeout(queryPromise(), METRIC_SERIES_TIMEOUT_MS, `metric_series query for ${marketUuid}`);
+    
+    if (!rows || !Array.isArray(rows) || rows.length === 0) return null;
     const ordered = rows.slice().reverse(); // oldest -> newest
 
     const t: number[] = [];
@@ -260,7 +337,8 @@ async function fetchMetricSeriesAsOhlcv(params: {
 
     return { t, o, h, l, c, v, count: ordered.length };
   } catch (e) {
-    try { await client.close(); } catch {}
+    // Don't close the shared client on error
+    console.warn(`⚠️ Metric series query failed for ${marketUuid}:`, e instanceof Error ? e.message : e);
     return null;
   }
 }
@@ -412,12 +490,14 @@ export async function GET(request: NextRequest) {
 
     // TradingView passes `countback` (bars requested). If we ignore it and honor a huge `from`,
     // ClickHouse can end up scanning/sorting a massive range for no reason.
+    // OPTIMIZATION: Cap at 500 bars for initial load, which is plenty for most charts
     const requestedCountback = countbackParam ? parseInt(countbackParam, 10) : NaN;
-    const limit = clampInt(Number.isFinite(requestedCountback) ? requestedCountback : 2000, 1, 2000);
+    const limit = clampInt(Number.isFinite(requestedCountback) ? requestedCountback : 300, 1, 500);
 
     const tfSec = TIMEFRAME_SECONDS[timeframe] || 60;
-    // Allow gaps (markets may not have a candle for every bucket); still clamp aggressively to avoid table scans.
-    const lookbackSec = limit * tfSec * 2;
+    // OPTIMIZATION: Clamp time range more aggressively - only look back 1.5x the requested bars
+    // This dramatically reduces the amount of data ClickHouse needs to scan
+    const lookbackSec = limit * tfSec * 1.5;
     const clampedStartMs = Math.max(startTime.getTime(), endTime.getTime() - lookbackSec * 1000);
     const effectiveStartTime = new Date(clampedStartMs);
 
@@ -425,6 +505,24 @@ export async function GET(request: NextRequest) {
     const clickhouse = getClickHouseDataPipeline();
 
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(symbol);
+
+    // Check if this market recently failed - skip expensive queries
+    const failedCacheKey = `failed:${symbol}:${timeframe}`;
+    const cachedFailed = FAILED_QUERY_CACHE.get(failedCacheKey);
+    if (cachedFailed && cachedFailed.expiresAt > Date.now()) {
+      // Return no_data quickly for recently failed markets
+      return NextResponse.json(
+        { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
+        { 
+          headers: { 
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-store',
+            'X-Failed-Cache': '1',
+            'X-Failed-Reason': cachedFailed.reason,
+          } 
+        }
+      );
+    }
 
     // Resolve metric_id -> market_uuid so ClickHouse queries stay market-id centric.
     // (TradingView shows ticker, so we keep ticker human-readable and map here.)
@@ -443,19 +541,24 @@ export async function GET(request: NextRequest) {
       }
       try {
         if (!marketUuid) {
-          const { data: m } = await supabase
-            .from('orderbook_markets_view')
-            .select('id')
-            .eq('metric_id', symbol)
-            .limit(1)
-            .maybeSingle();
-          if (m?.id) {
-            marketUuid = String(m.id);
+          // Wrap Supabase query in timeout to fail fast
+          const supabaseResult = await withTimeout(
+            supabase
+              .from('orderbook_markets_view')
+              .select('id')
+              .eq('metric_id', symbol)
+              .limit(1)
+              .maybeSingle(),
+            SUPABASE_QUERY_TIMEOUT_MS,
+            `Supabase market lookup for ${symbol}`
+          );
+          if (supabaseResult?.data?.id) {
+            marketUuid = String(supabaseResult.data.id);
             MARKET_UUID_CACHE.set(symbol, { id: marketUuid, expiresAt: Date.now() + MARKET_UUID_CACHE_TTL_MS });
           }
         }
       } catch {
-        // ignore
+        // ignore - proceed without market UUID
       }
     }
     const tResolve1 = Date.now();
@@ -484,17 +587,61 @@ export async function GET(request: NextRequest) {
       HISTORY_CACHE.clear();
     }
 
-    // Fetch candles using dynamic aggregation.
+    // Fetch candles using dynamic aggregation with timeout protection.
     // Prefer market_uuid filtering (canonical). If we can't resolve, fall back to symbol filtering.
     const tCh0 = Date.now();
-    const candles = await clickhouse.getOHLCVCandles(
-      marketUuid ? undefined : symbol,
-      timeframe,
-      limit,
-      effectiveStartTime,
-      endTime,
-      marketUuid
-    );
+    let candles: Awaited<ReturnType<typeof clickhouse.getOHLCVCandles>>;
+    try {
+      const candlesResult = await withTimeout(
+        clickhouse.getOHLCVCandles(
+          marketUuid ? undefined : symbol,
+          timeframe,
+          limit,
+          effectiveStartTime,
+          endTime,
+          marketUuid
+        ),
+        CLICKHOUSE_QUERY_TIMEOUT_MS,
+        `OHLCV candles for ${marketUuid || symbol}`
+      );
+      
+      if (candlesResult === null) {
+        // Timeout occurred - cache this failure and return no_data quickly
+        FAILED_QUERY_CACHE.set(failedCacheKey, { 
+          expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, 
+          reason: 'timeout' 
+        });
+        return NextResponse.json(
+          { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
+          { 
+            headers: { 
+              'Access-Control-Allow-Origin': '*',
+              'Cache-Control': 'no-store',
+              'X-Timeout': '1',
+            } 
+          }
+        );
+      }
+      candles = candlesResult;
+    } catch (e) {
+      // Query failed - cache the failure and return no_data
+      const errorMsg = e instanceof Error ? e.message : 'unknown';
+      console.error(`❌ ClickHouse query failed for ${marketUuid || symbol}:`, errorMsg);
+      FAILED_QUERY_CACHE.set(failedCacheKey, { 
+        expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, 
+        reason: errorMsg.slice(0, 50) 
+      });
+      return NextResponse.json(
+        { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
+        { 
+          headers: { 
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-store',
+            'X-Error': '1',
+          } 
+        }
+      );
+    }
     const tCh1 = Date.now();
 
     // Some older dev seed runs accidentally inserted OHLCV with price=0 due to empty-query-param parsing.

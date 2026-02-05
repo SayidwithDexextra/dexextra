@@ -13,6 +13,7 @@ import type { MetricResolutionResponse } from '@/components/MetricResolutionModa
 import { runMetricAIWithPolling, getMetricAIWorkerBaseUrl, type MetricAIResult } from '@/lib/metricAiWorker';
 import type { CreateMarketAssistantResponse } from '@/types/createMarketAssistant';
 import { createMarketOnChain } from '@/lib/createMarketOnChain';
+import { uploadImageToSupabase } from '@/lib/imageUpload';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
 
@@ -25,9 +26,133 @@ function clampText(input: string, maxLen: number) {
   return `${trimmed.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`;
 }
 
+function toConciseMarketIdentifier(input: string, opts?: { maxLen?: number }) {
+  const maxLen = Math.max(8, Math.min(48, opts?.maxLen ?? 28));
+  const raw = String(input || '').toUpperCase();
+  const words = raw
+    // Drop punctuation/parentheses entirely (they tend to create ugly identifiers).
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!words.length) return 'MARKET';
+
+  // Scope / currency hints.
+  const hasUs =
+    words.includes('US') ||
+    words.includes('USA') ||
+    (words.includes('UNITED') && words.includes('STATES')) ||
+    words.includes('AMERICA');
+  const currency =
+    words.includes('USD')
+      ? 'USD'
+      : words.includes('EUR')
+        ? 'EUR'
+        : words.includes('GBP')
+          ? 'GBP'
+          : words.includes('JPY')
+            ? 'JPY'
+            : words.includes('CAD')
+              ? 'CAD'
+              : null;
+
+  // Measurement hint.
+  const measure =
+    // Prefer "INDEX"/"RATE" when present; many prompts include the word "price" even for index-like series.
+    words.includes('INDEX')
+      ? 'INDEX'
+      : words.includes('RATE')
+        ? 'RATE'
+        : words.includes('RATIO')
+          ? 'RATIO'
+          : words.includes('PRICE')
+            ? 'PRICE'
+            : null;
+
+  const STOP = new Set([
+    'A',
+    'AN',
+    'THE',
+    'OF',
+    'IN',
+    'ON',
+    'AT',
+    'BY',
+    'FOR',
+    'AND',
+    'OR',
+    'PER',
+    'TO',
+    'FROM',
+    'AS',
+    'IS',
+    'ARE',
+    // Common "verbose metric" words we don't want as the core identifier.
+    'AVERAGE',
+    'RETAIL',
+    'MEAN',
+    'MEDIAN',
+    'CURRENT',
+    'LATEST',
+    'GRADE',
+    'LARGE',
+    'SMALL',
+    'MEDIUM',
+    // Location words (handled via `US`), and currency tokens.
+    'UNITED',
+    'STATES',
+    'AMERICA',
+    'US',
+    'USA',
+    'USD',
+    'EUR',
+    'GBP',
+    'JPY',
+    'CAD',
+  ]);
+
+  const subject = words.filter((w) => w.length >= 3 && !STOP.has(w));
+
+  const build = (subjectCount: number) => {
+    const parts: string[] = [];
+    const picked = subject.slice(0, Math.max(0, subjectCount));
+    for (const p of picked) {
+      if (!parts.includes(p)) parts.push(p);
+    }
+    if (measure && !parts.includes(measure)) parts.push(measure);
+    if (currency && !parts.includes(currency)) parts.push(currency);
+    else if (hasUs && !parts.includes('US')) parts.push('US');
+    return parts.join('-');
+  };
+
+  // Try to keep it short while preserving meaning.
+  let out = build(2);
+  if (!out) out = build(1);
+  if (!out) out = words[0] || 'MARKET';
+
+  // If still too long, reduce subject tokens and then hard-trim.
+  if (out.length > maxLen) out = build(1);
+  if (out.length > maxLen) {
+    const sliced = out.slice(0, maxLen);
+    // Avoid ending in a partial token when possible.
+    const lastDash = sliced.lastIndexOf('-');
+    out = lastDash >= 8 ? sliced.slice(0, lastDash) : sliced;
+  }
+  // Final hard-sanitize: never allow parentheses, periods, or any punctuation.
+  out = out.replace(/[^A-Z0-9-]/g, '');
+  // Normalize repeated separators and strip any trailing punctuation-like artifacts.
+  out = out.replace(/-+/g, '-').replace(/-+$/g, '').replace(/^-+/g, '');
+  out = out.replace(/\.+$/g, '');
+  return out || 'MARKET';
+}
+
 function suggestMarketName(params: { metricName?: string; sourceLabel?: string }) {
   const base = params.metricName?.trim() || 'New Market';
-  const withSource = params.sourceLabel ? `${base} • ${params.sourceLabel}` : base;
+  const sourceLabel = params.sourceLabel?.trim();
+  const includeSourceLabel =
+    Boolean(sourceLabel) && !/custom\s*url/i.test(String(sourceLabel || ''));
+  const withSource = includeSourceLabel ? `${base} • ${sourceLabel}` : base;
   return clampText(withSource, 56);
 }
 
@@ -187,6 +312,7 @@ function StepPanel({
   onConfirmDescription,
   iconPreviewUrl,
   onConfirmIcon,
+  isIconSaving,
   onStartOver,
   devTools,
 }: {
@@ -204,7 +330,8 @@ function StepPanel({
   onChangeDescription: (v: string) => void;
   onConfirmDescription: () => void;
   iconPreviewUrl: string | null;
-  onConfirmIcon: () => void;
+  onConfirmIcon: () => void | Promise<void>;
+  isIconSaving: boolean;
   onStartOver: () => void;
   devTools?: React.ReactNode;
 }) {
@@ -249,8 +376,10 @@ function StepPanel({
     if (step === 'description') resizeTextarea(descriptionRef.current);
   }, [marketDescription, resizeTextarea, step]);
 
+  const showUserBubble = step !== 'select_source';
+
   return (
-    <div className="space-y-4">
+    <div className={step === 'select_source' ? 'space-y-2' : 'space-y-4'}>
       {/* Row 1: AI message on right side of page */}
       <div
         className={[
@@ -274,116 +403,112 @@ function StepPanel({
       </div>
 
       {/* Row 2: User input on left side of page */}
-      <div
-        className={[
-          'flex justify-start transition-all duration-200 ease-out delay-75',
-          isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0',
-        ].join(' ')}
-      >
-        <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-full max-w-[520px]">
-          {step === 'clarify_metric' ? (
-            <div>
-              <textarea
-                ref={clarificationRef}
-                value={metricClarification}
-                onChange={(e) => onChangeMetricClarification(e.target.value)}
-                onInput={() => resizeTextarea(clarificationRef.current)}
-                onKeyDown={handleClarificationKeyDown}
-                className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
-                style={{ outline: 'none', boxShadow: 'none', minHeight: '7.5rem' }}
-                rows={4}
-                placeholder="Reply with a clarification (Shift+Enter for a new line)"
-                autoFocus
-              />
-              <div className="mt-2 text-[11px] text-white/45">
-                Press Enter to submit clarification
+      {showUserBubble ? (
+        <div
+          className={[
+            'flex justify-start transition-all duration-200 ease-out delay-75',
+            isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0',
+          ].join(' ')}
+        >
+          <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-full max-w-[520px]">
+            {step === 'clarify_metric' ? (
+              <div>
+                <textarea
+                  ref={clarificationRef}
+                  value={metricClarification}
+                  onChange={(e) => onChangeMetricClarification(e.target.value)}
+                  onInput={() => resizeTextarea(clarificationRef.current)}
+                  onKeyDown={handleClarificationKeyDown}
+                  className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
+                  style={{ outline: 'none', boxShadow: 'none', minHeight: '7.5rem' }}
+                  rows={4}
+                  placeholder="Reply with a clarification (Shift+Enter for a new line)"
+                  autoFocus
+                />
+                <div className="mt-2 text-[11px] text-white/45">
+                  Press Enter to submit clarification
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {step === 'name' ? (
-            <div>
-              <input
-                value={marketName}
-                onChange={(e) => onChangeName(e.target.value)}
-                onKeyDown={handleNameKeyDown}
-                className="w-full bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none"
-                style={{ outline: 'none', boxShadow: 'none' }}
-                placeholder="Market name"
-                autoFocus
-              />
-              <div className="mt-2 text-[11px] text-white/45">
-                Press Enter to continue
+            {step === 'name' ? (
+              <div>
+                <input
+                  value={marketName}
+                  onChange={(e) => onChangeName(e.target.value)}
+                  onKeyDown={handleNameKeyDown}
+                  className="w-full bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none"
+                  style={{ outline: 'none', boxShadow: 'none' }}
+                  placeholder="Market name"
+                  autoFocus
+                />
+                <div className="mt-2 text-[11px] text-white/45">
+                  Press Enter to continue
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {step === 'description' ? (
-            <div>
-              <textarea
-                ref={descriptionRef}
-                value={marketDescription}
-                onChange={(e) => onChangeDescription(e.target.value)}
-                onInput={() => resizeTextarea(descriptionRef.current)}
-                onKeyDown={handleDescriptionKeyDown}
-                className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
-                style={{ outline: 'none', boxShadow: 'none', minHeight: '7.5rem' }}
-                rows={4}
-                placeholder="Market description"
-                autoFocus
-              />
-              <div className="mt-2 text-[11px] text-white/45">
-                Press Enter to continue
+            {step === 'description' ? (
+              <div>
+                <textarea
+                  ref={descriptionRef}
+                  value={marketDescription}
+                  onChange={(e) => onChangeDescription(e.target.value)}
+                  onInput={() => resizeTextarea(descriptionRef.current)}
+                  onKeyDown={handleDescriptionKeyDown}
+                  className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
+                  style={{ outline: 'none', boxShadow: 'none', minHeight: '7.5rem' }}
+                  rows={4}
+                  placeholder="Market description"
+                  autoFocus
+                />
+                <div className="mt-2 text-[11px] text-white/45">
+                  Press Enter to continue
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {step === 'select_source' ? (
-            <div className="text-[12px] text-white/45">
-              Select a data source below. Tip: hover a source to see reliability details.
-            </div>
-          ) : null}
+            {step === 'icon' ? (
+              <div className="flex items-center gap-3">
+                {/* Preview */}
+                <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-white/8 bg-black/40">
+                  {iconPreviewUrl ? (
+                    <Image
+                      src={iconPreviewUrl}
+                      alt="Market icon preview"
+                      width={48}
+                      height={48}
+                      className="h-full w-full object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-white/10 to-white/5" />
+                  )}
+                </div>
 
-          {step === 'icon' ? (
-            <div className="flex items-center gap-3">
-              {/* Preview */}
-              <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-white/8 bg-black/40">
-                {iconPreviewUrl ? (
-                  <Image
-                    src={iconPreviewUrl}
-                    alt="Market icon preview"
-                    width={48}
-                    height={48}
-                    className="h-full w-full object-cover"
-                    unoptimized
-                  />
-                ) : (
-                  <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-white/10 to-white/5" />
-                )}
+                <div className="flex-1 text-sm text-white/60">
+                  {iconPreviewUrl ? 'Icon selected' : 'Select an icon below'}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void onConfirmIcon()}
+                  disabled={!iconPreviewUrl || isIconSaving}
+                  className="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black transition-opacity disabled:opacity-50"
+                >
+                  {isIconSaving ? 'Uploading…' : 'Done'}
+                </button>
               </div>
+            ) : null}
 
-              <div className="flex-1 text-sm text-white/60">
-                {iconPreviewUrl ? 'Icon selected' : 'Select an icon below'}
+            {step === 'complete' ? (
+              <div className="text-[12px] text-white/55">
+                Review your market configuration below. When ready, confirm to generate the market parameters.
               </div>
-
-              <button
-                type="button"
-                onClick={onConfirmIcon}
-                disabled={!iconPreviewUrl}
-                className="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black transition-opacity disabled:opacity-50"
-              >
-                Done
-              </button>
-            </div>
-          ) : null}
-
-          {step === 'complete' ? (
-            <div className="text-[12px] text-white/55">
-              Review your market configuration below. When ready, confirm to generate the market parameters.
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -680,6 +805,19 @@ export function InteractiveMarketCreation() {
     process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEV_TOOLS === 'true';
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
 
+  const DEV_REVIEW_PRESET = {
+    marketName: 'AVERAGE-RETAIL-PRICE-OF-BANANAS-IN-THE-USA',
+    marketDescription:
+      'Tracks the U.S. average retail price of bananas (USD per lb) using FRED series APU0000711311. Updated monthly.',
+    startPrice: '0.62',
+    iconUrl:
+      'https://images.unsplash.com/photo-1528825871115-3581a5387919?w=256&h=256&fit=crop&auto=format',
+    sourceUrl: 'https://fred.stlouisfed.org/series/APU0000711311',
+    sourceDomain: 'fred.stlouisfed.org',
+    sourceLabel: 'FRED',
+    sourceAuthority: 'Federal Reserve Bank of St. Louis (FRED)',
+  } as const;
+
   const DEV_SELECT_SOURCE_PRESET: NonNullable<MetricDiscoveryResponse['sources']> = {
     primary_source: {
       url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
@@ -724,6 +862,8 @@ export function InteractiveMarketCreation() {
   const [isDescriptionConfirmed, setIsDescriptionConfirmed] = React.useState(false);
   const [iconFile, setIconFile] = React.useState<File | null>(null);
   const [iconPreviewUrl, setIconPreviewUrl] = React.useState<string | null>(null);
+  const [iconStoredUrl, setIconStoredUrl] = React.useState<string | null>(null);
+  const [isIconSaving, setIsIconSaving] = React.useState(false);
   const [isIconConfirmed, setIsIconConfirmed] = React.useState(false);
   const [nameTouched, setNameTouched] = React.useState(false);
   const [descriptionTouched, setDescriptionTouched] = React.useState(false);
@@ -733,6 +873,33 @@ export function InteractiveMarketCreation() {
   const [validationResult, setValidationResult] = React.useState<MetricResolutionResponse | null>(null);
   const [showValidationModal, setShowValidationModal] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | null>(null);
+
+  // Cache the most recently validated source so accidental navigation back to Step 3
+  // doesn't force a re-fetch + re-run of the AI metric tool.
+  const [cachedValidatedSelection, setCachedValidatedSelection] = React.useState<{
+    key: string;
+    source: MetricSourceOption;
+    validation: MetricResolutionResponse;
+  } | null>(null);
+
+  const normalizeUrlForCache = React.useCallback((url: string) => {
+    try {
+      const u = new URL(url);
+      u.hash = '';
+      return u.toString().replace(/\/$/, '');
+    } catch {
+      return (url || '').trim().replace(/\/$/, '');
+    }
+  }, []);
+
+  const makeValidationCacheKey = React.useCallback(
+    (metric: string, url: string) => `${(metric || '').trim()}::${normalizeUrlForCache(url)}`,
+    [normalizeUrlForCache]
+  );
+
+  // Source denial/re-search state
+  const [deniedSourceUrls, setDeniedSourceUrls] = React.useState<string[]>([]);
+  const [searchVariation, setSearchVariation] = React.useState(0);
 
   // Market creation state
   const [isCreatingMarket, setIsCreatingMarket] = React.useState(false);
@@ -772,6 +939,12 @@ export function InteractiveMarketCreation() {
 
   const assistantRequestKey = React.useMemo(() => {
     if ((discoveryState !== 'success' && discoveryState !== 'clarify') || !discoveryResult) return '';
+    // Avoid premature assistant conclusions while Step 3 source discovery is still running.
+    // The assistant prompt may otherwise see empty `search_results` (define_only mode) and claim "no sources"
+    // even though the UI is still actively searching.
+    if (visibleStep === 'select_source' && (sourcesFetchState === 'idle' || sourcesFetchState === 'loading')) {
+      return '';
+    }
     return JSON.stringify({
       step: visibleStep,
       discoveryState,
@@ -779,6 +952,7 @@ export function InteractiveMarketCreation() {
       rejection: discoveryResult.rejection_reason ?? '',
       metricName: discoveryResult.metric_definition?.metric_name ?? '',
       selectedUrl: selectedSource?.url ?? '',
+      sourcesFetchState,
     });
     // Intentionally exclude `discoveryResult.sources/search_results` so source fetching doesn't retrigger typing.
   }, [
@@ -787,8 +961,18 @@ export function InteractiveMarketCreation() {
     discoveryResult?.metric_definition?.metric_name,
     discoveryState,
     selectedSource?.url,
+    sourcesFetchState,
     visibleStep,
   ]);
+
+  React.useEffect(() => {
+    if (visibleStep !== 'select_source') return;
+    if (sourcesFetchState !== 'idle' && sourcesFetchState !== 'loading') return;
+    // Clear any stale assistant message so the fallback can display a consistent loading state.
+    setAssistantMessage('');
+    setAssistantIsLoading(false);
+    lastAssistantRequestKeyRef.current = '';
+  }, [sourcesFetchState, visibleStep]);
 
   const ensureDevDiscovery = React.useCallback((): MetricDiscoveryResponse => {
     if (discoveryResult?.metric_definition) return discoveryResult;
@@ -960,6 +1144,128 @@ export function InteractiveMarketCreation() {
     ]
   );
 
+  const devSkipToReviewWithPreset = React.useCallback(() => {
+    // Ensure we can render the flow, then fill everything required for the review screen.
+    setErrorMessage(null);
+    setDiscoveryState('success');
+
+    // Fill core form fields
+    setMarketName(DEV_REVIEW_PRESET.marketName);
+    setMarketDescription(DEV_REVIEW_PRESET.marketDescription);
+    setNameTouched(true);
+    setDescriptionTouched(true);
+    setIsNameConfirmed(true);
+    setIsDescriptionConfirmed(true);
+
+    // Pick an icon immediately
+    setIconFile(null);
+    setIconPreviewUrl(DEV_REVIEW_PRESET.iconUrl);
+    setIsIconConfirmed(true);
+
+    // Preselect a source immediately
+    const devSource: MetricSourceOption = {
+      id: 'dev-banana-source',
+      icon: (
+        <div className="relative h-7 w-7">
+          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/15 text-white/90">
+            <span className="text-[14px] font-semibold">B</span>
+          </div>
+        </div>
+      ),
+      label: DEV_REVIEW_PRESET.sourceLabel,
+      sublabel: DEV_REVIEW_PRESET.sourceDomain,
+      url: DEV_REVIEW_PRESET.sourceUrl,
+      confidence: 0.88,
+      authority: DEV_REVIEW_PRESET.sourceAuthority,
+      badge: 'Dev',
+      iconBg: 'bg-gradient-to-br from-yellow-400 to-orange-500',
+      tooltip: {
+        name: DEV_REVIEW_PRESET.sourceLabel,
+        description:
+          'Official public time series page for average banana retail price in the U.S. (FRED APU0000711311).',
+        reliability: 'High (Dev preset)',
+        updateFrequency: 'Monthly',
+        dataType: 'Web',
+      },
+    };
+    setSelectedSource(devSource);
+    setSourcesFetchState('success');
+
+    // Make sure discoveryResult exists and is aligned with the preset (helps downstream UI + assistant context).
+    setDiscoveryResult((prev) => {
+      const base: MetricDiscoveryResponse =
+        prev?.metric_definition
+          ? prev
+          : {
+              measurable: true,
+              metric_definition: {
+                metric_name: DEV_REVIEW_PRESET.marketName,
+                unit: 'USD per lb',
+                scope: 'United States',
+                time_basis: 'Monthly',
+                measurement_method:
+                  'Average retail price of bananas per pound as published by FRED (series APU0000711311).',
+              },
+              assumptions: [],
+              sources: null,
+              rejection_reason: null,
+              search_results: [],
+              processing_time_ms: 0,
+            };
+
+      return {
+        ...base,
+        measurable: true,
+        rejection_reason: null,
+        metric_definition: base.metric_definition || {
+          metric_name: DEV_REVIEW_PRESET.marketName,
+          unit: 'USD per lb',
+          scope: 'United States',
+          time_basis: 'Monthly',
+          measurement_method:
+            'Average retail price of bananas per pound as published by FRED (series APU0000711311).',
+        },
+      };
+    });
+
+    // Pre-fill a validated start price so Create Market can proceed immediately.
+    const nowIso = new Date().toISOString();
+    setValidationResult({
+      status: 'completed',
+      processingTime: '0ms',
+      cached: true,
+      data: {
+        metric: DEV_REVIEW_PRESET.marketName,
+        value: DEV_REVIEW_PRESET.startPrice,
+        unit: 'USD',
+        as_of: nowIso,
+        confidence: 0.88,
+        asset_price_suggestion: DEV_REVIEW_PRESET.startPrice,
+        reasoning: 'Dev preset value for fast end-to-end market creation.',
+        sources: [
+          {
+            url: DEV_REVIEW_PRESET.sourceUrl,
+            screenshot_url: '',
+            quote: DEV_REVIEW_PRESET.startPrice,
+            match_score: 0.9,
+          },
+        ],
+      },
+      performance: {
+        totalTime: 0,
+        breakdown: {
+          cacheCheck: '0ms',
+          scraping: '0ms',
+          processing: '0ms',
+          aiAnalysis: '0ms',
+        },
+      },
+    });
+
+    // Close menu + ensure we land on the end screen.
+    setDevToolsOpen(false);
+  }, [DEV_REVIEW_PRESET]);
+
   const runDefineOnlyDiscovery = async (description: string) => {
     setDiscoveryState('discovering');
     setErrorMessage(null);
@@ -1005,6 +1311,8 @@ export function InteractiveMarketCreation() {
     setIsDescriptionConfirmed(false);
     setIconFile(null);
     setIconPreviewUrl(null);
+    setIconStoredUrl(null);
+    setIsIconSaving(false);
     setIsIconConfirmed(false);
     setNameTouched(false);
     setDescriptionTouched(false);
@@ -1012,6 +1320,7 @@ export function InteractiveMarketCreation() {
     setAssistantMessage('');
     setAssistantIsLoading(false);
     setAssistantHistory([{ role: 'user', content: prompt.trim() }]);
+    setCachedValidatedSelection(null);
 
     await runDefineOnlyDiscovery(prompt);
   };
@@ -1029,6 +1338,8 @@ export function InteractiveMarketCreation() {
     setIsDescriptionConfirmed(false);
     setIconFile(null);
     setIconPreviewUrl(null);
+    setIconStoredUrl(null);
+    setIsIconSaving(false);
     setIsIconConfirmed(false);
     setNameTouched(false);
     setDescriptionTouched(false);
@@ -1038,6 +1349,10 @@ export function InteractiveMarketCreation() {
     setValidationResult(null);
     setShowValidationModal(false);
     setValidationError(null);
+    setCachedValidatedSelection(null);
+    // Reset source denial/re-search state
+    setDeniedSourceUrls([]);
+    setSearchVariation(0);
     // Reset assistant state
     setAssistantMessage('');
     setAssistantIsLoading(false);
@@ -1140,7 +1455,7 @@ export function InteractiveMarketCreation() {
 
     try {
       const INITIAL_SPLASH_MS = 1200;
-      const symbol = marketName.trim().replace(/\s+/g, '-').toUpperCase();
+      const symbol = toConciseMarketIdentifier(marketName, { maxLen: 28 });
       const metricUrl = selectedSource.url;
       const dataSource = selectedSource.authority || selectedSource.label || 'User Provided';
       const tags: string[] = [];
@@ -1149,7 +1464,15 @@ export function InteractiveMarketCreation() {
 
       // Try to get start price from AI worker if not already available
       const workerUrl = getMetricAIWorkerBaseUrl();
-      if (workerUrl && metricUrl) {
+      const hasValidatedPrice = (() => {
+        const raw = String(validationResult?.data?.asset_price_suggestion || validationResult?.data?.value || '').trim();
+        if (!raw) return false;
+        const n = Number(raw.replace(/,/g, '').replace(/[^0-9.]/g, ''));
+        return Number.isFinite(n) && n > 0;
+      })();
+
+      // If we already have a validated price (normal flow) or a dev preset value, don't override it.
+      if (!hasValidatedPrice && workerUrl && metricUrl) {
         try {
           const ai = await runMetricAIWithPolling(
             {
@@ -1229,6 +1552,12 @@ export function InteractiveMarketCreation() {
         }).catch(() => {});
       }
 
+      // Ensure the icon is persisted in Supabase Storage (never save blob: URLs).
+      const iconUrl =
+        iconStoredUrl ||
+        (iconPreviewUrl && !iconPreviewUrl.startsWith('blob:') ? iconPreviewUrl : null) ||
+        (await ensureIconStored());
+
       // Create market on chain
       const { orderBook, marketId, chainId, transactionHash } = await createMarketOnChain({
         symbol,
@@ -1236,6 +1565,11 @@ export function InteractiveMarketCreation() {
         startPrice: String(startPrice),
         dataSource,
         tags,
+        name: marketName.trim(),
+        description: String(marketDescription || '').trim(),
+        bannerImageUrl: iconUrl || null,
+        iconImageUrl: iconUrl || null,
+        aiSourceLocator: sourceLocator,
         pipelineId,
         onProgress: ({ step }) => {
           const idx = stepIndexMap[step];
@@ -1268,8 +1602,8 @@ export function InteractiveMarketCreation() {
           body: JSON.stringify({
             marketIdentifier: symbol,
             symbol,
-            name: `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`,
-            description: marketDescription || `OrderBook market for ${symbol}`,
+            name: marketName.trim(),
+            description: String(marketDescription || '').trim() || `OrderBook market for ${symbol}`,
             category: 'CUSTOM',
             decimals: 6,
             minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
@@ -1293,7 +1627,8 @@ export function InteractiveMarketCreation() {
             blockNumber: null,
             gasUsed: null,
             aiSourceLocator: sourceLocator,
-            iconImageUrl: iconPreviewUrl || null,
+            bannerImageUrl: iconUrl || null,
+            iconImageUrl: iconUrl || null,
           }),
         });
         if (!saveRes.ok) {
@@ -1332,6 +1667,7 @@ export function InteractiveMarketCreation() {
     marketDescription,
     validationResult,
     iconPreviewUrl,
+    iconStoredUrl,
     deploymentOverlay,
     pusher,
     router,
@@ -1358,15 +1694,67 @@ export function InteractiveMarketCreation() {
 
   React.useEffect(() => {
     if (!iconFile) {
-      setIconPreviewUrl(null);
+      // If we already uploaded/imported an icon into Supabase Storage,
+      // keep showing that persisted URL.
+      setIconPreviewUrl(iconStoredUrl || null);
       return;
     }
     const url = URL.createObjectURL(iconFile);
     setIconPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [iconFile]);
+  }, [iconFile, iconStoredUrl]);
+
+  const ensureIconStored = React.useCallback(async (): Promise<string | null> => {
+    // Prefer a previously persisted URL.
+    if (iconStoredUrl) return iconStoredUrl;
+    const current = iconPreviewUrl;
+    if (!current) return null;
+
+    // Already a Supabase public object URL.
+    if (current.includes('/storage/v1/object/public/market-images/')) {
+      setIconStoredUrl(current);
+      return current;
+    }
+
+    setIsIconSaving(true);
+    try {
+      // Local upload: store the selected file.
+      if (current.startsWith('blob:') && iconFile) {
+        const uploaded = await uploadImageToSupabase(iconFile, 'markets/icon');
+        if (!uploaded.success || !uploaded.url) {
+          throw new Error(uploaded.error || 'Icon upload failed');
+        }
+        setIconStoredUrl(uploaded.url);
+        // Drop the local file to avoid keeping large blobs in memory.
+        setIconFile(null);
+        return uploaded.url;
+      }
+
+      // Remote URL selection: import to Storage via server (avoids CORS).
+      if (/^https?:\/\//i.test(current)) {
+        const res = await fetch('/api/market-images/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: current, kind: 'icon' }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(json?.error || `Icon import failed (${res.status})`);
+        }
+        const publicUrl = typeof json?.publicUrl === 'string' ? json.publicUrl : null;
+        if (!publicUrl) throw new Error('Icon import did not return a URL');
+        setIconStoredUrl(publicUrl);
+        return publicUrl;
+      }
+
+      return null;
+    } finally {
+      setIsIconSaving(false);
+    }
+  }, [iconFile, iconPreviewUrl, iconStoredUrl]);
 
   // Step 3: After name + description are confirmed, fetch sources (SERP + AI ranking) for MetricSourceBubble.
+  // Includes searchVariation and deniedSourceUrls to support re-searching after user denies a source.
   React.useEffect(() => {
     if (discoveryState !== 'success' || !discoveryResult) return;
     if (visibleStep !== 'select_source') return;
@@ -1384,7 +1772,12 @@ export function InteractiveMarketCreation() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
-          body: JSON.stringify({ description: query, mode: 'full' }),
+          body: JSON.stringify({ 
+            description: query, 
+            mode: 'full',
+            searchVariation,
+            excludeUrls: deniedSourceUrls.length > 0 ? deniedSourceUrls : undefined,
+          }),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json?.message || 'Failed to fetch sources');
@@ -1401,7 +1794,7 @@ export function InteractiveMarketCreation() {
     })();
 
     return () => controller.abort();
-  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isNameConfirmed, visibleStep, sourcesFetchNonce]);
+  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isNameConfirmed, visibleStep, sourcesFetchNonce, searchVariation, deniedSourceUrls]);
 
   const desiredStep = React.useMemo<CreationStep>(() => {
     if (!discoveryResult) return 'clarify_metric';
@@ -1446,6 +1839,8 @@ export function InteractiveMarketCreation() {
                 metric_definition: discoveryResult.metric_definition ?? null,
                 assumptions: discoveryResult.assumptions ?? [],
                 sources: discoveryResult.sources ?? null,
+                // Include SERP candidates so the assistant doesn't incorrectly claim none exist.
+                search_results: discoveryResult.search_results ?? [],
               },
               marketName: marketNameRef.current,
               marketDescription: marketDescriptionRef.current,
@@ -1547,6 +1942,22 @@ export function InteractiveMarketCreation() {
     }
 
     if (!selectedSource) {
+      if (visibleStep === 'select_source' && (sourcesFetchState === 'idle' || sourcesFetchState === 'loading')) {
+        return `Searching the web for reliable data sources…`;
+      }
+      if (visibleStep === 'select_source' && sourcesFetchState === 'error') {
+        return `I couldn’t fetch data sources right now. Retry, or paste a public URL as a custom endpoint.`;
+      }
+
+      const hasCandidates =
+        Boolean(discoveryResult?.sources?.primary_source?.url) ||
+        (Array.isArray(discoveryResult?.search_results) && discoveryResult.search_results.length > 0) ||
+        (Array.isArray(discoveryResult?.sources?.secondary_sources) && discoveryResult.sources.secondary_sources.length > 0);
+
+      if (!hasCandidates) {
+        return `I couldn’t find reliable public data sources for this metric. If you know a specific dataset or publisher, paste a public URL and we’ll use it.`;
+      }
+
       return `Now pick a data source for this market.`;
     }
 
@@ -1555,7 +1966,7 @@ export function InteractiveMarketCreation() {
     }
 
     return `Perfect. Your market setup is ready.`;
-  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource]);
+  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, sourcesFetchState, visibleStep]);
 
   return (
     <div className="relative w-full max-w-[90vw] sm:w-[702px] sm:max-w-[702px]">
@@ -1592,7 +2003,20 @@ export function InteractiveMarketCreation() {
                 }}
                 onConfirmDescription={() => setIsDescriptionConfirmed(true)}
                 iconPreviewUrl={iconPreviewUrl}
-                onConfirmIcon={() => setIsIconConfirmed(true)}
+                isIconSaving={isIconSaving}
+                onConfirmIcon={async () => {
+                  try {
+                    setErrorMessage(null);
+                    const stored = await ensureIconStored();
+                    if (!stored) throw new Error('Please select an icon image.');
+                    // Ensure we’re now using the persisted (Supabase) URL everywhere.
+                    setIconStoredUrl(stored);
+                    setIconPreviewUrl(stored);
+                    setIsIconConfirmed(true);
+                  } catch (e: any) {
+                    setErrorMessage(e?.message || 'Icon upload failed');
+                  }
+                }}
                 onStartOver={handleReset}
             devTools={
               devToolsEnabled ? (
@@ -1625,6 +2049,16 @@ export function InteractiveMarketCreation() {
                           </button>
                         )
                       )}
+                      <div className="mt-2 pt-2 border-t border-white/10">
+                        <div className="px-2 pb-1 text-[11px] text-white/45">Presets</div>
+                        <button
+                          type="button"
+                          onClick={() => devSkipToReviewWithPreset()}
+                          className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
+                        >
+                          Skip to review (Bananas preset)
+                        </button>
+                      </div>
                       <div className="mt-2 pt-2 border-t border-white/10">
                         <div className="px-2 pb-1 text-[11px] text-white/45">Modals</div>
                         <button
@@ -1749,6 +2183,19 @@ export function InteractiveMarketCreation() {
                             )
                           )}
                           <div className="mt-2 pt-2 border-t border-white/10">
+                            <div className="px-2 pb-1 text-[11px] text-white/45">Presets</div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                devSkipToReviewWithPreset();
+                                setDevToolsOpen(false);
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
+                            >
+                              Skip to review (Bananas preset)
+                            </button>
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-white/10">
                             <div className="px-2 pb-1 text-[11px] text-white/45">Modals</div>
                             <button
                               type="button"
@@ -1856,6 +2303,7 @@ export function InteractiveMarketCreation() {
           secondarySources={discoveryResult?.sources?.secondary_sources ?? []}
           metricName={discoveryResult.metric_definition.metric_name}
           searchResults={discoveryResult.search_results ?? []}
+          validatedSourceUrl={cachedValidatedSelection?.source?.url ?? null}
           fetchState={sourcesFetchState}
           onRetry={() => {
             // Force a re-fetch (effect runs when fetchState returns to idle).
@@ -1867,7 +2315,22 @@ export function InteractiveMarketCreation() {
             const md = discoveryResult.metric_definition;
             if (!md) return;
 
+            const nextKey = makeValidationCacheKey(md.metric_name, source.url);
+            const canReuseValidation =
+              Boolean(cachedValidatedSelection?.validation) && cachedValidatedSelection?.key === nextKey;
+
+            // If we already validated this exact URL for this metric, skip AI + keep downstream state.
+            if (canReuseValidation) {
+              setSelectedSource(source);
+              setIsValidating(false);
+              setValidationError(null);
+              setShowValidationModal(false);
+              setValidationResult(cachedValidatedSelection!.validation);
+              return;
+            }
+
             setSelectedSource(source);
+            // Changing the source invalidates downstream confirmation (icon + validation).
             setIsIconConfirmed(false);
             
             // Optionally enrich defaults with source if user hasn't edited.
@@ -1911,13 +2374,28 @@ export function InteractiveMarketCreation() {
 
               const processingMs = Math.max(0, Date.now() - started);
               const result = toModalResponse(ai, marketName || md.metric_name, processingMs);
+              const numericCandidate = String(
+                result?.data?.asset_price_suggestion || result?.data?.value || ''
+              )
+                .trim()
+                .replace(/,/g, '')
+                .replace(/[^0-9.]/g, '');
+              const parsed = Number(numericCandidate);
+              if (!numericCandidate || !Number.isFinite(parsed) || parsed <= 0) {
+                throw new Error(
+                  "We couldn’t extract a numeric metric price from that URL. Please pick another suggested source, or use Custom URL to paste a different public endpoint."
+                );
+              }
               
               setValidationResult(result);
+              setCachedValidatedSelection({ key: nextKey, source, validation: result });
               setIsValidating(false);
             } catch (error) {
               console.error('Validation Error:', error);
               setValidationError(error instanceof Error ? error.message : 'Validation failed');
               setIsValidating(false);
+              // Keep the user on source selection so they can choose another source / custom URL.
+              setSelectedSource(null);
             }
           }}
         />
@@ -1932,11 +2410,13 @@ export function InteractiveMarketCreation() {
           query={discoveryResult.metric_definition.metric_name || marketName || prompt}
           onSelectIcon={(url) => {
             setIconFile(null);
+            setIconStoredUrl(null);
             setIconPreviewUrl(url);
             setIsIconConfirmed(false);
           }}
           onUploadIcon={(file) => {
             setIconFile(file);
+            setIconStoredUrl(null);
             setIsIconConfirmed(false);
           }}
           selectedIconUrl={iconPreviewUrl}
@@ -1966,8 +2446,8 @@ export function InteractiveMarketCreation() {
               setSelectedSource(null);
               setIsIconConfirmed(false);
             } else if (step === 'select_source') {
+              // Keep icon + previous validation cached so user can re-select without rerunning AI.
               setSelectedSource(null);
-              setIsIconConfirmed(false);
             } else if (step === 'icon') {
               setIsIconConfirmed(false);
             } else if (step === 'clarify_metric') {
@@ -2016,11 +2496,38 @@ export function InteractiveMarketCreation() {
           setValidationError(null);
         }}
         response={validationResult}
+        error={validationError}
         onAccept={() => {
           // Handle accepted validation - proceed to next step
           setShowValidationModal(false);
           // The source is already selected, validation is complete
           // User can now proceed to icon step
+        }}
+        onPickAnotherSource={() => {
+          // Keep the user on select_source so they can pick a different suggestion or use Custom URL.
+          setSelectedSource(null);
+          setShowValidationModal(false);
+          setValidationResult(null);
+          setValidationError(null);
+          setCachedValidatedSelection(null);
+        }}
+        onDeny={() => {
+          // Track the denied source URL to exclude from future searches
+          if (selectedSource?.url) {
+            setDeniedSourceUrls((prev) => [...prev, selectedSource.url]);
+          }
+          // Clear the selected source so user stays on select_source step
+          setSelectedSource(null);
+          // Increment search variation to get different results
+          setSearchVariation((prev) => prev + 1);
+          // Reset sources fetch state to trigger a new search
+          setSourcesFetchState('idle');
+          setSourcesFetchNonce((n) => n + 1);
+          // Clear validation state
+          setShowValidationModal(false);
+          setValidationResult(null);
+          setValidationError(null);
+          setCachedValidatedSelection(null);
         }}
       />
     </div>

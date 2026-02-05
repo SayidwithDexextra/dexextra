@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
 import path from 'path';
+import { readFileSync } from 'node:fs';
 import { archivePage } from '@/lib/archivePage';
 import {
   OBAdminFacetABI,
@@ -79,9 +80,9 @@ function loadFacetAbi(contractName: string, fallbackAbi: any[]): any[] {
       `${contractName}.sol`,
       `${contractName}.json`
     );
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const artifact = require(artifactPath);
-    if (artifact && Array.isArray(artifact.abi)) return artifact.abi;
+    const raw = readFileSync(artifactPath, 'utf8');
+    const artifact = JSON.parse(raw);
+    if (artifact && Array.isArray((artifact as any).abi)) return (artifact as any).abi;
   } catch {}
   return fallbackAbi;
 }
@@ -231,6 +232,14 @@ export async function POST(req: Request) {
       aiSourceLocator,
     } = body || {};
 
+    const symbolStr = String(symbol || '').trim();
+    if (symbolStr && symbolStr.length > 100) {
+      return NextResponse.json(
+        { error: `symbol too long (${symbolStr.length}/100). Choose a shorter symbol.` },
+        { status: 400 }
+      );
+    }
+
     // Validate settlement date is required and in the future
     if (!settlementDate || typeof settlementDate !== 'number' || settlementDate <= 0) {
       return NextResponse.json({
@@ -279,10 +288,18 @@ export async function POST(req: Request) {
       logStep('wayback_snapshot', 'error', { error: e?.message || String(e) });
     }
 
-    let effectiveIdentifier = String(marketIdentifier || symbol || '').toUpperCase();
+    let effectiveIdentifier = String(marketIdentifier || symbolStr || '').toUpperCase();
     if (!effectiveIdentifier) {
       logStep('validate_identifier', 'error', { reason: 'missing_identifier' });
       return NextResponse.json({ error: 'Missing market identifier' }, { status: 400 });
+    }
+    // DB column `market_identifier` is varchar(100)
+    if (effectiveIdentifier.length > 100) {
+      logStep('validate_identifier', 'error', { reason: 'identifier_too_long', length: effectiveIdentifier.length });
+      return NextResponse.json(
+        { error: `marketIdentifier too long (${effectiveIdentifier.length}/100). Choose a shorter identifier.` },
+        { status: 400 }
+      );
     }
     logStep('validate_identifier', 'success', { effectiveIdentifier });
 
@@ -339,12 +356,13 @@ export async function POST(req: Request) {
 
     if (!marketIdUuid) {
       logStep('db_insert', 'start', { effectiveIdentifier });
+      const networkStr = String(networkName || '');
       const insertPayload = {
         market_identifier: effectiveIdentifier,
-        symbol,
-        name: name || symbol,
-        description: description || `OrderBook market for ${symbol}`,
-        category: category || (Array.isArray(initialOrder?.tags) && initialOrder.tags[0]) || 'CUSTOM',
+        symbol: symbolStr || effectiveIdentifier,
+        name: String(name || symbolStr || effectiveIdentifier).slice(0, 100),
+        description: description || `OrderBook market for ${symbolStr || effectiveIdentifier}`,
+        category: String(category || (Array.isArray(initialOrder?.tags) && initialOrder.tags[0]) || 'CUSTOM').slice(0, 50),
         decimals: 6,
         minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
         tick_size: 0.01,
@@ -363,7 +381,7 @@ export async function POST(req: Request) {
         },
         metric_resolution_id: resolutionId,
         chain_id: chainId,
-        network: networkName,
+        network: networkStr.length > 50 ? networkStr.slice(0, 50) : networkStr,
         creator_wallet_address: creatorWalletAddress || null,
         banner_image_url: bannerImageUrl || null,
         icon_image_url: iconImageUrl || null,
@@ -398,11 +416,12 @@ export async function POST(req: Request) {
 
     } else {
       logStep('db_update', 'start', { marketId: marketIdUuid });
+      const networkStr = String(networkName || '');
       const updatePayload = {
         market_address: marketAddress,
         market_id_bytes32: marketIdBytes32,
         chain_id: chainId,
-        network: networkName,
+        network: networkStr.length > 50 ? networkStr.slice(0, 50) : networkStr,
         deployment_transaction_hash: transactionHash || null,
         deployment_block_number: blockNumber != null ? Number(blockNumber) : null,
         deployment_gas_used: gasUsed ? Number(gasUsed) : null,

@@ -126,15 +126,27 @@ async function setupOrderbookClickHouse() {
         close Float64,
         volume Float64,
         trades UInt32,
-        market_uuid LowCardinality(String) DEFAULT ''   -- Supabase markets.id linkage
+        market_uuid LowCardinality(String) DEFAULT '',   -- Supabase markets.id linkage
+        INDEX idx_market_uuid market_uuid TYPE bloom_filter(0.01) GRANULARITY 4
       )
       ENGINE = MergeTree()
       PARTITION BY toYYYYMM(ts)
-      ORDER BY (symbol, ts)
+      ORDER BY (market_uuid, ts)
       TTL ts + INTERVAL 90 DAY DELETE
       SETTINGS index_granularity = 8192`,
       `Ensured ${db}.ohlcv_1m table`
     );
+    
+    // 3b) Add bloom filter index on market_uuid for existing tables
+    try {
+      await exec(
+        `ALTER TABLE ${db}.ohlcv_1m ADD INDEX IF NOT EXISTS idx_market_uuid market_uuid TYPE bloom_filter(0.01) GRANULARITY 4`,
+        `Ensured bloom_filter index on ${db}.ohlcv_1m.market_uuid`
+      );
+    } catch (e) {
+      // Index may already exist, ignore
+      console.log(`ℹ️ Bloom filter index already exists or cannot be added`);
+    }
 
     // 4) Materialized view from market_ticks -> 1m candles (deterministic open/close)
     await exec(

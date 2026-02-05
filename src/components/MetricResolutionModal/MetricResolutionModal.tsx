@@ -47,7 +47,10 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
   isOpen, 
   onClose, 
   response,
+  error,
   onAccept,
+  onDeny,
+  onPickAnotherSource,
   onDenySuggestedAssetPrice,
   imageUrl = 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=600&h=300&fit=crop&auto=format',
   fullscreenImageUrl = 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=1400&h=900&fit=crop&auto=format'
@@ -110,7 +113,8 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
   if (!mounted || !isOpen) return null;
 
   // Check if we're in loading state (modal open but no response data yet)
-  const isLoading = !response || !response.data;
+  const hasError = Boolean(error && String(error).trim());
+  const isLoading = (!response || !response.data) && !hasError;
   
   // Only destructure if we have response data
   const data = response?.data;
@@ -178,9 +182,29 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
     return !Number.isNaN(n);
   })();
 
+  const handleDeny = () => {
+    try {
+      // If there's a suggested asset price, also call that callback
+      if (hasSuggestedAssetPrice) {
+        onDenySuggestedAssetPrice?.();
+      }
+      onDeny?.();
+    } finally {
+      onClose();
+    }
+  };
+
   const handleDenySuggestedAssetPrice = () => {
     try {
       onDenySuggestedAssetPrice?.();
+    } finally {
+      onClose();
+    }
+  };
+
+  const handlePickAnotherSource = () => {
+    try {
+      onPickAnotherSource?.();
     } finally {
       onClose();
     }
@@ -211,6 +235,32 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
         <div className={styles.content}>
           {isLoading ? (
             <LoadingSpinner />
+          ) : hasError ? (
+            <div className={styles.summarySection}>
+              <h3 className={styles.summaryTitle}>Couldn’t validate this URL</h3>
+              <div className={styles.summaryText}>
+                {String(error || '').trim() || 'We couldn’t extract a numeric metric value from that URL.'}
+              </div>
+              <div style={{ marginTop: 12, fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.4 }}>
+                Pick another suggested source, or use <strong>Custom URL</strong> to paste a different public endpoint.
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  className={styles.denyButton}
+                  onClick={handlePickAnotherSource}
+                  type="button"
+                >
+                  Pick another source
+                </button>
+                <button
+                  className={styles.acceptButton}
+                  onClick={handlePickAnotherSource}
+                  type="button"
+                >
+                  Enter custom URL
+                </button>
+              </div>
+            </div>
           ) : (
             <>
               {/* Value Display */}
@@ -272,14 +322,22 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
           )}
         </div>
 
-        {/* Action Button */}
+        {/* Action Buttons */}
         <div className={styles.actions}>
-          {hasSuggestedAssetPrice && (
-            <button className={styles.denyButton} onClick={handleDenySuggestedAssetPrice} type="button">
-              Deny
-            </button>
-          )}
-          <button className={styles.acceptButton} onClick={handleAccept} type="button">
+          <button 
+            className={styles.denyButton} 
+            onClick={handleDeny} 
+            type="button"
+            disabled={isLoading || hasError}
+          >
+            Deny
+          </button>
+          <button 
+            className={styles.acceptButton} 
+            onClick={handleAccept} 
+            type="button"
+            disabled={isLoading || hasError}
+          >
             Accept
           </button>
         </div>

@@ -28,6 +28,42 @@ export interface MetricIndicatorConfig {
 const metricDataCache = new Map<string, { data: Array<{ ts: number; y: number }>; fetchedAt: number }>();
 const CACHE_TTL_MS = 30_000; // 30 seconds
 
+// Global store for latest realtime values - allows main() to always return the most recent value
+// Key: marketId:metricName, Value: { ts, value, updatedAt }
+const REALTIME_VALUE_STORE_KEY = '__DEXEXTRA_METRIC_REALTIME_VALUES__';
+
+function getRealtimeValueStore(): Map<string, { ts: number; value: number; updatedAt: number }> {
+  try {
+    if (typeof window === 'undefined') return new Map();
+    let store = (window as any)[REALTIME_VALUE_STORE_KEY];
+    if (!store) {
+      store = new Map();
+      (window as any)[REALTIME_VALUE_STORE_KEY] = store;
+    }
+    return store;
+  } catch {
+    return new Map();
+  }
+}
+
+function setLatestRealtimeValue(marketId: string, metricName: string, ts: number, value: number): void {
+  try {
+    const store = getRealtimeValueStore();
+    const key = `${marketId}:${metricName}`.toLowerCase();
+    store.set(key, { ts, value, updatedAt: Date.now() });
+  } catch {}
+}
+
+function getLatestRealtimeValue(marketId: string, metricName: string): { ts: number; value: number; updatedAt: number } | null {
+  try {
+    const store = getRealtimeValueStore();
+    const key = `${marketId}:${metricName}`.toLowerCase();
+    return store.get(key) || null;
+  } catch {
+    return null;
+  }
+}
+
 // Try to reuse the app-level Pusher client singleton across the TradingView same-origin iframe.
 // If not available (early init), we'll retry a few times before falling back to polling.
 const PUSHER_SINGLETON_KEY = '__DEXEXTRA_PUSHER_CLIENT_SINGLETON__';
@@ -66,6 +102,31 @@ function getSharedPusherClient(): any | null {
     } catch {}
   } catch {}
   return null;
+}
+
+function bucketStartMsForTimeframe(tsMs: number, timeframe: string): number {
+  const t = String(timeframe || '').trim().toLowerCase();
+  let stepMs = 60_000; // default 1m
+
+  // Accept both `5m` and TradingView numeric resolutions like `5`
+  if (/^\d+$/.test(t)) {
+    const n = Math.max(1, parseInt(t, 10));
+    stepMs = n * 60_000;
+  } else {
+    const m = t.match(/^(\d+)\s*([mhdw])$/);
+    if (m) {
+      const n = Math.max(1, parseInt(m[1] || '1', 10));
+      const unit = m[2];
+      if (unit === 'm') stepMs = n * 60_000;
+      else if (unit === 'h') stepMs = n * 60 * 60_000;
+      else if (unit === 'd') stepMs = n * 24 * 60 * 60_000;
+      else if (unit === 'w') stepMs = n * 7 * 24 * 60 * 60_000;
+    }
+  }
+
+  const ms = Number(tsMs);
+  if (!Number.isFinite(ms) || ms <= 0) return ms;
+  return Math.floor(ms / stepMs) * stepMs;
 }
 
 function upsertPointSorted(
@@ -162,27 +223,86 @@ function kickParentChartOnce(): void {
   try {
     if (typeof window === 'undefined') return;
 
-    const invoke = (w: any) => {
+    let kicked = false;
+    
+    // Try the registered kick function first
+    const invoke = (w: any, src: string) => {
       try {
         const fn = w?.__DEXEXTRA_TV_METRIC_OVERLAY_KICK__;
-        if (typeof fn === 'function') fn();
-      } catch {
-        // noop
-      }
+        if (typeof fn === 'function') {
+          fn();
+          rtMetricLog(`kickParentChartOnce: invoked from ${src}`);
+          return true;
+        }
+      } catch {}
+      return false;
     };
 
-    // Prefer parent/top (the app page), fall back to local window (just in case).
+    // Prefer parent/top (the app page), fall back to local window
     try {
       const parent = (window as any).parent;
-      if (parent && parent !== window) invoke(parent);
+      if (parent && parent !== window && invoke(parent, 'parent')) kicked = true;
     } catch {}
 
     try {
       const top = (window as any).top;
-      if (top && top !== window) invoke(top);
+      if (top && top !== window && invoke(top, 'top')) kicked = true;
     } catch {}
 
-    invoke(window as any);
+    if (invoke(window as any, 'window')) kicked = true;
+    
+    // Fallback: try study recalc triggers (replays lastBar to force TradingView recalc)
+    if (!kicked) {
+      try {
+        const tryTriggers = (w: any) => {
+          const triggers = w?.__DEXEXTRA_STUDY_RECALC_TRIGGERS__;
+          if (Array.isArray(triggers)) {
+            for (const fn of triggers) {
+              if (typeof fn === 'function') {
+                try { 
+                  if (fn()) {
+                    rtMetricLog('kickParentChartOnce: triggered via recalc');
+                    return true;
+                  }
+                } catch {}
+              }
+            }
+          }
+          return false;
+        };
+        tryTriggers(window) || tryTriggers((window as any).parent) || tryTriggers((window as any).top);
+      } catch {}
+    }
+    
+    // Last resort: try to access TradingView widget directly and force visibility toggle
+    if (!kicked) {
+      try {
+        const tryWidget = (w: any) => {
+          const widget = w?.tvWidget;
+          if (!widget) return false;
+          try {
+            const chart = typeof widget.activeChart === 'function' ? widget.activeChart() : null;
+            if (!chart) return false;
+            const studies = typeof chart.getAllStudies === 'function' ? chart.getAllStudies() : [];
+            for (const s of studies) {
+              if (String(s?.name || '').toLowerCase().includes('metricoverlay')) {
+                const id = s?.id;
+                if (id && typeof chart.setEntityVisibility === 'function') {
+                  chart.setEntityVisibility(id, false);
+                  setTimeout(() => {
+                    try { chart.setEntityVisibility(id, true); } catch {}
+                  }, 10);
+                  rtMetricLog('kickParentChartOnce: visibility toggle via widget');
+                  return true;
+                }
+              }
+            }
+          } catch {}
+          return false;
+        };
+        tryWidget(window) || tryWidget((window as any).parent) || tryWidget((window as any).top);
+      } catch {}
+    }
   } catch {
     // noop
   }
@@ -681,11 +801,18 @@ export function createMetricIndicatorDefinition(config: MetricIndicatorConfig) {
                 const ts = Number((evt as any)?.ts);
                 const value = Number((evt as any)?.value);
                 if (Number.isFinite(ts) && Number.isFinite(value)) {
-                  this._metricData = upsertPointSorted(this._metricData || [], { ts, y: value });
+                  // Align realtime point timestamps to the indicator timeframe bucket so it maps to candle bar times.
+                  const bucketTs = bucketStartMsForTimeframe(ts, String(this._timeframe || '1m'));
+                  this._metricData = upsertPointSorted(this._metricData || [], { ts: bucketTs, y: value });
                   this._dataLoaded = true;
                   this._lastFetchMs = Date.now(); // treat as fresh to avoid immediate polling overwrite
                   this._warnedEmpty = false;
+                  
+                  // Store the latest realtime value globally so main() can always return it
+                  setLatestRealtimeValue(String(this._marketId), String(this._metricName), bucketTs, value);
+                  
                   requestStudyUpdate(this._context);
+                  rtMetricLog('indicator calling kickParentChartOnce');
                   kickParentChartOnce();
                   rtMetricLog('indicator applied point', { marketId: mId, ts, value, seriesLen: (this._metricData || []).length });
                 }
@@ -828,7 +955,20 @@ export function createMetricIndicatorDefinition(config: MetricIndicatorConfig) {
         const barTimeMs = n > 1e12 ? n : n * 1000;
         // The /api/charts/metric endpoint can compute SMA server-side (and we prefer that),
         // so we only need to interpolate the returned series for per-bar plotting.
-        const value = getMetricValueForTime(this._metricData, barTimeMs);
+        let value = getMetricValueForTime(this._metricData, barTimeMs);
+        
+        // For the most recent bar (within last 5 minutes), check if there's a newer realtime value
+        const currentTimeMs = Date.now();
+        const isRecentBar = (currentTimeMs - barTimeMs) < 5 * 60 * 1000; // Within last 5 minutes
+        if (isRecentBar) {
+          const rtValue = getLatestRealtimeValue(String(this._marketId), String(this._metricName));
+          if (rtValue && (currentTimeMs - rtValue.updatedAt) < 60_000) {
+            // Use the realtime value if it's fresher than what we have
+            if (rtValue.ts >= barTimeMs || !value) {
+              value = rtValue.value;
+            }
+          }
+        }
 
         // Debug-only: TradingView calls `main` a *lot*; avoid logging (and avoid `console.error`)
         // unless explicitly opted in via `metricDebug=1` / localStorage.
