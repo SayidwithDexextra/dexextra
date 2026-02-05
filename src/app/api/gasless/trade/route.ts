@@ -901,11 +901,9 @@ export async function POST(req: Request) {
         }
       }
     });
-    // Optional: persist *placement* history only.
+    // Persist *placement* history only.
     // IMPORTANT: cancellation must never depend on Supabase history writes.
-    const persistHistory =
-      String(process.env.GASLESS_PERSIST_USER_ORDER_HISTORY || 'false').trim().toLowerCase() === 'true';
-    if (persistHistory && PLACE_METHODS.has(method)) {
+    if (PLACE_METHODS.has(method)) {
       try {
         await saveGaslessOrderHistory({
           method,
