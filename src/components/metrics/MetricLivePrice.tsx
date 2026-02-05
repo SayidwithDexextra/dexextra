@@ -33,6 +33,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     className = '',
     label = 'Metric Source',
     url,
+    pollIntervalMs,
   } = props;
 
   const supabase = getSupabaseClient();
@@ -46,36 +47,90 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     url: url || null,
   }));
 
+  const stopPollingRef = React.useRef<boolean>(false);
+
+  const pollMs = React.useMemo(() => {
+    const raw = Number(pollIntervalMs);
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    // Safety clamp: avoid extreme spam or accidental multi-minute waits.
+    return Math.max(2000, Math.min(120_000, Math.floor(raw)));
+  }, [pollIntervalMs]);
+
+  const setSourceIfChanged = React.useCallback(
+    (next: { kind: 'url' | 'script' | 'none'; value: string | null; url: string | null }) => {
+      setSource((prev) => {
+        if (prev.kind === next.kind && prev.value === next.value && prev.url === next.url) return prev;
+        return next;
+      });
+    },
+    []
+  );
+
   React.useEffect(() => {
     // Keep `source` in sync with `props.url`.
     if (url) {
-      setSource({ kind: 'url', value: url, url });
+      stopPollingRef.current = true; // parent-provided url is authoritative; don't poll.
+      setSourceIfChanged({ kind: 'url', value: url, url });
     } else {
+      stopPollingRef.current = false;
       setSource((prev) => (prev.kind === 'url' ? { kind: 'none', value: null, url: null } : prev));
     }
-  }, [url]);
+  }, [url, setSourceIfChanged]);
 
   // If `url` is not provided, attempt to load it from the `markets` table.
   React.useEffect(() => {
+    if (url) return;
     let cancelled = false;
 
     const load = async () => {
-      if (url) return;
-
       const t = token || marketIdentifier;
       if (!marketId && !t) {
-        setSource({ kind: 'none', value: null, url: null });
+        setSourceIfChanged({ kind: 'none', value: null, url: null });
         return;
       }
 
       try {
+        // Prefer DB view if present (encodes our intended fallback order).
+        // If it doesn't exist in an env, we'll fall back to reading `markets` directly.
+        try {
+          let q = supabase
+            .from('market_metric_source_display')
+            .select('display_kind, display_value, source_url');
+          q = marketId ? q.eq('id', marketId) : q.or(`market_identifier.eq.${t},symbol.eq.${t}`);
+          const { data: vRow, error: vErr } = await q.maybeSingle();
+          if (!cancelled && !vErr && vRow) {
+            const kind = String((vRow as any)?.display_kind || '').toLowerCase();
+            const displayValue = String((vRow as any)?.display_value ?? '').trim();
+            const sourceUrl = String((vRow as any)?.source_url ?? '').trim();
+            if (kind === 'script' && displayValue) {
+              // Script-kind has no navigable URL.
+              setSourceIfChanged({ kind: 'script', value: displayValue, url: null });
+              stopPollingRef.current = true;
+              return;
+            }
+            if (kind === 'url') {
+              const resolved = sourceUrl || displayValue;
+              if (resolved) {
+                setSourceIfChanged({ kind: 'url', value: resolved, url: resolved });
+                stopPollingRef.current = true;
+                return;
+              }
+            }
+            if (kind === 'none') {
+              // Continue to fallback below (some envs may have stale view definition).
+            }
+          }
+        } catch {
+          // non-fatal; fallback to markets query below
+        }
+
         let query = supabase.from('markets').select('market_config, initial_order');
         query = marketId ? query.eq('id', marketId) : query.or(`market_identifier.eq.${t},symbol.eq.${t}`);
 
         const { data, error } = await query.maybeSingle();
         if (cancelled) return;
         if (error || !data) {
-          setSource({ kind: 'none', value: null, url: null });
+          setSourceIfChanged({ kind: 'none', value: null, url: null });
           return;
         }
 
@@ -104,18 +159,39 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
         const initialOrderMetricUrl = clean(initial?.metricUrl ?? initial?.metric_url ?? initial?.metricurl);
 
         const resolvedUrl = marketConfigSourceUrl || initialOrderMetricUrl;
-        if (resolvedUrl) setSource({ kind: 'url', value: resolvedUrl, url: resolvedUrl });
-        else setSource({ kind: 'none', value: null, url: null });
+        if (resolvedUrl) {
+          setSourceIfChanged({ kind: 'url', value: resolvedUrl, url: resolvedUrl });
+          stopPollingRef.current = true;
+        } else {
+          setSourceIfChanged({ kind: 'none', value: null, url: null });
+        }
       } catch {
-        if (!cancelled) setSource({ kind: 'none', value: null, url: null });
+        if (!cancelled) setSourceIfChanged({ kind: 'none', value: null, url: null });
       }
     };
 
-    void load();
+    // Initial load + optional polling:
+    // When markets are created, the deployment pipeline may populate source_url later.
+    // Poll until the source becomes available, then stop.
+    stopPollingRef.current = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      await load();
+      if (cancelled) return;
+      if (!pollMs) return;
+      if (stopPollingRef.current) return;
+      timer = setTimeout(() => {
+        void tick();
+      }, pollMs);
+    };
+
+    void tick();
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
-  }, [supabase, url, marketId, token, marketIdentifier]);
+  }, [supabase, url, marketId, token, marketIdentifier, pollMs, setSourceIfChanged]);
 
   const displayText = React.useMemo(() => {
     if (!source.value) return '—';
