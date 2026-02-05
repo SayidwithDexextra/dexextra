@@ -1533,6 +1533,7 @@ export function InteractiveMarketCreation() {
         subtitle: 'Initializing market and registering oracle',
         messages: pipelineMessages,
         splashMs: INITIAL_SPLASH_MS,
+        meta: { pipelineId, marketSymbol: symbol },
       });
 
       await new Promise(resolve => setTimeout(resolve, INITIAL_SPLASH_MS));

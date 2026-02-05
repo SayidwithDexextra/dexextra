@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo } from 'react';
 
 type ProgressOverlayProps = {
   messages: string[];
@@ -11,6 +11,7 @@ type ProgressOverlayProps = {
   showSplash?: boolean;
   title?: string;
   subtitle?: string;
+  onMinimize?: () => void;
 };
 
 export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
@@ -22,21 +23,21 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
   showSplash = false,
   title = 'System Initialization',
   subtitle = 'Smart contract deployment pipeline',
+  onMinimize,
 }) => {
   const clampedIndex = Math.max(0, Math.min(activeIndex, Math.max(messages.length - 1, 0)));
-  const [containerHeight, setContainerHeight] = useState<number>(24); // fallback row height in px (approx 1.5rem)
-  const rowRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (rowRef.current) {
-      const rect = rowRef.current.getBoundingClientRect();
-      if (rect.height > 0) setContainerHeight(rect.height);
-    }
-  }, [messages]);
+  const completedCount = Math.max(0, clampedIndex);
+  const completedMessages = messages.slice(0, completedCount);
+  const remainingMessages = messages.slice(clampedIndex);
 
   const progressWidth = useMemo(() => {
     return `${Math.max(0, Math.min(100, percentComplete))}%`;
   }, [percentComplete]);
+
+  const previewFinalized = completedMessages.slice(Math.max(0, completedMessages.length - 3));
+  const previewPending = remainingMessages.slice(0, 6);
+  const moreFinalized = Math.max(0, completedMessages.length - previewFinalized.length);
+  const morePending = Math.max(0, remainingMessages.length - previewPending.length);
 
   if (!visible) return null;
 
@@ -76,32 +77,64 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
 
           <div className="h-px bg-gradient-to-r from-blue-500/40 via-transparent to-transparent" />
 
-          {/* Carousel */}
-          <div className="p-4">
-            {/* Visible window */}
-            <div className="overflow-hidden" style={{ height: containerHeight }}>
-              {/* Stack */}
-              <div
-                className="flex flex-col transition-transform duration-300 ease-out"
-                style={{ transform: `translateY(-${clampedIndex * containerHeight}px)` }}
-              >
-                {messages.map((msg, idx) => (
-                  <div
-                    // Measure the first row for height
-                    ref={idx === 0 ? rowRef : undefined}
-                    key={`${idx}-${msg}`}
-                    className="flex items-center justify-between min-h-[1.5rem]"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${idx <= clampedIndex ? 'bg-blue-400' : 'bg-[#404040]'}`} />
-                      <span className="text-[11px] text-white truncate">{msg}</span>
-                    </div>
-                    <span className={`text-[9px] ${idx < clampedIndex ? 'text-green-400' : idx === clampedIndex ? 'text-blue-400' : 'text-[#606060]'}`}>
-                      {idx < clampedIndex ? 'Done' : idx === clampedIndex ? 'In Progress' : 'Pending'}
-                    </span>
-                  </div>
-                ))}
+          {/* Section 1: Finalized deployments */}
+          <div className="px-4 pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Finalized deployments</div>
+              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                {completedMessages.length}/{messages.length}
               </div>
+            </div>
+            <div className="h-px bg-[#1A1A1A]" />
+
+            <div className="mt-3 grid gap-2">
+              {previewFinalized.length === 0 ? (
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <span className="text-[10px] text-[#808080] truncate">None yet</span>
+                </div>
+              ) : (
+                previewFinalized.map((m, i) => (
+                  <div key={`${i}-${m}`} className="flex items-center gap-2 min-w-0">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                    <span className="text-[10px] text-white truncate">{m}</span>
+                  </div>
+                ))
+              )}
+              {moreFinalized > 0 ? (
+                <div className="text-[9px] text-[#606060]">+{moreFinalized} more</div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* Section divider */}
+          <div className="mt-4 h-px bg-[#1A1A1A]" />
+
+          {/* Section 2: Pipeline progression */}
+          <div className="px-4 pt-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Progression of the deployment pipeline</div>
+              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                {Math.max(0, Math.min(100, percentComplete))}%
+              </div>
+            </div>
+            <div className="h-px bg-[#1A1A1A]" />
+
+            <div className="mt-3 grid gap-2">
+              {previewPending.map((m, i) => (
+                <div key={`${i}-${m}`} className="flex items-center justify-between min-h-[1.5rem]">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${i === 0 ? 'bg-blue-400' : 'bg-[#404040]'}`} />
+                    <span className="text-[11px] text-white truncate">{m}</span>
+                  </div>
+                  <span className={`text-[9px] ${i === 0 ? 'text-blue-400' : 'text-[#606060]'}`}>
+                    {i === 0 ? 'In Progress' : 'Pending'}
+                  </span>
+                </div>
+              ))}
+              {morePending > 0 ? (
+                <div className="text-[9px] text-[#606060]">+{morePending} more pending</div>
+              ) : null}
             </div>
 
             {/* Expandable detail (subtle) */}
@@ -112,6 +145,23 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Section divider */}
+          <div className="mt-4 h-px bg-[#1A1A1A]" />
+
+          {/* Section 3: Actions */}
+          <div className="px-4 py-3 flex items-center justify-end">
+            {typeof onMinimize === 'function' ? (
+              <button
+                onClick={onMinimize}
+                className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
+                title="Continue in background"
+                aria-label="Continue in background"
+              >
+                Continue in background
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

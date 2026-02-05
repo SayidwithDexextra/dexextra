@@ -173,7 +173,9 @@ const MarketTickerInlineCard: React.FC<MarketTickerCardProps> = ({
       <div className={styles.body}>
         {/* Title with verified badge */}
         <div className={styles.titleRow}>
-          <h3 className={styles.title}>{formattedTitle}</h3>
+          <h3 className={styles.title} title={formattedTitle}>
+            {formattedTitle}
+          </h3>
           <svg
             className={styles.verifiedBadge}
             viewBox="0 0 24 24"

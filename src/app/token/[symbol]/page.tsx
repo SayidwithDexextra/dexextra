@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState, useEffect, useMemo, useCallback } from 'react';
+import { use, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { 
   TokenHeader, 
@@ -26,6 +26,7 @@ import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRout
 import { SettlementInterface } from '@/components/SettlementInterface';
 import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAiWorker';
 import { getSupabaseClient } from '@/lib/supabase-browser';
+import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -61,8 +62,32 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const md = useMarketData();
   const sp = useSearchParams();
   const isDeploying = sp.get('deploying') === '1';
+  const pipelineIdParam = sp.get('pipelineId') || sp.get('pipeline') || null;
+  const deploymentOverlay = useDeploymentOverlay();
   const metricDebug = sp.get('metricDebug') === '1' && process.env.NODE_ENV !== 'production';
   const [isSettlementView, setIsSettlementView] = useState(false);
+  const [pendingPipelineId, setPendingPipelineId] = useState<string | null>(pipelineIdParam);
+  const symbolUpper = String(symbol || '').toUpperCase();
+
+  // If we continued in background, persist a "pending deployment" hint so token pages
+  // can render a "market is being built" state even if the DB row isn't created yet.
+  useEffect(() => {
+    if (!symbolUpper) return;
+    try {
+      const storageKey = `dexextra:deployment:pending:${symbolUpper}`;
+      const raw = window.localStorage?.getItem(storageKey);
+      if (!raw) {
+        // Keep any explicit pipelineId from the URL.
+        setPendingPipelineId(pipelineIdParam);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      const pid = parsed?.pipelineId ? String(parsed.pipelineId) : null;
+      setPendingPipelineId(pid || pipelineIdParam);
+    } catch {
+      setPendingPipelineId(pipelineIdParam);
+    }
+  }, [symbolUpper, pipelineIdParam]);
 
   const tokenData = md.tokenData;
   // Prevent flicker: once we have initial data, keep rendering content even if background polling toggles isLoading
@@ -99,6 +124,37 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
   const loadingMessage = "Loading Trading Interface...";
   const loadingSubtitle = `Fetching ${symbol} market data, mark price, and available margin`;
+
+  const marketAny = md.market as any;
+  const marketHasContract = Boolean(marketAny?.market_address);
+  const marketDeploymentStatus = String(marketAny?.deployment_status || '').toUpperCase();
+  const marketIsActiveFlag = (marketAny?.is_active as boolean | undefined);
+  const marketIsReady =
+    Boolean(marketAny) &&
+    (marketHasContract || marketDeploymentStatus === 'DEPLOYED') &&
+    (marketIsActiveFlag !== false);
+
+  const overlayStateLive = deploymentOverlay?.state;
+  const overlayMatchesSymbol =
+    Boolean(overlayStateLive?.isVisible) &&
+    String(overlayStateLive?.meta?.marketSymbol || '').toUpperCase() === symbolUpper;
+  const deployingHint = isDeploying || Boolean(pipelineIdParam) || Boolean(pendingPipelineId) || overlayMatchesSymbol;
+
+  // While deploying, poll for the market row to appear / become ready.
+  const refetchRef = useRef(md.refetchMarket);
+  useEffect(() => {
+    refetchRef.current = md.refetchMarket;
+  }, [md.refetchMarket]);
+  useEffect(() => {
+    if (!deployingHint) return;
+    if (marketIsReady) return;
+    const id = window.setInterval(() => {
+      try {
+        void refetchRef.current?.();
+      } catch {}
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [deployingHint, marketIsReady]);
 
   // Series / Rollover UI hooks must be called unconditionally (before any early returns)
   const currentMarketId = (md.market as any)?.id as string | undefined;
@@ -556,6 +612,68 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         message={loadingMessage}
         subtitle={loadingSubtitle}
       />
+    );
+  }
+
+  // Deploying/building state:
+  // - Avoid showing "Market Not Found" / "inactive" while the pipeline is still running.
+  // - Instead, show a clear "market is being built" message and keep polling until ready.
+  if (deployingHint && !marketIsReady) {
+    const overlayState = deploymentOverlay?.state;
+    const overlayMatches = Boolean(
+      overlayState?.isVisible &&
+      String(overlayState?.meta?.marketSymbol || '').toUpperCase() === symbolUpper
+    );
+    const pct = overlayMatches ? Math.max(0, Math.min(100, overlayState!.percentComplete)) : null;
+    const overlayMsg = (() => {
+      if (!overlayMatches) return null;
+      const msgs = Array.isArray(overlayState!.messages) ? overlayState!.messages : [];
+      const idx = Math.max(0, Math.min(overlayState!.activeIndex || 0, Math.max(msgs.length - 1, 0)));
+      return msgs[idx] || overlayState!.subtitle || overlayState!.title || null;
+    })();
+
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 w-full max-w-md">
+          <div className="p-4">
+            <div className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market is being built</div>
+            <div className="mt-1 text-[10px] text-[#606060]">
+              {symbolUpper} is currently being deployed and configured. Trading will become available automatically once setup is complete.
+            </div>
+
+            <div className="mt-4 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] text-white truncate">
+                  {overlayMsg || 'Deployment pipeline running in the background…'}
+                </div>
+                {typeof pct === 'number' ? (
+                  <div className="mt-2 w-full h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-400 transition-all duration-300" style={{ width: `${pct}%` }} />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              {overlayMatches ? (
+                <button
+                  onClick={() => deploymentOverlay.restore()}
+                  className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
+                >
+                  View pipeline
+                </button>
+              ) : null}
+              <button
+                onClick={() => void md.refetchMarket()}
+                className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 

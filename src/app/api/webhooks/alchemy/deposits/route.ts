@@ -414,7 +414,7 @@ async function getHubProvider(): Promise<ethers.JsonRpcProvider> {
     process.env.ALCHEMY_HYPERLIQUID_HTTP ||
     process.env.RPC_URL_HUB ||
     process.env.RPC_URL_HYPEREVM ||
-    process.env.HYPERLIQUID_RPC_URL
+    process.env.HYPERLIQUID_RPC_URL ||
     ''
   if (!hubRpc) {
     throw new Error('Missing Hyperliquid RPC (HUB_RPC_URL/ALCHEMY_HYPERLIQUID_HTTP/RPC_URL_HUB)')

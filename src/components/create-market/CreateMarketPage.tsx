@@ -329,6 +329,7 @@ export const CreateMarketPage = () => {
         subtitle: 'Initializing market and registering oracle',
         messages: pipelineMessages,
         splashMs: INITIAL_SPLASH_MS,
+        meta: { pipelineId, marketSymbol: String(symbol || '').toUpperCase() },
       });
       // Brief splash for aesthetic purposes, then navigate behind the modal
       await new Promise(resolve => setTimeout(resolve, INITIAL_SPLASH_MS));

@@ -8,6 +8,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { useMarkets } from '@/hooks/useMarkets';
 import { normalizeBytes32Hex } from '@/lib/hex';
 import { FooterWatchlistPopup } from './FooterWatchlistPopup';
+import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 
 const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED']);
 const ORDERBOOK_PREFIX = 'orderbook:activeOrders:';
@@ -51,9 +52,39 @@ const Footer: React.FC = () => {
   const { theme } = useTheme();
   const { walletData } = useWallet() as any;
   const walletAddress: string | null = walletData?.address || null;
+  const deploymentOverlay = useDeploymentOverlay();
   const [sessionOrderSymbols, setSessionOrderSymbols] = useState<string[]>([]);
   const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
   const watchlistCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const deploymentFooterPip = useMemo(() => {
+    const s = deploymentOverlay?.state;
+    if (!s?.isVisible) return null;
+    if (s.displayMode !== 'footer') return null;
+
+    const pct = Math.max(0, Math.min(100, Number.isFinite(s.percentComplete) ? s.percentComplete : 0));
+    const messages = Array.isArray(s.messages) ? s.messages : [];
+    const idx = Math.max(0, Math.min(Number.isFinite(s.activeIndex) ? s.activeIndex : 0, Math.max(messages.length - 1, 0)));
+    const msg = (messages[idx] || s.subtitle || s.title || 'Working…').toString();
+
+    const isRunning = pct < 100;
+
+    return (
+      <button
+        onClick={() => deploymentOverlay.minimize()}
+        title={msg}
+        aria-label="Show deployment progress"
+        className="group relative inline-flex items-center justify-center rounded border border-[#222222] bg-[#0F0F0F] px-2 py-1 transition-all duration-200 hover:border-[#333333] hover:bg-[#1A1A1A] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/30 cursor-pointer"
+      >
+        <div className="w-14 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+          <div
+            className={`h-full bg-blue-500 transition-all duration-300 ${isRunning ? 'animate-pulse' : ''}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </button>
+    );
+  }, [deploymentOverlay]);
 
   const handleWatchlistMouseEnter = useCallback(() => {
     // Clear any pending close timeout
@@ -516,6 +547,13 @@ const Footer: React.FC = () => {
           gap: '16px',
         }}
       >
+        {/* Deployment progress pip (when reduced to footer) */}
+        {deploymentFooterPip ? (
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {deploymentFooterPip}
+          </div>
+        ) : null}
+
         {/* ETH Price Display */}
         <div 
           style={{
