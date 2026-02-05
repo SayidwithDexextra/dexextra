@@ -800,16 +800,21 @@ export async function POST(req: Request) {
           } catch (pre: any) {
             const data = extractRevertData(pre);
             const decoded = data ? decodeRevertData(data) : null;
-            // Log but do not fail the session path; some RPCs omit revert data on static calls
+            const decodedMsg = decoded?.message || decoded?.kind || null;
+            const rawMsg = pre?.reason || pre?.shortMessage || pre?.message || String(pre);
+            // Log for observability
             console.warn('[UpGas][API][trade] session preflight failed', {
               method,
-              error: pre?.reason || pre?.shortMessage || pre?.message || String(pre),
+              error: rawMsg,
               code: pre?.code,
               hasData: Boolean(data),
               dataSelector: decoded?.selector,
-              decoded: decoded?.message || decoded?.kind,
+              decoded: decodedMsg,
               rpcMsg: pre?.info?.error?.message,
             });
+
+            // Log only; do not fail the session path.
+            // Some RPCs can be flaky here and we'd rather rely on the mined receipt when configured.
           }
           switch (method) {
             case 'sessionPlaceLimit':
@@ -896,22 +901,29 @@ export async function POST(req: Request) {
         }
       }
     });
-    try {
-      await saveGaslessOrderHistory({
-        method,
-        orderBook,
-        txHash: tx.hash,
-        blockNumber: null,
-        isSession,
-        sessionId,
-        message,
-        params,
-      });
-    } catch (err) {
-      console.error('[GASLESS][API][trade] history persist exception', err);
+    // Optional: persist *placement* history only.
+    // IMPORTANT: cancellation must never depend on Supabase history writes.
+    const persistHistory =
+      String(process.env.GASLESS_PERSIST_USER_ORDER_HISTORY || 'false').trim().toLowerCase() === 'true';
+    if (persistHistory && PLACE_METHODS.has(method)) {
+      try {
+        await saveGaslessOrderHistory({
+          method,
+          orderBook,
+          txHash: tx.hash,
+          blockNumber: null,
+          isSession,
+          sessionId,
+          message,
+          params,
+        });
+      } catch (err) {
+        console.error('[GASLESS][API][trade] history persist exception', err);
+      }
     }
     // Configurable wait policy to reduce perceived latency
-    const waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
+    const isCancelMethod = method === 'sessionCancelOrder' || method === 'metaCancelOrder';
+    let waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
     if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
       const rc = await provider.waitForTransaction(tx.hash, waitConfirms);
       const status = (rc as any)?.status;
@@ -923,13 +935,18 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
-      return NextResponse.json({ txHash: tx.hash, blockNumber: rc?.blockNumber });
+      return NextResponse.json({ txHash: tx.hash, blockNumber: rc?.blockNumber, mined: true });
     }
 
     // Optional short polling window for fast revert detection without waiting for confirmations.
     // Useful when RPC preflights omit revert data (e.g. "missing revert data") but we still want quick feedback.
     const pollMsRaw = String(process.env.GASLESS_TRADE_POLL_RECEIPT_MS ?? '').trim();
-    const pollMs = pollMsRaw ? Number(pollMsRaw) : 0;
+    let pollMs = pollMsRaw ? Number(pollMsRaw) : 0;
+    // Default behavior for cancels: try to observe the mined receipt briefly so we don't claim "cancelled"
+    // when the tx is only broadcasted (or later reverts).
+    if (isCancelMethod && !(Number.isFinite(pollMs) && pollMs > 0)) {
+      pollMs = 15_000;
+    }
     if (Number.isFinite(pollMs) && pollMs > 0) {
       const deadline = Date.now() + pollMs;
       let lastRc: any = null;
@@ -954,12 +971,12 @@ export async function POST(req: Request) {
             { status: 500 }
           );
         }
-        return NextResponse.json({ txHash: tx.hash, blockNumber: lastRc?.blockNumber });
+        return NextResponse.json({ txHash: tx.hash, blockNumber: lastRc?.blockNumber, mined: true });
       }
     }
     console.log('[GASLESS][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
     console.log('[UpGas][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
-    return NextResponse.json({ txHash: tx.hash });
+    return NextResponse.json({ txHash: tx.hash, pending: true });
   } catch (e: any) {
     if (e instanceof HttpError) {
       return NextResponse.json(e.body, { status: e.status });

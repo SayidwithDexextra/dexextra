@@ -79,18 +79,18 @@ export async function GET(request: NextRequest) {
     }
 
     const marketIds = Array.from(byMarket.keys());
-    const metaByMetric = new Map<string, { symbol?: string; name?: string }>();
+    const metaByMetric = new Map<string, { symbol?: string; name?: string; marketAddress?: string | null }>();
     if (marketIds.length > 0) {
       try {
         // Best-effort: enrich with symbol/name if the resolved view is available
         const { data: mkts } = await supabaseAdmin
           .from('orderbook_markets_resolved')
-          .select('metric_id, symbol, name')
+          .select('metric_id, symbol, name, market_address')
           .in('metric_id', marketIds);
         (mkts || []).forEach((m: any) => {
           const k = String(m?.metric_id || '').trim();
           if (!k) return;
-          metaByMetric.set(k, { symbol: m?.symbol, name: m?.name });
+          metaByMetric.set(k, { symbol: m?.symbol, name: m?.name, marketAddress: m?.market_address ?? null });
         });
       } catch {
         // ignore
@@ -103,6 +103,7 @@ export async function GET(request: NextRequest) {
         const meta = metaByMetric.get(metricId) || {};
         const symbol = String(meta.symbol || metricId).toUpperCase();
         const token = String(meta.name || meta.symbol || metricId);
+        const marketAddress = meta.marketAddress ?? null;
         const transformedOrders = orders.map((order: any) => ({
           order_id: order.order_id,
           trader_wallet_address: order.trader_wallet_address,
@@ -120,7 +121,7 @@ export async function GET(request: NextRequest) {
           post_only: false,
           expiry_time: null,
         }));
-        return { symbol, token, orders: transformedOrders };
+        return { symbol, token, marketAddress, orders: transformedOrders };
       })
       .filter((b) => Array.isArray(b.orders) && b.orders.length > 0)
       .sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));

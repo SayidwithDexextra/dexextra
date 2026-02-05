@@ -34,7 +34,7 @@ export function useTrading(marketKey: string = 'ALUMINUM') {
   const { walletData } = useWallet();
   const { contract: orderBookContract } = useAluminumOrderBook();
   const orderBookAddress = (orderBookContract as any)?.address as Address | undefined;
-  const GASLESS = typeof process !== 'undefined' && (process as any).env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+  const GASLESS = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
   // [GASLESS] Log env flag(s) to confirm feature toggle
   console.log(
     '[GASLESS] Env flags',

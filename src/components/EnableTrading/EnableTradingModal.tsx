@@ -61,7 +61,7 @@ export default function EnableTradingModal({
   const isConnected = Boolean(walletData?.isConnected && walletData?.address)
   const addressShort = walletData?.address ? formatAddress(walletData.address) : null
   const gaslessEnabled = useMemo(
-    () => (typeof process !== 'undefined' && (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true'),
+    () => (process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true'),
     []
   )
 

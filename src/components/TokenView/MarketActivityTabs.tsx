@@ -10,10 +10,10 @@ import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal, SuccessModal } from '@/components/StatusModals';
 import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
-import { usePortfolioData } from '@/hooks/usePortfolioData';
+import { usePositions as usePositionsHook } from '@/hooks/usePositions';
 import type { Address } from 'viem';
 import { signAndSubmitGasless, submitSessionTrade, isSessionErrorMessage } from '@/lib/gasless';
-import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
+import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { gaslessTopUpPosition } from '@/lib/gaslessTopup';
 import { parseUnits } from 'viem';
 import { useSession } from '@/contexts/SessionContext';
@@ -52,6 +52,7 @@ interface Order {
   status: 'PENDING' | 'PARTIAL' | 'FILLED' | 'CANCELLED';
   timestamp: number;
   metricId?: string;
+  orderBookAddress?: string | null;
   txHash?: string;
 }
 
@@ -92,15 +93,40 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   }, []);
   const [isLoading, setIsLoading] = useState(false);
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
-  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [expandedOrderKey, setExpandedOrderKey] = useState<string | null>(null);
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
   const [optimisticallyRemovedOrderIds, setOptimisticallyRemovedOrderIds] = useState<Set<string>>(new Set());
   const [sessionOrders, setSessionOrders] = useState<Order[]>([]);
   const wallet = useWallet() as any;
   const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
-  const GASLESS = typeof process !== 'undefined' && (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+  const GASLESS = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
   const getOrderCompositeKey = (symbol?: string | null, id?: string | number | bigint) =>
     `${String(symbol || '').toUpperCase()}::${typeof id === 'bigint' ? id.toString() : String(id ?? '')}`;
+  const isValidNumericOrderId = (id: any): boolean => {
+    try {
+      const b = BigInt(String(id));
+      return b > 0n;
+    } catch {
+      return false;
+    }
+  };
+  const getOrderUiKey = (order: Partial<Order>) => {
+    const sym = String(order?.symbol || '').toUpperCase();
+    const rawId: any = (order as any)?.id;
+    const idStr = rawId === undefined || rawId === null ? '' : String(rawId);
+    if (idStr.trim()) return getOrderCompositeKey(sym, idStr.trim());
+
+    // Fallback when backend payload doesn't include a concrete order_id.
+    // Important: expansion must be unique per-row; otherwise clicking "Manage" expands every row
+    // that shares the same empty/duplicate id.
+    const side = String((order as any)?.side || '');
+    const type = String((order as any)?.type || '');
+    const price = Number((order as any)?.price || 0);
+    const size = Number((order as any)?.size || 0);
+    const ts = Number((order as any)?.timestamp || 0);
+    const tx = String((order as any)?.txHash || '');
+    return getOrderCompositeKey(sym, `ui:${side}:${type}:${price}:${size}:${ts}:${tx}`);
+  };
   // Ensure we consistently use metricId (aligned with TradingPanel)
   console.log('symbol MarketActivityTabs', symbol);
   const metricId = symbol;
@@ -114,10 +140,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Event-driven only (no polling). Positions refresh via 'positionsRefreshRequested' / 'ordersUpdated'.
   // Disable autoRefresh polling; markets are fetched once on mount.
   const { markets } = useMarkets({ limit: 500, autoRefresh: false });
-  const { positions: allPositions, isLoadingPositions: positionsIsLoading, ordersBuckets, isLoadingOrders } = usePortfolioData({
+  const { positions: allPositions, isLoading: positionsIsLoading } = usePositionsHook(undefined, {
     enabled: !!walletAddress,
-    // Disable polling; orders refresh via 'ordersUpdated' events.
-    refreshInterval: 0
+    pollIntervalMs: 0, // disable polling; fetch on demand / events
   });
   const marketIdMap = useMemo(() => {
     const map = new Map<string, { symbol: string; name: string }>();
@@ -228,6 +253,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         orders.forEach((o: any) => {
           if (o === null || o === undefined) return;
           if (o.id === undefined || o.id === null) return;
+          // Skip placeholder ids like `tx:<hash>` - these are not cancelable and cause confusion.
+          if (!isValidNumericOrderId(o.id)) return;
           const status = normalizeOrderStatus(o.status);
           if (status === 'CANCELLED' || status === 'FILLED') return;
           const isBuy = o.isBuy !== undefined ? Boolean(o.isBuy) : String(o.side || '').toLowerCase() !== 'sell';
@@ -362,13 +389,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     [walletAddress, metricId]
   );
 
-  // Prefetch history count as soon as wallet connects so the tab badge is correct
-  // even before the user clicks into the Order History tab.
-  useEffect(() => {
-    if (!walletAddress) return;
-    // Silent fetch to avoid flashing the global "Loading..." indicator on initial page load.
-    fetchOrderHistory({ force: true, silent: true });
-  }, [walletAddress, fetchOrderHistory]);
+  // IMPORTANT: Do not hit Supabase for order history unless the History tab is active.
+
+  const lastSessionHydrateAtRef = useRef(0);
 
   // Immediate optimistic UI patch for Open Orders on `ordersUpdated`.
   useEffect(() => {
@@ -385,12 +408,25 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         openOrdersOverlayRef.current.seenTrace.set(traceId, now);
       }
 
-      const sym = String(detail?.symbol || '').toUpperCase();
       const trader = String(detail?.trader || '').toLowerCase();
       const me = String(walletAddress || '').toLowerCase();
-      if (!sym || !me) return;
+      if (!me) return;
       // Only mutate UI for the current wallet's orders when trader is present
       if (trader && trader !== me) return;
+
+      // Keep the session-backed open orders in sync whenever any order event fires.
+      // Many internal refreshes dispatch `ordersUpdated` with `marketId` (not `symbol`) and without `eventType`.
+      // If we don't hydrate here, the Open Orders tab can appear stale after a gasless placement.
+      if (now - lastSessionHydrateAtRef.current > 400) {
+        lastSessionHydrateAtRef.current = now;
+        try {
+          // Defer slightly to allow the order refresh to persist sessionStorage first.
+          setTimeout(() => hydrateSessionOrders(), 250);
+        } catch {}
+      }
+
+      const sym = String(detail?.symbol || detail?.marketId || detail?.metricId || '').toUpperCase();
+      if (!sym) return;
 
       const eventType = String(detail?.eventType || detail?.reason || '').trim();
       const orderId = detail?.orderId !== undefined ? String(detail.orderId) : '';
@@ -416,7 +452,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       // Treat as an order placement only when we have enough fields to render a real row.
       // IMPORTANT: don't treat empty eventType as "placed" (it can be a partial/unknown payload) or we may add 0/0/0 rows.
       if (!shouldRefreshSessionOrders && isPlacementEvent) {
-        if (!orderId) return;
+        // Some producers (notably gasless UI) emit `orderId: "tx:<hash>"` as a placeholder.
+        // That is NOT cancelable (can't be parsed as bigint) and will show as a duplicate once the real numeric id arrives.
+        // We still want to re-hydrate session orders (handled above), but we must NOT add an optimistic Open Orders row.
+        let orderIdBig: bigint = 0n;
+        try { orderIdBig = BigInt(orderId); } catch { orderIdBig = 0n; }
+        if (!orderId || orderIdBig <= 0n) {
+          shouldRefreshSessionOrders = true;
+        } else {
         const overlayKey = getOrderCompositeKey(sym, orderId);
         // If we already marked this id removed, don't re-add it (race between cancel + stale updates).
         if (openOrdersOverlayRef.current.removed.has(overlayKey)) return;
@@ -462,17 +505,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         // eslint-disable-next-line no-console
         console.log('[RealTimeToken] ui:openOrders:patched', { traceId, symbol: sym, eventType: 'OrderPlaced', orderId, action: 'add' });
         shouldRefreshSessionOrders = true;
+        }
       }
 
       if (shouldRefreshSessionOrders) {
         hydrateSessionOrders();
       }
 
-      // Refresh Order History whenever we see an order lifecycle event.
-      // Silent when not on the History tab to avoid flashing the global loading indicator.
+      // Do NOT refresh Order History unless History tab is active.
       try {
-        if (isHistoryEvent) {
-          fetchOrderHistory({ force: true, silent: activeTab !== 'history' });
+        if (activeTab === 'history' && isHistoryEvent) {
+          fetchOrderHistory({ force: true, silent: false });
         }
       } catch {}
     };
@@ -481,17 +524,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return () => window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
   }, [walletAddress, hydrateSessionOrders, activeTab, metricId, fetchOrderHistory]);
 
-  // Explicit Order History refresh hook (used by gasless flows right after the Supabase row is created).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!walletAddress) return;
+    if (activeTab !== 'history') return;
 
     const onHistoryRefresh = (e: any) => {
       const detail = (e as CustomEvent)?.detail as any;
       const trader = String(detail?.trader || '').toLowerCase();
       const me = String(walletAddress || '').toLowerCase();
       if (trader && me && trader !== me) return;
-      fetchOrderHistory({ force: true, silent: activeTab !== 'history' });
+      fetchOrderHistory({ force: true, silent: false });
     };
 
     window.addEventListener('orderHistoryRefreshRequested', onHistoryRefresh as EventListener);
@@ -542,10 +585,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
       setPosOverlayTick((x) => x + 1);
 
-      // If viewing Order History, refresh after trade events (fills) land.
-      try {
-        fetchOrderHistory({ force: true, silent: activeTab !== 'history' });
-      } catch {}
+      // Do not touch Order History unless History tab is active.
     };
 
     window.addEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
@@ -557,27 +597,54 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Resolve per-market OrderBook address from symbol/metricId using populated CONTRACT_ADDRESSES.MARKET_INFO
   const resolveOrderBookAddress = useCallback((symbolOrMetricId?: string | null): string | null => {
     try {
-      if (!symbolOrMetricId) return null;
+      const needle = String(symbolOrMetricId || '').trim();
+      if (!needle) return null;
+      const lowerNeedle = needle.toLowerCase();
+      const chainId = String((CHAIN_CONFIG as any)?.chainId ?? '');
+
+      // Prefer `markets` list (comes from DB and includes `market_address` + `chain_id`)
+      const mkt = (markets || []).find((m: any) => {
+        if (!m?.market_address) return false;
+        if (chainId && m?.chain_id !== undefined && String(m.chain_id) !== chainId) return false;
+        const candidates = [
+          m?.symbol,
+          m?.market_identifier,
+          m?.name,
+        ].filter(Boolean).map((v: any) => String(v).toLowerCase());
+        if (candidates.includes(lowerNeedle)) return true;
+
+        // Legacy "base symbol" match (e.g. BTC from BTC-USD)
+        const baseNeedle = needle.split('-')[0]?.toLowerCase?.() || '';
+        const baseSym = String(m?.symbol || '').split('-')[0]?.toLowerCase?.() || '';
+        return Boolean(baseNeedle && baseSym && baseNeedle === baseSym);
+      });
+      if (mkt?.market_address) return String(mkt.market_address);
+
+      // Fallback to populated MARKET_INFO (chain-aware)
       const entries: any[] = Object.values((CONTRACT_ADDRESSES as any)?.MARKET_INFO || {});
-      // Try direct base-symbol key first (e.g. 'ALU' from 'ALU-USD')
-      const baseKey = String(symbolOrMetricId).split('-')[0].toUpperCase();
-      const direct = (CONTRACT_ADDRESSES as any)?.MARKET_INFO?.[baseKey];
-      if (direct?.orderBook) return direct.orderBook as string;
-      // Fallback: scan by marketIdentifier / full symbol / name
-      const lower = String(symbolOrMetricId).toLowerCase();
+      const directExact = (CONTRACT_ADDRESSES as any)?.MARKET_INFO?.[needle.toUpperCase()];
+      if (directExact?.orderBook && (!chainId || String(directExact.chainId || '') === chainId)) {
+        return directExact.orderBook as string;
+      }
+      const baseKey = needle.split('-')[0].toUpperCase();
+      const directBase = (CONTRACT_ADDRESSES as any)?.MARKET_INFO?.[baseKey];
+      if (directBase?.orderBook && (!chainId || String(directBase.chainId || '') === chainId)) {
+        return directBase.orderBook as string;
+      }
       const match = entries.find((m: any) => {
+        if (chainId && m?.chainId !== undefined && String(m.chainId) !== chainId) return false;
         const candidates = [
           m?.marketIdentifier?.toLowerCase?.(),
           m?.symbol?.toLowerCase?.(),
           m?.name?.toLowerCase?.()
         ].filter(Boolean);
-        return candidates.includes(lower);
+        return candidates.includes(lowerNeedle);
       });
       return match?.orderBook || null;
     } catch {
       return null;
     }
-  }, []);
+  }, [markets]);
   
   // Positions: show ALL user positions across markets (reuse portfolio hook)
   useEffect(() => {
@@ -833,52 +900,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return n;
   }
 
-  // Open Orders sourced from portfolio data hook (aggregates across all markets)
-  const flattenOrderBuckets = useCallback((buckets: any[] = []): Order[] => {
-    const flat: Order[] = [];
-    (buckets || []).forEach((bucket: any) => {
-      const symbolUpper = String(bucket?.symbol || 'UNKNOWN').toUpperCase();
-      (bucket?.orders || []).forEach((o: any) => {
-        const sideStr = String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase();
-        const typeStr = String(o?.order_type || o?.type || 'limit').toUpperCase();
-        const status = normalizeOrderStatus(o?.order_status ?? o?.status);
-        const rawQty = Number(
-          o?.quantity !== undefined ? o.quantity : o?.size !== undefined ? o.size : 0
-        );
-        const rawFilled = Number(
-          o?.filled_quantity !== undefined
-            ? o.filled_quantity
-            : o?.filledQuantity !== undefined
-              ? o.filledQuantity
-              : o?.filled !== undefined
-                ? o.filled
-                : 0
-        );
-        const qty = normalizeQuantity(rawQty);
-        const filledQty = normalizeQuantity(rawFilled);
-        flat.push({
-          id: String(o?.order_id ?? o?.id ?? ''),
-          symbol: symbolUpper,
-          side: (sideStr === 'BUY' ? 'BUY' : 'SELL'),
-          type: typeStr === 'MARKET' ? 'MARKET' : 'LIMIT',
-          price: Number(o?.price || 0),
-          size: qty,
-          filled: filledQty,
-          status,
-          timestamp: Number(
-            (o?.updated_at && new Date(o.updated_at).getTime()) ||
-            (o?.created_at && new Date(o.created_at).getTime()) ||
-            o?.timestamp ||
-            Date.now()
-          ),
-          metricId: String(o?.market_metric_id || o?.metricId || symbolUpper)
-        });
-      });
-    });
-    return flat;
-  }, []);
-
-  // Fallback: derive open orders directly from on-chain OrderBook state when Supabase buckets are empty
+  // Open Orders: derive directly from on-chain OrderBook state (no Supabase).
   const onchainOpenOrders = useMemo(() => {
     const symbolUpper = String(metricId || symbol || 'UNKNOWN').toUpperCase();
     const src = Array.isArray(orderBookState.activeOrders) ? orderBookState.activeOrders : [];
@@ -908,13 +930,18 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   }, [orderBookState.activeOrders, metricId, symbol]);
 
   const openOrders = useMemo(() => {
-    const flat = flattenOrderBuckets(ordersBuckets);
-    // Prefer Supabase-backed snapshot when available; otherwise fall back to direct on-chain reads
-    const base = flat.length > 0 ? flat : onchainOpenOrders;
+    // Match TradingPanel behavior: Open Orders for THIS market come from on-chain user orders
+    // (orderBookState.activeOrders via useOrderBook), plus any session-cached optimistic rows.
+    const currentSym = String(metricId || symbol || '').toUpperCase();
+    const base = (Array.isArray(onchainOpenOrders) ? onchainOpenOrders : []).filter(
+      (o) => String(o?.symbol || '').toUpperCase() === currentSym
+    );
     const dedup = new Map<string, Order>();
 
     const appendOrder = (order: Order) => {
       if (!order || order.id === undefined || order.id === null) return;
+      // Only show cancelable orders (numeric on-chain ids). Skip placeholder ids.
+      if (!isValidNumericOrderId(order.id)) return;
       const key = getOrderCompositeKey(order.symbol, order.id);
       if (!key) return;
       if (!dedup.has(key)) {
@@ -923,7 +950,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     };
 
     base.forEach(appendOrder);
-    sessionOrders.forEach(appendOrder);
+    // Only include session cached orders for THIS market
+    sessionOrders
+      .filter((o) => String(o?.symbol || '').toUpperCase() === currentSym)
+      .forEach(appendOrder);
 
     // Defensive: never render a LIMIT order with non-positive price/size. This usually indicates a stale/partial
     // optimistic/session snapshot, and it matches the "$0 / 0 / 0" ghost rows we've observed after cancels.
@@ -950,8 +980,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         }
         return true;
       });
-  }, [ordersBuckets, flattenOrderBuckets, onchainOpenOrders, optimisticallyRemovedOrderIds, sessionOrders]);
-  const openOrdersIsLoading = Boolean(isLoadingOrders && activeTab === 'orders');
+  }, [onchainOpenOrders, optimisticallyRemovedOrderIds, sessionOrders, metricId, symbol]);
+  const openOrdersIsLoading = Boolean((orderBookState as any)?.isLoading && activeTab === 'orders');
 
   // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
   // Prevents flicker/revert while backend/onchain read catches up.
@@ -961,6 +991,73 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     seenTrace: Map<string, number>;
   }>({ added: new Map(), removed: new Map(), seenTrace: new Map() });
   const [openOrdersOverlayTick, setOpenOrdersOverlayTick] = useState(0);
+  const [isRefreshingOnchainOrders, setIsRefreshingOnchainOrders] = useState(false);
+
+  const clearOptimisticOpenOrders = useCallback(() => {
+    try {
+      openOrdersOverlayRef.current.added.clear();
+      openOrdersOverlayRef.current.removed.clear();
+      openOrdersOverlayRef.current.seenTrace.clear();
+    } catch {}
+    setOptimisticallyRemovedOrderIds(new Set());
+    setExpandedOrderKey(null);
+    setOpenOrdersOverlayTick((x) => x + 1);
+  }, []);
+
+  const clearSessionActiveOrdersCache = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (!walletAddress) return;
+    const walletLower = String(walletAddress).toLowerCase();
+    const keys: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const k = window.sessionStorage.key(i);
+      if (k) keys.push(k);
+    }
+    for (const k of keys) {
+      if (!k.startsWith('orderbook:activeOrders:v1:')) continue;
+      const raw = window.sessionStorage.getItem(k);
+      if (!raw) continue;
+      try {
+        const payload = JSON.parse(raw);
+        if (String(payload?.walletAddress || '').toLowerCase() !== walletLower) continue;
+        window.sessionStorage.removeItem(k);
+      } catch {
+        // If it's malformed, remove it anyway.
+        try { window.sessionStorage.removeItem(k); } catch {}
+      }
+    }
+  }, [walletAddress]);
+
+  const resetOptimisticAndRefreshOnchain = useCallback(async () => {
+    if (isRefreshingOnchainOrders) return;
+    setIsRefreshingOnchainOrders(true);
+    try {
+      // 1) Stop showing any optimistic overlay rows immediately
+      clearOptimisticOpenOrders();
+
+      // 2) Clear local session snapshot so we don't re-hydrate stale rows
+      clearSessionActiveOrdersCache();
+      setSessionOrders([]);
+
+      // 3) Force on-chain refresh for this market's active orders
+      try {
+        await orderBookActions.refreshOrders?.();
+      } catch {}
+
+      // 4) Re-hydrate session orders after refresh persists
+      try {
+        setTimeout(() => hydrateSessionOrders(), 350);
+      } catch {}
+    } finally {
+      setIsRefreshingOnchainOrders(false);
+    }
+  }, [
+    isRefreshingOnchainOrders,
+    clearOptimisticOpenOrders,
+    clearSessionActiveOrdersCache,
+    orderBookActions.refreshOrders,
+    hydrateSessionOrders,
+  ]);
 
   const displayedOpenOrders = useMemo(() => {
     const base = Array.isArray(openOrders) ? openOrders : [];
@@ -992,26 +1089,27 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   useEffect(() => {
     if (!walletAddress) return;
     logGoddMat(21, 'MarketActivityTabs updated openOrders derived state', {
-      bucketCount: ordersBuckets.length,
-      flattenedOrderCount: displayedOpenOrders.length,
+      onchainCount: Array.isArray(orderBookState.activeOrders) ? orderBookState.activeOrders.length : 0,
+      openOrdersCount: displayedOpenOrders.length,
       activeTab
     });
-  }, [walletAddress, ordersBuckets, displayedOpenOrders.length, activeTab]);
+  }, [walletAddress, orderBookState.activeOrders, displayedOpenOrders.length, activeTab]);
 
   // Real-time UI update log (post-render): confirms the Open Orders UI state changed.
   useEffect(() => {
     if (!walletAddress) return;
-    const key = `${activeTab}:${ordersBuckets.length}:${displayedOpenOrders.length}:${optimisticallyRemovedOrderIds.size}`;
+    const onchainCount = Array.isArray(orderBookState.activeOrders) ? orderBookState.activeOrders.length : 0;
+    const key = `${activeTab}:${onchainCount}:${displayedOpenOrders.length}:${optimisticallyRemovedOrderIds.size}`;
     if (lastUiLogRef.current?.key === key) return;
     lastUiLogRef.current = { key };
     // eslint-disable-next-line no-console
     console.log('[RealTimeToken] ui:openOrders:rendered', {
       activeTab,
-      bucketCount: ordersBuckets.length,
+      onchainCount,
       openOrdersCount: displayedOpenOrders.length,
       hiddenOptimisticCount: optimisticallyRemovedOrderIds.size,
     });
-  }, [walletAddress, activeTab, ordersBuckets.length, displayedOpenOrders.length, optimisticallyRemovedOrderIds.size]);
+  }, [walletAddress, activeTab, orderBookState.activeOrders, displayedOpenOrders.length, optimisticallyRemovedOrderIds.size]);
   // Fetch order history ONLY when History tab is active. Refreshes are also triggered by realtime events.
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -1326,7 +1424,18 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
 
     return (
-                  <table className="w-full">
+                  <div className="w-full">
+                    <div className="flex items-center justify-end px-2 py-1.5">
+                      <button
+                        onClick={resetOptimisticAndRefreshOnchain}
+                        disabled={isRefreshingOnchainOrders}
+                        className="px-2.5 py-1 text-[10px] font-medium text-[#E5E7EB] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Clear optimistic rows and refresh active orders from chain"
+                      >
+                        {isRefreshingOnchainOrders ? 'Refreshing…' : 'Reset + Refresh'}
+                      </button>
+                    </div>
+                    <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
                         <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
@@ -1340,8 +1449,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       </tr>
                     </thead>
                     <tbody>
-                      {displayedOpenOrders.map((order, index) => (
-                        <React.Fragment key={`${order.id}-${index}`}>
+                      {displayedOpenOrders.map((order, index) => {
+                        const uiKey = getOrderUiKey(order);
+                        const isExpanded = expandedOrderKey === uiKey;
+                        return (
+                        <React.Fragment key={uiKey}>
                           <tr className={`mat-slide-rtl group/row hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`} style={{ animationDelay: `${index * 50}ms` }}>
                             <td className="pl-2 pr-1 py-1.5">
                               <div className="flex items-center gap-1">
@@ -1382,14 +1494,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             </td>
                             <td className="px-2 py-1.5 text-right">
                               <button
-                                onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
+                                onClick={() => setExpandedOrderKey(isExpanded ? null : uiKey)}
                                 className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
                               >
-                                {expandedOrderId === order.id ? 'Hide' : 'Manage'}
+                                {isExpanded ? 'Hide' : 'Manage'}
                               </button>
                             </td>
                           </tr>
-                          {expandedOrderId === order.id && (
+                          {isExpanded && (
                             <tr className="bg-[#1A1A1A]">
                               <td colSpan={8} className="px-0">
                                 <div className="px-2 py-1.5 border-t border-[#222222]">
@@ -1415,7 +1527,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                             try {
                                               setIsCancelingOrder(true);
                                               const metric = String(order.metricId || order.symbol);
-                                              const obAddress = resolveOrderBookAddress(metric || order.symbol);
+                                              // Match TradingPanel: for this TokenView, cancel against the current market's OrderBook address.
+                                              const obAddress = (md?.market as any)?.market_address || resolveOrderBookAddress(metric || order.symbol);
                                               if (GASLESS && walletAddress && obAddress) {
                                                 let oid: bigint;
                                                 try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
@@ -1445,6 +1558,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   throw new Error(msg);
                                                 }
                                                 showSuccess('Order cancelled successfully');
+                                                // Ensure state is authoritative like TradingPanel
+                                                try { await orderBookActions.refreshOrders?.(); } catch {}
                                               const removalKey = getOrderCompositeKey(order.symbol, order.id);
                                               setOptimisticallyRemovedOrderIds(prev => {
                                                 const next = new Set(prev);
@@ -1531,9 +1646,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             </tr>
                           )}
                         </React.Fragment>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
+                  </div>
     );
   };
 

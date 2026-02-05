@@ -84,6 +84,9 @@ export type GaslessMethod =
 export interface GaslessResponse {
   success: boolean;
   txHash?: string;
+  blockNumber?: number | null;
+  mined?: boolean;
+  pending?: boolean;
   error?: string;
 }
 
@@ -625,8 +628,21 @@ export async function submitSessionTrade(params: {
   }
   let json: any = {};
   try { json = body ? JSON.parse(body) : {}; } catch { json = {}; }
-  try { console.log('[UpGas][client] session trade success', { txHash: json?.txHash }); } catch {}
-  return { success: true, txHash: json?.txHash as string };
+  try {
+    console.log('[UpGas][client] session trade success', {
+      txHash: json?.txHash,
+      blockNumber: json?.blockNumber,
+      mined: json?.mined,
+      pending: json?.pending,
+    });
+  } catch {}
+  return {
+    success: true,
+    txHash: json?.txHash as string,
+    blockNumber: typeof json?.blockNumber === 'number' ? json.blockNumber : null,
+    mined: Boolean(json?.mined),
+    pending: Boolean(json?.pending),
+  };
 }
 
 function defaultMethodsBitmap(): `0x${string}` {

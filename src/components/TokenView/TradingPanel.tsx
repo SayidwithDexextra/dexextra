@@ -834,7 +834,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     if (isSubmittingOrder) return 'Submitting Order...';
     if (isCancelingOrder) return 'Canceling Order...';
     // Gasless session: prompt to enable trading when session is not active
-    const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+    const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
     if (GASLESS_ENABLED && address && globalSessionActive === false) return 'Enable Trading';
     if (!selectedOption) return 'Select Position Direction';
     if (orderType === 'limit' && triggerPrice <= 0) return 'Set Limit Price';
@@ -1103,7 +1103,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
 
       // [GASLESS] toggle and OB address log
-      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       let obAddrForGasless: string | undefined;
       try {
         obAddrForGasless = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
@@ -1460,7 +1460,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
 
       // [GASLESS] toggle and OB address log
-      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       let obAddrForGasless: string | undefined;
       try {
         obAddrForGasless = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
@@ -1626,7 +1626,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     
     try {
       // [GASLESS] try session-based gasless cancel first
-      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       const obAddrForGasless = (marketRow as any)?.market_address as string | undefined;
       console.log('[GASLESS] Env:', { NEXT_PUBLIC_GASLESS_ENABLED: (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED });
       console.log('[GASLESS] OB address:', obAddrForGasless);
@@ -1721,7 +1721,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
     // If gasless is enabled and no active session, create it first instead of trading
     try {
-      const GASLESS_ENABLED = (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+      const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       if (GASLESS_ENABLED && address && globalSessionActive === false) {
         const created = await globalEnableTrading();
         if (created.success) {
@@ -2654,15 +2654,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           ) : (
             <button 
               onClick={handleTradeClick}
-              disabled={(isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())}
+              disabled={(isSubmittingOrder || isCancelingOrder) || (!(process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())}
               className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md"
               style={{
                 padding: '10px',
                 fontSize: '16px',
                 fontWeight: '600',
-                backgroundColor: ((isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? '#1A1A1A' : '#3B82F6',
-                color: ((isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? '#6B7280' : '#FFFFFF',
-                cursor: ((isSubmittingOrder || isCancelingOrder) || (!((process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? 'not-allowed' : 'pointer'
+                backgroundColor: ((isSubmittingOrder || isCancelingOrder) || (!(process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? '#1A1A1A' : '#3B82F6',
+                color: ((isSubmittingOrder || isCancelingOrder) || (!(process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? '#6B7280' : '#FFFFFF',
+                cursor: ((isSubmittingOrder || isCancelingOrder) || (!(process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true' && address && globalSessionActive === false) && !canExecuteTrade())) ? 'not-allowed' : 'pointer'
               }}
             >
               {getTradeButtonText()}

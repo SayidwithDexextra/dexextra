@@ -18,7 +18,7 @@ const SessionContext = createContext<SessionState | undefined>(undefined);
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const { walletData } = useWallet() as any;
   const address = walletData?.address as string | undefined;
-  const GASLESS_ENABLED = typeof process !== 'undefined' && (process as any)?.env?.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+  const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionActive, setSessionActive] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
