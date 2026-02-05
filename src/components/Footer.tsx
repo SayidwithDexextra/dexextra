@@ -303,12 +303,12 @@ const Footer: React.FC = () => {
   }, [combinedActiveMarkets, currentTokenKey]);
 
   const secondaryNavLinks = useMemo(() => ([
-    { label: 'Explore', href: '/explore', title: 'Explore markets' },
-    { label: 'Markets', href: '/markets', title: 'Browse markets' },
     { label: 'Portfolio', href: '/portfolio', title: 'View portfolio' },
   ]), []);
 
-  const showActiveMarketShortcuts = combinedActiveMarkets.length > 0;
+  // Only show "Active Markets" shortcuts when a wallet is connected and we can infer user activity.
+  const showActiveMarketShortcuts = Boolean(walletAddress) && combinedActiveMarkets.length > 0;
+  // When disconnected or when there's no activity, Quick Links should only show Portfolio.
   const footerNavLinks = showActiveMarketShortcuts ? activeMarketLinks : secondaryNavLinks;
   
   // Create tooltip text for ETH price
@@ -751,7 +751,7 @@ const Footer: React.FC = () => {
               <Link
                 key={`${keyPrefix}-${l.href}`}
                 href={l.href}
-                title={l.title}
+                title={l.label}
                 style={{
                   padding: '2px 6px',
                   border: `1px solid ${baseBorder}`,
@@ -760,6 +760,13 @@ const Footer: React.FC = () => {
                   textDecoration: 'none',
                   cursor: 'pointer',
                   transition: 'opacity 0.2s ease, border-color 0.2s ease',
+                  // Prevent long market names from overflowing the footer
+                  display: 'inline-block',
+                  maxWidth: 'min(38vw, 240px)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  verticalAlign: 'middle',
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.opacity = '0.9';

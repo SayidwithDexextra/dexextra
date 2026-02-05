@@ -15,6 +15,8 @@ export interface IconOption {
 interface IconSearchBubbleProps {
   /** Search query (usually metric name) */
   query: string;
+  /** Optional extra context (market description) */
+  description?: string;
   /** Callback when an icon is selected (url or File) */
   onSelectIcon: (iconUrl: string) => void;
   /** Callback when a file is uploaded */
@@ -29,6 +31,7 @@ type FetchState = 'idle' | 'loading' | 'success' | 'error';
 
 export function IconSearchBubble({
   query,
+  description,
   onSelectIcon,
   onUploadIcon,
   selectedIconUrl,
@@ -55,7 +58,7 @@ export function IconSearchBubble({
         const response = await fetch('/api/icon-search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, maxResults: 8 }),
+          body: JSON.stringify({ query, description, maxResults: 8 }),
         });
 
         if (!response.ok) {
@@ -119,7 +122,7 @@ export function IconSearchBubble({
       fetch('/api/icon-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, maxResults: 8 }),
+        body: JSON.stringify({ query, description, maxResults: 8 }),
       })
         .then((res) => res.json())
         .then((data) => {

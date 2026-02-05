@@ -2408,7 +2408,8 @@ export function InteractiveMarketCreation() {
         discoveryResult.metric_definition &&
         visibleStep === 'icon' && (
         <IconSearchBubble
-          query={discoveryResult.metric_definition.metric_name || marketName || prompt}
+          query={marketName || discoveryResult.metric_definition.metric_name || prompt}
+          description={marketDescription || undefined}
           onSelectIcon={(url) => {
             setIconFile(null);
             setIconStoredUrl(null);

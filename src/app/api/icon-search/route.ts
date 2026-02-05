@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import OpenAI from 'openai';
 
 export interface IconSearchResult {
   title: string;
@@ -7,6 +9,9 @@ export interface IconSearchResult {
   source: string;
   domain: string;
 }
+
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 
 interface SerpApiImageResult {
   images_results?: Array<{
@@ -18,14 +23,30 @@ interface SerpApiImageResult {
   }>;
 }
 
+const BodySchema = z.object({
+  query: z.string().min(1).max(500),
+  description: z.string().max(3000).optional(),
+  maxResults: z.number().int().min(1).max(20).optional().default(12),
+});
+
 /**
  * POST /api/icon-search
- * Search for icon images using SerpApi Google Images
+ * Search for market images using SerpApi Google Images.
+ *
+ * We infer user intent (short concept keywords) with AI, then suffix with "unsplash"
+ * to strongly bias results toward Unsplash photos from Google Images.
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { query, maxResults = 12 } = body;
+    const body = BodySchema.safeParse(await request.json());
+    if (!body.success) {
+      return NextResponse.json(
+        { error: 'Missing or invalid request body', details: body.error.flatten() },
+        { status: 400 }
+      );
+    }
+
+    const { query, description, maxResults } = body.data;
 
     if (!query || typeof query !== 'string') {
       return NextResponse.json(
@@ -43,8 +64,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build search query optimized for icons/logos
-    const searchQuery = buildIconSearchQuery(query);
+    // Infer a concise "intent" phrase, then target Unsplash results via Google Images.
+    const intent = await inferImageSearchIntent({ name: query, description });
+    const searchQuery = buildUnsplashSearchQuery(intent || query);
 
     const url = new URL('https://serpapi.com/search');
     url.searchParams.set('engine', 'google_images');
@@ -52,15 +74,17 @@ export async function POST(request: NextRequest) {
     url.searchParams.set('api_key', apiKey);
     url.searchParams.set('num', String(Math.min(maxResults, 20)));
     url.searchParams.set('safe', 'active');
-    // Prefer transparent/logo-style images
-    url.searchParams.set('tbs', 'ic:trans,isz:m'); // Transparent, medium size
+    // Prefer medium-ish images; we crop client-side.
+    url.searchParams.set('tbs', 'isz:m');
 
     // Log request (without API key)
     const sanitizedUrl = new URL(url.toString());
     sanitizedUrl.searchParams.delete('api_key');
     console.log('[icon-search] Request:', {
       url: sanitizedUrl.toString(),
-      query_preview: searchQuery.slice(0, 120),
+      input_preview: query.slice(0, 120),
+      intent,
+      query_preview: searchQuery.slice(0, 160),
     });
 
     const response = await fetch(url.toString(), {
@@ -108,10 +132,21 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function buildIconSearchQuery(query: string): string {
-  const base = query.trim();
-  // Add modifiers to find logo/icon-style images
-  return `${base} logo icon transparent`;
+function buildUnsplashSearchQuery(intent: string): string {
+  const base = String(intent || '').trim().replace(/\s+/g, ' ');
+  // Keep "unsplash" as a suffix per product requirement.
+  // Include site hint to bias toward Unsplash-hosted images without losing the suffix.
+  const siteHint = 'site:unsplash.com';
+  if (!base) return `${siteHint} unsplash`;
+  const alreadyHasUnsplash = /\bunsplash\b/i.test(base);
+  const alreadyHasSite = /\bsite:unsplash\.com\b/i.test(base);
+
+  const parts: string[] = [];
+  if (!alreadyHasSite) parts.push(siteHint);
+  parts.push(base);
+  if (!alreadyHasUnsplash) parts.push('unsplash');
+  else if (!/\bunsplash\b/i.test(parts[parts.length - 1] || '')) parts.push('unsplash');
+  return parts.join(' ').trim();
 }
 
 function extractDomain(url: string): string {
@@ -120,4 +155,156 @@ function extractDomain(url: string): string {
   } catch {
     return '';
   }
+}
+
+const IntentOutputSchema = z.object({
+  intent: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length > 0 && s.length <= 80, 'intent must be 1..80 chars'),
+});
+
+const intentCache = new Map<string, { intent: string; ts: number }>();
+const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
+
+async function inferImageSearchIntent(params: { name: string; description?: string }): Promise<string> {
+  const name = String(params.name || '').trim();
+  const description = String(params.description || '').trim();
+  const cacheKey = `${name}\n---\n${description}`.slice(0, 1200);
+
+  const cached = intentCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < INTENT_TTL_MS) return cached.intent;
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_ICON_SEARCH_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+  // Fallback: deterministic heuristic when OpenAI isn't configured.
+  if (!apiKey) {
+    const fallback = heuristicIntentFromText([name, description].filter(Boolean).join(' '));
+    intentCache.set(cacheKey, { intent: fallback, ts: Date.now() });
+    return fallback;
+  }
+
+  try {
+    const openai = new OpenAI({ apiKey });
+    const completion = await openai.chat.completions.create({
+      model,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `You turn verbose market/metric text into a short photo-search intent for Unsplash.
+
+Return JSON only: {"intent": string}
+
+Rules:
+- intent is 1-4 words (max 40 chars preferred), all-lowercase.
+- Capture the real-world visual subject (thing/place/commodity/person/object).
+- Remove finance/contract jargon: futures, front-month, settlement, daily, price, index, c, contract, report, ICE, NYMEX, CME, etc.
+- Remove source/site names: investing.com, fred, coingecko, etc.
+- Do NOT include dates, tickers, units, or timeframes.
+
+Example:
+Name: "Front-Month Arabica Coffee C Futures Daily Settlement"
+Description: "A market tracking ... (ICE) ..."
+=> {"intent":"arabica coffee"}`,
+        },
+        {
+          role: 'user',
+          content: `Name: ${name || '(missing)'}\nDescription: ${description || '(missing)'}`,
+        },
+      ],
+      max_tokens: 80,
+    });
+
+    const raw = completion.choices?.[0]?.message?.content || '';
+    const parsed = IntentOutputSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) throw new Error('Invalid intent JSON');
+
+    const intent = parsed.data.intent.toLowerCase();
+    intentCache.set(cacheKey, { intent, ts: Date.now() });
+    return intent;
+  } catch (e) {
+    const fallback = heuristicIntentFromText([name, description].filter(Boolean).join(' '));
+    intentCache.set(cacheKey, { intent: fallback, ts: Date.now() });
+    return fallback;
+  } finally {
+    // Tiny cache cleanup to prevent unbounded growth.
+    if (intentCache.size > 200) {
+      const now = Date.now();
+      for (const [k, v] of intentCache.entries()) {
+        if (now - v.ts > INTENT_TTL_MS) intentCache.delete(k);
+      }
+    }
+  }
+}
+
+function heuristicIntentFromText(text: string): string {
+  const raw = String(text || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^a-zA-Z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  const STOP = new Set([
+    'front',
+    'month',
+    'front-month',
+    'futures',
+    'future',
+    'contract',
+    'contracts',
+    'daily',
+    'weekly',
+    'monthly',
+    'annual',
+    'settlement',
+    'settle',
+    'price',
+    'index',
+    'rate',
+    'reported',
+    'report',
+    'tracking',
+    'market',
+    'measurement',
+    'using',
+    'via',
+    'ice',
+    'cme',
+    'nymex',
+    'investing',
+    'investingcom',
+    'com',
+    'api',
+    'data',
+    'series',
+    'usd',
+    'eur',
+    'gbp',
+    'jpy',
+    'cad',
+  ]);
+
+  const tokens = raw
+    .split(/\s+/)
+    .map((t) => t.replace(/^-+|-+$/g, ''))
+    .filter((t) => t.length >= 3)
+    .filter((t) => !STOP.has(t))
+    .filter((t) => !/^\d+$/.test(t));
+
+  // Special-case common pairings to keep meaning.
+  const hasArabica = tokens.includes('arabica');
+  const hasCoffee = tokens.includes('coffee');
+  if (hasArabica && hasCoffee) return 'arabica coffee';
+
+  const uniq: string[] = [];
+  for (const t of tokens) {
+    if (!uniq.includes(t)) uniq.push(t);
+    if (uniq.length >= 3) break;
+  }
+  return uniq.join(' ') || raw.split(/\s+/).slice(0, 3).join(' ') || 'market';
 }
