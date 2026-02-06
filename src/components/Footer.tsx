@@ -8,11 +8,26 @@ import { useWallet } from '@/hooks/useWallet';
 import { useMarkets } from '@/hooks/useMarkets';
 import { normalizeBytes32Hex } from '@/lib/hex';
 import { FooterWatchlistPopup } from './FooterWatchlistPopup';
+import { FooterSupportPopup } from './FooterSupportPopup';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 
 const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED']);
 const ORDERBOOK_PREFIX = 'orderbook:activeOrders:';
 const PORTFOLIO_PREFIX = 'portfolio:orders:';
+
+function truncateChipLabel(raw: unknown, maxChars = 7): string {
+  const s = String(raw ?? '').trim();
+  if (s.length <= maxChars) return s;
+
+  const suffix = '...';
+  if (maxChars <= suffix.length) return suffix.slice(0, maxChars);
+
+  const headLen = maxChars - suffix.length;
+  const headRaw = s.slice(0, headLen);
+  const head = headRaw.replace(/[\s\-_]+$/g, '').trimEnd();
+  // If trimming removed everything (e.g. "---"), fall back to raw slice.
+  return (head.length ? head : headRaw) + suffix;
+}
 
 function isEvmAddress(value: string): boolean {
   const v = String(value || '').trim();
@@ -56,6 +71,8 @@ const Footer: React.FC = () => {
   const [sessionOrderSymbols, setSessionOrderSymbols] = useState<string[]>([]);
   const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
   const watchlistCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isSupportOpen, setIsSupportOpen] = useState(false);
+  const supportCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const deploymentFooterPip = useMemo(() => {
     const s = deploymentOverlay?.state;
@@ -102,11 +119,28 @@ const Footer: React.FC = () => {
     }, 200); // 200ms delay before closing
   }, []);
 
+  const handleSupportMouseEnter = useCallback(() => {
+    if (supportCloseTimeoutRef.current) {
+      clearTimeout(supportCloseTimeoutRef.current);
+      supportCloseTimeoutRef.current = null;
+    }
+    setIsSupportOpen(true);
+  }, []);
+
+  const handleSupportMouseLeave = useCallback(() => {
+    supportCloseTimeoutRef.current = setTimeout(() => {
+      setIsSupportOpen(false);
+    }, 200);
+  }, []);
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (watchlistCloseTimeoutRef.current) {
         clearTimeout(watchlistCloseTimeoutRef.current);
+      }
+      if (supportCloseTimeoutRef.current) {
+        clearTimeout(supportCloseTimeoutRef.current);
       }
     };
   }, []);
@@ -284,6 +318,13 @@ const Footer: React.FC = () => {
     sessionOrderSymbols.forEach(push);
     return ordered;
   }, [rankedSymbols, sessionOrderSymbols, normalizeActiveMarketCandidate]);
+
+  const supportDefaultTokenSymbol = useMemo(() => {
+    if (currentTokenSymbol) return String(currentTokenSymbol);
+    if (combinedActiveMarkets.length > 0) return String(combinedActiveMarkets[0]?.hrefId || combinedActiveMarkets[0]?.key || 'BTC');
+    if (Array.isArray(rankedSymbols) && rankedSymbols.length > 0) return String(rankedSymbols[0] || 'BTC');
+    return 'BTC';
+  }, [combinedActiveMarkets, currentTokenSymbol, rankedSymbols]);
 
   const activeMarketLinks = useMemo(() => {
     const filtered = combinedActiveMarkets.filter((m) => {
@@ -545,6 +586,7 @@ const Footer: React.FC = () => {
           display: 'flex',
           alignItems: 'center',
           gap: '16px',
+          minWidth: 0, // allow children (like Active Markets) to shrink/ellipsis
         }}
       >
         {/* Deployment progress pip (when reduced to footer) */}
@@ -647,28 +689,38 @@ const Footer: React.FC = () => {
         </div>
 
         {/* Support */}
-        <Link 
-          href="/support"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '4px 8px',
-            fontSize: '14px',
-            fontWeight: '400',
-            color: '#FFFFFF',
-            textDecoration: 'none',
-            cursor: 'pointer',
-            transition: 'color 0.2s ease',
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.color = '#CCCCCC'}
-          onMouseLeave={(e) => e.currentTarget.style.color = '#FFFFFF'}
+        <div
+          style={{ position: 'relative' }}
+          onMouseEnter={handleSupportMouseEnter}
+          onMouseLeave={handleSupportMouseLeave}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
-          </svg>
-          Support
-        </Link>
+          <button
+            onClick={() => setIsSupportOpen(!isSupportOpen)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '4px 8px',
+              fontSize: '14px',
+              fontWeight: '400',
+              color: isSupportOpen ? '#CCCCCC' : '#FFFFFF',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'color 0.2s ease',
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
+            </svg>
+            Support
+          </button>
+          <FooterSupportPopup
+            isOpen={isSupportOpen}
+            onClose={() => setIsSupportOpen(false)}
+            defaultTokenSymbol={supportDefaultTokenSymbol}
+          />
+        </div>
 
         {/* Theme Toggle */}
         <button 
@@ -727,7 +779,11 @@ const Footer: React.FC = () => {
             fontSize: '12px',
             fontWeight: '500',
             color: '#FFFFFF',
-            flexWrap: 'wrap',
+            // Footer is fixed-height; never wrap to a second line.
+            flexWrap: 'nowrap',
+            minWidth: 0,
+            maxWidth: 'min(42vw, 520px)',
+            overflow: 'hidden',
           }}
         >
           <span
@@ -738,49 +794,67 @@ const Footer: React.FC = () => {
               letterSpacing: '0.2px',
               marginRight: '2px',
               whiteSpace: 'nowrap',
+              flex: '0 0 auto',
             }}
           >
             {showActiveMarketShortcuts ? 'Active Markets:' : 'Quick Links:'}
           </span>
-          {footerNavLinks.map((l) => {
-            const isActive = showActiveMarketShortcuts;
-            const baseBorder = isActive ? '#333333' : '#2A2A2A';
-            const hoverBorder = isActive ? '#444444' : '#3A3A3A';
-            const keyPrefix = isActive ? 'active' : 'nav';
-            return (
-              <Link
-                key={`${keyPrefix}-${l.href}`}
-                href={l.href}
-                title={l.label}
-                style={{
-                  padding: '2px 6px',
-                  border: `1px solid ${baseBorder}`,
-                  borderRadius: '4px',
-                  color: '#FFFFFF',
-                  textDecoration: 'none',
-                  cursor: 'pointer',
-                  transition: 'opacity 0.2s ease, border-color 0.2s ease',
-                  // Prevent long market names from overflowing the footer
-                  display: 'inline-block',
-                  maxWidth: 'min(38vw, 240px)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  verticalAlign: 'middle',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.opacity = '0.9';
-                  e.currentTarget.style.borderColor = hoverBorder;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.opacity = '1';
-                  e.currentTarget.style.borderColor = baseBorder;
-                }}
-              >
-                {l.label}
-              </Link>
-            );
-          })}
+          <div
+            className="scrollbar-none"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flex: '1 1 auto',
+              minWidth: 0,
+              overflowX: 'auto',
+              overflowY: 'hidden',
+            }}
+            aria-label={showActiveMarketShortcuts ? 'Active markets' : 'Quick links'}
+          >
+            {footerNavLinks.map((l) => {
+              const isActive = showActiveMarketShortcuts;
+              const baseBorder = isActive ? '#333333' : '#2A2A2A';
+              const hoverBorder = isActive ? '#444444' : '#3A3A3A';
+              const keyPrefix = isActive ? 'active' : 'nav';
+              const fullLabel = String(l.label ?? '');
+              const chipLabel = truncateChipLabel(fullLabel, 7);
+              return (
+                <Link
+                  key={`${keyPrefix}-${l.href}`}
+                  href={l.href}
+                  title={fullLabel}
+                  style={{
+                    padding: '2px 6px',
+                    border: `1px solid ${baseBorder}`,
+                    borderRadius: '4px',
+                    color: '#FFFFFF',
+                    textDecoration: 'none',
+                    cursor: 'pointer',
+                    transition: 'opacity 0.2s ease, border-color 0.2s ease',
+                    // Keep "standard" chip sizing; only truncate *very* long labels.
+                    display: 'inline-block',
+                    flex: '0 0 auto',
+                    maxWidth: 'min(38vw, 240px)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    verticalAlign: 'middle',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.opacity = '0.9';
+                    e.currentTarget.style.borderColor = hoverBorder;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.opacity = '1';
+                    e.currentTarget.style.borderColor = baseBorder;
+                  }}
+                >
+                  {chipLabel}
+                </Link>
+              );
+            })}
+          </div>
         </div>
 
         {/* Volume Control */}

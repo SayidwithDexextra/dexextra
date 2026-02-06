@@ -93,6 +93,19 @@ export default function Header() {
     setHasMounted(true)
   }, [])
 
+  // Walkthrough hooks: allow global tours to open/close the deposit modal.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOpen = () => setIsDepositModalOpen(true);
+    const onClose = () => setIsDepositModalOpen(false);
+    window.addEventListener('walkthrough:deposit:open', onOpen as any);
+    window.addEventListener('walkthrough:deposit:close', onClose as any);
+    return () => {
+      window.removeEventListener('walkthrough:deposit:open', onOpen as any);
+      window.removeEventListener('walkthrough:deposit:close', onClose as any);
+    };
+  }, []);
+
   // React to coreVaultSummary events to update UI immediately
   useEffect(() => {
     const onSummary = (e: any) => {
@@ -295,7 +308,7 @@ export default function Header() {
               Dexetera
             </span>
           </Link>
-          <div className="relative w-full max-w-sm">
+          <div className="relative w-full max-w-sm" data-walkthrough="header-search">
             <div 
               className="absolute left-3 top-1/2 transform -translate-y-1/2 z-10 pointer-events-none"
               style={{ color: '#ffffff' }}
@@ -483,6 +496,7 @@ export default function Header() {
 
             {/* Deposit Button */}
             <button 
+            data-walkthrough="deposit-button"
               className="px-4 py-1.5 rounded-md transition-all duration-200 font-medium inline-flex items-center justify-center gap-2"
               style={{
                 backgroundColor: '#4a9eff',

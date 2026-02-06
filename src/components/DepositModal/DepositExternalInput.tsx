@@ -280,6 +280,7 @@ export default function DepositExternalInput({
                       <button
                         type="button"
                         onClick={handleFunctionDeposit}
+                        data-walkthrough="deposit-function-cta"
                         disabled={functionCtaLoading || !hasFunctionHandler}
                         aria-busy={functionCtaLoading}
                         className={[

@@ -741,7 +741,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
             )}
             <div className="flex md:hidden flex-col gap-1">
-              <div className="w-full mt-1 h-[70svh] min-h-[520px] relative">
+              <div className="w-full mt-1 h-[70svh] min-h-[520px] relative" data-walkthrough="token-chart">
                 {currentMarketId ? (
                   isDesktop === false ? (
                     <TradingViewChart
@@ -794,10 +794,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   </div>
                 )}
               </div>
-              <div className="w-full">
+              <div className="w-full" data-walkthrough="token-activity">
                 <MarketActivityTabs symbol={symbol} className="h-[320px]" />
               </div>
-              <div className="w-full">
+              <div className="w-full" data-walkthrough="token-trade">
                 {tokenData ? (
                   <TradingPanel 
                     tokenData={tokenData} 
@@ -822,7 +822,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
             <div className="hidden md:flex gap-1" style={{ height: 'calc(100vh - 96px - 40px - 1rem - 1.5rem + 27px)' }}>
               <div className="flex-1 flex flex-col gap-0.5 h-full overflow-hidden">
-                <div className="flex-1 min-h-0 overflow-hidden relative">
+                <div className="flex-1 min-h-0 overflow-hidden relative" data-walkthrough="token-chart">
                   {currentMarketId ? (
                     isDesktop === true ? (
                       <TradingViewChart
@@ -875,11 +875,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     </div>
                   )}
                 </div>
-                <div className="min-h-[240px] h-[320px] max-h-[40%] overflow-hidden">
+                <div className="min-h-[240px] h-[320px] max-h-[40%] overflow-hidden" data-walkthrough="token-activity">
                   <MarketActivityTabs symbol={symbol} className="h-full" />
                 </div>
               </div>
-              <div className="w-[280px] h-full shrink-0">
+              <div className="w-[280px] h-full shrink-0" data-walkthrough="token-orderbook">
                 <TransactionTable 
                   marketId={(md.market as any)?.id}
                   marketIdentifier={(md.market as any)?.market_identifier || symbol}
@@ -888,7 +888,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 />
               </div>
               <div className="w-80 flex flex-col gap-1 h-full">
-                <div className="flex-shrink-0">
+                <div className="flex-shrink-0" data-walkthrough="token-live-price">
                   {(() => {
                     const locator = ((md.market as any)?.market_config?.ai_source_locator) || null;
                     const url = locator?.url || locator?.primary_source_url || null;
@@ -916,10 +916,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     );
                   })()}
                 </div>
-                <div className="flex-shrink-0 max-h-80 overflow-hidden">
+                <div className="flex-shrink-0 max-h-80 overflow-hidden" data-walkthrough="token-info">
                   <TokenHeader symbol={symbol} />
                 </div>
-                <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-hidden" data-walkthrough="token-trade">
                   {tokenData ? (
                     <TradingPanel 
                       tokenData={tokenData} 

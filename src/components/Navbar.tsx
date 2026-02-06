@@ -164,6 +164,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
       <>
                 <nav 
           className="fixed left-0 top-0 h-full bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333] transition-all duration-300 ease-in-out"
+          data-walkthrough="navbar"
           style={{
             width: isOpen ? `${expandedWidth}px` : `${collapsedWidth}px`,
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -285,6 +286,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                   className={`w-full flex items-center transition-all duration-200 ${
                     isOpen ? 'gap-2' : 'justify-center'
                   }`}
+                  data-walkthrough={`nav:${item.id}`}
                   style={{
                     height: '40px',
                     padding: isOpen ? '10px 12px' : '10px',
@@ -325,6 +327,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
          {isOpen && (
            <button
              onClick={() => router.push('/new-market')}
+             data-walkthrough="new-market"
              className="flex items-center justify-center text-white font-semibold text-base transition-all duration-200 hover:opacity-80 cursor-pointer"
              style={{
                height: '50px',
@@ -343,6 +346,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
          {!isOpen && (
            <button
              onClick={() => router.push('/new-market')}
+             data-walkthrough="new-market"
              className="flex items-center justify-center text-white font-semibold transition-all duration-200 hover:opacity-80 cursor-pointer"
              style={{
                height: '40px',

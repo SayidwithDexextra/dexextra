@@ -56,6 +56,7 @@ export default function SpokeDepositModal({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-all duration-300" />
 
       <div
+        data-walkthrough="deposit-spoke-modal"
         className="group relative z-10 w-full max-w-md bg-[#0F0F0F] rounded-xl border border-[#222222] transition-all duration-200"
         style={{
           boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05)',
@@ -127,6 +128,7 @@ export default function SpokeDepositModal({
             </div>
             <div className="p-3">
               <input
+                data-walkthrough="deposit-amount"
                 type="text"
                 inputMode="decimal"
                 value={amount}
@@ -157,6 +159,7 @@ export default function SpokeDepositModal({
           <button
             type="button"
             onClick={handleSubmit}
+            data-walkthrough="deposit-submit"
             disabled={isSubmitting}
             aria-busy={isSubmitting}
             className={[

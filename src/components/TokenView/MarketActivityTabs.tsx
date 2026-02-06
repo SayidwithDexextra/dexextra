@@ -18,6 +18,7 @@ import { gaslessTopUpPosition } from '@/lib/gaslessTopup';
 import { parseUnits } from 'viem';
 import { useSession } from '@/contexts/SessionContext';
 import { normalizeBytes32Hex } from '@/lib/hex';
+import { useWalkthrough } from '@/contexts/WalkthroughContext';
 
 // Public USDC icon (fallback to Circle's official)
 const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
@@ -78,6 +79,11 @@ interface MarketActivityTabsProps {
 }
 
 export default function MarketActivityTabs({ symbol, className = '' }: MarketActivityTabsProps) {
+  const walkthrough = useWalkthrough();
+  const walkthroughStepId = walkthrough.currentStep?.id || null;
+  const forcePositionManageVisible =
+    Boolean(walkthrough.state.active) && walkthroughStepId === 'token-activity-manage';
+
   const [activeTab, setActiveTab] = useState<TabType>('positions');
   const [positions, setPositions] = useState<Position[]>([]); // base positions (from vault reads)
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -226,6 +232,31 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions, posOverlayTick]);
+
+  // Walkthrough hooks: allow the token tour to expand a position row.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const expandFirst = () => {
+      setActiveTab('positions');
+      const first = displayedPositions?.[0];
+      if (first?.id) {
+        setExpandedPositionId(first.id);
+      }
+    };
+
+    const collapseAll = () => {
+      setActiveTab('positions');
+      setExpandedPositionId(null);
+    };
+
+    window.addEventListener('walkthrough:tokenActivity:expandFirstPosition', expandFirst as any);
+    window.addEventListener('walkthrough:tokenActivity:collapsePositions', collapseAll as any);
+    return () => {
+      window.removeEventListener('walkthrough:tokenActivity:expandFirstPosition', expandFirst as any);
+      window.removeEventListener('walkthrough:tokenActivity:collapsePositions', collapseAll as any);
+    };
+  }, [displayedPositions]);
 
   const hydrateSessionOrders = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -1110,7 +1141,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       hiddenOptimisticCount: optimisticallyRemovedOrderIds.size,
     });
   }, [walletAddress, activeTab, orderBookState.activeOrders, displayedOpenOrders.length, optimisticallyRemovedOrderIds.size]);
-  // Fetch order history ONLY when History tab is active. Refreshes are also triggered by realtime events.
+  // Prefetch order history so the History tab count is populated on initial load.
+  // Keep this silent to avoid showing the global "Loading..." indicator unless the user is actively viewing the tab.
+  useEffect(() => {
+    if (!walletAddress) return;
+    fetchOrderHistory({ force: true, silent: true });
+  }, [walletAddress, fetchOrderHistory]);
+
+  // Fetch order history when History tab is active. Refreshes are also triggered by realtime events.
   useEffect(() => {
     if (activeTab !== 'history') return;
     if (!walletAddress) return;
@@ -1205,7 +1243,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const renderPositionsTable = () => {
     if (displayedPositions.length === 0) {
   return (
-                  <div className="flex items-center justify-center p-8">
+                  <div className="flex items-center justify-center p-8" data-walkthrough="token-activity-empty-positions">
                     <div className="flex items-center gap-2">
             <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${positionsIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
                       <span className="text-[11px] font-medium text-[#E5E7EB]">
@@ -1324,7 +1362,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           <td className="px-2 py-1.5 text-right">
                   <button 
                     onClick={() => setExpandedPositionId(expandedPositionId === position.id ? null : position.id)}
-                    className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
+                    data-walkthrough="token-activity-manage"
+                    className={`${forcePositionManageVisible ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded`}
                   >
                     {expandedPositionId === position.id ? 'Hide' : 'Manage'}
                             </button>
@@ -1391,6 +1430,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 setCloseSize(position.size.toString());
                                 setShowCloseModal(true);
                               }}
+                              data-walkthrough="token-activity-close-position"
                               className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200"
                             >
                               Close Position
@@ -1459,7 +1499,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               <div className="flex items-center gap-1">
                                 <Link
                                   href={getTokenHref(order.symbol)}
-                                  className="group/link flex items-center gap-1 hover:opacity-90 transition-opacity"
+                                  className="group/link flex min-w-0 max-w-[200px] md:max-w-[260px] items-center gap-2 hover:opacity-90 transition-opacity"
                                   title={`Open ${order.symbol} market`}
                                 >
                                   <img
@@ -1467,10 +1507,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     alt={`${order.symbol} logo`}
                                     className="w-4 h-4 rounded-full border border-[#333333] object-cover"
                                   />
-                                  <span className="text-[11px] font-medium text-white">
-                                    {marketSymbolMap.get(order.symbol)?.name || order.symbol}
-                                  </span>
-                                  <span className="text-[10px] text-[#CBD5E1]">{order.symbol}</span>
+                                  <div className="min-w-0">
+                                    <span className="block truncate text-[11px] font-medium text-white">
+                                      {marketSymbolMap.get(order.symbol)?.name || order.symbol}
+                                    </span>
+                                    <span className="block truncate text-[10px] text-[#9CA3AF]">{order.symbol}</span>
+                                  </div>
                                 </Link>
                               </div>
                             </td>
@@ -1933,8 +1975,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
                         <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
                         <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
                         <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
@@ -1942,10 +1982,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       {orderHistory.map((order, index) => (
                         <tr key={`${order.id}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
                           <td className="px-2.5 py-2.5">
-                            <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
                               <Link
                                 href={getTokenHref(order.symbol)}
-                                className="group/link flex min-w-0 items-center gap-1 hover:opacity-90 transition-opacity"
+                                className="group/link flex min-w-0 flex-1 max-w-[200px] md:max-w-[260px] items-center gap-2 hover:opacity-90 transition-opacity"
                                 title={`Open ${order.symbol} market`}
                               >
                                 <img
@@ -1953,10 +1993,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   alt={`${order.symbol} logo`}
                                   className="w-4 h-4 rounded-full border border-[#333333] object-cover"
                                 />
-                                <span className="truncate text-[11px] font-medium text-white">
-                                  {marketSymbolMap.get(order.symbol)?.name || order.symbol}
-                                </span>
-                                <span className="text-[10px] text-[#CBD5E1]">{order.symbol}</span>
+                                <div className="min-w-0">
+                                  <span className="block truncate text-[11px] font-medium text-white">
+                                    {marketSymbolMap.get(order.symbol)?.name || order.symbol}
+                                  </span>
+                                  <span className="block truncate text-[10px] text-[#9CA3AF]">{order.symbol}</span>
+                                </div>
                               </Link>
 
                               {order.txHash && (
@@ -2006,13 +2048,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">{formatAmount(order.filled, 4)}</span>
-                          </td>
-                          <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
-                          </td>
-                          <td className="px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-[#9CA3AF]">{formatDate(order.timestamp)}</span>
+                            <span className="text-[11px] text-[#9CA3AF] whitespace-nowrap">{formatDate(order.timestamp)}</span>
                           </td>
                         </tr>
                       ))}
@@ -2109,7 +2145,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide">
+      <div className="flex-1 min-h-0 overflow-auto scrollbar-hide">
         {!walletAddress ? (
                   <div className="flex items-center justify-center p-8">
                     <div className="flex items-center gap-2">

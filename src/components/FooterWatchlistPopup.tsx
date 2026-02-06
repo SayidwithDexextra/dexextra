@@ -158,7 +158,7 @@ export function FooterWatchlistPopup({ isOpen, onClose }: FooterWatchlistPopupPr
 
   return (
     <div
-      className="absolute bottom-full left-0 mb-2 z-50"
+      className="absolute bottom-full left-0 mb-3.5 z-50"
       style={{
         minWidth: '300px',
         maxWidth: '340px',

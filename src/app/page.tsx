@@ -514,36 +514,38 @@ export default function Home() {
               </button>
             </div>
           ) : (
-            <MarketTickerCardContainer
-              title="Active Markets"
-              variant="inline"
-              cards={marketCardData.length > 0 ? marketCardData : []}
-              onCardClick={handleMarketCardNavigate}
-              onCardLongPosition={handleMarketCardLongPosition}
-              onCardShortPosition={handleMarketCardShortPosition}
-              onWatchlistToggle={handleWatchlistToggle}
-              watchlistIds={watchlistIds}
-              watchlistPendingIds={watchlistPending}
-              isWatchlistDisabled={!walletData?.address}
-              isLoading={marketsLoading}
-              toolbar={
-                <MarketToolbar
-                  filters={marketFilters}
-                  selectedFilter={selectedFilter}
-                  onFilterChange={setSelectedFilter}
-                  onSearch={setSearchQuery}
-                  onFilterClick={() => {
-                    // TODO: Implement filter modal/dropdown
-                    console.log('Filter clicked');
-                  }}
-                onSavedClick={() => setIsWatchlistSorted((prev) => !prev)}
-                savedCount={watchlistIds.length}
-                savedActive={isWatchlistSorted}
-                  advancedFilters={advancedFilters}
-                  onAdvancedFiltersChange={setAdvancedFilters}
-                />
-              }
-            />
+            <div data-walkthrough="home-active-markets">
+              <MarketTickerCardContainer
+                title="Active Markets"
+                variant="inline"
+                cards={marketCardData.length > 0 ? marketCardData : []}
+                onCardClick={handleMarketCardNavigate}
+                onCardLongPosition={handleMarketCardLongPosition}
+                onCardShortPosition={handleMarketCardShortPosition}
+                onWatchlistToggle={handleWatchlistToggle}
+                watchlistIds={watchlistIds}
+                watchlistPendingIds={watchlistPending}
+                isWatchlistDisabled={!walletData?.address}
+                isLoading={marketsLoading}
+                toolbar={
+                  <MarketToolbar
+                    filters={marketFilters}
+                    selectedFilter={selectedFilter}
+                    onFilterChange={setSelectedFilter}
+                    onSearch={setSearchQuery}
+                    onFilterClick={() => {
+                      // TODO: Implement filter modal/dropdown
+                      console.log('Filter clicked');
+                    }}
+                    onSavedClick={() => setIsWatchlistSorted((prev) => !prev)}
+                    savedCount={watchlistIds.length}
+                    savedActive={isWatchlistSorted}
+                    advancedFilters={advancedFilters}
+                    onAdvancedFiltersChange={setAdvancedFilters}
+                  />
+                }
+              />
+            </div>
           )}
         </div>
       </div>

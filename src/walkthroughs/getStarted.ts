@@ -1,0 +1,93 @@
+import type { WalkthroughDefinition } from '@/contexts/WalkthroughContext';
+
+export const getStartedWalkthrough: WalkthroughDefinition = {
+  id: 'get-started',
+  storageKey: 'dexextra:walkthrough:get-started:completed',
+  steps: [
+    {
+      id: 'search',
+      route: '/',
+      selector: '[data-walkthrough="header-search"]',
+      title: 'Search markets instantly',
+      description: 'Use global search to quickly jump to any active market by symbol, category, or creator.',
+      placement: 'bottom',
+      paddingPx: 10,
+      radiusPx: 12,
+    },
+    {
+      id: 'nav-settings',
+      route: '/',
+      selector: '[data-walkthrough="nav:settings"]',
+      title: 'Settings',
+      description: 'Head here to update your profile and account preferences.',
+      placement: 'right',
+      paddingPx: 10,
+      radiusPx: 12,
+      nextLabel: 'Open settings',
+    },
+    {
+      id: 'settings-overview',
+      route: '/settings',
+      selector: '[data-walkthrough="settings-header"]',
+      title: 'Settings overview',
+      description:
+        'Here you can update things like your username, profile images, and social links. You can come back any time — let’s keep moving.',
+      placement: 'bottom',
+      paddingPx: 10,
+      radiusPx: 12,
+      nextLabel: 'Continue',
+    },
+    {
+      id: 'nav-watchlist',
+      route: '/',
+      selector: '[data-walkthrough="nav:watchlist"]',
+      title: 'Watchlist',
+      description: 'Save markets you care about and keep them pinned for quick access.',
+      placement: 'right',
+      paddingPx: 10,
+      radiusPx: 12,
+    },
+    {
+      id: 'create-market',
+      route: '/',
+      selector: '[data-walkthrough="new-market"]',
+      title: 'Create a new market',
+      description: 'Start the market creation flow from anywhere.',
+      placement: 'right',
+      paddingPx: 12,
+      radiusPx: 12,
+      nextLabel: 'Go to creator',
+    },
+    {
+      id: 'creator',
+      route: '/new-market',
+      selector: '[data-walkthrough="market-creator"]',
+      title: 'AI-assisted market creator',
+      description: 'Describe what you want to track, pick a source, validate the value, and deploy.',
+      placement: 'top',
+      paddingPx: 12,
+      radiusPx: 16,
+      nextLabel: 'Back to markets',
+    },
+    {
+      id: 'home-active-markets',
+      route: '/',
+      selector: '[data-walkthrough="home-active-markets"]',
+      title: 'Active markets',
+      description:
+        'These cards are the live “Active Markets” feed. You can scan what’s trending, jump into a market, and star markets to add them to your watchlist.',
+      placement: 'top',
+      paddingPx: 12,
+      radiusPx: 16,
+      allowDocumentScroll: true,
+      enterEvents: [
+        {
+          name: 'walkthrough:scrollToSelector',
+          detail: { selector: '[data-walkthrough="home-active-markets"]', behavior: 'smooth', block: 'center' },
+        },
+      ],
+      nextLabel: 'Finish',
+    },
+  ],
+};
+

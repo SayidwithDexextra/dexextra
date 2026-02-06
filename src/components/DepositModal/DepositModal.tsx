@@ -165,6 +165,42 @@ export default function DepositModal({
     }
   }, [isOpen])
 
+  // Walkthrough hooks: allow a tour to drive the deposit UI without user clicks.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const onSetStep = (e: any) => {
+      const next = String(e?.detail?.step || '').trim() as any;
+      if (!next) return;
+      setStep(next);
+    };
+    const onSetToken = (e: any) => {
+      const chain = String(e?.detail?.chain || '').trim();
+      const symbol = String(e?.detail?.symbol || '').trim();
+      if (!chain || !symbol) return;
+      const match = availableTokens.find((t) => t.chain === chain && t.symbol === symbol);
+      if (match) setSourceToken(match);
+    };
+    const onOpenSpoke = (e: any) => {
+      const amt = String(e?.detail?.amount || '').trim();
+      if (amt) setSpokeDepositAmount(amt);
+      setSpokeDepositError(null);
+      setNetworkWarning(null);
+      setShowSpokeDepositModal(true);
+      setStep('spoke');
+    };
+
+    window.addEventListener('walkthrough:deposit:setStep', onSetStep as any);
+    window.addEventListener('walkthrough:deposit:setToken', onSetToken as any);
+    window.addEventListener('walkthrough:deposit:openSpoke', onOpenSpoke as any);
+    return () => {
+      window.removeEventListener('walkthrough:deposit:setStep', onSetStep as any);
+      window.removeEventListener('walkthrough:deposit:setToken', onSetToken as any);
+      window.removeEventListener('walkthrough:deposit:openSpoke', onOpenSpoke as any);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Disable scrolling on body when modal is open
   useEffect(() => {
     if (isOpen) {

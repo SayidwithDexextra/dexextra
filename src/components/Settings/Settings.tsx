@@ -230,13 +230,15 @@ export default function Settings({ className }: SettingsProps) {
     <div className={`dex-page-enter-up min-h-screen bg-[#0F0F0F] text-white font-sans ${className || ''}`}>
       <div className="max-w-2xl mx-auto p-6">
         {/* Header Section */}
-        <div className="mb-8">
+        <div className="mb-8" data-walkthrough="settings-header">
           <div className="flex items-center justify-between mb-6">
             <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
               Account Settings
             </h4>
-            <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-              Profile
+            <div className="flex items-center gap-2">
+              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                Profile
+              </div>
             </div>
           </div>
           
@@ -386,6 +388,7 @@ export default function Settings({ className }: SettingsProps) {
                     type="text"
                     id="username"
                     name="username"
+                    data-walkthrough="settings-username"
                     value={formData.username}
                     onChange={handleInputChange}
                     placeholder="Enter username..."
@@ -486,6 +489,7 @@ export default function Settings({ className }: SettingsProps) {
               
               <label 
                 htmlFor="profile-image" 
+                data-walkthrough="settings-profile-image-upload"
                 className={`flex items-center gap-2 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#333333] rounded-md px-4 py-2.5 cursor-pointer transition-all duration-200 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 {isLoading ? (
@@ -733,6 +737,7 @@ export default function Settings({ className }: SettingsProps) {
           <button 
             onClick={handleSave} 
             disabled={isLoading || !walletData.isConnected || !!usernameError}
+            data-walkthrough="settings-save"
             className={`px-6 py-3 rounded-md font-medium text-sm transition-all duration-200 flex items-center gap-2 ${
               saveStatus === 'saving' 
                 ? 'bg-yellow-500 text-black cursor-not-allowed' 

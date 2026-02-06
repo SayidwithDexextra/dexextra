@@ -1970,7 +1970,10 @@ export function InteractiveMarketCreation() {
   }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, sourcesFetchState, visibleStep]);
 
   return (
-    <div className="relative w-full max-w-[90vw] sm:w-[702px] sm:max-w-[702px]">
+    <div
+      className="relative w-full max-w-[90vw] sm:w-[702px] sm:max-w-[702px]"
+      data-walkthrough="market-creator"
+    >
       {/* Step panel - full page width chat layout with equal margins from edges */}
       {/* Hide when at 'complete' step - we show the MarketDetailsReview instead */}
       {(discoveryState === 'success' || discoveryState === 'clarify') && discoveryResult && visibleStep !== 'complete' ? (

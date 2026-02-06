@@ -57,6 +57,18 @@ export default function DepositTokenSelect({
     setOpenChain((prev) => (prev === chain ? null : chain))
   }
 
+  // Walkthrough hook: open a specific chain section (e.g. Arbitrum) on demand.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (e: any) => {
+      const chain = String(e?.detail?.chain || '').trim();
+      if (!chain) return;
+      setOpenChain(chain);
+    };
+    window.addEventListener('walkthrough:deposit:openChain', handler as any);
+    return () => window.removeEventListener('walkthrough:deposit:openChain', handler as any);
+  }, []);
+
   // Keep local selection in sync (component stays mounted even when closed)
   useEffect(() => {
     setLocalSelected(selectedToken?.symbol || '')
@@ -180,6 +192,7 @@ export default function DepositTokenSelect({
               <div key={chain} className="mb-4">
                 {/* Chain header row */}
                 <button
+                  data-walkthrough={chain === 'Arbitrum' ? 'deposit-chain-arbitrum' : undefined}
                   className="w-full flex items-center justify-between p-3 rounded-md border bg-[#0F0F0F] hover:bg-[#1A1A1A] border-[#222222] hover:border-[#333333] transition-all duration-200"
                   onClick={() => toggleChain(chain)}
                 >
@@ -237,6 +250,11 @@ export default function DepositTokenSelect({
                       return (
                         <div
                           key={`${t.chain}-${t.symbol}`}
+                          data-walkthrough={
+                            t.chain === 'Arbitrum' && t.symbol === 'USDC'
+                              ? 'deposit-token-arbitrum-usdc'
+                              : undefined
+                          }
                           className={[
                             'group rounded-md border transition-all duration-200',
                             'bg-[#0F0F0F] hover:bg-[#1A1A1A]',
@@ -299,6 +317,7 @@ export default function DepositTokenSelect({
           {/* Continue */}
           <div className="px-0">
             <button
+              data-walkthrough="deposit-continue"
               onClick={onContinue}
               className="group relative w-full flex items-center justify-center gap-2 p-3 rounded-lg border bg-green-500 hover:bg-green-600 border-green-500 hover:border-green-600 transition-all duration-200"
             >
