@@ -256,6 +256,25 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Effective mark price with CoreVault.getMarkPrice fallback
   const [effectiveMarkPrice, setEffectiveMarkPrice] = useState<number>(0);
   const [markPriceSource, setMarkPriceSource] = useState<'orderbook' | 'vault_fallback' | 'resolved'>('resolved');
+  // Sticky guard: once a market has trades, NEVER use CoreVault.getMarkPrice.
+  const [hasEverTraded, setHasEverTraded] = useState<boolean>(false);
+  const lastGoodOrderBookMarkRef = useRef<number>(0);
+  const markPriceStartMsRef = useRef<number>(Date.now());
+  const noTradesStableCountRef = useRef<number>(0);
+
+  // Reset sticky flags when switching markets
+  useEffect(() => {
+    setHasEverTraded(false);
+    lastGoodOrderBookMarkRef.current = 0;
+    markPriceStartMsRef.current = Date.now();
+    noTradesStableCountRef.current = 0;
+    try {
+      // Restore "ever traded" hint from previous sessions (best-effort)
+      const key = `dexextra:market:hasTrades:${String(symbol || '').toUpperCase()}`;
+      const raw = typeof window !== 'undefined' ? window.localStorage?.getItem(key) : null;
+      if (raw === '1') setHasEverTraded(true);
+    } catch {}
+  }, [symbol]);
 
   useEffect(() => {
     const obPrice = Number(md.markPrice ?? 0);
@@ -267,12 +286,29 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     const hasObTotalTrades = Number.isFinite(obTotalTrades) && obTotalTrades > 0;
     const dbTotalTrades = Number((marketData as any)?.total_trades ?? (marketData as any)?.totalTrades ?? 0);
     const hasDbTotalTrades = Number.isFinite(dbTotalTrades) && dbTotalTrades > 0;
-    const hasAnyTradesSignal = hasTrades || hasObTotalTrades || hasDbTotalTrades;
+    const recentTradesCount = Array.isArray((md as any)?.recentTrades) ? (md as any).recentTrades.length : 0;
+    const hasRecentTrades = recentTradesCount > 0;
+    const hasAnyTradesSignal = hasTrades || hasObTotalTrades || hasDbTotalTrades || hasRecentTrades;
     const isDefaultCalc = Math.abs(obPrice - 1) < 1e-9; // 1e6 scaled -> 1.0 when empty
     const obMissingOrZero = !Number.isFinite(obPrice) || obPrice <= 0;
+    const obValidForDisplay = !obMissingOrZero && !isDefaultCalc;
 
     const marketIdBytes32 = (marketData as any)?.market_id_bytes32 as string | undefined;
     const vaultAddr = (CONTRACT_ADDRESSES as any)?.CORE_VAULT as string | undefined;
+
+    // Track last known good OrderBook mark (prevents transient 0/1 from flipping UI)
+    if (obValidForDisplay) {
+      lastGoodOrderBookMarkRef.current = obPrice;
+    }
+
+    const hasTradesSticky = hasEverTraded || hasAnyTradesSignal;
+    if (!hasEverTraded && hasAnyTradesSignal) {
+      setHasEverTraded(true);
+      try {
+        const key = `dexextra:market:hasTrades:${String(symbol || '').toUpperCase()}`;
+        if (typeof window !== 'undefined') window.localStorage?.setItem(key, '1');
+      } catch {}
+    }
 
     // Debug: print both potential mark price sources.
     try {
@@ -282,33 +318,46 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         hasTrades,
         obTotalTrades,
         dbTotalTrades,
+        recentTradesCount,
         hasAnyTradesSignal,
+        hasTradesSticky,
+        lastGoodOrderBookMark: lastGoodOrderBookMarkRef.current,
         isDefaultCalc,
         obMissingOrZero,
+        obValidForDisplay,
         resolvedPrice: resolved,
       });
     } catch {}
 
-    // Only allow OrderBook to be authoritative when trades are present (DB or on-chain),
-    // to avoid default/empty-book mark prices. This also prevents transient RPC zeros from
-    // pushing us into the (currently unreliable) CoreVault mark price path.
-    const useOrderbookNow = hasAnyTradesSignal && !isDefaultCalc && !obMissingOrZero;
-    if (useOrderbookNow) {
-      try { console.log('[TokenHeader] Using OrderBook price (trades present)', { obPrice, lastTrade }); } catch {}
+    // CRITICAL: if the market has EVER traded, never use CoreVault mark price.
+    // Always prefer OrderBook mark, and if OrderBook is temporarily invalid, keep the last good OB mark.
+    if (hasTradesSticky) {
+      noTradesStableCountRef.current = 0;
+      if (obValidForDisplay) {
+        setEffectiveMarkPrice(obPrice);
+        setMarkPriceSource('orderbook');
+        return;
+      }
+      const lastGood = lastGoodOrderBookMarkRef.current;
+      if (Number.isFinite(lastGood) && lastGood > 0) {
+        setEffectiveMarkPrice(lastGood);
+        setMarkPriceSource('orderbook');
+        return;
+      }
+      // No valid OB mark yet; fall back to resolved (mid/last/db) but still avoid CoreVault.
+      setEffectiveMarkPrice(resolved > 0 ? resolved : 0);
+      setMarkPriceSource('resolved');
+      return;
+    }
+
+    // No evidence of trades yet. Prefer OB mark if it looks real (e.g. active book), otherwise resolved.
+    if (obValidForDisplay) {
       setEffectiveMarkPrice(obPrice);
       setMarkPriceSource('orderbook');
       return;
     }
 
     const baseWithoutOrderbook = resolved > 0 ? resolved : 0; // Prefer resolved over OB when no trades
-
-    // If we have *any* evidence of trades, never fall back to CoreVault (its mark price is not reliable).
-    // Instead, keep using resolved price until OrderBook reads recover.
-    if (hasAnyTradesSignal) {
-      setEffectiveMarkPrice(baseWithoutOrderbook);
-      setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
-      return;
-    }
 
     const tryFallback = async () => {
       try { console.log('[TokenHeader] Attempting CoreVault.getMarkPrice fallback (no trades or OB not authoritative)', { obPrice, resolved, lastTrade, marketIdBytes32, vaultAddr }); } catch {}
@@ -360,8 +409,37 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
     };
 
+    // Delay CoreVault fallback to avoid race where OrderBook initially returns 0/1 then corrects.
+    const elapsedMs = Date.now() - markPriceStartMsRef.current;
+    const FALLBACK_GRACE_MS = 12_000;
+    if (elapsedMs < FALLBACK_GRACE_MS) {
+      // During grace window, show resolved price and wait for OB/DB to settle.
+      setEffectiveMarkPrice(baseWithoutOrderbook);
+      setMarkPriceSource('resolved');
+      return;
+    }
+
+    // Require multiple consecutive "no trades + no valid OB mark" confirmations before using CoreVault.
+    noTradesStableCountRef.current = Math.min(10, (noTradesStableCountRef.current || 0) + 1);
+    const REQUIRED_STABLE_COUNT = 3;
+    if (noTradesStableCountRef.current < REQUIRED_STABLE_COUNT) {
+      setEffectiveMarkPrice(baseWithoutOrderbook);
+      setMarkPriceSource('resolved');
+      return;
+    }
+
     void tryFallback();
-  }, [md.markPrice, md.resolvedPrice, md.lastTradePrice, (marketData as any)?.market_id_bytes32]);
+  }, [
+    symbol,
+    hasEverTraded,
+    md.markPrice,
+    md.resolvedPrice,
+    md.lastTradePrice,
+    (md as any)?.totalTrades,
+    (md as any)?.recentTrades,
+    (marketData as any)?.total_trades,
+    (marketData as any)?.market_id_bytes32,
+  ]);
 
   // Calculate enhanced token data from unified markets table and contract mark price
   const enhancedTokenData = useMemo((): EnhancedTokenData | null => {
