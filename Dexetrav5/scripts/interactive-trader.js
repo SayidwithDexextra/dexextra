@@ -1120,6 +1120,80 @@ class InteractiveTrader {
     }
   }
 
+  // getUserOrders is not guaranteed to exist on every deployed OrderBook (facet may be missing),
+  // and some deployments return empty `0x` when the selector is absent. Treat those cases as "no orders".
+  async safeGetUserOrders(userAddress) {
+    const address =
+      userAddress || (this.currentUser && this.currentUser.address) || null;
+    if (!address) return [];
+
+    const obAddress = this.contracts?.orderBookAddress || null;
+    const provider =
+      (this.contracts?.orderBook &&
+        this.contracts.orderBook.runner &&
+        this.contracts.orderBook.runner.provider) ||
+      (this.contracts?.obView &&
+        this.contracts.obView.runner &&
+        this.contracts.obView.runner.provider) ||
+      ethers.provider;
+
+    try {
+      // If the configured OrderBook isn't even a contract, avoid hard-failing the UI.
+      if (provider && obAddress) {
+        const code = await this.withRpcRetry(() => provider.getCode(obAddress), 2, 50);
+        if (code === "0x") {
+          if (!this._warnedOrderBookNoCode) {
+            console.log(
+              colorText(
+                `⚠️ OrderBook has no bytecode at ${obAddress} (wrong network/address). Treating as no open orders.`,
+                colors.yellow
+              )
+            );
+            this._warnedOrderBookNoCode = true;
+          }
+          return [];
+        }
+      }
+
+      const contract =
+        this.contracts?.obView?.getUserOrders
+          ? this.contracts.obView
+          : this.contracts?.orderBook;
+      if (!contract || !contract.getUserOrders) return [];
+
+      const orders = await this.withRpcRetry(() => contract.getUserOrders(address));
+      return Array.isArray(orders) ? orders : [];
+    } catch (e) {
+      const msg = String(e?.shortMessage || e?.reason || e?.message || e);
+      const code = e?.code;
+
+      const looksLikeNoData =
+        code === "BAD_DATA" ||
+        /could not decode result data/i.test(msg) ||
+        /value="0x"/i.test(msg);
+
+      const looksLikeMissingFacet =
+        /Function does not exist|unknown selector|missing revert data|execution reverted/i.test(
+          msg
+        ) || code === "CALL_EXCEPTION";
+
+      if (looksLikeNoData || looksLikeMissingFacet) {
+        if (!this._warnedGetUserOrdersUnsupported) {
+          console.log(
+            colorText(
+              `⚠️ getUserOrders not available on this OrderBook. Treating as no open orders.`,
+              colors.yellow
+            )
+          );
+          this._warnedGetUserOrdersUnsupported = true;
+        }
+        return [];
+      }
+
+      throw e;
+    }
+  }
+
   async waitForRpcHealthy(timeoutMs = 8000, intervalMs = 200) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -6172,9 +6246,7 @@ ${colors.brightRed}└───────────────────�
 
       case "CA": {
         // Cancel All orders for user
-        const orders = await this.contracts.orderBook.getUserOrders(
-          user.address
-        );
+        const orders = await this.safeGetUserOrders(user.address);
         let success = 0;
         for (const orderId of orders) {
           try {
@@ -6231,9 +6303,7 @@ ${colors.brightRed}└───────────────────�
         const idxStr = parts[cursor++];
         if (!idxStr) throw new Error("CNO usage: [U#] CNO index");
         const idx = Number(idxStr) - 1;
-        const orders = await this.contracts.orderBook.getUserOrders(
-          user.address
-        );
+        const orders = await this.safeGetUserOrders(user.address);
         if (isNaN(idx) || idx < 0 || idx >= orders.length)
           throw new Error("Invalid order index");
         const orderId = orders[idx];
@@ -7024,7 +7094,7 @@ ${colors.brightRed}└───────────────────�
   }
 
   async viewMyOrdersFor(user) {
-    const orders = await this.contracts.orderBook.getUserOrders(user.address);
+    const orders = await this.safeGetUserOrders(user.address);
     if (!orders.length) {
       console.log(colorText("(no orders)", colors.dim));
       return;
@@ -8115,9 +8185,7 @@ ${colors.brightRed}└───────────────────�
         realizedPnL: unifiedRealizedPnL,
         unrealizedPnL: unifiedUnrealizedPnL,
       };
-      const userOrders = await this.contracts.orderBook.getUserOrders(
-        this.currentUser.address
-      );
+      const userOrders = await this.safeGetUserOrders(this.currentUser.address);
       const positions = await this.contracts.vault.getUserPositions(
         this.currentUser.address
       );
@@ -11660,9 +11728,7 @@ ${colors.brightRed}└───────────────────�
 
     try {
       // Get user orders independently
-      const userOrders = await this.contracts.orderBook.getUserOrders(
-        this.currentUser.address
-      );
+      const userOrders = await this.safeGetUserOrders(this.currentUser.address);
 
       console.log(
         colorText(
@@ -11984,9 +12050,7 @@ ${colors.brightRed}└───────────────────�
     console.log(colorText("\n❌ CANCEL SPECIFIC ORDER", colors.red));
 
     try {
-      const userOrders = await this.contracts.orderBook.getUserOrders(
-        this.currentUser.address
-      );
+      const userOrders = await this.safeGetUserOrders(this.currentUser.address);
 
       if (userOrders.length === 0) {
         console.log(colorText("No orders to cancel", colors.yellow));
@@ -12069,9 +12133,7 @@ ${colors.brightRed}└───────────────────�
     }
 
     try {
-      const userOrders = await this.contracts.orderBook.getUserOrders(
-        this.currentUser.address
-      );
+      const userOrders = await this.safeGetUserOrders(this.currentUser.address);
 
       console.log(
         colorText(
@@ -12145,9 +12207,7 @@ ${colors.brightRed}└───────────────────�
     console.log(boxText("❌ CANCEL ORDER", colors.magenta));
 
     try {
-      const userOrders = await this.contracts.orderBook.getUserOrders(
-        this.currentUser.address
-      );
+      const userOrders = await this.safeGetUserOrders(this.currentUser.address);
 
       if (userOrders.length === 0) {
         console.log(
@@ -12227,9 +12287,7 @@ ${colors.brightRed}└───────────────────�
       const positions = await this.contracts.vault.getUserPositions(
         this.currentUser.address
       );
-      const userOrders = await this.contracts.orderBook.getUserOrders(
-        this.currentUser.address
-      );
+      const userOrders = await this.safeGetUserOrders(this.currentUser.address);
       const balance = await this.contracts.mockUSDC.balanceOf(
         this.currentUser.address
       );

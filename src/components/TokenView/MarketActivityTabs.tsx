@@ -1203,6 +1203,20 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       maximumFractionDigits: 2,
     }).format(Number.isFinite(value) ? value : 0);
 
+  // Format P&L percent with grouping for large values (e.g. 7,002,137.00%)
+  const formatPnlPercent = (value: number) =>
+    new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number.isFinite(value) ? value : 0);
+
+  // Format P&L amount with grouping (e.g. 69,913.59)
+  const formatPnlAmount = (value: number) =>
+    new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number.isFinite(value) ? value : 0);
+
   const formatAmount = (value: number, decimals = 4) => {
     if (!Number.isFinite(value) || value === 0) return '0.0000';
     if (value < 0.00000001 && value > 0) return value.toFixed(8);
@@ -1320,12 +1334,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 <span className={`text-[11px] font-medium font-mono ${
                                   position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
                                 }`}>
-                                  {position.pnl >= 0 ? '+' : ''}{position.pnl.toFixed(2)}
+                                  {position.pnl >= 0 ? '+' : ''}{formatPnlAmount(position.pnl)}
                                 </span>
                                 <span className={`absolute -top-2 -right-0 text-[9px] font-mono ${
                                   position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
                                 }`}>
-                                  {position.pnlPercent >= 0 ? '+' : ''}{position.pnlPercent.toFixed(2)}%
+                                  {position.pnlPercent >= 0 ? '+' : ''}{formatPnlPercent(position.pnlPercent)}%
                                 </span>
                               </span>
                             </div>

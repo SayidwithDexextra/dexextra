@@ -30,6 +30,7 @@ import DecryptedText from './DecryptedText';
 // Removed NetworkStatus import (only used in commented code)
 // Removed direct contract config imports
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
 import { Wallet } from 'lucide-react'
 
 // Search Icon Component
@@ -71,14 +72,27 @@ export default function Header() {
   
   // Align with useCoreVault data as single source of truth
   const core = useCoreVault(walletData.address || undefined)
+  // Recompute unrealized P&L like InteractiveTrader detailed analysis (positions + mark prices)
+  const portfolio = usePortfolioSummary(walletData.address || null, {
+    enabled: Boolean(walletData.isConnected && walletData.address),
+    refreshIntervalMs: 15_000,
+  })
   const isVaultConnected = !!core.isConnected
-  const vaultAvailableCollateral = parseFloat((vaultEvent?.availableCollateral ?? core.availableBalance) || '0')
+  const vaultAvailableCollateral = (() => {
+    const pf = portfolio?.summary?.availableCash
+    if (Number.isFinite(Number(pf))) return Number(pf)
+    return parseFloat((vaultEvent?.availableCollateral ?? core.availableBalance) || '0')
+  })()
   // Portfolio value approximation consistent with TokenHeader broadcasting:
   // totalCollateral (6d) + realizedPnL (24d formatted) + unrealizedPnL (24d formatted)
   // All are already formatted to decimal strings by useCoreVault
   const totalCollateralNum = parseFloat((vaultEvent?.totalCollateral ?? core.totalCollateral) || '0')
   const realizedPnLNum = parseFloat((vaultEvent?.realizedPnL ?? core.realizedPnL) || '0')
-  const unrealizedPnLNum = parseFloat((vaultEvent?.unrealizedPnL ?? core.unrealizedPnL) || '0')
+  const unrealizedPnLNum = (() => {
+    const pf = portfolio?.summary?.unrealizedPnl
+    if (Number.isFinite(Number(pf))) return Number(pf)
+    return parseFloat((vaultEvent?.unrealizedPnL ?? core.unrealizedPnL) || '0')
+  })()
   // Avoid double counting losses: negative realized is already deducted from collateral on-chain
   const realizedForPortfolio = Math.max(0, realizedPnLNum)
   const vaultPortfolioValue = totalCollateralNum + realizedForPortfolio + unrealizedPnLNum

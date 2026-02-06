@@ -117,28 +117,6 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     }
   }, [address, isConnected]);
   
-  // Propagate core vault values globally so other components can react
-  useEffect(() => {
-    try {
-      const detail = {
-        address: address || null,
-        isConnected: isConnected,
-        isLoading: vaultData?.isLoading ?? true,
-        error: vaultData?.error ? String(vaultData.error) : null,
-        marginUsed: vaultData?.marginUsed ?? '0',
-        marginReserved: vaultData?.marginReserved ?? '0',
-        availableBalance: vaultData?.availableBalance ?? '0',
-        realizedPnL: (vaultData as any)?.realizedPnL ?? null,
-        unrealizedPnL: (vaultData as any)?.unrealizedPnL ?? null
-      };
-      console.log('[Dispatch] 📢 [EVT][TokenHeader] Dispatch coreVaultSummary', detail);
-      const evt = new CustomEvent('coreVaultSummary', { detail });
-      if (typeof window !== 'undefined') window.dispatchEvent(evt);
-    } catch (e) {
-      // no-op
-    }
-  }, [address, isConnected, vaultData?.isLoading, vaultData?.error, vaultData?.marginUsed, vaultData?.marginReserved, vaultData?.availableBalance]);
-  
   // Scroll detection state
   const [isPriceSectionVisible, setIsPriceSectionVisible] = useState(true);
   const [isLimitTabActive, setIsLimitTabActive] = useState(false);
@@ -285,14 +263,36 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
     const lastTrade = Number(md.lastTradePrice ?? 0);
     const hasTrades = Number.isFinite(lastTrade) && lastTrade > 0;
+    const obTotalTrades = Number((md as any)?.totalTrades ?? 0);
+    const hasObTotalTrades = Number.isFinite(obTotalTrades) && obTotalTrades > 0;
+    const dbTotalTrades = Number((marketData as any)?.total_trades ?? (marketData as any)?.totalTrades ?? 0);
+    const hasDbTotalTrades = Number.isFinite(dbTotalTrades) && dbTotalTrades > 0;
+    const hasAnyTradesSignal = hasTrades || hasObTotalTrades || hasDbTotalTrades;
     const isDefaultCalc = Math.abs(obPrice - 1) < 1e-9; // 1e6 scaled -> 1.0 when empty
     const obMissingOrZero = !Number.isFinite(obPrice) || obPrice <= 0;
 
     const marketIdBytes32 = (marketData as any)?.market_id_bytes32 as string | undefined;
     const vaultAddr = (CONTRACT_ADDRESSES as any)?.CORE_VAULT as string | undefined;
 
-    // Only allow OrderBook to be authoritative when trades are present
-    const useOrderbookNow = hasTrades && !isDefaultCalc && !obMissingOrZero;
+    // Debug: print both potential mark price sources.
+    try {
+      console.log('[MarkCore] orderbookMarkPrice', {
+        obPrice,
+        lastTrade,
+        hasTrades,
+        obTotalTrades,
+        dbTotalTrades,
+        hasAnyTradesSignal,
+        isDefaultCalc,
+        obMissingOrZero,
+        resolvedPrice: resolved,
+      });
+    } catch {}
+
+    // Only allow OrderBook to be authoritative when trades are present (DB or on-chain),
+    // to avoid default/empty-book mark prices. This also prevents transient RPC zeros from
+    // pushing us into the (currently unreliable) CoreVault mark price path.
+    const useOrderbookNow = hasAnyTradesSignal && !isDefaultCalc && !obMissingOrZero;
     if (useOrderbookNow) {
       try { console.log('[TokenHeader] Using OrderBook price (trades present)', { obPrice, lastTrade }); } catch {}
       setEffectiveMarkPrice(obPrice);
@@ -301,6 +301,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     }
 
     const baseWithoutOrderbook = resolved > 0 ? resolved : 0; // Prefer resolved over OB when no trades
+
+    // If we have *any* evidence of trades, never fall back to CoreVault (its mark price is not reliable).
+    // Instead, keep using resolved price until OrderBook reads recover.
+    if (hasAnyTradesSignal) {
+      setEffectiveMarkPrice(baseWithoutOrderbook);
+      setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
+      return;
+    }
 
     const tryFallback = async () => {
       try { console.log('[TokenHeader] Attempting CoreVault.getMarkPrice fallback (no trades or OB not authoritative)', { obPrice, resolved, lastTrade, marketIdBytes32, vaultAddr }); } catch {}
@@ -329,6 +337,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           args: [marketIdBytes32 as `0x${string}`]
         });
         const price = typeof raw === 'bigint' ? Number(raw) / 1e6 : Number(raw);
+
+        try {
+          console.log('[MarkCore] coreVaultMarkPrice', {
+            marketIdBytes32,
+            raw: typeof raw === 'bigint' ? raw.toString() : raw,
+            price,
+          });
+        } catch {}
         
         if (price > 0) {
           console.log('🔄 CoreVault.getMarkPrice fallback successful', price);
@@ -354,7 +370,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     const market = marketData;
     
     // Use effective price with CoreVault fallback when OB returns default and no order flow
-    const baseComputed = Number((md.markPrice ?? md.resolvedPrice) || 0);
+    const rawOb = Number(md.markPrice ?? 0);
+    const obLooksDefaultOrBad = !Number.isFinite(rawOb) || rawOb <= 0 || Math.abs(rawOb - 1) < 1e-9;
+    const baseComputed = obLooksDefaultOrBad ? Number(md.resolvedPrice || 0) : rawOb;
     const currentMarkPrice = Number(effectiveMarkPrice > 0 ? effectiveMarkPrice : baseComputed);
     
     // Funding and historical change not tracked in DB yet
