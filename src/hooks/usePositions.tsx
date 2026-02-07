@@ -62,7 +62,7 @@ function normalizePositionStruct(positionLike: any) {
 
 export function usePositions(
   marketSymbol?: string,
-  options?: { enabled?: boolean; pollIntervalMs?: number }
+  options?: { enabled?: boolean; pollIntervalMs?: number; listenToEvents?: boolean }
 ): PositionState {
   const wallet = useWallet() as any;
   const walletAddress: string | null = wallet?.walletData?.address ?? wallet?.address ?? null;
@@ -125,6 +125,7 @@ export function usePositions(
   // Fetch positions data
   useEffect(() => {
     const enabled = options?.enabled !== false;
+    const listenToEvents = options?.listenToEvents !== false;
     const rawPoll = options?.pollIntervalMs;
     const pollingDisabled = rawPoll !== undefined && Number(rawPoll) <= 0;
     const pollIntervalMs = pollingDisabled ? 0 : Math.max(2000, Number(rawPoll ?? 5000) || 5000);
@@ -544,30 +545,34 @@ export function usePositions(
     fetchPositions();
 
     // Real-time listeners: trigger immediate refresh on portfolio/order events
-    const onPositionsRefresh = (e: any) => {
-      const detail = (e as CustomEvent)?.detail as any;
-      // eslint-disable-next-line no-console
-      console.log('[RealTimeToken] positions:event:positionsRefreshRequested', {
-        traceId: detail?.traceId,
-        symbol: detail?.symbol,
-        txHash: detail?.txHash,
-        blockNumber: detail?.blockNumber,
-      });
-      fetchPositions();
-    };
-    const onOrdersUpdated = (e: any) => {
-      const detail = (e as CustomEvent)?.detail as any;
-      // eslint-disable-next-line no-console
-      console.log('[RealTimeToken] positions:event:ordersUpdated', {
-        traceId: detail?.traceId,
-        symbol: detail?.symbol,
-        txHash: detail?.txHash,
-        blockNumber: detail?.blockNumber,
-      });
-      fetchPositions();
-    };
+    const onPositionsRefresh = listenToEvents
+      ? (e: any) => {
+          const detail = (e as CustomEvent)?.detail as any;
+          // eslint-disable-next-line no-console
+          console.log('[RealTimeToken] positions:event:positionsRefreshRequested', {
+            traceId: detail?.traceId,
+            symbol: detail?.symbol,
+            txHash: detail?.txHash,
+            blockNumber: detail?.blockNumber,
+          });
+          fetchPositions();
+        }
+      : null;
+    const onOrdersUpdated = listenToEvents
+      ? (e: any) => {
+          const detail = (e as CustomEvent)?.detail as any;
+          // eslint-disable-next-line no-console
+          console.log('[RealTimeToken] positions:event:ordersUpdated', {
+            traceId: detail?.traceId,
+            symbol: detail?.symbol,
+            txHash: detail?.txHash,
+            blockNumber: detail?.blockNumber,
+          });
+          fetchPositions();
+        }
+      : null;
     try {
-      if (typeof window !== 'undefined') {
+      if (listenToEvents && typeof window !== 'undefined') {
         window.addEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
         window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
       }
@@ -579,13 +584,13 @@ export function usePositions(
     return () => {
       if (interval) clearInterval(interval);
       try {
-        if (typeof window !== 'undefined') {
+        if (listenToEvents && typeof window !== 'undefined') {
           window.removeEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
           window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
         }
       } catch {}
     };
-  }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32, options?.enabled, options?.pollIntervalMs]);
+  }, [contracts, walletAddress, marketSymbol, isMarketLoading, market?.market_id_bytes32, options?.enabled, options?.pollIntervalMs, options?.listenToEvents]);
 
   return state;
 }

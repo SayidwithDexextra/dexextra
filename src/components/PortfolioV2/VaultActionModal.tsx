@@ -2,6 +2,8 @@
 
 import React, { useMemo, useState } from 'react'
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
+import { useWallet } from '@/hooks/useWallet'
 
 type ActionType = 'deposit' | 'withdraw'
 
@@ -13,6 +15,11 @@ type VaultActionModalProps = {
 
 export default function VaultActionModal({ isOpen, action, onClose }: VaultActionModalProps) {
 	const { availableBalance, totalCollateral, depositCollateral, withdrawCollateral, isLoading } = useCoreVault()
+	const { walletData } = useWallet() as any
+	const portfolio = usePortfolioSummary(walletData?.address || null, {
+		enabled: Boolean(walletData?.isConnected && walletData?.address),
+		refreshIntervalMs: 15_000,
+	})
 	const [amount, setAmount] = useState<string>('')
 	const [submitting, setSubmitting] = useState<boolean>(false)
 	const [notice, setNotice] = useState<{ kind: 'none' | 'cancelled' | 'error'; message: string }>({ kind: 'none', message: '' })
@@ -49,11 +56,13 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 		if (submitting) return false
 		if (parsedAmount <= 0) return false
 		if (action === 'withdraw') {
-			const avail = parseFloat(availableBalance || '0') || 0
+			const avail = Number.isFinite(Number(portfolio?.summary?.availableCash))
+				? Number(portfolio?.summary?.availableCash)
+				: (parseFloat(availableBalance || '0') || 0)
 			return parsedAmount <= Math.max(0, avail)
 		}
 		return true
-	}, [parsedAmount, submitting, action, availableBalance])
+	}, [parsedAmount, submitting, action, availableBalance, portfolio?.summary?.availableCash])
 
 	if (!isOpen) return null
 
@@ -78,7 +87,7 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 					<div className="mb-3">
 						<div className="flex items-center justify-between">
 							<span className="text-[11px] font-medium text-[#808080]">Available</span>
-							<span className="text-[10px] text-white font-mono">{(parseFloat(availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} <span className="text-[#606060]">USDC</span></span>
+							<span className="text-[10px] text-white font-mono">{(Number.isFinite(Number(portfolio?.summary?.availableCash)) ? Number(portfolio?.summary?.availableCash) : (parseFloat(availableBalance || '0') || 0)).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} <span className="text-[#606060]">USDC</span></span>
 						</div>
 						<div className="flex items-center justify-between mt-1">
 							<span className="text-[11px] font-medium text-[#808080]">Total Collateral</span>
@@ -103,7 +112,7 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 						/>
 						{action === 'withdraw' ? (
 							<button
-								onClick={() => setAmount(String(parseFloat(availableBalance || '0') || 0))}
+								onClick={() => setAmount(String(Number.isFinite(Number(portfolio?.summary?.availableCash)) ? Number(portfolio?.summary?.availableCash) : (parseFloat(availableBalance || '0') || 0)))}
 								className="text-[10px] px-2 py-1 rounded-md border border-[#222222] bg-[#1A1A1A] text-[#9CA3AF]"
 							>
 								Max

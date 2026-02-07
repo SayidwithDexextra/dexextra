@@ -63,13 +63,14 @@ type OrdersSessionCachePayload = {
  * Centralized hook for portfolio data (positions + orders)
  * Ensures consistent loading, retry logic, and prevents race conditions
  */
-export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?: number }): PortfolioData {
+export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?: number; listenToEvents?: boolean }): PortfolioData {
 	const { walletData } = useWallet() as any
 	const walletAddress = walletData?.address
 	const enabled = options?.enabled !== false
+	const listenToEvents = options?.listenToEvents !== false
 
 	// Use the existing usePositions hook for positions
-	const positionsState = usePositions(undefined, { enabled, pollIntervalMs: options?.refreshInterval })
+	const positionsState = usePositions(undefined, { enabled, pollIntervalMs: options?.refreshInterval, listenToEvents })
 
 	// Local state for orders
 	const [ordersBuckets, setOrdersBuckets] = useState<PortfolioOrdersBucket[]>([])
@@ -339,6 +340,7 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 	useEffect(() => {
 		if (typeof window === 'undefined') return
 		if (!enabled || !walletAddress) return
+		if (!listenToEvents) return
 
 		const onOrdersUpdated = (e: any) => {
 			const detail = (e as CustomEvent)?.detail as any
@@ -451,7 +453,7 @@ export function usePortfolioData(options?: { enabled?: boolean; refreshInterval?
 				eventRefreshTimerRef.current = null
 			}
 		}
-	}, [enabled, walletAddress, refreshOrders])
+	}, [enabled, walletAddress, listenToEvents, refreshOrders])
 
 	// Main effect to fetch orders
 	useEffect(() => {

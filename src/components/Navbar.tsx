@@ -52,26 +52,21 @@ const WatchlistIcon = () => (
   </svg>
 )
 
-const PortfolioIcon = () => (
+const SupportIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path
-      d="M9 6V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1"
+      d="M12 2a8 8 0 0 0-8 8v1a3 3 0 0 0 3 3h1v-3a4 4 0 1 1 8 0v3h1a3 3 0 0 0 3-3v-1a8 8 0 0 0-8-8Z"
       stroke="currentColor"
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
     <path
-      d="M3 8h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M12 12v2"
+      d="M8 17v1a4 4 0 0 0 8 0v-1"
       stroke="currentColor"
       strokeWidth="2"
       strokeLinecap="round"
+      strokeLinejoin="round"
     />
   </svg>
 )
@@ -121,7 +116,6 @@ interface NavItem {
 
 const navigationItems: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: OverviewIcon, route: '/' },
-  { id: 'portfolio', label: 'Portfolio', icon: PortfolioIcon, route: '/portfolio' },
   { id: 'watchlist', label: 'Watchlist', icon: WatchlistIcon, route: '/watchlist' },
   // { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
   { id: 'rewards', label: 'Rewards', icon: RewardsIcon, route: '/rewards' },
@@ -130,6 +124,7 @@ const navigationItems: NavItem[] = [
   // { id: 'swap', label: 'Swap', icon: SwapIcon, route: '/swap' },
   // { id: 'earn', label: 'Earn', icon: EarnIcon, route: '/earn' },
   // { id: 'bridge', label: 'Bridge', icon: BridgeIcon, route: '/bridge' },
+  { id: 'support', label: 'Support', icon: SupportIcon, route: '/support' },
   { id: 'settings', label: 'Settings', icon: SettingsIcon, route: '/settings' },
 ]
 
@@ -157,7 +152,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
       if (item.route !== '/' && pathname.startsWith(item.route)) return true
       return false
     })
-    return currentItem?.id || 'overview'
+    return currentItem?.id || ''
   }
 
       return (

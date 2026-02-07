@@ -12,6 +12,13 @@ export default function PortfolioDashboard() {
 	const theme = getPortfolioTheme()
 	const evalRef = useRef<HTMLDivElement>(null)
 	const [evalHeight, setEvalHeight] = useState(0)
+	const openPortfolioSidebar = () => {
+		try {
+			if (typeof window !== 'undefined') {
+				window.dispatchEvent(new CustomEvent('portfolioSidebar:open', { detail: { source: 'portfolioPage' } }))
+			}
+		} catch {}
+	}
 
 	useEffect(() => {
 		// Lock page scroll completely while this page is mounted
@@ -62,7 +69,21 @@ export default function PortfolioDashboard() {
 			}}
 		>
 			<div className="max-w-[1400px] mx-auto h-full flex flex-col">
-				<DashboardHeader title="Portfolio" />
+				<DashboardHeader
+					title="Portfolio"
+					rightContent={
+						<button
+							onClick={openPortfolioSidebar}
+							className="flex items-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] hover:text-white transition-all duration-200"
+							aria-label="Open portfolio sidebar"
+						>
+							<svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+							</svg>
+							Details
+						</button>
+					}
+				/>
 
 				<div className="grid gap-6 grid-cols-1 lg:grid-cols-[4fr_5fr] flex-1 min-h-0">
 					<div ref={evalRef}>

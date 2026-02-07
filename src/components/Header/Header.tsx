@@ -98,6 +98,19 @@ export default function Header() {
   const vaultPortfolioValue = totalCollateralNum + realizedForPortfolio + unrealizedPnLNum
   const unrealizedPnL = unrealizedPnLNum
 
+  const openPortfolioSidebar = () => {
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('portfolioSidebar:open', { detail: { source: 'header' } }))
+        return
+      }
+    } catch {}
+    // Fallback: old behavior
+    try {
+      router.push('/portfolio')
+    } catch {}
+  }
+
   // Removed: direct ABIs and on-chain queries; rely on useCoreVault
 
   // Removed: manual fetchVaultData; rely on useCoreVault polling and formatting
@@ -403,7 +416,7 @@ export default function Header() {
           <div className="hidden md:flex items-center gap-4">
             <div 
               className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
-              onClick={() => router.push('/portfolio')}
+              onClick={openPortfolioSidebar}
             >
               <span 
                 style={{
@@ -433,7 +446,7 @@ export default function Header() {
             
             <div 
               className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
-              onClick={() => router.push('/portfolio')}
+              onClick={openPortfolioSidebar}
             >
               <div className="flex items-center gap-1">
                 <span 
@@ -479,7 +492,7 @@ export default function Header() {
              unrealizedPnL !== undefined && (
               <div 
                 className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
-                onClick={() => router.push('/portfolio')}
+                onClick={openPortfolioSidebar}
               >
                 <span 
                   style={{

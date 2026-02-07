@@ -3,13 +3,23 @@
 import React, { useState } from 'react'
 import VaultActionModal from './VaultActionModal'
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
+import { useWallet } from '@/hooks/useWallet'
 
 export default function VaultActions() {
 	const { availableBalance, totalCollateral } = useCoreVault()
+	const { walletData } = useWallet() as any
+	const portfolio = usePortfolioSummary(walletData?.address || null, {
+		enabled: Boolean(walletData?.isConnected && walletData?.address),
+		refreshIntervalMs: 15_000,
+	})
 	const [showDeposit, setShowDeposit] = useState(false)
 	const [showWithdraw, setShowWithdraw] = useState(false)
 
-	const avail = (parseFloat(availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+	const availNum = Number.isFinite(Number(portfolio?.summary?.availableCash))
+		? Number(portfolio?.summary?.availableCash)
+		: (parseFloat(availableBalance || '0') || 0)
+	const avail = availNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
 	const total = (parseFloat(totalCollateral || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
 
 	return (

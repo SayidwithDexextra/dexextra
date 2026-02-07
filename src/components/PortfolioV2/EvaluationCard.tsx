@@ -4,6 +4,7 @@ import Card from './Card'
 import { getPortfolioTheme } from './theme'
 import React, { useMemo } from 'react'
 import { useCoreVault } from '@/hooks/useCoreVault'
+import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
 import { usePortfolioData } from '@/hooks/usePortfolioData'
 import { useWallet } from '@/hooks/useWallet'
 
@@ -52,16 +53,24 @@ export default function EvaluationCard() {
 		isLoading,
 		isHealthy,
 	} = useCoreVault()
+	const portfolio = usePortfolioSummary(walletData?.address || null, {
+		enabled: Boolean(walletData?.isConnected && walletData?.address),
+		refreshIntervalMs: 15_000,
+	})
 	const { positions, activeOrdersCount, hasLoadedOnce: portfolioHasLoaded, isLoading: isLoadingPortfolio } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
 
 	// Parse numeric values safely
 	const nums = useMemo(() => {
 		const tc = parseFloat(totalCollateral || '0') || 0
-		const avail = parseFloat(availableBalance || '0') || 0
+		const avail = Number.isFinite(Number(portfolio?.summary?.availableCash))
+			? Number(portfolio?.summary?.availableCash)
+			: (parseFloat(availableBalance || '0') || 0)
 		const used = parseFloat(marginUsed || '0') || 0
 		const reserved = parseFloat(marginReserved || '0') || 0
 		const realized = parseFloat(realizedPnL || '0') || 0
-		const unrealized = parseFloat(unrealizedPnL || '0') || 0
+		const unrealized = Number.isFinite(Number(portfolio?.summary?.unrealizedPnl))
+			? Number(portfolio?.summary?.unrealizedPnl)
+			: (parseFloat(unrealizedPnL || '0') || 0)
 		const haircut = parseFloat(socializedLoss || '0') || 0
 		// Match Header logic: avoid liquidation double-count by not subtracting negative realized again
 		const realizedForPortfolio = Math.max(0, realized)
@@ -86,7 +95,17 @@ export default function EvaluationCard() {
 			totalProfit,
 			utilization,
 		}
-	}, [totalCollateral, availableBalance, marginUsed, marginReserved, realizedPnL, unrealizedPnL, socializedLoss])
+	}, [
+		totalCollateral,
+		availableBalance,
+		marginUsed,
+		marginReserved,
+		realizedPnL,
+		unrealizedPnL,
+		socializedLoss,
+		portfolio?.summary?.availableCash,
+		portfolio?.summary?.unrealizedPnl,
+	])
 
 	const formatUSD = (n: number, minFrac = 2, maxFrac = 2) =>
 		new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: minFrac, maximumFractionDigits: maxFrac }).format(n)
@@ -154,16 +173,25 @@ export default function EvaluationCard() {
 				<Sparkline />
 			</div>
 
-			<div className="grid grid-cols-3 gap-10 mt-6 pt-6" style={{ borderTop: '1px solid #1A1A1A' }}>
+			<div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-10 mt-6 pt-6" style={{ borderTop: '1px solid #1A1A1A' }}>
 				{kpis.map((kpi) => (
 					<div key={kpi.label} className="min-w-0">
 						<p className="text-xs font-medium mb-1.5" style={{ color: '#808080' }}>
 							{kpi.label}
 						</p>
-						<div className="flex items-baseline gap-2">
-							<p className="text-xl font-bold" style={{ color: '#FFFFFF' }}>{kpi.value}</p>
+						{/* Stack value + percent on smaller widths to prevent overlap on long numbers */}
+						<div className="flex flex-col gap-1 min-w-0">
+							<p
+								className="text-lg md:text-xl font-bold leading-tight break-all"
+								style={{ color: '#FFFFFF' }}
+							>
+								{kpi.value}
+							</p>
 							{kpi.sub ? (
-								<span className="text-xs font-medium" style={{ color: '#606060' }}>
+								<span
+									className="text-[11px] font-medium leading-tight break-all"
+									style={{ color: '#606060' }}
+								>
 									{kpi.sub}
 								</span>
 							) : null}
