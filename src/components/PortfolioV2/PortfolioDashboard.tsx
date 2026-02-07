@@ -63,40 +63,48 @@ export default function PortfolioDashboard() {
 	return (
 		<div
 			className="w-full h-screen overflow-hidden"
+			data-walkthrough="portfolio-dashboard"
 			style={{
 				background: theme.backgroundGradient,
 				padding: '16px 48px',
 			}}
 		>
 			<div className="max-w-[1400px] mx-auto h-full flex flex-col">
-				<DashboardHeader
-					title="Portfolio"
-					rightContent={
-						<button
-							onClick={openPortfolioSidebar}
-							className="flex items-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] hover:text-white transition-all duration-200"
-							aria-label="Open portfolio sidebar"
-						>
-							<svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-							</svg>
-							Details
-						</button>
-					}
-				/>
+				<div data-walkthrough="portfolio-dashboard-header">
+					<DashboardHeader
+						title="Portfolio"
+						rightContent={
+							<button
+								onClick={openPortfolioSidebar}
+								className="flex items-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] hover:text-white transition-all duration-200"
+								aria-label="Open portfolio sidebar"
+							>
+								<svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+								</svg>
+								Details
+							</button>
+						}
+					/>
+				</div>
 
 				<div className="grid gap-6 grid-cols-1 lg:grid-cols-[4fr_5fr] flex-1 min-h-0">
-					<div ref={evalRef}>
+					<div ref={evalRef} data-walkthrough="portfolio-evaluation">
 						<EvaluationCard />
 					</div>
 						<div
 							className="h-full min-h-0 overflow-y-auto scrollbar-none pr-2"
+							data-walkthrough="portfolio-right-rail"
 							style={{ overscrollBehavior: 'contain', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 200px)' }}
 						>
 						<div className="flex flex-col">
-							<VaultActions />
+							<div data-walkthrough="portfolio-vault-actions">
+								<VaultActions />
+							</div>
 								<div className="relative mt-4" style={{ height: allocationGridHeight }}>
-								<AllocationGrid />
+								<div data-walkthrough="portfolio-allocation">
+									<AllocationGrid />
+								</div>
 								{/* Fade between Allocation and Breakdown */}
 								<div
 									className="pointer-events-none absolute bottom-0 left-0 right-0 h-12"
@@ -107,7 +115,9 @@ export default function PortfolioDashboard() {
 								/>
 							</div>
 							<div className="mt-4">
-								<BreakdownTable />
+								<div data-walkthrough="portfolio-breakdown">
+									<BreakdownTable />
+								</div>
 							</div>
 						</div>
 					</div>

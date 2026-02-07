@@ -15,6 +15,53 @@ export const getStartedWalkthrough: WalkthroughDefinition = {
       radiusPx: 12,
     },
     {
+      id: 'header-cash-pnl',
+      route: '/',
+      selector: '[data-walkthrough="header-portfolio-cash-pnl"]',
+      title: 'Portfolio, Available Cash & Unrealized P&L',
+      description:
+        'Your portfolio value, deployable balance (Available Cash), and live P&L on open positions (Unrealized P&L). Click here any time to open your portfolio details.',
+      placement: 'bottom',
+      paddingPx: 10,
+      radiusPx: 12,
+      nextLabel: 'Open portfolio sidebar',
+    },
+    {
+      id: 'portfolio-sidebar',
+      route: '/',
+      selector: '[data-walkthrough="portfolio-sidebar"]',
+      title: 'Portfolio sidebar',
+      description:
+        'This quick drawer gives you a snapshot of your assets, open positions, and open orders. Tap any row to jump into that market.',
+      placement: 'left',
+      paddingPx: 12,
+      radiusPx: 16,
+      enterEvents: [{ name: 'portfolioSidebar:open', detail: { source: 'walkthrough:get-started' } }],
+      nextLabel: 'Show me around',
+    },
+    {
+      id: 'portfolio-sidebar-overview',
+      route: '/',
+      selector: '[data-walkthrough="portfolio-sidebar-overview"]',
+      title: 'Overview snapshot',
+      description: 'A quick, stable snapshot of your account totals. When you connect a wallet, this fills in live data.',
+      placement: 'left',
+      paddingPx: 12,
+      radiusPx: 16,
+      enterEvents: [{ name: 'portfolioSidebar:open', detail: { source: 'walkthrough:get-started' } }],
+    },
+    {
+      id: 'portfolio-sidebar-body',
+      route: '/',
+      selector: '[data-walkthrough="portfolio-sidebar-body"]',
+      title: 'Positions & orders (inside)',
+      description:
+        'Scroll this panel to see positions and orders. Tap any item to jump straight into that market.',
+      placement: 'left',
+      paddingPx: 12,
+      radiusPx: 16,
+    },
+    {
       id: 'nav-settings',
       route: '/',
       selector: '[data-walkthrough="nav:settings"]',
@@ -23,6 +70,7 @@ export const getStartedWalkthrough: WalkthroughDefinition = {
       placement: 'right',
       paddingPx: 10,
       radiusPx: 12,
+      enterEvents: [{ name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } }],
       nextLabel: 'Open settings',
     },
     {
@@ -81,6 +129,7 @@ export const getStartedWalkthrough: WalkthroughDefinition = {
       radiusPx: 16,
       allowDocumentScroll: true,
       enterEvents: [
+        { name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } },
         {
           name: 'walkthrough:scrollToSelector',
           detail: { selector: '[data-walkthrough="home-active-markets"]', behavior: 'smooth', block: 'center' },

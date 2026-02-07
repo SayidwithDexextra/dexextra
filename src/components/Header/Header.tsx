@@ -197,6 +197,7 @@ export default function Header() {
     })
     return showSign && num > 0 ? `+${formatted}` : formatted
   }
+  const displayUnrealizedPnL = !walletData.isConnected ? '$0.00' : formatCurrency(String(unrealizedPnL), true)
 
   // Calculate portfolio value from VaultRouter, re-animating only when 2-decimal display changes
   const roundedPortfolioCents = useMemo(() => {
@@ -414,84 +415,10 @@ export default function Header() {
         <div className="flex items-center gap-3">
           {/* Portfolio & Cash Display */}
           <div className="hidden md:flex items-center gap-4">
-            <div 
-              className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
-              onClick={openPortfolioSidebar}
-            >
-              <span 
-                style={{
-                  fontSize: '12px',
-                  color: '#b3b3b3',
-                  fontWeight: 400
-                }}
-              >
-                Portfolio
-              </span>
-              <DecryptedText
-                text={displayPortfolioValue}
-                animateTrigger={vaultUpdateSeq}
-                style={{
-                  fontSize: '14px',
-                  color: '#FFFFFFFF',
-                  fontWeight: 600
-                }}
-                characters="0123456789$.,+-"
-                speed={100}
-                maxIterations={12}
-                animateOnMount={true}
-                animateOnHover={false}
-                animateOnChange={false}
-              />
-            </div>
-            
-            <div 
-              className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
-              onClick={openPortfolioSidebar}
-            >
-              <div className="flex items-center gap-1">
-                <span 
-                  style={{
-                    fontSize: '12px',
-                    color: '#b3b3b3',
-                    fontWeight: 400
-                  }}
-                >
-                  Available Cash
-                </span>
-                {/* VaultRouter connection indicator */}
-                <div 
-                  className="w-2 h-2 rounded-full"
-                  style={{
-                    backgroundColor: isVaultConnected ? '#00d4aa' : '#ff6b6b',
-                    opacity: walletData.isConnected ? 1 : 0.3
-                  }}
-                  title={isVaultConnected ? 'Connected to CoreVault' : 'Vault disconnected'}
-                />
-              </div>
-              <DecryptedText
-                text={displayCashValue}
-                animateTrigger={vaultUpdateSeq}
-                style={{
-                  fontSize: '14px',
-                  color: '#FFFFFFFF',
-                  fontWeight: 600
-                }}
-                characters="0123456789$.,+-"
-                speed={100}
-                maxIterations={12}
-                animateOnMount={true}
-                animateOnHover={false}
-                animateOnChange={false}
-              />
-            </div>
-
-            {/* Unrealized PnL Display (only show if there's actual PnL and user is connected) */}
-            {walletData.isConnected && 
-             unrealizedPnL !== 0 && 
-             unrealizedPnL !== null && 
-             unrealizedPnL !== undefined && (
+            <div className="flex items-center gap-4" data-walkthrough="header-portfolio-cash-pnl">
               <div 
                 className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                data-walkthrough="header-portfolio"
                 onClick={openPortfolioSidebar}
               >
                 <span 
@@ -501,14 +428,14 @@ export default function Header() {
                     fontWeight: 400
                   }}
                 >
-                  Unrealized PnL
+                  Portfolio
                 </span>
                 <DecryptedText
-                  text={formatCurrency(String(unrealizedPnL), true)}
+                  text={displayPortfolioValue}
                   animateTrigger={vaultUpdateSeq}
                   style={{
                     fontSize: '14px',
-                    color: unrealizedPnL >= 0 ? '#00d4aa' : '#ff6b6b',
+                    color: '#FFFFFFFF',
                     fontWeight: 600
                   }}
                   characters="0123456789$.,+-"
@@ -519,7 +446,83 @@ export default function Header() {
                   animateOnChange={false}
                 />
               </div>
-            )}
+              
+              <div className="flex items-center gap-4" data-walkthrough="header-cash-pnl">
+                <div 
+                  className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                  data-walkthrough="header-available-cash"
+                  onClick={openPortfolioSidebar}
+                >
+                  <div className="flex items-center gap-1">
+                    <span 
+                      style={{
+                        fontSize: '12px',
+                        color: '#b3b3b3',
+                        fontWeight: 400
+                      }}
+                    >
+                      Available Cash
+                    </span>
+                    {/* VaultRouter connection indicator */}
+                    <div 
+                      className="w-2 h-2 rounded-full"
+                      style={{
+                        backgroundColor: isVaultConnected ? '#00d4aa' : '#ff6b6b',
+                        opacity: walletData.isConnected ? 1 : 0.3
+                      }}
+                      title={isVaultConnected ? 'Connected to CoreVault' : 'Vault disconnected'}
+                    />
+                  </div>
+                  <DecryptedText
+                    text={displayCashValue}
+                    animateTrigger={vaultUpdateSeq}
+                    style={{
+                      fontSize: '14px',
+                      color: '#FFFFFFFF',
+                      fontWeight: 600
+                    }}
+                    characters="0123456789$.,+-"
+                    speed={100}
+                    maxIterations={12}
+                    animateOnMount={true}
+                    animateOnHover={false}
+                    animateOnChange={false}
+                  />
+                </div>
+
+                {/* Unrealized P&L Display (always render so walkthrough can target it) */}
+                <div 
+                  className="flex flex-col items-center cursor-pointer transition-opacity duration-200 hover:opacity-80"
+                  data-walkthrough="header-unrealized-pnl"
+                  onClick={openPortfolioSidebar}
+                >
+                  <span 
+                    style={{
+                      fontSize: '12px',
+                      color: '#b3b3b3',
+                      fontWeight: 400
+                    }}
+                  >
+                    Unrealized P&amp;L
+                  </span>
+                  <DecryptedText
+                    text={displayUnrealizedPnL}
+                    animateTrigger={vaultUpdateSeq}
+                    style={{
+                      fontSize: '14px',
+                      color: !walletData.isConnected ? '#FFFFFFFF' : unrealizedPnL >= 0 ? '#00d4aa' : '#ff6b6b',
+                      fontWeight: 600
+                    }}
+                    characters="0123456789$.,+-"
+                    speed={100}
+                    maxIterations={12}
+                    animateOnMount={true}
+                    animateOnHover={false}
+                    animateOnChange={false}
+                  />
+                </div>
+              </div>
+            </div>
 
             {/* Deposit Button */}
             <button 

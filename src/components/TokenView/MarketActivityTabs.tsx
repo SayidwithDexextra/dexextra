@@ -103,6 +103,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
   const [optimisticallyRemovedOrderIds, setOptimisticallyRemovedOrderIds] = useState<Set<string>>(new Set());
   const [sessionOrders, setSessionOrders] = useState<Order[]>([]);
+  const [sitewideActiveOrders, setSitewideActiveOrders] = useState<Order[]>([]);
+  const [isLoadingSitewideOrders, setIsLoadingSitewideOrders] = useState(false);
   const wallet = useWallet() as any;
   const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
   const GASLESS = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
@@ -369,6 +371,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Throttle and in-flight guards for order history (must be declared before realtime effects that reference them)
   const isFetchingHistoryRef = useRef(false);
   const lastHistoryFetchTsRef = useRef(0);
+  const isFetchingSitewideOrdersRef = useRef(false);
+  const lastSitewideOrdersFetchTsRef = useRef(0);
 
   const fetchOrderHistory = useCallback(
     async (opts?: { force?: boolean; silent?: boolean }) => {
@@ -420,6 +424,80 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     [walletAddress, metricId]
   );
 
+  const fetchSitewideOpenOrders = useCallback(
+    async (opts?: { force?: boolean; silent?: boolean }) => {
+      if (!walletAddress) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden' && !opts?.force) return;
+      if (isFetchingSitewideOrdersRef.current) return;
+
+      const now = Date.now();
+      const cooldownMs = opts?.force ? 750 : 10_000;
+      if (now - lastSitewideOrdersFetchTsRef.current < cooldownMs) return;
+
+      isFetchingSitewideOrdersRef.current = true;
+      if (activeTab === 'orders' && !opts?.silent) setIsLoadingSitewideOrders(true);
+      try {
+        console.log('[Dispatch] 📡 [API][MarketActivityTabs] /api/orders/active-buckets request', { trader: walletAddress });
+        const params = new URLSearchParams({
+          trader: walletAddress,
+          limit: '800',
+          perMarket: '50',
+        });
+        const res = await fetch(`/api/orders/active-buckets?${params.toString()}`);
+        if (!res.ok) {
+          console.warn('[Dispatch] ⚠️ [API][MarketActivityTabs] /api/orders/active-buckets non-200', res.status);
+          return;
+        }
+        const data = await res.json();
+        const buckets = Array.isArray(data?.buckets) ? data.buckets : [];
+        const flattened: Order[] = [];
+        for (const b of buckets) {
+          const sym = String(b?.symbol || '').toUpperCase();
+          if (!sym) continue;
+          const obAddr = b?.marketAddress ? String(b.marketAddress) : null;
+          const orders = Array.isArray(b?.orders) ? b.orders : [];
+          for (const o of orders) {
+            const id = o?.order_id !== undefined && o?.order_id !== null ? String(o.order_id) : '';
+            if (!id) continue;
+            const sideRaw = String(o?.side || 'BUY').toUpperCase();
+            const typeRaw = String(o?.order_type || 'LIMIT').toUpperCase();
+            const tsRaw = o?.updated_at || o?.created_at || null;
+            const ts = tsRaw ? new Date(tsRaw).getTime() : Date.now();
+            flattened.push({
+              id,
+              symbol: sym,
+              metricId: sym,
+              orderBookAddress: obAddr,
+              side: sideRaw === 'SELL' ? 'SELL' : 'BUY',
+              type: typeRaw === 'MARKET' ? 'MARKET' : 'LIMIT',
+              price: o?.price === null || o?.price === undefined ? 0 : Number(o.price),
+              size: Number(o?.quantity || 0),
+              filled: Number(o?.filled_quantity || 0),
+              status: normalizeOrderStatus(o?.order_status),
+              timestamp: Number.isFinite(ts) ? ts : Date.now(),
+            });
+          }
+        }
+
+        // Stable ordering: newest first to avoid flicker
+        flattened.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+        if (isMountedRef.current) setSitewideActiveOrders(flattened);
+        console.log('[Dispatch] ✅ [API][MarketActivityTabs] /api/orders/active-buckets response', {
+          buckets: buckets.length,
+          orders: flattened.length,
+        });
+      } catch (e) {
+        console.error('[Dispatch] ❌ [API][MarketActivityTabs] /api/orders/active-buckets exception', e);
+        // keep existing sitewideActiveOrders on error
+      } finally {
+        lastSitewideOrdersFetchTsRef.current = Date.now();
+        isFetchingSitewideOrdersRef.current = false;
+        if (isMountedRef.current) setIsLoadingSitewideOrders(false);
+      }
+    },
+    [walletAddress, activeTab]
+  );
+
   // IMPORTANT: Do not hit Supabase for order history unless the History tab is active.
 
   const lastSessionHydrateAtRef = useRef(0);
@@ -455,6 +533,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           setTimeout(() => hydrateSessionOrders(), 250);
         } catch {}
       }
+
+      // Keep the sitewide open orders snapshot warm so EVERY market page shows the same open orders list.
+      // Throttling inside `fetchSitewideOpenOrders` prevents spam during rapid event bursts.
+      try {
+        void fetchSitewideOpenOrders({ silent: true });
+      } catch {}
 
       const sym = String(detail?.symbol || detail?.marketId || detail?.metricId || '').toUpperCase();
       if (!sym) return;
@@ -931,7 +1015,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return n;
   }
 
-  // Open Orders: derive directly from on-chain OrderBook state (no Supabase).
+  // Open Orders: current-market on-chain state (fast), plus sitewide snapshot (authoritative) + session cache + optimistic overlay.
   const onchainOpenOrders = useMemo(() => {
     const symbolUpper = String(metricId || symbol || 'UNKNOWN').toUpperCase();
     const src = Array.isArray(orderBookState.activeOrders) ? orderBookState.activeOrders : [];
@@ -961,12 +1045,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   }, [orderBookState.activeOrders, metricId, symbol]);
 
   const openOrders = useMemo(() => {
-    // Match TradingPanel behavior: Open Orders for THIS market come from on-chain user orders
-    // (orderBookState.activeOrders via useOrderBook), plus any session-cached optimistic rows.
-    const currentSym = String(metricId || symbol || '').toUpperCase();
-    const base = (Array.isArray(onchainOpenOrders) ? onchainOpenOrders : []).filter(
-      (o) => String(o?.symbol || '').toUpperCase() === currentSym
-    );
+    // IMPORTANT: Open Orders are SITE-WIDE (all markets), not just the current token page.
+    // This matches the requirement: every market's activities tab should show the same open orders list.
+    const base = Array.isArray(sitewideActiveOrders) && sitewideActiveOrders.length > 0
+      ? sitewideActiveOrders
+      : [];
     const dedup = new Map<string, Order>();
 
     const appendOrder = (order: Order) => {
@@ -975,16 +1058,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       if (!isValidNumericOrderId(order.id)) return;
       const key = getOrderCompositeKey(order.symbol, order.id);
       if (!key) return;
-      if (!dedup.has(key)) {
-        dedup.set(key, order);
-      }
+      const prev = dedup.get(key);
+      if (!prev) return void dedup.set(key, order);
+      const prevTs = Number(prev?.timestamp || 0);
+      const nextTs = Number(order?.timestamp || 0);
+      if (nextTs >= prevTs) dedup.set(key, order);
     };
 
+    // 1) Authoritative sitewide snapshot (Supabase)
     base.forEach(appendOrder);
-    // Only include session cached orders for THIS market
-    sessionOrders
-      .filter((o) => String(o?.symbol || '').toUpperCase() === currentSym)
-      .forEach(appendOrder);
+    // 2) Session cache across markets (fast recovery when returning to tab)
+    (Array.isArray(sessionOrders) ? sessionOrders : []).forEach(appendOrder);
+    // 3) Current-market on-chain reads (fast, fills gaps when snapshot lags)
+    (Array.isArray(onchainOpenOrders) ? onchainOpenOrders : []).forEach(appendOrder);
 
     // Defensive: never render a LIMIT order with non-positive price/size. This usually indicates a stale/partial
     // optimistic/session snapshot, and it matches the "$0 / 0 / 0" ghost rows we've observed after cancels.
@@ -1011,8 +1097,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         }
         return true;
       });
-  }, [onchainOpenOrders, optimisticallyRemovedOrderIds, sessionOrders, metricId, symbol]);
-  const openOrdersIsLoading = Boolean((orderBookState as any)?.isLoading && activeTab === 'orders');
+  }, [sitewideActiveOrders, sessionOrders, onchainOpenOrders, optimisticallyRemovedOrderIds]);
+  const openOrdersIsLoading = Boolean(isLoadingSitewideOrders && activeTab === 'orders');
 
   // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
   // Prevents flicker/revert while backend/onchain read catches up.
@@ -1070,7 +1156,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       clearSessionActiveOrdersCache();
       setSessionOrders([]);
 
-      // 3) Force on-chain refresh for this market's active orders
+      // 3) Force on-chain refresh for this market's active orders (best-effort; sitewide snapshot is authoritative)
       try {
         await orderBookActions.refreshOrders?.();
       } catch {}
@@ -1078,6 +1164,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       // 4) Re-hydrate session orders after refresh persists
       try {
         setTimeout(() => hydrateSessionOrders(), 350);
+      } catch {}
+
+      // 5) Refresh sitewide snapshot (so it matches across every market page)
+      try {
+        await fetchSitewideOpenOrders({ force: true, silent: true });
       } catch {}
     } finally {
       setIsRefreshingOnchainOrders(false);
@@ -1088,6 +1179,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     clearSessionActiveOrdersCache,
     orderBookActions.refreshOrders,
     hydrateSessionOrders,
+    fetchSitewideOpenOrders,
   ]);
 
   const displayedOpenOrders = useMemo(() => {
@@ -1147,6 +1239,37 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     if (!walletAddress) return;
     fetchOrderHistory({ force: true, silent: true });
   }, [walletAddress, fetchOrderHistory]);
+
+  // Prefetch sitewide open orders so the Open Orders tab is global across markets.
+  useEffect(() => {
+    if (!walletAddress) {
+      setSitewideActiveOrders([]);
+      return;
+    }
+    fetchSitewideOpenOrders({ force: true, silent: true });
+  }, [walletAddress, fetchSitewideOpenOrders]);
+
+  // Refresh sitewide open orders when the Open Orders tab becomes active.
+  useEffect(() => {
+    if (activeTab !== 'orders') return;
+    if (!walletAddress) return;
+
+    fetchSitewideOpenOrders({ force: true, silent: false });
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSitewideOpenOrders({ force: true, silent: false });
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
+    };
+  }, [activeTab, walletAddress, fetchSitewideOpenOrders]);
 
   // Fetch order history when History tab is active. Refreshes are also triggered by realtime events.
   useEffect(() => {
@@ -1583,8 +1706,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                             try {
                                               setIsCancelingOrder(true);
                                               const metric = String(order.metricId || order.symbol);
-                                              // Match TradingPanel: for this TokenView, cancel against the current market's OrderBook address.
-                                              const obAddress = (md?.market as any)?.market_address || resolveOrderBookAddress(metric || order.symbol);
+                                              // Cancel against the *order's* market (Open Orders is site-wide, so do not assume current market).
+                                              const obAddress = order.orderBookAddress || resolveOrderBookAddress(metric || order.symbol);
                                               if (GASLESS && walletAddress && obAddress) {
                                                 let oid: bigint;
                                                 try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
@@ -1614,8 +1737,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   throw new Error(msg);
                                                 }
                                                 showSuccess('Order cancelled successfully');
-                                                // Ensure state is authoritative like TradingPanel
-                                                try { await orderBookActions.refreshOrders?.(); } catch {}
+                                                // Refresh the sitewide snapshot (best-effort; optimistic UI already removed the row).
+                                                try { await fetchSitewideOpenOrders({ force: true, silent: true }); } catch {}
                                               const removalKey = getOrderCompositeKey(order.symbol, order.id);
                                               setOptimisticallyRemovedOrderIds(prev => {
                                                 const next = new Set(prev);
@@ -1652,6 +1775,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   showError('Failed to cancel order. Please try again.');
                                                 } else {
                                                   showSuccess('Order cancelled successfully');
+                                                  try { await fetchSitewideOpenOrders({ force: true, silent: true }); } catch {}
                                                   const removalKey = getOrderCompositeKey(order.symbol, order.id);
                                                   setOptimisticallyRemovedOrderIds(prev => {
                                                     const next = new Set(prev);
