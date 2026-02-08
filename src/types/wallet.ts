@@ -9,11 +9,9 @@ export interface WalletData {
   userProfile?: UserProfile | null
 }
 
-// Import the full UserProfile interface from userProfile types
-import type { PublicUserProfile } from './userProfile'
-
-// Use the PublicUserProfile interface for wallet context
-export type UserProfile = PublicUserProfile
+// Use the full UserProfile for the connected wallet (includes private fields like email).
+import type { UserProfile as FullUserProfile } from './userProfile'
+export type UserProfile = FullUserProfile
 
 export interface WalletProvider {
   name: string

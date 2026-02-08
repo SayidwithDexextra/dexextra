@@ -1,6 +1,6 @@
 // Client-side service for interacting with user profile API
 
-import type { UserProfile } from '@/types/wallet';
+import type { PublicUserProfile, UserProfile } from '@/types/userProfile';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -53,7 +53,7 @@ export class ProfileApi {
   /**
    * Get user profile by wallet address
    */
-  static async getProfile(walletAddress: string): Promise<UserProfile | null> {
+  static async getProfile(walletAddress: string): Promise<PublicUserProfile | null> {
     try {
       const response = await fetch(`/api/profile?wallet=${encodeURIComponent(walletAddress)}`);
       
@@ -61,7 +61,7 @@ export class ProfileApi {
         return null; // Profile doesn't exist
       }
 
-      const result: ApiResponse<UserProfile> = await response.json();
+      const result: ApiResponse<PublicUserProfile> = await response.json();
 
       if (!response.ok || !result.success) {
         throw new Error(result.error || 'Failed to fetch profile');

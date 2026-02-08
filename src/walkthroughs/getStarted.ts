@@ -111,7 +111,7 @@ export const getStartedWalkthrough: WalkthroughDefinition = {
       route: '/new-market',
       selector: '[data-walkthrough="market-creator"]',
       title: 'AI-assisted market creator',
-      description: 'Describe what you want to track, pick a source, validate the value, and deploy.',
+      description: 'Describe what you want to trade, pick a source, validate the value, and deploy.',
       placement: 'top',
       paddingPx: 12,
       radiusPx: 16,

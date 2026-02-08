@@ -4,10 +4,10 @@ import React from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { IconSparkles } from './icons';
+import { ethers } from 'ethers';
 import { MetricDiscoveryResponse } from '@/types/metricDiscovery';
 import { MetricSourceBubble, MetricSourceOption } from './MetricSourceBubble';
 import { IconSearchBubble } from './IconSearchBubble';
-import { MarketExamplesCarousel } from './MarketExamplesCarousel';
 import { MetricResolutionModal } from '@/components/MetricResolutionModal';
 import type { MetricResolutionResponse } from '@/components/MetricResolutionModal/types';
 import { runMetricAIWithPolling, getMetricAIWorkerBaseUrl, type MetricAIResult } from '@/lib/metricAiWorker';
@@ -19,6 +19,25 @@ import { usePusher } from '@/lib/pusher-client';
 
 type DiscoveryState = 'idle' | 'discovering' | 'success' | 'clarify' | 'rejected' | 'error';
 type CreationStep = 'clarify_metric' | 'name' | 'description' | 'select_source' | 'icon' | 'complete';
+
+const PROMPT_EXAMPLE_SUGGESTIONS = [
+  'Current price of Bitcoin in USD',
+  'ETH/USD spot price (Coinbase or Binance)',
+  'US CPI (YoY %) — monthly',
+  'US unemployment rate (%) — monthly',
+  'S&P 500 index level — daily close',
+  'Solana TPS (7d average)',
+] as const;
+
+function formatUsdc6(amount: bigint) {
+  // Format a 6-decimal USDC-like integer without relying on Intl.
+  const sign = amount < 0n ? '-' : '';
+  const x = amount < 0n ? -amount : amount;
+  const whole = x / 1_000_000n;
+  const frac = x % 1_000_000n;
+  const fracStr = frac.toString().padStart(6, '0').replace(/0+$/, '');
+  return `${sign}${whole.toString()}${fracStr ? `.${fracStr}` : ''} USDC`;
+}
 
 function clampText(input: string, maxLen: number) {
   const trimmed = input.trim();
@@ -301,6 +320,7 @@ function StepPanel({
   isAnimating,
   message,
   isAssistantLoading,
+  userPrompt,
   metricClarification,
   onChangeMetricClarification,
   onSubmitMetricClarification,
@@ -320,6 +340,7 @@ function StepPanel({
   isAnimating: boolean;
   message: string;
   isAssistantLoading: boolean;
+  userPrompt: string;
   metricClarification: string;
   onChangeMetricClarification: (v: string) => void;
   onSubmitMetricClarification: () => void;
@@ -376,7 +397,9 @@ function StepPanel({
     if (step === 'description') resizeTextarea(descriptionRef.current);
   }, [marketDescription, resizeTextarea, step]);
 
-  const showUserBubble = step !== 'select_source';
+  const showUserRow = step !== 'select_source' || Boolean(userPrompt.trim());
+  const isInteractiveUserInput =
+    step === 'clarify_metric' || step === 'name' || step === 'description' || step === 'icon';
 
   return (
     <div className={step === 'select_source' ? 'space-y-2' : 'space-y-4'}>
@@ -403,7 +426,7 @@ function StepPanel({
       </div>
 
       {/* Row 2: User input on left side of page */}
-      {showUserBubble ? (
+      {showUserRow ? (
         <div
           className={[
             'flex justify-start transition-all duration-200 ease-out delay-75',
@@ -411,6 +434,17 @@ function StepPanel({
           ].join(' ')}
         >
           <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-full max-w-[520px]">
+            {!isInteractiveUserInput && step === 'select_source' ? (
+              <div>
+                <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
+                  Your prompt
+                </div>
+                <div className="mt-2 text-sm text-white/85 whitespace-pre-wrap">
+                  {userPrompt.trim()}
+                </div>
+              </div>
+            ) : null}
+
             {step === 'clarify_metric' ? (
               <div>
                 <textarea
@@ -541,11 +575,67 @@ function MarketDetailsReview({
   isCreating: boolean;
 }) {
   const [hasAnimated, setHasAnimated] = React.useState(false);
+  const [bondConfig, setBondConfig] = React.useState<{
+    status: 'idle' | 'loading' | 'success' | 'error';
+    defaultBondAmount?: bigint;
+    penaltyBps?: number;
+    error?: string;
+  }>({ status: 'idle' });
+
+  const bondManagerAddress =
+    (process.env.NEXT_PUBLIC_MARKET_BOND_MANAGER_ADDRESS || '').trim() || null;
+  const rpcUrl = (process.env.NEXT_PUBLIC_RPC_URL || '').trim() || null;
 
   React.useEffect(() => {
     const t = window.setTimeout(() => setHasAnimated(true), 50);
     return () => window.clearTimeout(t);
   }, []);
+
+  React.useEffect(() => {
+    if (!bondManagerAddress || !ethers.isAddress(bondManagerAddress) || !rpcUrl) {
+      // Still show the bond notice in the UI, but skip on-chain fetch.
+      return;
+    }
+    let cancelled = false;
+    setBondConfig({ status: 'loading' });
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const abi = [
+      'function defaultBondAmount() view returns (uint256)',
+      'function creationPenaltyBps() view returns (uint16)',
+    ] as const;
+    const c = new ethers.Contract(bondManagerAddress, abi, provider);
+    (async () => {
+      const [bondRaw, bpsRaw] = await Promise.all([c.defaultBondAmount(), c.creationPenaltyBps()]);
+      const bond = BigInt(bondRaw.toString());
+      const bps = Number(bpsRaw.toString());
+      if (cancelled) return;
+      setBondConfig({
+        status: 'success',
+        defaultBondAmount: bond,
+        penaltyBps: Number.isFinite(bps) ? bps : 0,
+      });
+    })().catch((e: any) => {
+      if (cancelled) return;
+      setBondConfig({
+        status: 'error',
+        error: String(e?.message || e || 'Failed to load bond config'),
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bondManagerAddress, rpcUrl]);
+
+  const bondSummary = React.useMemo(() => {
+    const amount = bondConfig.defaultBondAmount;
+    const bps = bondConfig.penaltyBps;
+    if (amount == null || bps == null) return null;
+    const fee = (amount * BigInt(bps)) / 10_000n;
+    const refundable = amount - fee;
+    const pct = bps / 100;
+    const pctStr = Number.isInteger(pct) ? `${pct}%` : `${pct.toFixed(2)}%`;
+    return { amount, bps, fee, refundable, pctStr };
+  }, [bondConfig.defaultBondAmount, bondConfig.penaltyBps]);
 
   return (
     <div className="mt-4 w-full max-w-[900px]">
@@ -584,38 +674,43 @@ function MarketDetailsReview({
               Start over
             </button>
           </div>
-          <button
-            type="button"
-            onClick={onCreateMarket}
-            disabled={isCreating}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow transition-all active:scale-[0.98] ${
-              isCreating
-                ? 'bg-white/50 text-black/50 cursor-not-allowed'
-                : 'bg-white text-black hover:bg-white/90'
-            }`}
-          >
-            {isCreating ? (
-              <>
-                <span className="h-3 w-3 animate-spin rounded-full border border-black/20 border-t-black" />
-                Creating...
-              </>
-            ) : (
-              <>
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
-                Create Market
-              </>
-            )}
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              type="button"
+              onClick={onCreateMarket}
+              disabled={isCreating}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow transition-all active:scale-[0.98] ${
+                isCreating
+                  ? 'bg-white/50 text-black/50 cursor-not-allowed'
+                  : 'bg-white text-black hover:bg-white/90'
+              }`}
+            >
+              {isCreating ? (
+                <>
+                  <span className="h-3 w-3 animate-spin rounded-full border border-black/20 border-t-black" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                  Create Market
+                </>
+              )}
+            </button>
+            <div className="text-[10px] text-white/35">
+              Market creation requires a bond.
+            </div>
+          </div>
         </div>
 
         {/* Main content - 2 column grid */}
@@ -793,6 +888,55 @@ function MarketDetailsReview({
                 No metric definition available
               </div>
             )}
+
+            {/* Bond + penalty notice */}
+            <div className="mt-4 rounded-xl border border-white/5 bg-black/40 p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
+                  Bond &amp; Penalty
+                </div>
+                <div className="text-[10px] text-white/30">
+                  Charged from CoreVault available balance
+                </div>
+              </div>
+
+              <div className="mt-2 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-white/55">Bond required</span>
+                  <span className="text-white/85 font-medium tabular-nums">
+                    {bondSummary ? formatUsdc6(bondSummary.amount) : bondConfig.status === 'loading' ? 'Loading…' : 'Configured by protocol'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-white/55">Creation penalty</span>
+                  <span className="text-white/80 font-medium tabular-nums">
+                    {bondSummary ? `${bondSummary.pctStr} (${formatUsdc6(bondSummary.fee)})` : bondConfig.status === 'loading' ? 'Loading…' : 'Applies on refund'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-white/55">Refund if market is unused</span>
+                  <span className="text-white/80 font-medium tabular-nums">
+                    {bondSummary ? formatUsdc6(bondSummary.refundable) : 'Net of penalty'}
+                  </span>
+                </div>
+
+                <div className="pt-2 text-[11px] text-white/40 leading-relaxed">
+                  You can deactivate an unused market and reclaim the bond only if there have been no trades, no open orders, and no active positions.
+                </div>
+
+                {bondConfig.status === 'error' ? (
+                  <div className="pt-2 text-[11px] text-red-300/80">
+                    Could not load bond config on this network. {bondConfig.error ? `(${bondConfig.error})` : null}
+                  </div>
+                ) : null}
+
+                {!bondManagerAddress ? (
+                  <div className="pt-2 text-[11px] text-white/35">
+                    Tip: set <span className="font-mono">NEXT_PUBLIC_MARKET_BOND_MANAGER_ADDRESS</span> to display exact bond values here.
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -848,8 +992,17 @@ export function InteractiveMarketCreation() {
     ],
   };
 
+  const promptTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [prompt, setPrompt] = React.useState('');
   const [isFocused, setIsFocused] = React.useState(false);
+  const [promptPlaceholderIdx, setPromptPlaceholderIdx] = React.useState(0);
+  const promptSuggestion = React.useMemo(() => {
+    return (
+      PROMPT_EXAMPLE_SUGGESTIONS[promptPlaceholderIdx] ??
+      PROMPT_EXAMPLE_SUGGESTIONS[0] ??
+      'Current price of Bitcoin in USD'
+    );
+  }, [promptPlaceholderIdx]);
   const [discoveryState, setDiscoveryState] = React.useState<DiscoveryState>('idle');
   const [discoveryResult, setDiscoveryResult] = React.useState<MetricDiscoveryResponse | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -906,6 +1059,18 @@ export function InteractiveMarketCreation() {
   const router = useRouter();
   const deploymentOverlay = useDeploymentOverlay();
   const pusher = usePusher();
+
+  React.useEffect(() => {
+    if (discoveryState !== 'idle') return;
+    if (isFocused) return;
+    if (prompt.trim().length > 0) return;
+    if (PROMPT_EXAMPLE_SUGGESTIONS.length <= 1) return;
+
+    const id = window.setInterval(() => {
+      setPromptPlaceholderIdx((i) => (i + 1) % PROMPT_EXAMPLE_SUGGESTIONS.length);
+    }, 3200);
+    return () => window.clearInterval(id);
+  }, [discoveryState, isFocused, prompt]);
 
   // Create Market assistant state
   const [assistantMessage, setAssistantMessage] = React.useState<string>('');
@@ -1983,6 +2148,9 @@ export function InteractiveMarketCreation() {
                 isAnimating={isStepAnimating}
                 message={assistantMessage || fallbackAssistantResponseText}
                 isAssistantLoading={assistantIsLoading}
+                userPrompt={
+                  (assistantHistory.find((m) => m.role === 'user')?.content || promptRef.current || '').trim()
+                }
                 metricClarification={metricClarification}
                 onChangeMetricClarification={setMetricClarification}
                 onSubmitMetricClarification={async () => {
@@ -2137,19 +2305,31 @@ export function InteractiveMarketCreation() {
           }`}
         >
           {/* Input area */}
-          <div className="px-1 py-2">
+          <div className="relative px-1 py-2">
             <textarea
+              ref={promptTextareaRef}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
-              placeholder="Describe your metric (e.g., Current price of Bitcoin in USD)"
+              placeholder=""
+              aria-label="Metric prompt"
               className="w-full resize-none border-0 bg-transparent text-sm text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 focus:border-0 sm:text-base leading-relaxed"
               style={{ outline: 'none', boxShadow: 'none' }}
               rows={2}
               disabled={discoveryState === 'discovering'}
             />
+            {!prompt.trim() ? (
+              <div
+                key={`${discoveryState}:${promptPlaceholderIdx}`}
+                className="pointer-events-none absolute inset-0 flex items-start text-sm text-white/40 sm:text-base leading-relaxed px-0 py-0"
+              >
+                <div className="placeholderSlideUp px-0 py-0">
+                  {promptSuggestion}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* Bottom toolbar */}
@@ -2296,6 +2476,86 @@ export function InteractiveMarketCreation() {
           </div>
         </div>
       )}
+
+      {/* Helpful bubbles under the prompt (replaces carousel) */}
+      {discoveryState === 'idle' && !prompt.trim() && (
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-2 px-1 bubblesSlideUp">
+          {PROMPT_EXAMPLE_SUGGESTIONS.map((example) => (
+            <button
+              key={example}
+              type="button"
+              onClick={() => {
+                setPrompt(example);
+                window.setTimeout(() => promptTextareaRef.current?.focus(), 0);
+              }}
+              className="group inline-flex items-center rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-white/75 transition-colors hover:bg-white/[0.06] hover:text-white"
+              aria-label={`Use example: ${example}`}
+            >
+              <span className="text-white/50 group-hover:text-white/70">+</span>
+              <span className="ml-1.5">{clampText(example, 44)}</span>
+            </button>
+          ))}
+          <div className="w-full pt-1 text-[11px] text-white/35">
+            Tip: include a unit (USD, %, index points) and an update cadence (daily, hourly, monthly).
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        .placeholderSlideUp {
+          animation: placeholder-rise-fade 3200ms ease-in-out both;
+          will-change: transform, opacity;
+          padding-top: 0.5rem; /* matches textarea visual offset */
+          padding-left: 0.25rem; /* matches input area's px-1 */
+          padding-right: 0.25rem;
+        }
+
+        .bubblesSlideUp {
+          animation: bubbles-slide-up 260ms ease-out both;
+        }
+
+        @keyframes placeholder-rise-fade {
+          from {
+            transform: translateY(10px);
+            opacity: 0;
+          }
+          6% {
+            transform: translateY(0);
+            opacity: 1;
+          }
+          85% {
+            transform: translateY(0);
+            opacity: 1;
+          }
+          to {
+            transform: translateY(-10px);
+            opacity: 0;
+          }
+        }
+
+        /* Legacy name kept for safety in case of cached styles */
+        @keyframes placeholder-slide-up {
+          from {
+            transform: translateY(10px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+
+        @keyframes bubbles-slide-up {
+          from {
+            transform: translateY(10px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
 
       {/* Discovery Results - Source Selection Tiles (Step 3) */}
       {discoveryState === 'success' &&
@@ -2488,9 +2748,6 @@ export function InteractiveMarketCreation() {
           <p className="text-sm text-white/80">{errorMessage || 'An unexpected error occurred'}</p>
         </div>
       )}
-
-      {/* Market examples carousel - only shown in idle state */}
-      {discoveryState === 'idle' && <MarketExamplesCarousel />}
 
       {/* AI Validation Modal */}
       <MetricResolutionModal

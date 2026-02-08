@@ -111,7 +111,8 @@ export function WalletProvider({ children }: WalletProviderProps) {
     if (!address) return
 
     try {
-      const userProfile = await ProfileApi.getProfile(address)
+      // Use createOrGetProfile (full profile) so Settings can load private fields like email.
+      const userProfile = await ProfileApi.createOrGetProfile(address)
       setWalletData(prev => ({ 
         ...prev, 
         userProfile 

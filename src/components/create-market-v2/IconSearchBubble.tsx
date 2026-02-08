@@ -89,7 +89,7 @@ export function IconSearchBubble({
     };
 
     fetchIcons();
-  }, [isVisible, query]);
+  }, [isVisible, query, description]);
 
   // Trigger animations after mount
   React.useEffect(() => {
@@ -336,7 +336,9 @@ export function IconSearchBubble({
       </div>
 
       {/* Status card: only shown while loading or on error */}
-      {!iconOptions.length && !customMode && (fetchState === 'loading' || fetchState === 'idle' || fetchState === 'error') ? (
+      {!iconOptions.length &&
+      !customMode &&
+      (fetchState === 'loading' || fetchState === 'idle' || fetchState === 'error' || fetchState === 'success') ? (
         <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-sm text-white/70">
           {fetchState === 'loading' || fetchState === 'idle' ? (
             <div className="flex items-center gap-2">
@@ -345,6 +347,22 @@ export function IconSearchBubble({
                 aria-hidden="true"
               />
               <span>Searching for icons…</span>
+            </div>
+          ) : fetchState === 'success' ? (
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-white/85 font-medium">No icon suggestions found</div>
+                <div className="mt-1 text-white/55 text-[13px]">
+                  Try a shorter keyword, or upload a custom icon (png/jpg/svg).
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="shrink-0 rounded-xl bg-white px-3 py-2 text-xs font-medium text-black hover:bg-white/90"
+              >
+                Retry
+              </button>
             </div>
           ) : (
             <div className="flex items-center justify-between gap-3">

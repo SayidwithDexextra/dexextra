@@ -85,7 +85,8 @@ export async function GET(request: NextRequest) {
     }
 
     if (creator) {
-      query = query.eq('creator_wallet_address', creator);
+      // Wallet addresses may be stored with mixed casing; use case-insensitive match.
+      query = query.ilike('creator_wallet_address', creator);
     }
 
     if (search) {

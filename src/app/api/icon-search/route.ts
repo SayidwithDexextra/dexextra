@@ -66,44 +66,45 @@ export async function POST(request: NextRequest) {
 
     // Infer a concise "intent" phrase, then target Unsplash results via Google Images.
     const intent = await inferImageSearchIntent({ name: query, description });
-    const searchQuery = buildUnsplashSearchQuery(intent || query);
+    const primaryQuery = buildUnsplashSearchQuery(intent || query);
 
-    const url = new URL('https://serpapi.com/search');
-    url.searchParams.set('engine', 'google_images');
-    url.searchParams.set('q', searchQuery);
-    url.searchParams.set('api_key', apiKey);
-    url.searchParams.set('num', String(Math.min(maxResults, 20)));
-    url.searchParams.set('safe', 'active');
-    // Prefer medium-ish images; we crop client-side.
-    url.searchParams.set('tbs', 'isz:m');
+    const fetchSerp = async (q: string) => {
+      const url = new URL('https://serpapi.com/search');
+      url.searchParams.set('engine', 'google_images');
+      url.searchParams.set('q', q);
+      url.searchParams.set('api_key', apiKey);
+      url.searchParams.set('num', String(Math.min(maxResults, 20)));
+      url.searchParams.set('safe', 'active');
+      // Prefer medium-ish images; we crop client-side.
+      url.searchParams.set('tbs', 'isz:m');
 
-    // Log request (without API key)
-    const sanitizedUrl = new URL(url.toString());
-    sanitizedUrl.searchParams.delete('api_key');
-    console.log('[icon-search] Request:', {
-      url: sanitizedUrl.toString(),
-      input_preview: query.slice(0, 120),
-      intent,
-      query_preview: searchQuery.slice(0, 160),
-    });
+      // Log request (without API key)
+      const sanitizedUrl = new URL(url.toString());
+      sanitizedUrl.searchParams.delete('api_key');
+      console.log('[icon-search] Request:', {
+        url: sanitizedUrl.toString(),
+        input_preview: query.slice(0, 120),
+        intent,
+        query_preview: q.slice(0, 160),
+      });
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      console.error('[icon-search] SerpApi error:', response.status, errorText);
-      return NextResponse.json(
-        { error: 'Image search failed' },
-        { status: 502 }
-      );
-    }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.error('[icon-search] SerpApi error:', response.status, errorText);
+        return { ok: false as const, status: response.status, data: null as any };
+      }
 
-    const data: SerpApiImageResult = await response.json();
+      const data: SerpApiImageResult = await response.json();
+      return { ok: true as const, status: 200, data };
+    };
 
-    const results: IconSearchResult[] = (data.images_results || [])
+    const parse = (data: SerpApiImageResult): IconSearchResult[] =>
+      (data.images_results || [])
       .slice(0, maxResults)
       .map((img) => ({
         title: img.title || '',
@@ -114,8 +115,31 @@ export async function POST(request: NextRequest) {
       }))
       .filter((r) => r.url && r.thumbnail);
 
+    const primary = await fetchSerp(primaryQuery);
+    if (!primary.ok) {
+      return NextResponse.json({ error: 'Image search failed' }, { status: 502 });
+    }
+
+    let results: IconSearchResult[] = parse(primary.data);
+    let usedFallback = false;
+
+    // Fallback: if Unsplash-biased search yields nothing (common for crypto logos),
+    // retry with a more general "logo/icon" query.
+    if (results.length === 0) {
+      const fallbackQuery = buildGenericSearchQuery(intent || query);
+      const fallback = await fetchSerp(fallbackQuery);
+      if (fallback.ok) {
+        const fallbackResults = parse(fallback.data);
+        if (fallbackResults.length > 0) {
+          results = fallbackResults;
+          usedFallback = true;
+        }
+      }
+    }
+
     console.log('[icon-search] Response:', {
       result_count: results.length,
+      used_fallback: usedFallback,
       sample: results.slice(0, 3).map((r) => ({
         title: r.title.slice(0, 60),
         domain: r.domain,
@@ -147,6 +171,21 @@ function buildUnsplashSearchQuery(intent: string): string {
   if (!alreadyHasUnsplash) parts.push('unsplash');
   else if (!/\bunsplash\b/i.test(parts[parts.length - 1] || '')) parts.push('unsplash');
   return parts.join(' ').trim();
+}
+
+function buildGenericSearchQuery(intent: string): string {
+  const base = String(intent || '').trim().replace(/\s+/g, ' ');
+  const cleaned = base
+    .replace(/\bsite:unsplash\.com\b/gi, '')
+    .replace(/\bunsplash\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return 'logo icon';
+  // Bias toward icon-like imagery without requiring Unsplash.
+  const hasLogo = /\blogo\b/i.test(cleaned);
+  const hasIcon = /\bicon\b/i.test(cleaned);
+  const suffix = `${hasLogo ? '' : ' logo'}${hasIcon ? '' : ' icon'}`.trim();
+  return `${cleaned} ${suffix}`.trim();
 }
 
 function extractDomain(url: string): string {
