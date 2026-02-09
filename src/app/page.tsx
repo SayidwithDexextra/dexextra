@@ -488,25 +488,25 @@ export default function Home() {
   };
 
   return (
-    <>
+    <div className="dex-page-enter-up w-full">
       {/* Crypto Market Ticker with proper container */}
       <div className="w-full overflow-hidden">
         <CryptoMarketTicker />
       </div>
-      
+
       <Hero data={heroData} />
 
       <div className="flex justify-center py-8">
         <Widget />
       </div>
-      
+
       {/* Markets Section */}
       <div className="w-full py-8">
         <div className="w-full">
           {marketsError ? (
             <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 text-center">
               <p className="text-red-500">Error loading markets: {marketsError}</p>
-              <button 
+              <button
                 onClick={() => refetchMarkets()}
                 className="mt-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-md text-red-500"
               >
@@ -549,8 +549,7 @@ export default function Home() {
           )}
         </div>
       </div>
-      
-   
+
       {/* Market Preview Modal */}
       {selectedProduct && (
         <MarketPreviewModal
@@ -560,13 +559,15 @@ export default function Home() {
           author={selectedProduct.author}
           price={selectedProduct.price}
           currency={selectedProduct.currency}
-          description={selectedProduct.subtitle || 'High-quality design templates perfect for your next project. Professional crafted with modern aesthetics and user experience in mind.'}
+          description={
+            selectedProduct.subtitle ||
+            'High-quality design templates perfect for your next project. Professional crafted with modern aesthetics and user experience in mind.'
+          }
           category="Singular  Market"
           templates={mockTemplates}
           onGoToProduct={handleGoToProduct}
         />
       )}
-      
-    </>
+    </div>
   );
 }

@@ -16,20 +16,29 @@ const TopGainersSection: React.FC = () => {
     const run = async () => {
       try {
         setReady(false);
-        const qs = new URLSearchParams();
-        // We use the trending endpoint because it includes both:
-        // - notionalVolume (24h) so we can rank by volume
-        // - priceChange24hPct so we can show the green/red badge in this UI
-        qs.set('kind', 'trending');
-        qs.set('limit', '25');
-        // Widen the window so we can reliably show a Top 3 even
-        // when only a couple markets traded in the last 24h.
-        qs.set('windowHours', '168');
-        const res = await fetch(`/api/market-rankings?${qs.toString()}`, { signal: ctrl.signal, cache: 'no-store' });
-        const json = await res.json().catch(() => null);
-        if (!res.ok || !json?.success) throw new Error('ranking_fetch_failed');
+        const fetchRankings = async (windowHours: number) => {
+          const qs = new URLSearchParams();
+          // We use the trending endpoint because it includes both:
+          // - notionalVolume so we can rank by volume
+          // - priceChange24hPct so we can show the green/red badge in this UI
+          qs.set('kind', 'trending');
+          qs.set('limit', '50');
+          qs.set('windowHours', String(windowHours));
+          const res = await fetch(`/api/market-rankings?${qs.toString()}`, {
+            signal: ctrl.signal,
+            cache: 'no-store',
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok || !json?.success) throw new Error('ranking_fetch_failed');
+          const rows = Array.isArray(json.rows) ? json.rows : [];
+          return rows;
+        };
 
-        const rows = Array.isArray(json.rows) ? json.rows : [];
+        // Try last 7 days first; if it can't produce a Top 3, widen to 30 days.
+        let rows = await fetchRankings(168);
+        if (rows.length < 3) {
+          rows = await fetchRankings(720);
+        }
         if (rows.length === 0) throw new Error('ranking_empty');
         const fmtUsdCompact = (v: number) =>
           new Intl.NumberFormat('en-US', {
@@ -39,36 +48,35 @@ const TopGainersSection: React.FC = () => {
             maximumFractionDigits: 2,
           }).format(Number(v) || 0);
 
-        // Rank by 24h notional volume and take top 3 (matches widget mock size)
-        const top = rows
+        // Rank by notional volume and take top 3 (matches widget mock size)
+        const top = [...rows]
           .map((r: any) => ({
-            symbol: r.symbol ? String(r.symbol) : null,
-            marketUuid: r.marketUuid ? String(r.marketUuid) : null,
-            notionalVolume: Number(r.notionalVolume) || 0,
-            priceChange24hPct: Number(r.priceChange24hPct) || 0,
+            ...r,
+            notionalVolume: Number(r?.notionalVolume ?? r?.notional_volume) || 0,
+            priceChange24hPct: Number(r?.priceChange24hPct ?? r?.price_change_24h_pct) || 0,
           }))
-          .sort((a, b) => b.notionalVolume - a.notionalVolume)
+          .sort((a, b) => (b.notionalVolume || 0) - (a.notionalVolume || 0))
           .slice(0, 3);
 
         if (top.length === 0) throw new Error('ranking_empty_top');
 
         const mapped: TokenData[] = top.map((r: any, idx: number) => {
-          const name = (r.symbol || r.marketUuid || 'UNKNOWN').toString();
-          const change = Number.isFinite(r.priceChange24hPct) ? r.priceChange24hPct : 0;
+          const name = (r.symbol || r.marketUuid || r.market_uuid || 'UNKNOWN').toString();
+          const change = Number.isFinite(r.priceChange24hPct) ? Number(r.priceChange24hPct) : 0;
           // iconUrl is enriched from Supabase `markets.icon_image_url` in /api/market-rankings
-          const icon = typeof (r as any).iconUrl === 'string' ? String((r as any).iconUrl) : '';
+          const icon = typeof r?.iconUrl === 'string' ? String(r.iconUrl) : '';
           return {
             icon,
             name,
             price: fmtUsdCompact(r.notionalVolume),
             change: Number(change.toFixed(1)),
             isPositive: change >= 0,
-            symbol: r.symbol || undefined,
+            symbol: r.symbol ? String(r.symbol) : undefined,
           };
         });
 
         setTokens(mapped);
-        setReady(mapped.length > 0);
+        setReady(true);
       } catch (e: any) {
         if (e?.name === 'AbortError') return;
         // No mock fallbacks: keep showing skeleton and retry.
@@ -153,20 +161,22 @@ const TopGainersSection: React.FC = () => {
             {Array.from({ length: Math.max(0, 3 - tokens.length) }).map((_, i) => (
               <div
                 // eslint-disable-next-line react/no-array-index-key
-                key={`sk-${i}`}
-                className="flex items-center justify-between py-1.5 px-1.5 rounded-md"
+                key={`ph-${i}`}
+                className="flex items-center justify-between py-1.5 px-1.5 rounded-md opacity-60"
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <div
-                    className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse"
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#3A3A3A]"
                     aria-hidden="true"
                   />
-                  <div className={`${styles.skeleton}`} style={{ width: 20, height: 20, borderRadius: 999 }} />
-                  <div className={`${styles.skeleton}`} style={{ width: 84, height: 10, borderRadius: 6 }} />
+                  <MarketIconBadge iconUrl={null} alt="placeholder icon" sizePx={20} />
+                  <span className="text-[12px] font-medium text-[#9CA3AF] truncate">No additional markets yet</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className={`${styles.skeleton}`} style={{ width: 64, height: 10, borderRadius: 6 }} />
-                  <div className={`${styles.skeleton}`} style={{ width: 42, height: 14, borderRadius: 6 }} />
+                  <span className="text-[11px] text-[#9CA3AF] font-mono tabular-nums">—</span>
+                  <span className="text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums text-[#9CA3AF] bg-white/5">
+                    —
+                  </span>
                 </div>
               </div>
             ))}

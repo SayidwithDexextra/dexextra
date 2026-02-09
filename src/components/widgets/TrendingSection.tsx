@@ -17,18 +17,28 @@ const TrendingSection: React.FC = () => {
     const run = async () => {
       try {
         setReady(false);
-        const qs = new URLSearchParams();
-        qs.set('kind', 'trending');
-        // Widen the window so we can reliably show a Top 3 even
-        // when only a couple markets traded in the last 24h.
-        qs.set('windowHours', '168');
-        // Request more than needed so we can still render at least 3 even if some rows are missing fields/icons.
-        qs.set('limit', '12');
-        const res = await fetch(`/api/market-rankings?${qs.toString()}`, { signal: ctrl.signal, cache: 'no-store' });
-        const json = await res.json().catch(() => null);
-        if (!res.ok || !json?.success) throw new Error('ranking_fetch_failed');
+        const fetchRankings = async (windowHours: number) => {
+          const qs = new URLSearchParams();
+          qs.set('kind', 'trending');
+          // Request more than needed so we can still render at least 3 even if some rows are missing fields/icons.
+          qs.set('limit', '25');
+          qs.set('windowHours', String(windowHours));
+          const res = await fetch(`/api/market-rankings?${qs.toString()}`, {
+            signal: ctrl.signal,
+            cache: 'no-store',
+          });
+          const json = await res.json().catch(() => null);
+          if (!res.ok || !json?.success) throw new Error('ranking_fetch_failed');
+          const rows = Array.isArray(json.rows) ? json.rows : [];
+          return rows;
+        };
 
-        const rows = Array.isArray(json.rows) ? json.rows : [];
+        // Try last 7 days first; if it can't produce a Top 3, widen to 30 days.
+        // This avoids an “infinite loading” skeleton row when only 1-2 markets have traded recently.
+        let rows = await fetchRankings(168);
+        if (rows.length < 3) {
+          rows = await fetchRankings(720);
+        }
         if (rows.length === 0) throw new Error('ranking_empty');
 
         const fmtUsd = (v: number) =>
@@ -56,7 +66,7 @@ const TrendingSection: React.FC = () => {
 
         // Render what we have immediately; if it's < 3, we keep skeleton rows for the remainder.
         setTokens(mapped);
-        setReady(mapped.length > 0);
+        setReady(true);
       } catch (e: any) {
         if (e?.name === 'AbortError') return;
         retryTimer = setTimeout(() => {
@@ -141,20 +151,22 @@ const TrendingSection: React.FC = () => {
             {Array.from({ length: Math.max(0, 3 - tokens.length) }).map((_, i) => (
               <div
                 // eslint-disable-next-line react/no-array-index-key
-                key={`sk-${i}`}
-                className="flex items-center justify-between py-1.5 px-1.5 rounded-md"
+                key={`ph-${i}`}
+                className="flex items-center justify-between py-1.5 px-1.5 rounded-md opacity-60"
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <div
-                    className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse"
+                    className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#3A3A3A]"
                     aria-hidden="true"
                   />
-                  <div className={`${styles.skeleton}`} style={{ width: 20, height: 20, borderRadius: 999 }} />
-                  <div className={`${styles.skeleton}`} style={{ width: 84, height: 10, borderRadius: 6 }} />
+                  <MarketIconBadge iconUrl={null} alt="placeholder icon" sizePx={20} />
+                  <span className="text-[12px] font-medium text-[#9CA3AF] truncate">No additional markets yet</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className={`${styles.skeleton}`} style={{ width: 64, height: 10, borderRadius: 6 }} />
-                  <div className={`${styles.skeleton}`} style={{ width: 42, height: 14, borderRadius: 6 }} />
+                  <span className="text-[11px] text-[#9CA3AF] font-mono tabular-nums">—</span>
+                  <span className="text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums text-[#9CA3AF] bg-white/5">
+                    —
+                  </span>
                 </div>
               </div>
             ))}

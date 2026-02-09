@@ -1949,7 +1949,35 @@ export function InteractiveMarketCreation() {
         if (!res.ok) throw new Error(json?.message || 'Failed to fetch sources');
 
         if (!controller.signal.aborted) {
-          setDiscoveryResult(json);
+          // IMPORTANT: Step 1 (define_only) already produced a metric definition that powers the UI.
+          // Step 3 (full) is *source discovery*. If SERP returns no results, the API may respond with
+          // { measurable:false, metric_definition:null } which would blank out the UI. Preserve the
+          // existing metric definition in that case so the user can still proceed via Custom URL.
+          setDiscoveryResult((prev) => {
+            const base = prev || discoveryResult;
+            // If there's no prior state, just accept the payload.
+            if (!base) return json as any;
+
+            const incoming = json as Partial<MetricDiscoveryResponse>;
+            const merged: MetricDiscoveryResponse = {
+              ...base,
+              ...incoming,
+              metric_definition: incoming.metric_definition || base.metric_definition,
+              assumptions:
+                Array.isArray(incoming.assumptions) && incoming.assumptions.length > 0
+                  ? incoming.assumptions
+                  : base.assumptions,
+            };
+
+            // Treat "no sources found" as a discovery limitation, not a measurability rejection.
+            // Keep the original measurable flag when we already have a definition.
+            if (base.metric_definition && incoming.measurable === false) {
+              merged.measurable = true;
+              merged.rejection_reason = base.rejection_reason ?? null;
+            }
+
+            return merged;
+          });
           setSourcesFetchState('success');
         }
       } catch (e) {

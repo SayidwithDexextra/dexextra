@@ -29,6 +29,8 @@ const BodySchema = z.object({
   maxResults: z.number().int().min(1).max(20).optional().default(12),
 });
 
+type ImageKind = 'photo' | 'logo' | 'icon' | 'illustration';
+
 /**
  * POST /api/icon-search
  * Search for market images using SerpApi Google Images.
@@ -64,13 +66,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Infer a concise "intent" phrase, then target Unsplash results via Google Images.
-    const intent = await inferImageSearchIntent({ name: query, description });
-    const primaryQuery = buildUnsplashSearchQuery(intent || query);
+    // Infer a concise intent + preferred image kind.
+    // "photo" -> bias toward Unsplash; "logo/icon" -> bias toward logo/icon assets.
+    const plan = await inferImageSearchPlan({ name: query, description });
+    const intent = plan.intent || query;
+    const kind: ImageKind = plan.kind || 'photo';
 
-    const fetchSerp = async (q: string) => {
+    const primaryQuery =
+      kind === 'photo' ? buildUnsplashSearchQuery(intent) : buildLogoIconSearchQuery(intent);
+
+    const fetchSerp = async (q: string, engine: string) => {
       const url = new URL('https://serpapi.com/search');
-      url.searchParams.set('engine', 'google_images');
+      url.searchParams.set('engine', engine);
       url.searchParams.set('q', q);
       url.searchParams.set('api_key', apiKey);
       url.searchParams.set('num', String(Math.min(maxResults, 20)));
@@ -84,6 +91,7 @@ export async function POST(request: NextRequest) {
       console.log('[icon-search] Request:', {
         url: sanitizedUrl.toString(),
         input_preview: query.slice(0, 120),
+        kind,
         intent,
         query_preview: q.slice(0, 160),
       });
@@ -115,24 +123,50 @@ export async function POST(request: NextRequest) {
       }))
       .filter((r) => r.url && r.thumbnail);
 
-    const primary = await fetchSerp(primaryQuery);
+    let results: IconSearchResult[] = [];
+    let usedFallback = false;
+    let usedEngine = 'google_images';
+    let usedQueryLabel: 'primary' | 'fallback' | 'backup_engine' = 'primary';
+
+    // Attempt 1: primary query on Google Images.
+    const primary = await fetchSerp(primaryQuery, 'google_images');
     if (!primary.ok) {
       return NextResponse.json({ error: 'Image search failed' }, { status: 502 });
     }
+    results = parse(primary.data);
 
-    let results: IconSearchResult[] = parse(primary.data);
-    let usedFallback = false;
-
-    // Fallback: if Unsplash-biased search yields nothing (common for crypto logos),
-    // retry with a more general "logo/icon" query.
+    // Attempt 2: fallback query on Google Images (switch intent style).
     if (results.length === 0) {
-      const fallbackQuery = buildGenericSearchQuery(intent || query);
-      const fallback = await fetchSerp(fallbackQuery);
+      const fallbackQuery =
+        kind === 'photo'
+          ? buildGenericPhotoSearchQuery(intent)
+          : buildGenericSearchQuery(intent);
+      const fallback = await fetchSerp(fallbackQuery, 'google_images');
       if (fallback.ok) {
         const fallbackResults = parse(fallback.data);
         if (fallbackResults.length > 0) {
           results = fallbackResults;
           usedFallback = true;
+          usedQueryLabel = 'fallback';
+        }
+      }
+    }
+
+    // Attempt 3: backup SerpApi engine if Google Images yields nothing.
+    // This covers cases where Google is sparse or blocked for certain terms.
+    if (results.length === 0) {
+      const backupQuery =
+        kind === 'photo'
+          ? buildGenericPhotoSearchQuery(intent)
+          : buildGenericSearchQuery(intent);
+      const backup = await fetchSerp(backupQuery, 'bing_images');
+      if (backup.ok) {
+        const backupResults = parse(backup.data);
+        if (backupResults.length > 0) {
+          results = backupResults;
+          usedFallback = true;
+          usedEngine = 'bing_images';
+          usedQueryLabel = 'backup_engine';
         }
       }
     }
@@ -140,6 +174,8 @@ export async function POST(request: NextRequest) {
     console.log('[icon-search] Response:', {
       result_count: results.length,
       used_fallback: usedFallback,
+      used_engine: usedEngine,
+      used_query_label: usedQueryLabel,
       sample: results.slice(0, 3).map((r) => ({
         title: r.title.slice(0, 60),
         domain: r.domain,
@@ -173,6 +209,29 @@ function buildUnsplashSearchQuery(intent: string): string {
   return parts.join(' ').trim();
 }
 
+function buildLogoIconSearchQuery(intent: string): string {
+  const base = String(intent || '').trim().replace(/\s+/g, ' ');
+  if (!base) return 'logo icon';
+  const cleaned = base
+    .replace(/\bsite:unsplash\.com\b/gi, '')
+    .replace(/\bunsplash\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Bias toward icon assets and common deliverables.
+  const wantsTransparent = /\btransparent\b/i.test(cleaned);
+  const suffix = [
+    'logo',
+    'icon',
+    wantsTransparent ? '' : 'transparent',
+    'svg',
+    'png',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return `${cleaned} ${suffix}`.trim();
+}
+
 function buildGenericSearchQuery(intent: string): string {
   const base = String(intent || '').trim().replace(/\s+/g, ' ');
   const cleaned = base
@@ -185,6 +244,21 @@ function buildGenericSearchQuery(intent: string): string {
   const hasLogo = /\blogo\b/i.test(cleaned);
   const hasIcon = /\bicon\b/i.test(cleaned);
   const suffix = `${hasLogo ? '' : ' logo'}${hasIcon ? '' : ' icon'}`.trim();
+  return `${cleaned} ${suffix}`.trim();
+}
+
+function buildGenericPhotoSearchQuery(intent: string): string {
+  const base = String(intent || '').trim().replace(/\s+/g, ' ');
+  const cleaned = base
+    .replace(/\bsite:unsplash\.com\b/gi, '')
+    .replace(/\bunsplash\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return 'photo';
+  // Keep it broad; we just want *some* visual candidates when Unsplash bias fails.
+  const hasPhoto = /\bphoto\b/i.test(cleaned);
+  const hasImage = /\bimage\b/i.test(cleaned);
+  const suffix = `${hasPhoto ? '' : ' photo'}${hasImage ? '' : ' image'}`.trim();
   return `${cleaned} ${suffix}`.trim();
 }
 
@@ -201,26 +275,31 @@ const IntentOutputSchema = z.object({
     .string()
     .transform((s) => s.trim())
     .refine((s) => s.length > 0 && s.length <= 80, 'intent must be 1..80 chars'),
+  kind: z.enum(['photo', 'logo', 'icon', 'illustration']).optional().default('photo'),
 });
 
-const intentCache = new Map<string, { intent: string; ts: number }>();
 const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 
-async function inferImageSearchIntent(params: { name: string; description?: string }): Promise<string> {
+const planCache = new Map<string, { plan: { intent: string; kind: ImageKind }; ts: number }>();
+
+async function inferImageSearchPlan(params: {
+  name: string;
+  description?: string;
+}): Promise<{ intent: string; kind: ImageKind }> {
   const name = String(params.name || '').trim();
   const description = String(params.description || '').trim();
   const cacheKey = `${name}\n---\n${description}`.slice(0, 1200);
 
-  const cached = intentCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < INTENT_TTL_MS) return cached.intent;
+  const cached = planCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < INTENT_TTL_MS) return cached.plan;
 
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_ICON_SEARCH_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
   // Fallback: deterministic heuristic when OpenAI isn't configured.
   if (!apiKey) {
-    const fallback = heuristicIntentFromText([name, description].filter(Boolean).join(' '));
-    intentCache.set(cacheKey, { intent: fallback, ts: Date.now() });
+    const fallback = heuristicPlanFromText([name, description].filter(Boolean).join(' '));
+    planCache.set(cacheKey, { plan: fallback, ts: Date.now() });
     return fallback;
   }
 
@@ -233,9 +312,9 @@ async function inferImageSearchIntent(params: { name: string; description?: stri
       messages: [
         {
           role: 'system',
-          content: `You turn verbose market/metric text into a short photo-search intent for Unsplash.
+          content: `You turn verbose market/metric text into an image-search plan.
 
-Return JSON only: {"intent": string}
+Return JSON only: {"intent": string, "kind": "photo"|"logo"|"icon"|"illustration"}
 
 Rules:
 - intent is 1-4 words (max 40 chars preferred), all-lowercase.
@@ -243,11 +322,15 @@ Rules:
 - Remove finance/contract jargon: futures, front-month, settlement, daily, price, index, c, contract, report, ICE, NYMEX, CME, etc.
 - Remove source/site names: investing.com, fred, coingecko, etc.
 - Do NOT include dates, tickers, units, or timeframes.
+- kind guidance:
+  - "photo": commodity, food, place, weather, person, physical object, general concept that can be photographed.
+  - "logo" or "icon": branded assets (companies, crypto tokens), apps, protocols, exchanges, products where a logo is the best representation.
+  - "illustration": highly abstract concepts where a photo is likely irrelevant (use sparingly).
 
 Example:
 Name: "Front-Month Arabica Coffee C Futures Daily Settlement"
 Description: "A market tracking ... (ICE) ..."
-=> {"intent":"arabica coffee"}`,
+=> {"intent":"arabica coffee","kind":"photo"}`,
         },
         {
           role: 'user',
@@ -261,25 +344,28 @@ Description: "A market tracking ... (ICE) ..."
     const parsed = IntentOutputSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) throw new Error('Invalid intent JSON');
 
-    const intent = parsed.data.intent.toLowerCase();
-    intentCache.set(cacheKey, { intent, ts: Date.now() });
-    return intent;
+    const plan = {
+      intent: parsed.data.intent.toLowerCase(),
+      kind: parsed.data.kind,
+    };
+    planCache.set(cacheKey, { plan, ts: Date.now() });
+    return plan;
   } catch (e) {
-    const fallback = heuristicIntentFromText([name, description].filter(Boolean).join(' '));
-    intentCache.set(cacheKey, { intent: fallback, ts: Date.now() });
+    const fallback = heuristicPlanFromText([name, description].filter(Boolean).join(' '));
+    planCache.set(cacheKey, { plan: fallback, ts: Date.now() });
     return fallback;
   } finally {
     // Tiny cache cleanup to prevent unbounded growth.
-    if (intentCache.size > 200) {
+    if (planCache.size > 200) {
       const now = Date.now();
-      for (const [k, v] of intentCache.entries()) {
-        if (now - v.ts > INTENT_TTL_MS) intentCache.delete(k);
+      for (const [k, v] of planCache.entries()) {
+        if (now - v.ts > INTENT_TTL_MS) planCache.delete(k);
       }
     }
   }
 }
 
-function heuristicIntentFromText(text: string): string {
+function heuristicPlanFromText(text: string): { intent: string; kind: ImageKind } {
   const raw = String(text || '')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/https?:\/\/\S+/g, ' ')
@@ -287,6 +373,21 @@ function heuristicIntentFromText(text: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+
+  const kind: ImageKind = (() => {
+    // Strong logo/icon cues.
+    if (/\b(logo|icon|brand|emblem|symbol)\b/i.test(raw)) return 'logo';
+
+    // Crypto / token / exchange cues: logos are usually the best icon for these.
+    if (/\b(crypto|token|coin|btc|eth|sol|usdt|usdc|binance|coinbase|kraken|uniswap)\b/i.test(raw)) {
+      return 'logo';
+    }
+
+    // If the input looks like a ticker-only prompt, prefer a logo.
+    if (/\b[a-z]{2,6}\b/.test(raw) && /\b(price|chart|spot)\b/i.test(raw)) return 'logo';
+
+    return 'photo';
+  })();
 
   const STOP = new Set([
     'front',
@@ -338,12 +439,13 @@ function heuristicIntentFromText(text: string): string {
   // Special-case common pairings to keep meaning.
   const hasArabica = tokens.includes('arabica');
   const hasCoffee = tokens.includes('coffee');
-  if (hasArabica && hasCoffee) return 'arabica coffee';
+  if (hasArabica && hasCoffee) return { intent: 'arabica coffee', kind };
 
   const uniq: string[] = [];
   for (const t of tokens) {
     if (!uniq.includes(t)) uniq.push(t);
     if (uniq.length >= 3) break;
   }
-  return uniq.join(' ') || raw.split(/\s+/).slice(0, 3).join(' ') || 'market';
+  const intent = uniq.join(' ') || raw.split(/\s+/).slice(0, 3).join(' ') || 'market';
+  return { intent, kind };
 }
