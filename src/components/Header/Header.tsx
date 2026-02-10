@@ -61,6 +61,7 @@ export default function Header() {
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false)
+  const profileTriggerRef = useRef<HTMLButtonElement | null>(null)
   const { walletData } = useWallet()
   const router = useRouter()
   const [hasMounted, setHasMounted] = useState(false)
@@ -590,11 +591,16 @@ export default function Header() {
           </button>
 
           {/* User Profile Section */}
-          <div 
-            className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-pointer transition-all duration-200 ${
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={isProfileModalOpen}
+            aria-label={walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
+            className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-pointer transition-all duration-200 focus:outline-none ${
               !walletData.isConnected ? 'border border-[#222222] hover:border-[#333333]' : ''
             }`}
             data-walkthrough="header-connect-wallet"
+            ref={profileTriggerRef}
             style={{
               // Subtle gradient flare to draw attention when disconnected (design-system compliant)
               background: !walletData.isConnected
@@ -632,7 +638,14 @@ export default function Header() {
                 (e.currentTarget as any).style.backgroundColor = 'transparent'
               }
             }}
-            onClick={() => walletData.isConnected ? setIsProfileModalOpen(true) : setIsWalletModalOpen(true)}
+            onClick={() => {
+              if (!walletData.isConnected) {
+                setIsWalletModalOpen(true)
+                return
+              }
+              // Dropdown-like toggle behavior
+              setIsProfileModalOpen((prev) => !prev)
+            }}
           >
             {/* Avatar */}
             <div 
@@ -659,7 +672,7 @@ export default function Header() {
             <div style={{ color: '#b3b3b3' }}>
               <ChevronDownIcon />
             </div>
-          </div>
+          </button>
         </div>
       </header>
 
@@ -671,6 +684,7 @@ export default function Header() {
         balance={walletData.balance ? `${parseFloat(walletData.balance).toFixed(4)} ETH` : '$0.00'}
         isConnected={walletData.isConnected}
         profilePhotoUrl={walletData.userProfile?.profile_image_url}
+        anchorRef={profileTriggerRef as any}
       />
 
       {/* Search Modal */}

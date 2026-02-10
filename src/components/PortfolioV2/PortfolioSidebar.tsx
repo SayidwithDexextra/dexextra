@@ -95,6 +95,16 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		return m
 	}, [markets])
 
+	const iconUrlBySymbol = useMemo(() => {
+		const m = new Map<string, string>()
+		for (const mk of markets || []) {
+			const sym = String((mk as any)?.symbol || '').toUpperCase().trim()
+			const icon = String((mk as any)?.icon_image_url || '').trim()
+			if (sym && icon) m.set(sym, icon)
+		}
+		return m
+	}, [markets])
+
 	// Local-first open orders (session/local storage) + secondary on-chain backfill.
 	const sidebarOrders = usePortfolioSidebarOpenOrders({
 		enabled: dataEnabled,
@@ -598,15 +608,26 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									<div className="space-y-0.5">
 										{flatOrdersToRender.map((o) => {
 											const routeId = marketIdentifierBySymbol.get(String(o.symbol || '').toUpperCase()) || o.symbol
+											const orderIconUrl = iconUrlBySymbol.get(String(o.symbol || '').toUpperCase()) || ''
+											const orderIconSrc = orderIconUrl || DEXETERA_PLACEHOLDER_ICON_SRC
 											return (
 											<button
 												type="button"
-												key={o.id}
+												key={`${o.symbol}::${o.id}`}
 												onClick={() => navigateToToken(routeId)}
 												className="group w-full text-left bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
 											>
 												<div className="flex items-center justify-between p-2.5">
 													<div className="flex items-center gap-2 min-w-0 flex-1">
+														<div className="w-6 h-6 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0">
+															<Image
+																src={orderIconSrc}
+																alt={o.symbol}
+																width={24}
+																height={24}
+																className={orderIconUrl ? 'w-full h-full object-cover' : 'w-full h-full object-contain p-1'}
+															/>
+														</div>
 														<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${o.side === 'BUY' ? 'bg-green-400' : 'bg-red-400'}`} />
 														<div className="min-w-0 flex-1">
 															<div className="flex items-center gap-1.5 min-w-0">
@@ -616,7 +637,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 																</span>
 															</div>
 															<div className="text-[10px] text-[#606060] font-mono truncate">
-																{Number.isFinite(o.price) && o.price > 0 ? `$${o.price.toFixed(2)}` : '—'} · {Number.isFinite(o.size) ? o.size.toFixed(2) : '—'}
+																{Number.isFinite(o.price) && o.price > 0 ? `$${parseFloat(o.price.toFixed(4))}` : '—'} · {Number.isFinite(o.size) ? parseFloat(o.size.toFixed(6)) || '0' : '—'}
 															</div>
 														</div>
 													</div>

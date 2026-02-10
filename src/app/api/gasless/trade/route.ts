@@ -813,7 +813,20 @@ export async function POST(req: Request) {
               rpcMsg: pre?.info?.error?.message,
             });
 
-            // Log only; do not fail the session path.
+            // Fail fast for cancel/modify when order is known to not exist (avoids broadcasting a tx that will revert).
+            const orderNotFoundMsg =
+              decodedMsg && String(decodedMsg).toLowerCase().includes('order does not exist');
+            if (
+              orderNotFoundMsg &&
+              (method === 'sessionCancelOrder' || method === 'sessionModifyOrder')
+            ) {
+              throw new HttpError(400, {
+                error: 'order_not_found',
+                message: decodedMsg || 'Order does not exist',
+              });
+            }
+
+            // Log only for other preflight failures; do not fail the session path.
             // Some RPCs can be flaky here and we'd rather rely on the mined receipt when configured.
           }
           switch (method) {
@@ -937,13 +950,13 @@ export async function POST(req: Request) {
     }
 
     // Optional short polling window for fast revert detection without waiting for confirmations.
-    // Useful when RPC preflights omit revert data (e.g. "missing revert data") but we still want quick feedback.
+    // For cancel methods we default to 0 so the client gets txHash immediately for optimistic UI;
+    // set GASLESS_TRADE_POLL_RECEIPT_MS to poll for receipt if desired.
     const pollMsRaw = String(process.env.GASLESS_TRADE_POLL_RECEIPT_MS ?? '').trim();
     let pollMs = pollMsRaw ? Number(pollMsRaw) : 0;
-    // Default behavior for cancels: try to observe the mined receipt briefly so we don't claim "cancelled"
-    // when the tx is only broadcasted (or later reverts).
+    // Cancels: no default poll so we return right after broadcast (client removes order on txHash for slick UX).
     if (isCancelMethod && !(Number.isFinite(pollMs) && pollMs > 0)) {
-      pollMs = 15_000;
+      pollMs = 0;
     }
     if (Number.isFinite(pollMs) && pollMs > 0) {
       const deadline = Date.now() + pollMs;

@@ -253,192 +253,172 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     // Refresh functionality removed as we removed the legacy hooks
   };
 
-  // Effective mark price with CoreVault.getMarkPrice fallback
+  // Mark price rule (single requirement):
+  // - Read OrderBook.calculateMarkPrice()
+  // - Read CoreVault.getMarkPrice(marketId)
+  // - If OB mark == 1.000000, render vault mark; else render OB mark.
   const [effectiveMarkPrice, setEffectiveMarkPrice] = useState<number>(0);
-  const [markPriceSource, setMarkPriceSource] = useState<'orderbook' | 'vault_fallback' | 'resolved'>('resolved');
-  // Sticky guard: once a market has trades, NEVER use CoreVault.getMarkPrice.
-  const [hasEverTraded, setHasEverTraded] = useState<boolean>(false);
-  const lastGoodOrderBookMarkRef = useRef<number>(0);
-  const markPriceStartMsRef = useRef<number>(Date.now());
-  const noTradesStableCountRef = useRef<number>(0);
-
-  // Reset sticky flags when switching markets
-  useEffect(() => {
-    setHasEverTraded(false);
-    lastGoodOrderBookMarkRef.current = 0;
-    markPriceStartMsRef.current = Date.now();
-    noTradesStableCountRef.current = 0;
-    try {
-      // Restore "ever traded" hint from previous sessions (best-effort)
-      const key = `dexextra:market:hasTrades:${String(symbol || '').toUpperCase()}`;
-      const raw = typeof window !== 'undefined' ? window.localStorage?.getItem(key) : null;
-      if (raw === '1') setHasEverTraded(true);
-    } catch {}
-  }, [symbol]);
+  const [orderBookMarkPrice, setOrderBookMarkPrice] = useState<number>(0);
+  const [coreVaultMarkPrice, setCoreVaultMarkPrice] = useState<number>(0);
+  const [markPricesLoading, setMarkPricesLoading] = useState<boolean>(true);
+  const markPriceLoadKeyRef = useRef<string>('');
+  const markPriceRetryTimerRef = useRef<any>(null);
 
   useEffect(() => {
-    const obPrice = Number(md.markPrice ?? 0);
-    const resolved = Number(md.resolvedPrice ?? 0);
+    let cancelled = false;
 
-    const lastTrade = Number(md.lastTradePrice ?? 0);
-    const hasTrades = Number.isFinite(lastTrade) && lastTrade > 0;
-    const obTotalTrades = Number((md as any)?.totalTrades ?? 0);
-    const hasObTotalTrades = Number.isFinite(obTotalTrades) && obTotalTrades > 0;
-    const dbTotalTrades = Number((marketData as any)?.total_trades ?? (marketData as any)?.totalTrades ?? 0);
-    const hasDbTotalTrades = Number.isFinite(dbTotalTrades) && dbTotalTrades > 0;
-    const recentTradesCount = Array.isArray((md as any)?.recentTrades) ? (md as any).recentTrades.length : 0;
-    const hasRecentTrades = recentTradesCount > 0;
-    const hasAnyTradesSignal = hasTrades || hasObTotalTrades || hasDbTotalTrades || hasRecentTrades;
-    const isDefaultCalc = Math.abs(obPrice - 1) < 1e-9; // 1e6 scaled -> 1.0 when empty
-    const obMissingOrZero = !Number.isFinite(obPrice) || obPrice <= 0;
-    const obValidForDisplay = !obMissingOrZero && !isDefaultCalc;
+    const orderBookAddressCandidate =
+      ((md as any)?.orderBookAddress as string | null | undefined) ||
+      ((marketData as any)?.market_address as string | null | undefined) ||
+      null;
+    const orderBookAddress =
+      orderBookAddressCandidate &&
+      typeof orderBookAddressCandidate === 'string' &&
+      orderBookAddressCandidate.startsWith('0x') &&
+      orderBookAddressCandidate.length === 42
+        ? (orderBookAddressCandidate as Address)
+        : null;
 
-    const marketIdBytes32 = (marketData as any)?.market_id_bytes32 as string | undefined;
-    const vaultAddr = (CONTRACT_ADDRESSES as any)?.CORE_VAULT as string | undefined;
+    const marketIdBytes32FromDb = (marketData as any)?.market_id_bytes32 as string | undefined;
+    const marketIdOkFromDb =
+      !!(marketIdBytes32FromDb && typeof marketIdBytes32FromDb === 'string' && /^0x[0-9a-fA-F]{64}$/.test(marketIdBytes32FromDb));
 
-    // Track last known good OrderBook mark (prevents transient 0/1 from flipping UI)
-    if (obValidForDisplay) {
-      lastGoodOrderBookMarkRef.current = obPrice;
+    const vaultAddrFromConfig = (CONTRACT_ADDRESSES as any)?.CORE_VAULT as string | undefined;
+    const vaultAddrOkFromConfig =
+      !!(vaultAddrFromConfig && typeof vaultAddrFromConfig === 'string' && vaultAddrFromConfig.startsWith('0x') && vaultAddrFromConfig.length === 42);
+
+    const loadKey = `${String(symbol || '').toUpperCase()}|${String(orderBookAddress || '')}|${String(marketIdBytes32FromDb || '')}|${String(vaultAddrFromConfig || '')}`;
+    const keyChanged = loadKey !== markPriceLoadKeyRef.current;
+    if (keyChanged) {
+      markPriceLoadKeyRef.current = loadKey;
+      // Hard reset for a new market identity to prevent "show one then swap".
+      setMarkPricesLoading(true);
+      setEffectiveMarkPrice(0);
+      setOrderBookMarkPrice(0);
+      setCoreVaultMarkPrice(0);
     }
 
-    const hasTradesSticky = hasEverTraded || hasAnyTradesSignal;
-    if (!hasEverTraded && hasAnyTradesSignal) {
-      setHasEverTraded(true);
+    // Reset when switching markets / losing inputs
+    if (!orderBookAddress) setOrderBookMarkPrice(0);
+    if (!marketIdOkFromDb || !vaultAddrOkFromConfig) setCoreVaultMarkPrice(0);
+    if (!orderBookAddress) {
+      setEffectiveMarkPrice(0);
+      setMarkPricesLoading(true);
+      return () => {
+        cancelled = true;
+        try { if (markPriceRetryTimerRef.current) clearTimeout(markPriceRetryTimerRef.current); } catch {}
+      };
+    }
+
+    const ORDERBOOK_ABI_MIN = [
+      { type: 'function', name: 'calculateMarkPrice', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+      { type: 'function', name: 'marketStatic', stateMutability: 'view', inputs: [], outputs: [
+        { type: 'address', name: 'vault' },
+        { type: 'bytes32', name: 'marketId' },
+        { type: 'bool', name: 'useVWAP' },
+        { type: 'uint256', name: 'vwapWindow' },
+      ] },
+    ] as const as any[];
+    const CORE_VAULT_ABI_MIN = [
+      { type: 'function', name: 'getMarkPrice', stateMutability: 'view', inputs: [{ name: 'marketId', type: 'bytes32' }], outputs: [{ type: 'uint256' }] },
+    ] as const as any[];
+
+    const readBoth = async () => {
       try {
-        const key = `dexextra:market:hasTrades:${String(symbol || '').toUpperCase()}`;
-        if (typeof window !== 'undefined') window.localStorage?.setItem(key, '1');
-      } catch {}
-    }
+        // Always clear any pending retries when we actively attempt a read.
+        try { if (markPriceRetryTimerRef.current) clearTimeout(markPriceRetryTimerRef.current); } catch {}
 
-    // Debug: print both potential mark price sources.
-    try {
-      console.log('[MarkCore] orderbookMarkPrice', {
-        obPrice,
-        lastTrade,
-        hasTrades,
-        obTotalTrades,
-        dbTotalTrades,
-        recentTradesCount,
-        hasAnyTradesSignal,
-        hasTradesSticky,
-        lastGoodOrderBookMark: lastGoodOrderBookMarkRef.current,
-        isDefaultCalc,
-        obMissingOrZero,
-        obValidForDisplay,
-        resolvedPrice: resolved,
-      });
-    } catch {}
+        const [obRaw, marketStatic] = await Promise.all([
+          publicClient.readContract({
+            address: orderBookAddress,
+            abi: ORDERBOOK_ABI_MIN,
+            functionName: 'calculateMarkPrice',
+            args: [],
+          }) as Promise<bigint>,
+          publicClient
+            .readContract({
+              address: orderBookAddress,
+              abi: ORDERBOOK_ABI_MIN,
+              functionName: 'marketStatic',
+              args: [],
+            })
+            .catch(() => null) as Promise<any>,
+        ]);
 
-    // CRITICAL: if the market has EVER traded, never use CoreVault mark price.
-    // Always prefer OrderBook mark, and if OrderBook is temporarily invalid, keep the last good OB mark.
-    if (hasTradesSticky) {
-      noTradesStableCountRef.current = 0;
-      if (obValidForDisplay) {
-        setEffectiveMarkPrice(obPrice);
-        setMarkPriceSource('orderbook');
-        return;
-      }
-      const lastGood = lastGoodOrderBookMarkRef.current;
-      if (Number.isFinite(lastGood) && lastGood > 0) {
-        setEffectiveMarkPrice(lastGood);
-        setMarkPriceSource('orderbook');
-        return;
-      }
-      // No valid OB mark yet; fall back to resolved (mid/last/db) but still avoid CoreVault.
-      setEffectiveMarkPrice(resolved > 0 ? resolved : 0);
-      setMarkPriceSource('resolved');
-      return;
-    }
+        const onchainVaultAddr = (marketStatic?.[0] ?? marketStatic?.vault ?? null) as string | null;
+        const onchainMarketId = (marketStatic?.[1] ?? marketStatic?.marketId ?? null) as string | null;
+        const vaultAddr =
+          (onchainVaultAddr && typeof onchainVaultAddr === 'string' && onchainVaultAddr.startsWith('0x') && onchainVaultAddr.length === 42
+            ? onchainVaultAddr
+            : null) ||
+          (vaultAddrOkFromConfig ? vaultAddrFromConfig! : null);
+        const marketIdBytes32 =
+          (onchainMarketId && typeof onchainMarketId === 'string' && /^0x[0-9a-fA-F]{64}$/.test(onchainMarketId) ? onchainMarketId : null) ||
+          (marketIdOkFromDb ? marketIdBytes32FromDb! : null);
 
-    // No evidence of trades yet. Prefer OB mark if it looks real (e.g. active book), otherwise resolved.
-    if (obValidForDisplay) {
-      setEffectiveMarkPrice(obPrice);
-      setMarkPriceSource('orderbook');
-      return;
-    }
-
-    const baseWithoutOrderbook = resolved > 0 ? resolved : 0; // Prefer resolved over OB when no trades
-
-    const tryFallback = async () => {
-      try { console.log('[TokenHeader] Attempting CoreVault.getMarkPrice fallback (no trades or OB not authoritative)', { obPrice, resolved, lastTrade, marketIdBytes32, vaultAddr }); } catch {}
-      try {
-        if (!marketIdBytes32 || typeof marketIdBytes32 !== 'string' || !marketIdBytes32.startsWith('0x')) {
-          try { console.log('[TokenHeader] Fallback aborted: invalid marketIdBytes32'); } catch {}
-          setEffectiveMarkPrice(baseWithoutOrderbook);
-          setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
-          return;
-        }
-        if (!vaultAddr || typeof vaultAddr !== 'string' || !vaultAddr.startsWith('0x')) {
-          try { console.log('[TokenHeader] Fallback aborted: invalid CORE_VAULT address'); } catch {}
-          setEffectiveMarkPrice(baseWithoutOrderbook);
-          setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
-          return;
+        let vaultRaw: bigint | null = null;
+        if (vaultAddr && marketIdBytes32) {
+          try {
+            vaultRaw = (await publicClient.readContract({
+              address: vaultAddr as Address,
+              abi: CORE_VAULT_ABI_MIN,
+              functionName: 'getMarkPrice',
+              args: [marketIdBytes32 as `0x${string}`],
+            })) as bigint;
+          } catch {
+            vaultRaw = null;
+          }
         }
 
-        const CORE_VAULT_ABI_MIN = [
-          { type: 'function', name: 'getMarkPrice', stateMutability: 'view', inputs: [{ name: 'marketId', type: 'bytes32' }], outputs: [{ type: 'uint256' }] }
-        ] as const as any[];
+        // Require BOTH values to be loaded before rendering any mark price.
+        // This prevents a visual "swap" between OB and vault on late/failed reads.
+        if (vaultRaw === null) {
+          throw new Error('CoreVault.getMarkPrice not loaded yet');
+        }
 
-        const raw = await publicClient.readContract({
-          address: vaultAddr as Address,
-          abi: CORE_VAULT_ABI_MIN,
-          functionName: 'getMarkPrice',
-          args: [marketIdBytes32 as `0x${string}`]
-        });
-        const price = typeof raw === 'bigint' ? Number(raw) / 1e6 : Number(raw);
+        const ob = Number(obRaw) / 1e6;
+        const vault = Number(vaultRaw) / 1e6;
+        if (cancelled) return;
 
-        try {
-          console.log('[MarkCore] coreVaultMarkPrice', {
-            marketIdBytes32,
-            raw: typeof raw === 'bigint' ? raw.toString() : raw,
-            price,
-          });
-        } catch {}
-        
-        if (price > 0) {
-          console.log('🔄 CoreVault.getMarkPrice fallback successful', price);
-          setEffectiveMarkPrice(price);
-          setMarkPriceSource('vault_fallback');
+        setOrderBookMarkPrice(Number.isFinite(ob) ? ob : 0);
+        setCoreVaultMarkPrice(Number.isFinite(vault) ? vault : 0);
+
+        const OB_DEFAULT_RAW = 1_000_000n; // 1.000000 with 6 decimals
+        const chosen =
+          obRaw === OB_DEFAULT_RAW
+            ? (Number.isFinite(vault) ? vault : 0)
+            : (Number.isFinite(ob) ? ob : 0);
+        setEffectiveMarkPrice(Number.isFinite(chosen) ? chosen : 0);
+        setMarkPricesLoading(false);
+      } catch {
+        if (cancelled) return;
+        // If we haven't loaded both values yet, keep showing the loading state and retry.
+        if (markPricesLoading || keyChanged) {
+          setMarkPricesLoading(true);
+          try { if (markPriceRetryTimerRef.current) clearTimeout(markPriceRetryTimerRef.current); } catch {}
+          markPriceRetryTimerRef.current = setTimeout(() => {
+            if (!cancelled) void readBoth();
+          }, 1250);
           return;
         }
-      } catch (e) {
-        try { console.warn('[TokenHeader] CoreVault.getMarkPrice fallback failed', e); } catch {}
+        // After initial load, avoid flicker: keep last known good prices on transient errors.
       }
-      try { console.log('[TokenHeader] Fallback unavailable; using resolved/base price', { baseWithoutOrderbook }); } catch {}
-      setEffectiveMarkPrice(baseWithoutOrderbook);
-      setMarkPriceSource(resolved > 0 ? 'resolved' : 'resolved');
     };
 
-    // Delay CoreVault fallback to avoid race where OrderBook initially returns 0/1 then corrects.
-    const elapsedMs = Date.now() - markPriceStartMsRef.current;
-    const FALLBACK_GRACE_MS = 12_000;
-    if (elapsedMs < FALLBACK_GRACE_MS) {
-      // During grace window, show resolved price and wait for OB/DB to settle.
-      setEffectiveMarkPrice(baseWithoutOrderbook);
-      setMarkPriceSource('resolved');
-      return;
-    }
-
-    // Require multiple consecutive "no trades + no valid OB mark" confirmations before using CoreVault.
-    noTradesStableCountRef.current = Math.min(10, (noTradesStableCountRef.current || 0) + 1);
-    const REQUIRED_STABLE_COUNT = 3;
-    if (noTradesStableCountRef.current < REQUIRED_STABLE_COUNT) {
-      setEffectiveMarkPrice(baseWithoutOrderbook);
-      setMarkPriceSource('resolved');
-      return;
-    }
-
-    void tryFallback();
+    void readBoth();
+    return () => {
+      cancelled = true;
+      try { if (markPriceRetryTimerRef.current) clearTimeout(markPriceRetryTimerRef.current); } catch {}
+    };
+    // Refresh reads when OrderBook updates or market identity changes.
   }, [
     symbol,
-    hasEverTraded,
-    md.markPrice,
-    md.resolvedPrice,
-    md.lastTradePrice,
-    (md as any)?.totalTrades,
-    (md as any)?.recentTrades,
-    (marketData as any)?.total_trades,
+    (md as any)?.lastUpdated,
+    (md as any)?.orderBookAddress,
+    (marketData as any)?.market_address,
     (marketData as any)?.market_id_bytes32,
+    (CONTRACT_ADDRESSES as any)?.CORE_VAULT,
+    markPricesLoading,
   ]);
 
   // Calculate enhanced token data from unified markets table and contract mark price
@@ -447,11 +427,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
     const market = marketData;
     
-    // Use effective price with CoreVault fallback when OB returns default and no order flow
-    const rawOb = Number(md.markPrice ?? 0);
-    const obLooksDefaultOrBad = !Number.isFinite(rawOb) || rawOb <= 0 || Math.abs(rawOb - 1) < 1e-9;
-    const baseComputed = obLooksDefaultOrBad ? Number(md.resolvedPrice || 0) : rawOb;
-    const currentMarkPrice = Number(effectiveMarkPrice > 0 ? effectiveMarkPrice : baseComputed);
+    const currentMarkPrice = Number(effectiveMarkPrice > 0 ? effectiveMarkPrice : 0);
     
     // Funding and historical change not tracked in DB yet
     const currentFundingRate = 0;
@@ -502,8 +478,6 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     };
   }, [
     marketData,
-    md.markPrice,
-    md.resolvedPrice,
     effectiveMarkPrice,
     symbol
   ]);
@@ -578,6 +552,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   
   // Loading state - only show loading if market data is loading
   const shouldShowHeaderLoading = !hasLoadedHeaderOnce && (isLoadingMarket || !marketData);
+  const shouldShowMarkPriceLoading = Boolean(markPricesLoading);
 
   if (shouldShowHeaderLoading) {
     return (
@@ -758,9 +733,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                         animateOnChange={true}
                       />
                     ) : (
-                      <span className="text-[13px] font-bold text-white">
-                        ${formatPriceWithCommas(enhancedTokenData.markPrice)}
-                      </span>
+                      shouldShowMarkPriceLoading ? (
+                        <span className="inline-block w-[92px] h-[14px] bg-[#1A1A1A] rounded animate-pulse" />
+                      ) : (
+                        <span className="text-[13px] font-bold text-white">
+                          ${formatPriceWithCommas(enhancedTokenData.markPrice)}
+                        </span>
+                      )
                     )}
                     <span className={`text-[10px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
                       {isPositive ? '↑' : '↓'} {Math.abs(enhancedTokenData.priceChangePercent24h).toFixed(2)}%
@@ -825,9 +804,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                   animateOnChange={true}
                 />
               ) : (
-                <span className="text-base font-bold text-white font-mono">
-                  ${formatPriceWithCommas(enhancedTokenData.markPrice)}
-                </span>
+                shouldShowMarkPriceLoading ? (
+                  <span className="inline-block w-[112px] h-[18px] bg-[#1A1A1A] rounded animate-pulse" />
+                ) : (
+                  <span className="text-base font-bold text-white font-mono">
+                    ${formatPriceWithCommas(enhancedTokenData.markPrice)}
+                  </span>
+                )
               )}
               <span className={`text-[11px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
                 {isPositive ? '↑' : '↓'} {Math.abs(enhancedTokenData.priceChangePercent24h).toFixed(2)}%

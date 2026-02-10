@@ -120,11 +120,17 @@ function normalizeProviderError(err: any): string {
 // Normalize relayer errors so phone users see a concise reason
 function normalizeRelayErrorBody(body: string): string {
   let text = body?.trim?.() || '';
+  let parsed: { error?: string; message?: string } | null = null;
   try {
-    const parsed = JSON.parse(body);
+    parsed = JSON.parse(body);
     if (parsed?.error) text = String(parsed.error);
   } catch {
     // ignore JSON parse issues; fall through to raw text
+  }
+  if (parsed?.error === 'order_not_found') {
+    return parsed?.message && parsed.message !== 'order_not_found'
+      ? String(parsed.message)
+      : 'Order does not exist. It may have been filled or already cancelled.';
   }
   const lower = (text || '').toLowerCase();
   if (lower.includes('session: bad relayer') || lower.includes('missing proof') || lower.includes('session: unknown')) {

@@ -12,6 +12,7 @@ import { EnableTradingPrompt } from "./EnableTrading";
 import { ActiveMarketsProvider } from "@/contexts/ActiveMarketsContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
+import { OnchainOrdersProvider } from "@/contexts/OnchainOrdersContextV2";
 import PortfolioSidebar from "@/components/PortfolioV2/PortfolioSidebar";
 
 interface ClientLayoutProps {
@@ -47,6 +48,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
   return (
     <WalletProvider>
       <SessionProvider>
+        <OnchainOrdersProvider>
         <DeploymentOverlayProvider>
           <ThemeProvider>
             <ActiveMarketsProvider>
@@ -82,6 +84,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
             </ActiveMarketsProvider>
           </ThemeProvider>
         </DeploymentOverlayProvider>
+        </OnchainOrdersProvider>
       </SessionProvider>
     </WalletProvider>
   );
