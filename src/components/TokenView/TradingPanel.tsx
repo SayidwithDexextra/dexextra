@@ -1796,63 +1796,45 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
 
         {/* Header section */}
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setActiveTab('buy')}
-              className="transition-all duration-150 outline-none border-none cursor-pointer rounded-md"
-              style={{
-                padding: '5px 14px',
-                fontSize: '14px',
-                fontWeight: '600',
-                backgroundColor: activeTab === 'buy' ? '#22C55E' : '#2A2A2A',
-                color: activeTab === 'buy' ? '#000000' : '#9CA3AF'
-              }}
-            >
-              Buy
-            </button>
-            <button
-              onClick={() => setActiveTab('sell')}
-              className="transition-all duration-150 outline-none border-none cursor-pointer rounded-md"
-              style={{
-                padding: '5px 14px',
-                fontSize: '14px',
-                fontWeight: '600',
-                backgroundColor: activeTab === 'sell' ? '#22C55E' : '#2A2A2A',
-                color: activeTab === 'sell' ? '#000000' : '#9CA3AF'
-              }}
-            >
-              Orders
-            </button>
-          </div>
-          
-          {/* Order Type Toggle - Compact Design */}
-          <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-0.5">
-            <div className="flex">
+        <div className="mb-2">
+          {/*
+            Top tabs removed per request (Buy / Orders).
+            If we bring them back later, they toggle `activeTab` between 'buy' and 'sell'.
+          */}
+
+          {/* Order Type Toggle - Full Width */}
+          <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-1 w-full">
+            <div className="flex w-full gap-1">
               <button
                 onClick={() => setOrderType('market')}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all duration-200 ${
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-green-400/20 ${
                   orderType === 'market'
                     ? 'bg-[#1A1A1A] text-white'
-                    : 'text-[#808080] hover:text-[#9CA3AF]'
+                    : 'text-[#808080] hover:text-[#D1D5DB] hover:bg-[#101010]'
                 }`}
+                aria-pressed={orderType === 'market'}
               >
-                <div className={`w-1 h-1 rounded-full ${
-                  orderType === 'market' ? 'bg-green-400' : 'bg-[#404040]'
-                }`} />
+                <div
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    orderType === 'market' ? 'bg-green-400' : 'bg-[#404040]'
+                  }`}
+                />
                 Market
               </button>
               <button
                 onClick={() => setOrderType('limit')}
-                className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all duration-200 ${
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-400/20 ${
                   orderType === 'limit'
                     ? 'bg-[#1A1A1A] text-white'
-                    : 'text-[#808080] hover:text-[#9CA3AF]'
+                    : 'text-[#808080] hover:text-[#D1D5DB] hover:bg-[#101010]'
                 }`}
+                aria-pressed={orderType === 'limit'}
               >
-                <div className={`w-1 h-1 rounded-full ${
-                  orderType === 'limit' ? 'bg-blue-400' : 'bg-[#404040]'
-                }`} />
+                <div
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    orderType === 'limit' ? 'bg-blue-400' : 'bg-[#404040]'
+                  }`}
+                />
                 Limit
               </button>
             </div>

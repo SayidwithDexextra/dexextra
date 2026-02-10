@@ -206,7 +206,13 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   // Show top 6 wallets (prioritize installed ones)
   const installedWallets = providers.filter(p => p.isInstalled)
   const notInstalledWallets = providers.filter(p => !p.isInstalled)
-  const topWallets = [...installedWallets, ...notInstalledWallets].slice(0, 6)
+  // Ensure MetaMask is always visible (walkthrough + expected default).
+  const metaMask = providers.find(p => p.name === 'MetaMask')
+  const topWallets = [
+    ...(metaMask ? [metaMask] : []),
+    ...installedWallets.filter(p => p.name !== 'MetaMask'),
+    ...notInstalledWallets.filter(p => p.name !== 'MetaMask')
+  ].slice(0, 6)
 
   return createPortal(
     <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
@@ -318,6 +324,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
                   {/* Main Content */}
                   <div 
                     className="flex items-center justify-between p-3 cursor-pointer"
+                    data-walkthrough={provider.name === 'MetaMask' ? 'wallet-modal:metamask' : undefined}
                     onClick={() => provider.isInstalled ? handleConnect(provider.name) : openExternalLink(getWalletUrl(provider.name))}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">

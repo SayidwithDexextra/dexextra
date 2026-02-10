@@ -133,6 +133,19 @@ export default function Header() {
     };
   }, []);
 
+  // Walkthrough hooks: allow tours to open/close the wallet modal.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOpen = () => setIsWalletModalOpen(true);
+    const onClose = () => setIsWalletModalOpen(false);
+    window.addEventListener('walkthrough:wallet:open', onOpen as any);
+    window.addEventListener('walkthrough:wallet:close', onClose as any);
+    return () => {
+      window.removeEventListener('walkthrough:wallet:open', onOpen as any);
+      window.removeEventListener('walkthrough:wallet:close', onClose as any);
+    };
+  }, []);
+
   // React to coreVaultSummary events to update UI immediately
   useEffect(() => {
     const onSummary = (e: any) => {
@@ -581,6 +594,7 @@ export default function Header() {
             className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-pointer transition-all duration-200 ${
               !walletData.isConnected ? 'border border-[#222222] hover:border-[#333333]' : ''
             }`}
+            data-walkthrough="header-connect-wallet"
             style={{
               // Subtle gradient flare to draw attention when disconnected (design-system compliant)
               background: !walletData.isConnected

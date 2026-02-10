@@ -4,9 +4,10 @@ import React, { useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
-import { getStartedWalkthrough } from '@/walkthroughs/getStarted';
+import { makeGetStartedWalkthrough } from '@/walkthroughs/getStarted';
 import { depositWalkthrough } from '@/walkthroughs/deposit';
 import { tokenPageWalkthrough } from '@/walkthroughs/tokenPage';
+import { useWallet } from '@/hooks/useWallet';
 
 type FooterSupportPopupProps = {
   isOpen: boolean;
@@ -24,6 +25,7 @@ type TourItem = {
 export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: FooterSupportPopupProps) {
   const pathname = usePathname();
   const walkthrough = useWalkthrough();
+  const { walletData } = useWallet();
 
   // Close on escape key (matches watchlist behavior)
   useEffect(() => {
@@ -75,7 +77,7 @@ export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: Foot
         id: 'get-started',
         title: 'Get Started',
         description: 'A quick intro to the core parts of the platform UI.',
-        onStart: () => startTour(getStartedWalkthrough),
+        onStart: () => startTour(makeGetStartedWalkthrough({ includeWalletConnectSteps: !walletData.isConnected })),
       },
       {
         id: 'deposit',
@@ -92,7 +94,7 @@ export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: Foot
         onStart: () => startTokenPageTour(defaultTokenSymbol),
       },
     ];
-  }, [currentTokenSymbol, defaultTokenSymbol, startTokenPageTour, startTour]);
+  }, [currentTokenSymbol, defaultTokenSymbol, startTokenPageTour, startTour, walletData.isConnected]);
 
   if (!isOpen) return null;
 

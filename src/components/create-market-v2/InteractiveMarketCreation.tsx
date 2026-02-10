@@ -26,8 +26,28 @@ const PROMPT_EXAMPLE_SUGGESTIONS = [
   'US CPI (YoY %) — monthly',
   'US unemployment rate (%) — monthly',
   'S&P 500 index level — daily close',
-  'Solana TPS (7d average)',
+  'Gold spot price (XAU/USD) — daily close',
+  'US 10Y Treasury yield (%) — daily close',
 ] as const;
+
+type IntroHelpKey =
+  | 'how_creation_works'
+  | 'suggestions'
+  | 'settlement'
+  | 'bond_penalty'
+  | 'good_prompt';
+
+const INTRO_LEARN_BUBBLES: Array<{ key: IntroHelpKey; label: string }> = [
+  { key: 'how_creation_works', label: 'How creation works' },
+  { key: 'suggestions', label: 'How rewards work' },
+  { key: 'settlement', label: 'How settlement works' },
+  { key: 'bond_penalty', label: 'How much is my bond & penalty?' },
+  { key: 'good_prompt', label: 'What makes a good market?' },
+];
+
+// Default creation penalty (when on-chain fetch is unavailable).
+// 500 bps = 5%.
+const DEFAULT_CREATION_PENALTY_BPS = 500;
 
 function formatUsdc6(amount: bigint) {
   // Format a 6-decimal USDC-like integer without relying on Intl.
@@ -37,6 +57,11 @@ function formatUsdc6(amount: bigint) {
   const frac = x % 1_000_000n;
   const fracStr = frac.toString().padStart(6, '0').replace(/0+$/, '');
   return `${sign}${whole.toString()}${fracStr ? `.${fracStr}` : ''} USDC`;
+}
+
+function formatBpsPct(bps: number) {
+  const pct = bps / 100;
+  return Number.isInteger(pct) ? `${pct}%` : `${pct.toFixed(2)}%`;
 }
 
 function clampText(input: string, maxLen: number) {
@@ -580,7 +605,7 @@ function MarketDetailsReview({
     defaultBondAmount?: bigint;
     penaltyBps?: number;
     error?: string;
-  }>({ status: 'idle' });
+  }>({ status: 'idle', penaltyBps: DEFAULT_CREATION_PENALTY_BPS });
 
   const bondManagerAddress =
     (process.env.NEXT_PUBLIC_MARKET_BOND_MANAGER_ADDRESS || '').trim() || null;
@@ -612,14 +637,16 @@ function MarketDetailsReview({
       setBondConfig({
         status: 'success',
         defaultBondAmount: bond,
-        penaltyBps: Number.isFinite(bps) ? bps : 0,
+        penaltyBps: Number.isFinite(bps) ? bps : DEFAULT_CREATION_PENALTY_BPS,
       });
     })().catch((e: any) => {
       if (cancelled) return;
-      setBondConfig({
+      setBondConfig((prev) => ({
         status: 'error',
+        defaultBondAmount: prev?.defaultBondAmount,
+        penaltyBps: prev?.penaltyBps ?? DEFAULT_CREATION_PENALTY_BPS,
         error: String(e?.message || e || 'Failed to load bond config'),
-      });
+      }));
     });
     return () => {
       cancelled = true;
@@ -910,7 +937,13 @@ function MarketDetailsReview({
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-white/55">Creation penalty</span>
                   <span className="text-white/80 font-medium tabular-nums">
-                    {bondSummary ? `${bondSummary.pctStr} (${formatUsdc6(bondSummary.fee)})` : bondConfig.status === 'loading' ? 'Loading…' : 'Applies on refund'}
+                    {bondSummary
+                      ? `${bondSummary.pctStr} (${formatUsdc6(bondSummary.fee)})`
+                      : bondConfig.status === 'loading'
+                        ? 'Loading…'
+                        : bondConfig.penaltyBps != null
+                          ? `${formatBpsPct(bondConfig.penaltyBps)} (applies on refund)`
+                          : 'Applies on refund'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -996,6 +1029,66 @@ export function InteractiveMarketCreation() {
   const [prompt, setPrompt] = React.useState('');
   const [isFocused, setIsFocused] = React.useState(false);
   const [promptPlaceholderIdx, setPromptPlaceholderIdx] = React.useState(0);
+  const [introHelpKey, setIntroHelpKey] = React.useState<IntroHelpKey | null>(null);
+
+  // Bond config (used for the intro "bond & penalty" explainer bubble)
+  const bondManagerAddress =
+    (process.env.NEXT_PUBLIC_MARKET_BOND_MANAGER_ADDRESS || '').trim() || null;
+  const rpcUrl = (process.env.NEXT_PUBLIC_RPC_URL || '').trim() || null;
+  const [introBondConfig, setIntroBondConfig] = React.useState<{
+    status: 'idle' | 'loading' | 'success' | 'error';
+    defaultBondAmount?: bigint;
+    penaltyBps?: number;
+    error?: string;
+  }>({ status: 'idle', penaltyBps: DEFAULT_CREATION_PENALTY_BPS });
+  React.useEffect(() => {
+    if (introHelpKey !== 'bond_penalty') return;
+    if (!bondManagerAddress || !ethers.isAddress(bondManagerAddress) || !rpcUrl) {
+      // Still show the explainer, but skip on-chain fetch.
+      return;
+    }
+    let cancelled = false;
+    setIntroBondConfig({ status: 'loading' });
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const abi = [
+      'function defaultBondAmount() view returns (uint256)',
+      'function creationPenaltyBps() view returns (uint16)',
+    ] as const;
+    const c = new ethers.Contract(bondManagerAddress, abi, provider);
+    (async () => {
+      const [bondRaw, bpsRaw] = await Promise.all([c.defaultBondAmount(), c.creationPenaltyBps()]);
+      const bond = BigInt(bondRaw.toString());
+      const bps = Number(bpsRaw.toString());
+      if (cancelled) return;
+      setIntroBondConfig({
+        status: 'success',
+        defaultBondAmount: bond,
+        penaltyBps: Number.isFinite(bps) ? bps : DEFAULT_CREATION_PENALTY_BPS,
+      });
+    })().catch((e: any) => {
+      if (cancelled) return;
+      setIntroBondConfig((prev) => ({
+        status: 'error',
+        defaultBondAmount: prev?.defaultBondAmount,
+        penaltyBps: prev?.penaltyBps ?? DEFAULT_CREATION_PENALTY_BPS,
+        error: String(e?.message || e || 'Failed to load bond config'),
+      }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [introHelpKey, bondManagerAddress, rpcUrl]);
+  const introBondSummary = React.useMemo(() => {
+    const amount = introBondConfig.defaultBondAmount;
+    const bps = introBondConfig.penaltyBps;
+    if (amount == null || bps == null) return null;
+    const fee = (amount * BigInt(bps)) / 10_000n;
+    const refundable = amount - fee;
+    const pct = bps / 100;
+    const pctStr = Number.isInteger(pct) ? `${pct}%` : `${pct.toFixed(2)}%`;
+    return { amount, bps, fee, refundable, pctStr };
+  }, [introBondConfig.defaultBondAmount, introBondConfig.penaltyBps]);
+
   const promptSuggestion = React.useMemo(() => {
     return (
       PROMPT_EXAMPLE_SUGGESTIONS[promptPlaceholderIdx] ??
@@ -1859,15 +1952,20 @@ export function InteractiveMarketCreation() {
   }, [discoveryState, discoveryResult]);
 
   React.useEffect(() => {
-    if (!iconFile) {
-      // If we already uploaded/imported an icon into Supabase Storage,
-      // keep showing that persisted URL.
-      setIconPreviewUrl(iconStoredUrl || null);
-      return;
+    // Important: `iconPreviewUrl` is the source of truth for remote selections.
+    // This effect should ONLY derive a preview URL from an uploaded File (blob:)
+    // or swap in the persisted Storage URL after import/upload.
+    //
+    // Previous behavior reset the preview to `null` whenever `iconFile` was null,
+    // which overwrote remote selections and caused the preview square to stay black.
+    if (iconFile) {
+      const url = URL.createObjectURL(iconFile);
+      setIconPreviewUrl(url);
+      return () => URL.revokeObjectURL(url);
     }
-    const url = URL.createObjectURL(iconFile);
-    setIconPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
+
+    // If we already uploaded/imported an icon into Supabase Storage, keep showing that.
+    if (iconStoredUrl) setIconPreviewUrl(iconStoredUrl);
   }, [iconFile, iconStoredUrl]);
 
   const ensureIconStored = React.useCallback(async (): Promise<string | null> => {
@@ -2508,23 +2606,135 @@ export function InteractiveMarketCreation() {
       {/* Helpful bubbles under the prompt (replaces carousel) */}
       {discoveryState === 'idle' && !prompt.trim() && (
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2 px-1 bubblesSlideUp">
-          {PROMPT_EXAMPLE_SUGGESTIONS.map((example) => (
-            <button
-              key={example}
-              type="button"
-              onClick={() => {
-                setPrompt(example);
-                window.setTimeout(() => promptTextareaRef.current?.focus(), 0);
-              }}
-              className="group inline-flex items-center rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-white/75 transition-colors hover:bg-white/[0.06] hover:text-white"
-              aria-label={`Use example: ${example}`}
-            >
-              <span className="text-white/50 group-hover:text-white/70">+</span>
-              <span className="ml-1.5">{clampText(example, 44)}</span>
-            </button>
-          ))}
-          <div className="w-full pt-1 text-[11px] text-white/35">
-            Tip: include a unit (USD, %, index points) and an update cadence (daily, hourly, monthly).
+          <div className="w-full max-w-[860px] space-y-3">
+            <div className="w-full text-center text-[11px] font-medium text-white/35">
+              Learn how this works
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {INTRO_LEARN_BUBBLES.map((b) => {
+                const selected = introHelpKey === b.key;
+                return (
+                  <button
+                    key={b.key}
+                    type="button"
+                    onClick={() => setIntroHelpKey((k) => (k === b.key ? null : b.key))}
+                    className={[
+                      'group inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] transition-colors',
+                      selected
+                        ? 'border-white/20 bg-white/[0.08] text-white'
+                        : 'border-white/10 bg-white/[0.03] text-white/75 hover:bg-white/[0.06] hover:text-white',
+                    ].join(' ')}
+                    aria-label={b.label}
+                  >
+                    <span
+                      className={[
+                        'mr-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border text-[11px] leading-none',
+                        selected ? 'border-white/25 text-white/90' : 'border-white/15 text-white/55 group-hover:text-white/70',
+                      ].join(' ')}
+                      aria-hidden="true"
+                    >
+                      ?
+                    </span>
+                    <span>{b.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {introHelpKey ? (
+              <div className="mx-auto w-full max-w-[760px] rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-left">
+                {introHelpKey === 'how_creation_works' ? (
+                  <>
+                    <div className="text-[12px] font-medium text-white/85">How creation works</div>
+                    <div className="mt-1 text-[12px] text-white/60">
+                      Describe a metric in plain English. We draft a measurable definition, find candidate sources, and you
+                      confirm details before creating the market on-chain.
+                    </div>
+                  </>
+                ) : introHelpKey === 'suggestions' ? (
+                  <>
+                    <div className="text-[12px] font-medium text-white/85">How rewards work</div>
+                    <div className="mt-1 text-[12px] text-white/60">
+                      Rewards are protocol fees generated by activity in your market. For the first{' '}
+                      <span className="text-white/85">12 months</span> after a market is created, rewards are split{' '}
+                      <span className="text-white/85">80%</span> to the market creator address and{' '}
+                      <span className="text-white/85">20%</span> to Dexetera to support operations and growth.
+                      <br />
+                      <br />
+                      After that first-year period ends, rewards from the market go{' '}
+                      <span className="text-white/85">100%</span> to Dexetera. The split is enforced by the protocol and is
+                      attributed to the creator address used at market creation.
+                    </div>
+                  </>
+                ) : introHelpKey === 'settlement' ? (
+                  <>
+                    <div className="text-[12px] font-medium text-white/85">How settlement works</div>
+                    <div className="mt-1 text-[12px] text-white/60">
+                      Markets settle against a single, verifiable number derived from the source you choose. We validate the
+                      URL and definition so settlement is unambiguous.
+                    </div>
+                  </>
+                ) : introHelpKey === 'bond_penalty' ? (
+                  <>
+                    <div className="text-[12px] font-medium text-white/85">Bond &amp; penalty</div>
+                    <div className="mt-1 text-[12px] text-white/60">
+                      Creating a market requires a bond set by the protocol. If you deactivate an unused market, the bond can be
+                      reclaimed only if there have been no trades, no open orders, and no active positions (net of any penalty).
+                    </div>
+
+                    <div className="mt-3 grid gap-2 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-[12px] text-white/70 sm:grid-cols-3">
+                      <div>
+                        <div className="text-[11px] text-white/45">Bond</div>
+                        <div className="mt-0.5 text-white/85">
+                          {introBondSummary
+                            ? formatUsdc6(introBondSummary.amount)
+                            : introBondConfig.status === 'loading'
+                              ? 'Loading…'
+                              : 'Configured by protocol'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-white/45">Creation penalty</div>
+                        <div className="mt-0.5 text-white/85">
+                          {introBondSummary
+                            ? `${introBondSummary.pctStr} (${formatUsdc6(introBondSummary.fee)})`
+                            : introBondConfig.status === 'loading'
+                              ? 'Loading…'
+                              : introBondConfig.penaltyBps != null
+                                ? `${formatBpsPct(introBondConfig.penaltyBps)} (applies on refund)`
+                                : 'Applies on refund'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-white/45">Refundable</div>
+                        <div className="mt-0.5 text-white/85">
+                          {introBondSummary ? formatUsdc6(introBondSummary.refundable) : 'Net of penalty'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {introBondConfig.status === 'error' ? (
+                      <div className="mt-2 text-[11px] text-white/40">
+                        Could not load bond config on this network. {introBondConfig.error ? `(${introBondConfig.error})` : null}
+                      </div>
+                    ) : null}
+                    {!bondManagerAddress ? (
+                      <div className="mt-2 text-[11px] text-white/35">
+                        Tip: set <span className="font-mono">NEXT_PUBLIC_MARKET_BOND_MANAGER_ADDRESS</span> to display exact bond values here.
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <div className="text-[12px] font-medium text-white/85">What makes a good market?</div>
+                    <div className="mt-1 text-[12px] text-white/60">
+                      Pick one number, one unit, and one source. Add scope (who/where) and a cadence (daily, monthly, etc.) so
+                      settlement is verifiable and repeatable.
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
         </div>
       )}

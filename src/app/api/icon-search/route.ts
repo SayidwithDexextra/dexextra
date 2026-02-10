@@ -27,6 +27,7 @@ const BodySchema = z.object({
   query: z.string().min(1).max(500),
   description: z.string().max(3000).optional(),
   maxResults: z.number().int().min(1).max(20).optional().default(12),
+  debug: z.boolean().optional().default(false),
 });
 
 type ImageKind = 'photo' | 'logo' | 'icon' | 'illustration';
@@ -35,8 +36,9 @@ type ImageKind = 'photo' | 'logo' | 'icon' | 'illustration';
  * POST /api/icon-search
  * Search for market images using SerpApi Google Images.
  *
- * We infer user intent (short concept keywords) with AI, then suffix with "unsplash"
- * to strongly bias results toward Unsplash photos from Google Images.
+ * We infer user intent (short concept keywords) with AI.
+ * For photo-like intent, we suffix with "unsplash" to bias toward Unsplash images.
+ * For logo/icon intent, we bias toward logo/icon asset queries.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -48,7 +50,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { query, description, maxResults } = body.data;
+    const { query, description, maxResults, debug } = body.data;
 
     if (!query || typeof query !== 'string') {
       return NextResponse.json(
@@ -74,6 +76,14 @@ export async function POST(request: NextRequest) {
 
     const primaryQuery =
       kind === 'photo' ? buildUnsplashSearchQuery(intent) : buildLogoIconSearchQuery(intent);
+    let usedQuery = primaryQuery;
+    let primaryResultCount = 0;
+    let fallbackAttempted = false;
+    let backupAttempted = false;
+    let fallbackQuery: string | null = null;
+    let fallbackResultCount = 0;
+    let backupQuery: string | null = null;
+    let backupResultCount = 0;
 
     const fetchSerp = async (q: string, engine: string) => {
       const url = new URL('https://serpapi.com/search');
@@ -134,20 +144,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Image search failed' }, { status: 502 });
     }
     results = parse(primary.data);
+    primaryResultCount = results.length;
 
     // Attempt 2: fallback query on Google Images (switch intent style).
     if (results.length === 0) {
-      const fallbackQuery =
+      fallbackAttempted = true;
+      const fq =
         kind === 'photo'
           ? buildGenericPhotoSearchQuery(intent)
           : buildGenericSearchQuery(intent);
-      const fallback = await fetchSerp(fallbackQuery, 'google_images');
+      fallbackQuery = fq;
+      const fallback = await fetchSerp(fq, 'google_images');
       if (fallback.ok) {
         const fallbackResults = parse(fallback.data);
+        fallbackResultCount = fallbackResults.length;
         if (fallbackResults.length > 0) {
           results = fallbackResults;
           usedFallback = true;
           usedQueryLabel = 'fallback';
+          usedQuery = fq;
         }
       }
     }
@@ -155,18 +170,22 @@ export async function POST(request: NextRequest) {
     // Attempt 3: backup SerpApi engine if Google Images yields nothing.
     // This covers cases where Google is sparse or blocked for certain terms.
     if (results.length === 0) {
-      const backupQuery =
+      backupAttempted = true;
+      const bq =
         kind === 'photo'
           ? buildGenericPhotoSearchQuery(intent)
           : buildGenericSearchQuery(intent);
-      const backup = await fetchSerp(backupQuery, 'bing_images');
+      backupQuery = bq;
+      const backup = await fetchSerp(bq, 'bing_images');
       if (backup.ok) {
         const backupResults = parse(backup.data);
+        backupResultCount = backupResults.length;
         if (backupResults.length > 0) {
           results = backupResults;
           usedFallback = true;
           usedEngine = 'bing_images';
           usedQueryLabel = 'backup_engine';
+          usedQuery = bq;
         }
       }
     }
@@ -182,7 +201,29 @@ export async function POST(request: NextRequest) {
       })),
     });
 
-    return NextResponse.json({ results });
+    return NextResponse.json({
+      results,
+      ...(debug
+        ? {
+            debug: {
+              kind,
+              intent,
+              primaryQuery,
+              usedQuery,
+              usedEngine,
+              usedQueryLabel,
+              resultCount: results.length,
+              primaryResultCount,
+              fallbackAttempted,
+              fallbackQuery,
+              fallbackResultCount,
+              backupAttempted,
+              backupQuery,
+              backupResultCount,
+            },
+          }
+        : null),
+    });
   } catch (error) {
     console.error('[icon-search] Error:', error);
     return NextResponse.json(
@@ -193,20 +234,18 @@ export async function POST(request: NextRequest) {
 }
 
 function buildUnsplashSearchQuery(intent: string): string {
-  const base = String(intent || '').trim().replace(/\s+/g, ' ');
-  // Keep "unsplash" as a suffix per product requirement.
-  // Include site hint to bias toward Unsplash-hosted images without losing the suffix.
-  const siteHint = 'site:unsplash.com';
-  if (!base) return `${siteHint} unsplash`;
-  const alreadyHasUnsplash = /\bunsplash\b/i.test(base);
-  const alreadyHasSite = /\bsite:unsplash\.com\b/i.test(base);
+  // Always end with the literal token "unsplash" (suffix).
 
-  const parts: string[] = [];
-  if (!alreadyHasSite) parts.push(siteHint);
-  parts.push(base);
-  if (!alreadyHasUnsplash) parts.push('unsplash');
-  else if (!/\bunsplash\b/i.test(parts[parts.length - 1] || '')) parts.push('unsplash');
-  return parts.join(' ').trim();
+  const base = String(intent || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    // Strip any existing "unsplash" tokens so we can re-append cleanly.
+    .replace(/\bunsplash\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!base) return `unsplash`;
+  return `${base} unsplash`.trim();
 }
 
 function buildLogoIconSearchQuery(intent: string): string {

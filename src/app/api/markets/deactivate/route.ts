@@ -208,7 +208,6 @@ export async function POST(req: Request) {
 
     // Preflight staticcall to surface the exact revert reason without spending gas.
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
       await factory.deactivateFuturesMarket.staticCall(orderBook, { from: sender });
     } catch (e: any) {
       return NextResponse.json(
@@ -258,7 +257,6 @@ export async function POST(req: Request) {
         finalPriceUsed = mark.toString();
         // best-effort staticcall preflight
         try {
-          // eslint-disable-next-line @typescript-eslint/no-unused-expressions
           await vault.settleMarket.staticCall(marketIdBytes32, mark, { from: sender });
         } catch (e: any) {
           return NextResponse.json(
@@ -280,6 +278,32 @@ export async function POST(req: Request) {
     // Send tx (relayer/admin pays gas)
     const tx = await factory.deactivateFuturesMarket(orderBook, await nonceMgr.nextOverrides());
     const receipt = await tx.wait();
+
+    // Persist deactivation in Supabase so the market is treated as inactive across the app.
+    // Note: this endpoint is specifically used for "bond refund via deactivation", so we always flip is_active off.
+    let dbUpdated = false;
+    let dbUpdateError: string | null = null;
+    try {
+      if (receipt?.status === 1) {
+        const { error: updErr } = await supabase
+          .from('markets')
+          .update({
+            is_active: false,
+            // The market was settled above (or already settled). Use SETTLED so UIs stop treating it as tradable.
+            market_status: 'SETTLED',
+            updated_at: new Date().toISOString(),
+          } as any)
+          .eq('id', marketId);
+        if (updErr) {
+          dbUpdateError = updErr.message;
+        } else {
+          dbUpdated = true;
+        }
+      }
+    } catch (e: any) {
+      dbUpdateError = extractError(e);
+    }
+
     return NextResponse.json({
       ok: true,
       factory: factoryAddress,
@@ -292,6 +316,8 @@ export async function POST(req: Request) {
       txHash: tx.hash,
       blockNumber: receipt?.blockNumber ?? null,
       status: receipt?.status ?? null,
+      dbUpdated,
+      dbUpdateError,
     });
   } catch (e: any) {
     return NextResponse.json({ error: extractError(e) }, { status: 500 });

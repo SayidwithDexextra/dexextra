@@ -17,6 +17,12 @@ interface IconSearchBubbleProps {
   query: string;
   /** Optional extra context (market description) */
   description?: string;
+  /**
+   * Layout mode for the bubble container.
+   * - "full_bleed": matches the Create Market V2 chat layout (default)
+   * - "contained": stays within the parent container (useful for debug pages)
+   */
+  layout?: 'full_bleed' | 'contained';
   /** Callback when an icon is selected (url or File) */
   onSelectIcon: (iconUrl: string) => void;
   /** Callback when a file is uploaded */
@@ -32,6 +38,7 @@ type FetchState = 'idle' | 'loading' | 'success' | 'error';
 export function IconSearchBubble({
   query,
   description,
+  layout = 'full_bleed',
   onSelectIcon,
   onUploadIcon,
   selectedIconUrl,
@@ -165,7 +172,13 @@ export function IconSearchBubble({
     !iconOptions.some((opt) => opt.url === selectedIconUrl || opt.thumbnail === selectedIconUrl);
 
   return (
-    <div className="mt-8 w-[calc(100%+320px)] max-w-[calc(100vw-120px)] -ml-[280px]">
+    <div
+      className={
+        layout === 'contained'
+          ? 'mt-8 w-full max-w-full'
+          : 'mt-8 w-[calc(100%+320px)] max-w-[calc(100vw-120px)] -ml-[280px]'
+      }
+    >
       {/* Section Header */}
       <div
         className="mb-4 text-left"
@@ -198,7 +211,9 @@ export function IconSearchBubble({
               <button
                 key={icon.id}
                 type="button"
-                onClick={() => onSelectIcon(icon.url)}
+                // Prefer the SerpApi thumbnail for selection:
+                // many "original" URLs block hotlinking (403/CORS), causing the preview to stay blank.
+                onClick={() => onSelectIcon(icon.thumbnail || icon.url)}
                 className={`group relative flex items-center justify-center rounded-xl p-2 transition-all duration-200 ${
                   selectedIconUrl === icon.url || selectedIconUrl === icon.thumbnail
                     ? 'bg-white/10 ring-1 ring-white/20'

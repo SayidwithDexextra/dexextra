@@ -6,10 +6,10 @@ import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
-import { usePortfolioData } from '@/hooks/usePortfolioData'
+import { usePositions } from '@/hooks/usePositions'
 import { useMarkets } from '@/hooks/useMarkets'
 import { normalizeBytes32Hex } from '@/lib/hex'
-import { supabase } from '@/lib/supabase'
+import { usePortfolioSidebarOpenOrders } from '@/hooks/usePortfolioSidebarOpenOrders'
 
 type PortfolioSidebarProps = {
 	isOpen: boolean
@@ -66,11 +66,9 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		// Sidebar should not poll; keep it stable and refresh on re-open.
 		refreshIntervalMs: 0,
 	})
-	const portfolioData = usePortfolioData({
+	const positionsState = usePositions(undefined, {
 		enabled: dataEnabled,
-		// Disable positions polling inside sidebar
-		refreshInterval: 0,
-		// Avoid frequent global refresh events causing re-renders
+		pollIntervalMs: 0,
 		listenToEvents: false,
 	})
 
@@ -97,14 +95,12 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		return m
 	}, [markets])
 
-	type SidebarOpenOrder = {
-		id: string
-		symbol: string
-		side: 'BUY' | 'SELL'
-		price: number
-		size: number
-		timestamp: number
-	}
+	// Local-first open orders (session/local storage) + secondary on-chain backfill.
+	const sidebarOrders = usePortfolioSidebarOpenOrders({
+		enabled: dataEnabled,
+		walletAddress,
+		positionSymbols: (positionsState?.positions || []).map((p: any) => String(p?.symbol || '').toUpperCase()).filter(Boolean),
+	})
 
 	const navigateToToken = (identifierOrSymbol: string) => {
 		const id = String(identifierOrSymbol || '').trim()
@@ -196,8 +192,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		}
 	}, [coreVault?.availableBalance, coreVault?.realizedPnL, coreVault?.totalCollateral, coreVault?.unrealizedPnL, portfolio?.summary?.availableCash, portfolio?.summary?.unrealizedPnl])
 
-	const positions = (portfolioData?.positions || []) as any[]
-	const ordersBuckets = (portfolioData?.ordersBuckets || []) as any[] // fallback if active-buckets fetch fails
+	const positions = (positionsState?.positions || []) as any[]
 
 	type PositionMarketMeta = {
 		name?: string | null
@@ -206,64 +201,20 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		icon_image_url?: string | null
 	}
 
-	const [positionMarketMetaByKey, setPositionMarketMetaByKey] = useState<Record<string, PositionMarketMeta>>({})
-
-	const positionMarketKeys = useMemo(() => {
-		const keys = new Set<string>()
-		for (const p of positions || []) {
-			const k = normalizeBytes32Hex(String(p?.marketId || p?.id || ''))
-			if (k) keys.add(k)
-			// Prevent oversized IN() queries from extremely large portfolios
-			if (keys.size >= 80) break
+	const positionMetaByMarketBytes32 = useMemo(() => {
+		const m = new Map<string, PositionMarketMeta>()
+		for (const mk of markets || []) {
+			const key = normalizeBytes32Hex(String((mk as any)?.market_id_bytes32 || ''))
+			if (!key) continue
+			m.set(key, {
+				name: (mk as any)?.name ?? null,
+				symbol: (mk as any)?.symbol ?? null,
+				market_identifier: (mk as any)?.market_identifier ?? null,
+				icon_image_url: (mk as any)?.icon_image_url ?? null,
+			})
 		}
-		return Array.from(keys)
-	}, [positions])
-
-	// Use Supabase to populate market name/symbol/icon for positions.
-	useEffect(() => {
-		if (!dataEnabled) return
-		if (positionMarketKeys.length === 0) return
-
-		let cancelled = false
-		;(async () => {
-			try {
-				const missing = positionMarketKeys.filter((k) => !positionMarketMetaByKey[k])
-				if (missing.length === 0) return
-
-				const { data, error } = await supabase
-					.from('markets')
-					.select('market_id_bytes32,market_identifier,name,symbol,icon_image_url')
-					.in('market_id_bytes32', missing)
-
-				if (cancelled) return
-				if (error) return
-
-				const rows = (data || []) as any[]
-				if (!rows.length) return
-
-				setPositionMarketMetaByKey((prev) => {
-					const next: Record<string, PositionMarketMeta> = { ...prev }
-					for (const r of rows) {
-						const key = normalizeBytes32Hex(String(r?.market_id_bytes32 || ''))
-						if (!key) continue
-						next[key] = {
-							name: r?.name ?? null,
-							symbol: r?.symbol ?? null,
-							market_identifier: r?.market_identifier ?? null,
-							icon_image_url: r?.icon_image_url ?? null,
-						}
-					}
-					return next
-				})
-			} catch {
-				// ignore
-			}
-		})()
-
-		return () => {
-			cancelled = true
-		}
-	}, [dataEnabled, positionMarketKeys, positionMarketMetaByKey])
+		return m
+	}, [markets])
 
 	const topPositions = useMemo(() => {
 		if (!Array.isArray(positions) || positions.length === 0) return []
@@ -278,103 +229,9 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		return rows.slice(0, 6).map((r) => r.p)
 	}, [positions])
 
-	// Site-wide Open Orders snapshot (no Supabase client / no order history).
-	// This matches the Market Activities implementation: use /api/orders/active-buckets.
-	const [sitewideOpenOrders, setSitewideOpenOrders] = useState<SidebarOpenOrder[]>([])
-	const [sitewideOrdersLoading, setSitewideOrdersLoading] = useState(false)
-	const [sitewideOrdersHasLoadedOnce, setSitewideOrdersHasLoadedOnce] = useState(false)
-	const isFetchingSitewideOrdersRef = useRef(false)
-	const lastSitewideOrdersFetchTsRef = useRef(0)
-
-	const fetchSitewideOpenOrders = useMemo(() => {
-		return async (opts?: { force?: boolean; silent?: boolean }) => {
-			if (!walletAddress) return
-			if (!dataEnabled) return
-			if (typeof document !== 'undefined' && document.visibilityState === 'hidden' && !opts?.force) return
-			if (isFetchingSitewideOrdersRef.current) return
-
-			const now = Date.now()
-			const cooldownMs = opts?.force ? 750 : 10_000
-			if (now - lastSitewideOrdersFetchTsRef.current < cooldownMs) return
-
-			isFetchingSitewideOrdersRef.current = true
-			if (!opts?.silent) setSitewideOrdersLoading(true)
-			try {
-				const params = new URLSearchParams({
-					trader: walletAddress,
-					limit: '800',
-					perMarket: '50',
-				})
-				const res = await fetch(`/api/orders/active-buckets?${params.toString()}`)
-				if (!res.ok) return
-				const data = await res.json()
-				const buckets = Array.isArray((data as any)?.buckets) ? (data as any).buckets : []
-
-				const flattened: SidebarOpenOrder[] = []
-				for (const b of buckets) {
-					const sym = String(b?.symbol || '').toUpperCase()
-					if (!sym) continue
-					const orders = Array.isArray(b?.orders) ? b.orders : []
-					for (const o of orders) {
-						const id = o?.order_id !== undefined && o?.order_id !== null ? String(o.order_id) : ''
-						if (!id) continue
-						const sideRaw = String(o?.side || 'BUY').toUpperCase()
-						const typeRaw = String(o?.order_type || 'LIMIT').toUpperCase()
-						// Skip non-cancelable placeholders (we only want real on-chain ids in UI)
-						if (typeRaw && typeRaw !== 'LIMIT' && typeRaw !== 'MARKET') {
-							// leave it in; UI only displays price/size/side
-						}
-						let qty = Number(o?.quantity || 0)
-						if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000
-						const price = o?.price === null || o?.price === undefined ? 0 : Number(o.price)
-						const tsRaw = o?.updated_at || o?.created_at || null
-						const ts = tsRaw ? new Date(tsRaw).getTime() : Date.now()
-						flattened.push({
-							id,
-							symbol: sym,
-							side: sideRaw === 'SELL' ? 'SELL' : 'BUY',
-							price: Number.isFinite(price) ? price : 0,
-							size: Number.isFinite(qty) ? qty : 0,
-							timestamp: Number.isFinite(ts) ? ts : Date.now(),
-						})
-					}
-				}
-
-				// stable ordering: newest first
-				flattened.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0))
-
-				setSitewideOpenOrders(flattened.slice(0, 50)) // keep bounded in memory; UI slices to 8
-				setSitewideOrdersHasLoadedOnce(true)
-			} catch {
-				// ignore; keep previous snapshot
-			} finally {
-				lastSitewideOrdersFetchTsRef.current = Date.now()
-				isFetchingSitewideOrdersRef.current = false
-				setSitewideOrdersLoading(false)
-			}
-		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [walletAddress, dataEnabled])
-
 	const flatOrders = useMemo(() => {
-		// Prefer the sitewide snapshot, fallback to portfolioData buckets if needed.
-		const src = sitewideOrdersHasLoadedOnce ? sitewideOpenOrders : []
-		if (src.length > 0) return src.slice(0, 8)
-
-		const out: SidebarOpenOrder[] = []
-		for (const bucket of ordersBuckets || []) {
-			const symbol = String(bucket?.symbol || bucket?.token || 'UNKNOWN').toUpperCase()
-			for (const o of (bucket?.orders || []) as any[]) {
-				const side = (String(o?.side || (o?.isBuy ? 'BUY' : 'SELL')).toUpperCase() as any) === 'SELL' ? 'SELL' : 'BUY'
-				const price = Number(o?.price || o?.limitPrice || 0)
-				let qty = Number(o?.quantity || o?.size || 0)
-				if (qty >= 1_000_000_000) qty = qty / 1_000_000_000_000
-				const id = String(o?.id || o?.orderId || o?.order_id || `${symbol}-${side}-${price}-${qty}`)
-				out.push({ id, symbol, side, price, size: qty, timestamp: Date.now() })
-			}
-		}
-		return out.slice(0, 8)
-	}, [ordersBuckets, sitewideOpenOrders, sitewideOrdersHasLoadedOnce])
+		return (sidebarOrders.orders || []).slice(0, 8)
+	}, [sidebarOrders.orders])
 
 	// Prevent UI blinking: keep last non-empty lists during transient empty/loading flips.
 	const prevNonEmptyTopPositionsRef = useRef<any[]>([])
@@ -393,7 +250,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 
 	const metrics: Metric[] = useMemo(() => {
 		const posCount = Array.isArray(positions) ? positions.length : 0
-		const ordCount = sitewideOrdersHasLoadedOnce ? sitewideOpenOrders.length : Number(portfolioData?.activeOrdersCount || 0)
+		const ordCount = Array.isArray(sidebarOrders.orders) ? sidebarOrders.orders.length : 0
 		return [
 			{ label: 'Total assets', value: formatUsd(Math.max(0, totals.totalValue), 2), valueClassName: 'font-mono' },
 			{ label: 'Δ (session)', value: `${totals.valueDelta >= 0 ? '+' : ''}${formatUsd(totals.valueDelta, 2)}`, valueClassName: 'font-mono', valueTone: totals.valueDelta >= 0 ? 'pos' : 'neg' },
@@ -402,21 +259,27 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			{ label: 'Open positions', value: String(posCount), valueClassName: 'font-mono' },
 			{ label: 'Open orders', value: String(ordCount), valueClassName: 'font-mono' },
 		]
-	}, [portfolioData?.activeOrdersCount, positions, sitewideOpenOrders.length, sitewideOrdersHasLoadedOnce, totals.availableCash, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
+	}, [positions, sidebarOrders.orders, totals.availableCash, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
 
 	const isHealthy = Boolean(coreVault?.isHealthy)
-	// Important: don't let CoreVault's internal refresh cycles "blink" the sidebar content.
-	// Treat the sidebar as a snapshot panel; only show skeletons when we truly have no data yet.
-	const isBusy = Boolean((portfolioData as any)?.isLoading || portfolio?.isLoading)
-	const showPositionsSkeleton = topPositionsToRender.length === 0 && Boolean((portfolioData as any)?.isLoadingPositions || (portfolioData as any)?.isLoading)
-	const showOrdersSkeleton = flatOrdersToRender.length === 0 && Boolean(sitewideOrdersLoading || (portfolioData as any)?.isLoadingOrders || (portfolioData as any)?.isLoading)
-
-	// Fetch sitewide open orders when the sidebar opens (and while it remains open).
+	// Important: don't let background refresh cycles "blink" the sidebar content.
+	// Treat the sidebar as a snapshot panel; only show "Updating…" during the first load per-open.
+	const [didPaintSnapshot, setDidPaintSnapshot] = useState(false)
 	useEffect(() => {
+		// Reset per open/close cycle
+		if (!isOpen) {
+			setDidPaintSnapshot(false)
+			return
+		}
 		if (!dataEnabled) return
-		if (!walletAddress) return
-		fetchSitewideOpenOrders({ force: true, silent: true })
-	}, [dataEnabled, walletAddress, fetchSitewideOpenOrders])
+		// Consider "snapshot ready" once all initial fetches have completed at least once
+		const ready = Boolean(!portfolio?.isLoading && !positionsState?.isLoading && sidebarOrders.hasLoadedOnce)
+		if (ready) setDidPaintSnapshot(true)
+	}, [isOpen, dataEnabled, portfolio?.isLoading, positionsState?.isLoading, sidebarOrders.hasLoadedOnce])
+
+	const showUpdatingBadge = Boolean(isWalletConnected && !didPaintSnapshot)
+	const showPositionsSkeleton = topPositionsToRender.length === 0 && Boolean(positionsState?.isLoading)
+	const showOrdersSkeleton = flatOrdersToRender.length === 0 && Boolean(sidebarOrders.isLoading || sidebarOrders.isRefreshing)
 
 	if (!rendered) return null
 
@@ -492,7 +355,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								</h4>
 								{isWalletConnected ? (
 									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-										{isBusy ? 'Updating…' : 'Snapshot'}
+										{showUpdatingBadge ? 'Updating…' : 'Snapshot'}
 									</div>
 								) : (
 									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
@@ -632,7 +495,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											const isPos = pnl >= 0
 											const dotTone = side === 'SHORT' ? 'bg-red-400' : 'bg-green-400'
 											const posMarketKey = normalizeBytes32Hex(String(p?.marketId || p?.id || ''))
-											const meta = posMarketKey ? positionMarketMetaByKey[posMarketKey] : undefined
+											const meta = posMarketKey ? positionMetaByMarketBytes32.get(posMarketKey) : undefined
 											const displaySymbol = String(meta?.symbol || rawSymbol).toUpperCase()
 											const displayName = String(meta?.name || displaySymbol)
 											const routeId = String(meta?.market_identifier || displaySymbol)
@@ -702,7 +565,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								<div className="flex items-center justify-between mb-2">
 									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Orders</h4>
 									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-										{sitewideOrdersHasLoadedOnce ? sitewideOpenOrders.length : Number(portfolioData?.activeOrdersCount || 0)}
+										{Array.isArray(sidebarOrders.orders) ? sidebarOrders.orders.length : 0}
 									</div>
 								</div>
 
