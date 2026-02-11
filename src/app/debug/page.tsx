@@ -225,6 +225,9 @@ export default function DebugSearchPage() {
             <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/deployment-overlay">
               Deployment Overlay
             </a>
+            <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/market-similarity">
+              Market Similarity
+            </a>
             <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/create-market-v2">
               Create Market V2 UI
             </a>

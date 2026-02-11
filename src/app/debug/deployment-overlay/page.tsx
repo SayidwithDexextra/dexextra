@@ -134,6 +134,7 @@ export default function DebugDeploymentOverlayPage() {
         <div className="text-[12px] font-medium text-white">Debug: Deployment Overlay</div>
         <div className="mt-1 text-[11px] text-[#9CA3AF]">
           Use this page to test the “Continue in background” dock + completion notice without deploying.
+          The button only appears after simulating a signed transaction (or after step 1 in real flows).
         </div>
 
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -196,6 +197,12 @@ export default function DebugDeploymentOverlayPage() {
             className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-[12px] text-white hover:bg-[#1A1A1A]"
           >
             Step +1
+          </button>
+          <button
+            onClick={() => overlay.update({ transactionSigned: true })}
+            className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-[12px] text-white hover:bg-[#1A1A1A]"
+          >
+            Simulate tx signed (show button)
           </button>
           <button
             onClick={() => overlay.minimize()}
@@ -272,8 +279,9 @@ export default function DebugDeploymentOverlayPage() {
         </div>
 
         <div className="mt-4 rounded border border-[#222222] bg-[#0B0B0B] p-3 text-[11px] text-[#9CA3AF]">
-          Tip: Click <span className="text-white">Open overlay</span> → then use the overlay’s own{' '}
-          <span className="text-white">Continue in background</span> button to verify the dock flow.
+          Tip: Click <span className="text-white">Open overlay</span> → click{' '}
+          <span className="text-white">Simulate tx signed</span> to show the Continue in background button → then use
+          it to verify the dock flow.
         </div>
       </div>
     </div>

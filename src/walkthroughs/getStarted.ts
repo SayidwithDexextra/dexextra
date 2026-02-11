@@ -123,6 +123,26 @@ const baseSteps: WalkthroughStep[] = [
     radiusPx: 12,
   },
   {
+    id: 'home-active-markets',
+    route: '/',
+    selector: '[data-walkthrough="home-active-markets"]',
+    title: 'Active markets',
+    description:
+      'These cards are the live “Active Markets” feed. You can scan what’s trending, jump into a market, and star markets to add them to your watchlist.',
+    placement: 'top',
+    paddingPx: 12,
+    radiusPx: 16,
+    allowDocumentScroll: true,
+    enterEvents: [
+      { name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } },
+      {
+        name: 'walkthrough:scrollToSelector',
+        detail: { selector: '[data-walkthrough="home-active-markets"]', behavior: 'smooth', block: 'center' },
+      },
+    ],
+    nextLabel: 'Create a market',
+  },
+  {
     id: 'create-market',
     route: '/',
     selector: '[data-walkthrough="new-market"]',
@@ -142,26 +162,6 @@ const baseSteps: WalkthroughStep[] = [
     placement: 'top',
     paddingPx: 12,
     radiusPx: 16,
-    nextLabel: 'Back to markets',
-  },
-  {
-    id: 'home-active-markets',
-    route: '/',
-    selector: '[data-walkthrough="home-active-markets"]',
-    title: 'Active markets',
-    description:
-      'These cards are the live “Active Markets” feed. You can scan what’s trending, jump into a market, and star markets to add them to your watchlist.',
-    placement: 'top',
-    paddingPx: 12,
-    radiusPx: 16,
-    allowDocumentScroll: true,
-    enterEvents: [
-      { name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } },
-      {
-        name: 'walkthrough:scrollToSelector',
-        detail: { selector: '[data-walkthrough="home-active-markets"]', behavior: 'smooth', block: 'center' },
-      },
-    ],
     nextLabel: 'Finish',
   },
 ];

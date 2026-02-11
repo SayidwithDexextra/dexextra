@@ -16,6 +16,8 @@ type DeploymentOverlayState = {
   messages: string[];
   activeIndex: number;
   percentComplete: number;
+  /** Only show "Continue in background" after user has signed the market creation transaction. */
+  transactionSigned: boolean;
   meta: {
     pipelineId: string | null;
     marketSymbol: string | null;
@@ -30,7 +32,7 @@ type OpenOptions = {
   meta?: Partial<DeploymentOverlayState['meta']>;
 };
 
-type UpdateOptions = Partial<Pick<DeploymentOverlayState, 'activeIndex' | 'percentComplete' | 'title' | 'subtitle' | 'messages'>>;
+type UpdateOptions = Partial<Pick<DeploymentOverlayState, 'activeIndex' | 'percentComplete' | 'title' | 'subtitle' | 'messages' | 'transactionSigned'>>;
 
 type DeploymentOverlayContextValue = {
   state: DeploymentOverlayState;
@@ -214,6 +216,7 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
     messages: [],
     activeIndex: 0,
     percentComplete: 0,
+    transactionSigned: false,
     meta: { pipelineId: null, marketSymbol: null },
   });
   const [completedSymbol, setCompletedSymbol] = useState<string | null>(null);
@@ -234,6 +237,7 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
       messages: opts.messages,
       activeIndex: 0,
       percentComplete: 0,
+      transactionSigned: false,
       meta: {
         pipelineId: (opts.meta?.pipelineId ? String(opts.meta.pipelineId) : null),
         marketSymbol: (opts.meta?.marketSymbol ? String(opts.meta.marketSymbol).toUpperCase() : null),
@@ -258,6 +262,7 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
       messages: Array.isArray(opts.messages) ? opts.messages : prev.messages,
       title: typeof opts.title === 'string' ? opts.title : prev.title,
       subtitle: typeof opts.subtitle === 'string' ? opts.subtitle : prev.subtitle,
+      transactionSigned: typeof opts.transactionSigned === 'boolean' ? opts.transactionSigned : prev.transactionSigned,
     }));
   }, []);
 
@@ -307,18 +312,19 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
     } catch {}
     setOverlay(prev => ({ ...prev, isFadingOut: true }));
     window.setTimeout(() => {
-      setOverlay(prev => ({
-        ...prev,
-        isFadingOut: false,
-        isVisible: false,
-        splashVisible: false,
-        displayMode: 'overlay',
-        messages: [],
-        activeIndex: 0,
-        percentComplete: 0,
-        meta: { pipelineId: null, marketSymbol: null },
-      }));
-    }, delayMs);
+    setOverlay(prev => ({
+      ...prev,
+      isFadingOut: false,
+      isVisible: false,
+      splashVisible: false,
+      displayMode: 'overlay',
+      messages: [],
+      activeIndex: 0,
+      percentComplete: 0,
+      transactionSigned: false,
+      meta: { pipelineId: null, marketSymbol: null },
+    }));
+  }, delayMs);
   }, [overlay.meta.marketSymbol, triggerCompletedNotice, clearPendingPipeline]);
 
   const close = useCallback(() => {
@@ -335,6 +341,7 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
       messages: [],
       activeIndex: 0,
       percentComplete: 0,
+      transactionSigned: false,
       meta: { pipelineId: null, marketSymbol: null },
     }));
   }, []);
@@ -381,7 +388,7 @@ export function DeploymentOverlayProvider({ children }: { children: React.ReactN
         percentComplete={overlay.percentComplete}
         title={overlay.title}
         subtitle={overlay.subtitle}
-        onMinimize={minimize}
+        onMinimize={overlay.transactionSigned ? minimize : undefined}
       />
     </DeploymentOverlayContext.Provider>
   );

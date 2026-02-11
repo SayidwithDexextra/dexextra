@@ -537,27 +537,9 @@ export function useCoreVault(walletAddress?: string) {
     };
   }, [isInitialized, contracts, userAddress, scheduleRefresh]);
 
-  // Subscribe to new blocks to opportunistically refresh snapshot-based state
-  useEffect(() => {
-    if (!isInitialized || !contracts || !userAddress) return;
-    const wsProvider: any = getWsProvider();
-    if (!wsProvider || typeof wsProvider.on !== 'function') return;
-    let lastBlockTs = 0;
-    const onBlock = (_bn: number) => {
-      const now = Date.now();
-      if (now - lastBlockTs < 1500) return;
-      lastBlockTs = now;
-      // Reset backoff since we have new chain data
-      backoffRef.current = 15000;
-      scheduleRefresh();
-    };
-    try {
-      wsProvider.on('block', onBlock);
-    } catch {}
-    return () => {
-      try { wsProvider?.off?.('block', onBlock); } catch {}
-    };
-  }, [isInitialized, contracts, userAddress, scheduleRefresh]);
+  // Block subscription removed: it was triggering fetchBalances on every new block (~1-2s on fast chains).
+  // Each useCoreVault instance registered its own handler, causing N redundant fetches per block.
+  // Event-driven updates (CoreVault + USDC Transfer) already refresh when vault state changes.
 
   // Replace fixed polling with adaptive, visibility-aware timer
   useEffect(() => {

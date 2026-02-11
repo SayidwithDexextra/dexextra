@@ -868,13 +868,6 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                     {tabItems[activeTab].value}
                   </span>
                 )}
-                {vaultData?.isLoading && <span className="text-blue-400 animate-spin">⟳</span>}
-                {!vaultData?.isLoading && isConnected && (
-                  <span className="text-green-400" title="Real-time vault data">●</span>
-                )}
-                {vaultData?.error && (
-                  <span className="text-red-400" title="Error fetching vault data">⚠</span>
-                )}
               </div>
             </div>
             

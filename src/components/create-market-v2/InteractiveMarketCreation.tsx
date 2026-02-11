@@ -1773,6 +1773,9 @@ export function InteractiveMarketCreation() {
               if (typeof s === 'string') {
                 const idx = stepIndexMap[s];
                 if (typeof idx === 'number') updateOverlayIndex(idx);
+                if (s === 'factory_confirm_meta_mined' || s === 'factory_confirm_mined') {
+                  deploymentOverlay.update({ transactionSigned: true });
+                }
                 if (s === 'save_market') {
                   const st = String(evt?.status || '').toLowerCase();
                   if (st === 'success') {
@@ -1830,9 +1833,16 @@ export function InteractiveMarketCreation() {
         iconImageUrl: iconUrl || null,
         aiSourceLocator: sourceLocator,
         pipelineId,
-        onProgress: ({ step }) => {
+        onProgress: ({ step, status }) => {
           const idx = stepIndexMap[step];
           if (typeof idx === 'number') updateOverlayIndex(idx);
+          if (
+            (step === 'meta_signature' && status === 'success') ||
+            (step === 'send_tx' && status === 'sent') ||
+            (step === 'confirm' && status === 'mined')
+          ) {
+            deploymentOverlay.update({ transactionSigned: true });
+          }
         },
       });
 

@@ -305,6 +305,7 @@ export const CreateMarketPage = () => {
                 // Mirror server steps into panel status when possible
                 if (s === 'factory_confirm_meta_mined' || s === 'factory_confirm_mined' || s === 'confirm') {
                   markDone('confirm');
+                  deploymentOverlay.update({ transactionSigned: true });
                 }
                 if (s === 'grant_roles' || s === 'grant_ORDERBOOK_ROLE_mined' || s === 'grant_SETTLEMENT_ROLE_mined') {
                   markDone('roles');
@@ -389,9 +390,17 @@ export const CreateMarketPage = () => {
         dataSource,
         tags,
         pipelineId,
-        onProgress: ({ step, data }) => {
+        onProgress: ({ step, status, data }) => {
           const idx = stepIndexMap[step];
           if (typeof idx === 'number') updateOverlayIndex(idx);
+          // Show "Continue in background" only after user has signed the market creation transaction
+          if (
+            (step === 'meta_signature' && status === 'success') ||
+            (step === 'send_tx' && status === 'sent') ||
+            (step === 'confirm' && status === 'mined')
+          ) {
+            deploymentOverlay.update({ transactionSigned: true });
+          }
           // Mirror client-side attach-session-registry steps to console for visibility
           if (step === 'attach_session_registry' || step === 'attach_session_registry_sent' || step === 'attach_session_registry_mined' || step === 'attach_session_registry_client_probe') {
             const banner = 'background: #0b1220; color: #e5e7eb; padding: 2px 6px; border-radius: 4px; font-weight: 700;';
