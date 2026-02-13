@@ -3,7 +3,8 @@ import { Wallet, TypedDataDomain } from 'ethers';
 
 export type SessionPermit = {
   trader: string;
-  relayer: string;
+  /** Merkle root for the allowed relayer set (SessionPermitV2) */
+  relayerSetRoot: `0x${string}`;
   expiry: bigint;
   maxNotionalPerTrade: bigint;
   maxNotionalPerSession: bigint;
@@ -29,6 +30,19 @@ export function defaultMethodsBitmap(): `0x${string}` {
   return (`0x${v.toString(16).padStart(64, '0')}`) as `0x${string}`;
 }
 
+export async function fetchRelayerSetRoot(appUrl: string): Promise<`0x${string}`> {
+  const url = new URL('/api/gasless/session/relayer-set', appUrl);
+  const res = await fetch(url.toString(), { method: 'GET' });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`GET /api/gasless/session/relayer-set failed: ${res.status} ${text}`);
+  const json = JSON.parse(text);
+  const root = String(json?.relayerSetRoot || '').trim();
+  if (!/^0x[a-fA-F0-9]{64}$/.test(root)) {
+    throw new Error(`Invalid relayerSetRoot returned by server: ${root || '(empty)'}`);
+  }
+  return root as `0x${string}`;
+}
+
 export async function fetchSessionNonce(appUrl: string, trader: string): Promise<bigint> {
   const url = new URL('/api/gasless/session/nonce', appUrl);
   url.searchParams.set('trader', trader);
@@ -41,7 +55,7 @@ export async function fetchSessionNonce(appUrl: string, trader: string): Promise
 
 export function buildSessionPermit(params: {
   trader: string;
-  relayer?: string;
+  relayerSetRoot: `0x${string}`;
   expirySec: number;
   nonce: bigint;
   allowedMarkets: `0x${string}`[];
@@ -49,11 +63,10 @@ export function buildSessionPermit(params: {
   maxNotionalPerSession?: bigint;
   methodsBitmap?: `0x${string}`;
 }): SessionPermit {
-  const relayer = (params.relayer || '0x0000000000000000000000000000000000000000') as `0x${string}`;
   const sessionSalt = randomBytes32();
   return {
     trader: params.trader,
-    relayer,
+    relayerSetRoot: params.relayerSetRoot,
     expiry: BigInt(params.expirySec),
     maxNotionalPerTrade: params.maxNotionalPerTrade ?? 0n,
     maxNotionalPerSession: params.maxNotionalPerSession ?? 0n,
@@ -80,7 +93,7 @@ export async function signSessionPermit(params: {
   const types = {
     SessionPermit: [
       { name: 'trader', type: 'address' },
-      { name: 'relayer', type: 'address' },
+      { name: 'relayerSetRoot', type: 'bytes32' },
       { name: 'expiry', type: 'uint256' },
       { name: 'maxNotionalPerTrade', type: 'uint256' },
       { name: 'maxNotionalPerSession', type: 'uint256' },
@@ -92,7 +105,7 @@ export async function signSessionPermit(params: {
   } as const;
   const message = {
     trader: params.permit.trader,
-    relayer: params.permit.relayer,
+    relayerSetRoot: params.permit.relayerSetRoot,
     expiry: params.permit.expiry,
     maxNotionalPerTrade: params.permit.maxNotionalPerTrade,
     maxNotionalPerSession: params.permit.maxNotionalPerSession,
@@ -115,7 +128,7 @@ export async function createGaslessSessionViaApi(params: {
   // Convert BigInt values to strings for JSON transport to API route
   const permitForApi = {
     trader: params.permit.trader,
-    relayer: params.permit.relayer,
+    relayerSetRoot: params.permit.relayerSetRoot,
     expiry: params.permit.expiry.toString(),
     maxNotionalPerTrade: params.permit.maxNotionalPerTrade.toString(),
     maxNotionalPerSession: params.permit.maxNotionalPerSession.toString(),

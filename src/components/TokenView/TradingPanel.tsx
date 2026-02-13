@@ -1148,9 +1148,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             return;
           }
           const txHash = r.txHash || null;
+          const mined = Boolean((r as any)?.mined);
+          const pending = Boolean((r as any)?.pending);
           showSuccess(
-            `Market ${selectedOption} order placed successfully!`,
-            'Order Placed'
+            mined
+              ? `Market ${selectedOption} order placed successfully!`
+              : `Market ${selectedOption} order submitted${pending ? ' (pending confirmation)' : ''}.`,
+            mined ? 'Order Placed' : 'Order Submitted'
           );
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Market order relayed', { txHash });
           console.log('[UpGas][UI] market submit: success', { txHash });
@@ -1505,9 +1509,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             return;
           }
           const txHash = r.txHash || null;
+          const mined = Boolean((r as any)?.mined);
+          const pending = Boolean((r as any)?.pending);
           showSuccess(
-            `Limit ${selectedOption} order placed successfully!`,
-            'Order Placed'
+            mined
+              ? `Limit ${selectedOption} order placed successfully!`
+              : `Limit ${selectedOption} order submitted${pending ? ' (pending confirmation)' : ''}.`,
+            mined ? 'Order Placed' : 'Order Submitted'
           );
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Limit order relayed', { txHash });
           console.log('[UpGas][UI] limit submit: success', { txHash });

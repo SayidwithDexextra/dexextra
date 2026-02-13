@@ -132,6 +132,9 @@ function normalizeRelayErrorBody(body: string): string {
       ? String(parsed.message)
       : 'Order does not exist. It may have been filled or already cancelled.';
   }
+  if (parsed?.error === 'orderbook_not_deployed') {
+    return 'This market contract is not deployed on the connected network. Refresh the page and retry (or switch to the correct chain).';
+  }
   const lower = (text || '').toLowerCase();
   if (lower.includes('session: bad relayer') || lower.includes('missing proof') || lower.includes('session: unknown')) {
     return 'Gasless session is out of date. Please re-enable gasless trading and retry.';

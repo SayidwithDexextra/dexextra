@@ -350,19 +350,60 @@ export async function POST(req: Request) {
       console.log('[GASLESS][API][trade] provider network', { chainId: String(net.chainId) });
       console.log('[UpGas][API][trade] provider network', { chainId: String(net.chainId) });
     } catch {}
+
+    // Hard guard: if the OrderBook address has no code on this RPC/chain,
+    // sending a tx will either revert (missing selector) or silently "succeed" against an EOA.
+    // That produces the exact UX bug: UI reports success but nothing is placed on-chain.
+    try {
+      const code = await provider.getCode(orderBook);
+      if (!code || code === '0x') {
+        return NextResponse.json(
+          { error: 'orderbook_not_deployed', orderBook },
+          { status: 400 }
+        );
+      }
+    } catch (codeErr: any) {
+      console.warn('[UpGas][API][trade] orderBook code check failed', {
+        orderBook,
+        error: codeErr?.shortMessage || codeErr?.message || String(codeErr),
+      });
+      // continue; downstream call will still fail if misconfigured
+    }
     // Session V2: session is authorized to a relayer *set* (Merkle root) in the registry.
     // Any relayer in our configured keyset can submit, but it must pass a valid Merkle proof.
 
     const tradeGasLimit = (() => {
+      // Margin market orders can be gas-heavy (matching loops + vault accounting + reentrancy sentry).
+      // If this is too low, the tx can revert *without a revert reason* due to out-of-gas in an internal call.
+      // HyperEVM currently has a 3,000,000 block gas limit; keep a margin below that.
+      const DEFAULT_TRADE_GAS_LIMIT = 2_800_000n;
       const raw = String(process.env.GASLESS_TRADE_GAS_LIMIT || '').trim()
-      if (!raw) return 1_800_000n
+      if (!raw) return DEFAULT_TRADE_GAS_LIMIT
       try {
         const n = BigInt(raw)
-        return n > 0n ? n : 1_800_000n
+        return n > 0n ? n : DEFAULT_TRADE_GAS_LIMIT
       } catch {
-        return 1_800_000n
+        return DEFAULT_TRADE_GAS_LIMIT
       }
     })()
+
+    // Cap to block gas limit (RPC will reject eth_sendRawTransaction if gasLimit > blockGasLimit).
+    // Also keep a safety buffer so we don't request nearly the entire block.
+    let effectiveTradeGasLimit = tradeGasLimit
+    try {
+      const b = await provider.getBlock('latest')
+      const blockGasLimit = BigInt((b as any)?.gasLimit ?? 0)
+      const safety = 120_000n
+      const cap = blockGasLimit > safety ? (blockGasLimit - safety) : blockGasLimit
+      if (cap > 0n && effectiveTradeGasLimit > cap) {
+        console.warn('[UpGas][API][trade] capping trade gasLimit to block gas limit', {
+          requested: effectiveTradeGasLimit.toString(),
+          cap: cap.toString(),
+          blockGasLimit: blockGasLimit.toString(),
+        })
+        effectiveTradeGasLimit = cap
+      }
+    } catch {}
 
     // Probe selector presence to avoid opaque "Function does not exist"
     try {
@@ -838,7 +879,7 @@ export async function POST(req: Request) {
                 method: 'sessionPlaceLimit',
                 args: [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof],
                 label: `trade:${method}`,
-                overrides: { gasLimit: tradeGasLimit },
+                overrides: { gasLimit: effectiveTradeGasLimit },
               });
             case 'sessionPlaceMarginLimit':
               return await sendWithNonceRetry({
@@ -848,7 +889,7 @@ export async function POST(req: Request) {
                 method: 'sessionPlaceMarginLimit',
                 args: [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof],
                 label: `trade:${method}`,
-                overrides: { gasLimit: tradeGasLimit },
+                overrides: { gasLimit: effectiveTradeGasLimit },
               });
             case 'sessionPlaceMarket':
               return await sendWithNonceRetry({
@@ -858,7 +899,7 @@ export async function POST(req: Request) {
                 method: 'sessionPlaceMarket',
                 args: [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof],
                 label: `trade:${method}`,
-                overrides: { gasLimit: tradeGasLimit },
+                overrides: { gasLimit: effectiveTradeGasLimit },
               });
             case 'sessionPlaceMarginMarket':
               return await sendWithNonceRetry({
@@ -868,7 +909,7 @@ export async function POST(req: Request) {
                 method: 'sessionPlaceMarginMarket',
                 args: [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof],
                 label: `trade:${method}`,
-                overrides: { gasLimit: tradeGasLimit },
+                overrides: { gasLimit: effectiveTradeGasLimit },
               });
             case 'sessionModifyOrder':
               return await sendWithNonceRetry({
@@ -878,7 +919,7 @@ export async function POST(req: Request) {
                 method: 'sessionModifyOrder',
                 args: [sessionId, params?.trader, params?.orderId, params?.price, params?.amount, relayerProof],
                 label: `trade:${method}`,
-                overrides: { gasLimit: tradeGasLimit },
+                overrides: { gasLimit: effectiveTradeGasLimit },
               });
             case 'sessionCancelOrder':
               return await sendWithNonceRetry({
@@ -888,7 +929,7 @@ export async function POST(req: Request) {
                 method: 'sessionCancelOrder',
                 args: [sessionId, params?.trader, params?.orderId, relayerProof],
                 label: `trade:${method}`,
-                overrides: { gasLimit: tradeGasLimit },
+                overrides: { gasLimit: effectiveTradeGasLimit },
               });
             default:
               throw new Error('method not allowed');
@@ -898,17 +939,17 @@ export async function POST(req: Request) {
         console.log('[UpGas][API][trade] legacy meta path selected', { method, hasMessage: !!message, hasSignature: typeof signature === 'string' });
         switch (method) {
           case 'metaPlaceLimit':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: tradeGasLimit } });
+            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
           case 'metaPlaceMarginLimit':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: tradeGasLimit } });
+            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
           case 'metaPlaceMarket':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: tradeGasLimit } });
+            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
           case 'metaPlaceMarginMarket':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: tradeGasLimit } });
+            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
           case 'metaModifyOrder':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaModifyOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: tradeGasLimit } });
+            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaModifyOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
           case 'metaCancelOrder':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaCancelOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: tradeGasLimit } });
+            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaCancelOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
           default:
             throw new Error('method not allowed');
         }
@@ -934,7 +975,7 @@ export async function POST(req: Request) {
     }
     // Configurable wait policy to reduce perceived latency
     const isCancelMethod = method === 'sessionCancelOrder' || method === 'metaCancelOrder';
-    let waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
+    const waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
     if (Number.isFinite(waitConfirms) && waitConfirms > 0) {
       const rc = await provider.waitForTransaction(tx.hash, waitConfirms);
       const status = (rc as any)?.status;
@@ -957,6 +998,10 @@ export async function POST(req: Request) {
     // Cancels: no default poll so we return right after broadcast (client removes order on txHash for slick UX).
     if (isCancelMethod && !(Number.isFinite(pollMs) && pollMs > 0)) {
       pollMs = 0;
+    }
+    // Placements: default to a short poll window (unless explicitly disabled) so we can surface immediate reverts.
+    if (!isCancelMethod && !pollMsRaw) {
+      pollMs = 7000;
     }
     if (Number.isFinite(pollMs) && pollMs > 0) {
       const deadline = Date.now() + pollMs;

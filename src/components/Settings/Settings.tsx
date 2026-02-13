@@ -19,6 +19,7 @@ export default function Settings({ className }: SettingsProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { walletData, refreshProfile } = useWallet()
+  const [walletCopied, setWalletCopied] = useState(false)
   const [uiStatusModal, setUiStatusModal] = useState<{
     isOpen: boolean
     tone: 'warning' | 'success' | 'error' | 'info'
@@ -206,6 +207,17 @@ export default function Settings({ className }: SettingsProps) {
   )
   const profileInitial = (profileLabel.trim().slice(0, 1) || 'D').toUpperCase()
   const shortAddress = walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : 'Connect wallet'
+
+  const copyWalletAddress = async () => {
+    if (!walletAddress) return
+    try {
+      await navigator.clipboard.writeText(walletAddress)
+      setWalletCopied(true)
+      setTimeout(() => setWalletCopied(false), 1200)
+    } catch {
+      // ignore
+    }
+  }
 
   type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'preferences'
   const tabs = useMemo(
@@ -1037,8 +1049,47 @@ export default function Settings({ className }: SettingsProps) {
               <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide truncate">Settings</h4>
               <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Profile</div>
             </div>
-            <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded font-mono">
-              {shortAddress}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={copyWalletAddress}
+                disabled={!walletAddress}
+                aria-label={walletCopied ? 'Wallet address copied' : 'Copy wallet address'}
+                title="Copy wallet address"
+                className={[
+                  'w-8 h-8 rounded-md border flex items-center justify-center transition-all duration-200',
+                  !walletAddress
+                    ? 'border-[#222222] text-[#606060] opacity-60 cursor-not-allowed'
+                    : walletCopied
+                      ? 'border-green-500/30 text-green-400 bg-green-500/5'
+                      : 'border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white',
+                ].join(' ')}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M8 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <rect
+                    x="4"
+                    y="8"
+                    width="12"
+                    height="12"
+                    rx="2"
+                    ry="2"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded font-mono">
+                {shortAddress}
+              </div>
             </div>
           </div>
 

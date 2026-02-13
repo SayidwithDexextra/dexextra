@@ -289,6 +289,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         }
         
         // Prefer DB-sourced OrderBook address when available, fallback to static mapping
+        // NOTE: This value can become stale if the DB is not updated after redeploys.
         const orderBookAddressOverride = (marketRow as any)?.market_address || match?.orderBook;
         if (!orderBookAddressOverride) {
           console.warn(`[ALTKN][useOrderBook] No OrderBook address for ${marketId} on chain ${currentChain}`);
@@ -299,13 +300,8 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           }));
           return;
         }
-        // Track address for centralized event hub
-        try {
-          const addr = String(orderBookAddressOverride);
-          if (addr.startsWith('0x') && addr.length === 42) {
-            setObAddress(addr as Address);
-          }
-        } catch {}
+        // We'll potentially override this with CoreVault's on-chain mapping below.
+        let resolvedOrderBookAddress = String(orderBookAddressOverride);
         // Choose runner: prefer signer; else derive signer from BrowserProvider; else fail
         let runner: ethers.Signer | ethers.Provider | undefined = undefined;
         if (walletSigner) {
@@ -349,12 +345,73 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           (marketRow as any)?.market_identifier_bytes32 ||
           (marketRow as any)?.market_id_bytes32 ||
           (match?.marketId as string | undefined);
-        const contractInstances = await initializeContracts({ 
+        let contractInstances = await initializeContracts({ 
           providerOrSigner: runner, 
-          orderBookAddressOverride,
+          orderBookAddressOverride: resolvedOrderBookAddress,
           marketIdBytes32: marketBytes32
         });
-        console.log('[ALTKN][useOrderBook] Initialized contracts for marketId', marketId, 'address', orderBookAddressOverride);
+
+        // If we have a bytes32 market id, trust the on-chain CoreVault mapping over DB/static config.
+        // This prevents gasless + UI from pointing at stale OrderBook addresses after redeploys.
+        // (If CoreVault mapping isn't available, we keep the DB/static value.)
+        marketBytes32 =
+          (marketRow as any)?.market_identifier_bytes32 ||
+          (marketRow as any)?.market_id_bytes32 ||
+          (match?.marketId as string | undefined);
+        if (marketBytes32 && contractInstances.vault?.marketToOrderBook) {
+          try {
+            const resolved = await contractInstances.vault.marketToOrderBook(marketBytes32);
+            const resolvedStr = String(resolved || '');
+            if (resolvedStr && resolvedStr.startsWith('0x') && resolvedStr.length === 42) {
+              const differs =
+                resolvedStr.toLowerCase() !== String(resolvedOrderBookAddress).toLowerCase();
+              if (differs) {
+                // Confirm the resolved address has code on this chain before switching.
+                let hasCode = true;
+                try {
+                  const runnerAny: any = (contractInstances.vault as any)?.runner;
+                  const provider: any = runnerAny?.provider ?? runnerAny;
+                  const code = provider && typeof provider.getCode === 'function'
+                    ? await provider.getCode(resolvedStr)
+                    : null;
+                  if (code === '0x') hasCode = false;
+                } catch {
+                  // If we can't check code, still prefer the vault mapping (best-effort).
+                }
+
+                if (hasCode) {
+                  console.warn(`[ALTKN][useOrderBook] CoreVault mapping mismatch for ${marketId}; switching to on-chain mapping:`,
+                    `\nConfigured: ${resolvedOrderBookAddress}`,
+                    `\nResolved:   ${resolvedStr}`
+                  );
+                  resolvedOrderBookAddress = resolvedStr;
+                  contractInstances = await initializeContracts({
+                    providerOrSigner: runner,
+                    orderBookAddressOverride: resolvedOrderBookAddress,
+                    marketIdBytes32: marketBytes32
+                  });
+                } else {
+                  console.warn(`[ALTKN][useOrderBook] CoreVault resolved OrderBook has no code; keeping configured address`, {
+                    configured: resolvedOrderBookAddress,
+                    resolved: resolvedStr,
+                  });
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('[ALTKN][useOrderBook] CoreVault mapping check failed:', e);
+          }
+        }
+
+        // Track (possibly corrected) address for centralized event hub
+        try {
+          const addr = String(resolvedOrderBookAddress);
+          if (addr.startsWith('0x') && addr.length === 42) {
+            setObAddress(addr as Address);
+          }
+        } catch {}
+
+        console.log('[ALTKN][useOrderBook] Initialized contracts for marketId', marketId, 'address', resolvedOrderBookAddress);
         
         // Ensure we have the trade execution facet
         if (!contractInstances.obTradeExecution) {
@@ -362,25 +419,6 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         }
         
         setContracts(contractInstances);
-
-      // Use market's bytes32 ID for CoreVault mapping
-      marketBytes32 =
-        (marketRow as any)?.market_identifier_bytes32 ||
-        (marketRow as any)?.market_id_bytes32 ||
-        (match?.marketId as string | undefined);
-      if (marketBytes32 && contractInstances.vault?.marketToOrderBook) {
-        try {
-          const resolved = await contractInstances.vault.marketToOrderBook(marketBytes32);
-          if (resolved && resolved.toLowerCase() !== orderBookAddressOverride.toLowerCase()) {
-            console.warn(`[ALTKN][useOrderBook] CoreVault mapping mismatch for ${marketId}:`,
-              `\nExpected: ${orderBookAddressOverride}`,
-              `\nResolved: ${resolved}`
-            );
-          }
-        } catch (e) {
-          console.warn('[ALTKN][useOrderBook] CoreVault mapping check failed:', e);
-        }
-      }
       } catch (error: any) {
         console.error('[ALTKN] Failed to initialize contracts:', error);
         setState(prev => ({ ...prev, error: 'Failed to initialize contracts', isLoading: false }));

@@ -504,6 +504,14 @@ contract FuturesMarketFactory is EIP712 {
         address bm = bondManager;
         if (bm == address(0)) revert InvalidInput();
         IMarketBondManager(bm).onMarketDeactivate(marketId, orderBook, msg.sender);
+
+        // Cease all future trading by settling the market in CoreVault.
+        // OrderBook placement routes enforce: require(!vault.marketSettled(marketId), ...)
+        if (!vault.marketSettled(marketId)) {
+            uint256 finalPrice = vault.getMarkPrice(marketId);
+            if (finalPrice == 0) revert InvalidOraclePrice();
+            vault.settleMarket(marketId, finalPrice);
+        }
         
         // Deregister from vault
         vault.deregisterOrderBook(orderBook);

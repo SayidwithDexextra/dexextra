@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "chainId": 999,
+  "orderBook": "0xFbe79024aCe21df3810473B41b9E156951dF3eF4",
+  "market": {
+    "symbol": "FRONT-MONTH",
+    "market_identifier": "FRONT-MONTH",
+    "market_address": "0xFbe79024aCe21df3810473B41b9E156951dF3eF4",
+    "market_id_bytes32": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+    "chain_id": 999,
+    "tick_size": 0.01
+  },
+  "run": {
+    "runId": "d6ffc832-4660-46e1-8365-ed7b4b409cac",
+    "startedAt": "2026-02-13T05:05:51.818Z",
+    "updatedAt": "2026-02-13T05:17:11.517Z"
+  },
+  "config": {
+    "makerRatio": 0,
+    "maxOpenOrdersPerMaker": 0,
+    "minDelayMs": 250,
+    "maxDelayMs": 1200,
+    "sizeMin": 0.05,
+    "sizeMax": 0.25,
+    "mode": "MEAN"
+  },
+  "wallets": {
+    "0x724cbe7b515dab1ce4b0e262990d2e3c47c6ca36": {
+      "nickname": "User001",
+      "role": "MAKER",
+      "sessionId": "0x44a1263decab3af1368b17b4531689579bc5103fdc30cc6d95bfe578002e3edc",
+      "sessionExpiry": 1771045491,
+      "lastActionAt": 1770959642946
+    },
+    "0x53aca02402062a61c871d1b5b4ded3e4232826e5": {
+      "nickname": "User002",
+      "role": "MAKER",
+      "sessionId": "0x645e33118b25744fad0e4e27458d5f9a9c5bd32fdbb0762dc01ac8e593740290",
+      "sessionExpiry": 1771045491,
+      "lastActionAt": 1770959680094
+    },
+    "0x89bd0af6fe5292ed96fc026770b24f4b4f6de7c6": {
+      "nickname": "User003",
+      "role": "MAKER",
+      "sessionId": "0x9497d90bc4d8f55bee54ef4f0b07b458a194d858f30028696a9551c542556eec",
+      "sessionExpiry": 1771045491,
+      "lastActionAt": 1770959721727
+    },
+    "0xb5bac03724f123dd70bd6804fc1d3a5a8f611b25": {
+      "nickname": "User004",
+      "role": "MAKER",
+      "sessionId": "0x6bc8f7ce4f934f4ac4601ed10bd0fbf610755e9be6d79c048508a790e2df26e1",
+      "sessionExpiry": 1771045491,
+      "lastActionAt": 1770959763221
+    },
+    "0xdf4b23491a85d777dd0be799cbed09368c42f087": {
+      "nickname": "User005",
+      "role": "MAKER",
+      "sessionId": "0x4f8b4e0d1f02d95f6d8a6ecb9f33b1d56d26494d469a5304b5051c90ea3682fa",
+      "sessionExpiry": 1771045491,
+      "lastActionAt": 1770959802330
+    },
+    "0xa0f2d53186801ba175f6911d0cae6c99abbe5b19": {
+      "nickname": "User006",
+      "role": "MAKER",
+      "sessionId": "0x08bfddda5b7f22f18247c04a00baaf888a3e935b92045d4067896214fa72da6b",
+      "sessionExpiry": 1771045491,
+      "lastActionAt": 1770959831027
+    },
+    "0xc7d77fde8ea75bc8e3fdf634756ee252095422cd": {
+      "nickname": "User007",
+      "role": "MAKER",
+      "sessionId": "0xa980b4b1610b5ddcc54ee38b3b2640c3b502dc3acfbbf1939e6de875626d59cb",
+      "sessionExpiry": 1771045491,
+      "lastActionAt": 1770959131092
+    },
+    "0xc8d3da3a29762c2e6503945393a0fd1b70023a5a": {
+      "nickname": "User008",
+      "role": "MAKER",
+      "sessionId": "0x3469bfc2dfb3d08a100c615ddb8d616ad3a1c316586ad64fa3f71dbf97b65fd3",
+      "sessionExpiry": 1771045551,
+      "lastActionAt": 1770959157836
+    },
+    "0xdb55b652b8cdfabc08623c0995e6d5f572555d9a": {
+      "nickname": "User009",
+      "role": "MAKER",
+      "sessionId": "0x507c15e1b91997459c3dbf8b82675c80d6ec1f66f3de4456b7930cbc2146d740",
+      "sessionExpiry": 1771045551,
+      "lastActionAt": 1770959163477
+    },
+    "0x0980f424b427d9d1584093c7b42c86f47113d3ac": {
+      "nickname": "User010",
+      "role": "MAKER",
+      "sessionId": "0x86637011b63c0ab56d8ba1e361d5c38908222280f72423e667c4d670a6f70c36",
+      "sessionExpiry": 1771045551,
+      "lastActionAt": 1770959169059
+    }
+  }
+}

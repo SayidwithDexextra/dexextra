@@ -313,8 +313,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     if (searchValue.trim()) {
       saveRecentSearch(searchValue)
     }
-    // You could navigate to user profile page here
-     console.log('Selected user:', user)
+    // Navigate to user profile page by wallet address
+    window.location.href = `/user/${encodeURIComponent(user.wallet_address)}`
     onClose()
   }, [onClose, searchValue, saveRecentSearch])
 

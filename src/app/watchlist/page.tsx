@@ -727,7 +727,8 @@ export default function WatchlistPage() {
                           return (
                             <tr
                               key={u.id}
-                              className="border-b border-[#1A1A1A] bg-[#0F0F0F] hover:bg-[#1A1A1A] transition-all duration-200"
+                              className="group border-b border-[#1A1A1A] bg-[#0F0F0F] hover:bg-[#1A1A1A] transition-all duration-200 cursor-pointer"
+                              onClick={() => router.push(`/user/${encodeURIComponent(u.wallet_address)}`)}
                             >
                               <td className="px-2.5 py-2.5">
                                 <div className="flex items-center gap-2 min-w-0">
@@ -746,12 +747,12 @@ export default function WatchlistPage() {
                                     )}
                                   </div>
                                   <div className="min-w-0">
-                                    <div className="text-[11px] font-medium text-white truncate">{label}</div>
+                                    <div className="text-[11px] font-medium text-white truncate group-hover:underline">{label}</div>
                                     <div className="text-[10px] text-[#606060] font-mono">{shortAddr}</div>
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-2.5 py-2.5 text-right">
+                              <td className="px-2.5 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                                 <div className="inline-flex items-center gap-2">
                                   <button
                                     onClick={() => handleCopyWatchedUserAddress(u)}

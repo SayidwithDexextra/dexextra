@@ -707,9 +707,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         console.log('Gasless top-up tx:', res.txHash);
       } else {
         // Fallback: direct signer flow
-        let signer: ethers.Signer | null = null;
+        let signer: ethers.Signer | undefined;
         if (typeof window !== 'undefined' && (window as any).ethereum) {
-          signer = await ensureHyperliquidWallet();
+          const s = await ensureHyperliquidWallet();
+          signer = s ?? undefined;
         }
         if (!signer) {
           throw new Error('No signer available. Please connect your wallet.');
@@ -1175,10 +1176,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
 
     return (
-                  <table className="w-full">
+                  <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="w-1/3 text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
                         <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
@@ -1197,24 +1198,30 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               } ${
                 index !== displayedPositions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
               }`} style={{ animationDelay: `${index * 50}ms` }}>
-                          <td className="pl-2 pr-1 py-1.5">
-                              <div className="flex items-center gap-1">
+                          <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
+                              <div className="flex items-center gap-1 min-w-0">
                               <Link
                                 href={getTokenHref(position.symbol)}
-                                className="group/link flex items-center gap-1 hover:opacity-90 transition-opacity"
+                                className="group/link flex min-w-0 max-w-full items-center gap-1 hover:opacity-90 transition-opacity"
                                 title={`Open ${position.symbol} market`}
                               >
                                 <img
                                   src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                   alt={`${position.symbol} logo`}
-                                  className="w-4 h-4 rounded-full border border-[#333333] object-cover"
+                                  className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                 />
-                                <span className="text-[11px] font-medium text-white">
-                                  {marketSymbolMap.get(position.symbol)?.name || position.symbol}
-                                </span>
-                                <span className="text-[10px] text-[#CBD5E1]">{position.symbol}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-baseline gap-1 min-w-0">
+                                    <span className="min-w-0 flex-1 text-[11px] font-medium text-white truncate">
+                                      {marketSymbolMap.get(position.symbol)?.name || position.symbol}
+                                    </span>
+                                    <span className="min-w-0 max-w-[40%] text-[10px] text-[#CBD5E1] truncate">
+                                      {position.symbol}
+                                    </span>
+                                  </div>
+                                </div>
                                 {position.isUnderLiquidation && (
-                                  <div className="px-1 py-0.5 bg-yellow-400/10 rounded">
+                                  <div className="shrink-0 px-1 py-0.5 bg-yellow-400/10 rounded">
                                     <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
                                   </div>
                                 )}
@@ -1385,10 +1392,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
     return (
                   <div className="w-full overflow-x-hidden">
-                    <table className="w-full">
+                    <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="w-1/3 text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
                         <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
                         <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
@@ -1415,17 +1422,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                             }}
                           >
-                            <td className="pl-2 pr-1 py-1.5">
-                              <div className="flex items-center gap-1">
+                            <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
+                              <div className="flex items-center gap-1 min-w-0">
                                 <Link
                                   href={getTokenHref(order.symbol)}
-                                  className="group/link flex min-w-0 max-w-[200px] md:max-w-[260px] items-center gap-2 hover:opacity-90 transition-opacity"
+                                  className="group/link flex min-w-0 max-w-full items-center gap-2 hover:opacity-90 transition-opacity"
                                   title={`Open ${order.symbol} market`}
                                 >
                                   <img
                                     src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                     alt={`${order.symbol} logo`}
-                                    className="w-4 h-4 rounded-full border border-[#333333] object-cover"
+                                    className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                   />
                                   <div className="min-w-0">
                                     <span className="block truncate text-[11px] font-medium text-white">
@@ -1892,10 +1899,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
 
     return (
-                  <table className="w-full">
+                  <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
+                        <th className="w-1/3 text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
                         <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
                         <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
                         <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
@@ -1906,17 +1913,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     <tbody>
                       {orderHistory.map((order, index) => (
                         <tr key={`${order.id}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
-                          <td className="px-2.5 py-2.5">
-                            <div className="flex items-center gap-2">
+                          <td className="px-2.5 py-2.5 w-1/3 max-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
                               <Link
                                 href={getTokenHref(order.symbol)}
-                                className="group/link flex min-w-0 flex-1 max-w-[200px] md:max-w-[260px] items-center gap-2 hover:opacity-90 transition-opacity"
+                                className="group/link flex min-w-0 flex-1 max-w-full items-center gap-2 hover:opacity-90 transition-opacity"
                                 title={`Open ${order.symbol} market`}
                               >
                                 <img
                                   src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                   alt={`${order.symbol} logo`}
-                                  className="w-4 h-4 rounded-full border border-[#333333] object-cover"
+                                  className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                 />
                                 <div className="min-w-0">
                                   <span className="block truncate text-[11px] font-medium text-white">
