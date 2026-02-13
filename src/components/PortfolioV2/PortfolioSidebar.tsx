@@ -207,6 +207,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			totalCollateral: tc,
 			availableCash: available,
 			realizedPnl: realized,
+			realizedLoss: Math.max(0, -realized),
 			unrealizedPnl: unrealizedFromSummary,
 			totalValue: value,
 			valueDelta,
@@ -278,10 +279,11 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			{ label: 'Δ (session)', value: `${totals.valueDelta >= 0 ? '+' : ''}${formatUsd(totals.valueDelta, 2)}`, valueClassName: 'font-mono', valueTone: totals.valueDelta >= 0 ? 'pos' : 'neg' },
 			{ label: 'Δ% (session)', value: formatPct(totals.valueDeltaPct, 2), valueClassName: 'font-mono', valueTone: totals.valueDeltaPct >= 0 ? 'pos' : 'neg' },
 			{ label: 'Available', value: formatUsd(Math.max(0, totals.availableCash), 2), valueClassName: 'font-mono' },
+			{ label: 'Realized loss', value: formatUsd(totals.realizedLoss, 2), valueClassName: 'font-mono', valueTone: totals.realizedLoss > 0 ? 'neg' : 'default' },
 			{ label: 'Open positions', value: String(posCount), valueClassName: 'font-mono' },
 			{ label: 'Open orders', value: String(ordCount), valueClassName: 'font-mono' },
 		]
-	}, [positions, sidebarOrders.orders, totals.availableCash, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
+	}, [positions, sidebarOrders.orders, totals.availableCash, totals.realizedLoss, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
 
 	const isHealthy = Boolean(coreVault?.isHealthy)
 	// Important: don't let background refresh cycles "blink" the sidebar content.

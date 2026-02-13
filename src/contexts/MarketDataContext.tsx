@@ -66,7 +66,10 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
   const { data: obLive, isLoading: obLoading, error: obError } = useOrderBookContractData(symbol, {
     refreshInterval: 15000,
     orderBookAddress: (market as any)?.market_address || undefined,
-    marketIdBytes32: (market as any)?.market_id_bytes32 || undefined
+    marketIdBytes32: (market as any)?.market_id_bytes32 || undefined,
+    // Fetch more depth levels so the BOOK tab isn't capped at 10 per side.
+    // Server API currently clamps to max 25.
+    levels: 25,
   });
 
   // Shared OrderBook actions/state (one instance across the page)

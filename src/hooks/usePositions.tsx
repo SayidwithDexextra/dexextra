@@ -77,6 +77,11 @@ export function usePositions(
     isLoading: true,
     error: null
   });
+  // In event-driven mode (pollIntervalMs <= 0), a single refetch can occur "too early"
+  // (before the node/vault view reflects the trade), causing a momentary revert until reload.
+  // We run a short, bounded "refresh window" after position-changing events to guarantee convergence.
+  const refreshEpochRef = useRef(0);
+  const refreshTimeoutsRef = useRef<number[]>([]);
   // Resolve the current market to get its bytes32 marketId for filtering
   const { market, isLoading: isMarketLoading, error: marketError } = useMarket(marketSymbol);
 
@@ -542,6 +547,68 @@ export function usePositions(
       }
     };
 
+    const clearRefreshWindow = () => {
+      try {
+        for (const id of refreshTimeoutsRef.current) {
+          try {
+            clearTimeout(id);
+          } catch {}
+        }
+      } catch {}
+      refreshTimeoutsRef.current = [];
+    };
+
+    const getRunnerProvider = (): any | null => {
+      try {
+        const runner = (contracts?.vault as any)?.runner || (contracts?.obPricing as any)?.runner;
+        const provider = (runner as any)?.provider || runner;
+        return provider || null;
+      } catch {
+        return null;
+      }
+    };
+
+    const waitForBlock = async (minBlock?: number, maxWaitMs = 3500) => {
+      try {
+        const b = Number(minBlock || 0);
+        if (!Number.isFinite(b) || b <= 0) return;
+        const provider: any = getRunnerProvider();
+        if (!provider?.getBlockNumber) return;
+
+        const start = Date.now();
+        while (Date.now() - start < maxWaitMs && !unmountedRef.current) {
+          let cur = 0;
+          try {
+            cur = Number(await provider.getBlockNumber());
+          } catch {
+            cur = 0;
+          }
+          if (Number.isFinite(cur) && cur >= b) return;
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      } catch {}
+    };
+
+    const requestRefreshWindow = (detail?: any) => {
+      // Bump epoch to cancel any pending scheduled refreshes from previous events
+      refreshEpochRef.current += 1;
+      const epoch = refreshEpochRef.current;
+      clearRefreshWindow();
+
+      const blockNumber = detail?.blockNumber !== undefined ? Number(detail.blockNumber) : 0;
+      const schedule = [0, 1000, 2000, 4000, 8000]; // bounded backoff window
+
+      for (const delay of schedule) {
+        const id = setTimeout(async () => {
+          if (unmountedRef.current) return;
+          if (refreshEpochRef.current !== epoch) return;
+          if (blockNumber > 0) await waitForBlock(blockNumber);
+          await fetchPositions();
+        }, delay) as unknown as number;
+        refreshTimeoutsRef.current.push(id);
+      }
+    };
+
     fetchPositions();
 
     // Real-time listeners: trigger immediate refresh on portfolio/order events
@@ -555,7 +622,9 @@ export function usePositions(
             txHash: detail?.txHash,
             blockNumber: detail?.blockNumber,
           });
-          fetchPositions();
+          // Stronger: refresh window to avoid momentary "revert" in event-driven mode.
+          // (If polling is enabled, the window is harmless but redundant; still bounded.)
+          requestRefreshWindow(detail);
         }
       : null;
     const onOrdersUpdated = listenToEvents
@@ -568,7 +637,13 @@ export function usePositions(
             txHash: detail?.txHash,
             blockNumber: detail?.blockNumber,
           });
-          fetchPositions();
+          // Orders updates do not always imply a position change. Keep this lightweight.
+          // Still, do a single guarded refresh (and wait for block if provided).
+          (async () => {
+            const b = detail?.blockNumber !== undefined ? Number(detail.blockNumber) : 0;
+            if (b > 0) await waitForBlock(b, 2000);
+            await fetchPositions();
+          })();
         }
       : null;
     try {
@@ -583,6 +658,7 @@ export function usePositions(
 
     return () => {
       if (interval) clearInterval(interval);
+      clearRefreshWindow();
       try {
         if (listenToEvents && typeof window !== 'undefined') {
           window.removeEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);

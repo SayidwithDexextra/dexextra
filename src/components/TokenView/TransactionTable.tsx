@@ -259,6 +259,17 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     ? (obError ? ((obError as any).message || String(obError)) : null)
     : tradeError;
   const isConnected = !!obData?.orderBookAddress;
+  // Show a loader on initial render to avoid flashing "No orders" while the first
+  // orderbook snapshot is still propagating to the UI. This is intentionally one-shot
+  // per market and does NOT re-trigger on background refreshes.
+  const [showInitialOrderBookLoader, setShowInitialOrderBookLoader] = useState<boolean>(true);
+  useEffect(() => {
+    setShowInitialOrderBookLoader(true);
+    if (typeof window === 'undefined') return;
+    // Safety valve: if the market is truly empty, stop loading after a short grace window.
+    const t = window.setTimeout(() => setShowInitialOrderBookLoader(false), 12_000);
+    return () => window.clearTimeout(t);
+  }, [validMarketIdentifier]);
   const refetch = () => {};
 
   // Only log connection status changes, not every render
@@ -281,9 +292,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   }, [recentTrades.length]);
 
 
-  // Legacy animation hook removed - using placeholder values
-  const isOrderNew = () => false;
-  const getAnimationDelay = () => 0;
+  // Track newly inserted filled trades so we can animate them on insert (TRADES tab).
+  // Note: we intentionally do NOT animate the initial load.
+  const seenFilledOrderIdsRef = React.useRef<Set<string>>(new Set());
+  const [newFilledOrderIds, setNewFilledOrderIds] = useState<Set<string>>(new Set());
+
+  const isOrderNew = (orderId: string) => newFilledOrderIds.has(orderId);
+  const getAnimationDelay = (index: number, isNewRow: boolean) => (isNewRow ? Math.min(index, 8) * 35 : 0);
 
   // Only log state changes when significant changes occur
   const prevState = React.useRef<{ tradesCount: number; isLoading: boolean; error: string | null }>({ 
@@ -316,6 +331,44 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     console.log('🔍 [TRANSACTIONS] Found', recentTrades.length, 'recent trades');
     return recentTrades;
   }, [recentTrades]);
+
+  useEffect(() => {
+    // Reset animation tracking when the market changes.
+    seenFilledOrderIdsRef.current.clear();
+    setNewFilledOrderIds(new Set());
+  }, [validMarketIdentifier]);
+
+  useEffect(() => {
+    const ids = filledOrders.map((o) => o.order_id).filter(Boolean) as string[];
+    if (ids.length === 0) return;
+
+    const seen = seenFilledOrderIdsRef.current;
+    // First load: mark all as seen, don't animate.
+    if (seen.size === 0) {
+      ids.forEach((id) => seen.add(id));
+      return;
+    }
+
+    const newlyInserted = ids.filter((id) => !seen.has(id));
+    if (newlyInserted.length === 0) return;
+
+    newlyInserted.forEach((id) => seen.add(id));
+    setNewFilledOrderIds((prev) => {
+      const next = new Set(prev);
+      newlyInserted.forEach((id) => next.add(id));
+      return next;
+    });
+
+    const timer = window.setTimeout(() => {
+      setNewFilledOrderIds((prev) => {
+        const next = new Set(prev);
+        newlyInserted.forEach((id) => next.delete(id));
+        return next;
+      });
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [filledOrders]);
 
   // Separate bids and asks for traditional orderbook display (prefer on-chain depth when available)
   const { bids, asks } = useMemo(() => {
@@ -398,6 +451,25 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     console.log('🔍 [ORDERBOOK][DB] Bids:', buyOrders.length, 'Asks:', sellOrders.length);
     return { bids: buyOrders, asks: sellOrders };
   }, [obData?.depth, pendingOrders, depthOverlayTick]);
+
+  // Stop showing initial loader as soon as the first batch of orders is actually in the UI.
+  const orderBookHasOrders = (bids?.length || 0) + (asks?.length || 0) > 0;
+  useEffect(() => {
+    if (!showInitialOrderBookLoader) return;
+    if (error) {
+      setShowInitialOrderBookLoader(false);
+      return;
+    }
+    if (!isConnected) return;
+    if (orderBookHasOrders) setShowInitialOrderBookLoader(false);
+  }, [showInitialOrderBookLoader, error, isConnected, orderBookHasOrders]);
+
+  const showOrderBookLoading =
+    view === 'orderbook' &&
+    showInitialOrderBookLoader &&
+    !error &&
+    isConnected &&
+    !orderBookHasOrders;
 
   // Best Bid/Ask derived from depth with on-chain fallback values
   const bestBidPrice = useMemo(() => {
@@ -540,12 +612,19 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           </div>
         ) : (
           <div className="text-[10px] text-gray-200 text-center py-1">
-            Order Book
-                {!marketIdentifier && (
-                  <span className="block text-[9px] text-gray-300">
-                    Market data unavailable
-                  </span>
-                )}
+            {showOrderBookLoading ? (
+              <span className="inline-flex items-center justify-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                <span>Loading open orders…</span>
+              </span>
+            ) : (
+              'Order Book'
+            )}
+            {!marketIdentifier && (
+              <span className="block text-[9px] text-gray-300">
+                Market data unavailable
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -575,18 +654,36 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {/* Ask Orders (Sell Orders) - Just above spread */}
             <div className="overflow-hidden flex flex-col justify-end" style={{ minHeight: '200px' }}>
               <div className="overflow-y-auto orders-table-scroll flex-grow-0" style={{ maxHeight: '200px' }}>
-                {asks.length === 0 ? (
+                {showOrderBookLoading ? (
+                  <div className="space-y-0 flex flex-col justify-end">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={`ask-skel-${i}`} className="relative overflow-hidden">
+                        <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
+                          <div className="flex items-center justify-center">
+                            <span className="inline-block w-[86px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                          </div>
+                          <div className="flex items-center justify-center">
+                            <span className="inline-block w-[72px] h-[12px] bg-[#141414] rounded animate-pulse" />
+                          </div>
+                          <div className="flex items-center justify-center">
+                            <span className="inline-block w-[92px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : asks.length === 0 ? (
                   <div className="text-[10px] text-gray-200 text-center py-2">
                     No sell orders
                   </div>
                 ) : (
                   <div className="space-y-0 flex flex-col justify-end">
-                    {(() => { let cumulativeAskUsd = 0; return [...asks].slice(0, 10).map((order, index) => {
+                    {(() => {
+                      const maxRemainingQuantity = Math.max(0, ...asks.map((o) => (o.quantity - o.filled_quantity)));
+                      return [...asks].map((order) => {
                       const remainingQuantity = order.quantity - order.filled_quantity;
-                      const maxQuantity = Math.max(...asks.map(o => o.quantity - o.filled_quantity));
-                      const fillPercentage = maxQuantity > 0 ? (remainingQuantity / maxQuantity) * 100 : 0;
+                      const fillPercentage = maxRemainingQuantity > 0 ? (remainingQuantity / maxRemainingQuantity) * 100 : 0;
                       const lineUsd = (remainingQuantity * (order.price || 0));
-                      // Removed cumulativeAskUsd += lineUsd; to avoid cumulative total
                       
                       return (
                         <AnimatedOrderRow
@@ -632,7 +729,9 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {/* Spread Display */}
             <div className="pt-0 pb-1 px-1 bg-[#1A1A1A] border-y border-gray-700">
               <div className="text-[10px] text-gray-200 text-center font-mono tabular-nums">
-                {bestAskPrice > 0 && bestBidPrice > 0 ? (
+                {showOrderBookLoading ? (
+                  <span className="inline-block w-[180px] h-[12px] bg-[#141414] rounded animate-pulse" />
+                ) : bestAskPrice > 0 && bestBidPrice > 0 ? (
                   <>
                     Spread: ${((bestAskPrice - bestBidPrice)).toFixed(4)}
                     <span className="text-[9px] text-gray-200 ml-2">
@@ -652,18 +751,36 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                 <span className="text-[#00D084]">{bids.length} orders</span>
               </div>
               <div className="flex-1 overflow-y-auto orders-table-scroll">
-                {bids.length === 0 ? (
+                {showOrderBookLoading ? (
+                  <div className="space-y-0">
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div key={`bid-skel-${i}`} className="relative overflow-hidden">
+                        <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
+                          <div className="flex items-center justify-center">
+                            <span className="inline-block w-[86px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                          </div>
+                          <div className="flex items-center justify-center">
+                            <span className="inline-block w-[72px] h-[12px] bg-[#141414] rounded animate-pulse" />
+                          </div>
+                          <div className="flex items-center justify-center">
+                            <span className="inline-block w-[92px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : bids.length === 0 ? (
                   <div className="text-[10px] text-gray-200 text-center py-2">
                     No buy orders
                   </div>
                 ) : (
                   <div className="space-y-0">
-                    {(() => { let cumulativeBidUsd = 0; return bids.slice(0, 10).map((order, index) => {
+                    {(() => {
+                      const maxRemainingQuantity = Math.max(0, ...bids.map((o) => (o.quantity - o.filled_quantity)));
+                      return bids.map((order) => {
                       const remainingQuantity = order.quantity - order.filled_quantity;
-                      const maxQuantity = Math.max(...bids.map(o => o.quantity - o.filled_quantity));
-                      const fillPercentage = maxQuantity > 0 ? (remainingQuantity / maxQuantity) * 100 : 0;
+                      const fillPercentage = maxRemainingQuantity > 0 ? (remainingQuantity / maxRemainingQuantity) * 100 : 0;
                       const lineUsd = (remainingQuantity * (order.price || 0));
-                      // Removed cumulativeBidUsd += lineUsd; to avoid cumulative total
                       
                       return (
                         <AnimatedOrderRow
@@ -718,14 +835,18 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                   const fillPercentage = Math.max(...filteredAndSortedData.map(o => o.quantity)) > 0 
                     ? (order.quantity / Math.max(...filteredAndSortedData.map(o => o.quantity))) * 100 
                     : 0;
+
+                  const isNewRow = isOrderNew(order.order_id);
+                  const animationDelay = getAnimationDelay(index, isNewRow);
                   
                   return (
                     <AnimatedOrderRow
                       key={order.order_id}
                       orderId={order.order_id}
                       side={order.side.toUpperCase() as 'BUY' | 'SELL'}
-                      isNew={false}
-                      animationDelay={0}
+                      isNew={isNewRow}
+                      animationDelay={animationDelay}
+                      animationType="slideFromTop"
                       className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
                     >
                       {/* Background depth bar */}

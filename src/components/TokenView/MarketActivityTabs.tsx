@@ -7,7 +7,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { initializeContracts } from '@/lib/contracts';
 import { ensureHyperliquidWallet } from '@/lib/network';
-import { ErrorModal, SuccessModal } from '@/components/StatusModals';
+import { ErrorModal } from '@/components/StatusModals';
 import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
 import { usePositions as usePositionsHook } from '@/hooks/usePositions';
@@ -20,6 +20,7 @@ import { useSession } from '@/contexts/SessionContext';
 import { normalizeBytes32Hex } from '@/lib/hex';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
 import { useOnchainOrders } from '@/contexts/OnchainOrdersContextV2';
+import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
 
 // Public USDC icon (fallback to Circle's official)
 const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
@@ -102,6 +103,92 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
   const [expandedOrderKey, setExpandedOrderKey] = useState<string | null>(null);
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
+  // Order cancel modal (subtle "cup fill" loader)
+  const [orderFillModal, setOrderFillModal] = useState<{
+    isOpen: boolean;
+    progress: number; // 0..1
+    status: OrderFillStatus;
+    allowClose: boolean;
+    startedAt: number;
+    kind: 'cancel' | null;
+  }>({
+    isOpen: false,
+    progress: 0,
+    status: 'submitting',
+    allowClose: false,
+    startedAt: 0,
+    kind: null,
+  });
+
+  const startCancelModal = useCallback(() => {
+    setOrderFillModal({
+      isOpen: true,
+      progress: 0.06,
+      status: 'submitting',
+      allowClose: false,
+      startedAt: Date.now(),
+      kind: 'cancel',
+    });
+  }, []);
+
+  const markCancelModalError = useCallback(() => {
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: true,
+      status: 'error',
+      progress: 1,
+      allowClose: true,
+    }));
+  }, []);
+
+  const finishCancelModal = useCallback(() => {
+    setOrderFillModal((cur) => ({
+      ...cur,
+      status: 'filled',
+      progress: 1,
+      allowClose: false,
+    }));
+    window.setTimeout(() => {
+      setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }));
+    }, 750);
+  }, []);
+
+  // Smooth progress while submitting/filling (purely visual)
+  useEffect(() => {
+    if (!orderFillModal.isOpen) return;
+    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+
+    const id = window.setInterval(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen) return cur;
+        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        const t = cur.status === 'submitting' ? 0.7 : 0.92;
+        const next = Math.min(t, cur.progress + (t - cur.progress) * 0.08 + 0.003);
+        return { ...cur, progress: next };
+      });
+    }, 120);
+
+    return () => window.clearInterval(id);
+  }, [orderFillModal.isOpen, orderFillModal.status]);
+
+  // Escape hatch for cancel (avoid trapping UI if RPC hangs)
+  useEffect(() => {
+    if (!orderFillModal.isOpen) return;
+    if (orderFillModal.kind !== 'cancel') return;
+    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    const startedAt = orderFillModal.startedAt;
+    const id = window.setInterval(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen || cur.kind !== 'cancel') return cur;
+        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (Date.now() - startedAt > 18_000) {
+          return { ...cur, allowClose: true };
+        }
+        return cur;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [orderFillModal.isOpen, orderFillModal.kind, orderFillModal.startedAt, orderFillModal.status]);
   const [optimisticallyRemovedOrderIds, setOptimisticallyRemovedOrderIds] = useState<Set<string>>(new Set());
   /** Keys of orders currently playing slide-out animation (still visible until animation ends) */
   const [animatingOutOrderKeys, setAnimatingOutOrderKeys] = useState<Set<string>>(new Set());
@@ -130,6 +217,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const wallet = useWallet() as any;
   const walletAddress = wallet?.walletData?.address ?? wallet?.address ?? null;
   const GASLESS = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
+  const truncateMarketName = useCallback((raw: string, maxWords = 3) => {
+    const cleaned = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) return '';
+    const words = cleaned.split(' ');
+    if (words.length <= maxWords) return cleaned;
+    return `${words.slice(0, maxWords).join(' ')}…`;
+  }, []);
   const getOrderCompositeKey = (symbol?: string | null, id?: string | number | bigint) =>
     `${String(symbol || '').toUpperCase()}::${typeof id === 'bigint' ? id.toString() : String(id ?? '')}`;
   const isValidNumericOrderId = (id: any): boolean => {
@@ -188,11 +282,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return map;
   }, [markets]);
   const marketSymbolMap = useMemo(() => {
-    const map = new Map<string, { symbol: string; name: string; icon?: string }>();
+    const map = new Map<string, { symbol: string; name: string; identifier?: string; icon?: string }>();
     for (const m of markets || []) {
       const sym = (m?.symbol || '').toUpperCase();
       if (!sym) continue;
-      map.set(sym, { symbol: sym, name: m?.name || sym, icon: (m as any)?.icon_image_url || undefined });
+      const identifierRaw = String((m as any)?.market_identifier || '').trim();
+      const identifier = identifierRaw ? identifierRaw.toUpperCase() : undefined;
+      map.set(sym, { symbol: sym, name: m?.name || sym, identifier, icon: (m as any)?.icon_image_url || undefined });
     }
     return map;
   }, [markets]);
@@ -210,9 +306,146 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   
   // Optimistic overlay for positions on trade events (prevents "revert" when vault reads lag a block).
   // We keep small deltas for a short TTL and render basePositions + deltas.
-  const posOverlayRef = useRef<Map<string, { delta: number; expiresAt: number }>>(new Map());
+  const posOverlayRef = useRef<
+    Map<string, { delta: number; baseSigned: number; appliedAt: number; expiresAt: number }>
+  >(new Map());
   const appliedTraceRef = useRef<Map<string, number>>(new Map());
   const [posOverlayTick, setPosOverlayTick] = useState(0); // re-render trigger
+  const posOverlayPruneIntervalRef = useRef<number | null>(null);
+
+  // Canonicalize event keys (symbol vs market_identifier) so overlays apply to the same keys as positions.
+  const marketKeyToSymbol = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of markets || []) {
+      const sym = String((m as any)?.symbol || '').trim();
+      if (sym) map.set(sym.toLowerCase(), sym.toUpperCase());
+      const ident = String((m as any)?.market_identifier || '').trim();
+      if (ident) map.set(ident.toLowerCase(), sym.toUpperCase());
+    }
+    return map;
+  }, [markets]);
+
+  const resolveCanonicalSymbol = useCallback(
+    (raw?: string | null) => {
+      const needle = String(raw || '').trim();
+      if (!needle) return '';
+      return marketKeyToSymbol.get(needle.toLowerCase()) || needle.toUpperCase();
+    },
+    [marketKeyToSymbol]
+  );
+
+  const getBaseSignedSize = useCallback(
+    (symUpper: string) => {
+      const sym = String(symUpper || '').toUpperCase();
+      if (!sym) return 0;
+      const p = (positions || []).find((x) => String((x as any)?.symbol || '').toUpperCase() === sym);
+      if (!p) return 0;
+      const size = Number((p as any)?.size || 0);
+      if (!Number.isFinite(size)) return 0;
+      const side = String((p as any)?.side || 'LONG').toUpperCase();
+      return side === 'SHORT' ? -Math.abs(size) : Math.abs(size);
+    },
+    [positions]
+  );
+
+  // Important: overlay expiry is time-based, but `displayedPositions` is memoized.
+  // Without a timed prune that bumps `posOverlayTick`, expired deltas can "stick"
+  // visually until some unrelated re-render (e.g. full page refresh).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const overlay = posOverlayRef.current;
+    const shouldRun = overlay.size > 0;
+
+    if (shouldRun && posOverlayPruneIntervalRef.current === null) {
+      posOverlayPruneIntervalRef.current = window.setInterval(() => {
+        const now = Date.now();
+        let changed = false;
+        for (const [sym, o] of overlay.entries()) {
+          if (!o || !Number.isFinite(o.delta) || o.delta === 0 || o.expiresAt <= now) {
+            overlay.delete(sym);
+            changed = true;
+          }
+        }
+        if (changed) setPosOverlayTick((x) => x + 1);
+        if (overlay.size === 0 && posOverlayPruneIntervalRef.current !== null) {
+          window.clearInterval(posOverlayPruneIntervalRef.current);
+          posOverlayPruneIntervalRef.current = null;
+        }
+      }, 500);
+    }
+
+    if (!shouldRun && posOverlayPruneIntervalRef.current !== null) {
+      window.clearInterval(posOverlayPruneIntervalRef.current);
+      posOverlayPruneIntervalRef.current = null;
+    }
+  }, [posOverlayTick]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (posOverlayPruneIntervalRef.current !== null) {
+          window.clearInterval(posOverlayPruneIntervalRef.current);
+          posOverlayPruneIntervalRef.current = null;
+        }
+      } catch {}
+    };
+  }, []);
+
+  // Reconcile overlays against refreshed base positions.
+  // This prevents double-counting if the vault/portfolio data catches up before TTL expiry.
+  useEffect(() => {
+    const overlay = posOverlayRef.current;
+    if (!overlay || overlay.size === 0) return;
+
+    const eps = 1e-12;
+    const signedBySym = new Map<string, number>();
+    for (const p of positions || []) {
+      const sym = String((p as any)?.symbol || '').toUpperCase();
+      if (!sym) continue;
+      const size = Number((p as any)?.size || 0);
+      if (!Number.isFinite(size)) continue;
+      const side = String((p as any)?.side || 'LONG').toUpperCase();
+      signedBySym.set(sym, side === 'SHORT' ? -Math.abs(size) : Math.abs(size));
+    }
+
+    const now = Date.now();
+    let changed = false;
+    for (const [sym, o] of overlay.entries()) {
+      if (!o) continue;
+
+      // Eager prune invalid/expired entries.
+      if (!Number.isFinite(o.delta) || o.delta === 0 || o.expiresAt <= now) {
+        overlay.delete(sym);
+        changed = true;
+        continue;
+      }
+
+      const baseNow = signedBySym.get(sym) ?? 0;
+      const baseSigned = Number.isFinite(o.baseSigned) ? o.baseSigned : 0;
+      const caughtUp = baseNow - baseSigned;
+      if (!Number.isFinite(caughtUp) || Math.abs(caughtUp) <= eps) continue;
+
+      // Consume only when base movement aligns with overlay delta direction.
+      if (Math.sign(caughtUp) !== Math.sign(o.delta)) continue;
+
+      const consume = Math.min(Math.abs(caughtUp), Math.abs(o.delta));
+      if (!(consume > eps)) continue;
+
+      const sign = Math.sign(o.delta) || 1;
+      const nextDelta = o.delta - sign * consume;
+      const nextBaseSigned = baseSigned + sign * consume;
+
+      if (!Number.isFinite(nextDelta) || Math.abs(nextDelta) <= eps) {
+        overlay.delete(sym);
+      } else {
+        overlay.set(sym, { ...o, delta: nextDelta, baseSigned: nextBaseSigned });
+      }
+      changed = true;
+    }
+
+    if (changed) setPosOverlayTick((x) => x + 1);
+  }, [positions]);
 
   const displayedPositions = useMemo(() => {
     const base = Array.isArray(positions) ? positions : [];
@@ -491,8 +724,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
     const onPositionsRefresh = (e: any) => {
       const detail = (e as CustomEvent)?.detail as any;
-      const sym = String(detail?.symbol || '').toUpperCase();
+      const sym = resolveCanonicalSymbol(detail?.symbol || '');
       const traceId = String(detail?.traceId || '');
+      const txHash = String(detail?.txHash || '');
+      const blockNumber = detail?.blockNumber !== undefined ? String(detail.blockNumber) : '';
       const buyer = String(detail?.buyer || '').toLowerCase();
       const seller = String(detail?.seller || '').toLowerCase();
       const me = String(walletAddress || '').toLowerCase();
@@ -500,11 +735,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       if (buyer !== me && seller !== me) return;
 
       // Dedup repeated dispatches for the same tx/trace in a short window
-      if (traceId) {
+      {
         const now = Date.now();
-        const prev = appliedTraceRef.current.get(traceId) || 0;
+        const dedupKey =
+          traceId ||
+          (txHash ? `tx:${txHash.toLowerCase()}` : '') ||
+          (blockNumber ? `blk:${blockNumber}` : '') ||
+          `${sym}:${buyer}:${seller}:${String(detail?.amount || '')}:${Math.floor(Number(detail?.timestamp || now) / 1000)}`;
+        const prev = appliedTraceRef.current.get(dedupKey) || 0;
         if (now - prev < 10_000) return;
-        appliedTraceRef.current.set(traceId, now);
+        appliedTraceRef.current.set(dedupKey, now);
       }
 
       let delta = 0;
@@ -517,13 +757,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         delta = 0;
       }
       if (delta === 0) return;
+      // Safety clamps: prevent pathological event payloads from poisoning UI state.
+      if (!Number.isFinite(delta) || Math.abs(delta) > 1e9) return;
 
       const signedDelta = buyer === me ? delta : -delta;
       const now = Date.now();
       const ttlMs = 8_000; // keep overlay long enough for vault to catch up
       const existing = posOverlayRef.current.get(sym);
       const nextDelta = (existing?.delta || 0) + signedDelta;
-      posOverlayRef.current.set(sym, { delta: nextDelta, expiresAt: now + ttlMs });
+      const baseSigned = existing?.baseSigned ?? getBaseSignedSize(sym);
+      posOverlayRef.current.set(sym, { delta: nextDelta, baseSigned, appliedAt: now, expiresAt: now + ttlMs });
       // eslint-disable-next-line no-console
       console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
       setPosOverlayTick((x) => x + 1);
@@ -535,7 +778,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return () => {
       window.removeEventListener('positionsRefreshRequested', onPositionsRefresh as EventListener);
     };
-  }, [walletAddress, activeTab, metricId, fetchOrderHistory]);
+  }, [walletAddress, resolveCanonicalSymbol, getBaseSignedSize]);
 
   // Resolve per-market OrderBook address from symbol/metricId using populated CONTRACT_ADDRESSES.MARKET_INFO
   const resolveOrderBookAddress = useCallback((symbolOrMetricId?: string | null): string | null => {
@@ -622,17 +865,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   }, [walletAddress, allPositions, marketIdMap]);
 
-  // Add success/error modal state
-  const [successModal, setSuccessModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-  }>({
-    isOpen: false,
-    title: '',
-    message: ''
-  });
-  
+  // Success modal intentionally disabled in this component (use `OrderFillLoadingModal` UX instead)
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -643,11 +876,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     message: ''
   });
 
-  // Helper functions for showing success/error messages
-  const showSuccess = (message: string, title: string = 'Success') => {
-    setSuccessModal({ isOpen: true, title, message });
-  };
-
+  // Helper functions for showing messages
+  // `showSuccess` intentionally no-ops (SuccessModal disabled)
+  const showSuccess = (_message: string, _title: string = 'Success') => {};
   const showError = (message: string, title: string = 'Error') => {
     setErrorModal({ isOpen: true, title, message });
   };
@@ -904,7 +1135,89 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     seenTrace: Map<string, number>;
   }>({ added: new Map(), removed: new Map(), seenTrace: new Map() });
   const [openOrdersOverlayTick, setOpenOrdersOverlayTick] = useState(0);
+  const openOrdersOverlayPruneIntervalRef = useRef<number | null>(null);
   const [isRefreshingOnchainOrders, setIsRefreshingOnchainOrders] = useState(false);
+
+  // Same issue as positions: the overlay is time-based, but `displayedOpenOrders` is memoized.
+  // If we never bump `openOrdersOverlayTick` when TTLs elapse, optimistic rows can linger until refresh.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const overlay = openOrdersOverlayRef.current;
+    const shouldRun = overlay.added.size > 0 || overlay.removed.size > 0;
+
+    if (shouldRun && openOrdersOverlayPruneIntervalRef.current === null) {
+      openOrdersOverlayPruneIntervalRef.current = window.setInterval(() => {
+        const now = Date.now();
+        let changed = false;
+        for (const [id, until] of overlay.removed.entries()) {
+          if (!Number.isFinite(until) || until <= now) {
+            overlay.removed.delete(id);
+            changed = true;
+          }
+        }
+        for (const [id, rec] of overlay.added.entries()) {
+          if (!rec || !Number.isFinite(rec.expiresAt) || rec.expiresAt <= now) {
+            overlay.added.delete(id);
+            changed = true;
+          }
+        }
+        if (changed) setOpenOrdersOverlayTick((x) => x + 1);
+        if (overlay.added.size === 0 && overlay.removed.size === 0 && openOrdersOverlayPruneIntervalRef.current !== null) {
+          window.clearInterval(openOrdersOverlayPruneIntervalRef.current);
+          openOrdersOverlayPruneIntervalRef.current = null;
+        }
+      }, 500);
+    }
+
+    if (!shouldRun && openOrdersOverlayPruneIntervalRef.current !== null) {
+      window.clearInterval(openOrdersOverlayPruneIntervalRef.current);
+      openOrdersOverlayPruneIntervalRef.current = null;
+    }
+  }, [openOrdersOverlayTick]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (openOrdersOverlayPruneIntervalRef.current !== null) {
+          window.clearInterval(openOrdersOverlayPruneIntervalRef.current);
+          openOrdersOverlayPruneIntervalRef.current = null;
+        }
+      } catch {}
+    };
+  }, []);
+
+  // Reconcile open-orders overlays against refreshed base `openOrders`.
+  // This avoids stale optimistic bookkeeping sticking around longer than needed.
+  useEffect(() => {
+    const overlay = openOrdersOverlayRef.current;
+    if (!overlay) return;
+    if (overlay.added.size === 0 && overlay.removed.size === 0) return;
+
+    const base = Array.isArray(openOrders) ? openOrders : [];
+    const baseKeys = new Set<string>();
+    for (const o of base) {
+      baseKeys.add(getOrderCompositeKey(o.symbol, o.id));
+    }
+
+    let changed = false;
+    // If an optimistic "added" order is now in base, drop it early.
+    for (const [k] of overlay.added.entries()) {
+      if (baseKeys.has(k)) {
+        overlay.added.delete(k);
+        changed = true;
+      }
+    }
+    // If we marked an order removed but base no longer contains it, drop the tombstone early.
+    for (const [k] of overlay.removed.entries()) {
+      if (!baseKeys.has(k)) {
+        overlay.removed.delete(k);
+        changed = true;
+      }
+    }
+
+    if (changed) setOpenOrdersOverlayTick((x) => x + 1);
+  }, [openOrders]);
 
   const clearOptimisticOpenOrders = useCallback(() => {
     try {
@@ -1183,58 +1496,107 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
+                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
                         <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {displayedPositions.map((position, index) => (
-            <React.Fragment key={`${position.id}-${index}`}>
-              <tr className={`mat-slide-rtl group/row transition-colors duration-200 ${
-                position.isUnderLiquidation 
-                  ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
-                  : 'hover:bg-[#1A1A1A]'
-              } ${
-                index !== displayedPositions.length - 1 ? 'border-b border-[#1A1A1A]' : ''
-              }`} style={{ animationDelay: `${index * 50}ms` }}>
-                          <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
-                              <div className="flex items-center gap-1 min-w-0">
-                              <Link
-                                href={getTokenHref(position.symbol)}
-                                className="group/link flex min-w-0 max-w-full items-center gap-1 hover:opacity-90 transition-opacity"
-                                title={`Open ${position.symbol} market`}
-                              >
-                                <img
-                                  src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
-                                  alt={`${position.symbol} logo`}
-                                  className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-baseline gap-1 min-w-0">
-                                    <span className="min-w-0 flex-1 text-[11px] font-medium text-white truncate">
-                                      {marketSymbolMap.get(position.symbol)?.name || position.symbol}
-                                    </span>
-                                    <span className="min-w-0 max-w-[40%] text-[10px] text-[#CBD5E1] truncate">
-                                      {position.symbol}
-                                    </span>
+                      {displayedPositions.map((position, index) => {
+                        // When positions hydrate before markets metadata resolves, the symbol can briefly be "UNKNOWN".
+                        // Instead of flashing UNKNOWN, render a subtle skeleton loader (matching the token header mark-price loader style).
+                        const showSkeleton =
+                          String(position.symbol || '').toUpperCase() === 'UNKNOWN' &&
+                          (positionsIsLoading || (markets || []).length === 0);
+
+                        const rowClass = `mat-slide-rtl group/row transition-colors duration-200 ${
+                          position.isUnderLiquidation
+                            ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
+                            : 'hover:bg-[#1A1A1A]'
+                        } ${index !== displayedPositions.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`;
+
+                        if (showSkeleton) {
+                          return (
+                            <tr
+                              key={`${position.id}-${index}`}
+                              className={rowClass}
+                              style={{ animationDelay: `${index * 50}ms` }}
+                            >
+                              <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <span className="w-4 h-4 shrink-0 rounded-full border border-[#333333] bg-[#1A1A1A] animate-pulse" />
+                                  <div className="min-w-0 flex-1">
+                                    <span className="block w-[120px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                    <span className="block mt-1 w-[84px] h-[10px] bg-[#141414] rounded animate-pulse" />
                                   </div>
                                 </div>
-                                {position.isUnderLiquidation && (
-                                  <div className="shrink-0 px-1 py-0.5 bg-yellow-400/10 rounded">
-                                    <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
-                                  </div>
-                                )}
-                              </Link>
-                            </div>
-                          </td>
-                          <td className="pl-1 pr-2 py-1.5">
-                            <span className={`text-[11px] font-medium ${
-                              position.side === 'LONG' ? 'text-green-400' : 'text-red-400'
-                            }`}>
-                              {position.side}
-                            </span>
-                          </td>
+                              </td>
+                              <td className="pl-1 pr-2 py-1.5">
+                                <span className="inline-block w-[44px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <span className="inline-block w-[64px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <span className="inline-block w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <span className="inline-block w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <span className="inline-block w-[52px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return (
+                          <React.Fragment key={`${position.id}-${index}`}>
+                            <tr className={rowClass} style={{ animationDelay: `${index * 50}ms` }}>
+                              <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <Link
+                                    href={getTokenHref(position.symbol)}
+                                    className="group/link flex min-w-0 max-w-full items-center gap-1 hover:opacity-90 transition-opacity"
+                                    title={`Open ${position.symbol} market`}
+                                  >
+                                    <img
+                                      src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
+                                      alt={`${position.symbol} logo`}
+                                      className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
+                                    />
+                                    <div className="min-w-0 flex-1">
+                                      <span className="block truncate text-[11px] font-medium text-white">
+                                        {truncateMarketName(marketSymbolMap.get(position.symbol)?.name || position.symbol)}
+                                      </span>
+                                      <span className="block truncate text-[10px] text-[#9CA3AF]">
+                                        {marketSymbolMap.get(position.symbol)?.identifier || position.symbol}
+                                      </span>
+                                    </div>
+                                    {position.isUnderLiquidation && (
+                                      <div className="shrink-0 px-1 py-0.5 bg-yellow-400/10 rounded">
+                                        <span className="text-[8px] font-medium text-yellow-400">LIQUIDATING</span>
+                                      </div>
+                                    )}
+                                  </Link>
+                                </div>
+                              </td>
+                              <td className="pl-1 pr-2 py-1.5">
+                                <span
+                                  className={`text-[11px] font-medium ${
+                                    position.side === 'LONG' ? 'text-green-400' : 'text-red-400'
+                                  }`}
+                                >
+                                  {position.side}
+                                </span>
+                              </td>
                           <td className="px-2 py-1.5 text-right">
                             <span className="text-[11px] text-white font-mono">{formatSize(position.size)}</span>
                           </td>
@@ -1242,17 +1604,36 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <span className="text-[11px] text-white font-mono">${formatPrice(position.markPrice)}</span>
                           </td>
                           <td className="px-2 py-1.5 text-right">
+                            <span className="text-[11px] text-white font-mono">
+                              $
+                              {formatPrice(
+                                position.size *
+                                  (Number.isFinite(position.markPrice) && position.markPrice > 0
+                                    ? position.markPrice
+                                    : Number.isFinite(position.entryPrice) && position.entryPrice > 0
+                                      ? position.entryPrice
+                                      : 0)
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
                             <div className="flex justify-end">
                               <span className="relative inline-block pr-4">
-                                <span className={`text-[11px] font-medium font-mono ${
-                                  position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
-                                }`}>
-                                  {position.pnl >= 0 ? '+' : ''}{formatPnlAmount(position.pnl)}
+                                <span
+                                  className={`text-[11px] font-medium font-mono ${
+                                    position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                                  }`}
+                                >
+                                  {position.pnl >= 0 ? '+' : ''}
+                                  {formatPnlAmount(position.pnl)}
                                 </span>
-                                <span className={`absolute -top-2 -right-0 text-[9px] font-mono ${
-                                  position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
-                                }`}>
-                                  {position.pnlPercent >= 0 ? '+' : ''}{formatPnlPercent(position.pnlPercent)}%
+                                <span
+                                  className={`absolute -top-2 -right-0 text-[9px] font-mono ${
+                                    position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                                  }`}
+                                >
+                                  {position.pnlPercent >= 0 ? '+' : ''}
+                                  {formatPnlPercent(position.pnlPercent)}%
                                 </span>
                               </span>
                             </div>
@@ -1298,7 +1679,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         </tr>
               {expandedPositionId === position.id && (
                 <tr className="bg-[#1A1A1A]">
-                  <td colSpan={7} className="px-0">
+                  <td colSpan={8} className="px-0">
                     <div className="px-2 py-1.5 border-t border-[#222222]">
                       <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
@@ -1370,7 +1751,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         </tr>
               )}
             </React.Fragment>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
     );
@@ -1436,9 +1818,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   />
                                   <div className="min-w-0">
                                     <span className="block truncate text-[11px] font-medium text-white">
-                                      {marketSymbolMap.get(order.symbol)?.name || order.symbol}
+                                      {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                     </span>
-                                    <span className="block truncate text-[10px] text-[#9CA3AF]">{order.symbol}</span>
+                                    <span className="block truncate text-[10px] text-[#9CA3AF]">
+                                      {marketSymbolMap.get(order.symbol)?.identifier || order.symbol}
+                                    </span>
                                   </div>
                                 </Link>
                               </div>
@@ -1507,6 +1891,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                               });
                                             };
                                             try {
+                                              startCancelModal();
                                               setIsCancelingOrder(true);
                                               const metric = String(order.metricId || order.symbol);
                                               const obAddress = order.orderBookAddress || resolveOrderBookAddress(metric || order.symbol);
@@ -1523,6 +1908,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   throw new Error('Trading session is not enabled. Click Enable Trading before using gasless cancel.');
                                                 }
                                                 await new Promise((r) => setTimeout(r, 400));
+                                                setOrderFillModal((cur) => ({ ...cur, status: 'filling' }));
                                                 setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
                                                 const r = await submitSessionTrade({
                                                   method: 'sessionCancelOrder',
@@ -1540,7 +1926,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   }
                                                   throw new Error(msg);
                                                 }
-                                                showSuccess('Order cancelled successfully');
+                                                finishCancelModal();
                                                 removeOrderFromSessionCache(order.id, metric);
                                                 try { await refreshGlobalOrders(); } catch {}
                                                 try {
@@ -1567,13 +1953,15 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 } catch {}
                                               } else {
                                                 await new Promise((r) => setTimeout(r, 400));
+                                                setOrderFillModal((cur) => ({ ...cur, status: 'filling' }));
                                                 setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
                                                 const ok = await cancelOrderForMarket(order.id, metric);
                                                 if (!ok) {
                                                   revertOrder();
                                                   showError('Failed to cancel order. Please try again.');
+                                                  markCancelModalError();
                                                 } else {
-                                                  showSuccess('Order cancelled successfully');
+                                                  finishCancelModal();
                                                   removeOrderFromSessionCache(order.id, metric);
                                                   try { await refreshGlobalOrders(); } catch {}
                                                   try {
@@ -1603,6 +1991,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                             } catch (e: any) {
                                               revertOrder();
                                               showError(e?.message || 'Cancellation failed. Please try again.');
+                                              markCancelModalError();
                                             } finally {
                                               setIsCancelingOrder(false);
                                             }
@@ -1927,9 +2316,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 />
                                 <div className="min-w-0">
                                   <span className="block truncate text-[11px] font-medium text-white">
-                                    {marketSymbolMap.get(order.symbol)?.name || order.symbol}
+                                    {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                   </span>
-                                  <span className="block truncate text-[10px] text-[#9CA3AF]">{order.symbol}</span>
+                                  <span className="block truncate text-[10px] text-[#9CA3AF]">
+                                    {marketSymbolMap.get(order.symbol)?.identifier || order.symbol}
+                                  </span>
                                 </div>
                               </Link>
 
@@ -2029,12 +2420,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         title={errorModal.title}
         message={errorModal.message}
       />
-      
-      <SuccessModal
-        isOpen={successModal.isOpen}
-        onClose={() => setSuccessModal({ isOpen: false, title: '', message: '' })}
-        title={successModal.title}
-        message={successModal.message}
+
+      <OrderFillLoadingModal
+        isOpen={orderFillModal.isOpen}
+        progress={orderFillModal.progress}
+        status={orderFillModal.status}
+        allowClose={orderFillModal.allowClose}
+        onClose={() => setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }))}
+        headlineText="Cancelling order,"
       />
       
       <div className="flex items-center justify-between border-b border-[#222222] p-2.5 flex-shrink-0">

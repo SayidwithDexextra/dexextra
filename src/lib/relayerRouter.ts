@@ -55,12 +55,21 @@ const rrCounter = new Map<RelayerPoolName, number>()
 // Per-address in-process serialization chain
 const sendChains = new Map<string, Promise<unknown>>()
 
+// Per-address in-process nonce hint (best-effort).
+// This protects against RPC "pending nonce" lag immediately after broadcasting a tx.
+// NOTE: This does NOT protect across multiple server instances; for that, use the Supabase allocator.
+const localNextNonce = new Map<string, bigint>()
+
 function runExclusive<T>(address: string, fn: () => Promise<T>): Promise<T> {
   const prev = sendChains.get(address) ?? Promise.resolve()
   const next = prev.then(fn, fn)
   // Keep chain alive even if errors happen
   sendChains.set(address, next.catch(() => undefined))
   return next
+}
+
+function nonceCacheKey(address: string, chainId: bigint): string {
+  return `${chainId.toString()}:${String(address).toLowerCase()}`
 }
 
 function loadPool(name: RelayerPoolName): RelayerKey[] {
@@ -161,8 +170,12 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
 
   let lastErr: any = null
   for (let i = 0; i < attempts; i++) {
-    const observedPending = await (params.provider as any).getTransactionCount(params.wallet.address, 'pending')
-    let nonce: bigint = BigInt(observedPending)
+    const observedPendingRaw = await (params.provider as any).getTransactionCount(params.wallet.address, 'pending')
+    const observedPending = BigInt(observedPendingRaw)
+
+    const cacheKey = nonceCacheKey(params.wallet.address, chainId)
+    const cachedNext = localNextNonce.get(cacheKey)
+    let nonce: bigint = cachedNext !== undefined && cachedNext > observedPending ? cachedNext : observedPending
 
     // Optional Supabase-backed allocator (prevents cross-instance nonce collisions).
     // Enabled automatically when service-role env is present, unless RELAYER_NONCE_ALLOCATOR=disabled.
@@ -198,6 +211,14 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
         nonce,
       })
 
+      // Update local nonce hint to avoid immediately reusing the same nonce on retries.
+      // Only advance on successful broadcast (i.e., we got a tx hash back).
+      try {
+        localNextNonce.set(cacheKey, nonce + 1n)
+      } catch {
+        // ignore
+      }
+
       // Best-effort mark broadcasted for observability
       try {
         const mode = String(process.env.RELAYER_NONCE_ALLOCATOR || '').trim().toLowerCase()
@@ -222,15 +243,29 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
       lastErr = e
       const msg = String(e?.reason || e?.shortMessage || e?.message || e)
       const m = msg.toLowerCase()
-      const nonceish =
+      const isNonceUsed =
         m.includes('nonce has already been used') ||
         m.includes('nonce too low') ||
         m.includes('already known') ||
-        m.includes('known transaction') ||
-        m.includes('replacement transaction underpriced')
+        m.includes('known transaction')
+      const isReplacementUnderpriced = m.includes('replacement transaction underpriced')
+
+      const nonceish = isNonceUsed || isReplacementUnderpriced
       if (!nonceish) throw e
+
+      // If the node says "known/already known", we likely broadcasted this nonce already.
+      // If it says "replacement underpriced", we are accidentally trying to reuse a nonce
+      // that already has a pending tx. In both cases, move our local hint forward.
+      try {
+        const cur = localNextNonce.get(cacheKey)
+        const nextHint = nonce + 1n
+        if (cur === undefined || nextHint > cur) localNextNonce.set(cacheKey, nextHint)
+      } catch {
+        // ignore
+      }
+
       // brief delay before retry to let provider/mempool catch up
-      await new Promise((r) => setTimeout(r, 600))
+      await new Promise((r) => setTimeout(r, isReplacementUnderpriced ? 1200 : 700))
       if (process.env.NODE_ENV !== 'production') {
         console.log(`[relayer][nonce-retry] ${label} attempt ${i + 1}/${attempts} failed: ${msg}`)
       }

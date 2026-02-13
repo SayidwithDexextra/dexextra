@@ -17,6 +17,7 @@ import type { Address } from 'viem';
 import { submitSessionTrade, isSessionErrorMessage } from '@/lib/gasless';
 import { useSession } from '@/contexts/SessionContext';
 import WalletModal from '@/components/WalletModal';
+import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -163,6 +164,56 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   
   // Order submission state
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+
+  // Order fill modal (subtle "cup fill" loader)
+  const [orderFillModal, setOrderFillModal] = useState<{
+    isOpen: boolean;
+    progress: number; // 0..1
+    status: OrderFillStatus;
+    allowClose: boolean;
+    startedAt: number;
+    kind: 'market' | 'limit' | 'cancel' | null;
+  }>({
+    isOpen: false,
+    progress: 0,
+    status: 'submitting',
+    allowClose: false,
+    startedAt: 0,
+    kind: null,
+  });
+
+  const startOrderFillModal = useCallback((kind: 'market' | 'limit' | 'cancel') => {
+    setOrderFillModal({
+      isOpen: true,
+      progress: 0.06,
+      status: 'submitting',
+      allowClose: false,
+      startedAt: Date.now(),
+      kind,
+    });
+  }, []);
+
+  const markOrderFillError = useCallback(() => {
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: true,
+      status: 'error',
+      progress: 1,
+      allowClose: true,
+    }));
+  }, []);
+
+  const finishOrderFillModal = useCallback(() => {
+    setOrderFillModal((cur) => ({
+      ...cur,
+      status: 'filled',
+      progress: 1,
+      allowClose: false,
+    }));
+    window.setTimeout(() => {
+      setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }));
+    }, 750);
+  }, []);
   
   // Order cancellation state
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
@@ -291,6 +342,63 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     await Promise.allSettled(tasks);
     hydrateSessionOrders();
   }, [refreshOrderBookData, refreshPortfolioOrders, hydrateSessionOrders]);
+
+  // Smooth progress while submitting/filling (purely visual)
+  useEffect(() => {
+    if (!orderFillModal.isOpen) return;
+    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+
+    const target = orderFillModal.status === 'submitting' ? 0.7 : 0.92;
+    const id = window.setInterval(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen) return cur;
+        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        const t = cur.status === 'submitting' ? 0.7 : 0.92;
+        const next = Math.min(t, cur.progress + (t - cur.progress) * 0.08 + 0.003);
+        return { ...cur, progress: next };
+      });
+    }, 120);
+
+    return () => window.clearInterval(id);
+  }, [orderFillModal.isOpen, orderFillModal.status]);
+
+  // Escape hatch: if a market order stays pending too long, allow user to close.
+  useEffect(() => {
+    if (!orderFillModal.isOpen) return;
+    if (orderFillModal.kind !== 'market') return;
+    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    const startedAt = orderFillModal.startedAt;
+    const id = window.setInterval(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen || cur.kind !== 'market') return cur;
+        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (Date.now() - startedAt > 25_000) {
+          return { ...cur, allowClose: true };
+        }
+        return cur;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [orderFillModal.isOpen, orderFillModal.kind, orderFillModal.startedAt, orderFillModal.status]);
+
+  // Escape hatch for cancel too (avoid trapping UI if RPC hangs)
+  useEffect(() => {
+    if (!orderFillModal.isOpen) return;
+    if (orderFillModal.kind !== 'cancel') return;
+    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    const startedAt = orderFillModal.startedAt;
+    const id = window.setInterval(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen || cur.kind !== 'cancel') return cur;
+        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (Date.now() - startedAt > 18_000) {
+          return { ...cur, allowClose: true };
+        }
+        return cur;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [orderFillModal.isOpen, orderFillModal.kind, orderFillModal.startedAt, orderFillModal.status]);
 
   // Trading validation
   const canPlaceOrder = useCallback(() => {
@@ -951,6 +1059,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }
     
     clearAllErrors();
+    startOrderFillModal('market');
     setIsSubmittingOrder(true);
 
     try {
@@ -1150,12 +1259,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           const txHash = r.txHash || null;
           const mined = Boolean((r as any)?.mined);
           const pending = Boolean((r as any)?.pending);
-          showSuccess(
-            mined
-              ? `Market ${selectedOption} order placed successfully!`
-              : `Market ${selectedOption} order submitted${pending ? ' (pending confirmation)' : ''}.`,
-            mined ? 'Order Placed' : 'Order Submitted'
-          );
+          // Success popup modal removed for order placement (replaced by fill modal UX)
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Market order relayed', { txHash });
           console.log('[UpGas][UI] market submit: success', { txHash });
           try {
@@ -1183,6 +1287,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           await refreshOrders();
           setAmount(0);
           setAmountInput('');
+          // Market orders should fill immediately; if relayed but not mined yet, keep a brief "filling" moment.
+          setOrderFillModal((cur) => ({ ...cur, status: mined ? 'filled' : 'filling' }));
+          if (mined) {
+            finishOrderFillModal();
+          } else {
+            window.setTimeout(() => finishOrderFillModal(), 1400);
+          }
           return;
         } catch (gerr: any) {
           console.warn('[GASLESS] Market order gasless path failed:', gerr?.message || gerr);
@@ -1213,10 +1324,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       const receipt = await tx.wait();
       console.log('[Order TX][market] confirmed:', tx.hash);
 
-      showSuccess(
-        `Market ${selectedOption} order placed successfully!`,
-        'Order Placed'
-      );
+      // Success popup modal removed for order placement (replaced by fill modal UX)
       
       // Refresh orders after successful placement
       await refreshOrders();
@@ -1224,6 +1332,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       // Clear input fields after successful order
       setAmount(0);
       setAmountInput('');
+
+      finishOrderFillModal();
       
       } catch (error: any) {
       console.error('💥 Market order execution failed:', error);
@@ -1266,6 +1376,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
       
       showError(errorMessage, errorTitle);
+      markOrderFillError();
     } finally {
       setIsSubmittingOrder(false);
     }
@@ -1286,6 +1397,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     
     console.log('📋 Creating limit order with OrderBook...');
     clearAllErrors();
+    startOrderFillModal('limit');
     setIsSubmittingOrder(true);
 
     try {
@@ -1511,12 +1623,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           const txHash = r.txHash || null;
           const mined = Boolean((r as any)?.mined);
           const pending = Boolean((r as any)?.pending);
-          showSuccess(
-            mined
-              ? `Limit ${selectedOption} order placed successfully!`
-              : `Limit ${selectedOption} order submitted${pending ? ' (pending confirmation)' : ''}.`,
-            mined ? 'Order Placed' : 'Order Submitted'
-          );
+          // Success popup modal removed for order placement (replaced by fill modal UX)
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Limit order relayed', { txHash });
           console.log('[UpGas][UI] limit submit: success', { txHash });
           try {
@@ -1545,6 +1652,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           setAmountInput('');
           setTriggerPrice(0);
           setTriggerPriceInput("");
+          // Limit orders can remain open for a long time; we treat "placed/submitted" as completion for the modal.
+          setOrderFillModal((cur) => ({ ...cur, status: mined ? 'filled' : 'filling' }));
+          window.setTimeout(() => finishOrderFillModal(), mined ? 750 : 1100);
           return;
         } catch (gerr: any) {
           console.warn('[GASLESS] Limit order gasless path failed:', gerr?.message || gerr);
@@ -1576,10 +1686,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       const receipt = await tx.wait();
       console.log('[Dispatch] [Order TX][limit] confirmed:', tx.hash);
 
-      showSuccess(
-        `Limit ${selectedOption} order placed successfully!`,
-        'Order Placed'
-      );
+      // Success popup modal removed for order placement (replaced by fill modal UX)
       
       // Refresh orders after successful placement
       console.log('[Dispatch] 🔄 [UI][TradingPanel] Calling refreshOrders after limit order placement');
@@ -1591,6 +1698,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       setAmountInput('');
       setTriggerPrice(0);
       setTriggerPriceInput("");
+
+      finishOrderFillModal();
       
     } catch (error: any) {
       console.error('❌ Limit order creation failed:', error);
@@ -1620,6 +1729,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
       
       showError(errorMessage, errorTitle);
+      markOrderFillError();
     } finally {
       setIsSubmittingOrder(false);
     }
@@ -1633,6 +1743,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }
     
     try {
+      startOrderFillModal('cancel');
       // [GASLESS] try session-based gasless cancel first
       const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       const obAddrForGasless = (marketRow as any)?.market_address as string | undefined;
@@ -1648,6 +1759,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
           if (!activeSessionId || globalSessionActive !== true) {
             showError('Trading session is not enabled. Click Enable Trading before using gasless cancel.', 'Session Required');
+            setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }));
             return false;
           }
 
@@ -1668,13 +1780,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             } else {
               showError(msg, 'Gasless Error');
             }
+            markOrderFillError();
             return false;
           }
           const txHash = r.txHash || null;
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Cancel relayed', { txHash });
           console.log('[UpGas][UI] cancel: success', { txHash });
           await refreshOrders();
-          showSuccess('Order cancelled successfully', 'Order Cancelled');
+          // Success popup modal removed (replaced by fill modal UX)
+          finishOrderFillModal();
           return true;
         } catch (gerr: any) {
           console.warn('[GASLESS] Cancel gasless path failed:', gerr?.message || gerr);
@@ -1686,6 +1800,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           } else {
             showError(msg, 'Gasless Error');
           }
+          markOrderFillError();
           return false;
         }
       }
@@ -1693,8 +1808,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       const success = await orderBookActions.cancelOrder(orderId);
       
       if (success) {
-        showSuccess('Order cancelled successfully', 'Order Cancelled');
         await refreshOrders();
+        // Success popup modal removed (replaced by fill modal UX)
+        finishOrderFillModal();
         return true;
       } else {
         throw new Error('Failed to cancel order');
@@ -1703,6 +1819,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       console.error('Failed to cancel order:', error);
       let errorMessage = 'Failed to cancel order. Please try again.';
       showError(errorMessage, 'Cancellation Failed');
+      markOrderFillError();
       return false;
     }
   };
@@ -1780,6 +1897,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   return (
     <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 flex flex-col min-h-0 h-full">
       {/* Status Modals */}
+      <OrderFillLoadingModal
+        isOpen={orderFillModal.isOpen}
+        progress={orderFillModal.progress}
+        status={orderFillModal.status}
+        allowClose={orderFillModal.allowClose}
+        onClose={() => setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }))}
+        headlineText={orderFillModal.kind === 'cancel' ? 'Cancelling order,' : 'Submitting your order,'}
+      />
       <ErrorModal
         isOpen={errorModal.isOpen}
         onClose={() => setErrorModal({ isOpen: false, title: '', message: '' })}

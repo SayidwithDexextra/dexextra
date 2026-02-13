@@ -43,6 +43,8 @@ type UseOBOptions = {
   refreshInterval?: number;
   orderBookAddress?: Address | string | null;
   marketIdBytes32?: `0x${string}` | string | null;
+  /** Number of price levels to fetch for each side (clamped 1..25). */
+  levels?: number;
   /** When false, disables polling + RPC reads (useful when a parent provider already fetches this data). */
   enabled?: boolean;
   /** Prefer backend aggregator API (reduces browser RPC). Falls back to direct RPC on failure. */
@@ -65,6 +67,11 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
   const refreshInterval = _options?.refreshInterval ?? 5000;
   const enabled = _options?.enabled !== false;
   const source = _options?.source ?? 'api';
+  const requestedLevels = useMemo(() => {
+    const raw = Number(_options?.levels ?? 10);
+    if (!Number.isFinite(raw)) return 10;
+    return Math.min(25, Math.max(1, Math.floor(raw)));
+  }, [_options?.levels]);
   // Cache the resolved address to ensure consistency
   const resolvedAddressRef = useRef<Address | null>(null);
   const resolvedIsFallbackRef = useRef<boolean>(false);
@@ -508,7 +515,7 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
             if (explicitAddr && explicitAddr.startsWith('0x') && explicitAddr.length === 42) params.set('orderBookAddress', explicitAddr);
             const mid = (_options?.marketIdBytes32 as string | undefined) || '';
             if (mid && mid.startsWith('0x')) params.set('marketIdBytes32', mid);
-            params.set('levels', '10');
+            params.set('levels', String(requestedLevels));
             const resp = await fetch(`/api/orderbook/live?${params.toString()}`, { method: 'GET' });
             if (resp.ok) {
               const json = await resp.json();
@@ -605,7 +612,7 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
         // First fetch depth quickly and update state so UI can render bids/asks immediately
         let depth: OrderBookLiveData['depth'] = null;
         try {
-          const levels = 10n;
+          const levels = BigInt(requestedLevels);
           let d: any = null;
           try {
             d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepth', args: [levels] }), 2000, 'getOrderBookDepth');
