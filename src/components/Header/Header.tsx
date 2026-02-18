@@ -30,7 +30,7 @@ import DecryptedText from './DecryptedText';
 // Removed NetworkStatus import (only used in commented code)
 // Removed direct contract config imports
 import { useCoreVault } from '@/hooks/useCoreVault'
-import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
+import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext'
 import { Wallet } from 'lucide-react'
 
 // Search Icon Component
@@ -73,16 +73,16 @@ export default function Header() {
   
   // Align with useCoreVault data as single source of truth
   const core = useCoreVault(walletData.address || undefined)
-  // Recompute unrealized P&L like InteractiveTrader detailed analysis (positions + mark prices)
-  const portfolio = usePortfolioSummary(walletData.address || null, {
-    enabled: Boolean(walletData.isConnected && walletData.address),
-    refreshIntervalMs: 15_000,
-  })
+  // Global cached snapshot: used by both Header + PortfolioSidebar.
+  const { snapshot, isReady: snapshotReady } = usePortfolioSnapshot()
+  // Avoid showing fallback values that can be briefly wrong until the snapshot is ready.
+  const hidePortfolioUntilSummaryReady = Boolean(walletData.isConnected && !snapshotReady)
   const isVaultConnected = !!core.isConnected
   const vaultAvailableCollateral = (() => {
-    const pf = portfolio?.summary?.availableCash
-    if (Number.isFinite(Number(pf))) return Number(pf)
-    return parseFloat((vaultEvent?.availableCollateral ?? core.availableBalance) || '0')
+    if (hidePortfolioUntilSummaryReady) return Number.NaN
+    const v = snapshot?.availableCash
+    if (Number.isFinite(Number(v))) return Number(v)
+    return Number.NaN
   })()
   // Portfolio value approximation consistent with TokenHeader broadcasting:
   // totalCollateral (6d) + realizedPnL (24d formatted) + unrealizedPnL (24d formatted)
@@ -90,13 +90,23 @@ export default function Header() {
   const totalCollateralNum = parseFloat((vaultEvent?.totalCollateral ?? core.totalCollateral) || '0')
   const realizedPnLNum = parseFloat((vaultEvent?.realizedPnL ?? core.realizedPnL) || '0')
   const unrealizedPnLNum = (() => {
-    const pf = portfolio?.summary?.unrealizedPnl
-    if (Number.isFinite(Number(pf))) return Number(pf)
-    return parseFloat((vaultEvent?.unrealizedPnL ?? core.unrealizedPnL) || '0')
+    if (hidePortfolioUntilSummaryReady) return Number.NaN
+    const v = snapshot?.unrealizedPnl
+    if (Number.isFinite(Number(v))) return Number(v)
+    return Number.NaN
   })()
   // Avoid double counting losses: negative realized is already deducted from collateral on-chain
   const realizedForPortfolio = Math.max(0, realizedPnLNum)
-  const vaultPortfolioValue = totalCollateralNum + realizedForPortfolio + unrealizedPnLNum
+  const vaultPortfolioValue = (() => {
+    if (hidePortfolioUntilSummaryReady) return Number.NaN
+    const v = snapshot?.portfolioValue
+    if (Number.isFinite(Number(v))) return Number(v)
+    // Fallback (should rarely be used): compute from core + snapshot unrealized
+    if (Number.isFinite(totalCollateralNum) && Number.isFinite(realizedForPortfolio) && Number.isFinite(unrealizedPnLNum)) {
+      return totalCollateralNum + realizedForPortfolio + unrealizedPnLNum
+    }
+    return Number.NaN
+  })()
   const unrealizedPnL = unrealizedPnLNum
 
   const openPortfolioSidebar = () => {
@@ -201,8 +211,9 @@ export default function Header() {
   // Ensure certain UI renders only after client mount to avoid hydration issues
 
   // Format portfolio and cash values from centralized vault
-  const formatCurrency = (value: string, showSign = false) => {
-    const num = parseFloat(value || '0')
+  const formatCurrency = (value: string | number, showSign = false) => {
+    const num = typeof value === 'number' ? value : parseFloat(value || '0')
+    if (!Number.isFinite(num)) return '$—'
     const formatted = num.toLocaleString('en-US', { 
       style: 'currency', 
       currency: 'USD',
@@ -211,7 +222,7 @@ export default function Header() {
     })
     return showSign && num > 0 ? `+${formatted}` : formatted
   }
-  const displayUnrealizedPnL = !walletData.isConnected ? '$0.00' : formatCurrency(String(unrealizedPnL), true)
+  const displayUnrealizedPnL = !walletData.isConnected ? '$0.00' : formatCurrency(unrealizedPnL, true)
 
   // Calculate portfolio value from VaultRouter, re-animating only when 2-decimal display changes
   const roundedPortfolioCents = useMemo(() => {
@@ -238,8 +249,10 @@ export default function Header() {
 
   const animateCentsKey = useMemo(() => {
     if (!walletData.isConnected) return null
+    if (hidePortfolioUntilSummaryReady) return null
+    if (![roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents].every((n) => Number.isFinite(n))) return null
     return [roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents].join('|')
-  }, [walletData.isConnected, roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents])
+  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, roundedPortfolioCents, roundedCashCents, roundedUnrealizedPnLCents])
 
   useEffect(() => {
     if (!walletData.isConnected || !animateCentsKey) {
@@ -247,7 +260,7 @@ export default function Header() {
       return
     }
 
-    // On first connected snapshot, animate once (Header already mounted with $0.00).
+    // First non-null key: animate once (we keep animateOnMount disabled to avoid double-animating).
     if (lastAnimateCentsKeyRef.current === null) {
       lastAnimateCentsKeyRef.current = animateCentsKey
       setVaultUpdateSeq((s) => s + 1)
@@ -455,7 +468,7 @@ export default function Header() {
                   characters="0123456789$.,+-"
                   speed={100}
                   maxIterations={12}
-                  animateOnMount={true}
+                  animateOnMount={false}
                   animateOnHover={false}
                   animateOnChange={false}
                 />
@@ -498,7 +511,7 @@ export default function Header() {
                     characters="0123456789$.,+-"
                     speed={100}
                     maxIterations={12}
-                    animateOnMount={true}
+                    animateOnMount={false}
                     animateOnHover={false}
                     animateOnChange={false}
                   />
@@ -530,7 +543,7 @@ export default function Header() {
                     characters="0123456789$.,+-"
                     speed={100}
                     maxIterations={12}
-                    animateOnMount={true}
+                    animateOnMount={false}
                     animateOnHover={false}
                     animateOnChange={false}
                   />

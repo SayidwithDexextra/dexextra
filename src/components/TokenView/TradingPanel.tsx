@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { useMarginSummary } from '@/hooks/useMarginSummary';
 import { usePortfolioData, type PortfolioOrdersBucket } from '@/hooks/usePortfolioData';
 import type { OrderBookOrder } from '@/hooks/useOrderBook';
-import { ErrorModal, SuccessModal } from '@/components/StatusModals';
+import { SuccessModal } from '@/components/StatusModals';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
 import { initializeContracts } from '@/lib/contracts';
@@ -173,6 +173,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     allowClose: boolean;
     startedAt: number;
     kind: 'market' | 'limit' | 'cancel' | null;
+    headlineText?: string;
+    detailText?: string;
+    showProgressLabel?: boolean;
   }>({
     isOpen: false,
     progress: 0,
@@ -180,6 +183,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     allowClose: false,
     startedAt: 0,
     kind: null,
+    headlineText: undefined,
+    detailText: undefined,
+    showProgressLabel: undefined,
   });
 
   const startOrderFillModal = useCallback((kind: 'market' | 'limit' | 'cancel') => {
@@ -190,6 +196,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       allowClose: false,
       startedAt: Date.now(),
       kind,
+      headlineText: undefined,
+      detailText: undefined,
+      showProgressLabel: undefined,
     });
   }, []);
 
@@ -200,6 +209,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       status: 'error',
       progress: 1,
       allowClose: true,
+      showProgressLabel: false,
     }));
   }, []);
 
@@ -209,10 +219,47 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       status: 'filled',
       progress: 1,
       allowClose: false,
+      headlineText: undefined,
+      detailText: undefined,
+      showProgressLabel: undefined,
     }));
     window.setTimeout(() => {
-      setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }));
+      setOrderFillModal((cur) => ({
+        ...cur,
+        isOpen: false,
+        kind: null,
+        headlineText: undefined,
+        detailText: undefined,
+        showProgressLabel: undefined,
+      }));
     }, 750);
+  }, []);
+
+  const markOrderAsSlowBackgroundable = useCallback((opts: { kind: 'market' | 'limit' | 'cancel'; routedPool?: string; reroutedToBig?: boolean }) => {
+    const isBig = opts.routedPool === 'hub_trade_big' || opts.reroutedToBig === true;
+    if (!isBig) return false;
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: true,
+      status: 'submitting',
+      progress: Math.max(cur.progress || 0, 0.12),
+      allowClose: true,
+      kind: opts.kind,
+      headlineText: 'This is taking longer than usual,',
+      detailText:
+        'Placing your order could take between 1 and 2 minutes. You can close this dialog to continue in the background.',
+      showProgressLabel: false,
+    }));
+    // Auto-dismiss after a moment so the UI doesn't feel stuck.
+    window.setTimeout(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen) return cur;
+        // Only auto-dismiss if we're still in the "submitting/filling" phase
+        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        return { ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined };
+      });
+    }, 9000);
+    return true;
   }, []);
   
   // Order cancellation state
@@ -407,7 +454,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
   // Clear any trading errors
   const clearTradingError = useCallback(() => {
-    setErrorModal({ isOpen: false, title: '', message: '' });
+    setOrderFillModal((cur) => {
+      // Only clear the "error dialog" variant (not active submit/fill flows)
+      if (!cur.isOpen) return cur;
+      if (cur.status !== 'error') return cur;
+      if (cur.kind !== null) return cur;
+      return {
+        ...cur,
+        isOpen: false,
+        headlineText: undefined,
+        detailText: undefined,
+        showProgressLabel: undefined,
+      };
+    });
   }, []);
   
   const isSystemReady = !orderBookLoading && !isSubmittingOrder;
@@ -439,6 +498,41 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   const [limitOrderType, setLimitOrderType] = useState<'LIMIT' | 'MARKET_IF_TOUCHED' | 'STOP_LOSS' | 'TAKE_PROFIT'>('LIMIT');
   const [orderExpiry, setOrderExpiry] = useState(24); // hours from now
   const [maxSlippage, setMaxSlippage] = useState(100); // basis points (1%)
+  const [isSlippageModalOpen, setIsSlippageModalOpen] = useState(false);
+  const [draftMaxSlippage, setDraftMaxSlippage] = useState<number>(100);
+  const SLIPPAGE_MIN_BPS = 10; // 0.10%
+  const SLIPPAGE_MAX_BPS = 10_000; // 100.00%
+
+  const openSlippageModal = useCallback(() => {
+    setDraftMaxSlippage(maxSlippage);
+    setIsSlippageModalOpen(true);
+  }, [maxSlippage]);
+
+  const closeSlippageModal = useCallback(() => {
+    setIsSlippageModalOpen(false);
+  }, []);
+
+  const confirmSlippageModal = useCallback(() => {
+    setMaxSlippage(draftMaxSlippage);
+    setIsSlippageModalOpen(false);
+  }, [draftMaxSlippage]);
+
+  useEffect(() => {
+    if (!isSlippageModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsSlippageModalOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isSlippageModalOpen]);
+
+  const formatSlippagePct = (bps: number) => {
+    const pct = bps / 100;
+    // Keep it compact but precise enough for a slider
+    if (pct >= 10) return `${pct.toFixed(0)}%`;
+    if (pct >= 1) return `${pct.toFixed(2).replace(/\.00$/, '')}%`;
+    return `${pct.toFixed(2)}%`;
+  };
   const [isContractInfoExpanded, setIsContractInfoExpanded] = useState(false);
   const [successModal, setSuccessModal] = useState<{
     isOpen: boolean;
@@ -449,16 +543,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     title: '',
     message: ''
   });
-  const [errorModal, setErrorModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-  }>({
-    isOpen: false,
-    title: '',
-    message: ''
-  });
-
   // Note: We intentionally avoid syncing amount -> amountInput via effect to not
   // overwrite partial decimal typing like "0." during user input.
 
@@ -535,7 +619,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
   const clearMessages = () => {
     setSuccessModal({ isOpen: false, title: '', message: '' });
-    setErrorModal({ isOpen: false, title: '', message: '' });
+    clearTradingError();
   };
 
   const showSuccess = (message: string, title: string = 'Success') => {
@@ -543,7 +627,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   };
 
   const showError = (message: string, title: string = 'Error') => {
-    setErrorModal({ isOpen: true, title, message });
+    // Use the new OrderFillLoadingModal as a unified status modal for errors too.
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: true,
+      kind: null,
+      startedAt: cur.startedAt || Date.now(),
+      status: 'error',
+      progress: 1,
+      allowClose: true,
+      headlineText: title,
+      detailText: message,
+      showProgressLabel: false,
+    }));
   };
 
   // Navigation helper
@@ -1038,7 +1134,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   // Clear any trading errors when needed
   const clearAllErrors = () => {
     clearTradingError();
-    setErrorModal({ isOpen: false, title: '', message: '' });
   };
 
   // =====================
@@ -1135,7 +1230,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
 
       // Compute slippage bps (use UI state)
-      const slippageBps = Math.max(10, Math.min(5000, Number(maxSlippage || 100))); // clamp 0.1%..50%
+      const slippageBps = Math.max(SLIPPAGE_MIN_BPS, Math.min(SLIPPAGE_MAX_BPS, Number(maxSlippage || 100))); // clamp 0.1%..100%
 
       // Preflight static call to surface revert reasons early
       try {
@@ -1257,8 +1352,17 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             return;
           }
           const txHash = r.txHash || null;
+          try {
+            console.log('[UpGas][UI] market gas estimate', {
+              estimatedGas: (r as any)?.estimatedGas,
+              estimatedGasBuffered: (r as any)?.estimatedGasBuffered,
+              routedPool: (r as any)?.routedPool,
+              estimatedFromAddress: (r as any)?.estimatedFromAddress,
+            });
+          } catch {}
           const mined = Boolean((r as any)?.mined);
           const pending = Boolean((r as any)?.pending);
+          const slow = markOrderAsSlowBackgroundable({ kind: 'market', routedPool: (r as any)?.routedPool, reroutedToBig: (r as any)?.reroutedToBig });
           // Success popup modal removed for order placement (replaced by fill modal UX)
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Market order relayed', { txHash });
           console.log('[UpGas][UI] market submit: success', { txHash });
@@ -1292,7 +1396,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           if (mined) {
             finishOrderFillModal();
           } else {
-            window.setTimeout(() => finishOrderFillModal(), 1400);
+            if (!slow) window.setTimeout(() => finishOrderFillModal(), 1400);
           }
           return;
         } catch (gerr: any) {
@@ -1621,6 +1725,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             return;
           }
           const txHash = r.txHash || null;
+          try {
+            console.log('[UpGas][UI] limit gas estimate', {
+              estimatedGas: (r as any)?.estimatedGas,
+              estimatedGasBuffered: (r as any)?.estimatedGasBuffered,
+              routedPool: (r as any)?.routedPool,
+              estimatedFromAddress: (r as any)?.estimatedFromAddress,
+            });
+          } catch {}
+          const slow = markOrderAsSlowBackgroundable({
+            kind: 'limit',
+            routedPool: (r as any)?.routedPool,
+            reroutedToBig: (r as any)?.reroutedToBig,
+          });
           const mined = Boolean((r as any)?.mined);
           const pending = Boolean((r as any)?.pending);
           // Success popup modal removed for order placement (replaced by fill modal UX)
@@ -1654,7 +1771,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           setTriggerPriceInput("");
           // Limit orders can remain open for a long time; we treat "placed/submitted" as completion for the modal.
           setOrderFillModal((cur) => ({ ...cur, status: mined ? 'filled' : 'filling' }));
-          window.setTimeout(() => finishOrderFillModal(), mined ? 750 : 1100);
+          if (!slow) window.setTimeout(() => finishOrderFillModal(), mined ? 750 : 1100);
           return;
         } catch (gerr: any) {
           console.warn('[GASLESS] Limit order gasless path failed:', gerr?.message || gerr);
@@ -1784,6 +1901,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             return false;
           }
           const txHash = r.txHash || null;
+          try {
+            console.log('[UpGas][UI] cancel gas estimate', {
+              estimatedGas: (r as any)?.estimatedGas,
+              estimatedGasBuffered: (r as any)?.estimatedGasBuffered,
+              routedPool: (r as any)?.routedPool,
+              estimatedFromAddress: (r as any)?.estimatedFromAddress,
+            });
+          } catch {}
+          markOrderAsSlowBackgroundable({
+            kind: 'cancel',
+            routedPool: (r as any)?.routedPool,
+            reroutedToBig: (r as any)?.reroutedToBig,
+          });
           console.log('[Dispatch] ✅ [GASLESS][SESSION] Cancel relayed', { txHash });
           console.log('[UpGas][UI] cancel: success', { txHash });
           await refreshOrders();
@@ -1893,6 +2023,47 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
   // Wallet modal state
   const [showWalletModal, setShowWalletModal] = useState(false);
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+  const [showBottomFade, setShowBottomFade] = useState(false);
+
+  const updateBottomFade = useCallback(() => {
+    const el = scrollAreaRef.current;
+    if (!el) return;
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const next = remaining > 12;
+    setShowBottomFade((cur) => (cur === next ? cur : next));
+  }, []);
+
+  useEffect(() => {
+    updateBottomFade();
+  }, [updateBottomFade, activeTab, orderType]);
+
+  useEffect(() => {
+    const el = scrollAreaRef.current;
+    if (!el) return;
+
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(updateBottomFade);
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+
+    const ro = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => updateBottomFade())
+      : null;
+    ro?.observe(el);
+
+    // Initial measurement
+    updateBottomFade();
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      el.removeEventListener('scroll', onScroll);
+      ro?.disconnect();
+    };
+  }, [updateBottomFade]);
 
   return (
     <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 flex flex-col min-h-0 h-full">
@@ -1902,14 +2073,22 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         progress={orderFillModal.progress}
         status={orderFillModal.status}
         allowClose={orderFillModal.allowClose}
-        onClose={() => setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }))}
-        headlineText={orderFillModal.kind === 'cancel' ? 'Cancelling order,' : 'Submitting your order,'}
-      />
-      <ErrorModal
-        isOpen={errorModal.isOpen}
-        onClose={() => setErrorModal({ isOpen: false, title: '', message: '' })}
-        title={errorModal.title}
-        message={errorModal.message}
+        onClose={() =>
+          setOrderFillModal((cur) => ({
+            ...cur,
+            isOpen: false,
+            kind: null,
+            headlineText: undefined,
+            detailText: undefined,
+            showProgressLabel: undefined,
+          }))
+        }
+        headlineText={
+          orderFillModal.headlineText ??
+          (orderFillModal.kind === 'cancel' ? 'Cancelling order,' : 'Submitting your order,')
+        }
+        detailText={orderFillModal.detailText}
+        showProgressLabel={orderFillModal.showProgressLabel}
       />
       
       <SuccessModal
@@ -1924,6 +2103,109 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         isOpen={showWalletModal} 
         onClose={() => setShowWalletModal(false)} 
       />
+
+      {/* Slippage Config Modal */}
+      {isSlippageModalOpen && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Adjust max slippage"
+        >
+          {/* Backdrop */}
+          <button
+            type="button"
+            aria-label="Close slippage modal"
+            onClick={closeSlippageModal}
+            className="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
+          />
+
+          {/* Panel */}
+          <div className="relative w-full max-w-md rounded-md border border-[#222222] bg-[#0F0F0F] shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+            <div className="flex items-start justify-between gap-4 p-4 border-b border-[#1A1A1A]">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                  <h3 className="text-sm font-semibold text-white">Adjust Max Slippage</h3>
+                </div>
+                <p className="mt-1 text-[10px] text-[#606060] leading-relaxed">
+                  Max slippage applies to <span className="text-[#9CA3AF]">market orders</span> placed from this panel.
+                  Higher values can improve fill likelihood during volatility, but may result in worse execution.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeSlippageModal}
+                className="p-1 rounded-md hover:bg-[#1A1A1A] text-[#9CA3AF] hover:text-white transition-colors duration-200"
+                aria-label="Close"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                  <path d="M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-medium text-[#808080]">Max slippage</span>
+                <span className="text-[10px] text-white font-mono">{formatSlippagePct(draftMaxSlippage)}</span>
+              </div>
+
+              {(() => {
+                const pct =
+                  ((draftMaxSlippage - SLIPPAGE_MIN_BPS) / (SLIPPAGE_MAX_BPS - SLIPPAGE_MIN_BPS)) * 100;
+                const safePct = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0;
+                return (
+                  <input
+                    type="range"
+                    min={SLIPPAGE_MIN_BPS}
+                    max={SLIPPAGE_MAX_BPS}
+                    step="5"
+                    value={draftMaxSlippage}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setDraftMaxSlippage(parseInt(getInputValue(e)))
+                    }
+                    className="w-full appearance-none cursor-pointer slippageRange"
+                    style={{
+                      background: `linear-gradient(to right, #60A5FA 0%, #60A5FA ${safePct}%, #2A2A2A ${safePct}%, #2A2A2A 100%)`,
+                    }}
+                  />
+                );
+              })()}
+
+              <div className="flex justify-between text-[9px] text-[#606060]">
+                <span>0.1%</span>
+                <span>Conservative</span>
+                <span>Aggressive</span>
+                <span>100%</span>
+              </div>
+
+              <div className="text-[9px] text-[#606060]">
+                Tip: for most markets, <span className="text-[#9CA3AF]">0.5–2%</span> is a good starting range.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-[#1A1A1A] bg-[#0A0A0A]">
+              <button
+                type="button"
+                onClick={closeSlippageModal}
+                className="px-3 py-2 rounded-md border border-[#222222] bg-[#0F0F0F] hover:bg-[#1A1A1A] hover:border-[#333333] text-[11px] font-medium text-[#9CA3AF] hover:text-white transition-all duration-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmSlippageModal}
+                className="px-3 py-2 rounded-md bg-[#3B82F6] hover:bg-[#2563EB] text-[11px] font-semibold text-white transition-all duration-200"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full flex flex-col overflow-hidden">
 
@@ -1975,10 +2257,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         </div>
 
         {/* Trading Content Area - scrollable within the panel to avoid cut-offs on large screens */}
-        <div className="flex-1 space-y-1.5 pb-1.5 trading-panel-scroll overflow-y-auto">
-          {/* Sell Tab - Current Positions */}
-          {activeTab === 'sell' && (
-            <div className="space-y-2">
+        <div className="relative flex-1 min-h-0">
+          <div
+            ref={scrollAreaRef}
+            className="h-full space-y-1.5 pb-1.5 trading-panel-scroll overflow-y-auto"
+          >
+            {/* Sell Tab - Current Positions */}
+            {activeTab === 'sell' && (
+              <div className="space-y-2">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-sm font-semibold text-white">Current Positions</h4>
                 <button
@@ -2177,8 +2463,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   </div>
                 </div>
               )}
-            </div>
-          )}
+              </div>
+            )}
 
           {/* Sell Tab - Active Limit Orders */}
           {activeTab === 'sell' && (
@@ -2643,6 +2929,32 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                     </div>
                   </button>
                 </div>
+
+                {/* Discreet slippage control (opens modal) */}
+                <div className="flex items-center justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={openSlippageModal}
+                    className="group inline-flex items-center gap-1.5 rounded px-2 py-1 hover:bg-[#1A1A1A] transition-all duration-200"
+                    title="Adjust max slippage"
+                  >
+                    <svg
+                      className="w-3 h-3 text-[#606060] group-hover:text-[#9CA3AF] transition-colors duration-200"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                    >
+                      <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2.2 2.2 0 0 1-1.56 3.76 2.2 2.2 0 0 1-1.56-.64l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.08 1.65V22a2.2 2.2 0 0 1-4.4 0v-.07a1.8 1.8 0 0 0-1.08-1.65 1.8 1.8 0 0 0-1.98.36l-.05.05A2.2 2.2 0 1 1 2.2 17l.05-.05A1.8 1.8 0 0 0 2.6 15a1.8 1.8 0 0 0-1.65-1.08H.9a2.2 2.2 0 0 1 0-4.4h.07A1.8 1.8 0 0 0 2.7 8.44a1.8 1.8 0 0 0-.36-1.98l-.05-.05A2.2 2.2 0 1 1 5.05 2.64l.05.05a1.8 1.8 0 0 0 1.98.36A1.8 1.8 0 0 0 8.16 1.4V1.33a2.2 2.2 0 0 1 4.4 0v.07a1.8 1.8 0 0 0 1.08 1.65 1.8 1.8 0 0 0 1.98-.36l.05-.05A2.2 2.2 0 1 1 21.8 7l-.05.05A1.8 1.8 0 0 0 21.44 9a1.8 1.8 0 0 0 1.65 1.08h.07a2.2 2.2 0 0 1 0 4.4h-.07A1.8 1.8 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+
+                    <span className="text-[10px] text-[#606060] group-hover:text-[#9CA3AF] transition-colors duration-200">
+                      Slippage
+                    </span>
+                    <span className="text-[10px] text-white font-mono whitespace-nowrap">
+                      {formatSlippagePct(maxSlippage)}
+                    </span>
+                  </button>
+                </div>
               </div>
             )}
 
@@ -2750,6 +3062,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           </div>
             </>
           )}
+          </div>
+
+          {/* Bottom fade hint (shows when content is cut off) */}
+          <div
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-0 right-0 bottom-0 h-12 z-10 bg-gradient-to-b from-[#0A0A0A]/0 via-[#0A0A0A]/70 to-[#0A0A0A] transition-opacity duration-200 ${
+              showBottomFade ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
         </div>
 
         {/* Trade Button */}
@@ -2817,6 +3138,61 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           background: #22C55E;
           cursor: pointer;
           border: none;
+        }
+
+        .slippageRange::-webkit-slider-thumb {
+          appearance: none;
+          height: 14px;
+          width: 14px;
+          border-radius: 9999px;
+          background: #60A5FA; /* blue-400 */
+          cursor: pointer;
+          border: 2px solid #0F0F0F;
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+          margin-top: -5px; /* center thumb on 4px track */
+          position: relative;
+          z-index: 3;
+        }
+
+        .slippageRange::-moz-range-thumb {
+          height: 14px;
+          width: 14px;
+          border-radius: 9999px;
+          background: #60A5FA; /* blue-400 */
+          cursor: pointer;
+          border: 2px solid #0F0F0F;
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+          position: relative;
+          z-index: 3;
+        }
+
+        .slippageRange::-webkit-slider-runnable-track {
+          height: 4px;
+          background: transparent; /* filled via input background gradient */
+          border-radius: 9999px;
+          position: relative;
+          z-index: 1;
+        }
+
+        .slippageRange::-moz-range-track {
+          height: 4px;
+          background: transparent; /* filled via input background gradient */
+          border-radius: 9999px;
+          position: relative;
+          z-index: 1;
+        }
+
+        .slippageRange {
+          height: 14px;
+          border-radius: 9999px;
+          outline: none;
+          overflow: visible;
+          position: relative;
+          z-index: 2;
+        }
+
+        .slippageRange:focus {
+          box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
         }
       `}</style>
       

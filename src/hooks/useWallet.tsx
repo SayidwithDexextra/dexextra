@@ -13,6 +13,7 @@ import {
   getBalance,
   generateAvatar,
   diagnoseWalletIssues,
+  getActiveEthereumProvider,
 } from '@/lib/wallet'
 import { fetchWalletPortfolio } from '@/lib/tokenService'
 import { ProfileApi } from '@/lib/profileApi'
@@ -374,8 +375,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
     try {
       setPortfolio(prev => ({ ...prev, isLoading: true }))
       
-      // Get the ethereum provider
-      const ethereum = (window as Window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum
+      // Prefer the user-selected wallet's provider in multi-wallet setups
+      const ethereum =
+        getActiveEthereumProvider() ??
+        (window as Window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum
       if (!ethereum) {
         throw new Error('No ethereum provider found')
       }

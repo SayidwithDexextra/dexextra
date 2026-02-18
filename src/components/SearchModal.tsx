@@ -338,9 +338,9 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         ref={modalRef}
         className={`relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
         style={{
-          maxWidth: '720px',
-          maxHeight: '800px',
-          padding: '20px',
+          maxWidth: '900px',
+          maxHeight: '85vh',
+          padding: '24px',
           boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
         }}
       >
@@ -379,7 +379,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         </div>
 
         {/* Content Sections */}
-        <div className="search-modal-scroll overflow-y-auto" style={{ maxHeight: '680px' }}>
+        <div className="search-modal-scroll overflow-y-auto" style={{ maxHeight: 'calc(85vh - 100px)' }}>
           {/* Error Message */}
           {searchResults.error && (
             <div className="bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5 mb-3">
@@ -623,57 +623,47 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           {/* Search Results - Users */}
           {searchValue && searchResults.users.length > 0 && (
             <div className="mb-3">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-3">
                 <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                   Users
                 </h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                  {searchResults.users.length}
-                </div>
+                <button className="text-[11px] text-[#808080] hover:text-white hover:underline transition-colors">
+                  Show all
+                </button>
               </div>
               
-              <div className="space-y-1">
-                {searchResults.users.map((user) => (
-                  <div
-                    key={user.id}
-                    onClick={() => handleUserSelect(user)}
-                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
-                  >
-                    <div className="flex items-center justify-between p-2.5">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <div 
-                            className="flex items-center justify-center text-[9px] font-medium rounded-full w-6 h-6"
-                            style={{
-                              backgroundColor: user.profile_image_url ? 'transparent' : '#404040',
-                              backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
-                              backgroundSize: 'cover',
-                              backgroundPosition: 'center',
-                              color: '#ffffff'
-                            }}
-                          >
-                            {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[11px] font-medium text-white">
-                              {user.display_name || user.username || 'Anonymous User'}
-                            </div>
-                            <div className="text-[10px] text-[#606060] font-mono">
-                              {user.wallet_address.slice(0, 6)}...{user.wallet_address.slice(-4)}
-                            </div>
-                          </div>
+              <div className="overflow-x-auto overflow-y-hidden users-horizontal-scroll -mx-2 px-2">
+                <div className="flex gap-4 pb-2" style={{ minWidth: 'max-content' }}>
+                  {searchResults.users.map((user) => (
+                    <div
+                      key={user.id}
+                      onClick={() => handleUserSelect(user)}
+                      className="group flex flex-col items-start cursor-pointer transition-all duration-200 flex-shrink-0 p-3 rounded-lg hover:bg-[#1A1A1A]"
+                      style={{ width: '140px' }}
+                    >
+                      <div 
+                        className="flex items-center justify-center text-3xl font-semibold rounded-full w-[115px] h-[115px] mb-3 transition-all duration-200 shadow-lg group-hover:shadow-xl"
+                        style={{
+                          backgroundColor: user.profile_image_url ? 'transparent' : '#282828',
+                          backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
+                          backgroundSize: 'cover',
+                          backgroundPosition: 'center',
+                          color: '#ffffff'
+                        }}
+                      >
+                        {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
+                      </div>
+                      <div className="text-left w-full">
+                        <div className="text-[14px] font-semibold text-white truncate">
+                          {user.display_name || user.username || 'Anonymous'}
+                        </div>
+                        <div className="text-[12px] text-[#a0a0a0]">
+                          User
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
-                        <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 24 24" fill="none">
-                          <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -747,6 +737,15 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           .search-modal-scroll::-webkit-scrollbar {
             width: 0px;
             height: 0px;
+          }
+
+          .users-horizontal-scroll {
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+          }
+
+          .users-horizontal-scroll::-webkit-scrollbar {
+            display: none;
           }
         `}</style>
       </div>

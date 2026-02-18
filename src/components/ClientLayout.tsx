@@ -14,6 +14,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { OnchainOrdersProvider } from "@/contexts/OnchainOrdersContextV2";
 import PortfolioSidebar from "@/components/PortfolioV2/PortfolioSidebar";
+import { PortfolioSnapshotProvider } from "@/contexts/PortfolioSnapshotContext";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
@@ -53,33 +54,35 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
           <ThemeProvider>
             <ActiveMarketsProvider>
               <WalkthroughProvider>
-                <div className="relative">
-                  <Header />
-                  <PortfolioSidebar isOpen={isPortfolioSidebarOpen} onClose={() => setIsPortfolioSidebarOpen(false)} />
+                <PortfolioSnapshotProvider>
+                  <div className="relative">
+                    <Header />
+                    <PortfolioSidebar isOpen={isPortfolioSidebarOpen} onClose={() => setIsPortfolioSidebarOpen(false)} />
                   
-                  <div className="flex">
-                    <Navbar isOpen={isNavbarOpen} onOpenChange={handleNavbarOpenChange} />
-                    <main 
-                      className="flex-1"
-                      style={{ 
-                        marginLeft: `${collapsedNavbarWidth}px`, // Match collapsed navbar width
-                        marginTop: '48px', // Account for fixed header
-                        minHeight: 'calc(100vh - 96px)', // Subtract header and footer height
-                        marginBottom: '48px', // Account for fixed footer
-                        backgroundColor: '#1a1a1a',
-                        minWidth: 0, // Prevent flex child from overflowing
-                        overflow: 'hidden', // Contain any overflowing content
-                      }}
-                    >
-                      <div style={{ backgroundColor: '#1a1a1a', width: '100%', overflow: 'hidden' }}>
-                        {children}
-                      </div>
-                    </main>
+                    <div className="flex">
+                      <Navbar isOpen={isNavbarOpen} onOpenChange={handleNavbarOpenChange} />
+                      <main 
+                        className="flex-1"
+                        style={{ 
+                          marginLeft: `${collapsedNavbarWidth}px`, // Match collapsed navbar width
+                          marginTop: '48px', // Account for fixed header
+                          minHeight: 'calc(100vh - 96px)', // Subtract header and footer height
+                          marginBottom: '48px', // Account for fixed footer
+                          backgroundColor: '#1a1a1a',
+                          minWidth: 0, // Prevent flex child from overflowing
+                          overflow: 'hidden', // Contain any overflowing content
+                        }}
+                      >
+                        <div style={{ backgroundColor: '#1a1a1a', width: '100%', overflow: 'hidden' }}>
+                          {children}
+                        </div>
+                      </main>
+                    </div>
+                    {/* Global session-aware prompt for enabling trading */}
+                    <EnableTradingPrompt />
+                    <Footer />
                   </div>
-                  {/* Global session-aware prompt for enabling trading */}
-                  <EnableTradingPrompt />
-                  <Footer />
-                </div>
+                </PortfolioSnapshotProvider>
               </WalkthroughProvider>
             </ActiveMarketsProvider>
           </ThemeProvider>

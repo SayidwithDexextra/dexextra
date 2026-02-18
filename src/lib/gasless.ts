@@ -87,6 +87,14 @@ export interface GaslessResponse {
   blockNumber?: number | null;
   mined?: boolean;
   pending?: boolean;
+  // Server-provided estimate + routing hints (optional)
+  estimatedGas?: string | null;
+  estimatedGasBuffered?: string | null;
+  routedPool?: string;
+  estimatedFromAddress?: string | null;
+  reroutedToBig?: boolean;
+  retryReason?: string;
+  previousTxHash?: string;
   error?: string;
 }
 
@@ -126,6 +134,12 @@ function normalizeRelayErrorBody(body: string): string {
     if (parsed?.error) text = String(parsed.error);
   } catch {
     // ignore JSON parse issues; fall through to raw text
+  }
+  if (parsed?.error === 'session_bad_relayer') {
+    return 'This gasless session does not authorize the relayer that submitted your trade. Please re-enable gasless trading (create a new session) and retry.';
+  }
+  if (parsed?.error === 'session_expired') {
+    return 'Gasless session expired. Please re-enable gasless trading and retry.';
   }
   if (parsed?.error === 'order_not_found') {
     return parsed?.message && parsed.message !== 'order_not_found'
@@ -644,6 +658,15 @@ export async function submitSessionTrade(params: {
       mined: json?.mined,
       pending: json?.pending,
     });
+    if (json?.estimatedGas || json?.routedPool) {
+      console.log('[UpGas][client] trade gas estimate', {
+        estimatedGas: json?.estimatedGas,
+        estimatedGasBuffered: json?.estimatedGasBuffered,
+        routedPool: json?.routedPool,
+        estimatedFromAddress: json?.estimatedFromAddress,
+        reroutedToBig: json?.reroutedToBig,
+      });
+    }
   } catch {}
   return {
     success: true,
@@ -651,6 +674,13 @@ export async function submitSessionTrade(params: {
     blockNumber: typeof json?.blockNumber === 'number' ? json.blockNumber : null,
     mined: Boolean(json?.mined),
     pending: Boolean(json?.pending),
+    estimatedGas: typeof json?.estimatedGas === 'string' ? json.estimatedGas : null,
+    estimatedGasBuffered: typeof json?.estimatedGasBuffered === 'string' ? json.estimatedGasBuffered : null,
+    routedPool: typeof json?.routedPool === 'string' ? json.routedPool : undefined,
+    estimatedFromAddress: typeof json?.estimatedFromAddress === 'string' ? json.estimatedFromAddress : null,
+    reroutedToBig: Boolean(json?.reroutedToBig),
+    retryReason: typeof json?.retryReason === 'string' ? json.retryReason : undefined,
+    previousTxHash: typeof json?.previousTxHash === 'string' ? json.previousTxHash : undefined,
   };
 }
 

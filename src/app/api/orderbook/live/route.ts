@@ -255,15 +255,16 @@ export async function GET(req: NextRequest): Promise<NextResponse<LiveResponse |
       let d: any = null;
       try {
         d = await withTimeout(
-          publicClient.readContract({ address, abi: ORDERBOOK_VIEW_ABI as any, functionName: 'getOrderBookDepth', args: [lvl] }),
-          2000,
-          'getOrderBookDepth'
-        );
-      } catch {
-        d = await withTimeout(
           publicClient.readContract({ address, abi: ORDERBOOK_VIEW_ABI as any, functionName: 'getOrderBookDepthFromPointers', args: [lvl] }),
           2000,
           'getOrderBookDepthFromPointers'
+        );
+      } catch {
+        // Fallback: full scan + sort (can be heavier on large books)
+        d = await withTimeout(
+          publicClient.readContract({ address, abi: ORDERBOOK_VIEW_ABI as any, functionName: 'getOrderBookDepth', args: [lvl] }),
+          2500,
+          'getOrderBookDepth'
         );
       }
       if (Array.isArray(d) && d.length >= 4) {

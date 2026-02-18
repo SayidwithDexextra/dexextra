@@ -57,6 +57,8 @@ export default function EvaluationCard() {
 		enabled: Boolean(walletData?.isConnected && walletData?.address),
 		refreshIntervalMs: 15_000,
 	})
+	// Prevent a brief flash of fallback (often incorrect) values before the detailed summary loads.
+	const hidePortfolioUntilSummaryReady = Boolean(walletData?.isConnected && portfolio.isLoading && !portfolio.summary)
 	const { positions, activeOrdersCount, hasLoadedOnce: portfolioHasLoaded, isLoading: isLoadingPortfolio } = usePortfolioData({ enabled: true, refreshInterval: 15000 })
 
 	// Parse numeric values safely
@@ -140,27 +142,33 @@ export default function EvaluationCard() {
 						Total assets
 					</p>
 					<div className="flex items-center gap-3 mb-2">
-						<span className="text-[44px] font-bold tracking-tight leading-none" style={{ color: '#FFFFFF' }}>
-							{formatUSD(Math.max(0, nums.value)).split('.')[0]}
-							<span className="text-[28px] align-top" style={{ color: '#D1D5DB' }}>
-								.{formatUSD(Math.max(0, nums.value)).split('.')[1] || '00'}
-							</span>
-						</span>
-						{Number.isFinite(nums.deltaPct) && (
-							<span
-								className="px-2.5 py-1 rounded-md text-xs font-semibold"
-								style={{ background: nums.deltaAmount >= 0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', color: nums.deltaAmount >= 0 ? '#10B981' : '#EF4444' }}
-							>
-								△{formatPct(nums.deltaPct)}
-							</span>
-						)}
-						{Number.isFinite(nums.deltaAmount) && (
-							<span
-								className="px-2.5 py-1 rounded-md text-xs font-semibold"
-								style={{ background: nums.deltaAmount >= 0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', color: nums.deltaAmount >= 0 ? '#10B981' : '#EF4444' }}
-							>
-								{`${nums.deltaAmount >= 0 ? '+' : ''}${formatUSD(nums.deltaAmount)}`}
-							</span>
+						{hidePortfolioUntilSummaryReady ? (
+							<div className="w-[260px] h-[44px] bg-[#1A1A1A] rounded animate-pulse" />
+						) : (
+							<>
+								<span className="text-[44px] font-bold tracking-tight leading-none" style={{ color: '#FFFFFF' }}>
+									{formatUSD(Math.max(0, nums.value)).split('.')[0]}
+									<span className="text-[28px] align-top" style={{ color: '#D1D5DB' }}>
+										.{formatUSD(Math.max(0, nums.value)).split('.')[1] || '00'}
+									</span>
+								</span>
+								{Number.isFinite(nums.deltaPct) && (
+									<span
+										className="px-2.5 py-1 rounded-md text-xs font-semibold"
+										style={{ background: nums.deltaAmount >= 0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', color: nums.deltaAmount >= 0 ? '#10B981' : '#EF4444' }}
+									>
+										△{formatPct(nums.deltaPct)}
+									</span>
+								)}
+								{Number.isFinite(nums.deltaAmount) && (
+									<span
+										className="px-2.5 py-1 rounded-md text-xs font-semibold"
+										style={{ background: nums.deltaAmount >= 0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)', color: nums.deltaAmount >= 0 ? '#10B981' : '#EF4444' }}
+									>
+										{`${nums.deltaAmount >= 0 ? '+' : ''}${formatUSD(nums.deltaAmount)}`}
+									</span>
+								)}
+							</>
 						)}
 					</div>
 				</div>
@@ -181,20 +189,29 @@ export default function EvaluationCard() {
 						</p>
 						{/* Stack value + percent on smaller widths to prevent overlap on long numbers */}
 						<div className="flex flex-col gap-1 min-w-0">
-							<p
-								className="text-lg md:text-xl font-bold leading-tight break-all"
-								style={{ color: '#FFFFFF' }}
-							>
-								{kpi.value}
-							</p>
-							{kpi.sub ? (
-								<span
-									className="text-[11px] font-medium leading-tight break-all"
-									style={{ color: '#606060' }}
-								>
-									{kpi.sub}
-								</span>
-							) : null}
+							{hidePortfolioUntilSummaryReady ? (
+								<>
+									<div className="w-32 h-5 bg-[#1A1A1A] rounded animate-pulse" />
+									<div className="w-24 h-3 bg-[#1A1A1A] rounded animate-pulse" />
+								</>
+							) : (
+								<>
+									<p
+										className="text-lg md:text-xl font-bold leading-tight break-all"
+										style={{ color: '#FFFFFF' }}
+									>
+										{kpi.value}
+									</p>
+									{kpi.sub ? (
+										<span
+											className="text-[11px] font-medium leading-tight break-all"
+											style={{ color: '#606060' }}
+										>
+											{kpi.sub}
+										</span>
+									) : null}
+								</>
+							)}
 						</div>
 					</div>
 				))}

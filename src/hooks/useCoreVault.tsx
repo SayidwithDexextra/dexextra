@@ -40,6 +40,13 @@ export function useCoreVault(walletAddress?: string) {
   const [totalCollateralStr, setTotalCollateralStr] = useState<string>('0');
   const [healthy, setHealthy] = useState<boolean>(true);
   const [socializedLoss, setSocializedLoss] = useState<string>('0');
+  // State for margin values (kept near top so we can reset on address changes)
+  const [marginValues, setMarginValues] = useState({
+    marginUsed: '0',
+    marginReserved: '0',
+    realizedPnL: '0',
+    unrealizedPnL: '0'
+  });
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initStartedRef = useRef<boolean>(false);
@@ -255,8 +262,37 @@ export function useCoreVault(walletAddress?: string) {
 
   // Fetch balances
   const isFetchingRef = useRef<boolean>(false);
+  const fetchSeqRef = useRef<number>(0);
+  const lastUserAddressRef = useRef<string | null>(null);
   const backoffRef = useRef<number>(15000);
   const lastSuccessRef = useRef<number>(0);
+
+  // Prevent "flash of previous wallet" by clearing state immediately when the address changes.
+  // Also invalidates any in-flight async updates for the previous address.
+  useEffect(() => {
+    const next = userAddress ? String(userAddress) : null;
+    const prev = lastUserAddressRef.current;
+    const prevLc = prev ? prev.toLowerCase() : null;
+    const nextLc = next ? next.toLowerCase() : null;
+    if (prevLc === nextLc) return;
+
+    lastUserAddressRef.current = next;
+    fetchSeqRef.current += 1; // invalidate any in-flight fetch
+    isFetchingRef.current = false;
+
+    setIsLoading(false);
+    setError(null);
+    setAvailableBalance('0');
+    setTotalCollateralStr('0');
+    setHealthy(true);
+    setSocializedLoss('0');
+    setMarginValues({
+      marginUsed: '0',
+      marginReserved: '0',
+      realizedPnL: '0',
+      unrealizedPnL: '0'
+    });
+  }, [userAddress]);
 
   const fetchBalances = useCallback(async () => {
     // Visibility and in-flight guards
@@ -265,6 +301,8 @@ export function useCoreVault(walletAddress?: string) {
     if (!isInitialized || !contracts || !userAddress) return;
 
     isFetchingRef.current = true;
+    const seq = (fetchSeqRef.current += 1);
+    const addrAtStartLc = String(userAddress).toLowerCase();
 
     try {
       setIsLoading(true);
@@ -317,6 +355,10 @@ export function useCoreVault(walletAddress?: string) {
         _totalCommitted,
         isHealthy
       ] = marginSummary;
+
+      // Ignore stale results if wallet switched while this async call was running.
+      if (fetchSeqRef.current !== seq) return;
+      if ((lastUserAddressRef.current || '').toLowerCase() !== addrAtStartLc) return;
 
       // Format the available balance for the UI
       setAvailableBalance(formatTokenAmount(availableCollateral));
@@ -383,10 +425,13 @@ export function useCoreVault(walletAddress?: string) {
       } catch {}
     } catch (err) {
       console.error('Failed to fetch balances:', err);
-      setError(err instanceof Error ? err : new Error('Failed to fetch balances'));
-      // Exponential backoff on error to reduce pressure on RPC
-      backoffRef.current = Math.min(backoffRef.current * 2, 120000);
-      setIsLoading(false);
+      // Don't clobber state for a different wallet if the address switched mid-flight.
+      if (fetchSeqRef.current === seq && (lastUserAddressRef.current || '').toLowerCase() === addrAtStartLc) {
+        setError(err instanceof Error ? err : new Error('Failed to fetch balances'));
+        // Exponential backoff on error to reduce pressure on RPC
+        backoffRef.current = Math.min(backoffRef.current * 2, 120000);
+        setIsLoading(false);
+      }
     }
     finally {
       isFetchingRef.current = false;
@@ -672,14 +717,6 @@ export function useCoreVault(walletAddress?: string) {
       throw err;
     }
   }, [userAddress, fetchBalances, getWriteContracts]);
-
-  // State for margin values
-  const [marginValues, setMarginValues] = useState({
-    marginUsed: '0',
-    marginReserved: '0',
-    realizedPnL: '0',
-    unrealizedPnL: '0'
-  });
 
   return {
     isConnected: isInitialized,

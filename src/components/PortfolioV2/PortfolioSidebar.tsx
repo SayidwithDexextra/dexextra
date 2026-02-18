@@ -5,8 +5,7 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
 import { useCoreVault } from '@/hooks/useCoreVault'
-import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
-import { usePositions } from '@/hooks/usePositions'
+import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext'
 import { useMarkets } from '@/hooks/useMarkets'
 import { normalizeBytes32Hex } from '@/lib/hex'
 import { usePortfolioSidebarOpenOrders } from '@/hooks/usePortfolioSidebarOpenOrders'
@@ -62,16 +61,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const dataEnabled = Boolean(isWalletConnected && rendered)
 
 	const coreVault = useCoreVault()
-	const portfolio = usePortfolioSummary(walletAddress, {
-		enabled: dataEnabled,
-		// Sidebar should not poll; keep it stable and refresh on re-open.
-		refreshIntervalMs: 0,
-	})
-	const positionsState = usePositions(undefined, {
-		enabled: dataEnabled,
-		pollIntervalMs: 0,
-		listenToEvents: false,
-	})
+	// Single global source of truth (shared with Header).
+	const { snapshot, isReady: snapshotReady, positions, positionsIsLoading } = usePortfolioSnapshot()
 
 	// Market metadata (for icons). No auto-refresh: sidebar should be stable while open.
 	const { markets } = useMarkets({ limit: 500, autoRefresh: false, refreshInterval: 0 })
@@ -110,7 +101,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const sidebarOrders = usePortfolioSidebarOpenOrders({
 		enabled: dataEnabled,
 		walletAddress,
-		positionSymbols: (positionsState?.positions || []).map((p: any) => String(p?.symbol || '').toUpperCase()).filter(Boolean),
+		positionSymbols: (positions || []).map((p: any) => String(p?.symbol || '').toUpperCase()).filter(Boolean),
 	})
 
 	const navigateToToken = (identifierOrSymbol: string) => {
@@ -188,20 +179,26 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	}, [isOpen, onClose])
 
 	const totals = useMemo(() => {
+		// Match Header behavior: avoid briefly showing fallback values that can be wrong
+		// (stale from a previous wallet, or partial data before the first snapshot completes).
+		const hideUntilSummaryReady = Boolean(isWalletConnected && dataEnabled && !snapshotReady)
+
 		const tc = parseFloat(coreVault?.totalCollateral || '0') || 0
 		const realized = parseFloat(coreVault?.realizedPnL || '0') || 0
-		const unrealizedFromSummary = Number.isFinite(Number(portfolio?.summary?.unrealizedPnl))
-			? Number(portfolio?.summary?.unrealizedPnl)
-			: (parseFloat(coreVault?.unrealizedPnL || '0') || 0)
+		const unrealizedFromSummary = Number.isFinite(Number(snapshot?.unrealizedPnl))
+			? Number(snapshot?.unrealizedPnl)
+			: (hideUntilSummaryReady ? Number.NaN : (parseFloat(coreVault?.unrealizedPnL || '0') || 0))
 		// Match EvaluationCard logic: avoid liquidation double-count by not subtracting negative realized again
 		const realizedForPortfolioValue = Math.max(0, realized)
-		const value = tc + realizedForPortfolioValue + unrealizedFromSummary
+		const value = Number.isFinite(Number(snapshot?.portfolioValue))
+			? Number(snapshot?.portfolioValue)
+			: (tc + realizedForPortfolioValue + unrealizedFromSummary)
 		const valueDelta = unrealizedFromSummary
 		const deltaPct = tc > 0 ? (valueDelta / Math.max(1e-9, tc)) * 100 : 0
 
-		const available = Number.isFinite(Number(portfolio?.summary?.availableCash))
-			? Number(portfolio?.summary?.availableCash)
-			: (parseFloat(coreVault?.availableBalance || '0') || 0)
+		const available = Number.isFinite(Number(snapshot?.availableCash))
+			? Number(snapshot?.availableCash)
+			: (hideUntilSummaryReady ? Number.NaN : (parseFloat(coreVault?.availableBalance || '0') || 0))
 
 		return {
 			totalCollateral: tc,
@@ -212,10 +209,22 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			totalValue: value,
 			valueDelta,
 			valueDeltaPct: deltaPct,
+			hideUntilSummaryReady,
 		}
-	}, [coreVault?.availableBalance, coreVault?.realizedPnL, coreVault?.totalCollateral, coreVault?.unrealizedPnL, portfolio?.summary?.availableCash, portfolio?.summary?.unrealizedPnl])
+	}, [
+		coreVault?.availableBalance,
+		coreVault?.realizedPnL,
+		coreVault?.totalCollateral,
+		coreVault?.unrealizedPnL,
+		dataEnabled,
+		isWalletConnected,
+		snapshot?.availableCash,
+		snapshot?.portfolioValue,
+		snapshot?.unrealizedPnl,
+		snapshotReady,
+	])
 
-	const positions = (positionsState?.positions || []) as any[]
+	const positionsAny = (positions || []) as any[]
 
 	type PositionMarketMeta = {
 		name?: string | null
@@ -240,8 +249,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	}, [markets])
 
 	const topPositions = useMemo(() => {
-		if (!Array.isArray(positions) || positions.length === 0) return []
-		const rows = positions
+		if (!Array.isArray(positionsAny) || positionsAny.length === 0) return []
+		const rows = positionsAny
 			.map((p: any) => {
 				const size = Number(p?.size || 0)
 				const mark = Number(p?.markPrice || p?.entryPrice || 0)
@@ -250,7 +259,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			})
 			.sort((a, b) => (b.notional || 0) - (a.notional || 0))
 		return rows.slice(0, 6).map((r) => r.p)
-	}, [positions])
+	}, [positionsAny])
 
 	const flatOrders = useMemo(() => {
 		return (sidebarOrders.orders || []).slice(0, 8)
@@ -272,18 +281,20 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const flatOrdersToRender = flatOrders.length > 0 ? flatOrders : prevNonEmptyFlatOrdersRef.current
 
 	const metrics: Metric[] = useMemo(() => {
-		const posCount = Array.isArray(positions) ? positions.length : 0
+		const posCount = Array.isArray(positionsAny) ? positionsAny.length : 0
 		const ordCount = Array.isArray(sidebarOrders.orders) ? sidebarOrders.orders.length : 0
+		const usdPlaceholder = '$—'
+		const plainPlaceholder = '—'
 		return [
-			{ label: 'Total assets', value: formatUsd(Math.max(0, totals.totalValue), 2), valueClassName: 'font-mono' },
-			{ label: 'Δ (session)', value: `${totals.valueDelta >= 0 ? '+' : ''}${formatUsd(totals.valueDelta, 2)}`, valueClassName: 'font-mono', valueTone: totals.valueDelta >= 0 ? 'pos' : 'neg' },
-			{ label: 'Δ% (session)', value: formatPct(totals.valueDeltaPct, 2), valueClassName: 'font-mono', valueTone: totals.valueDeltaPct >= 0 ? 'pos' : 'neg' },
-			{ label: 'Available', value: formatUsd(Math.max(0, totals.availableCash), 2), valueClassName: 'font-mono' },
+			{ label: 'Total assets', value: totals.hideUntilSummaryReady ? usdPlaceholder : formatUsd(Math.max(0, totals.totalValue), 2), valueClassName: 'font-mono' },
+			{ label: 'Δ (session)', value: totals.hideUntilSummaryReady ? plainPlaceholder : `${totals.valueDelta >= 0 ? '+' : ''}${formatUsd(totals.valueDelta, 2)}`, valueClassName: 'font-mono', valueTone: totals.hideUntilSummaryReady ? 'default' : (totals.valueDelta >= 0 ? 'pos' : 'neg') },
+			{ label: 'Δ% (session)', value: totals.hideUntilSummaryReady ? plainPlaceholder : formatPct(totals.valueDeltaPct, 2), valueClassName: 'font-mono', valueTone: totals.hideUntilSummaryReady ? 'default' : (totals.valueDeltaPct >= 0 ? 'pos' : 'neg') },
+			{ label: 'Available', value: totals.hideUntilSummaryReady ? usdPlaceholder : formatUsd(Math.max(0, totals.availableCash), 2), valueClassName: 'font-mono' },
 			{ label: 'Realized loss', value: formatUsd(totals.realizedLoss, 2), valueClassName: 'font-mono', valueTone: totals.realizedLoss > 0 ? 'neg' : 'default' },
 			{ label: 'Open positions', value: String(posCount), valueClassName: 'font-mono' },
 			{ label: 'Open orders', value: String(ordCount), valueClassName: 'font-mono' },
 		]
-	}, [positions, sidebarOrders.orders, totals.availableCash, totals.realizedLoss, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
+	}, [positionsAny, sidebarOrders.orders, totals.availableCash, totals.hideUntilSummaryReady, totals.realizedLoss, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
 
 	const isHealthy = Boolean(coreVault?.isHealthy)
 	// Important: don't let background refresh cycles "blink" the sidebar content.
@@ -297,12 +308,12 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		}
 		if (!dataEnabled) return
 		// Consider "snapshot ready" once all initial fetches have completed at least once
-		const ready = Boolean(!portfolio?.isLoading && !positionsState?.isLoading && sidebarOrders.hasLoadedOnce)
+		const ready = Boolean(snapshotReady && !positionsIsLoading && sidebarOrders.hasLoadedOnce)
 		if (ready) setDidPaintSnapshot(true)
-	}, [isOpen, dataEnabled, portfolio?.isLoading, positionsState?.isLoading, sidebarOrders.hasLoadedOnce])
+	}, [isOpen, dataEnabled, snapshotReady, positionsIsLoading, sidebarOrders.hasLoadedOnce])
 
 	const showUpdatingBadge = Boolean(isWalletConnected && !didPaintSnapshot)
-	const showPositionsSkeleton = topPositionsToRender.length === 0 && Boolean(positionsState?.isLoading)
+	const showPositionsSkeleton = topPositionsToRender.length === 0 && Boolean(positionsIsLoading)
 	const showOrdersSkeleton = flatOrdersToRender.length === 0 && Boolean(sidebarOrders.isLoading || sidebarOrders.isRefreshing)
 
 	if (!rendered) return null

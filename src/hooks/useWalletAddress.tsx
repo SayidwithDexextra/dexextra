@@ -1,18 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-
-interface EthereumProvider {
-  request: (args: { method: string; params?: any[] }) => Promise<any>
-  on: (event: string, callback: (...args: any[]) => void) => void
-  removeListener: (event: string, callback: (...args: any[]) => void) => void
-}
-
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider
-  }
-}
+import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet'
 
 export function useWalletAddress() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
@@ -22,9 +11,12 @@ export function useWalletAddress() {
   // Check if wallet is already connected
   useEffect(() => {
     async function checkConnection() {
-      if (typeof window !== 'undefined' && window.ethereum) {
+      const provider: EthereumProvider | undefined =
+        (getActiveEthereumProvider() ?? (typeof window !== 'undefined' ? window.ethereum : undefined)) || undefined
+
+      if (provider) {
         try {
-          const accounts = await window.ethereum.request({ 
+          const accounts = await provider.request({ 
             method: 'eth_accounts' 
           })
           
@@ -43,7 +35,10 @@ export function useWalletAddress() {
 
   // Listen for account changes
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.ethereum) {
+    const provider: EthereumProvider | undefined =
+      (getActiveEthereumProvider() ?? (typeof window !== 'undefined' ? window.ethereum : undefined)) || undefined
+
+    if (provider) {
       const handleAccountsChanged = (accounts: string[]) => {
         if (accounts.length > 0) {
           setWalletAddress(accounts[0])
@@ -54,19 +49,20 @@ export function useWalletAddress() {
         }
       }
 
-      window.ethereum.on('accountsChanged', handleAccountsChanged)
+      provider.on('accountsChanged', handleAccountsChanged)
 
       return () => {
-        if (window.ethereum) {
-          window.ethereum.removeListener('accountsChanged', handleAccountsChanged)
-        }
+        provider.removeListener('accountsChanged', handleAccountsChanged)
       }
     }
   }, [])
 
   const connectWallet = async () => {
-    if (typeof window === 'undefined' || !window.ethereum) {
-      setError('MetaMask not installed')
+    const provider: EthereumProvider | undefined =
+      (getActiveEthereumProvider() ?? (typeof window !== 'undefined' ? window.ethereum : undefined)) || undefined
+
+    if (!provider) {
+      setError('No wallet provider found')
       return false
     }
 
@@ -74,7 +70,7 @@ export function useWalletAddress() {
     setError(null)
 
     try {
-      const accounts = await window.ethereum.request({
+      const accounts = await provider.request({
         method: 'eth_requestAccounts'
       })
 

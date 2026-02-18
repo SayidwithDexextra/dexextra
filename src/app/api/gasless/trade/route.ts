@@ -387,23 +387,9 @@ export async function POST(req: Request) {
       }
     })()
 
-    // Cap to block gas limit (RPC will reject eth_sendRawTransaction if gasLimit > blockGasLimit).
-    // Also keep a safety buffer so we don't request nearly the entire block.
+    // Gas limit is computed per routed pool (small vs big) after we estimate gas.
+    // Initialize to the configured/default value as a fallback.
     let effectiveTradeGasLimit = tradeGasLimit
-    try {
-      const b = await provider.getBlock('latest')
-      const blockGasLimit = BigInt((b as any)?.gasLimit ?? 0)
-      const safety = 120_000n
-      const cap = blockGasLimit > safety ? (blockGasLimit - safety) : blockGasLimit
-      if (cap > 0n && effectiveTradeGasLimit > cap) {
-        console.warn('[UpGas][API][trade] capping trade gasLimit to block gas limit', {
-          requested: effectiveTradeGasLimit.toString(),
-          cap: cap.toString(),
-          blockGasLimit: blockGasLimit.toString(),
-        })
-        effectiveTradeGasLimit = cap
-      }
-    } catch {}
 
     // Probe selector presence to avoid opaque "Function does not exist"
     try {
@@ -426,11 +412,177 @@ export async function POST(req: Request) {
     }
     // Call corresponding method (meta or session)
     const stickyKey = isSession ? (params?.trader || sessionId || '') : '';
-    const tx = await withRelayer({
+
+    // --- Gas estimation + relayer routing (small blocks vs large blocks) ---
+    // Goal: route gasless trade to a "big-block" relayer if the tx won't fit in small blocks,
+    // without failing first.
+    const SMALL_BLOCK_GAS_LIMIT = (() => {
+      const raw = String(process.env.HYPEREVM_SMALL_BLOCK_GAS_LIMIT || '').trim();
+      if (!raw) return 2_000_000n;
+      try { return BigInt(raw); } catch { return 2_000_000n; }
+    })();
+    const ESTIMATE_BUFFER_BPS = (() => {
+      const raw = String(process.env.GASLESS_ESTIMATE_BUFFER_BPS || '').trim();
+      if (!raw) return 13000n; // 1.30x
+      try {
+        const v = BigInt(raw);
+        return v >= 10000n && v <= 30000n ? v : 13000n;
+      } catch {
+        return 13000n;
+      }
+    })();
+
+    const metaIface = new ethers.Interface((MetaTradeFacet as any).abi);
+
+    const smallKeys = loadRelayerPoolFromEnv({
+      pool: 'hub_trade_small',
+      jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
+      indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
+      // Back-compat: allow falling back to RELAYER_PRIVATE_KEYS_JSON / RELAYER_PRIVATE_KEY
+      allowFallbackSingleKey: true,
+    });
+    const bigKeys = loadRelayerPoolFromEnv({
+      pool: 'hub_trade_big',
+      jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON',
+      globalJsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON',
+      indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_BIG_',
+      allowFallbackSingleKey: false,
+    });
+    const legacyKeys = loadRelayerPoolFromEnv({
       pool: 'hub_trade',
-      provider,
-      stickyKey,
-      action: async (wallet) => {
+      jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_JSON',
+      indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_',
+      allowFallbackSingleKey: true,
+    });
+
+    const hasSmall = smallKeys.length > 0;
+    const hasBig = bigKeys.length > 0;
+    const estimateFrom = (hasSmall ? smallKeys[0]?.address : legacyKeys[0]?.address) || null;
+
+    let routedPool: 'hub_trade' | 'hub_trade_small' | 'hub_trade_big' = hasSmall ? 'hub_trade_small' : 'hub_trade';
+    let estimatedGas: bigint | null = null;
+    let estimatedGasBuffered: bigint | null = null;
+    let estimatedFromAddress: string | null = estimateFrom;
+
+    if (estimateFrom) {
+      try {
+        let data: string | null = null;
+        if (isSession) {
+          // Need a proof for the "from" address, otherwise estimateGas may revert on relayer checks.
+          const globalKeys = loadRelayerPoolFromEnv({
+            pool: 'global',
+            globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+            allowFallbackSingleKey: true,
+          });
+          const relayerAddrs = globalKeys.map((k) => ethers.getAddress(k.address));
+          const proof = computeRelayerProof(relayerAddrs, estimateFrom);
+
+          const args =
+            method === 'sessionPlaceLimit'
+              ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, proof]
+              : method === 'sessionPlaceMarginLimit'
+              ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, proof]
+              : method === 'sessionPlaceMarket'
+              ? [sessionId, params?.trader, params?.amount, params?.isBuy, proof]
+              : method === 'sessionPlaceMarginMarket'
+              ? [sessionId, params?.trader, params?.amount, params?.isBuy, proof]
+              : method === 'sessionModifyOrder'
+              ? [sessionId, params?.trader, params?.orderId, params?.price, params?.amount, proof]
+              : method === 'sessionCancelOrder'
+              ? [sessionId, params?.trader, params?.orderId, proof]
+              : [];
+          data = metaIface.encodeFunctionData(method, args as any);
+        } else {
+          // Legacy meta path
+          data = metaIface.encodeFunctionData(method, [message, signature] as any);
+        }
+
+        if (data) {
+          estimatedGas = await provider.estimateGas({ from: estimateFrom, to: orderBook, data } as any);
+          estimatedGasBuffered = (estimatedGas * ESTIMATE_BUFFER_BPS) / 10000n;
+          if (estimatedGasBuffered > SMALL_BLOCK_GAS_LIMIT && hasBig) {
+            routedPool = 'hub_trade_big';
+          } else if (hasSmall) {
+            routedPool = 'hub_trade_small';
+          } else {
+            routedPool = 'hub_trade';
+          }
+          console.log('[UpGas][API][trade] estimateGas routing', {
+            method,
+            isSession,
+            estimatedGas: estimatedGas.toString(),
+            buffered: estimatedGasBuffered.toString(),
+            bufferBps: ESTIMATE_BUFFER_BPS.toString(),
+            smallBlockLimit: SMALL_BLOCK_GAS_LIMIT.toString(),
+            estimateFrom,
+            routedPool,
+          });
+        }
+      } catch (e: any) {
+        console.warn('[UpGas][API][trade] estimateGas failed; using default pool', {
+          method,
+          error: e?.shortMessage || e?.message || String(e),
+          estimateFrom,
+        });
+      }
+    }
+
+    function isBlockGasLimitError(err: any): boolean {
+      const msg = String(err?.shortMessage || err?.reason || err?.message || err || '').toLowerCase();
+      return (
+        msg.includes('exceeds block gas limit') ||
+        msg.includes('block gas limit') ||
+        msg.includes('transaction gas limit exceeds') ||
+        msg.includes('gas limit too high') ||
+        msg.includes('intrinsic gas too low')
+      );
+    }
+
+    const BIG_BLOCK_GAS_LIMIT = (() => {
+      const raw = String(process.env.HYPEREVM_BIG_BLOCK_GAS_LIMIT || '').trim();
+      if (!raw) return 30_000_000n;
+      try { return BigInt(raw); } catch { return 30_000_000n; }
+    })();
+
+    function computeGasLimitForPool(pool: 'hub_trade' | 'hub_trade_small' | 'hub_trade_big'): bigint {
+      // Use estimate when available; otherwise use configured tradeGasLimit.
+      const desired = (estimatedGasBuffered && estimatedGasBuffered > 0n)
+        ? (estimatedGasBuffered + 50_000n)
+        : tradeGasLimit;
+
+      // Safety headroom so we don't request the entire block.
+      const safetySmall = 120_000n;
+      const safetyBig = 300_000n;
+
+      if (pool === 'hub_trade_big') {
+        const cap = BIG_BLOCK_GAS_LIMIT > safetyBig ? (BIG_BLOCK_GAS_LIMIT - safetyBig) : BIG_BLOCK_GAS_LIMIT;
+        return cap > 0n && desired > cap ? cap : desired;
+      }
+      if (pool === 'hub_trade_small') {
+        const cap = SMALL_BLOCK_GAS_LIMIT > safetySmall ? (SMALL_BLOCK_GAS_LIMIT - safetySmall) : SMALL_BLOCK_GAS_LIMIT;
+        return cap > 0n && desired > cap ? cap : desired;
+      }
+      // Legacy pool: cap against small-block limit by default (safe).
+      const cap = SMALL_BLOCK_GAS_LIMIT > safetySmall ? (SMALL_BLOCK_GAS_LIMIT - safetySmall) : SMALL_BLOCK_GAS_LIMIT;
+      return cap > 0n && desired > cap ? cap : desired;
+    }
+
+    const sendWithPool = async (pool: 'hub_trade' | 'hub_trade_small' | 'hub_trade_big') => {
+      // IMPORTANT: Set gasLimit according to the target pool before sending.
+      effectiveTradeGasLimit = computeGasLimitForPool(pool);
+      try {
+        console.log('[UpGas][API][trade] send gasLimit', {
+          pool,
+          gasLimit: effectiveTradeGasLimit.toString(),
+          estimatedGas: estimatedGas ? estimatedGas.toString() : null,
+          estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+        });
+      } catch {}
+      return await withRelayer({
+        pool,
+        provider,
+        stickyKey,
+        action: async (wallet) => {
         const meta = new ethers.Contract(orderBook, (MetaTradeFacet as any).abi, wallet);
         if (isSession) {
           if (!sessionId || typeof sessionId !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(sessionId)) {
@@ -936,25 +1088,43 @@ export async function POST(req: Request) {
           }
         }
 
-        console.log('[UpGas][API][trade] legacy meta path selected', { method, hasMessage: !!message, hasSignature: typeof signature === 'string' });
-        switch (method) {
-          case 'metaPlaceLimit':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
-          case 'metaPlaceMarginLimit':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
-          case 'metaPlaceMarket':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
-          case 'metaPlaceMarginMarket':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
-          case 'metaModifyOrder':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaModifyOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
-          case 'metaCancelOrder':
-            return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaCancelOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
-          default:
-            throw new Error('method not allowed');
+          console.log('[UpGas][API][trade] legacy meta path selected', { method, hasMessage: !!message, hasSignature: typeof signature === 'string' });
+          switch (method) {
+            case 'metaPlaceLimit':
+              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            case 'metaPlaceMarginLimit':
+              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginLimit', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            case 'metaPlaceMarket':
+              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            case 'metaPlaceMarginMarket':
+              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaPlaceMarginMarket', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            case 'metaModifyOrder':
+              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaModifyOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            case 'metaCancelOrder':
+              return await sendWithNonceRetry({ provider, wallet, contract: meta, method: 'metaCancelOrder', args: [message, signature], label: `trade:${method}`, overrides: { gasLimit: effectiveTradeGasLimit } });
+            default:
+              throw new Error('method not allowed');
+          }
         }
-      }
-    });
+      });
+    };
+
+    let reroutedToBig = false;
+    let tx: ethers.TransactionResponse;
+    try {
+      tx = await sendWithPool(routedPool);
+    } catch (sendErr: any) {
+      const canRetryToBig = hasBig && routedPool !== 'hub_trade_big' && isBlockGasLimitError(sendErr);
+      if (!canRetryToBig) throw sendErr;
+      console.warn('[UpGas][API][trade] retrying via big-block relayer due to block gas limit error', {
+        method,
+        prevPool: routedPool,
+        error: sendErr?.shortMessage || sendErr?.message || String(sendErr),
+      });
+      reroutedToBig = true;
+      routedPool = 'hub_trade_big';
+      tx = await sendWithPool('hub_trade_big');
+    }
     // Persist *placement* history only.
     // IMPORTANT: cancellation must never depend on Supabase history writes.
     if (PLACE_METHODS.has(method)) {
@@ -982,12 +1152,60 @@ export async function POST(req: Request) {
       console.log('[GASLESS][API][trade] relayed', { txHash: tx.hash, blockNumber: rc?.blockNumber, status });
       console.log('[UpGas][API][trade] relayed', { txHash: tx.hash, blockNumber: rc?.blockNumber, status });
       if (typeof status === 'number' && status === 0) {
+        // If the tx reverted due to out-of-gas / block constraints on the small relayer,
+        // automatically retry via the big-block relayer instead of surfacing an error to the user.
+        try {
+          const enableRetry = String(process.env.GASLESS_RETRY_BIG_ON_REVERT || 'true').toLowerCase() === 'true';
+          if (enableRetry && hasBig && routedPool !== 'hub_trade_big') {
+            const txObj: any = await provider.getTransaction(tx.hash);
+            const gasLimit = txObj?.gasLimit ? BigInt(txObj.gasLimit.toString()) : 0n;
+            const gasUsed = (rc as any)?.gasUsed ? BigInt((rc as any).gasUsed.toString()) : 0n;
+            const nearLimit = gasLimit > 0n && gasUsed > 0n && gasUsed + 25_000n >= gasLimit;
+            const likelyTooBigForSmall =
+              (estimatedGasBuffered !== null && estimatedGasBuffered > SMALL_BLOCK_GAS_LIMIT) || nearLimit;
+            if (likelyTooBigForSmall) {
+              console.warn('[UpGas][API][trade] tx reverted; retrying via big-block relayer', {
+                method,
+                prevPool: routedPool,
+                txHash: tx.hash,
+                gasUsed: gasUsed.toString(),
+                gasLimit: gasLimit.toString(),
+                estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+              });
+              reroutedToBig = true;
+              routedPool = 'hub_trade_big';
+              const tx2 = await sendWithPool('hub_trade_big');
+              return NextResponse.json({
+                txHash: tx2.hash,
+                pending: true,
+                estimatedGas: estimatedGas ? estimatedGas.toString() : null,
+                estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+                routedPool,
+                estimatedFromAddress,
+                reroutedToBig,
+                retryReason: 'revert_retry_big',
+                previousTxHash: tx.hash,
+              });
+            }
+          }
+        } catch (retryErr: any) {
+          console.warn('[UpGas][API][trade] revert retry failed', retryErr?.shortMessage || retryErr?.message || String(retryErr));
+        }
         return NextResponse.json(
           { error: 'tx_reverted', txHash: tx.hash, blockNumber: rc?.blockNumber },
           { status: 500 }
         );
       }
-      return NextResponse.json({ txHash: tx.hash, blockNumber: rc?.blockNumber, mined: true });
+      return NextResponse.json({
+        txHash: tx.hash,
+        blockNumber: rc?.blockNumber,
+        mined: true,
+        estimatedGas: estimatedGas ? estimatedGas.toString() : null,
+        estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+        routedPool,
+        estimatedFromAddress,
+        reroutedToBig,
+      });
     }
 
     // Optional short polling window for fast revert detection without waiting for confirmations.
@@ -1022,17 +1240,72 @@ export async function POST(req: Request) {
         const status = (lastRc as any)?.status;
         console.log('[UpGas][API][trade] polled receipt', { txHash: tx.hash, blockNumber: lastRc?.blockNumber, status });
         if (typeof status === 'number' && status === 0) {
+          // Same retry-to-big logic as above for fast-revert polling path.
+          try {
+            const enableRetry = String(process.env.GASLESS_RETRY_BIG_ON_REVERT || 'true').toLowerCase() === 'true';
+            if (enableRetry && hasBig && routedPool !== 'hub_trade_big') {
+              const txObj: any = await provider.getTransaction(tx.hash);
+              const gasLimit = txObj?.gasLimit ? BigInt(txObj.gasLimit.toString()) : 0n;
+              const gasUsed = (lastRc as any)?.gasUsed ? BigInt((lastRc as any).gasUsed.toString()) : 0n;
+              const nearLimit = gasLimit > 0n && gasUsed > 0n && gasUsed + 25_000n >= gasLimit;
+              const likelyTooBigForSmall =
+                (estimatedGasBuffered !== null && estimatedGasBuffered > SMALL_BLOCK_GAS_LIMIT) || nearLimit;
+              if (likelyTooBigForSmall) {
+                console.warn('[UpGas][API][trade] polled revert; retrying via big-block relayer', {
+                  method,
+                  prevPool: routedPool,
+                  txHash: tx.hash,
+                  gasUsed: gasUsed.toString(),
+                  gasLimit: gasLimit.toString(),
+                  estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+                });
+                reroutedToBig = true;
+                routedPool = 'hub_trade_big';
+                const tx2 = await sendWithPool('hub_trade_big');
+                return NextResponse.json({
+                  txHash: tx2.hash,
+                  pending: true,
+                  estimatedGas: estimatedGas ? estimatedGas.toString() : null,
+                  estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+                  routedPool,
+                  estimatedFromAddress,
+                  reroutedToBig,
+                  retryReason: 'polled_revert_retry_big',
+                  previousTxHash: tx.hash,
+                });
+              }
+            }
+          } catch (retryErr: any) {
+            console.warn('[UpGas][API][trade] polled revert retry failed', retryErr?.shortMessage || retryErr?.message || String(retryErr));
+          }
           return NextResponse.json(
             { error: 'tx_reverted', txHash: tx.hash, blockNumber: lastRc?.blockNumber },
             { status: 500 }
           );
         }
-        return NextResponse.json({ txHash: tx.hash, blockNumber: lastRc?.blockNumber, mined: true });
+        return NextResponse.json({
+          txHash: tx.hash,
+          blockNumber: lastRc?.blockNumber,
+          mined: true,
+          estimatedGas: estimatedGas ? estimatedGas.toString() : null,
+          estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+          routedPool,
+          estimatedFromAddress,
+          reroutedToBig,
+        });
       }
     }
     console.log('[GASLESS][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
     console.log('[UpGas][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
-    return NextResponse.json({ txHash: tx.hash, pending: true });
+    return NextResponse.json({
+      txHash: tx.hash,
+      pending: true,
+      estimatedGas: estimatedGas ? estimatedGas.toString() : null,
+      estimatedGasBuffered: estimatedGasBuffered ? estimatedGasBuffered.toString() : null,
+      routedPool,
+      estimatedFromAddress,
+      reroutedToBig,
+    });
   } catch (e: any) {
     if (e instanceof HttpError) {
       return NextResponse.json(e.body, { status: e.status });

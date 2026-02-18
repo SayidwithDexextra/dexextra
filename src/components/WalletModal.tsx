@@ -50,19 +50,6 @@ const WalletIcons = {
       <path d="M13.5 13.5H18.5V18.5H13.5V13.5Z" fill="#0052FF"/>
     </svg>
   ),
-  'Trust Wallet': () => (
-    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-      <rect width="32" height="32" rx="8" fill="url(#trustGradient)"/>
-      <path d="M16 6L24 10V16C24 20.5 20.5 24.5 16 26C11.5 24.5 8 20.5 8 16V10L16 6Z" fill="white"/>
-      <path d="M16 8L22 11.5V16C22 19.5 19.5 22.5 16 24C12.5 22.5 10 19.5 10 16V11.5L16 8Z" fill="#3375BB"/>
-      <defs>
-        <linearGradient id="trustGradient" x1="0" y1="0" x2="32" y2="32">
-          <stop stopColor="#3375BB"/>
-          <stop offset="1" stopColor="#1A5490"/>
-        </linearGradient>
-      </defs>
-    </svg>
-  ),
   'Zerion': () => (
     <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
       <rect width="32" height="32" rx="8" fill="url(#zerionGradient)"/>
@@ -187,10 +174,9 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
     const walletUrls: Record<string, string> = {
       'MetaMask': 'https://metamask.io',
       'Coinbase Wallet': 'https://www.coinbase.com/wallet',
-      'Trust Wallet': 'https://trustwallet.com',
+      'Phantom': 'https://phantom.app',
       'Zerion': 'https://zerion.io',
       'Rainbow': 'https://rainbow.me',
-      'Phantom': 'https://phantom.app',
       'WalletConnect': 'https://walletconnect.com',
       'Rabby': 'https://rabby.io',
     }
@@ -448,11 +434,21 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
             <div className="flex items-center gap-2">
               <p className="text-[10px] text-[#606060]">
                 By connecting, you agree to our
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">
+                <a
+                  href="https://dexetera.win/dexetera-tos.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline"
+                >
                   Terms
                 </a>
                 and
-                <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline">
+                <a
+                  href="https://dexetera.win/dexetera-privacy.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 transition-colors duration-200 mx-1 underline"
+                >
                   Privacy Policy
                 </a>
               </p>

@@ -46,6 +46,8 @@ type Underlying = {
   };
 };
 
+const UI_UPDATE_PREFIX = '[UI,Update]';
+
 // Minimal ABI fragments for the two events we care about.
 // Note: These names must match the actual event names in the deployed OrderBook diamond facets.
 const ORDERBOOK_EVENTS_ABI = [
@@ -223,7 +225,13 @@ function emit(u: Underlying, evt: MarketEvent) {
             : undefined;
 
           // eslint-disable-next-line no-console
-          console.log('[RealTimeToken] dispatch:ordersUpdated', { traceId, symbol: String(evt.symbol || '').toUpperCase() });
+          console.log(`${UI_UPDATE_PREFIX} dispatch:ordersUpdated`, {
+            traceId,
+            symbol: String(evt.symbol || '').toUpperCase(),
+            source: evt.source,
+            txHash: (evt.payload as any)?.transactionHash,
+            blockNumber: (evt.payload as any)?.blockNumber,
+          });
           window.dispatchEvent(new CustomEvent('ordersUpdated', {
             detail: {
               traceId,
@@ -267,7 +275,13 @@ function emit(u: Underlying, evt: MarketEvent) {
             }
           } catch {}
           // eslint-disable-next-line no-console
-          console.log('[RealTimeToken] dispatch:positionsRefreshRequested', { traceId, symbol: String(evt.symbol || '').toUpperCase() });
+          console.log(`${UI_UPDATE_PREFIX} dispatch:positionsRefreshRequested`, {
+            traceId,
+            symbol: String(evt.symbol || '').toUpperCase(),
+            source: evt.source,
+            txHash: (evt.payload as any)?.transactionHash,
+            blockNumber: (evt.payload as any)?.blockNumber,
+          });
           window.dispatchEvent(new CustomEvent('positionsRefreshRequested', {
             detail: {
               traceId,
@@ -308,6 +322,12 @@ function ensureUnderlying(symbol: string, address: Address): Underlying {
   try {
     const wsClient = createWsClient();
     logOnce(u, 'didLogOnchainSubscribe', 'subscribe:onchain:success', {
+      symbol: String(symbol || '').toUpperCase(),
+      address: String(address).toLowerCase(),
+      chainId: Number(CHAIN_CONFIG.chainId || 0),
+    });
+    // eslint-disable-next-line no-console
+    console.log(`${UI_UPDATE_PREFIX} hub:onchain:subscribe`, {
       symbol: String(symbol || '').toUpperCase(),
       address: String(address).toLowerCase(),
       chainId: Number(CHAIN_CONFIG.chainId || 0),
@@ -401,6 +421,13 @@ function ensureUnderlying(symbol: string, address: Address): Underlying {
       reason: 'ws_unavailable_or_failed',
       symbol: String(symbol || '').toUpperCase(),
       address: String(address).toLowerCase(),
+    });
+    // eslint-disable-next-line no-console
+    console.log(`${UI_UPDATE_PREFIX} hub:onchain:skipped`, {
+      reason: 'ws_unavailable_or_failed',
+      symbol: String(symbol || '').toUpperCase(),
+      address: String(address).toLowerCase(),
+      chainId: Number(CHAIN_CONFIG.chainId || 0),
     });
   }
 

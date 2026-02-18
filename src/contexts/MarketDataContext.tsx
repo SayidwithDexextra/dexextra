@@ -24,6 +24,10 @@ interface MarketDataContextValue {
   lastTradePrice?: number | null;
   volume24h?: number | null;
   totalTrades?: number | null;
+  /** Total number of active BUY orders in the market (not capped by UI depth rendering). */
+  activeBuyOrders?: number | null;
+  /** Total number of active SELL orders in the market (not capped by UI depth rendering). */
+  activeSellOrders?: number | null;
   depth?: {
     bidPrices: number[];
     bidAmounts: number[];
@@ -165,6 +169,8 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     lastTradePrice: obLive?.lastTradePrice ?? null,
     volume24h: obLive?.volume24h ?? null,
     totalTrades: obLive?.totalTrades ?? null,
+    activeBuyOrders: (obLive as any)?.activeBuyOrders ?? null,
+    activeSellOrders: (obLive as any)?.activeSellOrders ?? null,
     depth: obLive?.depth ?? null,
     recentTrades: obLive?.recentTrades ?? null,
     lastUpdated: obLive?.lastUpdated ?? null,

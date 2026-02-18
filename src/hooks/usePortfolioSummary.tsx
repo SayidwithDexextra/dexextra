@@ -30,24 +30,45 @@ export function usePortfolioSummary(walletAddress?: string | null, options?: { e
   const refreshIntervalMs = options?.refreshIntervalMs ?? 15_000;
 
   const user = useMemo(() => toAddressMaybe(walletAddress), [walletAddress]);
+  const userKey = useMemo(() => (user ? String(user).toLowerCase() : ''), [user]);
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<Error | null>(null);
-  const inflightRef = useRef<boolean>(false);
+  // Sequence-based in-flight guard; also used to ignore stale async results.
+  const inflightSeqRef = useRef<number>(0);
+  const runSeqRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const summaryRef = useRef<PortfolioSummary | null>(null);
   const errorMsgRef = useRef<string>('');
+  const userKeyRef = useRef<string>('');
 
   // Keep a ref so background refreshes can avoid toggling state.
   useEffect(() => {
     summaryRef.current = summary;
   }, [summary]);
 
+  // Reset state when the wallet address changes.
+  // Without this, the previous user's summary can briefly render until the new fetch completes.
+  useEffect(() => {
+    if (userKeyRef.current === userKey) return;
+    userKeyRef.current = userKey;
+    // Invalidate any in-flight request and clear cached state.
+    inflightSeqRef.current = 0;
+    runSeqRef.current += 1;
+    summaryRef.current = null;
+    setSummary(null);
+    setIsLoading(false);
+    setError(null);
+    errorMsgRef.current = '';
+  }, [userKey]);
+
   const run = useCallback(async () => {
     if (!enabled || !user) return;
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-    if (inflightRef.current) return;
-    inflightRef.current = true;
+    if (inflightSeqRef.current) return;
+    const seq = (runSeqRef.current += 1);
+    inflightSeqRef.current = seq;
+    const keyAtStart = userKey;
     const isInitialLoad = !summaryRef.current;
     // Only show "loading" on initial load; background refreshes should not cause UI re-animations.
     if (isInitialLoad) setIsLoading(true);
@@ -56,6 +77,10 @@ export function usePortfolioSummary(walletAddress?: string | null, options?: { e
         client: publicClient,
         userAddress: user,
       });
+
+      // Ignore stale results (wallet switched, or a newer run started).
+      if (inflightSeqRef.current !== seq) return;
+      if (userKeyRef.current !== keyAtStart) return;
 
       const prev = summaryRef.current;
       const changed =
@@ -67,7 +92,7 @@ export function usePortfolioSummary(walletAddress?: string | null, options?: { e
         setSummary(next);
       }
 
-      if (error) setError(null);
+      setError((prevErr) => (prevErr ? null : prevErr));
       errorMsgRef.current = '';
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -78,10 +103,10 @@ export function usePortfolioSummary(walletAddress?: string | null, options?: { e
         setError(err);
       }
     } finally {
-      inflightRef.current = false;
-      if (!summaryRef.current) setIsLoading(false);
+      if (inflightSeqRef.current === seq) inflightSeqRef.current = 0;
+      if (isInitialLoad) setIsLoading(false);
     }
-  }, [enabled, user, error]);
+  }, [enabled, user, userKey]);
 
   // Initial + reactive refresh
   useEffect(() => {

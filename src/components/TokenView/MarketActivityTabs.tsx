@@ -10,7 +10,7 @@ import { ensureHyperliquidWallet } from '@/lib/network';
 import { ErrorModal } from '@/components/StatusModals';
 import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
-import { usePositions as usePositionsHook } from '@/hooks/usePositions';
+import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext';
 import type { Address } from 'viem';
 import { signAndSubmitGasless, submitSessionTrade, isSessionErrorMessage } from '@/lib/gasless';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
@@ -21,6 +21,8 @@ import { normalizeBytes32Hex } from '@/lib/hex';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
 import { useOnchainOrders } from '@/contexts/OnchainOrdersContextV2';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
+
+const UI_UPDATE_PREFIX = '[UI,Update]';
 
 // Public USDC icon (fallback to Circle's official)
 const USDC_ICON_URL = 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Circle_USDC_Logo.svg';
@@ -264,10 +266,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Event-driven only (no polling). Positions refresh via 'positionsRefreshRequested' / 'ordersUpdated'.
   // Disable autoRefresh polling; markets are fetched once on mount.
   const { markets } = useMarkets({ limit: 500, autoRefresh: false });
-  const { positions: allPositions, isLoading: positionsIsLoading } = usePositionsHook(undefined, {
-    enabled: !!walletAddress,
-    pollIntervalMs: 0, // disable polling; fetch on demand / events
-  });
+  const { positions: allPositions, positionsIsLoading } = usePortfolioSnapshot();
   const marketIdMap = useMemo(() => {
     const map = new Map<string, { symbol: string; name: string }>();
     for (const m of markets || []) {
@@ -307,7 +306,20 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Optimistic overlay for positions on trade events (prevents "revert" when vault reads lag a block).
   // We keep small deltas for a short TTL and render basePositions + deltas.
   const posOverlayRef = useRef<
-    Map<string, { delta: number; baseSigned: number; appliedAt: number; expiresAt: number }>
+    Map<
+      string,
+      {
+        delta: number;
+        baseSigned: number;
+        appliedAt: number;
+        /** Soft TTL used to trigger background refetch nudges (not for hiding overlay). */
+        expiresAt: number;
+        /** Hard cap: never keep optimistic overlay beyond this time. */
+        hardExpiresAt: number;
+        /** Last time we nudged a base refetch for this symbol. */
+        lastRefetchRequestedAt?: number;
+      }
+    >
   >(new Map());
   const appliedTraceRef = useRef<Map<string, number>>(new Map());
   const [posOverlayTick, setPosOverlayTick] = useState(0); // re-render trigger
@@ -362,9 +374,27 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         const now = Date.now();
         let changed = false;
         for (const [sym, o] of overlay.entries()) {
-          if (!o || !Number.isFinite(o.delta) || o.delta === 0 || o.expiresAt <= now) {
+          if (!o || !Number.isFinite(o.delta) || o.delta === 0 || (o.hardExpiresAt || 0) <= now) {
             overlay.delete(sym);
             changed = true;
+            continue;
+          }
+
+          // If the base hasn't caught up by the soft TTL, nudge another refresh for convergence.
+          // This avoids "correct -> revert until reload" when event-driven reads happen too early.
+          if (o.expiresAt <= now) {
+            const last = Number(o.lastRefetchRequestedAt || 0);
+            if (!Number.isFinite(last) || now - last > 5_000) {
+              overlay.set(sym, { ...o, expiresAt: now + 8_000, lastRefetchRequestedAt: now });
+              changed = true;
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('positionsRefreshRequested', {
+                    detail: { symbol: sym, traceId: `ui:positions:retry:${sym}:${now}` },
+                  })
+                );
+              } catch {}
+            }
           }
         }
         if (changed) setPosOverlayTick((x) => x + 1);
@@ -415,7 +445,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       if (!o) continue;
 
       // Eager prune invalid/expired entries.
-      if (!Number.isFinite(o.delta) || o.delta === 0 || o.expiresAt <= now) {
+      if (!Number.isFinite(o.delta) || o.delta === 0 || (o.hardExpiresAt || 0) <= now) {
         overlay.delete(sym);
         changed = true;
         continue;
@@ -455,7 +485,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     for (const p of base) {
       const sym = String(p.symbol || '').toUpperCase();
       const o = overlay.get(sym);
-      if (!o || o.expiresAt <= now || !Number.isFinite(o.delta) || o.delta === 0) {
+      if (!o || (o.hardExpiresAt || 0) <= now || !Number.isFinite(o.delta) || o.delta === 0) {
         next.push(p);
         continue;
       }
@@ -467,7 +497,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
     // Add new positions created purely from overlay (no base yet)
     for (const [sym, o] of overlay.entries()) {
-      if (o.expiresAt <= now || !Number.isFinite(o.delta) || o.delta === 0) continue;
+      if ((o.hardExpiresAt || 0) <= now || !Number.isFinite(o.delta) || o.delta === 0) continue;
       const exists = next.some((p) => String(p.symbol || '').toUpperCase() === sym);
       if (exists) continue;
       next.push({
@@ -589,6 +619,18 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
     const onOrdersUpdated = (e: any) => {
       const detail = (e as CustomEvent)?.detail as any;
+      try {
+        // eslint-disable-next-line no-console
+        console.log(`${UI_UPDATE_PREFIX} MarketActivityTabs:ordersUpdated:received`, {
+          activeTab,
+          symbol: String(detail?.symbol || detail?.marketId || detail?.metricId || '').toUpperCase(),
+          eventType: String(detail?.eventType || detail?.reason || '').trim(),
+          orderId: detail?.orderId !== undefined ? String(detail.orderId) : undefined,
+          txHash: String(detail?.txHash || ''),
+          trader: String(detail?.trader || ''),
+          traceId: String(detail?.traceId || ''),
+        });
+      } catch {}
       const traceId = String(detail?.traceId || '');
       const now = Date.now();
       if (traceId) {
@@ -626,6 +668,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         setOpenOrdersOverlayTick((x) => x + 1);
         // eslint-disable-next-line no-console
         console.log('[RealTimeToken] ui:openOrders:patched', { traceId, symbol: sym, eventType, orderId, action: 'remove' });
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} MarketActivityTabs:openOrders:overlay:remove`, { traceId, symbol: sym, orderId });
+        } catch {}
         shouldRefreshSessionOrders = true;
       }
 
@@ -684,6 +730,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         setOpenOrdersOverlayTick((x) => x + 1);
         // eslint-disable-next-line no-console
         console.log('[RealTimeToken] ui:openOrders:patched', { traceId, symbol: sym, eventType: 'OrderPlaced', orderId, action: 'add' });
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} MarketActivityTabs:openOrders:overlay:add`, {
+            traceId,
+            symbol: sym,
+            orderId,
+            price: optimistic.price,
+            size: optimistic.size,
+            side: optimistic.side,
+          });
+        } catch {}
         shouldRefreshSessionOrders = true;
         }
       }
@@ -762,11 +819,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
       const signedDelta = buyer === me ? delta : -delta;
       const now = Date.now();
-      const ttlMs = 8_000; // keep overlay long enough for vault to catch up
+      const ttlMs = 8_000; // soft TTL
+      const hardTtlMs = 120_000; // hard cap (2 minutes) to avoid indefinite divergence
       const existing = posOverlayRef.current.get(sym);
       const nextDelta = (existing?.delta || 0) + signedDelta;
       const baseSigned = existing?.baseSigned ?? getBaseSignedSize(sym);
-      posOverlayRef.current.set(sym, { delta: nextDelta, baseSigned, appliedAt: now, expiresAt: now + ttlMs });
+      posOverlayRef.current.set(sym, {
+        delta: nextDelta,
+        baseSigned,
+        appliedAt: existing?.appliedAt ?? now,
+        expiresAt: now + ttlMs,
+        hardExpiresAt: (existing?.hardExpiresAt ?? (now + hardTtlMs)),
+        lastRefetchRequestedAt: existing?.lastRefetchRequestedAt,
+      });
       // eslint-disable-next-line no-console
       console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
       setPosOverlayTick((x) => x + 1);
@@ -1492,14 +1557,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="w-1/3 text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
+                        <th className="w-[clamp(130px,24%,260px)] text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1523,7 +1588,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               className={rowClass}
                               style={{ animationDelay: `${index * 50}ms` }}
                             >
-                              <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
+                              <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 w-[clamp(130px,24%,260px)] max-w-0">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <span className="w-4 h-4 shrink-0 rounded-full border border-[#333333] bg-[#1A1A1A] animate-pulse" />
                                   <div className="min-w-0 flex-1">
@@ -1535,22 +1600,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               <td className="pl-1 pr-2 py-1.5">
                                 <span className="inline-block w-[44px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-2 py-1.5 text-right">
+                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
                                 <span className="inline-block w-[64px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-2 py-1.5 text-right">
+                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
                                 <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-2 py-1.5 text-right">
+                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
                                 <span className="inline-block w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-2 py-1.5 text-right">
+                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
                                 <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-2 py-1.5 text-right">
+                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
                                 <span className="inline-block w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-2 py-1.5 text-right">
+                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
                                 <span className="inline-block w-[52px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
                             </tr>
@@ -1560,7 +1625,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         return (
                           <React.Fragment key={`${position.id}-${index}`}>
                             <tr className={rowClass} style={{ animationDelay: `${index * 50}ms` }}>
-                              <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
+                              <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 w-[clamp(130px,24%,260px)] max-w-0">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <Link
                                     href={getTokenHref(position.symbol)}
@@ -1570,13 +1635,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     <img
                                       src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                       alt={`${position.symbol} logo`}
-                                      className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
+                                      className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                     />
                                     <div className="min-w-0 flex-1">
-                                      <span className="block truncate text-[11px] font-medium text-white">
+                                      <span className="block truncate text-[10.5px] sm:text-[11px] font-medium text-white">
                                         {truncateMarketName(marketSymbolMap.get(position.symbol)?.name || position.symbol)}
                                       </span>
-                                      <span className="block truncate text-[10px] text-[#9CA3AF]">
+                                      <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
                                         {marketSymbolMap.get(position.symbol)?.identifier || position.symbol}
                                       </span>
                                     </div>
@@ -1597,13 +1662,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   {position.side}
                                 </span>
                               </td>
-                          <td className="px-2 py-1.5 text-right">
+                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
                             <span className="text-[11px] text-white font-mono">{formatSize(position.size)}</span>
                           </td>
-                          <td className="px-2 py-1.5 text-right">
+                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
                             <span className="text-[11px] text-white font-mono">${formatPrice(position.markPrice)}</span>
                           </td>
-                          <td className="px-2 py-1.5 text-right">
+                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
                             <span className="text-[11px] text-white font-mono">
                               $
                               {formatPrice(
@@ -1616,7 +1681,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               )}
                             </span>
                           </td>
-                          <td className="px-2 py-1.5 text-right">
+                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
                             <div className="flex justify-end">
                               <span className="relative inline-block pr-4">
                                 <span
@@ -1638,7 +1703,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               </span>
                             </div>
                           </td>
-                          <td className="px-2 py-1.5 text-right">
+                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
                             <div className="flex flex-col items-end gap-0.5">
                               <div className={`flex items-center justify-end gap-1.5 ${
                                 position.isUnderLiquidation 
@@ -1777,14 +1842,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="w-1/3 text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
-                        <th className="text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                        <th className="w-[clamp(130px,24%,260px)] text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
+                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1804,23 +1869,23 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                             }}
                           >
-                            <td className="pl-2 pr-1 py-1.5 w-1/3 max-w-0">
+                            <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 w-[clamp(130px,24%,260px)] max-w-0">
                               <div className="flex items-center gap-1 min-w-0">
                                 <Link
                                   href={getTokenHref(order.symbol)}
-                                  className="group/link flex min-w-0 max-w-full items-center gap-2 hover:opacity-90 transition-opacity"
+                                  className="group/link flex min-w-0 max-w-full items-center gap-1 sm:gap-2 hover:opacity-90 transition-opacity"
                                   title={`Open ${order.symbol} market`}
                                 >
                                   <img
                                     src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                     alt={`${order.symbol} logo`}
-                                    className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
+                                    className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                   />
                                   <div className="min-w-0">
-                                    <span className="block truncate text-[11px] font-medium text-white">
+                                    <span className="block truncate text-[10.5px] sm:text-[11px] font-medium text-white">
                                       {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                     </span>
-                                    <span className="block truncate text-[10px] text-[#9CA3AF]">
+                                    <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
                                       {marketSymbolMap.get(order.symbol)?.identifier || order.symbol}
                                     </span>
                                   </div>
@@ -1830,22 +1895,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <td className="pl-1 pr-2 py-1.5">
                               <span className={`text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                             </td>
-                            <td className="px-2 py-1.5">
+                            <td className="px-1.5 sm:px-2 py-1.5">
                               <span className="text-[11px] text-white">{order.type}</span>
                             </td>
-                            <td className="px-2 py-1.5 text-right">
+                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
                               <span className="text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
                             </td>
-                            <td className="px-2 py-1.5 text-right">
+                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
                               <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                             </td>
-                            <td className="px-2 py-1.5 text-right">
+                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
                               <span className="text-[11px] text-white font-mono">{formatAmount(order.filled, 4)}</span>
                             </td>
-                            <td className="px-2 py-1.5 text-right">
+                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
                               <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
                             </td>
-                            <td className="px-2 py-1.5 text-right">
+                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
                               <button
                                 onClick={() => setExpandedOrderKey(isExpanded ? null : uiKey)}
                                 className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
@@ -2291,34 +2356,34 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="w-1/3 text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
-                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                        <th className="w-[clamp(130px,24%,260px)] text-left px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
+                        <th className="text-left px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="text-left px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
+                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
+                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
                     <tbody>
                       {orderHistory.map((order, index) => (
                         <tr key={`${order.id}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
-                          <td className="px-2.5 py-2.5 w-1/3 max-w-0">
-                            <div className="flex items-center gap-2 min-w-0">
+                          <td className="px-2 sm:px-2.5 py-2.5 w-[clamp(130px,24%,260px)] max-w-0">
+                            <div className="flex items-center gap-1 sm:gap-2 min-w-0">
                               <Link
                                 href={getTokenHref(order.symbol)}
-                                className="group/link flex min-w-0 flex-1 max-w-full items-center gap-2 hover:opacity-90 transition-opacity"
+                                className="group/link flex min-w-0 flex-1 max-w-full items-center gap-1 sm:gap-2 hover:opacity-90 transition-opacity"
                                 title={`Open ${order.symbol} market`}
                               >
                                 <img
                                   src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                   alt={`${order.symbol} logo`}
-                                  className="w-4 h-4 shrink-0 rounded-full border border-[#333333] object-cover"
+                                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                 />
                                 <div className="min-w-0">
-                                  <span className="block truncate text-[11px] font-medium text-white">
+                                  <span className="block truncate text-[10.5px] sm:text-[11px] font-medium text-white">
                                     {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                   </span>
-                                  <span className="block truncate text-[10px] text-[#9CA3AF]">
+                                  <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
                                     {marketSymbolMap.get(order.symbol)?.identifier || order.symbol}
                                   </span>
                                 </div>
@@ -2358,19 +2423,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               )}
                             </div>
                           </td>
-                          <td className="px-2.5 py-2.5">
+                          <td className="px-2 sm:px-2.5 py-2.5">
                             <span className={`text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                           </td>
-                          <td className="px-2.5 py-2.5">
+                          <td className="px-2 sm:px-2.5 py-2.5">
                             <span className="text-[11px] text-white">{order.type}</span>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
+                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
+                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                           </td>
-                          <td className="px-2.5 py-2.5 text-right">
+                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-[#9CA3AF] whitespace-nowrap">{formatDate(order.timestamp)}</span>
                           </td>
                         </tr>

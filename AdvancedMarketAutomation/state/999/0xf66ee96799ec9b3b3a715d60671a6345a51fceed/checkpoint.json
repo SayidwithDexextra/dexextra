@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "chainId": 999,
+  "orderBook": "0xF66eE96799ec9B3B3A715D60671a6345A51FCEED",
+  "market": {
+    "symbol": "Y",
+    "market_identifier": "Y",
+    "market_address": "0xF66eE96799ec9B3B3A715D60671a6345A51FCEED",
+    "market_id_bytes32": "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+    "chain_id": 999,
+    "tick_size": 0.01
+  },
+  "run": {
+    "runId": "3bd6974a-8b85-44b0-8434-6bd3470387b1",
+    "startedAt": "2026-02-16T06:20:02.260Z",
+    "updatedAt": "2026-02-16T06:20:28.407Z"
+  },
+  "config": {
+    "makerRatio": 0,
+    "maxOpenOrdersPerMaker": 0,
+    "minDelayMs": 250,
+    "maxDelayMs": 1200,
+    "sizeMin": 0.05,
+    "sizeMax": 0.25,
+    "mode": "MEAN"
+  },
+  "wallets": {
+    "0x724cbe7b515dab1ce4b0e262990d2e3c47c6ca36": {
+      "nickname": "User001",
+      "role": "MAKER",
+      "sessionId": "0xef8e5566d7c14fe45197eae18761116ef394aaac14245e86802a91d6e45ea6cb",
+      "sessionExpiry": 1771309202,
+      "lastActionAt": 1771222811294
+    },
+    "0x53aca02402062a61c871d1b5b4ded3e4232826e5": {
+      "nickname": "User002",
+      "role": "MAKER",
+      "sessionId": "0x6f168dfbd728334344606f3ab0f9cbf9f5e74f3a3615a83af4e44604c75bc8e7",
+      "sessionExpiry": 1771309202,
+      "lastActionAt": 1771222816771
+    },
+    "0x89bd0af6fe5292ed96fc026770b24f4b4f6de7c6": {
+      "nickname": "User003",
+      "role": "MAKER",
+      "sessionId": "0x41218b1c448b1140ebe43996f44a40b224a09bbb91dc0011134793681f77a61e",
+      "sessionExpiry": 1771309202,
+      "lastActionAt": 1771222823146
+    },
+    "0xb5bac03724f123dd70bd6804fc1d3a5a8f611b25": {
+      "nickname": "User004",
+      "role": "MAKER",
+      "sessionId": "0x3ea7b621ee21aff38ea37966c3f22e32af81af26fd884483cf3130dee3a31d91",
+      "sessionExpiry": 1771309202,
+      "lastActionAt": 1771222828405
+    },
+    "0xdf4b23491a85d777dd0be799cbed09368c42f087": {
+      "nickname": "User005",
+      "role": "MAKER"
+    },
+    "0xa0f2d53186801ba175f6911d0cae6c99abbe5b19": {
+      "nickname": "User006",
+      "role": "MAKER"
+    },
+    "0xc7d77fde8ea75bc8e3fdf634756ee252095422cd": {
+      "nickname": "User007",
+      "role": "MAKER"
+    },
+    "0xc8d3da3a29762c2e6503945393a0fd1b70023a5a": {
+      "nickname": "User008",
+      "role": "MAKER"
+    },
+    "0xdb55b652b8cdfabc08623c0995e6d5f572555d9a": {
+      "nickname": "User009",
+      "role": "MAKER"
+    },
+    "0x0980f424b427d9d1584093c7b42c86f47113d3ac": {
+      "nickname": "User010",
+      "role": "MAKER"
+    }
+  }
+}

@@ -8,6 +8,8 @@ import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
 import { OrderBookAnimatedQuantity } from '@/components/ui/AnimatedQuantity';
 import { useMarketData } from '@/contexts/MarketDataContext';
 
+const UI_UPDATE_PREFIX = '[UI,Update]';
+
 interface TransactionTableProps {
   marketId?: string; // UUID from markets table
   marketIdentifier?: string; // Market identifier (e.g., 'ALU-USD')
@@ -147,6 +149,16 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
       const now = Date.now();
       const eventType = String(detail?.eventType || detail?.reason || '').trim();
+      try {
+        // eslint-disable-next-line no-console
+        console.log(`${UI_UPDATE_PREFIX} TransactionTable:ordersUpdated:received`, {
+          symbol: sym,
+          eventType,
+          orderId: detail?.orderId !== undefined ? String(detail.orderId) : undefined,
+          txHash: String(detail?.txHash || detail?.transactionHash || ''),
+          traceId: String(detail?.traceId || ''),
+        });
+      } catch {}
       const isCancelOrFill =
         eventType === 'OrderCancelled' ||
         eventType === 'cancel' ||
@@ -199,6 +211,18 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
       // eslint-disable-next-line no-console
       console.log('[RealTimeToken] ui:orderbook:patched', { eventKey, symbol: sym, eventType, price, amount, isBuy, delta: nextDelta });
+      try {
+        // eslint-disable-next-line no-console
+        console.log(`${UI_UPDATE_PREFIX} TransactionTable:orderbook:overlay:patched`, {
+          symbol: sym,
+          eventType,
+          price,
+          amount,
+          isBuy,
+          delta: nextDelta,
+          ttlMs,
+        });
+      } catch {}
       setDepthOverlayTick((x) => x + 1);
     };
 
@@ -326,6 +350,19 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   // Get pending orders for BOOK tab (unfilled limit orders)
   const pendingOrders = useMemo<OrderFromAPI[]>(() => [], []);
 
+  // Keep asks scrolled to bottom (best ask closest to spread) unless user scrolls up.
+  const asksScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const asksAutoScrollRef = React.useRef<boolean>(true);
+  const onAsksScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    try {
+      const el = e.currentTarget;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      asksAutoScrollRef.current = distanceFromBottom < 8;
+    } catch {
+      // ignore
+    }
+  };
+
   // Get filled orders for TRADES tab (completed trades)
   const filledOrders = useMemo(() => {
     console.log('🔍 [TRANSACTIONS] Found', recentTrades.length, 'recent trades');
@@ -383,9 +420,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         filled_quantity: 0,
         created_at: nowIso,
         trader_wallet_address: '0x0000000000000000000000000000000000000000'
-      })).sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest bid first
+      }))
+        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0)
+        .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest bid first (best bid first)
 
-      const askOrders = (obData.depth.askPrices || []).map((price, i) => ({
+      // Ask prices should be treated as best→worse internally (lowest→highest),
+      // then reversed for display (highest→lowest) so best ask sits at the bottom near the spread.
+      const askBestFirst = (obData.depth.askPrices || []).map((price, i) => ({
         order_id: `ASK-${price}-${i}`,
         side: 'SELL',
         order_status: 'PENDING',
@@ -394,7 +435,11 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         filled_quantity: 0,
         created_at: nowIso,
         trader_wallet_address: '0x0000000000000000000000000000000000000000'
-      })).sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest ask first for descending display
+      }))
+        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0)
+        .sort((a, b) => (a.price || 0) - (b.price || 0)); // Lowest ask first (best ask first)
+
+      const askOrders = [...askBestFirst].reverse(); // Display order: highest→lowest (best ask at bottom)
 
       console.log('🔍 [ORDERBOOK][ONCHAIN] Bids:', bidOrders.length, 'Asks:', askOrders.length);
       // Apply optimistic overlay deltas (best-effort) so the book updates instantly on events
@@ -409,11 +454,15 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           }
           if (map.size === 0) return arr;
           const out = [...arr];
-          const idxMap = new Map<number, number>();
-          out.forEach((o, i) => idxMap.set(Number(o.price || 0), i));
+          // Use fixed string keys to avoid float rounding mismatches.
+          const idxMap = new Map<string, number>();
+          out.forEach((o, i) => {
+            const k = Number(o.price || 0).toFixed(8);
+            idxMap.set(k, i);
+          });
           for (const [pKey, rec] of map.entries()) {
             const p = parseFloat(pKey);
-            const i = idxMap.get(p);
+            const i = idxMap.get(String(pKey));
             if (i !== undefined) {
               const q = Number(out[i].quantity || 0) + Number(rec.delta || 0);
               out[i] = { ...out[i], quantity: q > 0 ? q : 0 };
@@ -431,7 +480,9 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             }
           }
           const cleaned = out.filter((o) => Number(o.quantity || 0) > 0);
-          // sort by price descending (matches existing)
+          // Sort per standard orderbook conventions:
+          // - bids: highest→lowest
+          // - asks (display): highest→lowest (best ask will remain at bottom of the asks section)
           cleaned.sort((a, b) => (Number(b.price || 0) - Number(a.price || 0)));
           return cleaned;
         };
@@ -451,6 +502,30 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     console.log('🔍 [ORDERBOOK][DB] Bids:', buyOrders.length, 'Asks:', sellOrders.length);
     return { bids: buyOrders, asks: sellOrders };
   }, [obData?.depth, pendingOrders, depthOverlayTick]);
+
+  // Auto-scroll asks to bottom when pinned.
+  useEffect(() => {
+    if (view !== 'orderbook') return;
+    const el = asksScrollRef.current;
+    if (!el) return;
+    if (!asksAutoScrollRef.current) return;
+    // Ensure best ask (lowest) is visible nearest to the spread.
+    el.scrollTop = el.scrollHeight;
+  }, [view, obData?.lastUpdated, asks.length]);
+
+  // Total active orders (not capped by UI depth rendering).
+  // Fall back to the rendered depth lengths if the on-chain count isn't available.
+  const totalAskOrders = useMemo(() => {
+    const n = md.activeSellOrders;
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return n;
+    return asks.length;
+  }, [md.activeSellOrders, asks.length]);
+
+  const totalBidOrders = useMemo(() => {
+    const n = md.activeBuyOrders;
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) return n;
+    return bids.length;
+  }, [md.activeBuyOrders, bids.length]);
 
   // Stop showing initial loader as soon as the first batch of orders is actually in the UI.
   const orderBookHasOrders = (bids?.length || 0) + (asks?.length || 0) > 0;
@@ -478,8 +553,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   }, [bids, obData?.bestBid]);
 
   const bestAskPrice = useMemo(() => {
+    // `asks` are in display order highest→lowest, so best ask is the last item.
     const p = (asks && asks.length > 0) ? asks[asks.length - 1].price : null;
-    return (p ?? obData?.bestAsk ?? 0) || 0;
+    const fallback = obData?.bestAsk ?? 0;
+    return (p ?? fallback) || 0;
   }, [asks, obData?.bestAsk]);
 
   // Filtered and sorted data based on current view
@@ -653,7 +730,12 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           <div className="flex-1 flex flex-col">
             {/* Ask Orders (Sell Orders) - Just above spread */}
             <div className="overflow-hidden flex flex-col justify-end" style={{ minHeight: '200px' }}>
-              <div className="overflow-y-auto orders-table-scroll flex-grow-0" style={{ maxHeight: '200px' }}>
+              <div
+                ref={asksScrollRef}
+                onScroll={onAsksScroll}
+                className="overflow-y-auto orders-table-scroll flex-grow-0"
+                style={{ maxHeight: '200px' }}
+              >
                 {showOrderBookLoading ? (
                   <div className="space-y-0 flex flex-col justify-end">
                     {Array.from({ length: 8 }).map((_, i) => (
@@ -723,7 +805,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {/* Ask Orders Label */}
             <div className="text-[9px] text-gray-200 px-1 py-0.5 flex items-center justify-between">
               <span>ASKS (SELL)</span>
-              <span className="text-[#FF4747]">{asks.length} orders</span>
+              <span className="text-[#FF4747]">{totalAskOrders} orders</span>
             </div>
 
             {/* Spread Display */}
@@ -748,7 +830,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             <div className="flex-1 overflow-hidden flex flex-col">
               <div className="text-[9px] text-gray-200 mb-1 px-1 flex items-center justify-between">
                 <span>BIDS (BUY)</span>
-                <span className="text-[#00D084]">{bids.length} orders</span>
+                <span className="text-[#00D084]">{totalBidOrders} orders</span>
               </div>
               <div className="flex-1 overflow-y-auto orders-table-scroll">
                 {showOrderBookLoading ? (

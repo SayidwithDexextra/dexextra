@@ -91,15 +91,9 @@ const TrendingSection: React.FC = () => {
           </span>
           Trending
         </h4>
-        <a
-          href="/trending"
-          className="text-[11px] text-[#606060] bg-[#1A1A1A] px-2 py-0.5 rounded hover:text-white transition-colors"
-        >
-          View more <span aria-hidden="true">›</span>
-        </a>
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 flex-1">
         {ready ? (
           <>
             {tokens.map((token, index) => {

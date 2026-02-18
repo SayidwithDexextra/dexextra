@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 
 export type OrderFillStatus = 'submitting' | 'filling' | 'filled' | 'error';
@@ -129,6 +130,12 @@ export type OrderFillLoadingModalProps = {
   /** Override the main line of text (keeps design-system styling). */
   headlineText?: string;
 
+  /**
+   * Optional secondary line of text (e.g. error detail).
+   * If provided, this replaces the default "Please wait." / percent label.
+   */
+  detailText?: string;
+
   /** 0..1 */
   progress: number;
   status?: OrderFillStatus;
@@ -150,6 +157,7 @@ export function OrderFillLoadingModal({
   isOpen,
   onClose,
   headlineText = 'Submitting your order,',
+  detailText,
   progress,
   status = 'filling',
   allowClose,
@@ -158,12 +166,17 @@ export function OrderFillLoadingModal({
 }: OrderFillLoadingModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
 
   const meta = useMemo(() => statusMeta(status), [status]);
   const canClose = Boolean(allowClose && onClose);
   const showCloseButton = Boolean((canClose || safetyCloseButton) && onClose);
   const reducedMotion = useReducedMotion();
   const p = clamp01(progress);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -195,11 +208,17 @@ export function OrderFillLoadingModal({
   }, [isOpen, canClose, onClose]);
 
   if (!isOpen) return null;
+  if (!isMounted) return null;
 
   const headline = headlineText;
+  const detail = detailText;
 
-  return (
-    <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
+  return createPortal(
+    <div
+      className={`fixed inset-0 z-[15000] flex items-center justify-center p-4 transition-opacity duration-200 ${
+        isAnimating ? 'opacity-100' : 'opacity-0'
+      }`}
+    >
       <div
         className="absolute inset-0 bg-black/55 backdrop-blur-sm"
         onClick={canClose ? onClose : undefined}
@@ -259,20 +278,25 @@ export function OrderFillLoadingModal({
               <div className="text-white text-[13px] font-medium tracking-tight">{headline}</div>
               <div className={`text-[10px] px-1.5 py-0.5 rounded ${meta.badge}`}>{meta.label}</div>
             </div>
-            {showProgressLabel ? (
-              <div className="mt-2 text-[10px] text-white font-mono tabular-nums">
-                {formatPct(p)}
+            {detail ? (
+              <div
+                className={[
+                  'mt-2 text-[10px] leading-snug',
+                  status === 'error' ? 'text-red-300/90' : 'text-[#606060]',
+                ].join(' ')}
+              >
+                {detail}
               </div>
+            ) : showProgressLabel ? (
+              <div className="mt-2 text-[10px] text-white font-mono tabular-nums">{formatPct(p)}</div>
             ) : (
-              <div className="mt-2 text-[10px] text-[#606060]">
-                Please wait.
-              </div>
+              <div className="mt-2 text-[10px] text-[#606060]">Please wait.</div>
             )}
           </div>
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }
 
 export default OrderFillLoadingModal;

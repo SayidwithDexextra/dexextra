@@ -6,6 +6,8 @@ import { CHAIN_CONFIG, CONTRACT_ADDRESSES, populateMarketInfoClient } from '@/li
 import { publicClient as fallbackPublicClient } from '@/lib/viemClient';
 import { useMarketEventHub } from '@/services/realtime/marketEventHub';
 
+const UI_UPDATE_PREFIX = '[UI,Update]';
+
 type OrderBookLiveData = {
   orderBookAddress: Address | null;
   bestBid: number | null;
@@ -342,9 +344,17 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
     return {
       dispatchDomEvents: true,
       onOrdersChanged: () => {
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} orderbookLive:onOrdersChanged -> fetchNow`, { symbol: String(symbol || '').toUpperCase() });
+        } catch {}
         fetchNowRef.current?.();
       },
       onTradesChanged: () => {
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} orderbookLive:onTradesChanged -> fetchNow`, { symbol: String(symbol || '').toUpperCase() });
+        } catch {}
         fetchNowRef.current?.();
       },
     };
@@ -615,10 +625,12 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
           const levels = BigInt(requestedLevels);
           let d: any = null;
           try {
-            d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepth', args: [levels] }), 2000, 'getOrderBookDepth');
+            // Prefer pointer walk so we always fetch the levels closest to the spread (best bid/ask outward).
+            d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepthFromPointers', args: [levels] }), 2000, 'getOrderBookDepthFromPointers');
           } catch (_e) {
+            // Fallback: full scan + sort (can be heavier on large books)
             try {
-              d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepthFromPointers', args: [levels] }), 2000, 'getOrderBookDepthFromPointers');
+              d = await withTimeout(publicClient.readContract({ address, abi, functionName: 'getOrderBookDepth', args: [levels] }), 2500, 'getOrderBookDepth');
             } catch (_fallbackError) {}
           }
           if (Array.isArray(d) && d.length >= 4) {
@@ -815,8 +827,21 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
     fetchNowRef.current = () => {
       // Simple debounce to avoid bursts
       const now = Date.now();
-      if (now - lastRealtimeRefreshRef.current < 750) return;
+      if (now - lastRealtimeRefreshRef.current < 750) {
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} orderbookLive:fetchNow:debounced`, {
+            symbol: String(symbol || '').toUpperCase(),
+            deltaMs: now - lastRealtimeRefreshRef.current,
+          });
+        } catch {}
+        return;
+      }
       lastRealtimeRefreshRef.current = now;
+      try {
+        // eslint-disable-next-line no-console
+        console.log(`${UI_UPDATE_PREFIX} orderbookLive:fetchNow:run`, { symbol: String(symbol || '').toUpperCase() });
+      } catch {}
       void fetchData();
     };
 

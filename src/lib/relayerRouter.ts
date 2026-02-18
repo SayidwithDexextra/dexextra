@@ -4,6 +4,8 @@ import { getSupabaseServer } from './supabase-server'
 
 export type RelayerPoolName =
   | 'hub_trade'
+  | 'hub_trade_small'
+  | 'hub_trade_big'
   | 'hub_inbox'
   | 'spoke_outbox_arbitrum'
   | 'spoke_inbox_arbitrum'
@@ -16,6 +18,20 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_',
     allowFallbackSingleKey: true,
+  },
+  hub_trade_small: {
+    pool: 'hub_trade_small',
+    jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
+    indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
+    // Back-compat: if small pool is not configured, fall back to RELAYER_PRIVATE_KEYS_JSON / RELAYER_PRIVATE_KEY.
+    allowFallbackSingleKey: true,
+  },
+  hub_trade_big: {
+    pool: 'hub_trade_big',
+    jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON',
+    globalJsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON',
+    indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_BIG_',
+    allowFallbackSingleKey: false,
   },
   hub_inbox: {
     pool: 'hub_inbox',
