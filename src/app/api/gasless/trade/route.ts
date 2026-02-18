@@ -440,6 +440,8 @@ export async function POST(req: Request) {
       indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
       // Back-compat: allow falling back to RELAYER_PRIVATE_KEYS_JSON / RELAYER_PRIVATE_KEY
       allowFallbackSingleKey: true,
+      // Exclude "big" relayer keys - they must never sign session transactions for this pool
+      excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
     });
     const bigKeys = loadRelayerPoolFromEnv({
       pool: 'hub_trade_big',
@@ -453,6 +455,8 @@ export async function POST(req: Request) {
       jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_JSON',
       indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_',
       allowFallbackSingleKey: true,
+      // Exclude "big" relayer keys - they must never sign session transactions for this pool
+      excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
     });
 
     const hasSmall = smallKeys.length > 0;

@@ -1166,9 +1166,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     base.forEach(appendOrder);
 
     // Defensive: never render a LIMIT order with non-positive price/size.
+    // Keep orders that are animating out so the slide-out animation can complete.
     return Array.from(dedup.values())
       .filter((o) => {
         const removalKey = getOrderCompositeKey(o.symbol, o.id);
+        const isAnimatingOut = animatingOutOrderKeys.has(removalKey);
+        // Keep the order visible while animating, even if marked for removal
+        if (isAnimatingOut) return true;
         return o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(removalKey);
       })
       .filter((o) => {
@@ -1189,7 +1193,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         }
         return true;
       });
-  }, [sitewideActiveOrders, optimisticallyRemovedOrderIds]);
+  }, [sitewideActiveOrders, optimisticallyRemovedOrderIds, animatingOutOrderKeys]);
   const openOrdersIsLoading = Boolean(isLoadingSitewideOrders && activeTab === 'orders');
 
   // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
@@ -1863,8 +1867,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           <tr
                             className={`mat-slide-rtl group/row hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''} ${isAnimatingOut ? 'order-row-slide-out' : ''}`}
                             style={{ animationDelay: `${index * 50}ms` }}
-                            onAnimationEnd={(e) => {
-                              if (e.animationName !== 'order-row-slide-out' || !animatingOutOrderKeys.has(removalKey)) return;
+                            onAnimationEnd={() => {
+                              if (!animatingOutOrderKeys.has(removalKey)) return;
                               setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
                               setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                             }}
@@ -1991,6 +1995,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   }
                                                   throw new Error(msg);
                                                 }
+                                                // Success: immediately mark as removed so it disappears after animation
+                                                setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                                                 finishCancelModal();
                                                 removeOrderFromSessionCache(order.id, metric);
                                                 try { await refreshGlobalOrders(); } catch {}
@@ -2026,6 +2032,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   showError('Failed to cancel order. Please try again.');
                                                   markCancelModalError();
                                                 } else {
+                                                  // Success: immediately mark as removed so it disappears after animation
+                                                  setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                                                   finishCancelModal();
                                                   removeOrderFromSessionCache(order.id, metric);
                                                   try { await refreshGlobalOrders(); } catch {}

@@ -595,6 +595,18 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }).format(numPrice);
   };
 
+  // Format amount with commas + up to 2 decimals
+  const formatAmountInput = (rawAmount: string | number) => {
+    const numAmount = typeof rawAmount === 'string'
+      ? parseFloat(rawAmount.replace(/,/g, ''))
+      : rawAmount;
+    if (!Number.isFinite(numAmount)) return '';
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(numAmount);
+  };
+
   // Sanitize a numeric string, permitting a single dot and up to 6 decimals
   const sanitizeDecimalInput = (raw: string, maxDecimals: number = 6) => {
     // Allow only digits and dot
@@ -660,7 +672,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         const currentPrice = resolveCurrentPrice();
         next = prev + (value * currentPrice);
       }
-      setAmountInput(String(next));
+      setAmountInput(formatAmountInput(next));
       return next;
     });
   };
@@ -670,12 +682,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     const maxAmount = Math.max(marginSummary.availableCollateral, 50000); // $50K default or available collateral
     if (isUsdMode) {
       setAmount(maxAmount);
-      setAmountInput(String(maxAmount));
+      setAmountInput(formatAmountInput(maxAmount));
     } else {
       const currentPrice = resolveCurrentPrice();
       const next = maxAmount / currentPrice;
       setAmount(next);
-      setAmountInput(String(next));
+      setAmountInput(formatAmountInput(next));
     }
   };
 
@@ -2727,9 +2739,28 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                         // Strip commas before sanitizing
                         const raw = e.target.value.replace(/,/g, '');
                         const value = sanitizeDecimalInput(raw, 8);
-                        setTriggerPriceInput(value);
-                        const parsed = parseFloat(value);
-                        setTriggerPrice(Number.isFinite(parsed) ? parsed : 0);
+                        // Format with commas as user types
+                        if (value === '' || value === '.') {
+                          setTriggerPriceInput(value);
+                          setTriggerPrice(0);
+                        } else if (value.includes('.')) {
+                          // Handle decimal: format the whole part, keep decimal part as-is
+                          const [wholePart, decimalPart] = value.split('.');
+                          const formattedWhole = wholePart ? parseInt(wholePart, 10).toLocaleString('en-US') : '0';
+                          setTriggerPriceInput(`${formattedWhole}.${decimalPart}`);
+                          const parsed = parseFloat(value);
+                          setTriggerPrice(Number.isFinite(parsed) ? parsed : 0);
+                        } else {
+                          // No decimal - format entire number
+                          const parsed = parseInt(value, 10);
+                          if (!isNaN(parsed)) {
+                            setTriggerPriceInput(parsed.toLocaleString('en-US'));
+                            setTriggerPrice(parsed);
+                          } else {
+                            setTriggerPriceInput('');
+                            setTriggerPrice(0);
+                          }
+                        }
                       }}
                       onBlur={() => {
                         const num = parseFloat((triggerPriceInput || '').replace(/,/g, ''));
@@ -2740,10 +2771,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                           setTriggerPriceInput('');
                           setTriggerPrice(0);
                         }
-                      }}
-                      onFocus={() => {
-                        // Remove commas for easier editing
-                        setTriggerPriceInput((triggerPriceInput || '').replace(/,/g, ''));
                       }}
                       placeholder="0.00"
                       className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 pl-6 text-xs font-medium text-white placeholder-[#606060] focus:outline-none focus:border-blue-400 transition-colors duration-200"
@@ -2865,12 +2892,42 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   pattern="[0-9]*[.,]?[0-9]*"
                   value={amountInput}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                    const value = e.target.value;
-                    // Mirror Limit Price input behavior: allow only digits and a single decimal point
-                    if (/^\d*\.?\d*$/.test(value)) {
-                      setAmountInput(value);
-                      const parsed = parseFloat(value);
-                      setAmount(!isNaN(parsed) ? parsed : 0);
+                    // Strip commas before validating
+                    const raw = e.target.value.replace(/,/g, '');
+                    // Allow only digits and a single decimal point
+                    if (/^\d*\.?\d*$/.test(raw)) {
+                      // Format with commas as user types
+                      if (raw === '' || raw === '.') {
+                        setAmountInput(raw);
+                        setAmount(0);
+                      } else if (raw.includes('.')) {
+                        // Handle decimal: format the whole part, keep decimal part as-is
+                        const [wholePart, decimalPart] = raw.split('.');
+                        const formattedWhole = wholePart ? parseInt(wholePart, 10).toLocaleString('en-US') : '0';
+                        setAmountInput(`${formattedWhole}.${decimalPart}`);
+                        const parsed = parseFloat(raw);
+                        setAmount(!isNaN(parsed) ? parsed : 0);
+                      } else {
+                        // No decimal - format entire number
+                        const parsed = parseInt(raw, 10);
+                        if (!isNaN(parsed)) {
+                          setAmountInput(parsed.toLocaleString('en-US'));
+                          setAmount(parsed);
+                        } else {
+                          setAmountInput('');
+                          setAmount(0);
+                        }
+                      }
+                    }
+                  }}
+                  onBlur={() => {
+                    const num = parseFloat((amountInput || '').replace(/,/g, ''));
+                    if (Number.isFinite(num) && num > 0) {
+                      setAmountInput(formatAmountInput(num));
+                      setAmount(num);
+                    } else {
+                      setAmountInput('');
+                      setAmount(0);
                     }
                   }}
                   placeholder={isUsdMode ? "1,000.00" : "100.00"}

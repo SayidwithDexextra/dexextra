@@ -1,19 +1,20 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Open order row slide-out (MarketActivityTabs cancel) */
+/* Open order row slide-out to the right (MarketActivityTabs cancel) */
 @keyframes order-row-slide-out {
   from {
     transform: translateX(0);
     opacity: 1;
   }
   to {
-    transform: translateX(-100%);
+    transform: translateX(100%);
     opacity: 0;
   }
 }
 .order-row-slide-out {
-  animation: order-row-slide-out 0.3s ease-out forwards;
+  animation: order-row-slide-out 0.35s ease-out forwards;
+  pointer-events: none;
 }
 
 @custom-variant dark (&:is(.dark *));

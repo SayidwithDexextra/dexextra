@@ -50,6 +50,12 @@ export type RelayerPoolConfig = {
    * If the pool is empty and this is set, we will include RELAYER_PRIVATE_KEY as pool[0].
    */
   allowFallbackSingleKey?: boolean
+  /**
+   * Optional JSON env var(s) containing keys that should be EXCLUDED from this pool.
+   * Any private key appearing in these env vars will never be returned for this pool.
+   * This prevents overlapping keys (e.g. "big" relayers) from being used for session signing.
+   */
+  excludeJsonEnvs?: string[]
 }
 
 export function loadRelayerPoolFromEnv(cfg: RelayerPoolConfig): RelayerKey[] {
@@ -83,17 +89,35 @@ export function loadRelayerPoolFromEnv(cfg: RelayerPoolConfig): RelayerKey[] {
     if (v) keysRaw.push(v)
   }
 
+  // Build exclusion set from excludeJsonEnvs (normalized private keys)
+  const excludedKeys = new Set<string>()
+  if (cfg.excludeJsonEnvs && cfg.excludeJsonEnvs.length > 0) {
+    for (const envName of cfg.excludeJsonEnvs) {
+      const j = String(process.env[envName] || '').trim()
+      if (!j) continue
+      const parsed = parseJsonKeys(j)
+      for (const rawPk of parsed) {
+        const normPk = normalizePrivateKey(rawPk)
+        if (normPk) excludedKeys.add(normPk.toLowerCase())
+      }
+    }
+  }
+
   const out: RelayerKey[] = []
-  for (let i = 0; i < keysRaw.length; i++) {
-    const pk = normalizePrivateKey(keysRaw[i])
+  let idx = 0
+  for (const rawPk of keysRaw) {
+    const pk = normalizePrivateKey(rawPk)
     if (!pk) continue
+    // Skip keys that are in the exclusion set
+    if (excludedKeys.has(pk.toLowerCase())) continue
     const address = new ethers.Wallet(pk).address
     out.push({
-      id: `${cfg.pool}:${i}`,
+      id: `${cfg.pool}:${idx}`,
       pool: cfg.pool,
       address: ethers.getAddress(address),
       privateKey: pk,
     })
+    idx++
   }
   return out
 }

@@ -169,8 +169,8 @@ export function OrderFillLoadingModal({
   const [isMounted, setIsMounted] = useState(false);
 
   const meta = useMemo(() => statusMeta(status), [status]);
-  const canClose = Boolean(allowClose && onClose);
-  const showCloseButton = Boolean((canClose || safetyCloseButton) && onClose);
+  const canClose = Boolean(onClose);
+  const showCloseButton = Boolean(onClose);
   const reducedMotion = useReducedMotion();
   const p = clamp01(progress);
 
@@ -220,8 +220,8 @@ export function OrderFillLoadingModal({
       }`}
     >
       <div
-        className="absolute inset-0 bg-black/55 backdrop-blur-sm"
-        onClick={canClose ? onClose : undefined}
+        className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+        onClick={onClose}
         aria-hidden="true"
       />
 

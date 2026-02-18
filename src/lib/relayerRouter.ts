@@ -18,6 +18,8 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_',
     allowFallbackSingleKey: true,
+    // Exclude "big" relayer keys - they must never sign session transactions for this pool
+    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   hub_trade_small: {
     pool: 'hub_trade_small',
@@ -25,6 +27,8 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
     // Back-compat: if small pool is not configured, fall back to RELAYER_PRIVATE_KEYS_JSON / RELAYER_PRIVATE_KEY.
     allowFallbackSingleKey: true,
+    // Exclude "big" relayer keys - they must never sign session transactions for this pool
+    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   hub_trade_big: {
     pool: 'hub_trade_big',
@@ -38,30 +42,36 @@ const POOLS: Record<RelayerPoolName, RelayerPoolConfig> = {
     jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_INBOX_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_INBOX_',
     allowFallbackSingleKey: true,
+    // Exclude "big" relayer keys - they must never sign session transactions for this pool
+    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_outbox_arbitrum: {
     pool: 'spoke_outbox_arbitrum',
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_OUTBOX_ARBITRUM_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_OUTBOX_ARBITRUM_',
     allowFallbackSingleKey: true,
+    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_inbox_arbitrum: {
     pool: 'spoke_inbox_arbitrum',
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_INBOX_ARBITRUM_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_INBOX_ARBITRUM_',
     allowFallbackSingleKey: true,
+    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_outbox_polygon: {
     pool: 'spoke_outbox_polygon',
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_OUTBOX_POLYGON_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_OUTBOX_POLYGON_',
     allowFallbackSingleKey: true,
+    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
   spoke_inbox_polygon: {
     pool: 'spoke_inbox_polygon',
     jsonEnv: 'RELAYER_PRIVATE_KEYS_SPOKE_INBOX_POLYGON_JSON',
     indexedPrefix: 'RELAYER_PRIVATE_KEY_SPOKE_INBOX_POLYGON_',
     allowFallbackSingleKey: true,
+    excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
   },
 }
 

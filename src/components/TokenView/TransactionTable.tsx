@@ -106,12 +106,22 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
   // --- Realtime optimistic overlay for OrderBook depth (no polling) ---
   // Applies small, short-lived deltas from `ordersUpdated` events so the BOOK tab updates instantly.
+  // For cancellations, we track price levels that should be completely removed to avoid "microscopic" residuals.
   const depthOverlayRef = React.useRef<{
     bidsDelta: Map<string, { delta: number; expiresAt: number }>;
     asksDelta: Map<string, { delta: number; expiresAt: number }>;
+    // Track price levels to fully remove (for cancellations where the order might be the only one at that level)
+    bidsRemoved: Map<string, { amount: number; expiresAt: number }>;
+    asksRemoved: Map<string, { amount: number; expiresAt: number }>;
     seenTrace: Map<string, number>;
-  }>({ bidsDelta: new Map(), asksDelta: new Map(), seenTrace: new Map() });
+  }>({ bidsDelta: new Map(), asksDelta: new Map(), bidsRemoved: new Map(), asksRemoved: new Map(), seenTrace: new Map() });
   const [depthOverlayTick, setDepthOverlayTick] = useState(0);
+
+  // Ref to access current best bid/ask in event handlers without re-subscribing
+  const bestPricesRef = React.useRef<{ bestBid: number; bestAsk: number }>({ bestBid: 0, bestAsk: 0 });
+  useEffect(() => {
+    bestPricesRef.current = { bestBid: md.bestBid ?? 0, bestAsk: md.bestAsk ?? 0 };
+  }, [md.bestBid, md.bestAsk]);
 
   const bigintToFloat = (x: bigint, decimals: number, maxFraction = 8): number => {
     const TEN = 10n;
@@ -127,11 +137,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   // When fresh depth arrives, clear overlay so we don't "double count" (base has caught up).
   useEffect(() => {
     try {
-      const bids = depthOverlayRef.current.bidsDelta;
-      const asks = depthOverlayRef.current.asksDelta;
-      if (bids.size === 0 && asks.size === 0) return;
-      bids.clear();
-      asks.clear();
+      const overlay = depthOverlayRef.current;
+      if (overlay.bidsDelta.size === 0 && overlay.asksDelta.size === 0 && 
+          overlay.bidsRemoved.size === 0 && overlay.asksRemoved.size === 0) return;
+      overlay.bidsDelta.clear();
+      overlay.asksDelta.clear();
+      overlay.bidsRemoved.clear();
+      overlay.asksRemoved.clear();
       // eslint-disable-next-line no-console
       console.log('[RealTimeToken] ui:orderbook:overlay:cleared', { market: validMarketIdentifier });
       setDepthOverlayTick((x) => x + 1);
@@ -173,15 +185,21 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       if (!detail?.price || !detail?.amount || detail?.isBuy === undefined) return;
 
       // Strong dedupe: txHash if present; else fall back to orderId+fields.
-      // This prevents double-counting when we receive the same placement via onchain + pusher.
+      // This prevents double-counting when we receive the same placement via onchain + pusher + UI dispatch.
+      // IMPORTANT: When txHash is present, we use ONLY txHash + symbol as the key because:
+      // - UI dispatch uses placeholder orderId like "tx:<hash>" and eventType "order-placed"
+      // - On-chain event has real numeric orderId like "123" and eventType "OrderPlaced"
+      // - Both represent the same transaction, so txHash + symbol alone must be sufficient
       const txHash = String(detail?.txHash || detail?.transactionHash || '');
       const orderId = detail?.orderId !== undefined ? String(detail.orderId) : '';
       const priceRaw = String(detail?.price || '');
       const amountRaw = String(detail?.amount || '');
       const isBuyRaw = detail?.isBuy === undefined ? '' : (Boolean(detail.isBuy) ? 'B' : 'S');
+      // Normalize eventType for dedupe: treat all placement types as "place" and all cancel/fill as "remove"
+      const eventCategory = isCancelOrFill ? 'remove' : 'place';
       const eventKey = txHash
-        ? `tx:${txHash}:${sym}:${orderId || isBuyRaw}`
-        : `oid:${orderId || 'noOrderId'}:${sym}:${eventType}:${priceRaw}:${amountRaw}:${isBuyRaw}`;
+        ? `tx:${txHash}:${sym}:${eventCategory}`
+        : `oid:${orderId || 'noOrderId'}:${sym}:${eventCategory}:${priceRaw}:${amountRaw}:${isBuyRaw}`;
       {
         const prev = depthOverlayRef.current.seenTrace.get(eventKey) || 0;
         if (now - prev < 10_000) return;
@@ -200,29 +218,77 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
       const isBuy = Boolean(detail.isBuy);
       const ttlMs = 8_000;
-
-      // Place adds liquidity at a level; cancel/fill removes liquidity at a level (best-effort).
-      const sign = isCancelOrFill ? -1 : 1;
-      const map = isBuy ? depthOverlayRef.current.bidsDelta : depthOverlayRef.current.asksDelta;
       const priceKey = price.toFixed(8);
-      const existing = map.get(priceKey);
-      const nextDelta = (existing?.delta || 0) + sign * amount;
-      map.set(priceKey, { delta: nextDelta, expiresAt: now + ttlMs });
 
-      // eslint-disable-next-line no-console
-      console.log('[RealTimeToken] ui:orderbook:patched', { eventKey, symbol: sym, eventType, price, amount, isBuy, delta: nextDelta });
-      try {
+      if (isCancelOrFill) {
+        // For cancellations/fills: track the price level for removal instead of using negative deltas.
+        // This ensures the entire price level is removed if the cancelled order amount matches (or nearly matches)
+        // the level's quantity, avoiding "microscopic residual" bugs.
+        const removedMap = isBuy ? depthOverlayRef.current.bidsRemoved : depthOverlayRef.current.asksRemoved;
+        const existingRemoved = removedMap.get(priceKey);
+        const totalRemoved = (existingRemoved?.amount || 0) + amount;
+        removedMap.set(priceKey, { amount: totalRemoved, expiresAt: now + ttlMs });
+
         // eslint-disable-next-line no-console
-        console.log(`${UI_UPDATE_PREFIX} TransactionTable:orderbook:overlay:patched`, {
-          symbol: sym,
-          eventType,
-          price,
-          amount,
-          isBuy,
-          delta: nextDelta,
-          ttlMs,
-        });
-      } catch {}
+        console.log('[RealTimeToken] ui:orderbook:removed', { eventKey, symbol: sym, eventType, price, amount, isBuy, totalRemoved });
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} TransactionTable:orderbook:overlay:removed`, {
+            symbol: sym,
+            eventType,
+            price,
+            amount,
+            isBuy,
+            totalRemoved,
+            ttlMs,
+          });
+        } catch {}
+      } else {
+        // For placements: add positive delta to the price level
+        // BUT skip if the order crosses the spread (it will match immediately, not rest on the book)
+        const { bestBid, bestAsk } = bestPricesRef.current;
+        const isCrossingOrder = isBuy
+          ? (bestAsk > 0 && price >= bestAsk)  // Buy at or above best ask → will match
+          : (bestBid > 0 && price <= bestBid); // Sell at or below best bid → will match
+
+        if (isCrossingOrder) {
+          // eslint-disable-next-line no-console
+          console.log('[RealTimeToken] ui:orderbook:skip:crossing', {
+            eventKey,
+            symbol: sym,
+            eventType,
+            price,
+            amount,
+            isBuy,
+            bestBid,
+            bestAsk,
+            reason: 'Order crosses spread and will match immediately - not adding to book',
+          });
+          // Don't add to the overlay; the order will match on-chain and we'll see the fill event
+          setDepthOverlayTick((x) => x + 1);
+          return;
+        }
+
+        const map = isBuy ? depthOverlayRef.current.bidsDelta : depthOverlayRef.current.asksDelta;
+        const existing = map.get(priceKey);
+        const nextDelta = (existing?.delta || 0) + amount;
+        map.set(priceKey, { delta: nextDelta, expiresAt: now + ttlMs });
+
+        // eslint-disable-next-line no-console
+        console.log('[RealTimeToken] ui:orderbook:patched', { eventKey, symbol: sym, eventType, price, amount, isBuy, delta: nextDelta });
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} TransactionTable:orderbook:overlay:patched`, {
+            symbol: sym,
+            eventType,
+            price,
+            amount,
+            isBuy,
+            delta: nextDelta,
+            ttlMs,
+          });
+        } catch {}
+      }
       setDepthOverlayTick((x) => x + 1);
     };
 
@@ -447,12 +513,19 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         const now = Date.now();
         const overlay = depthOverlayRef.current;
         const applySide = (side: 'bid' | 'ask', arr: any[]) => {
-          const map = side === 'bid' ? overlay.bidsDelta : overlay.asksDelta;
-          // prune expired
-          for (const [p, rec] of map.entries()) {
-            if (!rec || rec.expiresAt <= now) map.delete(p);
+          const deltaMap = side === 'bid' ? overlay.bidsDelta : overlay.asksDelta;
+          const removedMap = side === 'bid' ? overlay.bidsRemoved : overlay.asksRemoved;
+          
+          // Prune expired entries from both maps
+          for (const [p, rec] of deltaMap.entries()) {
+            if (!rec || rec.expiresAt <= now) deltaMap.delete(p);
           }
-          if (map.size === 0) return arr;
+          for (const [p, rec] of removedMap.entries()) {
+            if (!rec || rec.expiresAt <= now) removedMap.delete(p);
+          }
+          
+          if (deltaMap.size === 0 && removedMap.size === 0) return arr;
+          
           const out = [...arr];
           // Use fixed string keys to avoid float rounding mismatches.
           const idxMap = new Map<string, number>();
@@ -460,9 +533,25 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             const k = Number(o.price || 0).toFixed(8);
             idxMap.set(k, i);
           });
-          for (const [pKey, rec] of map.entries()) {
+          
+          // Apply removals first: subtract the removed amount from existing levels
+          for (const [pKey, rec] of removedMap.entries()) {
+            const i = idxMap.get(pKey);
+            if (i !== undefined) {
+              const baseQty = Number(out[i].quantity || 0);
+              const removedAmt = Number(rec.amount || 0);
+              // If the removed amount is >= 99.9% of the base quantity, treat as full removal
+              // This handles floating-point precision issues
+              const remainingQty = baseQty - removedAmt;
+              const isFullRemoval = removedAmt >= baseQty * 0.999 || remainingQty < 0.00000001;
+              out[i] = { ...out[i], quantity: isFullRemoval ? 0 : Math.max(0, remainingQty) };
+            }
+          }
+          
+          // Apply positive deltas (new orders)
+          for (const [pKey, rec] of deltaMap.entries()) {
             const p = parseFloat(pKey);
-            const i = idxMap.get(String(pKey));
+            const i = idxMap.get(pKey);
             if (i !== undefined) {
               const q = Number(out[i].quantity || 0) + Number(rec.delta || 0);
               out[i] = { ...out[i], quantity: q > 0 ? q : 0 };
@@ -479,7 +568,9 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
               });
             }
           }
-          const cleaned = out.filter((o) => Number(o.quantity || 0) > 0);
+          
+          // Filter out zero/microscopic quantities and sort
+          const cleaned = out.filter((o) => Number(o.quantity || 0) > 0.00000001);
           // Sort per standard orderbook conventions:
           // - bids: highest→lowest
           // - asks (display): highest→lowest (best ask will remain at bottom of the asks section)
