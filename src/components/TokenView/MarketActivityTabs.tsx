@@ -7,7 +7,6 @@ import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { initializeContracts } from '@/lib/contracts';
 import { ensureHyperliquidWallet } from '@/lib/network';
-import { ErrorModal } from '@/components/StatusModals';
 import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
 import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext';
@@ -113,6 +112,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     allowClose: boolean;
     startedAt: number;
     kind: 'cancel' | null;
+    headlineText?: string;
+    detailText?: string;
+    showProgressLabel?: boolean;
   }>({
     isOpen: false,
     progress: 0,
@@ -120,6 +122,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     allowClose: false,
     startedAt: 0,
     kind: null,
+    headlineText: undefined,
+    detailText: undefined,
+    showProgressLabel: undefined,
   });
 
   const startCancelModal = useCallback(() => {
@@ -130,17 +135,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       allowClose: false,
       startedAt: Date.now(),
       kind: 'cancel',
+      headlineText: undefined,
+      detailText: undefined,
+      showProgressLabel: undefined,
     });
-  }, []);
-
-  const markCancelModalError = useCallback(() => {
-    setOrderFillModal((cur) => ({
-      ...cur,
-      isOpen: true,
-      status: 'error',
-      progress: 1,
-      allowClose: true,
-    }));
   }, []);
 
   const finishCancelModal = useCallback(() => {
@@ -149,9 +147,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       status: 'filled',
       progress: 1,
       allowClose: false,
+      headlineText: undefined,
+      detailText: undefined,
+      showProgressLabel: undefined,
     }));
     window.setTimeout(() => {
-      setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }));
+      setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined }));
     }, 750);
   }, []);
 
@@ -930,22 +931,40 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
   }, [walletAddress, allPositions, marketIdMap]);
 
-  // Success modal intentionally disabled in this component (use `OrderFillLoadingModal` UX instead)
-  const [errorModal, setErrorModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-  }>({
-    isOpen: false,
-    title: '',
-    message: ''
-  });
-
-  // Helper functions for showing messages
-  // `showSuccess` intentionally no-ops (SuccessModal disabled)
-  const showSuccess = (_message: string, _title: string = 'Success') => {};
+  // Helper functions for showing messages via the unified OrderFillLoadingModal
+  const showSuccess = (message: string, title: string = 'Success') => {
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: true,
+      kind: null,
+      startedAt: cur.startedAt || Date.now(),
+      status: 'success',
+      progress: 1,
+      allowClose: true,
+      headlineText: title,
+      detailText: message,
+      showProgressLabel: false,
+    }));
+    window.setTimeout(() => {
+      setOrderFillModal((cur) => {
+        if (cur.status !== 'success') return cur;
+        return { ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined };
+      });
+    }, 2500);
+  };
   const showError = (message: string, title: string = 'Error') => {
-    setErrorModal({ isOpen: true, title, message });
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: true,
+      kind: null,
+      startedAt: cur.startedAt || Date.now(),
+      status: 'error',
+      progress: 1,
+      allowClose: true,
+      headlineText: title,
+      detailText: message,
+      showProgressLabel: false,
+    }));
   };
 
   // Add top-up state and handler
@@ -2029,8 +2048,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 const ok = await cancelOrderForMarket(order.id, metric);
                                                 if (!ok) {
                                                   revertOrder();
-                                                  showError('Failed to cancel order. Please try again.');
-                                                  markCancelModalError();
+                                                  showError('Failed to cancel order. Please try again.', 'Cancellation Failed');
                                                 } else {
                                                   // Success: immediately mark as removed so it disappears after animation
                                                   setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
@@ -2063,8 +2081,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                               }
                                             } catch (e: any) {
                                               revertOrder();
-                                              showError(e?.message || 'Cancellation failed. Please try again.');
-                                              markCancelModalError();
+                                              showError(e?.message || 'Cancellation failed. Please try again.', 'Cancellation Failed');
                                             } finally {
                                               setIsCancelingOrder(false);
                                             }
@@ -2487,20 +2504,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           will-change: transform, opacity;
         }
       `}</style>
-      <ErrorModal
-        isOpen={errorModal.isOpen}
-        onClose={() => setErrorModal({ isOpen: false, title: '', message: '' })}
-        title={errorModal.title}
-        message={errorModal.message}
-      />
 
       <OrderFillLoadingModal
         isOpen={orderFillModal.isOpen}
         progress={orderFillModal.progress}
         status={orderFillModal.status}
         allowClose={orderFillModal.allowClose}
-        onClose={() => setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }))}
-        headlineText="Cancelling order,"
+        onClose={() => setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined }))}
+        headlineText={orderFillModal.headlineText ?? (orderFillModal.kind === 'cancel' ? 'Cancelling order,' : 'Processing,')}
+        detailText={orderFillModal.detailText}
+        showProgressLabel={orderFillModal.showProgressLabel}
       />
       
       <div className="flex items-center justify-between border-b border-[#222222] p-2.5 flex-shrink-0">

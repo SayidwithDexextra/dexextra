@@ -7,7 +7,6 @@ import { useMarketData } from '@/contexts/MarketDataContext';
 import { useMarginSummary } from '@/hooks/useMarginSummary';
 import { usePortfolioData, type PortfolioOrdersBucket } from '@/hooks/usePortfolioData';
 import type { OrderBookOrder } from '@/hooks/useOrderBook';
-import { SuccessModal } from '@/components/StatusModals';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
 import { initializeContracts } from '@/lib/contracts';
@@ -534,15 +533,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     return `${pct.toFixed(2)}%`;
   };
   const [isContractInfoExpanded, setIsContractInfoExpanded] = useState(false);
-  const [successModal, setSuccessModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-  }>({
-    isOpen: false,
-    title: '',
-    message: ''
-  });
   // Note: We intentionally avoid syncing amount -> amountInput via effect to not
   // overwrite partial decimal typing like "0." during user input.
 
@@ -630,12 +620,36 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   };
 
   const clearMessages = () => {
-    setSuccessModal({ isOpen: false, title: '', message: '' });
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: false,
+      kind: null,
+      headlineText: undefined,
+      detailText: undefined,
+      showProgressLabel: undefined,
+    }));
     clearTradingError();
   };
 
   const showSuccess = (message: string, title: string = 'Success') => {
-    setSuccessModal({ isOpen: true, title, message });
+    setOrderFillModal((cur) => ({
+      ...cur,
+      isOpen: true,
+      kind: null,
+      startedAt: cur.startedAt || Date.now(),
+      status: 'success',
+      progress: 1,
+      allowClose: true,
+      headlineText: title,
+      detailText: message,
+      showProgressLabel: false,
+    }));
+    window.setTimeout(() => {
+      setOrderFillModal((cur) => {
+        if (cur.status !== 'success') return cur;
+        return { ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined };
+      });
+    }, 2500);
   };
 
   const showError = (message: string, title: string = 'Error') => {
@@ -1888,7 +1902,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
           if (!activeSessionId || globalSessionActive !== true) {
             showError('Trading session is not enabled. Click Enable Trading before using gasless cancel.', 'Session Required');
-            setOrderFillModal((cur) => ({ ...cur, isOpen: false, kind: null }));
             return false;
           }
 
@@ -2101,13 +2114,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         }
         detailText={orderFillModal.detailText}
         showProgressLabel={orderFillModal.showProgressLabel}
-      />
-      
-      <SuccessModal
-        isOpen={successModal.isOpen}
-        onClose={() => setSuccessModal({ isOpen: false, title: '', message: '' })}
-        title={successModal.title}
-        message={successModal.message}
       />
       
       {/* Wallet Connection Modal */}
@@ -2573,12 +2579,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                         onClick={async () => {
                           try {
                             setIsCancelingOrder(true);
-                            const ok = await handleCancelOrder(order.id);
-                            if (!ok) {
-                              showError('Failed to cancel order. Please try again.');
-                            }
-                          } catch (e) {
-                            showError('Cancellation failed. Please try again.');
+                            await handleCancelOrder(order.id);
                           } finally {
                             setIsCancelingOrder(false);
                           }

@@ -126,15 +126,25 @@ function normalizeProviderError(err: any): string {
 }
 
 // Normalize relayer errors so phone users see a concise reason
-function normalizeRelayErrorBody(body: string): string {
+function normalizeRelayErrorBody(body: string, context?: string): string {
   let text = body?.trim?.() || '';
-  let parsed: { error?: string; message?: string } | null = null;
+  let parsed: { error?: string; message?: string; details?: string } | null = null;
   try {
     parsed = JSON.parse(body);
     if (parsed?.error) text = String(parsed.error);
+    // Log full details for debugging
+    console.error('[Gasless] Relay error details:', {
+      context,
+      rawBody: body,
+      parsedError: parsed?.error,
+      parsedMessage: parsed?.message,
+      parsedDetails: parsed?.details,
+    });
   } catch {
-    // ignore JSON parse issues; fall through to raw text
+    console.error('[Gasless] Relay error (non-JSON):', { context, rawBody: body });
   }
+  
+  // Handle known error codes
   if (parsed?.error === 'session_bad_relayer') {
     return 'This gasless session does not authorize the relayer that submitted your trade. Please re-enable gasless trading (create a new session) and retry.';
   }
@@ -149,6 +159,19 @@ function normalizeRelayErrorBody(body: string): string {
   if (parsed?.error === 'orderbook_not_deployed') {
     return 'This market contract is not deployed on the connected network. Refresh the page and retry (or switch to the correct chain).';
   }
+  if (parsed?.error === 'bad_sig') {
+    return 'Signature verification failed. Please try signing again with your wallet.';
+  }
+  if (parsed?.error === 'bad_nonce') {
+    return `Session nonce mismatch. Your session may be out of sync - please try again.`;
+  }
+  if (parsed?.error === 'server misconfigured' || parsed?.error === 'server missing SESSION_REGISTRY_ADDRESS') {
+    return 'Server configuration error. Please contact support or try again later.';
+  }
+  if (parsed?.error === 'missing payload') {
+    return 'Invalid request sent to server. Please refresh the page and try again.';
+  }
+  
   const lower = (text || '').toLowerCase();
   if (lower.includes('session: bad relayer') || lower.includes('missing proof') || lower.includes('session: unknown')) {
     return 'Gasless session is out of date. Please re-enable gasless trading and retry.';
@@ -171,7 +194,19 @@ function normalizeRelayErrorBody(body: string): string {
   if (lower.includes('session')) {
     return text || 'Session error. Please reconnect your wallet.';
   }
-  return text || 'Relay request failed.';
+  if (lower.includes('relayer') || lower.includes('gas')) {
+    return `Relayer error: ${text}. Please try again.`;
+  }
+  if (lower.includes('revert') || lower.includes('execution reverted')) {
+    return `Transaction failed: ${text}. Please try again.`;
+  }
+  
+  // For completely unknown errors, provide more context
+  if (!text || text === 'undefined' || text === 'null') {
+    return 'An unknown error occurred. Please check your connection and try again.';
+  }
+  
+  return `${text}. Please try again.`;
 }
 
 // Lightweight classifiers so callers can adjust UX without re-parsing all errors.
@@ -497,40 +532,79 @@ export async function createGaslessSession(params: {
     allowedMarkets = [],
   } = params;
 
-  const ethereum = (window as any)?.ethereum;
-  if (!ethereum) return { success: false, error: 'No wallet provider' };
+  console.log('[Gasless] createGaslessSession started', { trader, expirySec });
 
+  const ethereum = (window as any)?.ethereum;
+  if (!ethereum) {
+    console.error('[Gasless] No wallet provider detected');
+    return { success: false, error: 'No wallet provider detected. Please install a wallet extension.' };
+  }
+
+  console.log('[Gasless] Checking chain...');
   const chainCheck = await ensureCorrectChain();
   if (!chainCheck.ok) {
+    console.error('[Gasless] Chain check failed:', chainCheck.error);
     return { success: false, error: chainCheck.error };
   }
+  console.log('[Gasless] Chain check passed');
 
   const now = Math.floor(Date.now() / 1000);
   const defaultLifetime = Number((process as any)?.env?.NEXT_PUBLIC_SESSION_DEFAULT_LIFETIME_SECS ?? 86400);
   const expiry = BigInt(expirySec ?? (now + defaultLifetime));
+  
   // Build domain for global session registry
   const registryAddr = (process as any)?.env?.NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS as string | undefined;
-  if (!registryAddr) return { success: false, error: 'Missing NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS' };
+  if (!registryAddr) {
+    console.error('[Gasless] Missing SESSION_REGISTRY_ADDRESS config');
+    return { success: false, error: 'Session registry not configured. Please contact support.' };
+  }
+  
   const domain = {
     name: 'DexetraMeta',
     version: '1',
     chainId: Number(CHAIN_CONFIG.chainId),
     verifyingContract: registryAddr as Hex,
   };
-  const nonce = await fetchRegistryNonce(trader);
+  
+  console.log('[Gasless] Fetching registry nonce for trader...');
+  let nonce: bigint;
+  try {
+    nonce = await fetchRegistryNonce(trader);
+    console.log('[Gasless] Got nonce:', nonce.toString());
+  } catch (err: any) {
+    console.error('[Gasless] Failed to fetch nonce:', err?.message || err);
+    return { success: false, error: 'Failed to fetch session nonce. Please check your connection and try again.' };
+  }
+  
   // Build a random salt for session id uniqueness
   const sessionSalt = (ethersRandomHex(32) as `0x${string}`);
   const bitmap = methodsBitmap ?? defaultMethodsBitmap();
 
   // Fetch relayer set root from server so one signature authorizes any configured relayer key.
+  console.log('[Gasless] Fetching relayer set root...');
   let relayerSetRoot: string = '0x' + '00'.repeat(32);
+  let relayerSetError: string | null = null;
   try {
     const r = await fetch('/api/gasless/session/relayer-set', { method: 'GET' });
-    const j = await r.json();
-    if (j?.relayerSetRoot && typeof j.relayerSetRoot === 'string') relayerSetRoot = j.relayerSetRoot;
-  } catch {}
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('[Gasless] Relayer set fetch failed:', r.status, errText);
+      relayerSetError = `Relayer service error (${r.status})`;
+    } else {
+      const j = await r.json();
+      if (j?.relayerSetRoot && typeof j.relayerSetRoot === 'string') {
+        relayerSetRoot = j.relayerSetRoot;
+        console.log('[Gasless] Got relayer set root:', relayerSetRoot.slice(0, 18) + '...');
+      }
+    }
+  } catch (err: any) {
+    console.error('[Gasless] Relayer set fetch error:', err?.message || err);
+    relayerSetError = 'Network error fetching relayer configuration';
+  }
   if (!relayerSetRoot || relayerSetRoot === ('0x' + '00'.repeat(32))) {
-    return { success: false, error: 'Relayer set is unavailable. Please try again in a moment.' };
+    const errorMsg = relayerSetError || 'Relayer set is unavailable. Please try again in a moment.';
+    console.error('[Gasless] No valid relayer set root:', errorMsg);
+    return { success: false, error: errorMsg };
   }
 
   const message = {
@@ -574,16 +648,25 @@ export async function createGaslessSession(params: {
     message,
   });
 
+  console.log('[Gasless] Requesting wallet signature...');
   let signature: string;
   try {
     signature = await ethereum.request({
       method: 'eth_signTypedData_v4',
       params: [trader, payload],
     });
-  } catch (err) {
-    return { success: false, error: normalizeProviderError(err) };
+    console.log('[Gasless] Signature obtained');
+  } catch (err: any) {
+    const normalizedError = normalizeProviderError(err);
+    console.error('[Gasless] Wallet signature failed:', {
+      error: err?.message || err,
+      code: err?.code,
+      normalized: normalizedError,
+    });
+    return { success: false, error: normalizedError };
   }
 
+  console.log('[Gasless] Submitting session init to API...');
   let res: Response;
   try {
     res = await fetch('/api/gasless/session/init', {
@@ -591,18 +674,38 @@ export async function createGaslessSession(params: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ permit: message, signature }),
     });
-  } catch (err) {
-    return { success: false, error: normalizeNetworkError(err) };
+  } catch (err: any) {
+    const normalizedError = normalizeNetworkError(err);
+    console.error('[Gasless] Session init network error:', {
+      error: err?.message || err,
+      normalized: normalizedError,
+    });
+    return { success: false, error: normalizedError };
   }
+  
   const body = await res.text();
+  console.log('[Gasless] Session init response:', { status: res.status, ok: res.ok, bodyLength: body?.length });
+  
   if (!res.ok) {
-    try { console.warn('[UpGas][client] session init http error', { status: res.status, body }); } catch {}
-    return { success: false, error: normalizeRelayErrorBody(body) };
+    console.error('[Gasless] Session init HTTP error:', { status: res.status, body });
+    return { success: false, error: normalizeRelayErrorBody(body, 'session/init') };
   }
+  
   let json: any = {};
-  try { json = body ? JSON.parse(body) : {}; } catch { json = {}; }
-  try { console.log('[UpGas][client] session init success', { sessionId: json?.sessionId, txHash: json?.txHash }); } catch {}
-  return { success: true, sessionId: json?.sessionId, txHash: json?.txHash, expirySec: Number(expiry) };
+  try { 
+    json = body ? JSON.parse(body) : {}; 
+  } catch (parseErr) { 
+    console.error('[Gasless] Failed to parse session init response:', { body, parseErr });
+    json = {}; 
+  }
+  
+  if (!json?.sessionId) {
+    console.error('[Gasless] Session init response missing sessionId:', json);
+    return { success: false, error: 'Session was created but no session ID returned. Please try again.' };
+  }
+  
+  console.log('[Gasless] Session init success:', { sessionId: json.sessionId, txHash: json.txHash });
+  return { success: true, sessionId: json.sessionId, txHash: json?.txHash, expirySec: Number(expiry) };
 }
 
 export async function submitSessionTrade(params: {

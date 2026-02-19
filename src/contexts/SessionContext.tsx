@@ -113,15 +113,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const enableTrading = useCallback(async () => {
-    if (!GASLESS_ENABLED || !address) return { success: false, error: 'Wallet or gasless disabled' };
+    console.log('[SessionContext] enableTrading called', { GASLESS_ENABLED, address: address?.slice(0, 10) });
+    
+    if (!GASLESS_ENABLED) {
+      console.error('[SessionContext] Gasless trading is not enabled');
+      return { success: false, error: 'Gasless trading is not enabled. Please check configuration.' };
+    }
+    if (!address) {
+      console.error('[SessionContext] No wallet address available');
+      return { success: false, error: 'Please connect your wallet first.' };
+    }
+    
     try {
       setLoading(true);
+      console.log('[SessionContext] Calling createGaslessSession...');
       const created = await createGaslessSession({ trader: address });
+      console.log('[SessionContext] createGaslessSession result:', { 
+        success: created.success, 
+        sessionId: created.sessionId?.slice(0, 18),
+        error: created.error 
+      });
+      
       if (created.success && created.sessionId) {
         setSessionId(created.sessionId);
         setSessionActive(true);
         if (typeof window !== 'undefined' && storageKey) {
           window.localStorage.setItem(storageKey, created.sessionId);
+          console.log('[SessionContext] Session stored in localStorage');
           if (storageExpiryKey && created.expirySec) {
             window.localStorage.setItem(storageExpiryKey, String(created.expirySec));
           }
@@ -137,9 +155,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         }
         return { success: true, sessionId: created.sessionId };
       }
-      return { success: false, error: created.error || 'session init failed' };
+      
+      const errorMsg = created.error || 'Failed to create trading session. Please try again.';
+      console.error('[SessionContext] Session creation failed:', errorMsg);
+      return { success: false, error: errorMsg };
     } catch (e: any) {
-      return { success: false, error: e?.message || 'session init failed' };
+      const errorMsg = e?.message || 'An unexpected error occurred while enabling trading.';
+      console.error('[SessionContext] enableTrading exception:', e);
+      return { success: false, error: errorMsg };
     } finally {
       setLoading(false);
     }

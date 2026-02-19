@@ -110,9 +110,43 @@ export async function POST(req: Request) {
     console.log('[UpGas][API][session/init] broadcasted', { txHash: tx.hash, waitConfirms });
     return NextResponse.json({ sessionId, txHash: tx.hash });
   } catch (e: any) {
-    console.error('[GASLESS][API][session/init] error', e?.message || e);
-    console.error('[UpGas][API][session/init] error', e?.stack || e?.message || String(e));
-    return NextResponse.json({ error: e?.message || 'session init failed' }, { status: 500 });
+    const errorMessage = e?.message || String(e) || 'session init failed';
+    const errorCode = e?.code || 'UNKNOWN';
+    
+    console.error('[GASLESS][API][session/init] error', {
+      message: errorMessage,
+      code: errorCode,
+      stack: e?.stack,
+    });
+    console.error('[UpGas][API][session/init] error', e?.stack || errorMessage);
+    
+    // Parse specific error types for better user messages
+    let userFriendlyError = errorMessage;
+    const lowerMsg = errorMessage.toLowerCase();
+    
+    if (lowerMsg.includes('nonce') || lowerMsg.includes('replacement')) {
+      userFriendlyError = 'Transaction nonce conflict. Please wait a moment and try again.';
+    } else if (lowerMsg.includes('gas') || lowerMsg.includes('insufficient funds')) {
+      userFriendlyError = 'Relayer gas issue. Please try again in a moment.';
+    } else if (lowerMsg.includes('timeout') || lowerMsg.includes('timed out')) {
+      userFriendlyError = 'Request timed out. Please check your connection and try again.';
+    } else if (lowerMsg.includes('network') || lowerMsg.includes('fetch')) {
+      userFriendlyError = 'Network error connecting to blockchain. Please try again.';
+    } else if (lowerMsg.includes('revert') || lowerMsg.includes('execution reverted')) {
+      // Try to extract revert reason
+      const revertMatch = errorMessage.match(/reason="([^"]+)"/);
+      if (revertMatch) {
+        userFriendlyError = `Transaction reverted: ${revertMatch[1]}`;
+      } else {
+        userFriendlyError = 'Transaction was rejected by the contract. Please try again.';
+      }
+    }
+    
+    return NextResponse.json({ 
+      error: userFriendlyError,
+      code: errorCode,
+      details: process.env.NODE_ENV === 'development' ? errorMessage : undefined,
+    }, { status: 500 });
   }
 }
 

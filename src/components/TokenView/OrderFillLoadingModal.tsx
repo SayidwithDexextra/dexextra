@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 
-export type OrderFillStatus = 'submitting' | 'filling' | 'filled' | 'error';
+export type OrderFillStatus = 'submitting' | 'filling' | 'filled' | 'error' | 'success';
 
 function clamp01(n: number) {
   if (!Number.isFinite(n)) return 0;
@@ -22,9 +22,15 @@ function statusMeta(status: OrderFillStatus) {
       return {
         dot: 'bg-green-400',
         badge: 'bg-[#1A1A1A] text-green-400 border border-[#222222]',
-        // subtle but apparent background fill (design-system compliant)
         water: 'from-green-400/18 via-green-400/10 to-transparent',
         label: 'FILLED',
+      } as const;
+    case 'success':
+      return {
+        dot: 'bg-green-400',
+        badge: 'bg-[#1A1A1A] text-green-400 border border-[#222222]',
+        water: 'from-green-400/18 via-green-400/10 to-transparent',
+        label: 'SUCCESS',
       } as const;
     case 'error':
       return {
@@ -282,7 +288,7 @@ export function OrderFillLoadingModal({
               <div
                 className={[
                   'mt-2 text-[10px] leading-snug',
-                  status === 'error' ? 'text-red-300/90' : 'text-[#606060]',
+                  status === 'error' ? 'text-red-300/90' : status === 'success' ? 'text-green-300/90' : 'text-[#606060]',
                 ].join(' ')}
               >
                 {detail}

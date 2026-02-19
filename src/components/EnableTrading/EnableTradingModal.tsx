@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import useWallet from '@/hooks/useWallet'
 import { useSession } from '@/contexts/SessionContext'
 
@@ -57,6 +57,7 @@ export default function EnableTradingModal({
   const { sessionActive, loading, enableTrading, sessionId } = useSession()
   const [isWorking, setIsWorking] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
 
   const isConnected = Boolean(walletData?.isConnected && walletData?.address)
   const addressShort = walletData?.address ? formatAddress(walletData.address) : null
@@ -67,47 +68,75 @@ export default function EnableTradingModal({
 
   const shouldRender = isOpen
 
-  const handlePrimary = async () => {
+  const handlePrimary = useCallback(async () => {
     setErrorMessage(null)
+    console.log('[EnableTradingModal] handlePrimary called', { isConnected, gaslessEnabled, sessionActive, retryCount });
 
     // If not connected, try to connect automatically to first installed provider
     if (!isConnected) {
+      console.log('[EnableTradingModal] Attempting wallet connection...');
       try {
         const installed = providers.find(p => p.isInstalled)
         if (installed) {
           setIsWorking(true)
           await connect(installed.name)
+          console.log('[EnableTradingModal] Wallet connected successfully');
         } else if (onOpenWallets) {
           onOpenWallets()
         } else {
-          setErrorMessage('No wallet detected. Please install or open a wallet.')
+          const error = 'No wallet detected. Please install a wallet extension (e.g., MetaMask, Rabby) or open your wallet app.';
+          console.error('[EnableTradingModal] No wallet found');
+          setErrorMessage(error)
         }
       } catch (e: any) {
-        setErrorMessage(e?.message || 'Failed to connect wallet')
+        const error = e?.message || 'Failed to connect wallet. Please try again.';
+        console.error('[EnableTradingModal] Wallet connection failed:', e);
+        setErrorMessage(error)
       } finally {
         setIsWorking(false)
       }
       return
     }
 
-    if (!gaslessEnabled) return
-    if (sessionActive) return
+    if (!gaslessEnabled) {
+      console.log('[EnableTradingModal] Gasless not enabled');
+      return
+    }
+    if (sessionActive) {
+      console.log('[EnableTradingModal] Session already active');
+      return
+    }
 
     // Enable trading (gasless session)
+    console.log('[EnableTradingModal] Starting enableTrading...');
     try {
       setIsWorking(true)
       const res = await enableTrading()
+      console.log('[EnableTradingModal] enableTrading result:', res);
+      
       if (res.success) {
+        console.log('[EnableTradingModal] Trading enabled successfully:', res.sessionId);
         if (res.sessionId && onSuccess) onSuccess(res.sessionId)
       } else {
-        setErrorMessage(res.error || 'Failed to enable trading')
+        const error = res.error || 'Failed to enable trading. Please try again.';
+        console.error('[EnableTradingModal] enableTrading failed:', error);
+        setErrorMessage(error)
       }
     } catch (e: any) {
-      setErrorMessage(e?.message || 'Failed to enable trading')
+      const error = e?.message || 'An unexpected error occurred. Please try again.';
+      console.error('[EnableTradingModal] enableTrading exception:', e);
+      setErrorMessage(error)
     } finally {
       setIsWorking(false)
     }
-  }
+  }, [isConnected, gaslessEnabled, sessionActive, providers, connect, onOpenWallets, enableTrading, onSuccess, retryCount])
+
+  const handleRetry = useCallback(() => {
+    console.log('[EnableTradingModal] Retry clicked, attempt:', retryCount + 1);
+    setRetryCount(prev => prev + 1);
+    setErrorMessage(null);
+    handlePrimary();
+  }, [handlePrimary, retryCount])
 
   const primaryCta = useMemo(() => {
     if (!isConnected) return 'Connect Wallet'
@@ -244,8 +273,22 @@ export default function EnableTradingModal({
 
           {/* Error / Config hint */}
           {errorMessage && (
-            <div className="mt-4 bg-[#1A1A1A] border border-[#333333] rounded-md p-3">
-              <span className="text-[10px] text-red-400">{errorMessage}</span>
+            <div className="mt-4 bg-[#1A1A1A] border border-red-900/50 rounded-md p-3">
+              <div className="flex items-start gap-2">
+                <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <span className="text-[11px] text-red-400 block break-words">{errorMessage}</span>
+                  <button
+                    onClick={handleRetry}
+                    disabled={isWorking}
+                    className="mt-2 text-[10px] text-blue-400 hover:text-blue-300 underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isWorking ? 'Retrying...' : 'Try again'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           {!gaslessEnabled && (
