@@ -19,6 +19,8 @@ interface Position {
   symbol: string;
   side: 'LONG' | 'SHORT';
   size: number;
+  /** Raw absolute size as string (Wei units, 18 decimals) to preserve full precision for closing positions */
+  rawSize?: string;
   entryPrice: number;
   markPrice: number;
   pnl: number;
@@ -349,6 +351,7 @@ export function usePositions(
               symbol,
               side,
               size: displaySize,
+              rawSize: absSizeBig.toString(),
               entryPrice,
               markPrice,
               pnl,
@@ -495,6 +498,7 @@ export function usePositions(
                   symbol,
                   side,
                   size: displaySize,
+                  rawSize: absSizeBig.toString(),
                   entryPrice,
                   markPrice,
                   pnl,

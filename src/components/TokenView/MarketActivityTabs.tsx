@@ -34,6 +34,8 @@ interface Position {
   symbol: string;
   side: 'LONG' | 'SHORT';
   size: number;
+  /** Raw absolute size as string (Wei units, 18 decimals) to preserve full precision for closing positions */
+  rawSize?: string;
   entryPrice: number;
   markPrice: number;
   pnl: number;
@@ -42,7 +44,7 @@ interface Position {
   margin: number;
   leverage: number;
   timestamp: number;
-  isUnderLiquidation?: boolean; // Flag to indicate if position is under liquidation
+  isUnderLiquidation?: boolean;
 }
 
 interface Order {
@@ -104,14 +106,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
   const [expandedOrderKey, setExpandedOrderKey] = useState<string | null>(null);
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
-  // Order cancel modal (subtle "cup fill" loader)
+  // Order cancel/close modal (subtle "cup fill" loader)
   const [orderFillModal, setOrderFillModal] = useState<{
     isOpen: boolean;
     progress: number; // 0..1
     status: OrderFillStatus;
     allowClose: boolean;
     startedAt: number;
-    kind: 'cancel' | null;
+    kind: 'cancel' | 'close' | null;
     headlineText?: string;
     detailText?: string;
     showProgressLabel?: boolean;
@@ -156,6 +158,50 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }, 750);
   }, []);
 
+  const startCloseModal = useCallback((symbol: string) => {
+    setOrderFillModal({
+      isOpen: true,
+      progress: 0.06,
+      status: 'submitting',
+      allowClose: false,
+      startedAt: Date.now(),
+      kind: 'close',
+      headlineText: `Closing ${symbol} position,`,
+      detailText: undefined,
+      showProgressLabel: undefined,
+    });
+  }, []);
+
+  const finishCloseModal = useCallback(() => {
+    setOrderFillModal((cur) => ({
+      ...cur,
+      status: 'success',
+      progress: 1,
+      allowClose: true,
+      headlineText: 'Position Closed',
+      detailText: 'Your position has been closed successfully.',
+      showProgressLabel: false,
+    }));
+    window.setTimeout(() => {
+      setOrderFillModal((cur) => {
+        if (cur.status !== 'success') return cur;
+        return { ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined };
+      });
+    }, 2500);
+  }, []);
+
+  const errorCloseModal = useCallback((errorMessage: string) => {
+    setOrderFillModal((cur) => ({
+      ...cur,
+      status: 'error',
+      progress: 1,
+      allowClose: true,
+      headlineText: 'Close Failed',
+      detailText: errorMessage,
+      showProgressLabel: false,
+    }));
+  }, []);
+
   // Smooth progress while submitting/filling (purely visual)
   useEffect(() => {
     if (!orderFillModal.isOpen) return;
@@ -192,6 +238,26 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }, 1000);
     return () => window.clearInterval(id);
   }, [orderFillModal.isOpen, orderFillModal.kind, orderFillModal.startedAt, orderFillModal.status]);
+
+  // Escape hatch for close position (avoid trapping UI if RPC hangs)
+  useEffect(() => {
+    if (!orderFillModal.isOpen) return;
+    if (orderFillModal.kind !== 'close') return;
+    if (orderFillModal.status === 'success' || orderFillModal.status === 'error') return;
+    const startedAt = orderFillModal.startedAt;
+    const id = window.setInterval(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen || cur.kind !== 'close') return cur;
+        if (cur.status === 'success' || cur.status === 'error') return cur;
+        if (Date.now() - startedAt > 25_000) {
+          return { ...cur, allowClose: true };
+        }
+        return cur;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [orderFillModal.isOpen, orderFillModal.kind, orderFillModal.startedAt, orderFillModal.status]);
+
   const [optimisticallyRemovedOrderIds, setOptimisticallyRemovedOrderIds] = useState<Set<string>>(new Set());
   /** Keys of orders currently playing slide-out animation (still visible until animation ends) */
   const [animatingOutOrderKeys, setAnimatingOutOrderKeys] = useState<Set<string>>(new Set());
@@ -319,6 +385,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         hardExpiresAt: number;
         /** Last time we nudged a base refetch for this symbol. */
         lastRefetchRequestedAt?: number;
+        /** Trade price from the event, used as mark price for phantom positions */
+        tradePrice?: number;
       }
     >
   >(new Map());
@@ -454,6 +522,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
       const baseNow = signedBySym.get(sym) ?? 0;
       const baseSigned = Number.isFinite(o.baseSigned) ? o.baseSigned : 0;
+      
+      // CRITICAL: If the base position is gone (baseNow === 0) and the overlay delta
+      // represents a position reduction (opposite sign to baseSigned), the position
+      // has been fully closed on-chain. Delete the stale overlay to prevent phantom positions.
+      if (Math.abs(baseNow) < eps && Math.abs(baseSigned) > eps) {
+        const isClosureResidue = Math.sign(baseSigned) !== Math.sign(o.delta);
+        if (isClosureResidue) {
+          overlay.delete(sym);
+          changed = true;
+          continue;
+        }
+      }
+      
       const caughtUp = baseNow - baseSigned;
       if (!Number.isFinite(caughtUp) || Math.abs(caughtUp) <= eps) continue;
 
@@ -501,25 +582,52 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       if ((o.hardExpiresAt || 0) <= now || !Number.isFinite(o.delta) || o.delta === 0) continue;
       const exists = next.some((p) => String(p.symbol || '').toUpperCase() === sym);
       if (exists) continue;
+      
+      // CRITICAL: Check if this overlay represents a position closure rather than a new position.
+      // If baseSigned and delta have opposite signs, this means the overlay is reducing/closing
+      // an existing position, NOT creating a new one. When the base position disappears (closed
+      // on-chain), we should NOT create a phantom position from the residual negative delta.
+      const baseSigned = Number.isFinite(o.baseSigned) ? o.baseSigned : 0;
+      const isClosureResidue = baseSigned !== 0 && Math.sign(baseSigned) !== Math.sign(o.delta);
+      if (isClosureResidue) {
+        // This delta was reducing a position that has now been closed on-chain.
+        // Don't create a phantom position in the opposite direction.
+        continue;
+      }
+      
+      // Use trade price from the event, or fall back to current market price
+      const phantomMarkPrice = o.tradePrice && o.tradePrice > 0
+        ? o.tradePrice
+        : (md.markPrice || md.lastTradePrice || md.bestBid || md.bestAsk || 0);
+      
+      // Use stable ID based on appliedAt to prevent flickering when memo re-runs
+      const stableId = `phantom:${sym}:${o.appliedAt || now}`;
+      
       next.push({
-        id: `${sym}:${now}`,
+        id: stableId,
         symbol: sym,
         side: o.delta >= 0 ? 'LONG' : 'SHORT',
         size: Math.abs(o.delta),
-        entryPrice: 0,
-        markPrice: 0,
+        entryPrice: phantomMarkPrice,
+        markPrice: phantomMarkPrice,
         pnl: 0,
         pnlPercent: 0,
         liquidationPrice: 0,
         margin: 0,
         leverage: 1,
-        timestamp: now,
+        timestamp: o.appliedAt || now,
         isUnderLiquidation: false,
       });
     }
+    // Sort by value (size * markPrice) descending so largest positions appear first
+    next.sort((a, b) => {
+      const valueA = (a.size || 0) * (a.markPrice || 0);
+      const valueB = (b.size || 0) * (b.markPrice || 0);
+      return valueB - valueA;
+    });
     return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions, posOverlayTick]);
+  }, [positions, posOverlayTick, md.markPrice, md.lastTradePrice, md.bestBid, md.bestAsk]);
 
   // Walkthrough hooks: allow the token tour to expand a position row.
   useEffect(() => {
@@ -825,6 +933,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       const existing = posOverlayRef.current.get(sym);
       const nextDelta = (existing?.delta || 0) + signedDelta;
       const baseSigned = existing?.baseSigned ?? getBaseSignedSize(sym);
+      
+      // Capture trade price for phantom position rendering (avoid zero mark price)
+      let tradePrice = existing?.tradePrice || 0;
+      try {
+        const priceStr = String(detail?.price || '0');
+        if (priceStr && priceStr !== '0') {
+          const parsed = parseFloat(ethers.formatUnits(BigInt(priceStr), 18));
+          if (Number.isFinite(parsed) && parsed > 0) {
+            tradePrice = parsed;
+          }
+        }
+      } catch {}
+      
       posOverlayRef.current.set(sym, {
         delta: nextDelta,
         baseSigned,
@@ -832,6 +953,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         expiresAt: now + ttlMs,
         hardExpiresAt: (existing?.hardExpiresAt ?? (now + hardTtlMs)),
         lastRefetchRequestedAt: existing?.lastRefetchRequestedAt,
+        tradePrice,
       });
       // eslint-disable-next-line no-console
       console.log('[RealTimeToken] ui:positions:patched', { traceId, symbol: sym, signedDelta, overlayDelta: nextDelta });
@@ -914,6 +1036,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           symbol: symbolDisplay,
           side: (p?.side || 'LONG') as 'LONG' | 'SHORT',
           size: Number(p?.size || 0),
+          rawSize: p?.rawSize ? String(p.rawSize) : undefined,
           entryPrice: Number(p?.entryPrice || 0),
           markPrice: Number(p?.markPrice || p?.entryPrice || 0),
           pnl: Number(p?.pnl || 0),
@@ -980,6 +1103,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [closePositionId, setClosePositionId] = useState<string | null>(null);
   const [closeSymbol, setCloseSymbol] = useState<string>('');
   const [closeSize, setCloseSize] = useState<string>('');
+  /** Raw close size in Wei (18 decimals) for full precision when closing entire position */
+  const [rawCloseSize, setRawCloseSize] = useState<string>('');
   const [maxSize, setMaxSize] = useState<number>(0);
 
   // Handle top-up action
@@ -1075,18 +1200,52 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       return;
     }
 
-    setIsClosing(true);
+    // Close the input modal immediately and show loading modal
+    const symbolToClose = closeSymbol;
+    const positionIdToClose = closePositionId;
+    const closeSizeValue = closeSize;
+    const rawCloseSizeValue = rawCloseSize;
+    const maxSizeValue = maxSize;
+    
+    setShowCloseModal(false);
+    setCloseSize('');
+    setRawCloseSize('');
+    setClosePositionId(null);
+    setCloseSymbol('');
     setCloseError(null);
     
+    startCloseModal(symbolToClose);
+    
     try {
-      const closeAmount = parseFloat(closeSize);
+      const closeAmount = parseFloat(closeSizeValue);
       // Prefer gasless close via market order of opposite side (session-based)
       if (GASLESS && walletAddress) {
-        const pos = positions.find(p => p.id === closePositionId);
+        const pos = positions.find(p => p.id === positionIdToClose);
         const isBuy = pos?.side === 'SHORT';
-        const obAddress = resolveOrderBookAddress(closeSymbol || pos?.symbol);
+        const obAddress = resolveOrderBookAddress(symbolToClose || pos?.symbol);
         if (!obAddress) throw new Error('OrderBook not found for market');
-        const amountWei = parseUnits(closeSize, 18);
+        
+        // Use rawCloseSize (Wei) when closing the full position to avoid JS float precision loss.
+        // Otherwise, parse the user-entered closeSize for partial closes.
+        // Use a small tolerance for float comparison to handle rounding in UI display.
+        // Also use raw size for very small positions to avoid scientific notation issues.
+        const isFullClose = rawCloseSizeValue && (closeAmount >= maxSizeValue * 0.9999999);
+        const isVerySmall = closeAmount < 1e-12;
+        let amountWei: bigint;
+        if (isFullClose) {
+          amountWei = BigInt(rawCloseSizeValue);
+        } else if (isVerySmall && rawCloseSizeValue) {
+          // For very small amounts, scale rawCloseSize proportionally to avoid parseUnits issues
+          const ratio = closeAmount / maxSizeValue;
+          const rawBigInt = BigInt(rawCloseSizeValue);
+          // Use integer math: multiply by ratio * 1e18, then divide by 1e18
+          const scaledRatio = BigInt(Math.floor(ratio * 1e18));
+          amountWei = (rawBigInt * scaledRatio) / BigInt(1e18);
+          if (amountWei <= 0n) amountWei = 1n; // minimum 1 Wei
+        } else {
+          amountWei = parseUnits(closeSizeValue, 18) as unknown as bigint;
+        }
+        
         // session flow (no auto session creation)
         const activeSessionId =
           globalSessionId ||
@@ -1096,14 +1255,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         if (!activeSessionId || globalSessionActive !== true) {
           throw new Error('Trading session is not enabled. Click Enable Trading before closing positions gaslessly.');
         }
-          const r = await submitSessionTrade({
-            method: 'sessionPlaceMarginMarket',
-            orderBook: obAddress,
+        const r = await submitSessionTrade({
+          method: 'sessionPlaceMarginMarket',
+          orderBook: obAddress,
           sessionId: activeSessionId,
-            trader: walletAddress as string,
-            amountWei: amountWei as unknown as bigint,
-            isBuy,
-          });
+          trader: walletAddress as string,
+          amountWei: amountWei,
+          isBuy,
+        });
         if (!r.success) {
           const msg = r.error || 'Gasless close failed';
           if (isSessionErrorMessage(msg)) {
@@ -1119,7 +1278,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           }
         } catch {}
       } else {
-        const success = await orderBookActions.closePosition(closePositionId, closeAmount);
+        const success = await orderBookActions.closePosition(positionIdToClose, closeAmount);
         if (!success) {
           throw new Error('Failed to close position');
         }
@@ -1131,15 +1290,23 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         } catch {}
       }
 
-      setCloseSize('');
-      setClosePositionId(null);
-      setCloseSymbol('');
-      setShowCloseModal(false);
+      finishCloseModal();
     } catch (error: any) {
       console.error('Error closing position:', error);
-      setCloseError(error?.message || 'Failed to close position. Please try again.');
-    } finally {
-      setIsClosing(false);
+      const rawMsg = error?.message || '';
+      let userMessage = 'Failed to close position. Please try again.';
+      
+      if (rawMsg.toLowerCase().includes('ob_no_liquidity') || rawMsg.toLowerCase().includes('no_liquidity')) {
+        userMessage = 'Insufficient liquidity to close this position. Try a smaller size or wait for more market activity.';
+      } else if (rawMsg.toLowerCase().includes('slippage')) {
+        userMessage = 'Price moved too much. Try again or increase slippage tolerance.';
+      } else if (rawMsg.toLowerCase().includes('session')) {
+        userMessage = rawMsg;
+      } else if (rawMsg) {
+        userMessage = rawMsg;
+      }
+      
+      errorCloseModal(userMessage);
     }
   };
 
@@ -1534,6 +1701,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return raw;
   };
 
+  // Convert a number to a full decimal string without scientific notation.
+  // Useful for input fields where parseUnits needs a proper decimal format.
+  const toDecimalString = (value: number, maxDecimals = 18): string => {
+    if (!Number.isFinite(value) || value === 0) return '0';
+    // toFixed handles scientific notation conversion but may add trailing zeros
+    const fixed = value.toFixed(maxDecimals);
+    // Remove trailing zeros after decimal point, but keep at least one decimal
+    const trimmed = fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    return trimmed || '0';
+  };
+
   // Like SearchModal price formatting: keep 2dp for readability,
   // but allow more decimals for small position sizes so they don't render as 0.00.
   const formatSize = (value: number) => {
@@ -1823,7 +2001,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 setClosePositionId(position.id);
                                 setCloseSymbol(position.symbol);
                                 setMaxSize(position.size);
-                                setCloseSize(position.size.toString());
+                                setCloseSize(toDecimalString(position.size));
+                                setRawCloseSize(position.rawSize || '');
                                 setShowCloseModal(true);
                               }}
                               data-walkthrough="token-activity-close-position"
@@ -2578,51 +2757,68 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
       {showCloseModal && (
         <div 
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
           onClick={() => {
             setShowCloseModal(false);
             setCloseSize('');
+            setRawCloseSize('');
             setCloseError(null);
           }}
         >
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" />
           <div 
-            className="bg-[#1A1A1A] border border-[#333333] rounded-md p-6 w-96 max-h-[80vh] overflow-auto"
+            className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+            style={{ maxWidth: '400px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex flex-col gap-3 mb-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <img 
-                    src="/Dexicon/LOGO-Dexetera-01.svg" 
-                    alt="Dexetera Logo" 
-                    className="w-5 h-5"
-                  />
-                  <h3 className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
-                    Close Position - {closeSymbol}
-                  </h3>
+            {/* Header */}
+            <div className="p-4 border-b border-[#1A1A1A]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                    <div className="text-white text-[13px] font-medium tracking-tight truncate">Close Position</div>
+                    <div className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">{closeSymbol}</div>
+                  </div>
+                  <div className="mt-1 text-[10px] text-[#606060] leading-relaxed">
+                    Specify the amount to close from your position
+                  </div>
                 </div>
                 <button
-                  onClick={() => setShowCloseModal(false)}
-                  className="text-[#CBD5E1] hover:text-white transition-colors"
+                  onClick={() => {
+                    setShowCloseModal(false);
+                    setCloseSize('');
+                    setRawCloseSize('');
+                    setCloseError(null);
+                  }}
+                  className="p-2 rounded-md border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] text-[#808080] transition-all duration-200"
+                  aria-label="Close"
                 >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none">
+                    <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
               </div>
-              <div className="h-[1px] bg-gradient-to-r from-transparent via-[#333333] to-transparent" />
             </div>
-            
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded">
-                <span className="text-[10px] text-[#E5E7EB]">Position Size</span>
-                <span className="text-[11px] font-medium text-white font-mono">
-                  {formatSize(maxSize)}
-                </span>
+
+            {/* Content */}
+            <div className="p-4 space-y-4">
+              {/* Position Size Display */}
+              <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+                <div className="flex items-center justify-between p-2.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                    <span className="text-[11px] font-medium text-[#808080]">Position Size</span>
+                  </div>
+                  <span className="text-[11px] font-medium text-white font-mono">
+                    {formatSize(maxSize)}
+                  </span>
+                </div>
               </div>
               
+              {/* Close Size Input */}
               <div>
-                <label className="block text-[10px] text-[#9CA3AF] mb-1">
+                <label className="block text-[10px] text-[#9CA3AF] mb-1.5">
                   Close Size
                 </label>
                 <div className="relative">
@@ -2633,64 +2829,60 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       setCloseSize(e.target.value);
                       setCloseError(null);
                     }}
-                    className={`w-full bg-[#0F0F0F] border rounded px-3 py-2 text-[11px] text-white font-mono focus:outline-none transition-colors ${
+                    className={`w-full bg-[#0F0F0F] border rounded-md px-3 py-2.5 text-[11px] text-white font-mono focus:outline-none transition-all duration-200 ${
                       closeError 
-                        ? 'border-red-500 focus:border-red-400' 
-                        : 'border-[#333333] focus:border-blue-400'
+                        ? 'border-red-500/50 focus:border-red-400' 
+                        : 'border-[#222222] hover:border-[#333333] focus:border-[#333333]'
                     }`}
                     placeholder="Enter amount"
                     min="0"
                     max={maxSize}
                     step="0.0001"
-                    disabled={isClosing}
                   />
                   <button
                     onClick={() => {
-                      setCloseSize(maxSize.toString());
+                      setCloseSize(toDecimalString(maxSize));
                       setCloseError(null);
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-blue-400 hover:text-blue-300"
-                    disabled={isClosing}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200"
                   >
                     MAX
                   </button>
                 </div>
                 {closeError && (
-                  <div className="mt-1">
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                     <span className="text-[10px] text-red-400">{closeError}</span>
                   </div>
                 )}
               </div>
-              
-              <div className="flex justify-end gap-2 pt-2">
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-[#1A1A1A] bg-black/10">
+              <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={() => {
                     setShowCloseModal(false);
                     setCloseSize('');
+                    setRawCloseSize('');
                     setCloseError(null);
                   }}
-                  className="px-3 py-1.5 text-[11px] font-medium text-[#E5E7EB] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors"
-                  disabled={isClosing}
+                  className="px-3 py-2 rounded-md text-[11px] border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCloseSubmit}
-                  disabled={isClosing || !closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize}
-                  className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors flex items-center gap-1.5 ${
-                    isClosing || !closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize
-                      ? 'text-[#CBD5E1] bg-[#2A2A2A] cursor-not-allowed'
-                      : 'text-white bg-red-500 hover:bg-red-600'
+                  disabled={!closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize}
+                  className={`px-3 py-2 rounded-md text-[11px] border transition-all duration-200 flex items-center gap-2 ${
+                    !closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize
+                      ? 'border-[#222222] text-[#606060] cursor-not-allowed'
+                      : 'border-red-500/20 text-red-400 hover:border-red-500/30 hover:bg-red-500/5'
                   }`}
                 >
-                  {isClosing ? (
-                    <>
-                      <div className="w-3 h-3 border-2 border-t-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
-                      <span>Closing...</span>
-                    </>
-                  ) : (
-                    'Confirm Close'
-                  )}
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                  Confirm Close
                 </button>
               </div>
             </div>

@@ -44,6 +44,8 @@ export type CachedPosition = {
   symbol: string
   side: 'LONG' | 'SHORT'
   size: number
+  /** Raw absolute size as string (Wei units, 18 decimals) to preserve full precision for closing positions */
+  rawSize?: string
   entryPrice: number
   markPrice: number
   pnl: number
@@ -242,6 +244,7 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
       symbol: String(p?.symbol || '').toUpperCase(),
       side: (String(p?.side || 'LONG').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG'),
       size: Number(p?.size || 0),
+      rawSize: p?.rawSize ? String(p.rawSize) : undefined,
       entryPrice: Number(p?.entryPrice || 0),
       markPrice: Number(p?.markPrice || p?.entryPrice || 0),
       pnl: Number(p?.pnl || 0),
