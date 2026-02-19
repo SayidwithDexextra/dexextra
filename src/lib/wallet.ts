@@ -71,11 +71,11 @@ function resolveProviderForWallet(walletName: string): EthereumProvider | null {
     try {
       if (eth.providerMap instanceof Map) {
         eth.providerMap.forEach((v: any, k: string) => {
-          console.log(`  ${k}:`, { isMetaMask: v?.isMetaMask, isTrust: v?.isTrust })
+          console.log(`  ${k}:`, { isMetaMask: v?.isMetaMask, isBraveWallet: v?.isBraveWallet, isTrust: v?.isTrust })
         })
       } else {
         Object.entries(eth.providerMap).forEach(([k, v]: [string, any]) => {
-          console.log(`  ${k}:`, { isMetaMask: v?.isMetaMask, isTrust: v?.isTrust })
+          console.log(`  ${k}:`, { isMetaMask: v?.isMetaMask, isBraveWallet: v?.isBraveWallet, isTrust: v?.isTrust })
         })
       }
     } catch (e) {
@@ -88,6 +88,7 @@ function resolveProviderForWallet(walletName: string): EthereumProvider | null {
     eth.providers?.forEach((p: any, i: number) => {
       console.log(`[resolveProviderForWallet] provider[${i}]:`, {
         isMetaMask: p?.isMetaMask,
+        isBraveWallet: p?.isBraveWallet,
         isCoinbaseWallet: p?.isCoinbaseWallet,
         isTrust: p?.isTrust,
         isTrustWallet: p?.isTrustWallet,
@@ -99,6 +100,7 @@ function resolveProviderForWallet(walletName: string): EthereumProvider | null {
   } else if (eth) {
     console.log(`[resolveProviderForWallet] single provider flags:`, {
       isMetaMask: eth?.isMetaMask,
+      isBraveWallet: eth?.isBraveWallet,
       isCoinbaseWallet: eth?.isCoinbaseWallet,
       isTrust: eth?.isTrust,
       isTrustWallet: eth?.isTrustWallet,
@@ -193,6 +195,21 @@ function resolveProviderForWallet(walletName: string): EthereumProvider | null {
           return fromProvidersArray
         }
 
+        // Secondary check: Look for provider with _metamask property in providers array
+        // This catches MetaMask even if isGenuineMetaMask fails due to flag pollution
+        const fromProvidersWithMetamaskObj = findInjectedProvider((p) => {
+          // Must have _metamask object (real MetaMask internal)
+          if (!p?._metamask || typeof p._metamask !== 'object') return false
+          // Must NOT be Brave Wallet
+          if (p?.isBraveWallet) return false
+          console.log(`[resolveProviderForWallet] Found provider with _metamask object (likely real MetaMask)`)
+          return true
+        })
+        if (fromProvidersWithMetamaskObj) {
+          console.log(`[resolveProviderForWallet] MetaMask found in providers array via _metamask property`)
+          return fromProvidersWithMetamaskObj
+        }
+
         // Check if window.ethereum itself is genuine MetaMask
         if (!isAgg && isGenuineMetaMask(eth)) {
           console.log(`[resolveProviderForWallet] MetaMask is window.ethereum directly (genuine)`)
@@ -212,7 +229,8 @@ function resolveProviderForWallet(walletName: string): EthereumProvider | null {
 
         // Last resort: Check if eth has _metamask property (MetaMask internal)
         // Even if another wallet set isMetaMask, real MetaMask has _metamask object
-        if (eth?._metamask && typeof eth._metamask === 'object') {
+        // BUT we must ensure it's not Brave Wallet pretending to be MetaMask
+        if (eth?._metamask && typeof eth._metamask === 'object' && !eth?.isBraveWallet) {
           console.log(`[resolveProviderForWallet] MetaMask found via _metamask property (real MetaMask despite other flags)`)
           return eth as EthereumProvider
         }
@@ -259,12 +277,6 @@ function resolveProviderForWallet(walletName: string): EthereumProvider | null {
         null
       )
 
-    case 'Brave Wallet':
-      return (
-        findInjectedProvider((p) => p?.isBraveWallet) ||
-        (!isAgg && eth?.isBraveWallet ? (eth as EthereumProvider) : null) ||
-        null
-      )
 
     case 'Frame':
       return (
@@ -392,8 +404,6 @@ const isWalletInstalled = (walletName: string): boolean => {
     case 'Phantom':
       return !!resolveProviderForWallet('Phantom')
     
-    case 'Brave Wallet':
-      return !!resolveProviderForWallet('Brave Wallet')
     
     case 'Frame':
       return !!resolveProviderForWallet('Frame')
@@ -482,7 +492,7 @@ export const debugWalletDetection = (): void => {
   console.log('  window.BinanceChain:', !!win.BinanceChain)
   
   console.log('\n📊 All Wallet Detection Results:')
-  const walletNames = ['MetaMask', 'Coinbase Wallet', 'Trust Wallet', 'Zerion', 'Rabby', 'Rainbow', 'Phantom', 'Brave Wallet', 'Frame', 'Talisman', 'SubWallet', 'OKX Wallet', 'Binance Wallet']
+  const walletNames = ['MetaMask', 'Coinbase Wallet', 'Trust Wallet', 'Zerion', 'Rabby', 'Rainbow', 'Phantom', 'Frame', 'Talisman', 'SubWallet', 'OKX Wallet', 'Binance Wallet']
   walletNames.forEach(name => {
     console.log(`  ${name}:`, isWalletInstalled(name))
   })
@@ -523,7 +533,6 @@ export const detectWalletProviders = (): WalletProvider[] => {
     { name: 'Zerion', icon: '⚡', connect: connectZerion },
     { name: 'Rabby', icon: '🐰', connect: connectRabby },
     { name: 'Rainbow', icon: '🌈', connect: connectRainbow },
-    { name: 'Brave Wallet', icon: '🦁', connect: connectBrave },
     { name: 'Frame', icon: '🖼️', connect: connectFrame },
     { name: 'Talisman', icon: '🔮', connect: connectTalisman },
     { name: 'SubWallet', icon: '🌊', connect: connectSubWallet },
@@ -556,7 +565,7 @@ export const detectWalletProviders = (): WalletProvider[] => {
   // Sort providers: installed first, then by popularity
   const popularOrder = [
     'MetaMask', 'Coinbase Wallet', 'Phantom', 'Zerion', 'Rainbow', 
-    'Rabby', 'WalletConnect', 'Brave Wallet', 'Frame', 
+    'Rabby', 'WalletConnect', 'Frame', 
     'Talisman', 'SubWallet', 'OKX Wallet', 'Binance Wallet'
   ]
   
@@ -923,36 +932,6 @@ export const connectPhantom = async (): Promise<WalletData> => {
   }
 }
 
-// Connect to Brave Wallet
-export const connectBrave = async (): Promise<WalletData> => {
-  const provider = resolveProviderForWallet('Brave Wallet')
-  if (!provider) {
-    throw new Error('Brave Wallet not installed')
-  }
-
-  setActiveEthereumProvider(provider)
-  
-  try {
-    const accounts = await provider.request({
-      method: 'eth_requestAccounts',
-    })
-    
-    const address = accounts[0]
-    const balance = await getBalance(address, provider)
-    const chainId = await getChainId(provider)
-    
-    return {
-      address,
-      balance,
-      isConnected: true,
-      isConnecting: false,
-      chainId,
-      avatar: generateAvatar(address),
-    }
-  } catch (error: any) {
-    throw new Error(`Failed to connect to Brave Wallet: ${error.message}`)
-  }
-}
 
 // Connect to Frame
 export const connectFrame = async (): Promise<WalletData> => {
