@@ -234,6 +234,14 @@ export async function GET(request: NextRequest) {
       query = query.or(`market_identifier.ilike.%${search}%,description.ilike.%${search}%,name.ilike.%${search}%,symbol.ilike.%${search}%`);
     }
 
+    // Apply FTS fallback search when RPC failed but fts parameter was provided
+    if (fts && fts.trim()) {
+      const searchTerm = fts.trim();
+      query = query.or(`market_identifier.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%,name.ilike.%${searchTerm}%,symbol.ilike.%${searchTerm}%`);
+      // Also filter to only deployed markets for search results
+      query = query.eq('deployment_status', 'DEPLOYED');
+    }
+
     // Apply pagination
     query = query.range(offset, offset + limit - 1);
 

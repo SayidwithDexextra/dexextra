@@ -132,31 +132,23 @@ export function AddAssetsModal({
 
     setResults((prev) => ({ ...prev, isLoading: true, error: null }));
     try {
-      const [marketsSearchRes, marketsSymbolRes, marketsCategoryRes, usersRes] = await Promise.all([
-        fetch(`/api/markets?search=${encodeURIComponent(q)}&limit=12`),
-        fetch(`/api/markets?symbol=${encodeURIComponent(q)}&limit=12`),
-        fetch(`/api/markets?category=${encodeURIComponent(q)}&limit=12`),
+      // Use full-text search for better multi-word query handling
+      const [marketsRes, usersRes] = await Promise.all([
+        fetch(`/api/markets?fts=${encodeURIComponent(q)}&limit=15`),
         fetch(`/api/profile/search?q=${encodeURIComponent(q)}&limit=10`),
       ]);
 
-      const [marketsSearchJson, marketsSymbolJson, marketsCategoryJson, usersJson] = await Promise.all([
-        marketsSearchRes.json().catch(() => null),
-        marketsSymbolRes.json().catch(() => null),
-        marketsCategoryRes.json().catch(() => null),
+      const [marketsJson, usersJson] = await Promise.all([
+        marketsRes.json().catch(() => null),
         usersRes.json().catch(() => null),
       ]);
 
       const marketMap = new Map<string, Market>();
-      const ingest = (payload: any) => {
-        if (payload?.success && Array.isArray(payload?.markets)) {
-          (payload.markets as Market[]).forEach((m) => {
-            if (m?.id) marketMap.set(String(m.id), m);
-          });
-        }
-      };
-      ingest(marketsSearchJson);
-      ingest(marketsSymbolJson);
-      ingest(marketsCategoryJson);
+      if (marketsJson?.success && Array.isArray(marketsJson?.markets)) {
+        (marketsJson.markets as Market[]).forEach((m) => {
+          if (m?.id) marketMap.set(String(m.id), m);
+        });
+      }
 
       const users: UserProfileSearchResult[] =
         usersJson?.success && Array.isArray(usersJson?.data) ? (usersJson.data as UserProfileSearchResult[]) : [];
