@@ -26,7 +26,6 @@ export default function Home() {
     sortBy: '24h_volume',
     frequency: 'all',
     status: 'active',
-    hideCrypto: false,
   });
   const [rankingRows, setRankingRows] = useState<any[]>([]);
   const router = useRouter();
@@ -91,8 +90,15 @@ export default function Home() {
   const marketFilters = useMemo(() => {
     const categories = new Set<string>();
     baseMarkets.forEach((market) => {
-      if (market.category) {
-        categories.add(market.category);
+      const cats = market.category;
+      if (Array.isArray(cats)) {
+        cats.forEach((cat: string) => {
+          if (typeof cat === 'string' && cat.trim()) {
+            categories.add(cat.trim());
+          }
+        });
+      } else if (typeof cats === 'string' && cats.trim()) {
+        categories.add(cats.trim());
       }
     });
     
@@ -107,7 +113,7 @@ export default function Home() {
 
     const filters = [
       { id: 'all', label: 'All' },
-      ...Array.from(categories).map((cat) => ({
+      ...Array.from(categories).sort().map((cat) => ({
         id: cat.toLowerCase().replace(/\s+/g, '-'),
         label: formatCategoryLabel(cat),
         category: cat,
@@ -142,13 +148,6 @@ export default function Home() {
   const filteredMarkets = useMemo(() => {
     let filtered = baseMarkets;
 
-    if (advancedFilters.hideCrypto) {
-      filtered = filtered.filter((market) => {
-        const category = (market.category || '').toLowerCase();
-        return category !== 'crypto';
-      });
-    }
-
     if (advancedFilters.frequency !== 'all') {
       filtered = filtered.filter((market) => resolveFrequency(market) === advancedFilters.frequency);
     }
@@ -158,22 +157,29 @@ export default function Home() {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter((market) => {
         const name = (market.name || market.symbol || market.market_identifier || '').toLowerCase();
-        const category = (market.category || '').toLowerCase();
+        const cats = market.category;
+        const categoryStr = Array.isArray(cats) ? cats.join(' ').toLowerCase() : (cats || '').toLowerCase();
         const description = (market.description || '').toLowerCase();
-        return name.includes(query) || category.includes(query) || description.includes(query);
+        return name.includes(query) || categoryStr.includes(query) || description.includes(query);
       });
     }
     
     // Apply category filter (if not 'all')
     if (selectedFilter !== 'all') {
       filtered = filtered.filter((market) => {
-        const category = (market.category || '').toLowerCase().replace(/\s+/g, '-');
+        const cats = market.category;
+        if (Array.isArray(cats)) {
+          return cats.some((cat: string) => 
+            typeof cat === 'string' && cat.toLowerCase().replace(/\s+/g, '-') === selectedFilter.toLowerCase()
+          );
+        }
+        const category = (cats || '').toLowerCase().replace(/\s+/g, '-');
         return category === selectedFilter.toLowerCase();
       });
     }
     
     return filtered;
-  }, [baseMarkets, advancedFilters.frequency, advancedFilters.hideCrypto, searchQuery, selectedFilter]);
+  }, [baseMarkets, advancedFilters.frequency, searchQuery, selectedFilter]);
 
   useEffect(() => {
     const sortBy = advancedFilters.sortBy;

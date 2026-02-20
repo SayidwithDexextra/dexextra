@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       // Step 1: Market Information
       metric_id: body.metric_id,
       description: body.description,
-      category: body.category, // Should be string, not array
+      category: body.category, // Can be string or array of strings
 
       // Step 2: Trading Configuration  
       decimals: body.decimals,

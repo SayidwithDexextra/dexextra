@@ -18,7 +18,7 @@ type SimilarMarketMatch = {
   symbol: string;
   name: string;
   description: string;
-  category: string;
+  category: string | string[];
   market_status: string;
   settlement_date: string | null;
   created_at: string | null;
@@ -270,7 +270,7 @@ export default function DebugMarketSimilarityPage() {
                     <div className="mt-1 text-[11px] text-white/60">
                       <span className="font-mono text-white/70">{m.market_identifier}</span>{' '}
                       <span className="text-white/40">•</span> {m.market_status}{' '}
-                      <span className="text-white/40">•</span> {m.category}
+                      <span className="text-white/40">•</span> {Array.isArray(m.category) ? m.category.join(', ') : m.category}
                     </div>
                   </div>
                   <div className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/80 tabular-nums">

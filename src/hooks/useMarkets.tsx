@@ -9,7 +9,7 @@ export interface Market {
   symbol: string;
   name: string;
   description: string;
-  category: string;
+  category: string | string[];
   decimals: number;
   minimum_order_size: number;
   tick_size: number;

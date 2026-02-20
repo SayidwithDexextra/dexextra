@@ -8,7 +8,7 @@ interface OrderbookMarket {
   metric_id: string;
   description?: string;
   market_status: string;
-  category: string;
+  category: string | string[];
   last_trade_price?: number;
   tick_size?: number;
   icon_image_url?: string;
@@ -18,6 +18,14 @@ interface OrderbookMarket {
   settlement_date?: string;
   created_at: string;
   updated_at?: string;
+}
+
+// Helper to normalize category to array format
+function normalizeCategories(category: string | string[] | undefined | null): string[] {
+  if (!category) return [];
+  if (Array.isArray(category)) return category.filter(c => typeof c === 'string' && c.trim());
+  if (typeof category === 'string' && category.trim()) return [category.trim()];
+  return [];
 }
 
 /**
@@ -31,8 +39,8 @@ export function transformMarketToCard(market: Market): MarketTickerCardData {
   // Use name/symbol as the display title
   const title = market.name || market.symbol || market.market_identifier;
   
-  // Convert single category to array format expected by the card
-  const categories = [market.category];
+  // Normalize category to array format expected by the card
+  const categories = normalizeCategories(market.category);
   
   // Generate image URL - prefer icon, then banner, then fallback
   const imageUrl = market.icon_image_url || 
@@ -74,7 +82,7 @@ export function transformOverviewToCards(rows: MarketOverviewRow[]): MarketTicke
     // Mark price in Supabase is stored with USDC precision (1e6)
     const price = raw > 0 ? raw / 1_000_000 : (row.tick_size || 0);
     const title = row.name || row.symbol || row.market_identifier || '';
-    const categories = [row.category];
+    const categories = normalizeCategories(row.category);
   const imageUrl = row.icon_image_url || row.banner_image_url || 'https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExaWN2ZTV1YnZreHV3dDl4eTlrMGFtYjd6NWY1MHBtOXM4dmdianh2ZSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/j5rZvWi198VASs4Bpu/giphy.gif';
     const imageAlt = `${row.symbol || row.market_identifier} market icon`;
     return {
@@ -105,8 +113,8 @@ export function transformOrderbookMarketToCard(market: OrderbookMarket): MarketT
   // Use metric_id as the display title, but could be description in the future
   const title = market.metric_id;
   
-  // Convert single category to array format expected by the card
-  const categories = [market.category];
+  // Normalize category to array format expected by the card
+  const categories = normalizeCategories(market.category);
   
   // Generate image URL - prefer icon, then banner, then fallback
   const imageUrl = market.icon_image_url || 

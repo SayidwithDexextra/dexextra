@@ -127,13 +127,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Determine market type from category string
-    const cat = (market.category || '').toString().toLowerCase();
+    // Determine market type from category (now an array)
+    const cats = Array.isArray(market.category) ? market.category : [market.category || ''];
+    const catStr = cats.join(' ').toLowerCase();
     let marketType = 'futures';
-    if (cat.includes('crypto')) marketType = 'crypto';
-    else if (cat.includes('stock')) marketType = 'stock';
-    else if (cat.includes('index')) marketType = 'index';
-    else if (cat.includes('commodity')) marketType = 'commodity';
+    if (catStr.includes('crypto')) marketType = 'crypto';
+    else if (catStr.includes('stock')) marketType = 'stock';
+    else if (catStr.includes('index') || catStr.includes('indices')) marketType = 'index';
+    else if (catStr.includes('commodity') || catStr.includes('commodities')) marketType = 'commodity';
 
     // Calculate price scale for TradingView.
     // DO NOT use `market.decimals` here (often token decimals, not price decimals).

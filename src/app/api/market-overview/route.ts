@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
           query = query.eq('market_status', statuses[0]);
         }
       }
-    if (category) query = query.eq('category', category);
+    if (category) query = query.contains('category', [category]);
     if (search) {
       query = query.or(
         `market_identifier.ilike.%${search}%,symbol.ilike.%${search}%,name.ilike.%${search}%`

@@ -19,7 +19,7 @@ type SimilarMarket = {
   symbol: string;
   name: string;
   description: string;
-  category: string;
+  category: string | string[];
   market_status: string;
   is_active?: boolean;
   total_volume: number | string | null;
@@ -303,7 +303,7 @@ export async function POST(request: NextRequest) {
         .order('created_at', { ascending: false })
         .limit(pLimit);
 
-      if (category) q = q.eq('category', category);
+      if (category) q = q.contains('category', [category]);
       if (status) q = q.eq('market_status', status);
 
       if (t) {

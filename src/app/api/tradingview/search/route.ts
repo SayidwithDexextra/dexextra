@@ -77,13 +77,14 @@ export async function GET(request: NextRequest) {
 
     // Transform markets to TradingView format
     const symbols = (markets || []).map((market: any) => {
-      // Determine market type from category string
-      const cat = (market.category || '').toString().toLowerCase();
+      // Determine market type from category (now an array)
+      const cats = Array.isArray(market.category) ? market.category : [market.category || ''];
+      const catStr = cats.join(' ').toLowerCase();
       let marketType = 'futures';
-      if (cat.includes('crypto')) marketType = 'crypto';
-      else if (cat.includes('stock')) marketType = 'stock';
-      else if (cat.includes('index')) marketType = 'index';
-      else if (cat.includes('commodity')) marketType = 'commodity';
+      if (catStr.includes('crypto')) marketType = 'crypto';
+      else if (catStr.includes('stock')) marketType = 'stock';
+      else if (catStr.includes('index') || catStr.includes('indices')) marketType = 'index';
+      else if (catStr.includes('commodity') || catStr.includes('commodities')) marketType = 'commodity';
 
       // Canonical TradingView symbol id should be the market UUID for stability.
       // Keep the human label in full_name/description.

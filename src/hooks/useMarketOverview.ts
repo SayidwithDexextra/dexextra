@@ -14,7 +14,7 @@ export interface MarketOverviewRow {
   market_identifier?: string;
   symbol: string;
   name: string;
-  category: string;
+  category: string | string[];
   icon_image_url?: string | null;
   banner_image_url?: string | null;
   market_address?: string | null;

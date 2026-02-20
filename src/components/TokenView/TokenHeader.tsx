@@ -452,7 +452,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       symbol: market.symbol || market.market_identifier,
       name: market.name || market.market_identifier.replace(/_/g, ' '),
       description: market.description || '',
-      category: market.category || 'General',
+      category: Array.isArray(market.category) ? (market.category[0] || 'General') : (market.category || 'General'),
       chain: market.network || 'Unknown',
       logo: (market as any).icon_image_url || undefined,
       price: Number(currentMarkPrice),

@@ -16,7 +16,7 @@ export interface Market {
   symbol: string;
   name: string;
   description: string;
-  category: string;
+  category: string | string[];
   
   // Contract addresses
   market_id_bytes32: string;
@@ -194,7 +194,7 @@ export async function searchMarkets(searchTerm: string, category?: string, statu
       .limit(limit);
     
     if (category) {
-      query.eq('category', category);
+      query.contains('category', [category]);
     }
     
     if (status) {

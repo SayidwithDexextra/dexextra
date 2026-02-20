@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import searchModalDesign from '../../design/searchModal.json'
 import { getSupabaseClient } from '@/lib/supabase-browser'
 import MarketPairBadge from './Series/MarketPairBadge'
@@ -55,12 +56,19 @@ interface SearchResults {
 export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
   const [searchValue, setSearchValue] = useState('')
   const [isAnimating, setIsAnimating] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const [searchResults, setSearchResults] = useState<SearchResults>({
     markets: [],
     users: [],
     isLoading: false,
     error: null
   })
+  
+  // Track mount state for portal rendering (document.body not available during SSR)
+  useEffect(() => {
+    setMounted(true)
+    return () => setMounted(false)
+  }, [])
   const [pairMap, setPairMap] = useState<Record<string, { otherId: string; seriesSlug: string }>>({})
   const [idToMarket, setIdToMarket] = useState<Record<string, Market>>({})
   const [recentSearches, setRecentSearches] = useState<string[]>([])
@@ -129,31 +137,23 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     setSearchResults(prev => ({ ...prev, isLoading: true, error: null }))
 
     try {
-      // Search markets by both symbol and category, and users in parallel
-      const [marketsSymbolResponse, marketsCategoryResponse, usersResponse] = await Promise.all([
-        fetch(`/api/markets?symbol=${encodeURIComponent(searchTerm)}&limit=10`),
-        fetch(`/api/markets?category=${encodeURIComponent(searchTerm)}&limit=10`),
+      // Use full-text search for markets (handles multi-word queries, partial matches)
+      const [marketsResponse, usersResponse] = await Promise.all([
+        fetch(`/api/markets?fts=${encodeURIComponent(searchTerm)}&limit=15`),
         fetch(`/api/profile/search?q=${encodeURIComponent(searchTerm)}&limit=10`)
       ])
 
-      const marketsSymbolData = await marketsSymbolResponse.json()
-      const marketsCategoryData = await marketsCategoryResponse.json()
+      const marketsData = await marketsResponse.json()
       const usersData = await usersResponse.json()
 
       let markets: Market[] = []
       let users: UserProfileSearchResult[] = []
 
-      // Combine symbol and category search results, removing duplicates
+      // Build market map from FTS results (already relevance-ordered from API)
       const marketMap = new Map<string, Market>()
       
-      if (marketsSymbolData.success && marketsSymbolData.markets) {
-        marketsSymbolData.markets.forEach((market: Market) => {
-          marketMap.set(market.id, market)
-        })
-      }
-
-      if (marketsCategoryData.success && marketsCategoryData.markets) {
-        marketsCategoryData.markets.forEach((market: Market) => {
+      if (marketsData.success && marketsData.markets) {
+        marketsData.markets.forEach((market: Market) => {
           marketMap.set(market.id, market)
         })
       }
@@ -256,12 +256,21 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     return () => clearTimeout(timeoutId)
   }, [searchValue, performSearch])
 
-  // Handle modal animation
+  // Handle modal animation and body scroll lock
   useEffect(() => {
     if (isOpen) {
       setIsAnimating(true)
+      // Prevent body scrolling when modal is open
+      document.body.style.overflow = 'hidden'
     } else {
       setIsAnimating(false)
+      // Restore body scrolling when modal is closed
+      document.body.style.overflow = ''
+    }
+    
+    return () => {
+      // Cleanup: restore body scrolling on unmount
+      document.body.style.overflow = ''
     }
   }, [isOpen])
 
@@ -323,10 +332,19 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     setSearchValue(searchTerm)
   }, [])
 
-  if (!isOpen) return null
+  if (!isOpen || !mounted) return null
 
-  return (
-    <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
+  const modalContent = (
+    <div 
+      className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+      }}
+    >
       {/* Backdrop for click-to-close */}
       <div 
         className={`absolute inset-0 bg-black/50 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
@@ -341,7 +359,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           maxWidth: '900px',
           maxHeight: '85vh',
           padding: '24px',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)'
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+          margin: 'auto',
         }}
       >
         {/* Search Input Section */}
@@ -751,4 +770,6 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       </div>
     </div>
   )
+
+  return createPortal(modalContent, document.body)
 } 
