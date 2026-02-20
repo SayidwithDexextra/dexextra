@@ -10,6 +10,7 @@ import { normalizeBytes32Hex } from '@/lib/hex';
 import { FooterWatchlistPopup } from './FooterWatchlistPopup';
 import { FooterSupportPopup } from './FooterSupportPopup';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
+import PortfolioSidebar from './PortfolioV2/PortfolioSidebar';
 
 const INACTIVE_ORDER_STATUSES = new Set(['FILLED', 'CANCELLED', 'CANCELED', 'EXPIRED', 'REJECTED']);
 const ORDERBOOK_PREFIX = 'orderbook:activeOrders:';
@@ -73,6 +74,7 @@ const Footer: React.FC = () => {
   const watchlistCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const supportCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [isPortfolioSidebarOpen, setIsPortfolioSidebarOpen] = useState(false);
 
   const deploymentFooterPip = useMemo(() => {
     const s = deploymentOverlay?.state;
@@ -319,13 +321,6 @@ const Footer: React.FC = () => {
     return ordered;
   }, [rankedSymbols, sessionOrderSymbols, normalizeActiveMarketCandidate]);
 
-  const supportDefaultTokenSymbol = useMemo(() => {
-    if (currentTokenSymbol) return String(currentTokenSymbol);
-    if (combinedActiveMarkets.length > 0) return String(combinedActiveMarkets[0]?.hrefId || combinedActiveMarkets[0]?.key || 'BTC');
-    if (Array.isArray(rankedSymbols) && rankedSymbols.length > 0) return String(rankedSymbols[0] || 'BTC');
-    return 'BTC';
-  }, [combinedActiveMarkets, currentTokenSymbol, rankedSymbols]);
-
   const activeMarketLinks = useMemo(() => {
     const filtered = combinedActiveMarkets.filter((m) => {
       if (!m?.key) return false;
@@ -344,7 +339,7 @@ const Footer: React.FC = () => {
   }, [combinedActiveMarkets, currentTokenKey]);
 
   const secondaryNavLinks = useMemo(() => ([
-    { label: 'Portfolio', href: '/portfolio', title: 'View portfolio' },
+    { label: 'Portfolio', onClick: () => setIsPortfolioSidebarOpen(true), title: 'View portfolio' },
   ]), []);
 
   // Only show "Active Markets" shortcuts when a wallet is connected and we can infer user activity.
@@ -718,7 +713,6 @@ const Footer: React.FC = () => {
           <FooterSupportPopup
             isOpen={isSupportOpen}
             onClose={() => setIsSupportOpen(false)}
-            defaultTokenSymbol={supportDefaultTokenSymbol}
           />
         </div>
 
@@ -812,43 +806,68 @@ const Footer: React.FC = () => {
             }}
             aria-label={showActiveMarketShortcuts ? 'Active markets' : 'Quick links'}
           >
-            {footerNavLinks.map((l) => {
-              const isActive = showActiveMarketShortcuts;
-              const baseBorder = isActive ? '#333333' : '#2A2A2A';
-              const hoverBorder = isActive ? '#444444' : '#3A3A3A';
-              const keyPrefix = isActive ? 'active' : 'nav';
+            {footerNavLinks.map((l: any) => {
+              const isActiveMarket = showActiveMarketShortcuts;
+              const baseBorder = isActiveMarket ? '#333333' : '#2A2A2A';
+              const hoverBorder = isActiveMarket ? '#444444' : '#3A3A3A';
+              const keyPrefix = isActiveMarket ? 'active' : 'nav';
               const fullLabel = String(l.label ?? '');
-              const chipLabel = truncateChipLabel(fullLabel, 7);
+              // Only truncate active market labels, not static nav links
+              const chipLabel = isActiveMarket ? truncateChipLabel(fullLabel, 7) : fullLabel;
+              const chipStyles: React.CSSProperties = {
+                padding: '2px 6px',
+                border: `1px solid ${baseBorder}`,
+                borderRadius: '4px',
+                color: '#FFFFFF',
+                textDecoration: 'none',
+                cursor: 'pointer',
+                transition: 'opacity 0.2s ease, border-color 0.2s ease',
+                display: 'inline-block',
+                flex: '0 0 auto',
+                maxWidth: 'min(38vw, 240px)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                verticalAlign: 'middle',
+                background: 'none',
+                fontSize: 'inherit',
+                fontFamily: 'inherit',
+              };
+              const handleMouseEnter = (e: React.MouseEvent<HTMLElement>) => {
+                e.currentTarget.style.opacity = '0.9';
+                e.currentTarget.style.borderColor = hoverBorder;
+              };
+              const handleMouseLeave = (e: React.MouseEvent<HTMLElement>) => {
+                e.currentTarget.style.opacity = '1';
+                e.currentTarget.style.borderColor = baseBorder;
+              };
+
+              // If the item has onClick (e.g., Portfolio), render as a button
+              if (l.onClick) {
+                return (
+                  <button
+                    key={`${keyPrefix}-${fullLabel}`}
+                    type="button"
+                    title={l.title || fullLabel}
+                    style={chipStyles}
+                    onMouseEnter={handleMouseEnter}
+                    onMouseLeave={handleMouseLeave}
+                    onClick={l.onClick}
+                  >
+                    {chipLabel}
+                  </button>
+                );
+              }
+
+              // Otherwise render as a Link (for active markets)
               return (
                 <Link
                   key={`${keyPrefix}-${l.href}`}
                   href={l.href}
                   title={fullLabel}
-                  style={{
-                    padding: '2px 6px',
-                    border: `1px solid ${baseBorder}`,
-                    borderRadius: '4px',
-                    color: '#FFFFFF',
-                    textDecoration: 'none',
-                    cursor: 'pointer',
-                    transition: 'opacity 0.2s ease, border-color 0.2s ease',
-                    // Keep "standard" chip sizing; only truncate *very* long labels.
-                    display: 'inline-block',
-                    flex: '0 0 auto',
-                    maxWidth: 'min(38vw, 240px)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    verticalAlign: 'middle',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.opacity = '0.9';
-                    e.currentTarget.style.borderColor = hoverBorder;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.opacity = '1';
-                    e.currentTarget.style.borderColor = baseBorder;
-                  }}
+                  style={chipStyles}
+                  onMouseEnter={handleMouseEnter}
+                  onMouseLeave={handleMouseLeave}
                 >
                   {chipLabel}
                 </Link>
@@ -877,6 +896,12 @@ const Footer: React.FC = () => {
           </svg>
         </button>
       </div>
+
+      {/* Portfolio Sidebar */}
+      <PortfolioSidebar
+        isOpen={isPortfolioSidebarOpen}
+        onClose={() => setIsPortfolioSidebarOpen(false)}
+      />
     </footer>
   );
 };

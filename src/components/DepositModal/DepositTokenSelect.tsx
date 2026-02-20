@@ -281,10 +281,10 @@ export default function DepositTokenSelect({
                                   />
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                  <span className="text-[11px] font-medium text-white block truncate">
+                                  <span className="text-[13px] font-medium text-white block truncate">
                                     {t.symbol}
                                   </span>
-                                  <span className="text-[10px] text-[#606060] block truncate">
+                                  <span className="text-[12px] text-white block truncate">
                                     {t.name || 'Stablecoin'}
                                   </span>
                                 </div>
@@ -298,8 +298,8 @@ export default function DepositTokenSelect({
                           {/* Expandable Details on Hover */}
                           <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-16 overflow-hidden transition-all duration-200">
                             <div className="px-3 pb-3 border-t border-[#1A1A1A]">
-                              <div className="text-[9px] pt-2">
-                                <span className="text-[#606060]">
+                              <div className="text-[11px] pt-2">
+                                <span className="text-white">
                                   {isActive ? 'Selected for deposit' : `Click to select ${t.symbol} on ${t.chain}`}
                                 </span>
                               </div>

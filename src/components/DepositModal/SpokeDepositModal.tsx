@@ -7,6 +7,7 @@ import { Wallet } from 'lucide-react'
 interface SpokeDepositModalProps {
   isOpen: boolean
   onClose: () => void
+  onBack?: () => void
   onSubmit: (amount: string) => Promise<void> | void
   selectedToken: { symbol: string; icon: string }
   defaultAmount?: string
@@ -18,6 +19,7 @@ interface SpokeDepositModalProps {
 export default function SpokeDepositModal({
   isOpen,
   onClose,
+  onBack,
   onSubmit,
   selectedToken,
   defaultAmount = '1',
@@ -68,6 +70,20 @@ export default function SpokeDepositModal({
       >
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-[#1A1A1A]">
+          {onBack ? (
+            <button
+              onClick={onBack}
+              className="group flex items-center justify-center w-8 h-8 bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200"
+              aria-label="Back"
+            >
+              <svg className="w-4 h-4 text-[#808080] group-hover:text-white transition-colors duration-200" viewBox="0 0 24 24" fill="none">
+                <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          ) : (
+            <div className="w-8 h-8" />
+          )}
+
           <div className="flex items-center gap-3 min-w-0 flex-1 justify-center">
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
             <div className="relative group">

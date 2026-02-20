@@ -12,7 +12,6 @@ import { useWallet } from '@/hooks/useWallet';
 type FooterSupportPopupProps = {
   isOpen: boolean;
   onClose: () => void;
-  defaultTokenSymbol: string;
 };
 
 type TourItem = {
@@ -22,8 +21,7 @@ type TourItem = {
   onStart: () => void;
 };
 
-export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: FooterSupportPopupProps) {
-  const pathname = usePathname();
+export function FooterSupportPopup({ isOpen, onClose }: FooterSupportPopupProps) {
   const walkthrough = useWalkthrough();
   const { walletData } = useWallet();
 
@@ -39,18 +37,6 @@ export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: Foot
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  const currentTokenSymbol = useMemo(() => {
-    const path = String(pathname || '');
-    const match = path.match(/^\/token\/([^/?#]+)/i);
-    if (!match) return null;
-    const raw = match[1] || '';
-    try {
-      return decodeURIComponent(raw);
-    } catch {
-      return raw;
-    }
-  }, [pathname]);
-
   const startTour = useCallback(
     (def: any) => {
       onClose();
@@ -59,17 +45,14 @@ export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: Foot
     [onClose, walkthrough]
   );
 
-  const startTokenPageTour = useCallback((fallbackSymbol: string) => {
-    const symbolRaw = String(currentTokenSymbol || '').trim() || '';
-    const fallback = String(fallbackSymbol || '').trim();
-    const symbol = symbolRaw || fallback || 'BTC';
-    const route = `/token/${encodeURIComponent(symbol)}`;
+  const startTokenPageTour = useCallback(() => {
+    const route = '/token/BITCOIN';
     const def = {
       ...tokenPageWalkthrough,
       steps: tokenPageWalkthrough.steps.map((s: any) => ({ ...s, route })),
     };
     startTour(def);
-  }, [currentTokenSymbol, startTour]);
+  }, [startTour]);
 
   const tours: TourItem[] = useMemo(() => {
     return [
@@ -88,13 +71,11 @@ export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: Foot
       {
         id: 'token-page',
         title: 'Token page tour',
-        description: currentTokenSymbol
-          ? 'Learn the chart, activity, trading panel, and metric panels on this token page.'
-          : `We’ll open ${String(defaultTokenSymbol || 'BTC').toUpperCase()} and start the token tour.`,
-        onStart: () => startTokenPageTour(defaultTokenSymbol),
+        description: "We'll open the BITCOIN token page and walk through the chart, activity, trading panel, and metric panels.",
+        onStart: () => startTokenPageTour(),
       },
     ];
-  }, [currentTokenSymbol, defaultTokenSymbol, startTokenPageTour, startTour, walletData.isConnected]);
+  }, [startTokenPageTour, startTour, walletData.isConnected]);
 
   if (!isOpen) return null;
 
@@ -180,4 +161,3 @@ export function FooterSupportPopup({ isOpen, onClose, defaultTokenSymbol }: Foot
     </div>
   );
 }
-

@@ -53,7 +53,6 @@ export default function Home() {
     refetch: refetchMarkets
   } = useMarketOverview({
     status: statusFilter,
-    limit: 20,
     autoRefresh: false,
     realtimeDebounce: 1000 // Add 1 second debounce for realtime updates
   });

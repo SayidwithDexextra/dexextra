@@ -333,6 +333,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
           createOrGetUserProfile(connection.address).catch(error => 
             console.warn('User profile creation failed (non-blocking):', error)
           )
+          // Pre-fetch portfolio data (including ETH price) in background
+          // This ensures price is cached when modal opens
+          setTimeout(() => {
+            refreshPortfolio().catch(error =>
+              console.warn('Portfolio pre-fetch failed (non-blocking):', error)
+            )
+          }, 100)
         }
         
          console.log('Wallet connected successfully:', connection.address)
@@ -390,6 +397,14 @@ export function WalletProvider({ children }: WalletProviderProps) {
       setPortfolio(prev => ({ ...prev, isLoading: false }))
     }
   }, []) // No dependencies to avoid infinite loops
+
+  // Auto-refresh portfolio when wallet becomes connected
+  useEffect(() => {
+    if (walletData.isConnected && walletData.address && !portfolio.lastUpdated) {
+      console.log('📊 Auto-refreshing portfolio on wallet connect...')
+      refreshPortfolio()
+    }
+  }, [walletData.isConnected, walletData.address, portfolio.lastUpdated, refreshPortfolio])
 
   const contextValue: WalletContextType = {
     walletData,

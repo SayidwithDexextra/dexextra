@@ -52,6 +52,7 @@ const baseSteps: WalkthroughStep[] = [
     placement: 'bottom',
     paddingPx: 10,
     radiusPx: 12,
+    enterEvents: [{ name: 'portfolioSidebar:close', detail: { source: 'walkthrough:get-started' } }],
     nextLabel: 'Open portfolio sidebar',
   },
   {
@@ -87,6 +88,7 @@ const baseSteps: WalkthroughStep[] = [
     placement: 'left',
     paddingPx: 12,
     radiusPx: 16,
+    enterEvents: [{ name: 'portfolioSidebar:open', detail: { source: 'walkthrough:get-started' } }],
   },
   {
     id: 'nav-settings',

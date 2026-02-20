@@ -522,6 +522,12 @@ export default function DepositModal({
           setNetworkWarning(null)
           setStep('select')
         }}
+        onBack={() => {
+          setShowSpokeDepositModal(false)
+          setSpokeDepositError(null)
+          setNetworkWarning(null)
+          setStep('external')
+        }}
         onSubmit={handleSpokeDepositSubmit}
         selectedToken={sourceToken}
         defaultAmount={spokeDepositAmount || '1'}
@@ -547,6 +553,10 @@ export default function DepositModal({
         <SpokeDepositModal
           isOpen={showSpokeDepositModal}
           onClose={() => {
+            setShowSpokeDepositModal(false)
+            setSpokeDepositError(null)
+          }}
+          onBack={() => {
             setShowSpokeDepositModal(false)
             setSpokeDepositError(null)
           }}

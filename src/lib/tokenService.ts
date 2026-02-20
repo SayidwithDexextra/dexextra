@@ -150,7 +150,7 @@ async function _getTokenBalance(
   }
 }
 
-// Get ETH balance
+// Get ETH balance from connected provider
 async function getEthBalance(provider: EthereumProvider, address: string): Promise<string> {
   try {
     const balance = await provider.request({
@@ -170,9 +170,48 @@ async function getEthBalance(provider: EthereumProvider, address: string): Promi
   }
 }
 
+// Arbitrum mainnet RPC URL (fallback to public RPC if env not set)
+const ARBITRUM_RPC_URL = env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc'
+
+// Get ETH balance specifically from Arbitrum mainnet
+async function getArbitrumEthBalance(address: string): Promise<string> {
+  try {
+    const response = await fetch(ARBITRUM_RPC_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_getBalance',
+        params: [address, 'latest'],
+        id: 1,
+      }),
+    })
+
+    const data = await response.json()
+    
+    if (data.result) {
+      const balanceInEth = parseInt(data.result, 16) / Math.pow(10, 18)
+      return balanceInEth.toString()
+    }
+    
+    return '0'
+  } catch (error) {
+    console.error('Error fetching Arbitrum ETH balance:', error)
+    return '0'
+  }
+}
+
 // Rate limiting for CoinGecko API
 let lastPriceAPICall = 0
 const PRICE_API_COOLDOWN = 10000 // 10 seconds between calls
+
+// Cache for price data to avoid returning empty on rate limit
+// Pre-seed with fallback ETH price in case API fails initially
+let cachedPriceData: Record<string, TokenPriceData> = {
+  'ETH': { symbol: 'ETH', price: 2000, price_change_percentage_24h: 0 }
+}
 
 // Enhanced retry mechanism with exponential backoff
 async function retryWithBackoff<T>(
@@ -203,16 +242,16 @@ async function retryWithBackoff<T>(
 // Fetch token prices from our API route to avoid CORS issues
 export async function fetchTokenPrices(tokenSymbols: string[]): Promise<Record<string, TokenPriceData>> {
   try {
-    // Rate limiting protection
+    // Rate limiting protection - return cached data if within cooldown
     const now = Date.now()
     if (now - lastPriceAPICall < PRICE_API_COOLDOWN) {
-       console.log('Rate limiting: using cached price data')
-      return {}
+       console.log('Rate limiting: using cached price data', cachedPriceData)
+      return cachedPriceData
     }
     
     if (tokenSymbols.length === 0) {
        console.log('No token symbols provided for price fetching')
-      return {}
+      return cachedPriceData
     }
     
     // Limit to 50 tokens per request
@@ -249,17 +288,20 @@ export async function fetchTokenPrices(tokenSymbols: string[]): Promise<Record<s
     }, 3, 1000)
     
     lastPriceAPICall = now
-     console.log('Successfully fetched prices for:', Object.keys(priceData))
+    // Cache the price data for rate-limited requests
+    cachedPriceData = { ...cachedPriceData, ...priceData }
+     console.log('Successfully fetched prices for:', Object.keys(priceData), 'cached:', cachedPriceData)
     return priceData
     
   } catch (error) {
     console.error('Error fetching token prices after all retries:', error)
+    console.log('📊 Using fallback cached price data:', cachedPriceData)
     
     // Reset rate limiting on error to allow immediate retry next time
     lastPriceAPICall = 0
     
-    // Return empty object - let the component handle fallback
-    return {}
+    // Return cached data if available (with fallback ETH price)
+    return cachedPriceData
   }
 }
 
@@ -322,17 +364,17 @@ export async function fetchWalletPortfolio(
   walletAddress: string
 ): Promise<WalletPortfolio> {
   try {
-    const isHyperliquid = Number(env.CHAIN_ID) === 999
-    const nativeSymbol = isHyperliquid ? 'HYPE' : 'ETH'
-    const nativeName = isHyperliquid ? 'Hyperliquid (HYPE)' : 'Ethereum'
-    const nativeIcon = TOKEN_ICONS[nativeSymbol] || '🪙'
+    // Always display as Arbitrum ETH
+    const nativeSymbol = 'ETH'
+    const nativeName = 'Ethereum (Arbitrum)'
+    const nativeIcon = TOKEN_ICONS['ETH'] || '💎'
     // Validate wallet address format
     if (!isValidEthereumAddress(walletAddress)) {
       throw new Error('Invalid Ethereum address format')
     }
 
-    // Get ETH balance
-    const ethBalance = await getEthBalance(provider, walletAddress)
+    // Get ETH balance from Arbitrum mainnet
+    const ethBalance = await getArbitrumEthBalance(walletAddress)
     
     const tokens: TokenBalance[] = []
     let totalValue = 0
@@ -355,16 +397,16 @@ export async function fetchWalletPortfolio(
         
         // Get symbols for price fetching
         const tokenSymbols = Object.values(tokenMetadata).map(meta => meta.symbol)
-        // Only fetch ETH price on non-Hyperliquid networks
-        if (!isHyperliquid) tokenSymbols.push('ETH')
+        // Fetch ETH price for Arbitrum native token
+        tokenSymbols.push(nativeSymbol)
         
         // Fetch prices
         const priceData = await fetchTokenPrices(tokenSymbols)
         
         // Add native first (always include regardless of value)
-        const ethPrice = isHyperliquid ? 0 : (priceData['ETH']?.price || 0)
-        const ethValue = parseFloat(ethBalance) * ethPrice
-        totalValue += ethValue
+        const nativePrice = priceData[nativeSymbol]?.price || 0
+        const nativeValue = parseFloat(ethBalance) * nativePrice
+        totalValue += nativeValue
         
         tokens.push({
           symbol: nativeSymbol,
@@ -372,11 +414,11 @@ export async function fetchWalletPortfolio(
           balance: ethBalance,
           decimals: 18,
           address: '0x0',
-          price: ethPrice,
-          value: ethValue,
-          changePercent24h: isHyperliquid ? 0 : (priceData['ETH']?.price_change_percentage_24h || 0),
+          price: nativePrice,
+          value: nativeValue,
+          changePercent24h: priceData[nativeSymbol]?.price_change_percentage_24h || 0,
           balanceFormatted: formatTokenBalance(ethBalance, 18),
-          valueFormatted: formatTokenValue(ethValue),
+          valueFormatted: formatTokenValue(nativeValue),
           icon: nativeIcon,
         })
         
@@ -416,10 +458,14 @@ export async function fetchWalletPortfolio(
 
       } else {
         // If no tokens found via Alchemy, add just native (always include regardless of value)
-        const priceData = isHyperliquid ? {} : await fetchTokenPrices(['ETH'])
-        const ethPrice = isHyperliquid ? 0 : (priceData['ETH']?.price || 0)
-        const ethValue = parseFloat(ethBalance) * ethPrice
-        totalValue += ethValue
+        console.log('📊 No Alchemy tokens, fetching ETH price for symbol:', nativeSymbol)
+        const priceData = await fetchTokenPrices([nativeSymbol])
+        console.log('📊 Price data received:', priceData)
+        const nativePrice = priceData[nativeSymbol]?.price || 0
+        console.log('📊 Native price:', nativePrice, 'ETH balance:', ethBalance)
+        const nativeValue = parseFloat(ethBalance) * nativePrice
+        console.log('📊 Calculated native value:', nativeValue)
+        totalValue += nativeValue
         
         tokens.push({
           symbol: nativeSymbol,
@@ -427,11 +473,11 @@ export async function fetchWalletPortfolio(
           balance: ethBalance,
           decimals: 18,
           address: '0x0',
-          price: ethPrice,
-          value: ethValue,
-          changePercent24h: isHyperliquid ? 0 : (priceData['ETH']?.price_change_percentage_24h || 0),
+          price: nativePrice,
+          value: nativeValue,
+          changePercent24h: priceData[nativeSymbol]?.price_change_percentage_24h || 0,
           balanceFormatted: formatTokenBalance(ethBalance, 18),
-          valueFormatted: formatTokenValue(ethValue),
+          valueFormatted: formatTokenValue(nativeValue),
           icon: nativeIcon,
         })
       }
@@ -439,10 +485,10 @@ export async function fetchWalletPortfolio(
         console.error('Alchemy API failed, no fallback available for all tokens:', alchemyError)
         
                 // When Alchemy fails, just add native as we can't get all user tokens without it
-        const priceData = isHyperliquid ? {} : await fetchTokenPrices(['ETH'])
-        const ethPrice = isHyperliquid ? 0 : (priceData['ETH']?.price || 0)
-        const ethValue = parseFloat(ethBalance) * ethPrice
-        totalValue += ethValue
+        const priceData = await fetchTokenPrices([nativeSymbol])
+        const nativePrice = priceData[nativeSymbol]?.price || 0
+        const nativeValue = parseFloat(ethBalance) * nativePrice
+        totalValue += nativeValue
         
         tokens.push({
           symbol: nativeSymbol,
@@ -450,11 +496,11 @@ export async function fetchWalletPortfolio(
           balance: ethBalance,
           decimals: 18,
           address: '0x0',
-          price: ethPrice,
-          value: ethValue,
-          changePercent24h: isHyperliquid ? 0 : (priceData['ETH']?.price_change_percentage_24h || 0),
+          price: nativePrice,
+          value: nativeValue,
+          changePercent24h: priceData[nativeSymbol]?.price_change_percentage_24h || 0,
           balanceFormatted: formatTokenBalance(ethBalance, 18),
-          valueFormatted: formatTokenValue(ethValue),
+          valueFormatted: formatTokenValue(nativeValue),
           icon: nativeIcon,
         })
     }
@@ -462,16 +508,17 @@ export async function fetchWalletPortfolio(
     // Sort tokens by value (descending)
     tokens.sort((a, b) => (b.value || 0) - (a.value || 0))
     
-    const ethPrice = isHyperliquid ? 0 : (tokens.find(t => t.symbol === 'ETH')?.price || 0)
-    const ethValue = parseFloat(ethBalance) * ethPrice
+    // Get native token value (HYPE for Hyperliquid, ETH otherwise)
+    const nativeToken = tokens.find(t => t.symbol === nativeSymbol)
+    const nativeTokenValue = nativeToken?.value || 0
     
     return {
       totalValue: totalValue.toString(),
       totalValueFormatted: formatTokenValue(totalValue),
       ethBalance,
       ethBalanceFormatted: formatTokenBalance(ethBalance, 18),
-      ethValue: ethValue.toString(),
-      ethValueFormatted: formatTokenValue(ethValue),
+      ethValue: nativeTokenValue.toString(),
+      ethValueFormatted: formatTokenValue(nativeTokenValue),
       tokens,
       nfts: [], // NFT fetching would be implemented separately
       isLoading: false,

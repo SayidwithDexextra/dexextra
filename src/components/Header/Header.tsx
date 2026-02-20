@@ -62,7 +62,7 @@ export default function Header() {
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false)
   const profileTriggerRef = useRef<HTMLButtonElement | null>(null)
-  const { walletData } = useWallet()
+  const { walletData, portfolio } = useWallet()
   const router = useRouter()
   const [hasMounted, setHasMounted] = useState(false)
   const [vaultEvent, setVaultEvent] = useState<any | null>(null)
@@ -694,7 +694,7 @@ export default function Header() {
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         walletAddress={walletData.address ? `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}` : 'Not connected'}
-        balance={walletData.balance ? `${parseFloat(walletData.balance).toFixed(4)} ETH` : '$0.00'}
+        balance={`${portfolio.ethBalanceFormatted || '0.00'} ETH`}
         isConnected={walletData.isConnected}
         profilePhotoUrl={walletData.userProfile?.profile_image_url}
         anchorRef={profileTriggerRef as any}

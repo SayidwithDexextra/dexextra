@@ -20,10 +20,10 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
 
   const tokens = useMemo(() => portfolio.tokens || [], [portfolio.tokens])
   const totalValue = parseFloat(portfolio.totalValue) || tokens.reduce((sum: number, token: TokenBalance) => sum + (token.value || 0), 0)
-  // Hyperliquid native token labeling
-  const nativeSymbol = walletData.chainId === 999 ? 'HYPE' : 'ETH'
+  // Arbitrum ETH display
+  const nativeSymbol = 'ETH'
   const nativeBalance = portfolio.ethBalanceFormatted || '0.00'
-  const networkLabel = walletData.chainId === 999 ? 'Hyperliquid' : 'Connected'
+  const networkLabel = 'Arbitrum'
 
   // Debug logging
   useEffect(() => {
