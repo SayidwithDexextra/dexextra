@@ -1088,16 +1088,17 @@ export const connectBinance = async (): Promise<WalletData> => {
   }
 }
 
-// Connect via WalletConnect
+// Connect via WalletConnect - implemented via Wagmi connector
+// This function is called from WalletModal, but the actual connection
+// is handled by Wagmi's WalletConnect connector in the WalletModal component
 export const connectWalletConnect = async (): Promise<WalletData> => {
-  try {
-    // This is a simplified implementation
-    // In a real app, you'd use the WalletConnect SDK
-    alert('WalletConnect integration would require installing @walletconnect/web3-provider package. For now, please use a browser extension wallet.')
-    throw new Error('WalletConnect integration not implemented yet')
-  } catch (error: any) {
-    throw new Error(`WalletConnect connection failed: ${error.message}`)
+  // WalletConnect connections are now handled directly in WalletModal
+  // via Wagmi's useConnect hook. This function serves as a fallback
+  // that triggers the WalletConnect modal through a custom event.
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('walletconnect:open'))
   }
+  throw new Error('WalletConnect connection initiated - handled by Wagmi')
 }
 
 // Connect to generic Web3 provider

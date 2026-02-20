@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import useWallet from '@/hooks/useWallet'
 import { debugWalletDetection } from '@/lib/wallet'
+import { useConnect, useAccount, useDisconnect } from 'wagmi'
+import { WALLETCONNECT_PROJECT_ID } from '@/lib/wagmiConfig'
 
 interface WalletModalProps {
   isOpen: boolean
@@ -120,6 +122,15 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
 
+  // Wagmi hooks for WalletConnect
+  const { connect: wagmiConnect, connectors } = useConnect()
+  const { isConnected: wagmiConnected } = useAccount()
+  const { disconnect: wagmiDisconnect } = useDisconnect()
+
+  // Find WalletConnect connector from Wagmi
+  const walletConnectConnector = connectors.find(c => c.id === 'walletConnect')
+  const isWalletConnectAvailable = !!walletConnectConnector && !!WALLETCONNECT_PROJECT_ID
+
   // Mirror SearchModal/DepositTokenSelect animation behavior (fade/scale in)
   useEffect(() => {
     if (isOpen) {
@@ -128,6 +139,14 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
       setIsAnimating(false)
     }
   }, [isOpen])
+
+  // Close modal when Wagmi connection succeeds (for WalletConnect)
+  useEffect(() => {
+    if (wagmiConnected && connecting === 'WalletConnect') {
+      setConnecting(null)
+      onClose()
+    }
+  }, [wagmiConnected, connecting, onClose])
 
   // Preconnect + preload MetaMask icon so it is cached before modal opens.
   // This runs even when `isOpen` is false (component can remain mounted).
@@ -152,10 +171,32 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
     img.src = METAMASK_ICON_URL
   }, [])
 
+  // Handle WalletConnect connection via Wagmi
+  const handleWalletConnect = useCallback(async () => {
+    if (!walletConnectConnector) {
+      console.error('WalletConnect connector not available')
+      return
+    }
+    
+    setConnecting('WalletConnect')
+    try {
+      await wagmiConnect({ connector: walletConnectConnector })
+    } catch (error: unknown) {
+      console.error('WalletConnect connection failed:', error)
+      setConnecting(null)
+    }
+  }, [walletConnectConnector, wagmiConnect])
+
   if (!isOpen) return null
   if (typeof document === 'undefined') return null
 
   const handleConnect = async (providerName: string) => {
+    // Special handling for WalletConnect - use Wagmi
+    if (providerName === 'WalletConnect') {
+      handleWalletConnect()
+      return
+    }
+
     setConnecting(providerName)
     try {
       await connect(providerName)
@@ -163,7 +204,6 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
     } catch (error: unknown) {
       console.error('Connection failed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      // Use a more sophisticated error display instead of alert
       console.error(`Connection failed: ${errorMessage}`)
     } finally {
       setConnecting(null)
