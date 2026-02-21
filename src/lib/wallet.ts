@@ -1,6 +1,7 @@
 import { WalletData, WalletProvider } from '@/types/wallet'
 import { env } from '@/lib/env'
 import { getReadProvider as getUnifiedReadProvider, getChainId as getConfiguredChainId, getRpcUrl as getConfiguredRpcUrl } from '@/lib/network'
+import { getEip6963ProviderByUuid, getEip6963Providers, startEip6963Discovery } from '@/lib/eip6963'
 import { ethers } from 'ethers'
 // Removed networks import - smart contract functionality deleted
 
@@ -13,6 +14,7 @@ export interface EthereumProvider {
   isRabby?: boolean
   isBraveWallet?: boolean
   isFrame?: boolean
+  disconnect?: () => Promise<void> | void
   request: (args: { method: string; params?: any[] }) => Promise<any>
   on: (event: string, callback: (...args: any[]) => void) => void
   removeListener: (event: string, callback: (...args: any[]) => void) => void
@@ -22,6 +24,37 @@ export interface EthereumProvider {
 // We keep track of the wallet the user explicitly chose so subsequent calls
 // (balance, chainId, event listeners, tx signing, etc.) use the intended provider.
 let activeEthereumProvider: EthereumProvider | null = null
+
+// When a user explicitly logs out, we disable auto-reconnect on page load.
+// This prevents "silent re-login" via `eth_accounts` even if the wallet remains authorized.
+const AUTO_CONNECT_DISABLED_KEY = 'wallet:autoConnectDisabled'
+
+export const isWalletAutoConnectDisabled = (): boolean => {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(AUTO_CONNECT_DISABLED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export const clearWalletAutoConnectDisabled = (): void => {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(AUTO_CONNECT_DISABLED_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+function setWalletAutoConnectDisabled(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(AUTO_CONNECT_DISABLED_KEY, '1')
+  } catch {
+    // ignore
+  }
+}
 
 export const getActiveEthereumProvider = (): EthereumProvider | null => activeEthereumProvider
 
@@ -524,39 +557,89 @@ export const detectWalletProviders = (): WalletProvider[] => {
     // Return default providers for SSR
     return getDefaultWalletList()
   }
+
+  // Start EIP-6963 discovery (multi injected providers).
+  // This populates a cache asynchronously; subsequent calls will pick up newly announced wallets.
+  startEip6963Discovery()
+
+  const eip6963 = getEip6963Providers()
+
+  if (eip6963.length > 0) {
+    // If multiple wallets announce the same display name, disambiguate with rdns.
+    const nameCounts = new Map<string, number>()
+    for (const { info } of eip6963) {
+      nameCounts.set(info.name, (nameCounts.get(info.name) ?? 0) + 1)
+    }
+
+    for (const { info } of eip6963) {
+      const displayName =
+        (nameCounts.get(info.name) ?? 0) > 1 ? `${info.name} (${info.rdns})` : info.name
+
+      providers.push({
+        id: `eip6963:${info.uuid}`,
+        name: displayName,
+        icon: '🧩',
+        iconUrl: info.icon,
+        rdns: info.rdns,
+        kind: 'injected',
+        isInstalled: true,
+        connect: () => connectEip6963Injected(info.uuid),
+        disconnect: () => disconnect(),
+      })
+    }
+
+    // Fallback for wallets that don't implement EIP-6963 but still inject `window.ethereum`.
+    if ((window as any).ethereum) {
+      providers.push({
+        id: 'legacy:injected',
+        name: 'Browser Wallet (Legacy)',
+        icon: '🧩',
+        kind: 'static',
+        isInstalled: true,
+        connect: () => connectGeneric(),
+        disconnect: () => disconnect(),
+      })
+    }
+  } else {
+    // Fallback to heuristic-based static wallet detection when EIP-6963 is not available.
   
-  // Define all possible wallets (Trust Wallet removed due to provider conflicts)
-  const walletConfigs = [
-    { name: 'MetaMask', icon: '🦊', connect: connectMetaMask },
-    { name: 'Coinbase Wallet', icon: '🔵', connect: connectCoinbase },
-    { name: 'Phantom', icon: '👻', connect: connectPhantom },
-    { name: 'Zerion', icon: '⚡', connect: connectZerion },
-    { name: 'Rabby', icon: '🐰', connect: connectRabby },
-    { name: 'Rainbow', icon: '🌈', connect: connectRainbow },
-    { name: 'Frame', icon: '🖼️', connect: connectFrame },
-    { name: 'Talisman', icon: '🔮', connect: connectTalisman },
-    { name: 'SubWallet', icon: '🌊', connect: connectSubWallet },
-    { name: 'OKX Wallet', icon: '⭕', connect: connectOKX },
-    { name: 'Binance Wallet', icon: '🟡', connect: connectBinance },
-  ]
-  
-  // Check each wallet
-  walletConfigs.forEach(wallet => {
-    const isInstalled = isWalletInstalled(wallet.name)
-    
-    providers.push({
-      name: wallet.name,
-      icon: wallet.icon,
-      isInstalled,
-      connect: isInstalled ? wallet.connect : () => Promise.reject(new Error(`${wallet.name} not installed`)),
-      disconnect: () => disconnect(),
+    // Define all possible wallets (Trust Wallet removed due to provider conflicts)
+    const walletConfigs = [
+      { id: 'static:metamask', name: 'MetaMask', icon: '🦊', connect: connectMetaMask },
+      { id: 'static:coinbase', name: 'Coinbase Wallet', icon: '🔵', connect: connectCoinbase },
+      { id: 'static:phantom', name: 'Phantom', icon: '👻', connect: connectPhantom },
+      { id: 'static:zerion', name: 'Zerion', icon: '⚡', connect: connectZerion },
+      { id: 'static:rabby', name: 'Rabby', icon: '🐰', connect: connectRabby },
+      { id: 'static:rainbow', name: 'Rainbow', icon: '🌈', connect: connectRainbow },
+      { id: 'static:frame', name: 'Frame', icon: '🖼️', connect: connectFrame },
+      { id: 'static:talisman', name: 'Talisman', icon: '🔮', connect: connectTalisman },
+      { id: 'static:subwallet', name: 'SubWallet', icon: '🌊', connect: connectSubWallet },
+      { id: 'static:okx', name: 'OKX Wallet', icon: '⭕', connect: connectOKX },
+      { id: 'static:binance', name: 'Binance Wallet', icon: '🟡', connect: connectBinance },
+    ]
+
+    // Check each wallet
+    walletConfigs.forEach(wallet => {
+      const isInstalled = isWalletInstalled(wallet.name)
+      
+      providers.push({
+        id: wallet.id,
+        name: wallet.name,
+        icon: wallet.icon,
+        kind: 'static',
+        isInstalled,
+        connect: isInstalled ? wallet.connect : () => Promise.reject(new Error(`${wallet.name} not installed`)),
+        disconnect: () => disconnect(),
+      })
     })
-  })
+  }
   
   // Add WalletConnect (always available as it's web-based)
   providers.push({
+    id: 'walletconnect',
     name: 'WalletConnect',
     icon: '🔗',
+    kind: 'walletconnect',
     isInstalled: true,
     connect: () => connectWalletConnect(),
     disconnect: () => disconnect(),
@@ -575,9 +658,13 @@ export const detectWalletProviders = (): WalletProvider[] => {
     if (!a.isInstalled && b.isInstalled) return 1
     
     // Then by popularity order
-    const aIndex = popularOrder.indexOf(a.name)
-    const bIndex = popularOrder.indexOf(b.name)
-    return aIndex - bIndex
+    const baseA = a.name.replace(/\s*\([^)]+\)\s*$/, '')
+    const baseB = b.name.replace(/\s*\([^)]+\)\s*$/, '')
+    const aIndex = popularOrder.indexOf(baseA)
+    const bIndex = popularOrder.indexOf(baseB)
+    const safeA = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex
+    const safeB = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex
+    return safeA - safeB
   })
 }
 
@@ -594,12 +681,110 @@ const getDefaultWalletList = (): WalletProvider[] => {
   ]
   
   return defaultWallets.map(wallet => ({
+    id: `ssr:${wallet.name.toLowerCase().replace(/\s+/g, '-')}`,
     name: wallet.name,
     icon: wallet.icon,
+    kind: 'static',
     isInstalled: false,
     connect: () => Promise.reject(new Error(`${wallet.name} not available in SSR`)),
     disconnect: () => Promise.resolve(),
   }))
+}
+
+const withTimeout = <T>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms)
+    promise
+      .then((val) => {
+        clearTimeout(t)
+        resolve(val)
+      })
+      .catch((err) => {
+        clearTimeout(t)
+        reject(err)
+      })
+  })
+}
+
+const connectEip6963Injected = async (uuid: string): Promise<WalletData> => {
+  if (typeof window === 'undefined') {
+    throw new Error('Window object not available')
+  }
+
+  const detail = getEip6963ProviderByUuid(uuid)
+  if (!detail) {
+    throw new Error('Injected wallet not detected. Refresh the page and try again.')
+  }
+
+  const provider = detail.provider as any as EthereumProvider
+  if (!provider || typeof provider.request !== 'function') {
+    throw new Error('Selected wallet provider does not support EIP-1193 requests')
+  }
+
+  const previousProvider = getActiveEthereumProvider()
+  setActiveEthereumProvider(provider)
+
+  try {
+    // If accounts already connected, short-circuit without prompting
+    try {
+      const existingAccounts = await provider.request({ method: 'eth_accounts' })
+      if (Array.isArray(existingAccounts) && existingAccounts.length > 0) {
+        const address = existingAccounts[0]
+        const balance = await getBalance(address, provider)
+        const chainId = await getChainId(provider)
+        return {
+          address,
+          balance,
+          isConnected: true,
+          isConnecting: false,
+          chainId,
+          avatar: generateAvatar(address),
+        }
+      }
+    } catch {
+      // continue to request accounts
+    }
+
+    const accounts = await withTimeout(
+      provider.request({ method: 'eth_requestAccounts' }),
+      12000,
+      'Timed out waiting for the wallet. Open the extension and approve the request.'
+    )
+
+    if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+      throw new Error('No accounts found or user rejected the request')
+    }
+
+    const address = accounts[0]
+    if (!address || typeof address !== 'string' || !address.startsWith('0x')) {
+      throw new Error('Invalid address format received from wallet')
+    }
+
+    const balance = await getBalance(address, provider)
+    const chainId = await getChainId(provider)
+
+    return {
+      address,
+      balance,
+      isConnected: true,
+      isConnecting: false,
+      chainId,
+      avatar: generateAvatar(address),
+    }
+  } catch (error: any) {
+    setActiveEthereumProvider(previousProvider)
+
+    if (error?.code === 4001) {
+      throw new Error('User rejected the connection request')
+    }
+    if (error?.code === -32002) {
+      throw new Error('Wallet is already processing a request. Open the extension and complete the approval.')
+    }
+    if (/timed out/i.test(String(error?.message))) {
+      throw error
+    }
+    throw new Error(`Failed to connect to wallet: ${error?.message || 'Unknown error'}`)
+  }
 }
 
 // Enhanced MetaMask connection with improved provider handling
@@ -647,22 +832,6 @@ export const connectMetaMask = async (): Promise<WalletData> => {
       console.log('[connectMetaMask] Error checking existing accounts:', existingError)
     }
 
-    // Guard against providers that never resolve by applying a timeout
-    const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> => {
-      return new Promise<T>((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('Timed out waiting for MetaMask. Open the extension and approve the request.')), ms)
-        promise
-          .then((val) => {
-            clearTimeout(t)
-            resolve(val)
-          })
-          .catch((err) => {
-            clearTimeout(t)
-            reject(err)
-          })
-      })
-    }
-
     // Use the specific MetaMask provider
     console.log('[connectMetaMask] Requesting accounts via eth_requestAccounts...')
     let accounts: string[] | undefined
@@ -670,6 +839,8 @@ export const connectMetaMask = async (): Promise<WalletData> => {
       accounts = await withTimeout(
         provider.request({ method: 'eth_requestAccounts' }),
         12000
+        ,
+        'Timed out waiting for MetaMask. Open the extension and approve the request.'
       )
       console.log('[connectMetaMask] eth_requestAccounts returned:', accounts)
     } catch (primaryError: any) {
@@ -687,6 +858,8 @@ export const connectMetaMask = async (): Promise<WalletData> => {
               params: [{ eth_accounts: {} }],
             }),
             12000
+            ,
+            'Timed out waiting for MetaMask. Open the extension and approve the request.'
           )
           accounts = await provider.request({ method: 'eth_accounts' })
           console.log('[connectMetaMask] wallet_requestPermissions returned accounts:', accounts)
@@ -1088,17 +1261,70 @@ export const connectBinance = async (): Promise<WalletData> => {
   }
 }
 
-// Connect via WalletConnect - implemented via Wagmi connector
-// This function is called from WalletModal, but the actual connection
-// is handled by Wagmi's WalletConnect connector in the WalletModal component
+// Connect via WalletConnect
 export const connectWalletConnect = async (): Promise<WalletData> => {
-  // WalletConnect connections are now handled directly in WalletModal
-  // via Wagmi's useConnect hook. This function serves as a fallback
-  // that triggers the WalletConnect modal through a custom event.
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('walletconnect:open'))
+  if (typeof window === 'undefined') {
+    throw new Error('Window object not available')
   }
-  throw new Error('WalletConnect connection initiated - handled by Wagmi')
+
+  const projectId = env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+  if (!projectId) {
+    throw new Error('WalletConnect project ID missing (set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID)')
+  }
+
+  const previousProvider = getActiveEthereumProvider()
+
+  try {
+    const mod = await import('@walletconnect/ethereum-provider')
+    const EthereumProviderCtor =
+      (mod as any).EthereumProvider ?? (mod as any).default ?? (mod as any)
+
+    const chainId = getConfiguredChainId()
+    const rpcUrl = getConfiguredRpcUrl()
+
+    const metadata = {
+      name: 'Dexetera',
+      description: 'DeFi Unlocked - Advanced DeFi Trading Platform',
+      url: window.location.origin,
+      icons: ['https://dexetera.win/Dexicon/LOGO-Dexetera-03.png'],
+    }
+
+    const wcProvider = (await EthereumProviderCtor.init({
+      projectId,
+      metadata,
+      showQrModal: true,
+      optionalChains: [chainId],
+      rpcMap: rpcUrl ? { [chainId]: rpcUrl } : undefined,
+    })) as EthereumProvider & { enable?: () => Promise<string[]> }
+
+    // WalletConnect provider isn't injected, so we must make it the active provider.
+    setActiveEthereumProvider(wcProvider)
+
+    // Trigger account access request (opens QR modal).
+    const accounts =
+      (await wcProvider.enable?.()) ??
+      (await wcProvider.request({ method: 'eth_requestAccounts' }))
+
+    if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+      throw new Error('No accounts returned from WalletConnect')
+    }
+
+    const address = accounts[0]
+    const balance = await getBalance(address, wcProvider)
+    const connectedChainId = await getChainId(wcProvider)
+
+    return {
+      address,
+      balance,
+      isConnected: true,
+      isConnecting: false,
+      chainId: connectedChainId,
+      avatar: generateAvatar(address),
+    }
+  } catch (error: any) {
+    setActiveEthereumProvider(previousProvider)
+    throw new Error(`WalletConnect connection failed: ${error?.message || 'Unknown error'}`)
+  }
 }
 
 // Connect to generic Web3 provider
@@ -1136,6 +1362,16 @@ export const connectGeneric = async (): Promise<WalletData> => {
 
 // Disconnect wallet
 export const disconnect = async (): Promise<void> => {
+  // Attempt to close WalletConnect sessions, if that's the active provider.
+  try {
+    const p = activeEthereumProvider as any
+    if (p && typeof p.disconnect === 'function') {
+      await p.disconnect()
+    }
+  } catch (e) {
+    console.warn('Wallet disconnect cleanup failed:', e)
+  }
+
   // Clear any stored wallet data
   if (typeof window !== 'undefined') {
     localStorage.removeItem('walletAddress')
@@ -1143,6 +1379,27 @@ export const disconnect = async (): Promise<void> => {
   }
 
   setActiveEthereumProvider(null)
+}
+
+// Hard logout clears all local/session storage and disables auto-reconnect.
+// Use this when the user clicks "Logout" in the UI.
+export const hardLogout = async (): Promise<void> => {
+  try {
+    await disconnect()
+  } finally {
+    if (typeof window !== 'undefined') {
+      try {
+        // Clear all cached UI/app state on this origin.
+        window.localStorage.clear()
+      } catch {}
+      try {
+        window.sessionStorage.clear()
+      } catch {}
+
+      // Keep a single flag to prevent silent auto-login on reload.
+      setWalletAutoConnectDisabled()
+    }
+  }
 }
 
 // Get account balance (mock implementation - replace with actual Web3 calls)
@@ -1310,8 +1567,24 @@ export const getChainId = async (ethereumProvider?: EthereumProvider): Promise<n
 
 // Check if wallet is already connected
 export const checkConnection = async (): Promise<WalletData | null> => {
+  // If the user explicitly logged out, do not silently reconnect on page load.
+  if (isWalletAutoConnectDisabled()) {
+    return null
+  }
+
   const candidates: EthereumProvider[] = []
   if (activeEthereumProvider) candidates.push(activeEthereumProvider)
+
+  // Prefer explicit EIP-6963 discovered providers when available.
+  try {
+    startEip6963Discovery()
+    for (const d of getEip6963Providers()) {
+      if (d?.provider) candidates.push(d.provider as any as EthereumProvider)
+    }
+  } catch {
+    // ignore
+  }
+
   candidates.push(...getInjectedProviders())
 
   // Deduplicate by reference

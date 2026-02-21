@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet'
+import { getActiveEthereumProvider, isWalletAutoConnectDisabled, clearWalletAutoConnectDisabled, type EthereumProvider } from '@/lib/wallet'
 
 export function useWalletAddress() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
@@ -11,6 +11,7 @@ export function useWalletAddress() {
   // Check if wallet is already connected
   useEffect(() => {
     async function checkConnection() {
+      if (isWalletAutoConnectDisabled()) return
       const provider: EthereumProvider | undefined =
         (getActiveEthereumProvider() ?? (typeof window !== 'undefined' ? window.ethereum : undefined)) || undefined
 
@@ -58,6 +59,8 @@ export function useWalletAddress() {
   }, [])
 
   const connectWallet = async () => {
+    // Explicit user action: allow connect again.
+    clearWalletAutoConnectDisabled()
     const provider: EthereumProvider | undefined =
       (getActiveEthereumProvider() ?? (typeof window !== 'undefined' ? window.ethereum : undefined)) || undefined
 

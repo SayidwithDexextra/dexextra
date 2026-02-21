@@ -13,7 +13,6 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useWallet } from '@/hooks/useWallet'
-import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
 import { usePositions } from '@/hooks/usePositions'
 import { CHAIN_CONFIG } from '@/lib/contractConfig'
@@ -86,15 +85,51 @@ function safeParseNumber(n: any): number | null {
   return Number.isFinite(v) ? v : null
 }
 
+function normalizeSnapshot(raw: any): PortfolioSnapshot | null {
+  if (!raw || raw.version !== 1) return null
+  const chainId = raw.chainId
+  const walletAddress = raw.walletAddress
+  if (!chainId || !walletAddress) return null
+
+  // Back-compat: older snapshots used `unrealizedPnL` casing.
+  const updatedAt = safeParseNumber(raw.updatedAt)
+  const availableCash = safeParseNumber(raw.availableCash)
+  const unrealizedPnl = safeParseNumber(raw.unrealizedPnl ?? raw.unrealizedPnL)
+  const portfolioValue = safeParseNumber(raw.portfolioValue)
+  const totalCollateral = safeParseNumber(raw.totalCollateral)
+  const realizedPnl = safeParseNumber(raw.realizedPnl)
+
+  if (
+    updatedAt === null ||
+    availableCash === null ||
+    unrealizedPnl === null ||
+    portfolioValue === null ||
+    totalCollateral === null ||
+    realizedPnl === null
+  ) {
+    return null
+  }
+
+  return {
+    version: 1,
+    chainId: String(chainId),
+    walletAddress: String(walletAddress),
+    updatedAt,
+    availableCash,
+    unrealizedPnl,
+    portfolioValue,
+    totalCollateral,
+    realizedPnl,
+  }
+}
+
 function loadFromSession(key: string): PortfolioSnapshot | null {
   if (typeof window === 'undefined') return null
   try {
     const raw = window.sessionStorage.getItem(key)
     if (!raw) return null
     const parsed = JSON.parse(raw) as any
-    if (!parsed || parsed.version !== 1) return null
-    if (!parsed.walletAddress || !parsed.chainId) return null
-    return parsed as PortfolioSnapshot
+    return normalizeSnapshot(parsed)
   } catch {
     return null
   }
@@ -147,7 +182,6 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
   const isConnected = Boolean(walletData?.isConnected && walletAddress)
 
   // Single source hooks
-  const core = useCoreVault(walletAddress || undefined)
   const summary = usePortfolioSummary(walletAddress, {
     enabled: isConnected,
     refreshIntervalMs: 15_000,
@@ -205,10 +239,17 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
     const updatedAt = safeParseNumber((summary.summary as any)?.updatedAt)
     const availableCash = safeParseNumber((summary.summary as any)?.availableCash)
     const unrealizedPnl = safeParseNumber((summary.summary as any)?.unrealizedPnl)
-    if (updatedAt === null || availableCash === null || unrealizedPnl === null) return null
-
-    const totalCollateral = safeParseNumber(core.totalCollateral) ?? 0
-    const realizedPnl = safeParseNumber(core.realizedPnL) ?? 0
+    const totalCollateral = safeParseNumber((summary.summary as any)?.totalCollateral)
+    const realizedPnl = safeParseNumber((summary.summary as any)?.realizedPnl)
+    if (
+      updatedAt === null ||
+      availableCash === null ||
+      unrealizedPnl === null ||
+      totalCollateral === null ||
+      realizedPnl === null
+    ) {
+      return null
+    }
     const portfolioValue = totalCollateral + Math.max(0, realizedPnl) + unrealizedPnl
 
     return {
@@ -222,7 +263,7 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
       totalCollateral,
       realizedPnl,
     }
-  }, [chainId, core.realizedPnL, core.totalCollateral, isConnected, summary.summary, walletAddress])
+  }, [chainId, isConnected, summary.summary, walletAddress])
 
   // Persist fresh snapshots (and publish via context state).
   useEffect(() => {
@@ -272,18 +313,15 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
       summary.refresh()
     } catch {}
     try {
-      core.refresh?.()
-    } catch {}
-    try {
       // Trigger a positions refresh window (usePositions listens to this event)
       if (typeof window !== 'undefined' && walletAddress) {
         window.dispatchEvent(new CustomEvent('positionsRefreshRequested', { detail: { traceId: `ui:positions:refresh:${Date.now()}` } }))
       }
     } catch {}
-  }, [core, summary])
+  }, [summary, walletAddress])
 
   const isReady = Boolean(isConnected && snapshot && snapshot.walletAddress?.toLowerCase() === String(walletAddress || '').toLowerCase())
-  const isLoading = Boolean(isConnected && !isReady && (summary.isLoading || core.isLoading))
+  const isLoading = Boolean(isConnected && !isReady && summary.isLoading)
 
   const positionsIsReady = Boolean(
     isConnected &&

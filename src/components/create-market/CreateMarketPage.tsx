@@ -159,7 +159,7 @@ export const CreateMarketPage = () => {
 
   const isUserRejected = (e: any): boolean => {
     if (!e) return false;
-    // Common shapes across EIP-1193, ethers v5/v6, wagmi/viem
+    // Common shapes across EIP-1193 and ethers v5/v6
     const code = (e as any)?.code ?? (e as any)?.error?.code ?? (e as any)?.cause?.code;
     const name = (e as any)?.name ?? (e as any)?.cause?.name ?? (e as any)?.error?.name;
     const rawMessage =
@@ -172,7 +172,7 @@ export const CreateMarketPage = () => {
     return (
       code === 4001 || // EIP-1193 user rejected
       code === 'ACTION_REJECTED' || // ethers v6
-      name === 'UserRejectedRequestError' || // wagmi/viem
+      name === 'UserRejectedRequestError' ||
       msg.includes('user rejected') ||
       msg.includes('user denied') ||
       msg.includes('rejected the request') ||
@@ -456,7 +456,7 @@ export const CreateMarketPage = () => {
               symbol,
               name: `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`,
               description: `OrderBook market for ${symbol}`,
-              category: Array.isArray(tags) && tags.length ? tags[0] : 'CUSTOM',
+              category: Array.isArray(tags) && tags.length ? tags : ['CUSTOM'],
               decimals: 6,
               minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
               settlementDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,

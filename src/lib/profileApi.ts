@@ -21,13 +21,15 @@ export class ProfileApi {
     displayName?: string
   ): Promise<UserProfile> {
     try {
+      // Normalize wallet address to lowercase to prevent case-sensitivity duplicates
+      const normalizedAddress = walletAddress.toLowerCase();
       const response = await fetch('/api/profile', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          wallet_address: walletAddress,
+          wallet_address: normalizedAddress,
           username,
           display_name: displayName,
         }),
@@ -55,7 +57,9 @@ export class ProfileApi {
    */
   static async getProfile(walletAddress: string): Promise<PublicUserProfile | null> {
     try {
-      const response = await fetch(`/api/profile?wallet=${encodeURIComponent(walletAddress)}`);
+      // Normalize wallet address to lowercase to prevent case-sensitivity issues
+      const normalizedAddress = walletAddress.toLowerCase();
+      const response = await fetch(`/api/profile?wallet=${encodeURIComponent(normalizedAddress)}`);
       
       if (response.status === 404) {
         return null; // Profile doesn't exist
@@ -93,13 +97,15 @@ export class ProfileApi {
         }
       }
 
+      // Normalize wallet address to lowercase to prevent case-sensitivity issues
+      const normalizedAddress = walletAddress.toLowerCase();
       const response = await fetch('/api/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          wallet_address: walletAddress,
+          wallet_address: normalizedAddress,
           ...updates,
         }),
       });
@@ -181,8 +187,10 @@ export class ProfileApi {
    */
   static async deactivateProfile(walletAddress: string): Promise<void> {
     try {
+      // Normalize wallet address to lowercase
+      const normalizedAddress = walletAddress.toLowerCase();
       const response = await fetch(
-        `/api/profile?wallet=${encodeURIComponent(walletAddress)}`,
+        `/api/profile?wallet=${encodeURIComponent(normalizedAddress)}`,
         {
           method: 'DELETE',
         }
@@ -220,10 +228,13 @@ export class ProfileApi {
         throw new Error('File too large. Maximum size is 10MB.');
       }
 
+      // Normalize wallet address to lowercase
+      const normalizedAddress = walletAddress.toLowerCase();
+
       // Create form data
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('wallet_address', walletAddress);
+      formData.append('wallet_address', normalizedAddress);
       formData.append('type', type);
 
       const response = await fetch('/api/profile/upload', {
@@ -256,8 +267,10 @@ export class ProfileApi {
     type: 'profile' | 'banner' = 'profile'
   ): Promise<UserProfile> {
     try {
+      // Normalize wallet address to lowercase
+      const normalizedAddress = walletAddress.toLowerCase();
       const response = await fetch(
-        `/api/profile/upload?wallet_address=${encodeURIComponent(walletAddress)}&type=${type}`,
+        `/api/profile/upload?wallet_address=${encodeURIComponent(normalizedAddress)}&type=${type}`,
         {
           method: 'DELETE',
         }

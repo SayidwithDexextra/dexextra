@@ -18,7 +18,6 @@ export interface MarketToolbarFilterSettings {
   sortBy: MarketToolbarSortOption;
   frequency: MarketToolbarFrequencyOption;
   status: MarketToolbarStatusOption;
-  hideCrypto: boolean;
 }
 
 export interface MarketToolbarProps {
@@ -39,7 +38,6 @@ const defaultAdvancedFilters: MarketToolbarFilterSettings = {
   sortBy: '24h_volume',
   frequency: 'all',
   status: 'active',
-  hideCrypto: false,
 };
 
 interface DropdownOption<TValue extends string> {
@@ -105,11 +103,6 @@ const statusOptions: DropdownOption<MarketToolbarStatusOption>[] = [
   { label: 'Settled', value: 'settled' },
 ];
 
-type BooleanFilterKey = 'hideCrypto';
-
-const booleanFilterToggles: { key: BooleanFilterKey; label: string }[] = [
-  { key: 'hideCrypto', label: 'Hide crypto?' },
-];
 
 interface ToolbarDropdownProps<TValue extends string> {
   label: string;
@@ -520,24 +513,6 @@ const MarketToolbar: React.FC<MarketToolbarProps> = ({
                   }
                 />
               </div>
-
-              {booleanFilterToggles.map((toggle) => (
-                <label key={toggle.key} className={styles.filterToggle}>
-                  <span>{toggle.label}</span>
-                  <input
-                    suppressHydrationWarning
-                    type="checkbox"
-                    className={styles.filterToggleInput}
-                    checked={activeAdvancedFilters[toggle.key]}
-                    onChange={(event) =>
-                      updateAdvancedFilters({ [toggle.key]: event.target.checked } as Pick<
-                        MarketToolbarFilterSettings,
-                        BooleanFilterKey
-                      >)
-                    }
-                  />
-                </label>
-              ))}
           </div>
         </div>
       </div>

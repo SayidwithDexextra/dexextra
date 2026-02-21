@@ -14,8 +14,17 @@ import type { UserProfile as FullUserProfile } from './userProfile'
 export type UserProfile = FullUserProfile
 
 export interface WalletProvider {
+  // Stable unique identifier (do not display to users).
+  // Examples: "eip6963:<uuid>", "walletconnect", "static:metamask"
+  id: string
   name: string
   icon: string
+  // Optional icon URL (often a data: URI from EIP-6963)
+  iconUrl?: string
+  // Optional wallet origin identifier from EIP-6963 (reverse-DNS)
+  rdns?: string
+  // Optional classification (useful for UI ordering / debugging)
+  kind?: 'injected' | 'walletconnect' | 'static'
   isInstalled: boolean
   connect: () => Promise<void | WalletData>
   disconnect: () => Promise<void>
@@ -61,7 +70,7 @@ export interface WalletContextType {
   walletData: WalletData
   portfolio: WalletPortfolio
   providers: WalletProvider[]
-  connect: (providerName?: string) => Promise<void>
+  connect: (providerId?: string) => Promise<void>
   disconnect: () => Promise<void>
   refreshBalance: () => Promise<void>
   refreshPortfolio: () => Promise<void>

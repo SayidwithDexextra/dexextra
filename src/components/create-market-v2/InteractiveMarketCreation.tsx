@@ -323,7 +323,7 @@ function AssistantResponseBubble({
   }, [text]);
 
   return (
-    <div className="rounded-2xl border border-white/8 bg-[#0F0F0F] px-4 py-3 text-[13px] leading-relaxed text-white/85 shadow-lg whitespace-pre-wrap">
+    <div className="rounded-2xl border border-white/8 bg-[#0F0F0F] px-4 py-3 text-[13px] leading-relaxed text-white/85 shadow-lg whitespace-pre-wrap w-[520px]">
       {isLoading && !displayedText ? (
         <span className="text-white/65">
           Thinking<span className="inline-block w-[1ch] animate-pulse">.</span>
@@ -428,143 +428,145 @@ function StepPanel({
 
   return (
     <div className={step === 'select_source' ? 'space-y-2' : 'space-y-4'}>
-      {/* Row 1: AI message on right side of page */}
+      {/* Row 1: AI message on left side of page (top) */}
       <div
         className={[
-          'flex justify-end transition-all duration-200 ease-out',
+          'flex justify-start transition-all duration-200 ease-out',
           isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0',
         ].join(' ')}
       >
         <div className="flex items-start gap-3 max-w-[520px]">
           <AssistantResponseBubble text={message} isLoading={isAssistantLoading} />
-          <div className="mt-1 shrink-0 flex flex-col items-end gap-2">
-            <button
-              type="button"
-              onClick={onStartOver}
-              className="text-[12px] text-white/55 hover:text-white/80 transition-colors"
-            >
-              Start over
-            </button>
-            {devTools ? <div className="relative">{devTools}</div> : null}
-          </div>
         </div>
       </div>
 
-      {/* Row 2: User input on left side of page */}
+      {/* Row 2: User input on right side of page (below) */}
       {showUserRow ? (
         <div
           className={[
-            'flex justify-start transition-all duration-200 ease-out delay-75',
+            'flex justify-end transition-all duration-200 ease-out delay-75',
             isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0',
           ].join(' ')}
         >
-          <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-full max-w-[520px]">
-            {!isInteractiveUserInput && step === 'select_source' ? (
-              <div>
-                <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
-                  Your prompt
+          <div className="flex items-start gap-3">
+            <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-[520px]">
+              {!isInteractiveUserInput && step === 'select_source' ? (
+                <div>
+                  <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
+                    Your prompt
+                  </div>
+                  <div className="mt-2 text-sm text-white/85 whitespace-pre-wrap">
+                    {userPrompt.trim()}
+                  </div>
                 </div>
-                <div className="mt-2 text-sm text-white/85 whitespace-pre-wrap">
-                  {userPrompt.trim()}
+              ) : null}
+
+              {step === 'clarify_metric' ? (
+                <div>
+                  <textarea
+                    ref={clarificationRef}
+                    value={metricClarification}
+                    onChange={(e) => onChangeMetricClarification(e.target.value)}
+                    onInput={() => resizeTextarea(clarificationRef.current)}
+                    onKeyDown={handleClarificationKeyDown}
+                    className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
+                    style={{ outline: 'none', boxShadow: 'none', minHeight: '2.5rem' }}
+                    rows={2}
+                    placeholder="Reply with a clarification (Shift+Enter for a new line)"
+                    autoFocus
+                  />
+                  <div className="mt-2 text-[11px] text-white/45">
+                    Press Enter to submit clarification
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            {step === 'clarify_metric' ? (
-              <div>
-                <textarea
-                  ref={clarificationRef}
-                  value={metricClarification}
-                  onChange={(e) => onChangeMetricClarification(e.target.value)}
-                  onInput={() => resizeTextarea(clarificationRef.current)}
-                  onKeyDown={handleClarificationKeyDown}
-                  className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
-                  style={{ outline: 'none', boxShadow: 'none', minHeight: '7.5rem' }}
-                  rows={4}
-                  placeholder="Reply with a clarification (Shift+Enter for a new line)"
-                  autoFocus
-                />
-                <div className="mt-2 text-[11px] text-white/45">
-                  Press Enter to submit clarification
+              {step === 'name' ? (
+                <div>
+                  <input
+                    value={marketName}
+                    onChange={(e) => onChangeName(e.target.value)}
+                    onKeyDown={handleNameKeyDown}
+                    className="w-full bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none"
+                    style={{ outline: 'none', boxShadow: 'none' }}
+                    placeholder="Market name"
+                    autoFocus
+                  />
+                  <div className="mt-2 text-[11px] text-white/45">
+                    Press Enter to continue
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            {step === 'name' ? (
-              <div>
-                <input
-                  value={marketName}
-                  onChange={(e) => onChangeName(e.target.value)}
-                  onKeyDown={handleNameKeyDown}
-                  className="w-full bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none"
-                  style={{ outline: 'none', boxShadow: 'none' }}
-                  placeholder="Market name"
-                  autoFocus
-                />
-                <div className="mt-2 text-[11px] text-white/45">
-                  Press Enter to continue
+              {step === 'description' ? (
+                <div>
+                  <textarea
+                    ref={descriptionRef}
+                    value={marketDescription}
+                    onChange={(e) => onChangeDescription(e.target.value)}
+                    onInput={() => resizeTextarea(descriptionRef.current)}
+                    onKeyDown={handleDescriptionKeyDown}
+                    className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
+                    style={{ outline: 'none', boxShadow: 'none', minHeight: '2.5rem' }}
+                    rows={2}
+                    placeholder="Market description"
+                    autoFocus
+                  />
+                  <div className="mt-2 text-[11px] text-white/45">
+                    Press Enter to continue
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            {step === 'description' ? (
-              <div>
-                <textarea
-                  ref={descriptionRef}
-                  value={marketDescription}
-                  onChange={(e) => onChangeDescription(e.target.value)}
-                  onInput={() => resizeTextarea(descriptionRef.current)}
-                  onKeyDown={handleDescriptionKeyDown}
-                  className="scrollbar-none w-full resize-none bg-transparent text-sm text-white placeholder:text-white/35 outline-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 border-none !outline-none overflow-y-hidden"
-                  style={{ outline: 'none', boxShadow: 'none', minHeight: '7.5rem' }}
-                  rows={4}
-                  placeholder="Market description"
-                  autoFocus
-                />
-                <div className="mt-2 text-[11px] text-white/45">
-                  Press Enter to continue
+              {step === 'icon' ? (
+                <div className="flex items-center gap-3">
+                  {/* Preview */}
+                  <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-white/8 bg-black/40">
+                    {iconPreviewUrl ? (
+                      <Image
+                        src={iconPreviewUrl}
+                        alt="Market icon preview"
+                        width={48}
+                        height={48}
+                        className="h-full w-full object-cover"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-white/10 to-white/5" />
+                    )}
+                  </div>
+
+                  <div className="flex-1 text-sm text-white/60">
+                    {iconPreviewUrl ? 'Icon selected' : 'Select an icon below'}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void onConfirmIcon()}
+                    disabled={!iconPreviewUrl || isIconSaving}
+                    className="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black transition-opacity disabled:opacity-50"
+                  >
+                    {isIconSaving ? 'Uploading…' : 'Done'}
+                  </button>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            {step === 'icon' ? (
-              <div className="flex items-center gap-3">
-                {/* Preview */}
-                <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-white/8 bg-black/40">
-                  {iconPreviewUrl ? (
-                    <Image
-                      src={iconPreviewUrl}
-                      alt="Market icon preview"
-                      width={48}
-                      height={48}
-                      className="h-full w-full object-cover"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-white/10 to-white/5" />
-                  )}
+              {step === 'complete' ? (
+                <div className="text-[12px] text-white/55">
+                  Review your market configuration below. When ready, confirm to generate the market parameters.
                 </div>
-
-                <div className="flex-1 text-sm text-white/60">
-                  {iconPreviewUrl ? 'Icon selected' : 'Select an icon below'}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void onConfirmIcon()}
-                  disabled={!iconPreviewUrl || isIconSaving}
-                  className="inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-medium text-black transition-opacity disabled:opacity-50"
-                >
-                  {isIconSaving ? 'Uploading…' : 'Done'}
-                </button>
-              </div>
-            ) : null}
-
-            {step === 'complete' ? (
-              <div className="text-[12px] text-white/55">
-                Review your market configuration below. When ready, confirm to generate the market parameters.
-              </div>
-            ) : null}
+              ) : null}
+            </div>
+            <div className="mt-1 shrink-0 flex flex-col items-end gap-2">
+              <button
+                type="button"
+                onClick={onStartOver}
+                className="text-[12px] text-white/55 hover:text-white/80 transition-colors"
+              >
+                Start over
+              </button>
+              {devTools ? <div className="relative">{devTools}</div> : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -1021,6 +1023,61 @@ export function InteractiveMarketCreation() {
         url: 'https://pyth.network/price-feeds',
         authority: 'Pyth',
         confidence: 0.89,
+      },
+    ],
+  };
+
+  const DEV_SELECT_SOURCE_MANY_PRESET: NonNullable<MetricDiscoveryResponse['sources']> = {
+    primary_source: {
+      url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+      authority: 'CoinGecko',
+      confidence: 0.95,
+    },
+    secondary_sources: [
+      {
+        url: 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT',
+        authority: 'Binance',
+        confidence: 0.92,
+      },
+      {
+        url: 'https://data.chain.link/ethereum/mainnet/crypto-usd/btc-usd',
+        authority: 'Chainlink',
+        confidence: 0.94,
+      },
+      {
+        url: 'https://api.coinbase.com/v2/prices/BTC-USD/spot',
+        authority: 'Coinbase',
+        confidence: 0.91,
+      },
+      {
+        url: 'https://pyth.network/price-feeds',
+        authority: 'Pyth Network',
+        confidence: 0.89,
+      },
+      {
+        url: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSD',
+        authority: 'Kraken',
+        confidence: 0.90,
+      },
+      {
+        url: 'https://www.bitstamp.net/api/v2/ticker/btcusd/',
+        authority: 'Bitstamp',
+        confidence: 0.88,
+      },
+      {
+        url: 'https://api.gemini.com/v1/pubticker/btcusd',
+        authority: 'Gemini',
+        confidence: 0.87,
+      },
+      {
+        url: 'https://api.huobi.pro/market/detail/merged?symbol=btcusdt',
+        authority: 'Huobi',
+        confidence: 0.85,
+      },
+      {
+        url: 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=BTC-USDT',
+        authority: 'KuCoin',
+        confidence: 0.84,
       },
     ],
   };
@@ -1524,6 +1581,43 @@ export function InteractiveMarketCreation() {
     setDevToolsOpen(false);
   }, [DEV_REVIEW_PRESET]);
 
+  const devJumpToSelectSourceWithManySources = React.useCallback(() => {
+    // Ensure we have a base discovery result first
+    const base = ensureDevDiscovery();
+    setErrorMessage(null);
+    setDiscoveryState('success');
+
+    // Ensure name and description are set (required for render)
+    const metric = base.metric_definition?.metric_name || promptRef.current || 'Bitcoin Price';
+    if (!marketNameRef.current?.trim()) {
+      setMarketName(suggestMarketName({ metricName: metric }));
+    }
+    const method = base.metric_definition?.measurement_method;
+    if (!marketDescriptionRef.current?.trim()) {
+      setMarketDescription(
+        suggestMarketDescription({
+          metricName: metric,
+          measurementMethod: method,
+        })
+      );
+    }
+
+    setIsNameConfirmed(true);
+    setIsDescriptionConfirmed(true);
+    setSelectedSource(null);
+    setIsIconConfirmed(false);
+
+    setDiscoveryResult({
+      ...base,
+      measurable: true,
+      rejection_reason: null,
+      sources: DEV_SELECT_SOURCE_MANY_PRESET,
+      search_results: [],
+    });
+    setSourcesFetchState('success');
+    setDevToolsOpen(false);
+  }, [ensureDevDiscovery]);
+
   const runDefineOnlyDiscovery = async (description: string) => {
     setDiscoveryState('discovering');
     setErrorMessage(null);
@@ -1873,7 +1967,7 @@ export function InteractiveMarketCreation() {
             symbol,
             name: marketName.trim(),
             description: String(marketDescription || '').trim() || `OrderBook market for ${symbol}`,
-            category: 'CUSTOM',
+            category: ['CUSTOM'],
             decimals: 6,
             minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
             settlementDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
@@ -2275,10 +2369,12 @@ export function InteractiveMarketCreation() {
       className="relative w-full max-w-[90vw] sm:w-[702px] sm:max-w-[702px]"
       data-walkthrough="market-creator"
     >
-      {/* Step panel - full page width chat layout with equal margins from edges */}
+      {/* Step panel - full page width chat layout with equal visual margins from edges */}
+      {/* Left bubble: 40px from content edge (navbar 60px + 40px = 100px from screen edge) */}
+      {/* Right bubble: 100px from screen edge */}
       {/* Hide when at 'complete' step - we show the MarketDetailsReview instead */}
       {(discoveryState === 'success' || discoveryState === 'clarify') && discoveryResult && visibleStep !== 'complete' ? (
-        <div className="mt-6 w-full lg:w-[calc(100vw-60px)] lg:ml-[calc(50%-50vw+60px)] lg:px-[60px]">
+        <div className="mt-6 w-full lg:w-[calc(100vw-60px)] lg:ml-[calc(50%-50vw+60px)] lg:pl-[40px] lg:pr-[100px]">
           <StepPanel
                 step={visibleStep}
                 isAnimating={isStepAnimating}
@@ -2365,6 +2461,13 @@ export function InteractiveMarketCreation() {
                           className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
                         >
                           Skip to review (Bananas preset)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => devJumpToSelectSourceWithManySources()}
+                          className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
+                        >
+                          Select source (10 sources)
                         </button>
                       </div>
                       <div className="mt-2 pt-2 border-t border-white/10">
@@ -2513,6 +2616,15 @@ export function InteractiveMarketCreation() {
                               className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
                             >
                               Skip to review (Bananas preset)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                devJumpToSelectSourceWithManySources();
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
+                            >
+                              Select source (10 sources)
                             </button>
                           </div>
                           <div className="mt-2 pt-2 border-t border-white/10">

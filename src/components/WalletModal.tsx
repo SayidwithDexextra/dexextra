@@ -1,11 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import useWallet from '@/hooks/useWallet'
 import { debugWalletDetection } from '@/lib/wallet'
-import { useConnect, useAccount, useDisconnect } from 'wagmi'
-import { WALLETCONNECT_PROJECT_ID } from '@/lib/wagmiConfig'
 
 interface WalletModalProps {
   isOpen: boolean
@@ -122,15 +120,6 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
 
-  // Wagmi hooks for WalletConnect
-  const { connect: wagmiConnect, connectors } = useConnect()
-  const { isConnected: wagmiConnected } = useAccount()
-  const { disconnect: wagmiDisconnect } = useDisconnect()
-
-  // Find WalletConnect connector from Wagmi
-  const walletConnectConnector = connectors.find(c => c.id === 'walletConnect')
-  const isWalletConnectAvailable = !!walletConnectConnector && !!WALLETCONNECT_PROJECT_ID
-
   // Mirror SearchModal/DepositTokenSelect animation behavior (fade/scale in)
   useEffect(() => {
     if (isOpen) {
@@ -139,14 +128,6 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
       setIsAnimating(false)
     }
   }, [isOpen])
-
-  // Close modal when Wagmi connection succeeds (for WalletConnect)
-  useEffect(() => {
-    if (wagmiConnected && connecting === 'WalletConnect') {
-      setConnecting(null)
-      onClose()
-    }
-  }, [wagmiConnected, connecting, onClose])
 
   // Preconnect + preload MetaMask icon so it is cached before modal opens.
   // This runs even when `isOpen` is false (component can remain mounted).
@@ -171,39 +152,18 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
     img.src = METAMASK_ICON_URL
   }, [])
 
-  // Handle WalletConnect connection via Wagmi
-  const handleWalletConnect = useCallback(async () => {
-    if (!walletConnectConnector) {
-      console.error('WalletConnect connector not available')
-      return
-    }
-    
-    setConnecting('WalletConnect')
-    try {
-      await wagmiConnect({ connector: walletConnectConnector })
-    } catch (error: unknown) {
-      console.error('WalletConnect connection failed:', error)
-      setConnecting(null)
-    }
-  }, [walletConnectConnector, wagmiConnect])
-
   if (!isOpen) return null
   if (typeof document === 'undefined') return null
 
-  const handleConnect = async (providerName: string) => {
-    // Special handling for WalletConnect - use Wagmi
-    if (providerName === 'WalletConnect') {
-      handleWalletConnect()
-      return
-    }
-
-    setConnecting(providerName)
+  const handleConnect = async (providerId: string) => {
+    setConnecting(providerId)
     try {
-      await connect(providerName)
+      await connect(providerId)
       onClose()
     } catch (error: unknown) {
       console.error('Connection failed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      // Use a more sophisticated error display instead of alert
       console.error(`Connection failed: ${errorMessage}`)
     } finally {
       setConnecting(null)
@@ -211,6 +171,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   }
 
   const getWalletUrl = (walletName: string): string => {
+    const baseName = walletName.replace(/\s*\([^)]+\)\s*$/, '')
     const walletUrls: Record<string, string> = {
       'MetaMask': 'https://metamask.io',
       'Coinbase Wallet': 'https://www.coinbase.com/wallet',
@@ -220,7 +181,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
       'WalletConnect': 'https://walletconnect.com',
       'Rabby': 'https://rabby.io',
     }
-    return walletUrls[walletName] || 'https://ethereum.org/wallets'
+    return walletUrls[baseName] || 'https://ethereum.org/wallets'
   }
 
   const openExternalLink = (url: string) => {
@@ -233,11 +194,17 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const installedWallets = providers.filter(p => p.isInstalled)
   const notInstalledWallets = providers.filter(p => !p.isInstalled)
   // Ensure MetaMask is always visible (walkthrough + expected default).
-  const metaMask = providers.find(p => p.name === 'MetaMask')
+  const baseWalletName = (name: string) => name.replace(/\s*\([^)]+\)\s*$/, '')
+  const isMetaMaskProvider = (p: (typeof providers)[number]) =>
+    p.rdns === 'io.metamask' || baseWalletName(p.name) === 'MetaMask'
+
+  const metaMask =
+    providers.find(p => p.rdns === 'io.metamask') ??
+    providers.find(p => baseWalletName(p.name) === 'MetaMask')
   const topWallets = [
     ...(metaMask ? [metaMask] : []),
-    ...installedWallets.filter(p => p.name !== 'MetaMask'),
-    ...notInstalledWallets.filter(p => p.name !== 'MetaMask')
+    ...installedWallets.filter(p => !isMetaMaskProvider(p)),
+    ...notInstalledWallets.filter(p => !isMetaMaskProvider(p))
   ].slice(0, 6)
 
   return createPortal(
@@ -340,24 +307,39 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
           
           <div className="grid grid-cols-2 gap-3 mb-6">
             {topWallets.map((provider) => {
-              const IconComponent = WalletIcons[provider.name as keyof typeof WalletIcons]
+              const baseName = provider.name.replace(/\s*\([^)]+\)\s*$/, '')
+              const IconComponent = WalletIcons[baseName as keyof typeof WalletIcons]
               
               return (
                 <div
-                  key={provider.name}
+                  key={provider.id}
                   className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
                 >
                   {/* Main Content */}
                   <div 
                     className="flex items-center justify-between p-3 cursor-pointer"
-                    data-walkthrough={provider.name === 'MetaMask' ? 'wallet-modal:metamask' : undefined}
-                    onClick={() => provider.isInstalled ? handleConnect(provider.name) : openExternalLink(getWalletUrl(provider.name))}
+                    data-walkthrough={baseName === 'MetaMask' ? 'wallet-modal:metamask' : undefined}
+                    onClick={() => provider.isInstalled ? handleConnect(provider.id) : openExternalLink(getWalletUrl(provider.name))}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${provider.isInstalled ? 'bg-green-400' : 'bg-[#404040]'}`} />
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <div className="flex-shrink-0">
-                          {IconComponent ? <IconComponent /> : provider.icon}
+                          {provider.iconUrl ? (
+                            <img
+                              src={provider.iconUrl}
+                              alt={baseName}
+                              width="32"
+                              height="32"
+                              style={{ borderRadius: '8px' }}
+                              decoding="async"
+                              loading="eager"
+                            />
+                          ) : IconComponent ? (
+                            <IconComponent />
+                          ) : (
+                            provider.icon
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <span className="text-[11px] font-medium text-white block truncate">
@@ -371,7 +353,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
                     </div>
                     
                     <div className="flex items-center gap-2">
-                      {connecting === provider.name && (
+                      {connecting === provider.id && (
                         <div className="w-3 h-3">
                           <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />
                         </div>

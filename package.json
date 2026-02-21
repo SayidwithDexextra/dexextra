@@ -27,7 +27,9 @@
   },
   "dependencies": {
     "@clickhouse/client": "^1.11.2",
+    "@coinbase/wallet-sdk": "^4.3.7",
     "@heroicons/react": "^2.2.0",
+    "@metamask/sdk": "^0.33.1",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@react-three/postprocessing": "^3.0.4",
@@ -35,7 +37,6 @@
     "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/supabase-js": "^2.56.0",
     "@tailwindcss/postcss": "^4.1.11",
-    "@tanstack/react-query": "^5.90.21",
     "@truffle/hdwallet-provider": "^2.1.15",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -83,7 +84,6 @@
     "tailwindcss": "^4",
     "three": "^0.167.1",
     "viem": "^2.34.0",
-    "wagmi": "^3.5.0",
     "web3": "^4.16.0",
     "ws": "^8.18.3",
     "zod": "^3.25.76"

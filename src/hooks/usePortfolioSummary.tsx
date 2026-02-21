@@ -23,7 +23,7 @@ function toAddressMaybe(addr: string | undefined | null): Address | null {
 /**
  * Portfolio summary aligned with InteractiveTrader's detailed portfolio analysis:
  * - Available cash: CoreVault.getUnifiedMarginSummary().availableCollateral (6 decimals)
- * - Unrealized P&L: recomputed from getUserPositions + per-market mark price (18 decimals)
+ * - Unrealized P&L: CoreVault.getUnifiedMarginSummary().unrealizedPnL (18 decimals)
  */
 export function usePortfolioSummary(walletAddress?: string | null, options?: { enabled?: boolean; refreshIntervalMs?: number }) : UsePortfolioSummaryResult {
   const enabled = options?.enabled ?? true;
@@ -85,7 +85,9 @@ export function usePortfolioSummary(walletAddress?: string | null, options?: { e
       const prev = summaryRef.current;
       const changed =
         !prev ||
+        prev.totalCollateral6 !== next.totalCollateral6 ||
         prev.availableCash6 !== next.availableCash6 ||
+        prev.realizedPnl18 !== next.realizedPnl18 ||
         prev.unrealizedPnl18 !== next.unrealizedPnl18;
 
       if (changed) {

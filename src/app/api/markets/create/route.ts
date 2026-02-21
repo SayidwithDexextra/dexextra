@@ -1356,7 +1356,7 @@ export async function POST(req: Request) {
           symbol,
           name: safeName,
           description: safeDescription,
-          category: Array.isArray(tags) && tags.length ? tags[0] : 'CUSTOM',
+          category: Array.isArray(tags) && tags.length ? tags : ['CUSTOM'],
           decimals: 6,
           minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
           tick_size: Number(process.env.DEFAULT_TICK_SIZE || 0.01),

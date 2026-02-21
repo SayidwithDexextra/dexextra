@@ -3,9 +3,14 @@ import { UserProfileService } from '@/lib/userProfileService';
 import { supabase } from '@/lib/supabase';
 import { z } from 'zod';
 
+// Normalize wallet addresses to lowercase
+const walletAddressSchema = z.string()
+  .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format')
+  .transform(addr => addr.toLowerCase());
+
 // Validation schema
 const UploadSchema = z.object({
-  wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format'),
+  wallet_address: walletAddressSchema,
   type: z.enum(['profile', 'banner'], { required_error: 'Type must be profile or banner' }),
 });
 

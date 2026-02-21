@@ -442,7 +442,8 @@ export function useCoreVault(walletAddress?: string) {
   const scheduleRefresh = useCallback(() => {
     if (refreshTimerRef.current) return;
     refreshTimerRef.current = setTimeout(() => {
-      refreshTimerRef.current && clearTimeout(refreshTimerRef.current);
+      const t = refreshTimerRef.current;
+      if (t) clearTimeout(t);
       refreshTimerRef.current = null;
       fetchBalances();
     }, 300);

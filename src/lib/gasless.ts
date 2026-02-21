@@ -1,5 +1,6 @@
 import { CHAIN_CONFIG } from './contractConfig';
 import MetaTradeFacet from '@/lib/abis/facets/MetaTradeFacet.json';
+import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
 
 type Hex = `0x${string}`;
 
@@ -8,12 +9,12 @@ type ChainCheckResult = { ok: true } | { ok: false; error: string };
 const TARGET_CHAIN_ID = Number(CHAIN_CONFIG.chainId || 0);
 const TARGET_CHAIN_HEX = `0x${TARGET_CHAIN_ID.toString(16)}`;
 
-async function ensureCorrectChain(): Promise<ChainCheckResult> {
-  if (typeof window === 'undefined' || !(window as any)?.ethereum) {
-    return { ok: false, error: 'No wallet provider detected.' };
-  }
+function getWalletProvider(): EthereumProvider | null {
+  if (typeof window === 'undefined') return null;
+  return (getActiveEthereumProvider() ?? (window as any)?.ethereum ?? null) as any;
+}
 
-  const ethereum = (window as any).ethereum;
+async function ensureCorrectChain(ethereum: EthereumProvider): Promise<ChainCheckResult> {
   let activeChainId: number | null = null;
 
   try {
@@ -453,13 +454,32 @@ export async function signAndSubmitGasless(params: {
     console.log('[GASLESS] EIP712 message', jsonMessage);
   } catch {}
 
-  // Sign typed data via wallet (eth_signTypedData_v4)
-  const ethereum = (window as any)?.ethereum;
+  // Sign typed data via the selected wallet provider (EIP-6963 aware).
+  const ethereum = getWalletProvider();
   if (!ethereum) return { success: false, error: 'No wallet provider' };
 
-  const chainCheck = await ensureCorrectChain();
+  const chainCheck = await ensureCorrectChain(ethereum);
   if (!chainCheck.ok) {
     return { success: false, error: chainCheck.error };
+  }
+
+  // Ensure the wallet has authorized the account we are signing with.
+  // In multi-wallet environments, using an aggregator provider can trigger
+  // "method not authorized" errors if the wrong provider is used.
+  try {
+    const accounts = await ethereum.request({ method: 'eth_accounts' });
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+      return { success: false, error: 'Wallet is not connected. Please connect your wallet and retry.' };
+    }
+    const selected = String(accounts[0]);
+    if (selected.toLowerCase() !== String(trader).toLowerCase()) {
+      return {
+        success: false,
+        error: `Wallet account mismatch. Selected: ${selected.slice(0, 10)}…, expected: ${String(trader).slice(0, 10)}…. Switch accounts in your wallet and retry.`,
+      };
+    }
+  } catch {
+    // ignore; will surface in signing error below
   }
 
   const payload = JSON.stringify({
@@ -534,14 +554,43 @@ export async function createGaslessSession(params: {
 
   console.log('[Gasless] createGaslessSession started', { trader, expirySec });
 
-  const ethereum = (window as any)?.ethereum;
+  const ethereum = getWalletProvider();
   if (!ethereum) {
     console.error('[Gasless] No wallet provider detected');
     return { success: false, error: 'No wallet provider detected. Please install a wallet extension.' };
   }
 
+  // Ensure wallet connection/authorization exists before attempting typed-data signing.
+  // Some providers throw: "The requested account and/or method has not been authorized by the user."
+  let selectedAccount: string | null = null;
+  try {
+    const accounts = await ethereum.request({ method: 'eth_accounts' });
+    if (Array.isArray(accounts) && accounts.length > 0) {
+      selectedAccount = String(accounts[0]);
+    }
+  } catch {}
+  if (!selectedAccount) {
+    try {
+      const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+      if (Array.isArray(accounts) && accounts.length > 0) {
+        selectedAccount = String(accounts[0]);
+      }
+    } catch (err: any) {
+      return { success: false, error: normalizeProviderError(err) };
+    }
+  }
+  if (!selectedAccount) {
+    return { success: false, error: 'Wallet is not connected. Please connect your wallet and retry.' };
+  }
+  if (selectedAccount.toLowerCase() !== trader.toLowerCase()) {
+    return {
+      success: false,
+      error: `Wallet account mismatch. Selected: ${selectedAccount.slice(0, 10)}…, expected: ${trader.slice(0, 10)}…. Switch accounts in your wallet and retry.`,
+    };
+  }
+
   console.log('[Gasless] Checking chain...');
-  const chainCheck = await ensureCorrectChain();
+  const chainCheck = await ensureCorrectChain(ethereum);
   if (!chainCheck.ok) {
     console.error('[Gasless] Chain check failed:', chainCheck.error);
     return { success: false, error: chainCheck.error };

@@ -1,13 +1,19 @@
 import { parseUnits } from 'viem';
 import { verifyTypedData } from 'ethers';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from './contractConfig';
+import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
 
 const GASLESS_TOPUP_ENDPOINT = '/api/gasless/topup';
 type ChainCheckResult = { ok: true } | { ok: false; error: string };
 
+function getWalletProvider(): EthereumProvider | null {
+  if (typeof window === 'undefined') return null;
+  return (getActiveEthereumProvider() ?? (window as any)?.ethereum ?? null) as any;
+}
+
 async function getSelectedAccount(): Promise<string | null> {
-  if (typeof window === 'undefined' || !(window as any)?.ethereum) return null;
-  const ethereum = (window as any).ethereum;
+  const ethereum = getWalletProvider();
+  if (!ethereum) return null;
   // Try requesting to ensure wallet is connected
   const methods = ['eth_requestAccounts', 'eth_accounts'];
   for (const m of methods) {
@@ -25,8 +31,9 @@ async function getSelectedAccount(): Promise<string | null> {
 
 async function getActiveChainId(): Promise<number | null> {
   try {
-    if (typeof window === 'undefined' || !(window as any)?.ethereum) return null;
-    const active = await (window as any).ethereum.request({ method: 'eth_chainId' });
+    const ethereum = getWalletProvider();
+    if (!ethereum) return null;
+    const active = await ethereum.request({ method: 'eth_chainId' });
     if (typeof active === 'string') return parseInt(active, 16);
     if (typeof active === 'number') return active;
     return null;
@@ -36,10 +43,10 @@ async function getActiveChainId(): Promise<number | null> {
 }
 
 async function switchToTargetChain(targetChainId: number): Promise<ChainCheckResult> {
-  if (typeof window === 'undefined' || !(window as any)?.ethereum) {
+  const ethereum = getWalletProvider();
+  if (!ethereum) {
     return { ok: false, error: 'No wallet provider detected.' };
   }
-  const ethereum = (window as any).ethereum;
   const chainHex = `0x${targetChainId.toString(16)}`;
   try {
     await ethereum.request({
@@ -108,7 +115,8 @@ export async function gaslessTopUpPosition(params: {
   const { trader, marketId, amount } = params;
   const vaultAddr = params.vault || CONTRACT_ADDRESSES.CORE_VAULT;
   if (!vaultAddr) return { success: false, error: 'missing vault address' };
-  if (!window?.ethereum) return { success: false, error: 'No wallet provider' };
+  const ethereum = getWalletProvider();
+  if (!ethereum) return { success: false, error: 'No wallet provider' };
 
   const parsedMarketId = normalizeMarketId(marketId);
   if (!parsedMarketId) return { success: false, error: 'Invalid marketId for top-up' };
@@ -174,7 +182,7 @@ export async function gaslessTopUpPosition(params: {
 
   let signature: string;
   try {
-    signature = await (window as any).ethereum.request({
+    signature = await ethereum.request({
       method: 'eth_signTypedData_v4',
       params: [effectiveTrader, JSON.stringify({ domain, types, primaryType: 'TopUp', message })],
     });

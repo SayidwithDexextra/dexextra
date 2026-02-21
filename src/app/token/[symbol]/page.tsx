@@ -655,22 +655,16 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
             </div>
 
-            <div className="mt-4 flex items-center justify-end gap-2">
-              {overlayMatches ? (
+            {overlayMatches ? (
+              <div className="mt-4 flex items-center justify-end">
                 <button
                   onClick={() => deploymentOverlay.restore()}
                   className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
                 >
                   View pipeline
                 </button>
-              ) : null}
-              <button
-                onClick={() => void md.refetchMarket()}
-                className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
-              >
-                Refresh
-              </button>
-            </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

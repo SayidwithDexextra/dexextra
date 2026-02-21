@@ -14,6 +14,8 @@ import {
   generateAvatar,
   diagnoseWalletIssues,
   getActiveEthereumProvider,
+  hardLogout,
+  clearWalletAutoConnectDisabled,
 } from '@/lib/wallet'
 import { fetchWalletPortfolio } from '@/lib/tokenService'
 import { ProfileApi } from '@/lib/profileApi'
@@ -231,7 +233,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
       if (accounts.length === 0) {
         // Wallet disconnected
          console.log('Wallet disconnected - accounts changed to empty')
+        // Do not hard-logout here (this event can happen for non-logout reasons).
+        // Just reset in-memory state.
         setWalletData(initialWalletData)
+        setPortfolio(initialPortfolio)
       } else {
         // Account changed
         const address = accounts[0]
@@ -281,24 +286,34 @@ export function WalletProvider({ children }: WalletProviderProps) {
     }
   }, [refreshBalance]) // refreshBalance is now stable, so this won't cause infinite loops
 
-  const connect = async (providerName?: string): Promise<void> => {
+  const connect = async (providerId?: string): Promise<void> => {
     setWalletData(prev => ({ ...prev, isConnecting: true }))
 
     try {
-       console.log('Attempting to connect wallet:', providerName || 'auto-detect')
+       console.log('Attempting to connect wallet:', providerId || 'auto-detect')
+
+      // User is explicitly trying to connect; allow auto-connect behavior again.
+      clearWalletAutoConnectDisabled()
       
       let targetProvider: WalletProvider | undefined
       
-      if (providerName) {
-        targetProvider = providers.find(p => p.name === providerName)
+      if (providerId) {
+        // Prefer id match; fall back to name match for backward compatibility.
+        targetProvider = providers.find(p => p.id === providerId) ?? providers.find(p => p.name === providerId)
         if (!targetProvider) {
-          console.error('Requested provider not found:', providerName)
-           console.log('Available providers:', providers.map(p => p.name))
+          console.error('Requested provider not found:', providerId)
+           console.log('Available providers:', providers.map(p => ({ id: p.id, name: p.name })))
         }
       } else {
-        // Use first available provider
-        targetProvider = providers.find(p => p.isInstalled)
-         console.log('Auto-selected provider:', targetProvider?.name)
+        // Try user preference first, then first installed provider.
+        const preferred = typeof window !== 'undefined' ? localStorage.getItem('walletProvider') : null
+        if (preferred) {
+          targetProvider = providers.find(p => p.id === preferred) ?? providers.find(p => p.name === preferred)
+        }
+        if (!targetProvider) {
+          targetProvider = providers.find(p => p.isInstalled)
+        }
+         console.log('Auto-selected provider:', targetProvider?.name, targetProvider?.id)
       }
 
       if (!targetProvider) {
@@ -326,7 +341,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
         setWalletData(connection)
         
         // Store connection preference
-        localStorage.setItem('walletProvider', targetProvider.name)
+        localStorage.setItem('walletProvider', targetProvider.id)
         
         // OPTIMIZED: Create user profile in background - don't block connection
         if (connection.address) {
@@ -360,12 +375,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
   const disconnect = async (): Promise<void> => {
     try {
-      // Clear local storage
-      localStorage.removeItem('walletProvider')
-      localStorage.removeItem('walletAddress')
+      // Hard logout: clear all cached state and prevent silent reconnect on reload.
+      await hardLogout()
       
       // Reset wallet state
       setWalletData(initialWalletData)
+      setPortfolio(initialPortfolio)
     } catch (error) {
       console.error('Disconnect error:', error)
     }

@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 
 const WatchlistWalletSchema = z.object({
-  wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format'),
+  wallet_address: z.string()
+    .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format')
+    .transform(addr => addr.toLowerCase()),
 });
 
 const WatchlistMarketItemSchema = WatchlistWalletSchema.extend({

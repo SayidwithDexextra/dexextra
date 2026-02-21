@@ -3,13 +3,18 @@ import { UserProfileService } from '@/lib/userProfileService';
 import { z } from 'zod';
 import { normalizeSocialUrlInput } from '@/lib/socialUrl';
 
+// Helper to normalize wallet addresses to lowercase
+const walletAddressSchema = z.string()
+  .regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format')
+  .transform(addr => addr.toLowerCase());
+
 // Validation schemas
 const GetProfileSchema = z.object({
-  wallet: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format'),
+  wallet: walletAddressSchema,
 });
 
 const CreateProfileSchema = z.object({
-  wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format'),
+  wallet_address: walletAddressSchema,
   username: z.string().optional(),
   display_name: z.string().optional(),
 });
@@ -44,7 +49,7 @@ const optionalSocialUrl = (platform: Parameters<typeof normalizeSocialUrlInput>[
     });
 
 const UpdateProfileSchema = z.object({
-  wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address format'),
+  wallet_address: walletAddressSchema,
   username: z.string().optional(),
   display_name: z.string().optional(),
   bio: z.string().max(180, 'Bio must be 180 characters or less').optional(),

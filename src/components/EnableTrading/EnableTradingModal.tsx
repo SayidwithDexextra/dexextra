@@ -79,7 +79,7 @@ export default function EnableTradingModal({
         const installed = providers.find(p => p.isInstalled)
         if (installed) {
           setIsWorking(true)
-          await connect(installed.name)
+          await connect(installed.id)
           console.log('[EnableTradingModal] Wallet connected successfully');
         } else if (onOpenWallets) {
           onOpenWallets()

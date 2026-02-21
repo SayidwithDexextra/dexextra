@@ -23,10 +23,12 @@ export class UserProfileService {
    */
   static async getProfile(walletAddress: string): Promise<UserProfile | null> {
     try {
+      // Normalize wallet address to lowercase for case-insensitive lookup
+      const normalizedAddress = walletAddress.toLowerCase();
       const { data, error } = await this.db
         .from('user_profiles')
         .select('*')
-        .eq('wallet_address', walletAddress)
+        .eq('wallet_address', normalizedAddress)
         .eq('is_active', true)
         .single();
 
@@ -50,10 +52,12 @@ export class UserProfileService {
    */
   static async getPublicProfile(walletAddress: string): Promise<PublicUserProfile | null> {
     try {
+      // Normalize wallet address to lowercase for case-insensitive lookup
+      const normalizedAddress = walletAddress.toLowerCase();
       const { data, error } = await this.db
         .from('public_user_profiles')
         .select('*')
-        .eq('wallet_address', walletAddress)
+        .eq('wallet_address', normalizedAddress)
         .single();
 
       if (error) {
@@ -79,9 +83,11 @@ export class UserProfileService {
     displayName?: string
   ): Promise<UserProfile> {
     try {
+      // Normalize wallet address to lowercase for consistency
+      const normalizedAddress = walletAddress.toLowerCase();
       const { data, error } = await this.db
         .rpc('get_or_create_user_profile', {
-          p_wallet_address: walletAddress,
+          p_wallet_address: normalizedAddress,
           p_username: username,
           p_display_name: displayName
         });
@@ -114,10 +120,12 @@ export class UserProfileService {
         }
       }
 
+      // Normalize wallet address to lowercase for consistency
+      const normalizedAddress = walletAddress.toLowerCase();
       const { data, error } = await this.db
         .from('user_profiles')
         .update(updates)
-        .eq('wallet_address', walletAddress)
+        .eq('wallet_address', normalizedAddress)
         .select()
         .single();
 
@@ -158,7 +166,9 @@ export class UserProfileService {
         .eq('is_active', true);
 
       if (excludeWalletAddress) {
-        query = query.neq('wallet_address', excludeWalletAddress);
+        // Normalize wallet address to lowercase for consistency
+        const normalizedExclude = excludeWalletAddress.toLowerCase();
+        query = query.neq('wallet_address', normalizedExclude);
       }
 
       const { data, error } = await query;
@@ -194,10 +204,12 @@ export class UserProfileService {
    */
   static async deactivateProfile(walletAddress: string): Promise<void> {
     try {
+      // Normalize wallet address to lowercase for consistency
+      const normalizedAddress = walletAddress.toLowerCase();
       const { error } = await this.db
         .from('user_profiles')
         .update({ is_active: false })
-        .eq('wallet_address', walletAddress);
+        .eq('wallet_address', normalizedAddress);
 
       if (error) throw error;
     } catch (error) {
@@ -260,8 +272,10 @@ export class UserProfileService {
     type: 'profile' | 'banner' = 'profile'
   ): Promise<string> {
     try {
+      // Normalize wallet address to lowercase for consistency
+      const normalizedAddress = walletAddress.toLowerCase();
       const fileExt = file.name.split('.').pop();
-      const fileName = `${walletAddress}/${type}_${Date.now()}.${fileExt}`;
+      const fileName = `${normalizedAddress}/${type}_${Date.now()}.${fileExt}`;
       
       const { data: uploadData, error: uploadError } = await this.db.storage
         .from('profile-images')
@@ -275,9 +289,9 @@ export class UserProfileService {
         .from('profile-images')
         .getPublicUrl(fileName);
 
-      // Update the profile with the new image URL
+      // Update the profile with the new image URL (already uses normalized address)
       const updateField = type === 'profile' ? 'profile_image_url' : 'banner_image_url';
-      await this.updateProfile(walletAddress, { [updateField]: publicUrl });
+      await this.updateProfile(normalizedAddress, { [updateField]: publicUrl });
 
       return publicUrl;
     } catch (error) {
@@ -294,10 +308,12 @@ export class UserProfileService {
     enabled: boolean
   ): Promise<void> {
     try {
+      // Normalize wallet address to lowercase for consistency
+      const normalizedAddress = walletAddress.toLowerCase();
       const { error } = await supabase
         .from('user_profiles')
         .update({ email_notifications_enabled: enabled })
-        .eq('wallet_address', walletAddress);
+        .eq('wallet_address', normalizedAddress);
 
       if (error) throw error;
     } catch (error) {

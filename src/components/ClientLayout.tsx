@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import Navbar from "./Navbar";
 import Header from "./Header";
 import { WalletProvider } from "@/hooks/useWallet";
-import { Web3Provider } from "@/components/Web3Provider";
 import Footer from "./Footer";
 import { DeploymentOverlayProvider } from "@/contexts/DeploymentOverlayContext";
 import { SessionProvider } from "@/contexts/SessionContext";
@@ -48,9 +47,8 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
   }, []);
 
   return (
-    <Web3Provider>
-      <WalletProvider>
-        <SessionProvider>
+    <WalletProvider>
+      <SessionProvider>
         <OnchainOrdersProvider>
         <DeploymentOverlayProvider>
           <ThemeProvider>
@@ -90,8 +88,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
           </ThemeProvider>
         </DeploymentOverlayProvider>
         </OnchainOrdersProvider>
-        </SessionProvider>
-      </WalletProvider>
-    </Web3Provider>
+      </SessionProvider>
+    </WalletProvider>
   );
 } 

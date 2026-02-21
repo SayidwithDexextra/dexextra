@@ -362,7 +362,7 @@ export async function POST(req: Request) {
         symbol: symbolStr || effectiveIdentifier,
         name: String(name || symbolStr || effectiveIdentifier).slice(0, 100),
         description: description || `OrderBook market for ${symbolStr || effectiveIdentifier}`,
-        category: String(category || (Array.isArray(initialOrder?.tags) && initialOrder.tags[0]) || 'CUSTOM').slice(0, 50),
+        category: Array.isArray(category) ? category : [String(category || (Array.isArray(initialOrder?.tags) && initialOrder.tags[0]) || 'CUSTOM').slice(0, 50)],
         decimals: 6,
         minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
         tick_size: 0.01,

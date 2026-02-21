@@ -77,6 +77,7 @@ export default function Header() {
   const { snapshot, isReady: snapshotReady } = usePortfolioSnapshot()
   // Avoid showing fallback values that can be briefly wrong until the snapshot is ready.
   const hidePortfolioUntilSummaryReady = Boolean(walletData.isConnected && !snapshotReady)
+  const showPortfolioSkeleton = Boolean(walletData.isConnected && hidePortfolioUntilSummaryReady)
   const isVaultConnected = !!core.isConnected
   const vaultAvailableCollateral = (() => {
     if (hidePortfolioUntilSummaryReady) return Number.NaN
@@ -108,6 +109,13 @@ export default function Header() {
     return Number.NaN
   })()
   const unrealizedPnL = unrealizedPnLNum
+  const unrealizedPnlColor = !walletData.isConnected
+    ? '#FFFFFFFF'
+    : !Number.isFinite(unrealizedPnL)
+      ? '#FFFFFFFF'
+      : unrealizedPnL >= 0
+        ? '#00d4aa'
+        : '#ff6b6b'
 
   const openPortfolioSidebar = () => {
     try {
@@ -226,26 +234,36 @@ export default function Header() {
 
   // Calculate portfolio value from VaultRouter, re-animating only when 2-decimal display changes
   const roundedPortfolioCents = useMemo(() => {
-    return Math.round((vaultPortfolioValue || 0) * 100)
-  }, [vaultPortfolioValue])
+    if (!walletData.isConnected) return 0
+    if (hidePortfolioUntilSummaryReady) return Number.NaN
+    if (!Number.isFinite(vaultPortfolioValue)) return Number.NaN
+    return Math.round(vaultPortfolioValue * 100)
+  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, vaultPortfolioValue])
   const totalPortfolioValue = useMemo(() => {
+    if (!Number.isFinite(roundedPortfolioCents)) return '$—'
     const portfolioVal = roundedPortfolioCents / 100
-    console.log('[Dispatch] 🔁 [UI][Header] Recompute totalPortfolioValue', { portfolioVal })
-    return formatCurrency(portfolioVal.toString())
+    return formatCurrency(portfolioVal)
   }, [roundedPortfolioCents])
   
   // Calculate available cash display, re-animating only when 2-decimal display changes
   const roundedCashCents = useMemo(() => {
-    return Math.round((vaultAvailableCollateral || 0) * 100)
-  }, [vaultAvailableCollateral])
+    if (!walletData.isConnected) return 0
+    if (hidePortfolioUntilSummaryReady) return Number.NaN
+    if (!Number.isFinite(vaultAvailableCollateral)) return Number.NaN
+    return Math.round(vaultAvailableCollateral * 100)
+  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, vaultAvailableCollateral])
   const cashValueDisplay = useMemo(() => {
-    return formatCurrency(String(roundedCashCents / 100))
+    if (!Number.isFinite(roundedCashCents)) return '$—'
+    return formatCurrency(roundedCashCents / 100)
   }, [roundedCashCents])
 
   // Re-animate *only* when the cents-level display changes (prevents constant re-animation on noisy updates).
   const roundedUnrealizedPnLCents = useMemo(() => {
-    return Math.round((unrealizedPnL || 0) * 100)
-  }, [unrealizedPnL])
+    if (!walletData.isConnected) return 0
+    if (hidePortfolioUntilSummaryReady) return Number.NaN
+    if (!Number.isFinite(unrealizedPnL)) return Number.NaN
+    return Math.round(unrealizedPnL * 100)
+  }, [walletData.isConnected, hidePortfolioUntilSummaryReady, unrealizedPnL])
 
   const animateCentsKey = useMemo(() => {
     if (!walletData.isConnected) return null
@@ -457,21 +475,28 @@ export default function Header() {
                 >
                   Portfolio
                 </span>
-                <DecryptedText
-                  text={displayPortfolioValue}
-                  animateTrigger={vaultUpdateSeq}
-                  style={{
-                    fontSize: '14px',
-                    color: '#FFFFFFFF',
-                    fontWeight: 600
-                  }}
-                  characters="0123456789$.,+-"
-                  speed={100}
-                  maxIterations={12}
-                  animateOnMount={false}
-                  animateOnHover={false}
-                  animateOnChange={false}
-                />
+                {showPortfolioSkeleton ? (
+                  <span
+                    className="inline-block w-[78px] h-[14px] rounded border border-white/10 bg-white/10 animate-pulse"
+                    aria-label="Loading portfolio value"
+                  />
+                ) : (
+                  <DecryptedText
+                    text={displayPortfolioValue}
+                    animateTrigger={vaultUpdateSeq}
+                    style={{
+                      fontSize: '14px',
+                      color: '#FFFFFFFF',
+                      fontWeight: 600
+                    }}
+                    characters="0123456789$.,+-"
+                    speed={100}
+                    maxIterations={12}
+                    animateOnMount={false}
+                    animateOnHover={false}
+                    animateOnChange={false}
+                  />
+                )}
               </div>
               
               <div className="flex items-center gap-4" data-walkthrough="header-cash-pnl">
@@ -500,21 +525,28 @@ export default function Header() {
                       title={isVaultConnected ? 'Connected to CoreVault' : 'Vault disconnected'}
                     />
                   </div>
-                  <DecryptedText
-                    text={displayCashValue}
-                    animateTrigger={vaultUpdateSeq}
-                    style={{
-                      fontSize: '14px',
-                      color: '#FFFFFFFF',
-                      fontWeight: 600
-                    }}
-                    characters="0123456789$.,+-"
-                    speed={100}
-                    maxIterations={12}
-                    animateOnMount={false}
-                    animateOnHover={false}
-                    animateOnChange={false}
-                  />
+                  {showPortfolioSkeleton ? (
+                    <span
+                      className="inline-block w-[72px] h-[14px] rounded border border-white/10 bg-white/10 animate-pulse"
+                      aria-label="Loading available cash"
+                    />
+                  ) : (
+                    <DecryptedText
+                      text={displayCashValue}
+                      animateTrigger={vaultUpdateSeq}
+                      style={{
+                        fontSize: '14px',
+                        color: '#FFFFFFFF',
+                        fontWeight: 600
+                      }}
+                      characters="0123456789$.,+-"
+                      speed={100}
+                      maxIterations={12}
+                      animateOnMount={false}
+                      animateOnHover={false}
+                      animateOnChange={false}
+                    />
+                  )}
                 </div>
 
                 {/* Unrealized P&L Display (always render so walkthrough can target it) */}
@@ -532,21 +564,28 @@ export default function Header() {
                   >
                     Unrealized P&amp;L
                   </span>
-                  <DecryptedText
-                    text={displayUnrealizedPnL}
-                    animateTrigger={vaultUpdateSeq}
-                    style={{
-                      fontSize: '14px',
-                      color: !walletData.isConnected ? '#FFFFFFFF' : unrealizedPnL >= 0 ? '#00d4aa' : '#ff6b6b',
-                      fontWeight: 600
-                    }}
-                    characters="0123456789$.,+-"
-                    speed={100}
-                    maxIterations={12}
-                    animateOnMount={false}
-                    animateOnHover={false}
-                    animateOnChange={false}
-                  />
+                  {showPortfolioSkeleton ? (
+                    <span
+                      className="inline-block w-[62px] h-[14px] rounded border border-white/10 bg-white/10 animate-pulse"
+                      aria-label="Loading unrealized P&L"
+                    />
+                  ) : (
+                    <DecryptedText
+                      text={displayUnrealizedPnL}
+                      animateTrigger={vaultUpdateSeq}
+                      style={{
+                        fontSize: '14px',
+                        color: unrealizedPnlColor,
+                        fontWeight: 600
+                      }}
+                      characters="0123456789$.,+-"
+                      speed={100}
+                      maxIterations={12}
+                      animateOnMount={false}
+                      animateOnHover={false}
+                      animateOnChange={false}
+                    />
+                  )}
                 </div>
               </div>
             </div>
