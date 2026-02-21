@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
 import searchModalDesign from '../../design/searchModal.json'
 import { getSupabaseClient } from '@/lib/supabase-browser'
 import MarketPairBadge from './Series/MarketPairBadge'
@@ -54,6 +55,7 @@ interface SearchResults {
 }
 
 export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
+  const router = useRouter()
   const [searchValue, setSearchValue] = useState('')
   const [isAnimating, setIsAnimating] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -312,9 +314,9 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       saveRecentSearch(searchValue)
     }
     // Navigate to market page
-    window.location.href = `/token/${market.symbol}`
+    router.push(`/token/${encodeURIComponent(market.symbol)}`)
     onClose()
-  }, [onClose, searchValue, saveRecentSearch])
+  }, [onClose, router, searchValue, saveRecentSearch])
 
   // Handle user selection
   const handleUserSelect = useCallback((user: UserProfileSearchResult) => {
@@ -323,9 +325,9 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       saveRecentSearch(searchValue)
     }
     // Navigate to user profile page by wallet address
-    window.location.href = `/user/${encodeURIComponent(user.wallet_address)}`
+    router.push(`/user/${encodeURIComponent(user.wallet_address)}`)
     onClose()
-  }, [onClose, searchValue, saveRecentSearch])
+  }, [onClose, router, searchValue, saveRecentSearch])
 
   // Handle recent search selection
   const handleRecentSearchSelect = useCallback((searchTerm: string) => {

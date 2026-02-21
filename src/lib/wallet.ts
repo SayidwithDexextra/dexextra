@@ -1573,6 +1573,52 @@ export const checkConnection = async (): Promise<WalletData | null> => {
   }
 
   const candidates: EthereumProvider[] = []
+
+  // Prefer reconnecting to the wallet provider the user last selected.
+  // This avoids "connecting to a different wallet" when multiple injected providers are authorized.
+  let preferredProvider: EthereumProvider | null = null
+  try {
+    if (typeof window !== 'undefined') {
+      const preferredId = window.localStorage.getItem('walletProvider') || ''
+      if (preferredId) {
+        // Make sure EIP-6963 announcements have had a chance to populate the cache.
+        startEip6963Discovery()
+
+        if (preferredId.startsWith('eip6963:')) {
+          const uuid = preferredId.slice('eip6963:'.length)
+          const detail = getEip6963ProviderByUuid(uuid)
+          if (detail?.provider) {
+            preferredProvider = detail.provider as any as EthereumProvider
+          }
+        } else if (preferredId === 'legacy:injected') {
+          preferredProvider = (window as any).ethereum ?? null
+        } else if (preferredId.startsWith('static:')) {
+          const slug = preferredId.slice('static:'.length)
+          const walletNameBySlug: Record<string, string> = {
+            metamask: 'MetaMask',
+            coinbase: 'Coinbase Wallet',
+            phantom: 'Phantom',
+            zerion: 'Zerion',
+            rabby: 'Rabby',
+            rainbow: 'Rainbow',
+            frame: 'Frame',
+            talisman: 'Talisman',
+            subwallet: 'SubWallet',
+            okx: 'OKX Wallet',
+            binance: 'Binance Wallet',
+          }
+          const walletName = walletNameBySlug[slug]
+          if (walletName) {
+            preferredProvider = resolveProviderForWallet(walletName)
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  if (preferredProvider) candidates.push(preferredProvider)
   if (activeEthereumProvider) candidates.push(activeEthereumProvider)
 
   // Prefer explicit EIP-6963 discovered providers when available.
