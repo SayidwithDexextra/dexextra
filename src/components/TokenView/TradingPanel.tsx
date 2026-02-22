@@ -191,7 +191,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     setOrderFillModal({
       isOpen: true,
       progress: 0.06,
-      status: 'submitting',
+      status: kind === 'cancel' ? 'canceling' : 'submitting',
       allowClose: false,
       startedAt: Date.now(),
       kind,
@@ -215,7 +215,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   const finishOrderFillModal = useCallback(() => {
     setOrderFillModal((cur) => ({
       ...cur,
-      status: 'filled',
+      status: 'success',
       progress: 1,
       allowClose: false,
       headlineText: undefined,
@@ -237,24 +237,27 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   const markOrderAsSlowBackgroundable = useCallback((opts: { kind: 'market' | 'limit' | 'cancel'; routedPool?: string; reroutedToBig?: boolean }) => {
     const isBig = opts.routedPool === 'hub_trade_big' || opts.reroutedToBig === true;
     if (!isBig) return false;
+    const isCancel = opts.kind === 'cancel';
     setOrderFillModal((cur) => ({
       ...cur,
       isOpen: true,
-      status: 'submitting',
+      status: isCancel ? 'canceling' : 'submitting',
       progress: Math.max(cur.progress || 0, 0.12),
       allowClose: true,
       kind: opts.kind,
       headlineText: 'This is taking longer than usual,',
       detailText:
-        'Placing your order could take between 1 and 2 minutes. You can close this dialog to continue in the background.',
+        isCancel
+          ? 'Canceling your order could take between 1 and 2 minutes. You can close this dialog to continue in the background.'
+          : 'Placing your order could take between 1 and 2 minutes. You can close this dialog to continue in the background.',
       showProgressLabel: false,
     }));
     // Auto-dismiss after a moment so the UI doesn't feel stuck.
     window.setTimeout(() => {
       setOrderFillModal((cur) => {
         if (!cur.isOpen) return cur;
-        // Only auto-dismiss if we're still in the "submitting/filling" phase
-        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        // Only auto-dismiss if we're still in progress
+        if (cur.status === 'success' || cur.status === 'error') return cur;
         return { ...cur, isOpen: false, kind: null, headlineText: undefined, detailText: undefined, showProgressLabel: undefined };
       });
     }, 9000);
@@ -392,13 +395,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   // Smooth progress while submitting/filling (purely visual)
   useEffect(() => {
     if (!orderFillModal.isOpen) return;
-    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    if (orderFillModal.status === 'success' || orderFillModal.status === 'error') return;
 
     const target = orderFillModal.status === 'submitting' ? 0.7 : 0.92;
     const id = window.setInterval(() => {
       setOrderFillModal((cur) => {
         if (!cur.isOpen) return cur;
-        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (cur.status === 'success' || cur.status === 'error') return cur;
         const t = cur.status === 'submitting' ? 0.7 : 0.92;
         const next = Math.min(t, cur.progress + (t - cur.progress) * 0.08 + 0.003);
         return { ...cur, progress: next };
@@ -412,12 +415,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   useEffect(() => {
     if (!orderFillModal.isOpen) return;
     if (orderFillModal.kind !== 'market') return;
-    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    if (orderFillModal.status === 'success' || orderFillModal.status === 'error') return;
     const startedAt = orderFillModal.startedAt;
     const id = window.setInterval(() => {
       setOrderFillModal((cur) => {
         if (!cur.isOpen || cur.kind !== 'market') return cur;
-        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (cur.status === 'success' || cur.status === 'error') return cur;
         if (Date.now() - startedAt > 25_000) {
           return { ...cur, allowClose: true };
         }
@@ -431,12 +434,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   useEffect(() => {
     if (!orderFillModal.isOpen) return;
     if (orderFillModal.kind !== 'cancel') return;
-    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    if (orderFillModal.status === 'success' || orderFillModal.status === 'error') return;
     const startedAt = orderFillModal.startedAt;
     const id = window.setInterval(() => {
       setOrderFillModal((cur) => {
         if (!cur.isOpen || cur.kind !== 'cancel') return cur;
-        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (cur.status === 'success' || cur.status === 'error') return cur;
         if (Date.now() - startedAt > 18_000) {
           return { ...cur, allowClose: true };
         }
@@ -1417,8 +1420,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           await refreshOrders();
           setAmount(0);
           setAmountInput('');
-          // Market orders should fill immediately; if relayed but not mined yet, keep a brief "filling" moment.
-          setOrderFillModal((cur) => ({ ...cur, status: mined ? 'filled' : 'filling' }));
+          setOrderFillModal((cur) => ({ ...cur, status: mined ? 'success' : 'processing' }));
           if (mined) {
             finishOrderFillModal();
           } else {
@@ -1795,8 +1797,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           setAmountInput('');
           setTriggerPrice(0);
           setTriggerPriceInput("");
-          // Limit orders can remain open for a long time; we treat "placed/submitted" as completion for the modal.
-          setOrderFillModal((cur) => ({ ...cur, status: mined ? 'filled' : 'filling' }));
+          setOrderFillModal((cur) => ({ ...cur, status: mined ? 'success' : 'processing' }));
           if (!slow) window.setTimeout(() => finishOrderFillModal(), mined ? 750 : 1100);
           return;
         } catch (gerr: any) {

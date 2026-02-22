@@ -133,7 +133,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     setOrderFillModal({
       isOpen: true,
       progress: 0.06,
-      status: 'submitting',
+      status: 'canceling',
       allowClose: false,
       startedAt: Date.now(),
       kind: 'cancel',
@@ -146,7 +146,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const finishCancelModal = useCallback(() => {
     setOrderFillModal((cur) => ({
       ...cur,
-      status: 'filled',
+      status: 'success',
       progress: 1,
       allowClose: false,
       headlineText: undefined,
@@ -205,12 +205,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   // Smooth progress while submitting/filling (purely visual)
   useEffect(() => {
     if (!orderFillModal.isOpen) return;
-    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    if (orderFillModal.status === 'success' || orderFillModal.status === 'error') return;
 
     const id = window.setInterval(() => {
       setOrderFillModal((cur) => {
         if (!cur.isOpen) return cur;
-        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (cur.status === 'success' || cur.status === 'error') return cur;
         const t = cur.status === 'submitting' ? 0.7 : 0.92;
         const next = Math.min(t, cur.progress + (t - cur.progress) * 0.08 + 0.003);
         return { ...cur, progress: next };
@@ -224,12 +224,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   useEffect(() => {
     if (!orderFillModal.isOpen) return;
     if (orderFillModal.kind !== 'cancel') return;
-    if (orderFillModal.status === 'filled' || orderFillModal.status === 'error') return;
+    if (orderFillModal.status === 'success' || orderFillModal.status === 'error') return;
     const startedAt = orderFillModal.startedAt;
     const id = window.setInterval(() => {
       setOrderFillModal((cur) => {
         if (!cur.isOpen || cur.kind !== 'cancel') return cur;
-        if (cur.status === 'filled' || cur.status === 'error') return cur;
+        if (cur.status === 'success' || cur.status === 'error') return cur;
         if (Date.now() - startedAt > 18_000) {
           return { ...cur, allowClose: true };
         }
@@ -2175,7 +2175,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   throw new Error('Trading session is not enabled. Click Enable Trading before using gasless cancel.');
                                                 }
                                                 await new Promise((r) => setTimeout(r, 400));
-                                                setOrderFillModal((cur) => ({ ...cur, status: 'filling' }));
+                                                setOrderFillModal((cur) => ({ ...cur, status: 'canceling' }));
                                                 setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
                                                 const r = await submitSessionTrade({
                                                   method: 'sessionCancelOrder',
@@ -2222,7 +2222,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 } catch {}
                                               } else {
                                                 await new Promise((r) => setTimeout(r, 400));
-                                                setOrderFillModal((cur) => ({ ...cur, status: 'filling' }));
+                                                setOrderFillModal((cur) => ({ ...cur, status: 'canceling' }));
                                                 setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
                                                 const ok = await cancelOrderForMarket(order.id, metric);
                                                 if (!ok) {

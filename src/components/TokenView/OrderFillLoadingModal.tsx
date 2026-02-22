@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 
-export type OrderFillStatus = 'submitting' | 'filling' | 'filled' | 'error' | 'success';
+export type OrderFillStatus = 'submitting' | 'processing' | 'canceling' | 'error' | 'success';
 
 function clamp01(n: number) {
   if (!Number.isFinite(n)) return 0;
@@ -18,18 +18,28 @@ function formatPct(progress01: number) {
 
 function statusMeta(status: OrderFillStatus) {
   switch (status) {
-    case 'filled':
+    case 'canceling':
       return {
-        dot: 'bg-green-400',
-        badge: 'bg-[#1A1A1A] text-green-400 border border-[#222222]',
-        water: 'from-green-400/18 via-green-400/10 to-transparent',
-        label: 'FILLED',
+        dot: 'bg-yellow-400',
+        badge: 'bg-[#1A1A1A] text-yellow-400 border border-[#222222]',
+        water: 'from-blue-400/16 via-blue-400/9 to-transparent',
+        glow: '',
+        label: 'CANCELING',
+      } as const;
+    case 'processing':
+      return {
+        dot: 'bg-yellow-400',
+        badge: 'bg-[#1A1A1A] text-yellow-400 border border-[#222222]',
+        water: 'from-blue-400/16 via-blue-400/9 to-transparent',
+        glow: '',
+        label: 'PROCESSING',
       } as const;
     case 'success':
       return {
         dot: 'bg-green-400',
         badge: 'bg-[#1A1A1A] text-green-400 border border-[#222222]',
         water: 'from-green-400/18 via-green-400/10 to-transparent',
+        glow: '',
         label: 'SUCCESS',
       } as const;
     case 'error':
@@ -37,6 +47,7 @@ function statusMeta(status: OrderFillStatus) {
         dot: 'bg-red-400',
         badge: 'bg-[#1A1A1A] text-red-400 border border-[#222222]',
         water: 'from-red-400/16 via-red-400/8 to-transparent',
+        glow: '',
         label: 'ERROR',
       } as const;
     case 'submitting':
@@ -44,14 +55,8 @@ function statusMeta(status: OrderFillStatus) {
         dot: 'bg-blue-400',
         badge: 'bg-[#1A1A1A] text-blue-400 border border-[#222222]',
         water: 'from-blue-400/18 via-blue-400/10 to-transparent',
+        glow: '',
         label: 'SUBMITTING',
-      } as const;
-    default:
-      return {
-        dot: 'bg-yellow-400',
-        badge: 'bg-[#1A1A1A] text-yellow-400 border border-[#222222]',
-        water: 'from-blue-400/16 via-blue-400/9 to-transparent',
-        label: 'FILLING',
       } as const;
   }
 }
@@ -65,7 +70,7 @@ export type FillingReservoirProps = {
 
 export function FillingReservoir({
   progress,
-  status = 'filling',
+  status = 'processing',
   heightPx = 180,
 }: FillingReservoirProps) {
   const reducedMotion = useReducedMotion();
@@ -165,7 +170,7 @@ export function OrderFillLoadingModal({
   headlineText = 'Submitting your order,',
   detailText,
   progress,
-  status = 'filling',
+  status = 'processing',
   allowClose,
   safetyCloseButton,
   showProgressLabel,

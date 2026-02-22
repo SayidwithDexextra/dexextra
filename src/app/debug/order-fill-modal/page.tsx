@@ -14,10 +14,10 @@ export default function DebugOrderFillModalPage() {
     String(process.env.NEXT_PUBLIC_ENABLE_DEBUG_PAGES || '').toLowerCase() === 'true';
 
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<OrderFillStatus>('filling');
+  const [status, setStatus] = useState<OrderFillStatus>('processing');
   const [progress, setProgress] = useState(0.22);
   const [allowClose, setAllowClose] = useState(false);
-  const [autoCloseOnFilled, setAutoCloseOnFilled] = useState(true);
+  const [autoCloseOnSuccess, setAutoCloseOnSuccess] = useState(true);
   const [durationMs, setDurationMs] = useState(5200);
 
   const rafRef = useRef<number | null>(null);
@@ -54,7 +54,7 @@ export default function DebugOrderFillModalPage() {
           const submitK = k / 0.12;
           setProgress(from + (to - from) * (submitK * 0.15));
         } else {
-          setStatus('filling');
+          setStatus('processing');
           const fillK = (k - 0.12) / 0.88;
           const eased = 1 - Math.pow(1 - fillK, 2.2); // ease-out-ish
           setProgress(from + (to - from) * (0.15 + 0.85 * eased));
@@ -62,7 +62,7 @@ export default function DebugOrderFillModalPage() {
 
         if (k >= 1) {
           setProgress(to);
-          setStatus('filled');
+          setStatus('success');
           rafRef.current = null;
           return;
         }
@@ -77,11 +77,11 @@ export default function DebugOrderFillModalPage() {
 
   useEffect(() => {
     if (!open) return;
-    if (status !== 'filled') return;
-    if (!autoCloseOnFilled) return;
+    if (status !== 'success') return;
+    if (!autoCloseOnSuccess) return;
     const id = window.setTimeout(() => setOpen(false), 750);
     return () => window.clearTimeout(id);
-  }, [autoCloseOnFilled, open, status]);
+  }, [autoCloseOnSuccess, open, status]);
 
   if (!debugEnabled) {
     return (
@@ -126,7 +126,7 @@ export default function DebugOrderFillModalPage() {
               value={Math.round(clamp01(progress) * 100)}
               onChange={(e) => {
                 stopSim();
-                setStatus('filling');
+                setStatus('processing');
                 setProgress(clamp01(Number(e.target.value) / 100));
               }}
               className="w-full"
@@ -152,7 +152,7 @@ export default function DebugOrderFillModalPage() {
             onClick={() => {
               stopSim();
               setOpen(true);
-              setStatus('filling');
+              setStatus('processing');
             }}
             className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-[12px] font-medium text-white hover:bg-[#1A1A1A]"
           >
@@ -170,7 +170,7 @@ export default function DebugOrderFillModalPage() {
             onClick={() => startSim({ from: 0, to: 1, ms: durationMs })}
             className="rounded bg-white px-3 py-2 text-[12px] font-medium text-black hover:bg-white/90"
           >
-            Simulate fill
+            Simulate progress
           </button>
 
           <button
@@ -188,12 +188,12 @@ export default function DebugOrderFillModalPage() {
             onClick={() => {
               stopSim();
               setOpen(true);
-              setStatus('filled');
+              setStatus('success');
               setProgress(1);
             }}
             className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] font-medium text-emerald-300 hover:bg-emerald-500/15"
           >
-            Force filled
+            Force success
           </button>
         </div>
 
@@ -211,11 +211,11 @@ export default function DebugOrderFillModalPage() {
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input
               type="checkbox"
-              checked={autoCloseOnFilled}
-              onChange={(e) => setAutoCloseOnFilled(e.target.checked)}
+              checked={autoCloseOnSuccess}
+              onChange={(e) => setAutoCloseOnSuccess(e.target.checked)}
               className="accent-white"
             />
-            Auto-close on filled
+            Auto-close on success
           </label>
         </div>
       </div>
