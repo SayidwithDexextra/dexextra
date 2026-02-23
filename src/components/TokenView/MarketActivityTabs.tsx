@@ -367,8 +367,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const getTokenHref = useCallback((sym?: string | null) => {
     const s = String(sym || '').trim();
     if (!s) return '/';
-    return `/token/${encodeURIComponent(s)}`;
-  }, []);
+    const info = marketSymbolMap.get(s.toUpperCase());
+    const slug = info?.identifier || s;
+    return `/token/${encodeURIComponent(slug)}`;
+  }, [marketSymbolMap]);
   
   // Optimistic overlay for positions on trade events (prevents "revert" when vault reads lag a block).
   // We keep small deltas for a short TTL and render basePositions + deltas.

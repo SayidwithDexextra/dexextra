@@ -43,9 +43,16 @@ async function enrichWithMarketIcons(rows: any[]): Promise<any[]> {
   if (ids.length === 0 && symbols.length === 0) return rows;
 
   try {
-    const byId = new Map<string, string | null>();
-    const bySymbol = new Map<string, string | null>();
-    const byIdentifier = new Map<string, string | null>();
+    type MarketMeta = { iconUrl: string | null; marketIdentifier: string | null };
+    const byId = new Map<string, MarketMeta>();
+    const bySymbol = new Map<string, MarketMeta>();
+    const byIdentifier = new Map<string, MarketMeta>();
+
+    const upsert = (map: Map<string, MarketMeta>, key: string, m: any) => {
+      const url = typeof m?.icon_image_url === 'string' && m.icon_image_url.trim() ? m.icon_image_url.trim() : null;
+      const mi = m?.market_identifier ? String(m.market_identifier).trim() : null;
+      map.set(key, { iconUrl: url, marketIdentifier: mi });
+    };
 
     if (ids.length > 0) {
       const { data, error } = await supabaseAdmin
@@ -54,21 +61,14 @@ async function enrichWithMarketIcons(rows: any[]): Promise<any[]> {
         .in('id', ids);
       if (!error && data) {
         (data as any[]).forEach((m: any) => {
-          const id = m?.id ? String(m.id) : null;
-          const sym = m?.symbol ? String(m.symbol) : null;
-          const ident = m?.market_identifier ? String(m.market_identifier) : null;
-          const url = typeof m?.icon_image_url === 'string' && m.icon_image_url.trim() ? m.icon_image_url.trim() : null;
-          if (id) byId.set(id, url);
-          if (sym) bySymbol.set(sym, url);
-          if (ident) byIdentifier.set(ident, url);
+          if (m?.id) upsert(byId, String(m.id), m);
+          if (m?.symbol) upsert(bySymbol, String(m.symbol), m);
+          if (m?.market_identifier) upsert(byIdentifier, String(m.market_identifier), m);
         });
       }
     }
 
-    // If ClickHouse rows don't include marketUuid, fall back to mapping via symbol/market_identifier.
     if (symbols.length > 0) {
-      // Some parts of the stack use `symbol` while others use `market_identifier` as the canonical token route key.
-      // We query BOTH so that ClickHouse "symbol" can still match Supabase `market_identifier` (and vice-versa).
       const symbolKeys = Array.from(new Set([...symbols, ...symbolsUpper]));
 
       const [{ data: bySymData }, { data: byIdentData }] = await Promise.all([
@@ -79,11 +79,8 @@ async function enrichWithMarketIcons(rows: any[]): Promise<any[]> {
       const merged = ([] as any[]).concat((bySymData as any[]) || [], (byIdentData as any[]) || []);
       if (merged.length) {
         merged.forEach((m: any) => {
-          const sym = m?.symbol ? String(m.symbol) : null;
-          const ident = m?.market_identifier ? String(m.market_identifier) : null;
-          const url = typeof m?.icon_image_url === 'string' && m.icon_image_url.trim() ? m.icon_image_url.trim() : null;
-          if (sym) bySymbol.set(sym, url);
-          if (ident) byIdentifier.set(ident, url);
+          if (m?.symbol) upsert(bySymbol, String(m.symbol), m);
+          if (m?.market_identifier) upsert(byIdentifier, String(m.market_identifier), m);
         });
       }
     }
@@ -92,14 +89,17 @@ async function enrichWithMarketIcons(rows: any[]): Promise<any[]> {
       const id = String(r?.marketUuid || r?.market_uuid || '').trim();
       const sym = String(r?.symbol || '').trim();
       const ident = String(r?.market_identifier || '').trim();
-      const iconUrl =
-        (id && byId.has(id) ? byId.get(id) : null) ??
-        (sym && bySymbol.has(sym) ? bySymbol.get(sym) : null) ??
-        // ClickHouse "symbol" sometimes corresponds to Supabase `market_identifier`
-        (sym && byIdentifier.has(sym) ? byIdentifier.get(sym) : null) ??
-        (ident && byIdentifier.has(ident) ? byIdentifier.get(ident) : null) ??
+      const meta: MarketMeta | null =
+        (id ? byId.get(id) : null) ??
+        (sym ? bySymbol.get(sym) : null) ??
+        (sym ? byIdentifier.get(sym) : null) ??
+        (ident ? byIdentifier.get(ident) : null) ??
         null;
-      return { ...r, iconUrl };
+      return {
+        ...r,
+        iconUrl: meta?.iconUrl ?? null,
+        market_identifier: meta?.marketIdentifier || r?.market_identifier || null,
+      };
     });
   } catch {
     return rows;

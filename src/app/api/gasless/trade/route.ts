@@ -935,8 +935,27 @@ export async function POST(req: Request) {
                 if (crossErr instanceof HttpError) throw crossErr;
               }
 
-              const adjustedAmount = amount < 1_000_000_000_000n ? 1_000_000_000_000n : amount; // 1e12
-              const notional6 = (adjustedAmount * price) / 1_000_000_000_000_000_000n; // / 1e18
+              // Position-aware margin: only require margin for net new exposure.
+              // Closing or reducing an existing position releases margin, not consumes it.
+              let effectiveAmount = amount < 1_000_000_000_000n ? 1_000_000_000_000n : amount;
+              try {
+                const [posSize] = await vault.getPositionSummary(params.trader, marketId);
+                const currentNet = BigInt(posSize as any);
+                const isReducing =
+                  (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
+                if (isReducing) {
+                  const absCurrentSize = currentNet >= 0n ? currentNet : -currentNet;
+                  if (effectiveAmount <= absCurrentSize) {
+                    effectiveAmount = 0n;
+                  } else {
+                    effectiveAmount = effectiveAmount - absCurrentSize;
+                  }
+                }
+              } catch (_posErr) {
+                // Fall through with full amount if position query fails
+              }
+
+              const notional6 = (effectiveAmount * price) / 1_000_000_000_000_000_000n; // / 1e18
               const marginBps = isBuy ? BigInt(marginReq) : 15000n;
               const marginRequired6 = (notional6 * marginBps) / 10000n;
               const available6 = BigInt(await vault.getAvailableCollateral(params.trader));
@@ -946,6 +965,7 @@ export async function POST(req: Request) {
                 isBuy,
                 price: price.toString(),
                 amount: amount.toString(),
+                effectiveAmount: effectiveAmount.toString(),
                 notional6: notional6.toString(),
                 marginBps: marginBps.toString(),
                 marginRequired6: marginRequired6.toString(),

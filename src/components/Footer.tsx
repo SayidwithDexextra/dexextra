@@ -148,26 +148,39 @@ const Footer: React.FC = () => {
   }, []);
   const { markets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 });
 
-  const symbolByMarketAddress = useMemo(() => {
-    const map = new Map<string, string>();
+  const marketLookupByAddress = useMemo(() => {
+    const map = new Map<string, { symbol: string; marketIdentifier: string }>();
     for (const m of markets || []) {
       const addr = String((m as any)?.market_address || '').trim().toLowerCase();
       if (!addr || !isEvmAddress(addr)) continue;
       const sym = String((m as any)?.symbol || '').trim().toUpperCase();
-      if (!sym) continue;
-      map.set(addr, sym);
+      const mi = String((m as any)?.market_identifier || '').trim();
+      if (!sym || !mi) continue;
+      map.set(addr, { symbol: sym, marketIdentifier: mi });
     }
     return map;
   }, [markets]);
 
-  const symbolByMarketIdBytes32 = useMemo(() => {
-    const map = new Map<string, string>();
+  const marketLookupByBytes32 = useMemo(() => {
+    const map = new Map<string, { symbol: string; marketIdentifier: string }>();
     for (const m of markets || []) {
       const key = normalizeBytes32Hex(String((m as any)?.market_id_bytes32 || ''));
       if (!key) continue;
       const sym = String((m as any)?.symbol || '').trim().toUpperCase();
-      if (!sym) continue;
-      map.set(key, sym);
+      const mi = String((m as any)?.market_identifier || '').trim();
+      if (!sym || !mi) continue;
+      map.set(key, { symbol: sym, marketIdentifier: mi });
+    }
+    return map;
+  }, [markets]);
+
+  const marketIdentifierBySymbol = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of markets || []) {
+      const sym = String((m as any)?.symbol || '').trim().toUpperCase();
+      const mi = String((m as any)?.market_identifier || '').trim();
+      if (!sym || !mi) continue;
+      if (!map.has(sym)) map.set(sym, mi);
     }
     return map;
   }, [markets]);
@@ -176,27 +189,23 @@ const Footer: React.FC = () => {
     const v = String(raw || '').trim();
     if (!v) return null;
 
-    // If we received a market address, prefer resolving to the canonical symbol.
     if (isEvmAddress(v)) {
-      const sym = symbolByMarketAddress.get(v.toLowerCase());
-      if (sym) return { hrefId: sym, key: sym, label: sym };
-      // Unknown address: keep href usable, but display a short label.
+      const info = marketLookupByAddress.get(v.toLowerCase());
+      if (info) return { hrefId: info.marketIdentifier, key: info.symbol, label: info.symbol };
       return { hrefId: v, key: v.toUpperCase(), label: shortAddress(v) };
     }
 
-    // If we received a bytes32 market id, resolve to symbol when possible.
     if (isBytes32Hex(v)) {
       const key = normalizeBytes32Hex(v);
-      const sym = key ? symbolByMarketIdBytes32.get(key) : null;
-      if (!sym) return null;
-      // bytes32 itself isn't a stable route; prefer symbol.
-      return { hrefId: sym, key: sym, label: sym };
+      const info = key ? marketLookupByBytes32.get(key) : null;
+      if (!info) return null;
+      return { hrefId: info.marketIdentifier, key: info.symbol, label: info.symbol };
     }
 
-    // Otherwise treat as a symbol-like identifier.
     const sym = v.toUpperCase();
-    return { hrefId: sym, key: sym, label: sym };
-  }, [symbolByMarketAddress, symbolByMarketIdBytes32]);
+    const mi = marketIdentifierBySymbol.get(sym);
+    return { hrefId: mi || sym, key: sym, label: sym };
+  }, [marketLookupByAddress, marketLookupByBytes32, marketIdentifierBySymbol]);
 
   const hydrateSessionOrderSymbols = useCallback(() => {
     if (typeof window === 'undefined' || !walletAddress) {

@@ -10,6 +10,7 @@ import { useWallet } from '@/hooks/useWallet'
 type AllocationDatum = {
 	name: string
 	symbol: string
+	market_identifier?: string
 	percent: number
 	value?: number
 	icon?: string
@@ -136,13 +137,14 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 	const { markets, isLoading: isLoadingMarkets } = useMarkets({ limit: 500, autoRefresh: true, refreshInterval: 60000 })
 
 	const marketIdMap = useMemo(() => {
-		const map = new Map<string, { symbol: string; name: string; icon?: string }>()
+		const map = new Map<string, { symbol: string; name: string; icon?: string; market_identifier?: string }>()
 		for (const m of markets || []) {
 			if (m?.market_id_bytes32) {
 				map.set(String(m.market_id_bytes32).toLowerCase(), {
 					symbol: (m.symbol || '').toUpperCase(),
 					name: m.name || m.symbol || '',
 					icon: (m as any)?.icon_image_url || (m as any)?.icon || undefined,
+					market_identifier: m.market_identifier || undefined,
 				})
 			}
 		}
@@ -151,23 +153,23 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 
 	const liveItems: AllocationDatum[] = useMemo(() => {
 		if (!positions || positions.length === 0) return []
-		const group: Record<string, { name: string; symbol: string; value: number; net: number; absSize: number }> = {}
+		const group: Record<string, { name: string; symbol: string; market_identifier?: string; value: number; net: number; absSize: number }> = {}
 		for (const p of positions) {
 			const keyHex = String(p.marketId || '').toLowerCase()
 			const meta = marketIdMap.get(keyHex)
 			const symbol = (meta?.symbol || p.symbol || keyHex.slice(2, 6)).toUpperCase()
 			const name = meta?.name || symbol
+			const mi = meta?.market_identifier
 			const notional = Math.abs(p.size) * (p.markPrice || p.entryPrice || 0)
 			const absSize = Math.abs(isFinite(p.size) ? p.size : 0)
-			if (!group[symbol]) group[symbol] = { name, symbol, value: 0, net: 0, absSize: 0 }
+			if (!group[symbol]) group[symbol] = { name, symbol, market_identifier: mi, value: 0, net: 0, absSize: 0 }
+			if (mi && !group[symbol].market_identifier) group[symbol].market_identifier = mi
 			group[symbol].value += isFinite(notional) ? notional : 0
-			// Use signed size based on position side to determine LONG/SHORT net
 			const signedSize = (isFinite(p.size) ? p.size : 0) * (p.side === 'SHORT' ? -1 : 1)
 			group[symbol].net += signedSize
 			group[symbol].absSize += absSize
 		}
 		const total = Object.values(group).reduce((a, v) => a + v.value, 0)
-		// If we cannot compute notional yet (e.g., mark/entry price not ready), fallback to size-based allocation
 		if (total <= 0) {
 			const sizeTotal = Object.values(group).reduce((a, v) => a + v.absSize, 0)
 			if (sizeTotal <= 0) return []
@@ -183,7 +185,7 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 						}
 					} catch {}
 					const direction: 'LONG' | 'SHORT' | 'FLAT' = g.net > 0 ? 'LONG' : g.net < 0 ? 'SHORT' : 'FLAT'
-					return { name: g.name, symbol: g.symbol, percent: (g.absSize / sizeTotal) * 100, value: undefined, icon: iconUrl, direction }
+					return { name: g.name, symbol: g.symbol, market_identifier: g.market_identifier, percent: (g.absSize / sizeTotal) * 100, value: undefined, icon: iconUrl, direction }
 				})
 				.sort((a, b) => b.percent - a.percent)
 		}
@@ -199,7 +201,7 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 					}
 				} catch {}
 				const direction: 'LONG' | 'SHORT' | 'FLAT' = g.net > 0 ? 'LONG' : g.net < 0 ? 'SHORT' : 'FLAT'
-				return { name: g.name, symbol: g.symbol, percent: (g.value / total) * 100, value: g.value, icon: iconUrl, direction }
+				return { name: g.name, symbol: g.symbol, market_identifier: g.market_identifier, percent: (g.value / total) * 100, value: g.value, icon: iconUrl, direction }
 			})
 			.sort((a, b) => b.percent - a.percent)
 	}, [positions, marketIdMap])
@@ -511,14 +513,14 @@ export default function AllocationGrid({ data, gap = 12 }: AllocationGridProps) 
 							onMouseEnter={() => setHoveredIndex(idx)}
 							onMouseLeave={() => setHoveredIndex((prev) => (prev === idx ? null : prev))}
 							onClick={() => {
-								const sym = String(item.symbol || '').toUpperCase()
-								if (sym) router.push(`/token/${encodeURIComponent(sym)}`)
+								const id = String(item.market_identifier || item.symbol || '').trim()
+								if (id) router.push(`/token/${encodeURIComponent(id)}`)
 							}}
 							onKeyDown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
 									e.preventDefault()
-									const sym = String(item.symbol || '').toUpperCase()
-									if (sym) router.push(`/token/${encodeURIComponent(sym)}`)
+									const id = String(item.market_identifier || item.symbol || '').trim()
+									if (id) router.push(`/token/${encodeURIComponent(id)}`)
 								}
 							}}
 							role="button"

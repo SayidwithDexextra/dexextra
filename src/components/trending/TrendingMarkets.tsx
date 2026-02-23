@@ -84,7 +84,8 @@ export const TrendingMarkets: React.FC<TrendingMarketsProps> = ({
             percentChange: pct,
             gradientType: gradientTypes[idx % gradientTypes.length],
             onClick: () => {
-              const routeId = marketUuid || symbol;
+              const mi = r.market_identifier ? String(r.market_identifier).trim() : '';
+              const routeId = mi || symbol || marketUuid;
               if (routeId) router.push(`/token/${encodeURIComponent(routeId)}`);
             },
           };

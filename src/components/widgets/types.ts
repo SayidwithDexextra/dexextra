@@ -5,6 +5,7 @@ export interface TokenData {
   change: number;
   isPositive: boolean;
   symbol?: string;
+  market_identifier?: string;
 }
 
 export interface MarketData {

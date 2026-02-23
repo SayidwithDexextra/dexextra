@@ -7,6 +7,7 @@ import { Tooltip } from '../ui/Tooltip';
 interface MarketTickerItem {
   marketId: string;
   symbol: string;
+  market_identifier: string;
   name: string;
   description?: string;
   price: number;
@@ -191,10 +192,13 @@ export default function CryptoMarketTicker({
             ? (Number(opts?.changePct24h) as number)
             : 0;
 
+          const mi = String(m?.market_identifier || '').trim() || symbol;
+
           seen.add(marketId);
           out.push({
             marketId,
             symbol,
+            market_identifier: mi,
             name,
             description,
             price,
@@ -338,7 +342,7 @@ export default function CryptoMarketTicker({
         aria-label="Dexextra market ticker"
       >
         {validItems.concat(validItems).map((m, index) => {
-          const href = m.symbol ? `/token/${encodeURIComponent(m.symbol)}` : '#';
+          const href = (m.market_identifier || m.symbol) ? `/token/${encodeURIComponent(m.market_identifier || m.symbol)}` : '#';
           const tooltipTitle = m.symbol || 'Market';
           const tooltipDescription =
             typeof m.description === 'string' && m.description.trim()

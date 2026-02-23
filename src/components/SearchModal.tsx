@@ -314,7 +314,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       saveRecentSearch(searchValue)
     }
     // Navigate to market page
-    router.push(`/token/${encodeURIComponent(market.symbol)}`)
+    router.push(`/token/${encodeURIComponent(market.market_identifier || market.symbol)}`)
     onClose()
   }, [onClose, router, searchValue, saveRecentSearch])
 

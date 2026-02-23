@@ -61,6 +61,7 @@ const TrendingSection: React.FC = () => {
             change: Number(change.toFixed(1)),
             isPositive: change >= 0,
             symbol: r.symbol || undefined,
+            market_identifier: r.market_identifier || undefined,
           };
         });
 
@@ -98,7 +99,7 @@ const TrendingSection: React.FC = () => {
           <>
             {tokens.map((token, index) => {
               const changeText = `${token.isPositive ? '▲' : '▼'} ${Math.abs(token.change).toFixed(1)}%`;
-              const href = token.symbol ? `/token/${encodeURIComponent(token.symbol)}` : null;
+              const href = (token.market_identifier || token.symbol) ? `/token/${encodeURIComponent(token.market_identifier || token.symbol!)}` : null;
               return (
                 <Link
                   // eslint-disable-next-line react/no-array-index-key

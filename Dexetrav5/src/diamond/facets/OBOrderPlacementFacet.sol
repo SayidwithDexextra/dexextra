@@ -96,7 +96,7 @@ contract OBOrderPlacementFacet {
         uint256 refPrice2 = isBuy ? s.bestAsk : s.bestBid;
         require(refPrice2 != 0, "OrderBook: no liquidity available");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice2, 10000 + s.maxSlippageBps, 10000) : refPrice2;
-        uint256 estMargin = _calculateMarginRequired(s, amount, worstCase, isBuy);
+        uint256 estMargin = _marginRequiredForMarketOrder(s, msg.sender, amount, worstCase, isBuy);
         uint256 available = s.vault.getAvailableCollateral(msg.sender);
         emit MarketOrderAttempt(msg.sender, isBuy, amount, refPrice2, s.maxSlippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice2, refPrice2 != 0);
@@ -139,7 +139,7 @@ contract OBOrderPlacementFacet {
         uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
         require(refPrice != 0, "OrderBook: no liquidity available");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice, 10000 + slippageBps, 10000) : refPrice;
-        uint256 estMargin = _calculateMarginRequired(s, amount, worstCase, isBuy);
+        uint256 estMargin = _marginRequiredForMarketOrder(s, msg.sender, amount, worstCase, isBuy);
         uint256 available = s.vault.getAvailableCollateral(msg.sender);
         emit MarketOrderAttempt(msg.sender, isBuy, amount, refPrice, slippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice, refPrice != 0);
@@ -216,7 +216,7 @@ contract OBOrderPlacementFacet {
         uint256 refPrice2 = isBuy ? s.bestAsk : s.bestBid;
         require(refPrice2 != 0, "OrderBook: no liquidity available");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice2, 10000 + s.maxSlippageBps, 10000) : refPrice2;
-        uint256 estMargin = _calculateMarginRequired(s, amount, worstCase, isBuy);
+        uint256 estMargin = _marginRequiredForMarketOrder(s, trader, amount, worstCase, isBuy);
         uint256 available = s.vault.getAvailableCollateral(trader);
         emit MarketOrderAttempt(trader, isBuy, amount, refPrice2, s.maxSlippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice2, refPrice2 != 0);
@@ -708,6 +708,31 @@ contract OBOrderPlacementFacet {
         uint256 notional = Math.mulDiv(amount, price, 1e18);
         uint256 marginBps = isBuy ? s.marginRequirementBps : 15000;
         return Math.mulDiv(notional, marginBps, 10000);
+    }
+
+    /// @dev Position-aware margin: returns 0 when the order is reducing/closing an
+    ///      existing position, and only charges margin on net new exposure beyond
+    ///      the current position size (e.g. a flip from long to short).
+    function _marginRequiredForMarketOrder(
+        OrderBookStorage.State storage s,
+        address trader,
+        uint256 amount,
+        uint256 price,
+        bool isBuy
+    ) private view returns (uint256) {
+        (int256 currentSize, , ) = s.vault.getPositionSummary(trader, s.marketId);
+
+        bool isReducing = (currentSize > 0 && !isBuy) || (currentSize < 0 && isBuy);
+
+        if (isReducing) {
+            uint256 absCurrentSize = uint256(currentSize >= 0 ? currentSize : -currentSize);
+            if (amount <= absCurrentSize) {
+                return 0;
+            }
+            return _calculateMarginRequired(s, amount - absCurrentSize, price, isBuy);
+        }
+
+        return _calculateMarginRequired(s, amount, price, isBuy);
     }
     function _placeMarket(address trader, uint256 amount, bool isBuy, bool isMarginOrder, uint256 maxPrice, uint256 minPrice) private returns (uint256 filledAmount) {
         OrderBookStorage.State storage s = OrderBookStorage.state();

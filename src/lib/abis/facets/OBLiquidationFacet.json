@@ -1,6 +1,11 @@
 {
   "abi": [
     {
+      "inputs": [],
+      "name": "NotContractOwner",
+      "type": "error"
+    },
+    {
       "anonymous": false,
       "inputs": [
         {

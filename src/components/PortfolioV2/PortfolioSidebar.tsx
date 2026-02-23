@@ -290,11 +290,11 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			{ label: 'Δ (session)', value: totals.hideUntilSummaryReady ? plainPlaceholder : `${totals.valueDelta >= 0 ? '+' : ''}${formatUsd(totals.valueDelta, 2)}`, valueClassName: 'font-mono', valueTone: totals.hideUntilSummaryReady ? 'default' : (totals.valueDelta >= 0 ? 'pos' : 'neg') },
 			{ label: 'Δ% (session)', value: totals.hideUntilSummaryReady ? plainPlaceholder : formatPct(totals.valueDeltaPct, 2), valueClassName: 'font-mono', valueTone: totals.hideUntilSummaryReady ? 'default' : (totals.valueDeltaPct >= 0 ? 'pos' : 'neg') },
 			{ label: 'Available', value: totals.hideUntilSummaryReady ? usdPlaceholder : formatUsd(Math.max(0, totals.availableCash), 2), valueClassName: 'font-mono' },
-			{ label: 'Realized loss', value: formatUsd(totals.realizedLoss, 2), valueClassName: 'font-mono', valueTone: totals.realizedLoss > 0 ? 'neg' : 'default' },
+			{ label: 'Realized P&L', value: `${totals.realizedPnl >= 0 ? '+' : ''}${formatUsd(totals.realizedPnl, 2)}`, valueClassName: 'font-mono', valueTone: totals.realizedPnl > 0 ? 'pos' : totals.realizedPnl < 0 ? 'neg' : 'default' },
 			{ label: 'Open positions', value: String(posCount), valueClassName: 'font-mono' },
 			{ label: 'Open orders', value: String(ordCount), valueClassName: 'font-mono' },
 		]
-	}, [positionsAny, sidebarOrders.orders, totals.availableCash, totals.hideUntilSummaryReady, totals.realizedLoss, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
+	}, [positionsAny, sidebarOrders.orders, totals.availableCash, totals.hideUntilSummaryReady, totals.realizedPnl, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
 
 	const isHealthy = Boolean(coreVault?.isHealthy)
 	// Important: don't let background refresh cycles "blink" the sidebar content.
