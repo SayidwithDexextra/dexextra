@@ -121,9 +121,9 @@ async function fetchAllOrdersForContract(
       });
       const tuple = result as unknown as readonly [bigint, `0x${string}`, bigint, bigint, boolean, bigint, bigint, bigint, boolean];
 
-      // Skip zero/deleted orders (trader == 0x0 and amount == 0)
+      // Skip zero/deleted/filled orders (trader == 0x0 OR amount == 0)
       const [, trader, , amount] = tuple;
-      if (trader === '0x0000000000000000000000000000000000000000' && amount === 0n) {
+      if (trader === '0x0000000000000000000000000000000000000000' || amount === 0n) {
         consecutiveEmpty++;
         if (consecutiveEmpty >= maxConsecutiveEmpty) break;
         continue;
@@ -249,6 +249,11 @@ export async function GET(request: NextRequest) {
                 args: [oid],
               });
               const tuple = raw as unknown as readonly [bigint, `0x${string}`, bigint, bigint, boolean, bigint, bigint, bigint, boolean];
+              const [, orderTrader, , orderAmount] = tuple;
+              // Skip filled/cancelled/deleted orders (zeroed-out on-chain)
+              if (orderTrader === '0x0000000000000000000000000000000000000000' || orderAmount === 0n) {
+                continue;
+              }
               const o = serializeOrder(tuple, market.symbol);
               o.orderBook = address;
               orders.push(o);

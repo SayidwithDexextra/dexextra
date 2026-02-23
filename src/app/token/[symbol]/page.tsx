@@ -697,7 +697,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
               <div className="mt-4">
                 <a 
-                  href="/create-market" 
+                  href="/new-market" 
                   className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg transition-colors"
                 >
                   Create {symbol} Market

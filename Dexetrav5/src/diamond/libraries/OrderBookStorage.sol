@@ -49,6 +49,7 @@ library OrderBookStorage {
         mapping(uint256 => OrderBookStorage.PriceLevel) buyLevels;
         mapping(uint256 => OrderBookStorage.PriceLevel) sellLevels;
         mapping(address => uint256[]) userOrders;
+        mapping(address => mapping(uint256 => uint256)) userOrderIndex; // user => orderId => index+1 (0 = absent)
         uint256 nextOrderId;
         uint256 bestBid;
         uint256 bestAsk;
@@ -56,6 +57,11 @@ library OrderBookStorage {
         uint256[] sellPrices;
         mapping(uint256 => bool) buyPriceExists;
         mapping(uint256 => bool) sellPriceExists;
+        // Price-level linked-list pointers (descending for buys, ascending for sells)
+        mapping(uint256 => uint256) buyPriceNext;
+        mapping(uint256 => uint256) buyPricePrev;
+        mapping(uint256 => uint256) sellPriceNext;
+        mapping(uint256 => uint256) sellPricePrev;
         // Accounting
         mapping(uint256 => uint256) filledAmounts;
         mapping(uint256 => uint256) cumulativeMarginUsed;

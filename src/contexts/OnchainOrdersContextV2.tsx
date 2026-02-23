@@ -48,7 +48,7 @@ const OnchainOrdersContext = createContext<OnchainOrdersContextValue>({
 });
 
 // ── Constants ──────────────────────────────────────────────────────────
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 const CACHE_KEY_PREFIX = 'v2:onchainOrders:';
 
 // ── Cache helpers ──────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ export function OnchainOrdersProvider({ children }: { children: React.ReactNode 
 
     const cache = readCache(walletAddress);
     if (cache && isCacheFresh(cache)) {
-      // Cache is fresh -- render instantly, skip API
+      // Cache is fresh -- render instantly, then background-refresh
       setOrders(cache.orders);
       setLastFetchedAt(cache.fetchedAt);
       setHasHydrated(true);
@@ -212,12 +212,30 @@ export function OnchainOrdersProvider({ children }: { children: React.ReactNode 
         count: cache.orders.length,
         ageMinutes: Math.round((Date.now() - cache.fetchedAt) / 60_000),
       });
+      // Always verify against the chain in the background
+      void refresh();
     } else {
       // Cache stale or missing -- fetch from API
       void refresh();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress]);
+
+  // ── Re-fetch when the tab becomes visible again ──────────────────
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (!walletAddress) return;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      // Invalidate cache so refresh actually fetches
+      clearCache(walletAddress);
+      void refresh();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [walletAddress, refresh]);
 
   // ── Listen for ordersUpdated events to re-fetch ────────────────────
   useEffect(() => {

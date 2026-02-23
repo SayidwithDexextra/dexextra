@@ -8,6 +8,9 @@ export { Hero } from './Hero';
 // Top Performer Components
 export { TopPerformerCarousel, TopPerformerDualCarousel } from './TopPerformer';
 
+// Top Picks Components
+export { DexeteraTopPicksCarousel } from './TopPicksCarousel';
+
 // Trending Components
 export { TrendingMarkets } from './trending';
 

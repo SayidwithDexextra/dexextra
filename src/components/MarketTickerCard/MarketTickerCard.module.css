@@ -8,16 +8,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0 32px 8px 32px;
+  margin: 0 0 8px 0;
 }
 
 .sectionTitle {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: #9ca3af;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: #ffffff;
   margin: 0;
 }
 
@@ -328,18 +326,18 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
-  padding: 40px 32px;
+  padding: 40px 0;
 }
 
 .inlineGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 20px;
-  padding: 0 32px 24px;
+  padding: 0 0 24px;
 }
 
 .toolbarWrapper {
-  padding: 0 32px;
+  padding: 0;
   margin-bottom: 8px;
   min-height: 0;
   display: flex;
@@ -347,7 +345,7 @@
 }
 
 .emptyState {
-  padding: 0 32px;
+  padding: 0;
   min-height: 200px;
   display: flex;
   align-items: center;
@@ -370,12 +368,12 @@
 /* Responsive breakpoints */
 @media (max-width: 768px) {
   .sectionHeader {
-    margin: 0 16px 8px 16px;
+    margin: 0 0 8px 0;
   }
 
   .container {
     grid-template-columns: 1fr;
-    padding: 24px 16px;
+    padding: 24px 0;
     gap: 14px;
   }
   
@@ -394,11 +392,11 @@
   .inlineGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
-    padding: 24px 16px;
+    padding: 24px 0;
   }
 
   .toolbarWrapper {
-    padding: 0 16px;
+    padding: 0;
   }
 }
 
@@ -418,6 +416,6 @@
   }
 
   .toolbarWrapper {
-    padding: 0 16px;
+    padding: 0;
   }
 }

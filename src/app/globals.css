@@ -180,13 +180,13 @@ body {
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   min-height: 100vh;
-  overflow-x: hidden; /* Prevent horizontal scrolling */
+  overflow-x: hidden;
   width: 100%;
-  max-width: 100vw; /* Constrain to viewport width */
+  max-width: 100vw;
 }
 
 html {
-  overflow-x: hidden; /* Prevent horizontal scrolling at root level */
+  overflow-x: hidden;
   width: 100%;
   max-width: 100vw;
 }
@@ -220,22 +220,15 @@ header [onClick] {
   z-index: 50;
 }
 
-/* Custom scrollbar for dark theme */
-::-webkit-scrollbar {
-  width: 8px;
+/* Hide scrollbar globally while keeping scroll functional */
+html,
+body {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
-
-::-webkit-scrollbar-track {
-  background: var(--surface-bg);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border-default);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary);
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
 }
 
 /* Focus styles */
@@ -275,15 +268,6 @@ header [onClick] {
   display: none; /* Chrome, Safari */
 }
 
-/* Hide the main page scrollbar when token page is present, without disabling scroll */
-body:has(.token-page),
-html:has(.token-page) {
-  scrollbar-width: none; /* Firefox */
-}
-body:has(.token-page)::-webkit-scrollbar,
-html:has(.token-page)::-webkit-scrollbar {
-  display: none; /* Chrome, Safari */
-}
 
 /* Page enter animation (subtle upward slide) */
 @keyframes dexPageEnterUp {

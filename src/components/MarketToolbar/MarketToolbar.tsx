@@ -32,6 +32,7 @@ export interface MarketToolbarProps {
   className?: string;
   advancedFilters?: Partial<MarketToolbarFilterSettings>;
   onAdvancedFiltersChange?: (filters: MarketToolbarFilterSettings) => void;
+  showAdvancedFilters?: boolean;
 }
 
 const defaultAdvancedFilters: MarketToolbarFilterSettings = {
@@ -212,6 +213,7 @@ const MarketToolbar: React.FC<MarketToolbarProps> = ({
   className,
   advancedFilters,
   onAdvancedFiltersChange,
+  showAdvancedFilters = true,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -428,28 +430,30 @@ const MarketToolbar: React.FC<MarketToolbarProps> = ({
         </button>
 
         {/* Filter icon */}
-        <button
-          className={styles.iconButton}
-          onClick={handleFilterIconClick}
-          aria-label="Filter options"
-          aria-pressed={isAdvancedFiltersOpen}
-          type="button"
-        >
-          <svg
-            className={styles.actionIcon}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
+        {showAdvancedFilters && (
+          <button
+            className={styles.iconButton}
+            onClick={handleFilterIconClick}
+            aria-label="Filter options"
+            aria-pressed={isAdvancedFiltersOpen}
+            type="button"
           >
-            <line x1="4" y1="6" x2="20" y2="6" />
-            <line x1="4" y1="12" x2="20" y2="12" />
-            <line x1="4" y1="18" x2="20" y2="18" />
-            <circle cx="8" cy="6" r="2" />
-            <circle cx="16" cy="12" r="2" />
-            <circle cx="8" cy="18" r="2" />
-          </svg>
-        </button>
+            <svg
+              className={styles.actionIcon}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="18" x2="20" y2="18" />
+              <circle cx="8" cy="6" r="2" />
+              <circle cx="16" cy="12" r="2" />
+              <circle cx="8" cy="18" r="2" />
+            </svg>
+          </button>
+        )}
 
         {/* Bookmark icon */}
         <button
@@ -475,46 +479,48 @@ const MarketToolbar: React.FC<MarketToolbarProps> = ({
       </div>
     </div>
 
-        <div
-          className={styles.advancedFiltersWrapper}
-          data-open={isAdvancedFiltersOpen}
-          aria-hidden={!isAdvancedFiltersOpen}
-        >
-          <div className={styles.advancedFilters}>
-              <div className={styles.filterChip}>
-                <ToolbarDropdown
-                  label="Sort by"
-                  value={activeAdvancedFilters.sortBy}
-                  options={sortOptions}
-                  onChange={(optionValue) =>
-                    updateAdvancedFilters({ sortBy: optionValue as MarketToolbarSortOption })
-                  }
-                />
-              </div>
+        {showAdvancedFilters && (
+          <div
+            className={styles.advancedFiltersWrapper}
+            data-open={isAdvancedFiltersOpen}
+            aria-hidden={!isAdvancedFiltersOpen}
+          >
+            <div className={styles.advancedFilters}>
+                <div className={styles.filterChip}>
+                  <ToolbarDropdown
+                    label="Sort by"
+                    value={activeAdvancedFilters.sortBy}
+                    options={sortOptions}
+                    onChange={(optionValue) =>
+                      updateAdvancedFilters({ sortBy: optionValue as MarketToolbarSortOption })
+                    }
+                  />
+                </div>
 
-              <div className={styles.filterChip}>
-                <ToolbarDropdown
-                  label="Frequency"
-                  value={activeAdvancedFilters.frequency}
-                  options={frequencyOptions}
-                  onChange={(optionValue) =>
-                    updateAdvancedFilters({ frequency: optionValue as MarketToolbarFrequencyOption })
-                  }
-                />
-              </div>
+                <div className={styles.filterChip}>
+                  <ToolbarDropdown
+                    label="Frequency"
+                    value={activeAdvancedFilters.frequency}
+                    options={frequencyOptions}
+                    onChange={(optionValue) =>
+                      updateAdvancedFilters({ frequency: optionValue as MarketToolbarFrequencyOption })
+                    }
+                  />
+                </div>
 
-              <div className={styles.filterChip}>
-                <ToolbarDropdown
-                  label="Status"
-                  value={activeAdvancedFilters.status}
-                  options={statusOptions}
-                  onChange={(optionValue) =>
-                    updateAdvancedFilters({ status: optionValue as MarketToolbarStatusOption })
-                  }
-                />
-              </div>
+                <div className={styles.filterChip}>
+                  <ToolbarDropdown
+                    label="Status"
+                    value={activeAdvancedFilters.status}
+                    options={statusOptions}
+                    onChange={(optionValue) =>
+                      updateAdvancedFilters({ status: optionValue as MarketToolbarStatusOption })
+                    }
+                  />
+                </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
       <SearchModal
         isOpen={isSearchModalOpen}

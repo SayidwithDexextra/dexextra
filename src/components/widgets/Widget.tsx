@@ -8,8 +8,8 @@ import TrendingSection from './TrendingSection';
 
 const Widget: React.FC = () => {
   return (
-    <div className="w-full flex justify-center px-4">
-      <div className="grid grid-cols-1 lg:grid-cols-6 gap-3 w-full max-w-7xl">
+    <div className="w-full">
+      <div className="grid grid-cols-1 lg:grid-cols-6 gap-3 w-full">
         {/* Left Side - Market Overview Stacked (narrower) */}
         <div className="lg:col-span-2 flex flex-col gap-3">
           <MarketOverview />

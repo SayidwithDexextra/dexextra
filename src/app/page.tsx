@@ -13,6 +13,8 @@ import useWallet from '@/hooks/useWallet';
 import { useMarketOverview } from '@/hooks/useMarketOverview';
 import { transformOverviewToCards, sortMarketsByPriority } from '@/lib/marketTransformers';
 import { MarketToolbar, MarketToolbarFilterSettings } from '@/components/MarketToolbar';
+import { DexeteraTopPicksCarousel } from '@/components/TopPicksCarousel';
+import type { DexeteraTopPickItem } from '@/components/TopPicksCarousel';
 
 export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -54,6 +56,15 @@ export default function Home() {
     status: statusFilter,
     autoRefresh: false,
     realtimeDebounce: 1000 // Add 1 second debounce for realtime updates
+  });
+
+  // Fetch markets tagged with "Top Picks" category
+  const { data: topPicksData } = useMarketOverview({
+    category: 'Top Picks',
+    status: ['ACTIVE', 'SETTLEMENT_REQUESTED'],
+    autoRefresh: false,
+    realtime: true,
+    realtimeDebounce: 1000,
   });
 
   const baseMarkets = useMemo(() => (overview as any[]) || [], [overview]);
@@ -357,6 +368,24 @@ export default function Home() {
     () => transformOverviewToCards(sortedMarkets as any),
     [sortedMarkets]
   );
+
+  const topPicksItems: DexeteraTopPickItem[] = useMemo(() => {
+    return (topPicksData || []).map((market) => {
+      const raw = (market.mark_price ?? 0) as number;
+      const price = raw > 0 ? raw / 1_000_000 : 0;
+      return {
+        id: market.market_id,
+        title: market.name || market.symbol,
+        imageUrl: market.banner_image_url || market.icon_image_url,
+        imageAlt: market.name || market.symbol,
+        statLabel: 'Mark price',
+        price,
+        currency: '$',
+        changePercent: null,
+        isVerified: true,
+      };
+    });
+  }, [topPicksData]);
   
   const recentEvents: any[] = []
   const eventsLoading = false
@@ -501,13 +530,21 @@ export default function Home() {
 
       <Hero data={heroData} />
 
-      <div className="flex justify-center py-8">
-        <Widget />
-      </div>
+      {/* Shared container — aligns Widget, Top Picks, and Active Markets */}
+      <div className="w-full px-8">
+        <div className="pt-8 pb-2">
+          <Widget />
+        </div>
 
-      {/* Markets Section */}
-      <div className="w-full py-8">
-        <div className="w-full">
+        <DexeteraTopPicksCarousel
+          title="Top Picks"
+          subtitle="This week’s top picks"
+          items={topPicksItems}
+          onItemClick={handleMarketCardNavigate}
+        />
+
+        {/* Markets Section */}
+        <div className="w-full pt-2 pb-8">
           {marketsError ? (
             <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 text-center">
               <p className="text-red-500">Error loading markets: {marketsError}</p>
@@ -538,6 +575,7 @@ export default function Home() {
                     selectedFilter={selectedFilter}
                     onFilterChange={setSelectedFilter}
                     onSearch={setSearchQuery}
+                    showAdvancedFilters={false}
                     onFilterClick={() => {
                       // TODO: Implement filter modal/dropdown
                       console.log('Filter clicked');

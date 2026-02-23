@@ -8,7 +8,7 @@ import React from 'react';
  * Change this value later if you want a different placeholder icon everywhere
  * these widgets render market icons.
  */
-export const DEFAULT_MARKET_ICON_URL = '/placeholder-market.svg';
+export const DEFAULT_MARKET_ICON_URL = '/template.png';
 
 export function MarketIconBadge({
   iconUrl,

@@ -495,7 +495,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                 </div>
               </div>
               
-              <div className="space-y-1">
+              <div className="relative">
+              <div className="space-y-1 overflow-y-auto markets-internal-scroll" style={{ maxHeight: '320px' }}>
                 {searchResults.markets.map((market) => (
                   (() => {
                     const deploymentStatus = String(market.deployment_status || '').toLowerCase();
@@ -638,6 +639,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   })()
                 ))}
               </div>
+              {searchResults.markets.length > 6 && (
+                <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-[#0F0F0F] to-transparent rounded-b-md" />
+              )}
+              </div>
             </div>
           )}
 
@@ -758,6 +763,28 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           .search-modal-scroll::-webkit-scrollbar {
             width: 0px;
             height: 0px;
+          }
+
+          .markets-internal-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: #333333 transparent;
+          }
+
+          .markets-internal-scroll::-webkit-scrollbar {
+            width: 4px;
+          }
+
+          .markets-internal-scroll::-webkit-scrollbar-track {
+            background: transparent;
+          }
+
+          .markets-internal-scroll::-webkit-scrollbar-thumb {
+            background-color: #333333;
+            border-radius: 4px;
+          }
+
+          .markets-internal-scroll::-webkit-scrollbar-thumb:hover {
+            background-color: #444444;
           }
 
           .users-horizontal-scroll {
