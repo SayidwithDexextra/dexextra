@@ -62,144 +62,129 @@ export default function ClosedPositionModal({
 		}
 	}
 
+	const handleDismiss = () => {
+		if (isClosing) return
+		onClose()
+		setCloseError(null)
+	}
+
 	if (!isOpen) return null
 
 	return (
-		<div 
-			className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
-			onClick={() => {
-				if (isClosing) return
-				onClose()
-				setCloseError(null)
-			}}
+		<div
+			className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+			onClick={handleDismiss}
 		>
-			<div 
-				className="bg-[#1A1A1A] border border-[#333333] rounded-md p-6 w-96 max-h-[80vh] overflow-auto"
+			<div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" />
+			<div
+				className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+				style={{ maxWidth: '600px', padding: '24px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', margin: 'auto' }}
 				onClick={(e) => e.stopPropagation()}
 			>
-				{/* Close button */}
-				<button
-					onClick={handleBackdropClick}
-					className="absolute top-4 right-4 text-[#606060] hover:text-white transition-colors duration-200 z-10"
-				>
-					<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-					</svg>
-				</button>
-
-				{/* Market image + header */}
-				<div className="flex flex-col items-center pt-8 pb-4 px-6">
-					{iconUrl ? (
-						<div className="w-16 h-16 rounded-lg overflow-hidden border border-[#222222] mb-4">
-							<img
-								src={iconUrl}
-								alt={displayName}
-								className="w-full h-full object-cover"
-							/>
-						</div>
-					) : (
-						<div className="w-16 h-16 rounded-lg bg-[#1A1A1A] border border-[#222222] flex items-center justify-center mb-4">
-							<span className="text-lg font-bold text-[#606060]">
-								{symbol?.slice(0, 2) || '??'}
-							</span>
-							<span
-								className={`text-2xl font-bold font-mono ${
-									isProfitable ? 'text-green-400' : 'text-red-400'
-								}`}
-							>
-								MAX
-							</button>
-						</div>
-					)}
-
-					<h2 className="text-lg font-semibold text-white mb-1">
-						{actionLabel} {side === 'LONG' ? 'Long' : 'Short'}
-					</h2>
-					<p className="text-[11px] text-[#808080] text-center leading-relaxed max-w-[280px]">
-						{displayName}
-					</p>
+				{/* Header */}
+				<div className="flex items-center justify-between mb-4">
+					<div className="flex items-center gap-2 min-w-0">
+						<span className="text-white text-sm font-medium tracking-tight">Close Position</span>
+						<span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080]">{symbol}</span>
+					</div>
+					<button
+						onClick={handleDismiss}
+						className="p-1.5 rounded-full hover:bg-[#1A1A1A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+						aria-label="Close"
+					>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+							<path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+						</svg>
+					</button>
 				</div>
 
-				{/* P&L preview card */}
-				<div className="mx-6 mb-4">
-					<div className="bg-[#1A1A1A] rounded-md border border-[#222222] p-4">
-						<p className="text-xs font-medium text-[#9CA3AF] text-center mb-3 uppercase tracking-wide">
-							Estimated Return
-						</p>
-						<div className="flex items-center justify-center gap-2 mb-2">
-							<span className="text-[10px]">
-								{isProfitable ? '📈' : '📉'}
-							</span>
+				{/* Position size */}
+				<div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5 mb-4">
+					<div className="flex items-center justify-between">
+						<div className="flex items-center gap-1.5">
+							<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+							<span className="text-[10px] text-[#606060]">Position Size</span>
 						</div>
-						<div className="flex items-center justify-center gap-1.5 mb-3">
-							<div
-								className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-									isProfitable
-										? 'bg-green-400/10 text-green-400'
-										: 'bg-red-400/10 text-red-400'
-								}`}
-								placeholder="Enter amount"
-								min="0"
-								max={maxSize}
-								step="0.0001"
-								disabled={isClosing}
-							/>
-							<button
-								onClick={() => {
-									setCloseSize(String(maxSize))
-									setCloseError(null)
-								}}
-								className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-blue-400 hover:text-blue-300"
-								disabled={isClosing}
-							>
-								{isProfitable ? '+' : ''}{pnlPercent.toFixed(2)}%
-							</div>
-						)}
+						<span className="text-[13px] font-mono text-white">
+							{new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(maxSize)}
+						</span>
 					</div>
-					
-					<div className="flex justify-end gap-2 pt-2">
+				</div>
+
+				{/* Close size input */}
+				<div className="mb-4">
+					<div className="relative">
+						<input
+							type="number"
+							value={closeSize}
+							onChange={(e) => {
+								setCloseSize(e.target.value)
+								setCloseError(null)
+							}}
+							className={`w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+								closeError
+									? 'border-red-500/50 focus:border-red-400'
+									: 'border-[#222222] hover:border-[#333333] focus:border-[#333333]'
+							}`}
+							placeholder="Enter close size..."
+							min="0"
+							max={maxSize}
+							step="0.0001"
+							disabled={isClosing}
+						/>
 						<button
-							onClick={() => !isClosing && onClose()}
-							className="px-3 py-1.5 text-[11px] font-medium text-[#808080] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors"
+							onClick={() => {
+								setCloseSize(String(maxSize))
+								setCloseError(null)
+							}}
+							className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-[#0F0F0F] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200"
 							disabled={isClosing}
 						>
-							Cancel
-						</button>
-						<button
-							onClick={handleSubmit}
-							disabled={isClosing || parsedSize <= 0 || parsedSize > maxSize}
-							className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors flex items-center gap-1.5 ${
-								isClosing || parsedSize <= 0 || parsedSize > maxSize
-									? 'text-[#606060] bg-[#2A2A2A] cursor-not-allowed'
-									: 'text-white bg-red-500 hover:bg-red-600'
-							}`}
-						>
-							{isClosing ? (
-								<>
-									<div className="w-3 h-3 border-2 border-t-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
-									<span>Closing...</span>
-								</>
-							) : (
-								'Confirm Close'
-							)}
+							MAX
 						</button>
 					</div>
+					{closeError && (
+						<div className="mt-2 bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5">
+							<div className="flex items-center gap-2">
+								<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+								<span className="text-[11px] font-medium text-red-400">{closeError}</span>
+							</div>
+						</div>
+					)}
+				</div>
+
+				{/* Action buttons */}
+				<div className="flex items-center justify-end gap-2">
+					<button
+						onClick={handleDismiss}
+						className="px-4 py-2 rounded-md text-[11px] font-medium border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
+						disabled={isClosing}
+					>
+						Cancel
+					</button>
+					<button
+						onClick={handleSubmit}
+						disabled={isClosing || parsedSize <= 0 || parsedSize > maxSize}
+						className={`px-4 py-2 rounded-md text-[11px] font-medium border transition-all duration-200 flex items-center gap-2 ${
+							isClosing || parsedSize <= 0 || parsedSize > maxSize
+								? 'border-[#222222] text-[#606060] cursor-not-allowed'
+								: 'border-red-500/20 text-red-400 hover:border-red-500/30 hover:bg-red-500/5'
+						}`}
+					>
+						{isClosing ? (
+							<>
+								<div className="w-3 h-3 border-2 border-t-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+								<span>Closing...</span>
+							</>
+						) : (
+							<>
+								<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+								Confirm Close
+							</>
+						)}
+					</button>
 				</div>
 			</div>
 		</div>
 	)
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
