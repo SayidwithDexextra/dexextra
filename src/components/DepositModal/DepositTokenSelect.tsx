@@ -129,7 +129,7 @@ export default function DepositTokenSelect({
   // Determine if a chain is enabled based on presence of its Spoke Vault address
   const chainHasVault = (chain: string) => {
     const c = (chain || '').toLowerCase()
-    if (c === 'polygon') return !!env.SPOKE_POLYGON_VAULT_ADDRESS
+    if (c === 'polygon') return false
     if (c === 'arbitrum') return !!env.SPOKE_ARBITRUM_VAULT_ADDRESS
     if (c === 'ethereum') return !!env.SPOKE_ETHEREUM_VAULT_ADDRESS
     if (c === 'hyperliquid') return !!env.SPOKE_HYPERLIQUID_VAULT_ADDRESS
@@ -281,10 +281,10 @@ export default function DepositTokenSelect({
                                   />
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                  <span className="text-[13px] font-medium text-white block truncate">
+                                  <span className="text-[11px] font-medium text-white block truncate">
                                     {t.symbol}
                                   </span>
-                                  <span className="text-[12px] text-white block truncate">
+                                  <span className="text-[10px] text-[#606060] block truncate">
                                     {t.name || 'Stablecoin'}
                                   </span>
                                 </div>
@@ -298,8 +298,8 @@ export default function DepositTokenSelect({
                           {/* Expandable Details on Hover */}
                           <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-16 overflow-hidden transition-all duration-200">
                             <div className="px-3 pb-3 border-t border-[#1A1A1A]">
-                              <div className="text-[11px] pt-2">
-                                <span className="text-white">
+                              <div className="text-[9px] pt-2">
+                                <span className="text-[#606060]">
                                   {isActive ? 'Selected for deposit' : `Click to select ${t.symbol} on ${t.chain}`}
                                 </span>
                               </div>

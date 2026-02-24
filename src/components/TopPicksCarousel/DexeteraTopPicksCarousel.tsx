@@ -129,7 +129,7 @@ export default function DexeteraTopPicksCarousel({
         </div>
       </div>
 
-      <div className="relative mt-5">
+      <div className="group/carousel relative mt-5">
         {/* Right edge fade — subtle gradient over the peeking 5th card */}
         <div
           className="pointer-events-none absolute inset-y-0 right-0 z-10"
@@ -140,31 +140,29 @@ export default function DexeteraTopPicksCarousel({
           }}
         />
 
-        {/* Scroll buttons */}
-        {canScrollLeft && (
-          <button
-            type="button"
-            onClick={() => scroll('left')}
-            aria-label="Scroll left"
-            className="absolute left-2 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white shadow-lg backdrop-blur transition hover:bg-black/70 focus:outline-none md:flex"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
-              <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
-        )}
-        {canScrollRight && (
-          <button
-            type="button"
-            onClick={() => scroll('right')}
-            aria-label="Scroll right"
-            className="absolute right-1 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white shadow-lg backdrop-blur transition hover:bg-black/70 focus:outline-none md:flex"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
-              <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
-        )}
+        {/* Scroll buttons — visible on hover, disabled at scroll boundaries */}
+        <button
+          type="button"
+          onClick={() => scroll('left')}
+          disabled={!canScrollLeft}
+          aria-label="Scroll left"
+          className="absolute left-2 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white opacity-0 shadow-lg backdrop-blur transition-all hover:bg-black/70 focus:outline-none disabled:pointer-events-none disabled:opacity-0 md:flex group-hover/carousel:opacity-100"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => scroll('right')}
+          disabled={!canScrollRight}
+          aria-label="Scroll right"
+          className="absolute right-1 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white opacity-0 shadow-lg backdrop-blur transition-all hover:bg-black/70 focus:outline-none disabled:pointer-events-none disabled:opacity-0 md:flex group-hover/carousel:opacity-100"
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
+            <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
 
         <div
           ref={scrollRef}

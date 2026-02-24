@@ -269,10 +269,10 @@ export default function DepositExternalInput({
                 {/* Notice right */}
                 <div className="rounded-md border border-[#222222] bg-[#1A1A1A] px-4 py-4 flex flex-col gap-3 justify-center">
                   <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${hasFunctionHandler ? 'bg-green-400' : 'bg-[#404040]'}`} />
-                    <div className="text-sm font-medium text-white">Deposit {selectedToken?.symbol}</div>
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasFunctionHandler ? 'bg-green-400' : 'bg-[#404040]'}`} />
+                    <div className="text-xs text-white">Deposit {selectedToken?.symbol}</div>
                   </div>
-                  <div className="text-[13px] text-white">
+                  <div className="text-[10px] text-[#9CA3AF]">
                     Send only {selectedToken?.symbol} on the {chain} network.
                   </div>
                   {showFunctionCta && (
@@ -285,13 +285,13 @@ export default function DepositExternalInput({
                         aria-busy={functionCtaLoading}
                         className={[
                           'group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-full',
-                          'border border-green-500/30 bg-green-500/10 px-6 py-3 text-[13px] font-semibold text-white',
-                          'transition-all duration-200 hover:bg-green-500/20 hover:border-green-500/50',
-                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500/30 focus-visible:ring-offset-0',
+                          'border border-[#222222] bg-[#0F0F0F] px-5 py-2.5 text-[11px] font-medium text-white',
+                          'transition-all duration-200 hover:bg-[#1A1A1A] hover:border-[#333333]',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2A2A2A] focus-visible:ring-offset-0',
                           'disabled:opacity-50 disabled:cursor-not-allowed disabled:border-[#222222]/60 disabled:bg-[#0F0F0F]/80'
                         ].join(' ')}
                         style={{
-                          boxShadow: '0 12px 30px rgba(34, 197, 94, 0.15), 0 0 0 1px rgba(34, 197, 94, 0.1)'
+                          boxShadow: '0 12px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.03)'
                         }}
                       >
                         <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/5 via-transparent to-white/5 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
@@ -320,7 +320,7 @@ export default function DepositExternalInput({
                         )}
                       </button>
                       {!hasFunctionHandler && (
-                        <div className="text-[12px] text-white/70">
+                        <div className="text-[10px] text-[#606060]">
                           Connect a wallet to enable deposits.
                         </div>
                       )}
