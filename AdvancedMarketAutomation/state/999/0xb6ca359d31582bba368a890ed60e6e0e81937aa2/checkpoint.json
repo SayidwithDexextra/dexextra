@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "chainId": 999,
+  "orderBook": "0xB6Ca359d31582BBa368a890Ed60e6e0E81937AA2",
+  "market": {
+    "symbol": "BTC",
+    "market_identifier": "BITCOIN",
+    "market_address": "0xB6Ca359d31582BBa368a890Ed60e6e0E81937AA2",
+    "market_id_bytes32": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+    "chain_id": 999,
+    "tick_size": 0.01
+  },
+  "run": {
+    "runId": "bfe2017e-98ba-4bad-b7c0-fc4dfa8e5251",
+    "startedAt": "2026-02-24T16:22:32.266Z",
+    "updatedAt": "2026-02-24T16:33:00.651Z"
+  },
+  "config": {
+    "makerRatio": 0,
+    "maxOpenOrdersPerMaker": 0,
+    "minDelayMs": 250,
+    "maxDelayMs": 1200,
+    "sizeMin": 0.005,
+    "sizeMax": 0.05,
+    "mode": "MEAN"
+  },
+  "wallets": {
+    "0x724cbe7b515dab1ce4b0e262990d2e3c47c6ca36": {
+      "nickname": "User001",
+      "role": "MAKER",
+      "sessionId": "0x19cf076b5072cac5078d0d8d95232483e6fefdde066a474641f369987795f7be",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950383782
+    },
+    "0x53aca02402062a61c871d1b5b4ded3e4232826e5": {
+      "nickname": "User002",
+      "role": "MAKER",
+      "sessionId": "0x6601ba5271eb96b2217eb50f1a4e07fff12511e7fd96f8309231ff5d1b762989",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950395086
+    },
+    "0x89bd0af6fe5292ed96fc026770b24f4b4f6de7c6": {
+      "nickname": "User003",
+      "role": "MAKER",
+      "sessionId": "0x05af8afd47185b84cbc3931e71b296a9e61c2bbec37a4ea589de6e120b063769",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950415268
+    },
+    "0xb5bac03724f123dd70bd6804fc1d3a5a8f611b25": {
+      "nickname": "User004",
+      "role": "MAKER",
+      "sessionId": "0xaa035e42a4976c134637d8017f4719c164f601fb26bf45c6b45289b81786680b",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950430289
+    },
+    "0xdf4b23491a85d777dd0be799cbed09368c42f087": {
+      "nickname": "User005",
+      "role": "MAKER",
+      "sessionId": "0xc20496eb2043fec81ea0a5711c2b13453d770ef04a7b552193742132d6e9552e",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950446844
+    },
+    "0xa0f2d53186801ba175f6911d0cae6c99abbe5b19": {
+      "nickname": "User006",
+      "role": "MAKER",
+      "sessionId": "0x6bd44b2b817b751150501c360b0bc772e4971d08b36bad65d70ecec48044b14a",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950459822
+    },
+    "0xc7d77fde8ea75bc8e3fdf634756ee252095422cd": {
+      "nickname": "User007",
+      "role": "MAKER",
+      "sessionId": "0xe5f9a89f3a379bcf14e0e90546ec8462db6ffe31b701941cbec17c02dd242e90",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950472314
+    },
+    "0xc8d3da3a29762c2e6503945393a0fd1b70023a5a": {
+      "nickname": "User008",
+      "role": "MAKER",
+      "sessionId": "0x9843ca8256e34a1a934963f4ed6c8beb1ab4813b0dad377993ebb9e64d0195ea",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950483312
+    },
+    "0xdb55b652b8cdfabc08623c0995e6d5f572555d9a": {
+      "nickname": "User009",
+      "role": "MAKER",
+      "sessionId": "0x03c8d6515e759409239d102522b6708591d932d34135b3d3a7eacca727642edd",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950498815
+    },
+    "0x0980f424b427d9d1584093c7b42c86f47113d3ac": {
+      "nickname": "User010",
+      "role": "MAKER",
+      "sessionId": "0x43cccbbd3d781d7c508dc626457d11701f57a1fcffa8aee5a6e857035c584a94",
+      "sessionExpiry": 1803486152,
+      "lastActionAt": 1771950512406
+    }
+  }
+}

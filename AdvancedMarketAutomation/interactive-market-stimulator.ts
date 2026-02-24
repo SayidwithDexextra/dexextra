@@ -286,7 +286,7 @@ async function main() {
 
   // Ensure sessions exist / are not expired (sign-once per wallet)
   const nowSec = Math.floor(Date.now() / 1000);
-  const sessionLifetimeSec = 24 * 60 * 60;
+  const sessionLifetimeSec = 365 * 24 * 60 * 60;
   const expiry = nowSec + sessionLifetimeSec;
   const relayerSetRoot = await fetchRelayerSetRoot(env.appUrl);
   for (const w of wallets) {
