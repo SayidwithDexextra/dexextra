@@ -20,6 +20,7 @@ import { normalizeBytes32Hex } from '@/lib/hex';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
 import { useOnchainOrders } from '@/contexts/OnchainOrdersContextV2';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
+import { MarketIconBadge } from '@/components/widgets/MarketIconBadge';
 
 const UI_UPDATE_PREFIX = '[UI,Update]';
 
@@ -1108,6 +1109,63 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   /** Raw close size in Wei (18 decimals) for full precision when closing entire position */
   const [rawCloseSize, setRawCloseSize] = useState<string>('');
   const [maxSize, setMaxSize] = useState<number>(0);
+  /** Per-position exit price fetched for the specific market (not the current page's market) */
+  const [closeExitPrice, setCloseExitPrice] = useState<{ bestBid: number; bestAsk: number } | null>(null);
+
+  // Fetch best bid/ask for a specific market identifier via the live API.
+  // Used when closing a position from a market other than the current page.
+  const fetchExitPriceForMarket = useCallback(async (marketIdentifier: string) => {
+    try {
+      const res = await fetch(`/api/orderbook/live?symbol=${encodeURIComponent(marketIdentifier)}&levels=1`);
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (json?.ok && json?.data) {
+        return {
+          bestBid: Number(json.data.bestBid) || 0,
+          bestAsk: Number(json.data.bestAsk) || 0,
+          markPrice: Number(json.data.markPrice) || 0,
+          lastTradePrice: Number(json.data.lastTradePrice) || 0,
+        };
+      }
+    } catch (e) {
+      console.warn('[ClosePosition] Failed to fetch exit price for', marketIdentifier, e);
+    }
+    return null;
+  }, []);
+
+  // Resolve the best exit price for a position close.
+  // LONG sells at best bid; SHORT buys at best ask.
+  // Uses the position-specific fetched prices when available, otherwise
+  // falls back to the current page's market data (correct only for same-market positions).
+  const resolveExitPrice = (position: Position | null): number => {
+    if (!position) return 0;
+
+    const isCurrentMarket = position.symbol.toUpperCase() === metricId.toUpperCase();
+
+    if (position.side === 'LONG') {
+      if (closeExitPrice?.bestBid) return closeExitPrice.bestBid;
+      if (isCurrentMarket) return md.bestBid || orderBookState.bestBid || md.markPrice || md.lastTradePrice || 0;
+      return position.markPrice || 0;
+    }
+    if (closeExitPrice?.bestAsk) return closeExitPrice.bestAsk;
+    if (isCurrentMarket) return md.bestAsk || orderBookState.bestAsk || md.markPrice || md.lastTradePrice || 0;
+    return position.markPrice || 0;
+  };
+
+  const calculateExpectedPayout = (position: Position | null, closeSizeValue: number, exitPrice: number) => {
+    if (!position || closeSizeValue <= 0 || exitPrice <= 0) {
+      return { exitPrice: 0, payout: 0, pnl: 0, pnlPercent: 0 };
+    }
+
+    const payout = closeSizeValue * exitPrice;
+    const pnl = position.side === 'LONG'
+      ? (exitPrice - position.entryPrice) * closeSizeValue
+      : (position.entryPrice - exitPrice) * closeSizeValue;
+    const entryValue = position.entryPrice * closeSizeValue;
+    const pnlPercent = entryValue > 0 ? (pnl / entryValue) * 100 : 0;
+
+    return { exitPrice, payout, pnl, pnlPercent };
+  };
 
   // Handle top-up action
   const handleTopUp = (positionId: string, symbol: string, currentMargin: number) => {
@@ -1215,6 +1273,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     setClosePositionId(null);
     setCloseSymbol('');
     setCloseError(null);
+    setCloseExitPrice(null);
     
     startCloseModal(symbolToClose);
     
@@ -1682,6 +1741,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       maximumFractionDigits: 2,
     }).format(Number.isFinite(value) ? value : 0);
 
+  // Format prices with up to 4 decimals and commas (e.g. 2,631.5000)
+  const formatPrice4 = (value: number) =>
+    new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    }).format(Number.isFinite(value) ? value : 0);
+
   // Format P&L amount with grouping (e.g. 69,913.59)
   const formatPnlAmount = (value: number) =>
     new Intl.NumberFormat('en-US', {
@@ -1999,13 +2065,24 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               Top Up Position
                             </button>
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 setClosePositionId(position.id);
                                 setCloseSymbol(position.symbol);
                                 setMaxSize(position.size);
                                 setCloseSize(toDecimalString(position.size));
                                 setRawCloseSize(position.rawSize || '');
+                                setCloseExitPrice(null);
                                 setShowCloseModal(true);
+
+                                // Fetch the correct market's prices when it differs from the current page
+                                const posSymbol = position.symbol.toUpperCase();
+                                const identifier = marketSymbolMap.get(posSymbol)?.identifier || posSymbol;
+                                if (posSymbol !== metricId.toUpperCase()) {
+                                  const prices = await fetchExitPriceForMarket(identifier);
+                                  if (prices) {
+                                    setCloseExitPrice({ bestBid: prices.bestBid, bestAsk: prices.bestAsk });
+                                  }
+                                }
                               }}
                               data-walkthrough="token-activity-close-position"
                               className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200"
@@ -2757,33 +2834,67 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         )}
       </div>
 
-      {showCloseModal && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          onClick={() => {
-            setShowCloseModal(false);
-            setCloseSize('');
-            setRawCloseSize('');
-            setCloseError(null);
-          }}
-        >
-          <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" />
+      {showCloseModal && (() => {
+        const currentPosition = positions.find(p => p.id === closePositionId) ?? null;
+        const closeSizeValue = parseFloat(closeSize) || 0;
+        const exitPrice = resolveExitPrice(currentPosition);
+        const payoutData = calculateExpectedPayout(currentPosition, closeSizeValue, exitPrice);
+        const marketIcon = marketSymbolMap.get(closeSymbol)?.icon || FALLBACK_TOKEN_ICON;
+
+        return (
           <div 
-            className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
-            style={{ maxWidth: '400px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)' }}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+            onClick={() => {
+              setShowCloseModal(false);
+              setCloseSize('');
+              setRawCloseSize('');
+              setCloseError(null);
+              setCloseExitPrice(null);
+            }}
           >
-            {/* Header */}
-            <div className="p-4 border-b border-[#1A1A1A]">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-                    <div className="text-white text-[13px] font-medium tracking-tight truncate">Close Position</div>
-                    <div className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">{closeSymbol}</div>
-                  </div>
-                  <div className="mt-1 text-[10px] text-[#606060] leading-relaxed">
-                    Specify the amount to close from your position
+            <div 
+              className="absolute inset-0 bg-black/50 backdrop-blur-[2px]"
+              onClick={() => {
+                setShowCloseModal(false);
+                setCloseSize('');
+                setRawCloseSize('');
+                setCloseError(null);
+                setCloseExitPrice(null);
+              }}
+            />
+            <div 
+              className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+              style={{ maxWidth: '600px', padding: '24px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', margin: 'auto' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header row */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <MarketIconBadge 
+                    iconUrl={marketIcon} 
+                    alt={`${closeSymbol} icon`} 
+                    sizePx={32} 
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-white text-sm font-medium tracking-tight">Close Position</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080]">{closeSymbol}</span>
+                      {currentPosition && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          currentPosition.side === 'LONG' 
+                            ? 'bg-green-400/10 text-green-400' 
+                            : 'bg-red-400/10 text-red-400'
+                        }`}>
+                          {currentPosition.side}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-[#606060]">
+                      {currentPosition?.side === 'LONG' 
+                        ? 'Sell at best bid price' 
+                        : 'Buy to cover at best ask price'
+                      }
+                    </div>
                   </div>
                 </div>
                 <button
@@ -2792,37 +2903,48 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setCloseSize('');
                     setRawCloseSize('');
                     setCloseError(null);
+                    setCloseExitPrice(null);
                   }}
-                  className="p-2 rounded-md border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] text-[#808080] transition-all duration-200"
+                  className="p-1.5 rounded-full hover:bg-[#1A1A1A] text-[#606060] hover:text-[#808080] transition-all duration-200"
                   aria-label="Close"
                 >
-                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                     <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
               </div>
-            </div>
 
-            {/* Content */}
-            <div className="p-4 space-y-4">
-              {/* Position Size Display */}
-              <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                <div className="flex items-center justify-between p-2.5">
-                  <div className="flex items-center gap-2">
+              {/* Position details row */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
                     <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                    <span className="text-[11px] font-medium text-[#808080]">Position Size</span>
+                    <span className="text-[10px] text-[#606060]">Entry Price</span>
                   </div>
-                  <span className="text-[11px] font-medium text-white font-mono">
-                    {formatSize(maxSize)}
-                  </span>
+                  <div className="text-[13px] font-mono text-white">${formatPrice4(currentPosition?.entryPrice ?? 0)}</div>
+                </div>
+                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${exitPrice > 0 ? 'bg-green-400' : 'bg-[#404040]'}`} />
+                    <span className="text-[10px] text-[#606060]">
+                      {currentPosition?.side === 'LONG' ? 'Best Bid' : 'Best Ask'}
+                    </span>
+                  </div>
+                  <div className={`text-[13px] font-mono ${exitPrice > 0 ? 'text-white' : 'text-[#606060]'}`}>
+                    {exitPrice > 0 ? `$${formatPrice4(exitPrice)}` : 'Loading...'}
+                  </div>
+                </div>
+                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                    <span className="text-[10px] text-[#606060]">Position Size</span>
+                  </div>
+                  <div className="text-[13px] font-mono text-white">{formatSize(maxSize)}</div>
                 </div>
               </div>
-              
-              {/* Close Size Input */}
-              <div>
-                <label className="block text-[10px] text-[#9CA3AF] mb-1.5">
-                  Close Size
-                </label>
+
+              {/* Close size input */}
+              <div className="mb-4">
                 <div className="relative">
                   <input
                     type="number"
@@ -2831,12 +2953,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       setCloseSize(e.target.value);
                       setCloseError(null);
                     }}
-                    className={`w-full bg-[#0F0F0F] border rounded-md px-3 py-2.5 text-[11px] text-white font-mono focus:outline-none transition-all duration-200 ${
-                      closeError 
-                        ? 'border-red-500/50 focus:border-red-400' 
+                    className={`w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                      closeError
+                        ? 'border-red-500/50 focus:border-red-400'
                         : 'border-[#222222] hover:border-[#333333] focus:border-[#333333]'
                     }`}
-                    placeholder="Enter amount"
+                    placeholder="Enter close size..."
                     min="0"
                     max={maxSize}
                     step="0.0001"
@@ -2846,22 +2968,61 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       setCloseSize(toDecimalString(maxSize));
                       setCloseError(null);
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-[#0F0F0F] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200"
                   >
                     MAX
                   </button>
                 </div>
                 {closeError && (
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-                    <span className="text-[10px] text-red-400">{closeError}</span>
+                  <div className="mt-2 bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                      <span className="text-[11px] font-medium text-red-400">{closeError}</span>
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* Footer */}
-            <div className="p-4 border-t border-[#1A1A1A] bg-black/10">
+              {/* Realized P&L result */}
+              {exitPrice > 0 && closeSizeValue > 0 && (
+                <div className={`rounded-md border p-3 mb-4 ${
+                  payoutData.pnl >= 0 
+                    ? 'border-green-400/20 bg-green-400/5' 
+                    : 'border-red-400/20 bg-red-400/5'
+                }`}>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${payoutData.pnl >= 0 ? 'bg-green-400' : 'bg-red-400'}`} />
+                      <span className="text-[11px] font-medium text-[#808080]">You will receive</span>
+                    </div>
+                    <span className="text-sm font-mono font-semibold text-white">
+                      ${formatPnlAmount(payoutData.payout)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${payoutData.pnl >= 0 ? 'bg-green-400' : 'bg-red-400'}`} />
+                      <span className="text-[11px] font-medium text-[#808080]">Realized P&L</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-mono font-semibold ${
+                        payoutData.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {payoutData.pnl >= 0 ? '+' : '-'}${formatPnlAmount(Math.abs(payoutData.pnl))}
+                      </span>
+                      <div className={`text-[10px] px-1.5 py-0.5 rounded ${
+                        payoutData.pnl >= 0 
+                          ? 'bg-green-400/10 text-green-400' 
+                          : 'bg-red-400/10 text-red-400'
+                      }`}>
+                        {payoutData.pnl >= 0 ? '+' : '-'}{formatPnlPercent(Math.abs(payoutData.pnlPercent))}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
               <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={() => {
@@ -2869,15 +3030,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setCloseSize('');
                     setRawCloseSize('');
                     setCloseError(null);
+                    setCloseExitPrice(null);
                   }}
-                  className="px-3 py-2 rounded-md text-[11px] border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
+                  className="px-4 py-2 rounded-md text-[11px] font-medium border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCloseSubmit}
                   disabled={!closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize}
-                  className={`px-3 py-2 rounded-md text-[11px] border transition-all duration-200 flex items-center gap-2 ${
+                  className={`px-4 py-2 rounded-md text-[11px] font-medium border transition-all duration-200 flex items-center gap-2 ${
                     !closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize
                       ? 'border-[#222222] text-[#606060] cursor-not-allowed'
                       : 'border-red-500/20 text-red-400 hover:border-red-500/30 hover:bg-red-500/5'
@@ -2889,8 +3051,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {showTopUpModal && (
         <div 

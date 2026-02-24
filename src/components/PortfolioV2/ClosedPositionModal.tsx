@@ -77,51 +77,66 @@ export default function ClosedPositionModal({
 				className="bg-[#1A1A1A] border border-[#333333] rounded-md p-6 w-96 max-h-[80vh] overflow-auto"
 				onClick={(e) => e.stopPropagation()}
 			>
-				<div className="flex items-center justify-between mb-4">
-					<div className="flex items-center gap-2">
-						<img 
-							src="/Dexicon/LOGO-Dexetera-01.svg" 
-							alt="Dexetera Logo" 
-							className="w-5 h-5"
-						/>
-						<h3 className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
-							Close Position - {symbol}
-						</h3>
-					</div>
-					<button
-						onClick={() => !isClosing && onClose()}
-						className="text-[#606060] hover:text-white transition-colors"
-					>
-						<svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-						</svg>
-					</button>
+				{/* Close button */}
+				<button
+					onClick={handleBackdropClick}
+					className="absolute top-4 right-4 text-[#606060] hover:text-white transition-colors duration-200 z-10"
+				>
+					<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+
+				{/* Market image + header */}
+				<div className="flex flex-col items-center pt-8 pb-4 px-6">
+					{iconUrl ? (
+						<div className="w-16 h-16 rounded-lg overflow-hidden border border-[#222222] mb-4">
+							<img
+								src={iconUrl}
+								alt={displayName}
+								className="w-full h-full object-cover"
+							/>
+						</div>
+					) : (
+						<div className="w-16 h-16 rounded-lg bg-[#1A1A1A] border border-[#222222] flex items-center justify-center mb-4">
+							<span className="text-lg font-bold text-[#606060]">
+								{symbol?.slice(0, 2) || '??'}
+							</span>
+							<span
+								className={`text-2xl font-bold font-mono ${
+									isProfitable ? 'text-green-400' : 'text-red-400'
+								}`}
+							>
+								MAX
+							</button>
+						</div>
+					)}
+
+					<h2 className="text-lg font-semibold text-white mb-1">
+						{actionLabel} {side === 'LONG' ? 'Long' : 'Short'}
+					</h2>
+					<p className="text-[11px] text-[#808080] text-center leading-relaxed max-w-[280px]">
+						{displayName}
+					</p>
 				</div>
 
-				<div className="space-y-4">
-					<div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded">
-						<span className="text-[10px] text-[#808080]">Position Size</span>
-						<span className="text-[11px] font-medium text-white font-mono">
-							{(Number(maxSize) || 0).toFixed(4)}
-						</span>
-					</div>
-					
-					<div>
-						<label className="block text-[10px] text-[#9CA3AF] mb-1">
-							Close Size
-						</label>
-						<div className="relative">
-							<input
-								type="number"
-								value={closeSize}
-								onChange={(e) => {
-									setCloseSize(e.target.value)
-									setCloseError(null)
-								}}
-								className={`w-full bg-[#0F0F0F] border rounded px-3 py-2 text-[11px] text-white font-mono focus:outline-none transition-colors ${
-									closeError 
-										? 'border-red-500 focus:border-red-400' 
-										: 'border-[#333333] focus:border-blue-400'
+				{/* P&L preview card */}
+				<div className="mx-6 mb-4">
+					<div className="bg-[#1A1A1A] rounded-md border border-[#222222] p-4">
+						<p className="text-xs font-medium text-[#9CA3AF] text-center mb-3 uppercase tracking-wide">
+							Estimated Return
+						</p>
+						<div className="flex items-center justify-center gap-2 mb-2">
+							<span className="text-[10px]">
+								{isProfitable ? '📈' : '📉'}
+							</span>
+						</div>
+						<div className="flex items-center justify-center gap-1.5 mb-3">
+							<div
+								className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+									isProfitable
+										? 'bg-green-400/10 text-green-400'
+										: 'bg-red-400/10 text-red-400'
 								}`}
 								placeholder="Enter amount"
 								min="0"
@@ -137,12 +152,7 @@ export default function ClosedPositionModal({
 								className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-blue-400 hover:text-blue-300"
 								disabled={isClosing}
 							>
-								MAX
-							</button>
-						</div>
-						{closeError && (
-							<div className="mt-1">
-								<span className="text-[10px] text-red-400">{closeError}</span>
+								{isProfitable ? '+' : ''}{pnlPercent.toFixed(2)}%
 							</div>
 						)}
 					</div>
