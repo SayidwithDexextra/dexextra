@@ -145,21 +145,13 @@ export class ClickHouseDataPipeline {
       username: process.env.CLICKHOUSE_USER || 'default',
       password: process.env.CLICKHOUSE_PASSWORD,
       database: this.database,
-      // Reduced timeout to fail fast - better UX than hanging
-      request_timeout: 10000,
-      // Keep connections alive for reuse
+      request_timeout: 5000,
       keep_alive: { enabled: true },
-      // Enable compression for faster data transfer
       compression: { request: true, response: true },
-      // Clickhouse settings for faster queries
       clickhouse_settings: {
-        // Use parallel query processing
         max_threads: 4,
-        // Enable async inserts for better write performance
         async_insert: 1,
-        // Optimize for smaller result sets
         max_block_size: 10000,
-        // Prefer PREWHERE for faster filtering
         optimize_move_to_prewhere: 1,
       },
     });
@@ -290,6 +282,19 @@ export class ClickHouseDataPipeline {
       };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Pre-warm the ClickHouse connection (TLS handshake + auth).
+   * Call this at module-load time so the first real query doesn't pay the cold-start penalty.
+   */
+  async warmConnection(): Promise<void> {
+    if (!this.isConfigured()) return;
+    try {
+      await this.ensureClient().query({ query: 'SELECT 1', format: 'JSONEachRow' });
+    } catch {
+      // Swallow — warmup is best-effort
     }
   }
 
@@ -483,6 +488,25 @@ export class ClickHouseDataPipeline {
     }));
   }
 
+  private ohlcv1hAvailable: boolean | null = null;
+
+  /**
+   * Check if the pre-aggregated ohlcv_1h table exists (cached per instance lifetime).
+   */
+  private async hasOhlcv1h(): Promise<boolean> {
+    if (this.ohlcv1hAvailable !== null) return this.ohlcv1hAvailable;
+    try {
+      await this.ensureClient().query({
+        query: 'SELECT 1 FROM ohlcv_1h LIMIT 0',
+        format: 'JSONEachRow',
+      });
+      this.ohlcv1hAvailable = true;
+    } catch {
+      this.ohlcv1hAvailable = false;
+    }
+    return this.ohlcv1hAvailable;
+  }
+
   /**
    * Detect if a table contains a specific column; cache the result.
    */
@@ -563,11 +587,14 @@ export class ClickHouseDataPipeline {
 
   /**
    * Fetch the most recent 1m candle for a symbol.
+   * NOTE: ohlcv_1m is ordered by (market_uuid, ts). Filtering on symbol alone
+   * bypasses the primary index. Prefer fetchLatestOhlcv1mByMarketUuid when possible.
    */
   async fetchLatestOhlcv1m(symbol: string): Promise<OHLCVCandle | null> {
     if (!this.isConfigured()) {
       return null;
     }
+    const safe = escapeSqlString(symbol);
     const result = await this.ensureClient().query({
       query: `
         SELECT
@@ -580,9 +607,10 @@ export class ClickHouseDataPipeline {
           volume,
           trades
         FROM ohlcv_1m
-        WHERE symbol = '${symbol}'
+        WHERE symbol = '${safe}'
         ORDER BY ts DESC
         LIMIT 1
+        SETTINGS max_execution_time = 5
       `,
       format: 'JSONEachRow'
     });
@@ -921,8 +949,49 @@ export class ClickHouseDataPipeline {
   }
 
   /**
-   * Get OHLCV candles for any timeframe using dynamic aggregation
-   * This replaces all the individual timeframe tables
+   * Timeframes that benefit from the pre-aggregated ohlcv_1h table.
+   * These would otherwise scan 60-10,080x more rows from ohlcv_1m.
+   */
+  private static readonly HOURLY_PLUS_TIMEFRAMES = new Set(['1h', '4h', '1d', '1w', '1mo']);
+
+  /**
+   * Build PREWHERE/WHERE clauses from filter params.
+   * PREWHERE targets primary-key columns (market_uuid, ts) for fast granule skipping.
+   * WHERE handles non-primary-key columns (symbol).
+   */
+  private buildFilterClauses(opts: {
+    safeMarketUuid?: string;
+    safeSymbol?: string;
+    startEpochSec?: number;
+    endEpochSec?: number;
+  }) {
+    const prewhereParts: string[] = [];
+    const whereParts: string[] = [];
+
+    if (opts.safeMarketUuid) {
+      prewhereParts.push(`market_uuid = '${opts.safeMarketUuid}'`);
+    }
+    if (typeof opts.startEpochSec === 'number') {
+      prewhereParts.push(`ts >= toDateTime(${opts.startEpochSec})`);
+    }
+    if (typeof opts.endEpochSec === 'number') {
+      prewhereParts.push(`ts <= toDateTime(${opts.endEpochSec})`);
+    }
+    if (opts.safeSymbol) {
+      whereParts.push(`symbol = '${opts.safeSymbol}'`);
+    }
+
+    return {
+      prewhere: prewhereParts.length > 0 ? `PREWHERE ${prewhereParts.join(' AND ')}` : '',
+      where: whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '',
+    };
+  }
+
+  /**
+   * Get OHLCV candles for any timeframe.
+   *
+   * For 1h+ timeframes, prefers the pre-aggregated ohlcv_1h table (up to 60x less data scanned).
+   * Falls back to dynamic aggregation from ohlcv_1m when ohlcv_1h is unavailable.
    */
   async getOHLCVCandles(
     symbol: string | undefined,
@@ -937,48 +1006,120 @@ export class ClickHouseDataPipeline {
       throw new Error(`Unsupported timeframe: ${timeframe}`);
     }
 
-    let query: string;
-    const whereConditions: string[] = [];
+    if (!this.isConfigured()) {
+      return [];
+    }
 
     const safeSymbol = symbol ? escapeSqlString(String(symbol)) : undefined;
     const safeMarketUuid = marketUuid ? escapeSqlString(String(marketUuid)) : undefined;
-
-    if (safeSymbol) {
-      whereConditions.push(`symbol = '${safeSymbol}'`);
-    }
-    if (safeMarketUuid) {
-      whereConditions.push(`market_uuid = '${safeMarketUuid}'`);
-    }
-
-    // Normalize optional time range to epoch seconds (UTC).
     const startEpochSec = startTime ? Math.floor(startTime.getTime() / 1000) : undefined;
     const endEpochSec = endTime ? Math.floor(endTime.getTime() / 1000) : undefined;
 
-    // Build PREWHERE for primary key columns (market_uuid, ts) - much faster filtering
-    const prewhereParts: string[] = [];
-    const whereParts: string[] = [];
-    
-    // market_uuid goes in PREWHERE (part of primary key, indexed with bloom filter)
-    if (safeMarketUuid) {
-      prewhereParts.push(`market_uuid = '${safeMarketUuid}'`);
+    const filterOpts = { safeMarketUuid, safeSymbol, startEpochSec, endEpochSec };
+
+    // Route 1h+ timeframes through ohlcv_1h when available
+    if (ClickHouseDataPipeline.HOURLY_PLUS_TIMEFRAMES.has(timeframe) && await this.hasOhlcv1h()) {
+      try {
+        return await this.getOHLCVCandlesFrom1h(timeframe, config, limit, filterOpts);
+      } catch (error) {
+        console.warn(`⚠️ ohlcv_1h query failed, falling back to ohlcv_1m:`, error instanceof Error ? error.message : error);
+      }
     }
-    // Time range goes in PREWHERE (part of primary key)
-    if (typeof startEpochSec === 'number') {
-      prewhereParts.push(`ts >= toDateTime(${startEpochSec})`);
+
+    return this.getOHLCVCandlesFrom1m(timeframe, config, limit, filterOpts);
+  }
+
+  /**
+   * Query from the pre-aggregated ohlcv_1h table.
+   * For exact 1h: GROUP BY ts (merges partial-hour rows from different insert batches).
+   * For 4h/1d/1w/1mo: GROUP BY bucket from ohlcv_1h (scans 4-720 rows per bucket vs 240-43200 from 1m).
+   */
+  private async getOHLCVCandlesFrom1h(
+    timeframe: string,
+    config: TimeframeConfig,
+    limit: number,
+    filterOpts: { safeMarketUuid?: string; safeSymbol?: string; startEpochSec?: number; endEpochSec?: number }
+  ): Promise<OHLCVCandle[]> {
+    const { prewhere, where } = this.buildFilterClauses(filterOpts);
+
+    let query: string;
+
+    if (timeframe === '1h') {
+      query = `
+        SELECT
+          any(symbol) AS symbol,
+          toUnixTimestamp(ts) AS time,
+          argMin(open, first_ts) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          argMax(close, last_ts) AS close,
+          sum(volume) AS volume,
+          sum(trades) AS trades
+        FROM ohlcv_1h
+        ${prewhere}
+        ${where}
+        GROUP BY ts
+        ORDER BY ts DESC
+        LIMIT ${limit}
+        SETTINGS
+          max_execution_time = 8,
+          max_threads = 4,
+          optimize_aggregation_in_order = 1
+      `;
+    } else {
+      query = `
+        SELECT
+          any(symbol) AS symbol,
+          toStartOfInterval(ts, ${config.clickhouseInterval}, 'UTC') AS bucket_ts,
+          toUnixTimestamp(bucket_ts) AS time,
+          argMin(open, first_ts) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          argMax(close, last_ts) AS close,
+          sum(volume) AS volume,
+          sum(trades) AS trades
+        FROM ohlcv_1h
+        ${prewhere}
+        ${where}
+        GROUP BY bucket_ts
+        ORDER BY bucket_ts DESC
+        LIMIT ${limit}
+        SETTINGS
+          max_execution_time = 8,
+          max_threads = 4,
+          optimize_aggregation_in_order = 1
+      `;
     }
-    if (typeof endEpochSec === 'number') {
-      prewhereParts.push(`ts <= toDateTime(${endEpochSec})`);
-    }
-    // symbol goes in WHERE (not primary key in new schema)
-    if (safeSymbol) {
-      whereParts.push(`symbol = '${safeSymbol}'`);
-    }
-    
-    const prewhere = prewhereParts.length > 0 ? `PREWHERE ${prewhereParts.join(' AND ')}` : '';
-    const where = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    const result = await this.ensureClient().query({ query, format: 'JSONEachRow' });
+    const data = (await result.json()) as any[];
+    return (data || []).map((row: any) => ({
+      symbol: String(row.symbol),
+      time: Number(row.time),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: Number(row.volume),
+      trades: Number(row.trades),
+    })).reverse();
+  }
+
+  /**
+   * Original dynamic-aggregation path from ohlcv_1m.
+   * Used for sub-hour timeframes and as fallback when ohlcv_1h is unavailable.
+   */
+  private async getOHLCVCandlesFrom1m(
+    timeframe: string,
+    config: TimeframeConfig,
+    limit: number,
+    filterOpts: { safeMarketUuid?: string; safeSymbol?: string; startEpochSec?: number; endEpochSec?: number }
+  ): Promise<OHLCVCandle[]> {
+    const { prewhere, where } = this.buildFilterClauses(filterOpts);
+
+    let query: string;
 
     if (timeframe === '1m') {
-      // Direct query from ohlcv_1m table with optimized settings
       query = `
         SELECT
           symbol,
@@ -994,14 +1135,13 @@ export class ClickHouseDataPipeline {
         ${where}
         ORDER BY ts DESC
         LIMIT ${limit}
-        SETTINGS 
+        SETTINGS
           max_execution_time = 8,
           max_threads = 4,
           optimize_read_in_order = 1,
           read_in_order_two_level_merge_threshold = 100
       `;
     } else {
-      // Dynamic aggregation from ohlcv_1m for higher timeframes
       query = `
         SELECT
           symbol,
@@ -1019,25 +1159,17 @@ export class ClickHouseDataPipeline {
         GROUP BY symbol, bucket_ts
         ORDER BY bucket_ts DESC
         LIMIT ${limit}
-        SETTINGS 
+        SETTINGS
           max_execution_time = 8,
           max_threads = 4,
           optimize_aggregation_in_order = 1
       `;
     }
 
-    if (!this.isConfigured()) {
-      return [];
-    }
-
     try {
-      const result = await this.ensureClient().query({
-        query,
-        format: 'JSONEachRow'
-      });
-
+      const result = await this.ensureClient().query({ query, format: 'JSONEachRow' });
       const data = (await result.json()) as any[];
-      const mapped: OHLCVCandle[] = (data || []).map((row: any) => ({
+      return (data || []).map((row: any) => ({
         symbol: String(row.symbol),
         time: Number(row.time),
         open: Number(row.open),
@@ -1046,11 +1178,9 @@ export class ClickHouseDataPipeline {
         close: Number(row.close),
         volume: Number(row.volume),
         trades: Number(row.trades),
-      }));
-      // Return in chronological order (oldest first)
-      return mapped.reverse();
+      })).reverse();
     } catch (error) {
-      console.error(`❌ Failed to fetch ${timeframe} candles for ${symbol || safeMarketUuid || 'unknown'}:`, error);
+      console.error(`❌ Failed to fetch ${timeframe} candles for ${filterOpts.safeSymbol || filterOpts.safeMarketUuid || 'unknown'}:`, error);
       throw error;
     }
   }
@@ -1063,13 +1193,15 @@ export class ClickHouseDataPipeline {
       return null;
     }
     try {
+      const safe = escapeSqlString(symbol);
       const result = await this.ensureClient().query({
         query: `
           SELECT close
           FROM ohlcv_1m
-          WHERE symbol = '${symbol}'
+          WHERE symbol = '${safe}'
           ORDER BY ts DESC
           LIMIT 1
+          SETTINGS max_execution_time = 5
         `,
         format: 'JSONEachRow'
       });

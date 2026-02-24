@@ -172,6 +172,58 @@ async function setupOrderbookClickHouse() {
       `Created ${db}.mv_ticks_to_1m (market_ticks → ohlcv_1m)`
     );
 
+    // 5) Pre-aggregated hourly candles table
+    // Dramatically reduces scan volume for 1h/4h/1D/1W/1M queries (up to 60x fewer rows).
+    // Uses plain MergeTree with first_ts/last_ts for correct open/close across partial batches.
+    await exec(
+      `CREATE TABLE IF NOT EXISTS ${db}.ohlcv_1h (
+        market_uuid LowCardinality(String),
+        symbol LowCardinality(String),
+        ts DateTime('UTC'),
+        open Float64,
+        high Float64,
+        low Float64,
+        close Float64,
+        volume Float64,
+        trades UInt64,
+        first_ts DateTime('UTC'),
+        last_ts DateTime('UTC'),
+        INDEX idx_market_uuid market_uuid TYPE bloom_filter(0.01) GRANULARITY 4
+      )
+      ENGINE = MergeTree()
+      PARTITION BY toYYYYMM(ts)
+      ORDER BY (market_uuid, ts)
+      TTL ts + INTERVAL 365 DAY DELETE
+      SETTINGS index_granularity = 8192`,
+      `Ensured ${db}.ohlcv_1h table`
+    );
+
+    // 5b) Chained materialized view: ohlcv_1m → ohlcv_1h
+    await exec(
+      `DROP VIEW IF EXISTS ${db}.mv_1m_to_1h`,
+      `Dropped existing ${db}.mv_1m_to_1h (if any)`
+    );
+
+    await exec(
+      `CREATE MATERIALIZED VIEW ${db}.mv_1m_to_1h
+        TO ${db}.ohlcv_1h AS
+      SELECT
+        market_uuid,
+        any(symbol) AS symbol,
+        hour_ts AS ts,
+        argMin(open, ts) AS open,
+        max(high) AS high,
+        min(low) AS low,
+        argMax(close, ts) AS close,
+        sum(volume) AS volume,
+        sum(trades) AS trades,
+        min(ts) AS first_ts,
+        max(ts) AS last_ts
+      FROM ${db}.ohlcv_1m
+      GROUP BY market_uuid, toStartOfHour(ts) AS hour_ts`,
+      `Created ${db}.mv_1m_to_1h (ohlcv_1m → ohlcv_1h)`
+    );
+
     console.log("🎉 Order-book ClickHouse schema setup complete!");
     await clickhouse.close();
   } catch (err) {

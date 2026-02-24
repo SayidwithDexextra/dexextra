@@ -11,20 +11,42 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// === CONNECTION PRE-WARMING ===
+// Eagerly establish the ClickHouse TLS connection at module load so the first
+// real chart request doesn't pay the 1-3s cold-start penalty.
+const _chWarmup = (() => {
+  try {
+    const ch = getClickHouseDataPipeline();
+    if (ch.isConfigured()) ch.warmConnection().catch(() => {});
+  } catch {}
+})();
+
 // === TIMEOUT CONFIGURATION ===
-// Aggressive timeouts to fail fast and avoid blocking the UI
-const CLICKHOUSE_QUERY_TIMEOUT_MS = 8_000; // 8 seconds max for any ClickHouse query
-const SUPABASE_QUERY_TIMEOUT_MS = 3_000; // 3 seconds max for Supabase lookups
-const METRIC_SERIES_TIMEOUT_MS = 5_000; // 5 seconds for metric series fallback
+const CLICKHOUSE_QUERY_TIMEOUT_MS = 4_000;
+const SUPABASE_QUERY_TIMEOUT_MS = 2_000;
+const METRIC_SERIES_TIMEOUT_MS = 3_000;
 
 type CachedHistory = { expiresAt: number; body: any; headers: Record<string, string> };
 const HISTORY_CACHE = new Map<string, CachedHistory>();
-const HISTORY_CACHE_TTL_MS = 15_000;
 const HISTORY_CACHE_MAX_KEYS = 500;
+
+// Timeframe-aware cache TTLs — longer TFs change less frequently, cache longer
+const HISTORY_CACHE_TTL_BY_TF: Record<string, number> = {
+  '1m': 10_000,
+  '5m': 25_000,
+  '15m': 40_000,
+  '30m': 55_000,
+  '1h': 55_000,
+  '4h': 120_000,
+  '1d': 300_000,
+  '1w': 600_000,
+  '1mo': 600_000,
+};
+const HISTORY_CACHE_TTL_DEFAULT_MS = 15_000;
 
 type CachedMarketUuid = { expiresAt: number; id: string };
 const MARKET_UUID_CACHE = new Map<string, CachedMarketUuid>();
-const MARKET_UUID_CACHE_TTL_MS = 5 * 60_000;
+const MARKET_UUID_CACHE_TTL_MS = 30 * 60_000;
 const MARKET_UUID_CACHE_MAX_KEYS = 1000;
 
 // Cache for metric name resolution (avoids repeated Supabase queries for the same market)
@@ -412,7 +434,6 @@ export async function GET(request: NextRequest) {
     const failedCacheKey = `failed:${symbol}:${timeframe}`;
     const cachedFailed = FAILED_QUERY_CACHE.get(failedCacheKey);
     if (cachedFailed && cachedFailed.expiresAt > Date.now()) {
-      // Return no_data quickly for recently failed markets
       return NextResponse.json(
         { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
         { 
@@ -426,8 +447,39 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Resolve metric_id -> market_uuid so ClickHouse queries stay market-id centric.
-    // (TradingView shows ticker, so we keep ticker human-readable and map here.)
+    // ── EARLY CACHE CHECK ──
+    // Check cache BEFORE Supabase/ClickHouse so cached results skip all I/O.
+    // Bucket the end-time by timeframe so TradingView's per-second polling
+    // reuses cache entries instead of causing a miss every single second.
+    const cacheBucketSec = Math.max(tfSec, 10);
+    const rawToSec = Math.floor(endTime.getTime() / 1000);
+    const bucketedToSec = Math.floor(rawToSec / cacheBucketSec) * cacheBucketSec;
+
+    const cacheKey = [
+      `sym:${symbol}`,
+      `tf:${timeframe}`,
+      `from:${Math.floor(effectiveStartTime.getTime() / 1000)}`,
+      `to:${bucketedToSec}`,
+      `limit:${limit}`,
+    ].join('|');
+
+    const historyCacheTtl = HISTORY_CACHE_TTL_BY_TF[timeframe] ?? HISTORY_CACHE_TTL_DEFAULT_MS;
+
+    const cached = HISTORY_CACHE.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return NextResponse.json(cached.body, {
+        headers: {
+          ...cached.headers,
+          'X-Cache': 'HIT',
+        },
+      });
+    }
+    if (HISTORY_CACHE.size > HISTORY_CACHE_MAX_KEYS) {
+      HISTORY_CACHE.clear();
+    }
+
+    // ── UUID RESOLUTION ──
+    // Only reached on cache miss. Resolve metric_id → market_uuid for ClickHouse.
     const tResolve0 = Date.now();
     let marketUuid: string | undefined;
     if (isUuid) {
@@ -443,7 +495,6 @@ export async function GET(request: NextRequest) {
       }
       try {
         if (!marketUuid) {
-          // Wrap Supabase query in timeout to fail fast
           const supabaseResult = await withTimeout(
             supabase
               .from('orderbook_markets_view')
@@ -460,34 +511,10 @@ export async function GET(request: NextRequest) {
           }
         }
       } catch {
-        // ignore - proceed without market UUID
+        // proceed without market UUID
       }
     }
     const tResolve1 = Date.now();
-
-    const cacheKey = [
-      marketUuid ? `uuid:${marketUuid}` : `sym:${symbol}`,
-      `tf:${timeframe}`,
-      `res:${resolution}`,
-      `from:${Math.floor(effectiveStartTime.getTime() / 1000)}`,
-      `to:${Math.floor(endTime.getTime() / 1000)}`,
-      `limit:${limit}`,
-      `seed:${debugSeed ? 1 : 0}`,
-    ].join('|');
-
-    const cached = HISTORY_CACHE.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return NextResponse.json(cached.body, {
-        headers: {
-          ...cached.headers,
-          'X-Cache': 'HIT',
-        },
-      });
-    }
-    if (HISTORY_CACHE.size > HISTORY_CACHE_MAX_KEYS) {
-      // Best-effort safety valve (serverless instances are short-lived, but can be chatty while warm).
-      HISTORY_CACHE.clear();
-    }
 
     // Fetch candles using dynamic aggregation with timeout protection.
     // Prefer market_uuid filtering (canonical). If we can't resolve, fall back to symbol filtering.
@@ -606,7 +633,7 @@ export async function GET(request: NextRequest) {
                 'X-Cache': 'MISS',
                 'X-Metric-Bars': '1',
               };
-              HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + HISTORY_CACHE_TTL_MS, body, headers });
+              HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + historyCacheTtl, body, headers });
               return NextResponse.json(body, { headers });
             } else {
               // Cache that this market has no metric data to avoid repeated queries
@@ -685,10 +712,12 @@ export async function GET(request: NextRequest) {
       }
     };
 
+    // Tiered CDN cache: higher timeframes change less frequently, cache longer
+    const tfCacheSec = tfSec >= 14400 ? 30 : tfSec >= 3600 ? 15 : tfSec >= 300 ? 5 : 3;
+
     const headers: Record<string, string> = {
       'Access-Control-Allow-Origin': '*',
-      // Short CDN cache: dramatically improves timeframe switching, while remaining near-realtime.
-      'Cache-Control': 'public, s-maxage=3, stale-while-revalidate=30',
+      'Cache-Control': `public, s-maxage=${tfCacheSec}, stale-while-revalidate=30`,
       'Server-Timing': [
         `supabase;dur=${tResolve1 - tResolve0}`,
         `clickhouse;dur=${tCh1 - tCh0}`,
@@ -696,7 +725,7 @@ export async function GET(request: NextRequest) {
       ].join(', '),
       'X-Cache': 'MISS',
     };
-    HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + HISTORY_CACHE_TTL_MS, body, headers });
+    HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + historyCacheTtl, body, headers });
     return NextResponse.json(body, { headers });
 
   } catch (error) {
