@@ -74,8 +74,12 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
   const [pairMap, setPairMap] = useState<Record<string, { otherId: string; seriesSlug: string }>>({})
   const [idToMarket, setIdToMarket] = useState<Record<string, Market>>({})
   const [recentSearches, setRecentSearches] = useState<string[]>([])
+  const [showAllUsers, setShowAllUsers] = useState(false)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
   const modalRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const usersScrollRef = useRef<HTMLDivElement>(null)
 
   const design = searchModalDesign.searchModal
 
@@ -122,6 +126,33 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
   const clearRecentSearches = useCallback(() => {
     setRecentSearches([])
     localStorage.removeItem('dexextra-recent-searches')
+  }, [])
+
+  const updateScrollArrows = useCallback(() => {
+    const el = usersScrollRef.current
+    if (!el) return
+    setCanScrollLeft(el.scrollLeft > 2)
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2)
+  }, [])
+
+  useEffect(() => {
+    const el = usersScrollRef.current
+    if (!el) return
+    updateScrollArrows()
+    el.addEventListener('scroll', updateScrollArrows, { passive: true })
+    const ro = new ResizeObserver(updateScrollArrows)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', updateScrollArrows)
+      ro.disconnect()
+    }
+  }, [searchResults.users, updateScrollArrows, showAllUsers])
+
+  const scrollUsers = useCallback((direction: 'left' | 'right') => {
+    const el = usersScrollRef.current
+    if (!el) return
+    const scrollAmount = 300
+    el.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' })
   }, [])
 
   // Search function with debouncing
@@ -251,9 +282,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
   // Debounced search effect
   useEffect(() => {
+    setShowAllUsers(false)
     const timeoutId = setTimeout(() => {
       performSearch(searchValue)
-    }, 300) // 300ms delay
+    }, 300)
 
     return () => clearTimeout(timeoutId)
   }, [searchValue, performSearch])
@@ -483,9 +515,17 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
             </div>
           )}
 
-          {/* Search Results - Markets */}
+          {/* Search Results - Markets (hidden in show-all-users mode) */}
           {searchValue && searchResults.markets.length > 0 && (
-            <div className="mb-3">
+            <div
+              className="mb-3 transition-all duration-300"
+              style={{
+                maxHeight: showAllUsers ? 0 : '1000px',
+                opacity: showAllUsers ? 0 : 1,
+                overflow: 'hidden',
+                marginBottom: showAllUsers ? 0 : undefined,
+              }}
+            >
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                   Markets
@@ -585,7 +625,6 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                         <div className="text-[9px] pt-1.5">
                           <div className="flex flex-wrap gap-1">
                             {(() => {
-                              // Convert category to array if it's a string
                               const categories = Array.isArray(market.category)
                                 ? market.category
                                 : typeof market.category === 'string'
@@ -610,7 +649,6 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                                 </>
                               );
                             })()}
-                            {/* Inline series toggle if in active rollover */}
                             {pairMap[market.id] && idToMarket[pairMap[market.id].otherId] && (
                               <div className="flex items-center gap-2 mt-1 w-full">
                                 <MarketPairBadge text={pairMap[market.id].seriesSlug} />
@@ -648,49 +686,135 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           {/* Search Results - Users */}
           {searchValue && searchResults.users.length > 0 && (
-            <div className="mb-3">
+            <div className={`transition-all duration-300 ease-in-out ${showAllUsers ? 'flex-1' : 'mb-3'}`}>
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
-                  Users
-                </h4>
-                <button className="text-[11px] text-[#808080] hover:text-white hover:underline transition-colors">
-                  Show all
-                </button>
+                {showAllUsers ? (
+                  <button
+                    onClick={() => setShowAllUsers(false)}
+                    className="flex items-center gap-2 text-[11px] text-[#808080] hover:text-white transition-colors group"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="transition-transform group-hover:-translate-x-0.5">
+                      <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    <span>Back to results</span>
+                  </button>
+                ) : (
+                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                    Users
+                  </h4>
+                )}
+                {!showAllUsers && (
+                  <button
+                    onClick={() => setShowAllUsers(true)}
+                    className="text-[11px] text-[#808080] hover:text-white hover:underline transition-colors"
+                  >
+                    Show all
+                  </button>
+                )}
+                {showAllUsers && (
+                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                    {searchResults.users.length} users
+                  </div>
+                )}
               </div>
-              
-              <div className="overflow-x-auto overflow-y-hidden users-horizontal-scroll -mx-2 px-2">
-                <div className="flex gap-4 pb-2" style={{ minWidth: 'max-content' }}>
-                  {searchResults.users.map((user) => (
-                    <div
-                      key={user.id}
-                      onClick={() => handleUserSelect(user)}
-                      className="group flex flex-col items-start cursor-pointer transition-all duration-200 flex-shrink-0 p-3 rounded-lg hover:bg-[#1A1A1A]"
-                      style={{ width: '140px' }}
-                    >
-                      <div 
-                        className="flex items-center justify-center text-3xl font-semibold rounded-full w-[115px] h-[115px] mb-3 transition-all duration-200 shadow-lg group-hover:shadow-xl"
-                        style={{
-                          backgroundColor: user.profile_image_url ? 'transparent' : '#282828',
-                          backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
-                          backgroundSize: 'cover',
-                          backgroundPosition: 'center',
-                          color: '#ffffff'
-                        }}
+
+              {showAllUsers ? (
+                <div className="users-grid-scroll overflow-y-auto animate-users-expand" style={{ maxHeight: 'calc(85vh - 160px)' }}>
+                  <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 gap-3">
+                    {searchResults.users.map((user, i) => (
+                      <div
+                        key={user.id}
+                        onClick={() => handleUserSelect(user)}
+                        className="group flex flex-col items-center cursor-pointer transition-all duration-200 p-3 rounded-lg hover:bg-[#1A1A1A] animate-user-bubble-in"
+                        style={{ animationDelay: `${i * 30}ms` }}
                       >
-                        {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
-                      </div>
-                      <div className="text-left w-full">
-                        <div className="text-[14px] font-semibold text-white truncate">
-                          {user.display_name || user.username || 'Anonymous'}
+                        <div
+                          className="flex items-center justify-center text-2xl font-semibold rounded-full w-[90px] h-[90px] mb-2 transition-all duration-200 shadow-lg group-hover:shadow-xl group-hover:scale-105"
+                          style={{
+                            backgroundColor: user.profile_image_url ? 'transparent' : '#282828',
+                            backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                            color: '#ffffff'
+                          }}
+                        >
+                          {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
                         </div>
-                        <div className="text-[12px] text-[#a0a0a0]">
-                          User
+                        <div className="text-center w-full">
+                          <div className="text-[13px] font-semibold text-white truncate">
+                            {user.display_name || user.username || 'Anonymous'}
+                          </div>
+                          <div className="text-[11px] text-[#a0a0a0]">
+                            User
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="relative">
+                  {canScrollLeft && (
+                    <button
+                      onClick={() => scrollUsers('left')}
+                      className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-[#1A1A1A]/90 border border-[#333333] text-[#808080] hover:text-white hover:bg-[#2A2A2A] transition-all duration-200 shadow-lg backdrop-blur-sm"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  )}
+                  {canScrollRight && (
+                    <button
+                      onClick={() => scrollUsers('right')}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-[#1A1A1A]/90 border border-[#333333] text-[#808080] hover:text-white hover:bg-[#2A2A2A] transition-all duration-200 shadow-lg backdrop-blur-sm"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  )}
+                  {canScrollLeft && (
+                    <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-12 bg-gradient-to-r from-[#0F0F0F] to-transparent z-[5]" />
+                  )}
+                  {canScrollRight && (
+                    <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-[#0F0F0F] to-transparent z-[5]" />
+                  )}
+                  <div ref={usersScrollRef} className="overflow-x-auto overflow-y-hidden users-horizontal-scroll -mx-2 px-2">
+                    <div className="flex gap-4 pb-2" style={{ minWidth: 'max-content' }}>
+                      {searchResults.users.map((user) => (
+                        <div
+                          key={user.id}
+                          onClick={() => handleUserSelect(user)}
+                          className="group flex flex-col items-start cursor-pointer transition-all duration-200 flex-shrink-0 p-3 rounded-lg hover:bg-[#1A1A1A]"
+                          style={{ width: '140px' }}
+                        >
+                          <div
+                            className="flex items-center justify-center text-3xl font-semibold rounded-full w-[115px] h-[115px] mb-3 transition-all duration-200 shadow-lg group-hover:shadow-xl"
+                            style={{
+                              backgroundColor: user.profile_image_url ? 'transparent' : '#282828',
+                              backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
+                              backgroundSize: 'cover',
+                              backgroundPosition: 'center',
+                              color: '#ffffff'
+                            }}
+                          >
+                            {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
+                          </div>
+                          <div className="text-left w-full">
+                            <div className="text-[14px] font-semibold text-white truncate">
+                              {user.display_name || user.username || 'Anonymous'}
+                            </div>
+                            <div className="text-[12px] text-[#a0a0a0]">
+                              User
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -794,6 +918,58 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           .users-horizontal-scroll::-webkit-scrollbar {
             display: none;
+          }
+
+          .users-grid-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: #333333 transparent;
+          }
+
+          .users-grid-scroll::-webkit-scrollbar {
+            width: 4px;
+          }
+
+          .users-grid-scroll::-webkit-scrollbar-track {
+            background: transparent;
+          }
+
+          .users-grid-scroll::-webkit-scrollbar-thumb {
+            background-color: #333333;
+            border-radius: 4px;
+          }
+
+          .users-grid-scroll::-webkit-scrollbar-thumb:hover {
+            background-color: #444444;
+          }
+
+          .animate-users-expand {
+            animation: usersExpand 300ms ease-out forwards;
+          }
+
+          @keyframes usersExpand {
+            from {
+              opacity: 0;
+              transform: translateY(20px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+
+          .animate-user-bubble-in {
+            animation: bubbleIn 250ms ease-out both;
+          }
+
+          @keyframes bubbleIn {
+            from {
+              opacity: 0;
+              transform: scale(0.85);
+            }
+            to {
+              opacity: 1;
+              transform: scale(1);
+            }
           }
         `}</style>
       </div>
