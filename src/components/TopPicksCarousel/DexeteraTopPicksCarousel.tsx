@@ -146,7 +146,7 @@ export default function DexeteraTopPicksCarousel({
           onClick={() => scroll('left')}
           disabled={!canScrollLeft}
           aria-label="Scroll left"
-          className="absolute left-2 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white opacity-0 shadow-lg backdrop-blur transition-all hover:bg-black/70 focus:outline-none disabled:pointer-events-none disabled:opacity-0 md:flex group-hover/carousel:opacity-100"
+          className="absolute left-2 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white shadow-lg backdrop-blur transition-all hover:bg-black/70 focus:outline-none disabled:pointer-events-none disabled:opacity-30 md:flex"
         >
           <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
             <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -157,7 +157,7 @@ export default function DexeteraTopPicksCarousel({
           onClick={() => scroll('right')}
           disabled={!canScrollRight}
           aria-label="Scroll right"
-          className="absolute right-1 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white opacity-0 shadow-lg backdrop-blur transition-all hover:bg-black/70 focus:outline-none disabled:pointer-events-none disabled:opacity-0 md:flex group-hover/carousel:opacity-100"
+          className="absolute right-1 top-1/2 z-20 hidden -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/50 p-3 text-white shadow-lg backdrop-blur transition-all hover:bg-black/70 focus:outline-none disabled:pointer-events-none disabled:opacity-30 md:flex"
         >
           <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
             <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
