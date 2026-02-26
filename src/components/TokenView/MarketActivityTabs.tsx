@@ -793,6 +793,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         // Some producers (notably gasless UI) emit `orderId: "tx:<hash>"` as a placeholder.
         // That is NOT cancelable (can't be parsed as bigint) and will show as a duplicate once the real numeric id arrives.
         // We still want to re-hydrate session orders (handled above), but we must NOT add an optimistic Open Orders row.
+        const rawOrderType = String(
+          detail?.orderType ??
+          detail?.order_type ??
+          detail?.type ??
+          ''
+        ).trim().toUpperCase();
+        const isMarketHint =
+          rawOrderType === 'MARKET' ||
+          rawOrderType === '0' ||
+          rawOrderType === 'ORDER_TYPE_MARKET' ||
+          Boolean(detail?.isMarketOrder);
+        if (isMarketHint) {
+          shouldRefreshSessionOrders = true;
+          return;
+        }
         let orderIdBig: bigint = 0n;
         try { orderIdBig = BigInt(orderId); } catch { orderIdBig = 0n; }
         if (!orderId || orderIdBig <= 0n) {
@@ -824,6 +839,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
         const isBuy = detail?.isBuy === undefined ? true : Boolean(detail.isBuy);
         const side: Order['side'] = isBuy ? 'BUY' : 'SELL';
+        // Crossing placements execute immediately and should not appear in Open Orders.
+        const bestBid = Number(md.bestBid || orderBookState?.bestBid || 0);
+        const bestAsk = Number(md.bestAsk || orderBookState?.bestAsk || 0);
+        const isCrossingOrder = isBuy
+          ? (bestAsk > 0 && priceNum >= bestAsk)
+          : (bestBid > 0 && priceNum <= bestBid);
+        if (isCrossingOrder) {
+          shouldRefreshSessionOrders = true;
+          return;
+        }
 
         const optimistic: Order = {
           id: orderId,
@@ -867,7 +892,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
     window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
     return () => window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
-  }, [walletAddress, activeTab, metricId, fetchOrderHistory]);
+  }, [walletAddress, activeTab, metricId, fetchOrderHistory, md.bestBid, md.bestAsk, orderBookState?.bestBid, orderBookState?.bestAsk]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1420,7 +1445,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         const isAnimatingOut = animatingOutOrderKeys.has(removalKey);
         // Keep the order visible while animating, even if marked for removal
         if (isAnimatingOut) return true;
-        return o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(removalKey);
+        return o.type !== 'MARKET' && o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(removalKey);
       })
       .filter((o) => {
         const sizeOk = Number(o.size) > 0;
