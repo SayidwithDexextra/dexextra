@@ -245,11 +245,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       progress: Math.max(cur.progress || 0, 0.12),
       allowClose: true,
       kind: opts.kind,
-      headlineText: 'This is taking longer than usual,',
+      headlineText: 'Please wait a moment while we process your order.',
       detailText:
         isCancel
-          ? 'Canceling your order could take between 1 and 2 minutes. You can close this dialog to continue in the background.'
-          : 'Placing your order could take between 1 and 2 minutes. You can close this dialog to continue in the background.',
+          ? 'This can take between 1 and 2 minutes. You can close this dialog and continue in the background.'
+          : 'This can take between 1 and 2 minutes. You can close this dialog and continue in the background.',
       showProgressLabel: false,
     }));
     // Auto-dismiss after a moment so the UI doesn't feel stuck.

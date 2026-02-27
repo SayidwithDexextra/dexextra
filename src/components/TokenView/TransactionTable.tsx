@@ -806,9 +806,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             <div className="flex items-center justify-center">TOTAL (USD)</div>
           </div>
         ) : (
-          <div className="grid grid-cols-[1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-200 px-1">
+          <div className="grid grid-cols-[1fr_1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-200 px-1">
             <div className="text-right">SIZE (UNITS)</div>
             <div className="text-right">PRICE</div>
+            <div className="text-right">VALUE</div>
             <div className="text-right">TIME</div>
           </div>
         )}
@@ -1031,7 +1032,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                       />
                       
                       {/* Content */}
-                      <div className="relative grid grid-cols-[1fr_1fr_0.8fr] gap-1 py-0.5 px-1 text-[11px]">
+                      <div className="relative grid grid-cols-[1fr_1fr_1fr_0.8fr] gap-1 py-0.5 px-1 text-[11px]">
                         <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums">
                           <OrderBookAnimatedQuantity
                             orderId={order.order_id}
@@ -1044,6 +1045,9 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                         </div>
                         <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
                           {order.price ? `$${formatPriceDisplay(order.price, 4)}` : 'MARKET'}
+                        </div>
+                        <div className="text-right text-white font-mono text-[10px] flex items-center justify-end tabular-nums">
+                          {formatCurrency((order.quantity || 0) * (order.price || 0))}
                         </div>
                         <div className="text-right text-gray-200 font-mono text-[10px] flex items-center justify-end tabular-nums">
                           {formatTime(order.created_at)}
