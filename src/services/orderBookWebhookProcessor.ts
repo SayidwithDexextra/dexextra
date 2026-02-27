@@ -214,6 +214,21 @@ export class OrderBookWebhookProcessor {
           
           const orderEvent = await this.processOrderLog(log);
           if (orderEvent) {
+            if (
+              orderEvent.eventType === 'placed' &&
+              orderEvent.orderType === 0 &&
+              (orderEvent.price === '0' || orderEvent.price === '0x0')
+            ) {
+              const inferredPrice = this.inferMarketFillPriceFromWebhookLogs(logs, log, orderEvent);
+              if (inferredPrice) {
+                orderEvent.price = inferredPrice;
+                console.log('[DBG][webhook][market-price-inferred]', {
+                  orderId: orderEvent.orderId,
+                  txHash: orderEvent.txHash,
+                  inferredPriceRaw: inferredPrice
+                });
+              }
+            }
             result.orders.push(orderEvent);
             
             // Save to Supabase
@@ -246,6 +261,58 @@ export class OrderBookWebhookProcessor {
     }
 
     return result;
+  }
+
+  /**
+   * Infer market fill price from sibling logs in the same tx.
+   * This prevents persisting MARKET orders with price=0 when the execution
+   * event in the same webhook already has the billed price.
+   */
+  private inferMarketFillPriceFromWebhookLogs(
+    logs: AlchemyWebhookLog[],
+    placedLog: AlchemyWebhookLog,
+    orderEvent: ProcessedOrderEvent
+  ): string | null {
+    const txHash = (placedLog.transaction?.hash || '').toLowerCase();
+    if (!txHash) return null;
+    const trader = (orderEvent.trader || '').toLowerCase();
+
+    for (const candidate of logs) {
+      if ((candidate.transaction?.hash || '').toLowerCase() !== txHash) continue;
+      if ((candidate.index ?? 0) < (placedLog.index ?? 0)) continue;
+      if (!candidate.topics?.length || !candidate.data) continue;
+
+      const sig = candidate.topics[0];
+      try {
+        if (sig === HYPERLIQUID_EVENT_TOPICS.ORDER_FILLED) {
+          if (candidate.topics.length < 4) continue;
+          const taker = ethers.getAddress('0x' + candidate.topics[2].slice(26)).toLowerCase();
+          if (trader && taker !== trader) continue;
+          const decoded = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256', 'uint256'], candidate.data);
+          const rawPrice = decoded[1];
+          if (rawPrice && rawPrice > 0n) return rawPrice.toString();
+        }
+
+        if (sig === HYPERLIQUID_EVENT_TOPICS.TRADE_EXECUTED) {
+          if (candidate.topics.length < 3) continue;
+          const buyer = ethers.getAddress('0x' + candidate.topics[1].slice(26)).toLowerCase();
+          const seller = ethers.getAddress('0x' + candidate.topics[2].slice(26)).toLowerCase();
+          if (trader && buyer !== trader && seller !== trader) continue;
+          const decoded = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256', 'uint256'], candidate.data);
+          const rawPrice = decoded[1];
+          if (rawPrice && rawPrice > 0n) return rawPrice.toString();
+        }
+      } catch (error) {
+        console.warn('⚠️ [DEBUG] Failed to infer market fill price from sibling log', {
+          txHash,
+          logIndex: candidate.index,
+          signature: sig,
+          err: (error as Error).message
+        });
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -654,18 +721,39 @@ export class OrderBookWebhookProcessor {
       
       const quantityConverted = parseFloat(orderEvent.quantity) / PRICE_PRECISION;
       const priceConverted = parseFloat(orderEvent.price) / PRICE_PRECISION;
+      let resolvedQuantity = quantityConverted;
+      let resolvedPrice = priceConverted;
       
       // Additional validation: For market orders, ensure size represents UNITS, not USDC value
-      let actualUnits = quantityConverted;
-      if (orderEvent.orderType === 0 && priceConverted > 0) { // Market order with price data
+      let actualUnits = resolvedQuantity;
+      if (orderEvent.orderType === 0 && resolvedPrice > 0) { // Market order with price data
         // If this is a market order and we have price, verify if quantity represents units or USDC
-        const estimatedUSDCValue = quantityConverted * priceConverted;
+        const estimatedUSDCValue = resolvedQuantity * resolvedPrice;
         console.log(`🔍 [SIZE_VALIDATION] Market order size analysis:`, {
           rawQuantity: orderEvent.quantity,
-          convertedQuantity: quantityConverted,
-          priceConverted,
+          convertedQuantity: resolvedQuantity,
+          priceConverted: resolvedPrice,
           estimatedUSDCValue,
           likelyInterpretation: estimatedUSDCValue > 1000 ? 'quantity_is_units' : 'quantity_might_be_usdc_value'
+        });
+      }
+
+      // Prefer relayer-submitted canonical values for market orders when webhook price is missing/zero.
+      if (orderEvent.orderType === 0 && (!(resolvedPrice > 0) || !(resolvedQuantity > 0))) {
+        const submitted = await this.getSubmittedMarketSnapshot(orderEvent, marketId);
+        if (submitted?.price && submitted.price > 0) {
+          resolvedPrice = submitted.price;
+        }
+        if (submitted?.quantity && submitted.quantity > 0) {
+          resolvedQuantity = submitted.quantity;
+          actualUnits = submitted.quantity;
+        }
+        console.log(`🧭 [RELAYER_FALLBACK] Market order canonical values`, {
+          orderId: orderEvent.orderId,
+          txHash: orderEvent.txHash,
+          fallbackApplied: Boolean(submitted),
+          resolvedPrice,
+          resolvedQuantity
         });
       }
       
@@ -673,7 +761,7 @@ export class OrderBookWebhookProcessor {
         rawQuantity: orderEvent.quantity,
         rawPrice: orderEvent.price,
         quantityConverted: actualUnits,
-        priceConverted,
+        priceConverted: resolvedPrice,
         precision: PRICE_PRECISION,
         orderType: orderEvent.orderType,
         interpretation: 'quantity_represents_token_units'
@@ -687,7 +775,7 @@ export class OrderBookWebhookProcessor {
       
       // Use converted values with proper precision
       const quantity = actualUnits > 0 ? actualUnits : 0.000001; // Minimum fallback
-      const price = priceConverted > 0 ? priceConverted : null; // NULL allowed for market orders
+      const price = resolvedPrice > 0 ? resolvedPrice : null; // NULL allowed for market orders
       
       console.log(`✅ [DEBUG] Final values for database:`, {
         quantity,
@@ -715,8 +803,10 @@ export class OrderBookWebhookProcessor {
       
       // Determine status based on actual order type
       if (orderEvent.orderType === 0) { // OrderType.MARKET = 0
-        orderStatus = 'FILLED'; // Market orders are immediately executed
-        console.log(`📊 [DEBUG] Processing MARKET order (orderType=0, eventType=${orderEvent.eventType})`);
+        // MARKET orders should only be marked FILLED once we have a real fill price.
+        // If price is still unknown here, keep as PENDING and let execution webhook finalize it.
+        orderStatus = price && price > 0 ? 'FILLED' : 'PENDING';
+        console.log(`📊 [DEBUG] Processing MARKET order (orderType=0, eventType=${orderEvent.eventType}, hasPrice=${Boolean(price && price > 0)})`);
       } else {
         orderStatus = 'PENDING'; // Limit orders start as pending
         console.log(`📊 [DEBUG] Processing LIMIT order (orderType=${orderEvent.orderType}, eventType=${orderEvent.eventType})`);
@@ -803,6 +893,53 @@ export class OrderBookWebhookProcessor {
     } catch (error) {
       console.error(`❌ Failed to save new order: ${(error as Error).message}`);
       return false;
+    }
+  }
+
+  /**
+   * Pull canonical market order values from relayer SUBMITTED history row.
+   * This avoids persisting zero-price market webhook rows when relayer already
+   * computed the billed price/quantity for the same tx.
+   */
+  private async getSubmittedMarketSnapshot(
+    orderEvent: ProcessedOrderEvent,
+    marketId: string
+  ): Promise<{ price: number; quantity: number } | null> {
+    try {
+      const txHash = orderEvent.txHash || '';
+      if (!txHash) return null;
+
+      const { data, error } = await this.supabase
+        .from('userOrderHistory')
+        .select('price, quantity, occurred_at')
+        .eq('tx_hash', txHash)
+        .ilike('trader_wallet_address', orderEvent.trader)
+        .eq('market_metric_id', marketId)
+        .eq('event_type', 'SUBMITTED')
+        .order('occurred_at', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.warn(`⚠️ [RELAYER_FALLBACK] Failed to read SUBMITTED snapshot: ${error.message}`);
+        return null;
+      }
+
+      const row = data?.[0];
+      if (!row) return null;
+
+      const price = typeof row.price === 'number' ? row.price : parseFloat(String(row.price || '0'));
+      const quantity = typeof row.quantity === 'number' ? row.quantity : parseFloat(String(row.quantity || '0'));
+      if (!(price > 0) && !(quantity > 0)) return null;
+
+      return {
+        price: Number.isFinite(price) ? price : 0,
+        quantity: Number.isFinite(quantity) ? quantity : 0
+      };
+    } catch (error) {
+      console.warn('⚠️ [RELAYER_FALLBACK] Unexpected error resolving SUBMITTED snapshot', {
+        err: (error as Error).message
+      });
+      return null;
     }
   }
 

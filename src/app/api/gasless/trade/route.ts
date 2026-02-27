@@ -820,6 +820,11 @@ export async function POST(req: Request) {
                   throw new HttpError(400, { error: 'ob_no_liquidity_for_market', side: isBuy ? 'buy' : 'sell' });
                 }
                 price = refPrice;
+                // Persist the same resolved market reference price used for relayer precheck
+                // so SUBMITTED history rows don't end up with null/zero price.
+                if (params && (params.price === undefined || params.price === null || params.price === '0' || params.price === 0)) {
+                  params.price = refPrice.toString();
+                }
               } else {
                 price = parseBigintish(params?.price, 'price');
               }

@@ -1855,7 +1855,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
@@ -1963,19 +1962,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <span className="text-[11px] text-white font-mono">${formatPrice(position.markPrice)}</span>
                           </td>
                           <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-white font-mono">
-                              $
-                              {formatPrice(
-                                position.size *
-                                  (Number.isFinite(position.markPrice) && position.markPrice > 0
-                                    ? position.markPrice
-                                    : Number.isFinite(position.entryPrice) && position.entryPrice > 0
-                                      ? position.entryPrice
-                                      : 0)
-                              )}
-                            </span>
-                          </td>
-                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
                             <div className="flex justify-end">
                               <span className="relative inline-block pr-4">
                                 <span
@@ -2038,7 +2024,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         </tr>
               {expandedPositionId === position.id && (
                 <tr className="bg-[#1A1A1A]">
-                  <td colSpan={8} className="px-0">
+                  <td colSpan={7} className="px-0">
                     <div className="px-2 py-1.5 border-t border-[#222222]">
                       <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
@@ -2153,7 +2139,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Filled</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
                         <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
@@ -2211,9 +2196,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                             </td>
                             <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                              <span className="text-[11px] text-white font-mono">{formatAmount(order.filled, 4)}</span>
-                            </td>
-                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
                               <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
                             </td>
                             <td className="px-1.5 sm:px-2 py-1.5 text-right">
@@ -2227,7 +2209,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           </tr>
                           {isExpanded && (
                             <tr className={`bg-[#1A1A1A] ${isAnimatingOut ? 'order-row-slide-out' : ''}`}>
-                              <td colSpan={8} className="px-0">
+                              <td colSpan={7} className="px-0">
                                 <div className="px-2 py-1.5 border-t border-[#222222]">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-4">
@@ -2669,6 +2651,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         <th className="text-left px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
                         <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
                         <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
                         <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
@@ -2742,6 +2725,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           </td>
                           <td className="px-2 sm:px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
+                          </td>
+                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
+                            <span className="text-[11px] text-white font-mono">
+                              ${formatPrice(order.price * order.size)}
+                            </span>
                           </td>
                           <td className="px-2 sm:px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-[#9CA3AF] whitespace-nowrap">{formatDate(order.timestamp)}</span>
