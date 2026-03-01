@@ -198,7 +198,10 @@ const ABI = [
   parseAbiItem(
     "event TradeRecorded(bytes32 indexed marketId,address indexed buyer,address indexed seller,uint256 price,uint256 amount,uint256 buyerFee,uint256 sellerFee,uint256 timestamp,uint256 liquidationPrice)"
   ),
-  parseAbiItem("event PriceUpdated(uint256 lastTradePrice,uint256 currentMarkPrice)")
+  parseAbiItem("event PriceUpdated(uint256 lastTradePrice,uint256 currentMarkPrice)"),
+  parseAbiItem("event OrderPlaced(uint256 indexed orderId,address indexed trader,uint256 price,uint256 amount,bool isBuy,bool isMarginOrder)"),
+  parseAbiItem("event OrderCancelled(uint256 indexed orderId,address indexed trader)"),
+  parseAbiItem("event OrderModified(uint256 indexed oldOrderId,uint256 indexed newOrderId,address indexed trader,uint256 newPrice,uint256 newAmount)")
 ];
 
 const CORE_VAULT_ABI = [
@@ -209,6 +212,10 @@ const CORE_VAULT_ABI = [
   parseAbiItem(
     "function getPositionSummary(address user, bytes32 marketId) view returns (int256 size, uint256 entryPrice, uint256 marginLocked)"
   ),
+];
+
+const ORDERBOOK_PRICING_ABI = [
+  parseAbiItem("function calculateMarkPrice() view returns (uint256)"),
 ];
 
 function textEncoder() {
@@ -590,6 +597,36 @@ async function fetchOnchainLiq(
   }
 
   return last;
+}
+
+async function fetchOnchainKernelPrice(orderBookAddress: string, traceId: string): Promise<bigint | null> {
+  const orderbook = normalizeAddress(orderBookAddress);
+  if (!RPC_URL || !orderbook) return null;
+  try {
+    const publicClient = createPublicClient({ transport: http(RPC_URL) });
+    const mark = await publicClient.readContract({
+      address: orderbook as `0x${string}`,
+      abi: ORDERBOOK_PRICING_ABI,
+      functionName: "calculateMarkPrice",
+      args: [],
+    });
+    const markBn = toBigIntSafe(mark);
+    if (!markBn || markBn <= 0n) {
+      logDebug(traceId, "kernel_mark_invalid", {
+        orderBook: orderbook.slice(0, 12),
+        value: markBn?.toString?.() ?? null,
+      });
+      return null;
+    }
+    logDebug(traceId, "kernel_mark", { orderBook: orderbook.slice(0, 12), mark: markBn.toString() });
+    return markBn;
+  } catch (e) {
+    logStep(traceId, "KERNEL_FETCH_ERR", {
+      orderBook: orderbook?.slice(0, 12),
+      err: ((e as any)?.message || String(e)).slice(0, 120),
+    });
+    return null;
+  }
 }
 
 async function upsertNetTrade(opts: {
@@ -1260,6 +1297,61 @@ Deno.serve(async (req) => {
         marketHex: marketMeta.marketHex,
       });
       results.push({ status: "ok", event: "PriceUpdated", market: marketMeta.marketUuid, liquidations: compare });
+    } else if (
+      decoded.eventName === "OrderPlaced" ||
+      decoded.eventName === "OrderCancelled" ||
+      decoded.eventName === "OrderModified"
+    ) {
+      if (!supabase) {
+        results.push({ status: "skipped", event: decoded.eventName, reason: "no_supabase" });
+        continue;
+      }
+
+      const orderBookCandidates = collectLogAddresses(log);
+      if (!orderBookCandidates.length) {
+        results.push({ status: "skipped", event: decoded.eventName, reason: "missing_orderbook" });
+        continue;
+      }
+
+      let marketMeta: { marketUuid: string; marketHex: string } | null = null;
+      let matchedOrderBook: string | null = null;
+      for (const candidate of orderBookCandidates) {
+        const candidateMeta = await resolveMarketByAddress(supabase, candidate, traceId);
+        if (candidateMeta) {
+          marketMeta = candidateMeta;
+          matchedOrderBook = candidate;
+          break;
+        }
+      }
+      if (!marketMeta || !matchedOrderBook) {
+        results.push({ status: "skipped", event: decoded.eventName, reason: "market_not_resolved" });
+        continue;
+      }
+
+      const kernelMark = await fetchOnchainKernelPrice(matchedOrderBook, traceId);
+      if (!kernelMark) {
+        results.push({ status: "skipped", event: decoded.eventName, reason: "kernel_price_unavailable" });
+        continue;
+      }
+      logStep(traceId, "KERNEL_PRICE_CHECK", {
+        market: marketMeta.marketHex.slice(0, 14),
+        mark: kernelMark.toString(),
+        trigger: decoded.eventName,
+      });
+
+      const compare = await findCandidatesAndLiquidate(kernelMark, {
+        supabase,
+        traceId,
+        marketUuid: marketMeta.marketUuid,
+        marketHex: marketMeta.marketHex,
+      });
+      results.push({
+        status: "ok",
+        event: decoded.eventName,
+        market: marketMeta.marketUuid,
+        mark: kernelMark.toString(),
+        liquidations: compare,
+      });
     } else if (decoded.eventName === "LiquidationCompleted") {
       if (!supabase) {
         results.push({ status: "skipped", event: "LiquidationCompleted", reason: "no_supabase" });

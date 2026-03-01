@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "updatedAt": "2026-03-01T03:09:52.963Z",
+  "chainId": 999,
+  "orderBook": "0xdEe7613fD28a54E10CD231f19794D0CCc6549A16",
+  "marketId": "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+  "marketLabel": "AVERAGE-RETAIL-PRICE-OF-EGGS-PER-DOZEN (AVERAGE-RETAIL-PRICE-OF-EGGS-PER-DOZEN)  orderBook=0xdEe7…9A16  chain=999",
+  "wallets": {
+    "shortTrader": "0x724CbE7b515dab1CE4B0e262990d2E3C47c6CA36",
+    "longTrader": "0x53aca02402062a61C871D1b5b4ded3e4232826E5",
+    "liquidityMaker": "0x89bD0aF6FE5292ed96fc026770b24f4B4F6DE7C6",
+    "liquidityTaker": "0xB5BaC03724F123Dd70bD6804fC1D3A5a8f611B25"
+  },
+  "inputs": {
+    "matchUnits": 10,
+    "makerUnits": 10,
+    "takerChunkUnits": 2,
+    "maxConsumeRounds": 12,
+    "thresholdBufferPct": 0.5
+  },
+  "step1": {
+    "done": true,
+    "shortTxHash": "0x768e8b6d300e2b2915228c5c83d1b023f31fd9391241693eacd0e52a9bb9b623",
+    "longTxHash": "0xdbe43c7cbaf07173b292235311d6d89d67219ecce3329662196ca80c2aa9bfbc"
+  },
+  "step2": {
+    "done": true,
+    "makerTxHash": "0x045ad9b8f9f9d4a873bc2412db7a223928d8dee9fc16e4ed886bae4201c656f4"
+  },
+  "consume": {
+    "roundsCompleted": 0,
+    "txHashes": []
+  },
+  "completed": false,
+  "liquidationPrice6": "5677083",
+  "askPriceAboveLiq6": "5705468"
+}

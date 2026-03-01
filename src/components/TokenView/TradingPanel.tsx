@@ -3068,38 +3068,58 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                           ? (isUsdMode ? amount : amount * estPrice)
                           : (quoteState.value > 0 ? quoteState.value : (isUsdMode ? amount : amount * estPrice));
                         const marginRequired = orderValue * marginMultiplier;
-                        // Adjusted liquidity check to consider currentPrice as fallback for market orders
-                        const hasLiquidity = orderType === 'limit' ? (selectedOption === 'long' ? bestAsk > 0 : bestBid > 0) : (selectedOption === 'long' ? (bestAsk > 0 || currentPrice > 0) : (bestBid > 0 || currentPrice > 0));
+                        const hasPriceEstimate = estPrice > 0;
+                        const hasOrderValueEstimate = orderValue > 0;
+                        const hasMarginEstimate = marginRequired > 0;
+                        const quoteUnavailable = orderType === 'market' && !quoteState.isLoading && !!quoteState.error && quoteState.error.includes('No liquidity');
+                        const liquidationDisplay = selectedOption === 'long'
+                          ? 'N/A (100% collateral)'
+                          : (computedLiquidationPrice && computedLiquidationPrice > 0
+                              ? `$${formatNumber(computedLiquidationPrice)}`
+                              : (quoteState.isLoading ? '...' : 'Awaiting quote'));
                         return (
                           <div className="text-[10px] space-y-0.5">
                             {/* Quote health/status */}
                             <div className="flex items-center justify-between gap-2 min-w-0">
                               <span className="text-[#606060] flex-1 min-w-0 truncate">Est. Fill Price:</span>
-                              <span className="text-white font-mono whitespace-nowrap">{quoteState.isLoading ? '...' : (hasLiquidity ? `$${formatNumber(estPrice)}` : 'No liquidity')}{quoteState.partial ? ' (partial)' : ''}</span>
+                              <span className="text-white font-mono whitespace-nowrap">
+                                {quoteState.isLoading
+                                  ? '...'
+                                  : (hasPriceEstimate
+                                      ? `$${formatNumber(estPrice)}${quoteUnavailable ? ' (est.)' : ''}`
+                                      : 'Awaiting price')}
+                                {quoteState.partial ? ' (partial)' : ''}
+                              </span>
                             </div>
                     
                             <div className="flex items-center justify-end gap-2 min-w-0">
                               {/* <span className="text-[#606060]">{isUsdMode ? 'Est. Units:' : 'Est. Value:'}</span> */}
                               <span className="text-white font-mono whitespace-nowrap">
                                 {quoteState.isLoading ? '...'
-                                  : (hasLiquidity
+                                  : (hasOrderValueEstimate
                                       ? (isUsdMode
                                           ? `${formatNumber(estUnits)} units`
                                           : `$${formatNumber(orderValue)}`)
-                                      : 'No liquidity')}
+                                      : 'Awaiting price')}
                               </span>
                             </div>
+                            {quoteUnavailable && (
+                              <div className="flex items-center justify-between gap-2 min-w-0">
+                                <span className="text-[#606060] flex-1 min-w-0 truncate">Liquidity:</span>
+                                <span className="text-[#F59E0B] font-mono whitespace-nowrap">Order book unavailable</span>
+                              </div>
+                            )}
                             <div className="flex items-center justify-between gap-2 min-w-0">
                               <span className="text-[#606060] flex-1 min-w-0 truncate">Order Value:</span>
-                              <span className="text-white font-mono whitespace-nowrap">{hasLiquidity ? `$${formatNumber(orderValue)}` : 'No liquidity'}</span>
+                              <span className="text-white font-mono whitespace-nowrap">{hasOrderValueEstimate ? `$${formatNumber(orderValue)}` : 'Awaiting price'}</span>
                             </div>
                             <div className="flex items-center justify-between gap-2 min-w-0">
-                              <span className="text-[#606060] flex-1 min-w-0 truncate">Margin Required{selectedOption === 'short' ? ' (150%)' : ''}:</span>
-                              <span className="text-white font-mono whitespace-nowrap">{hasLiquidity ? `$${formatNumber(marginRequired)}` : 'No liquidity'}</span>
+                              <span className="text-[#606060] flex-1 min-w-0 truncate">Margin Required{selectedOption === 'short' ? ' (150%)' : ' (100%)'}:</span>
+                              <span className="text-white font-mono whitespace-nowrap">{hasMarginEstimate ? `$${formatNumber(marginRequired)}` : 'Awaiting price'}</span>
                             </div>
                             <div className="flex items-center justify-between gap-2 min-w-0">
                               <span className="text-[#606060] flex-1 min-w-0 truncate">Liquidation Price:</span>
-                              <span className="text-white font-mono whitespace-nowrap">{hasLiquidity ? `$${formatNumber(computedLiquidationPrice || 0)}` : 'No liquidity'}</span>
+                              <span className="text-white font-mono whitespace-nowrap">{liquidationDisplay}</span>
                             </div>
                     
                           </div>
