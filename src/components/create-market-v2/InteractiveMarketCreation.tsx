@@ -214,6 +214,15 @@ function suggestMarketDescription(params: {
   return clampText(body, 160);
 }
 
+function randomDevCode4() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 4; i += 1) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
 function toModalResponse(ai: MetricAIResult, metric: string, processingMs: number): MetricResolutionResponse {
   const rawSources = Array.isArray(ai?.sources) ? ai.sources : [];
   const sources = rawSources
@@ -584,6 +593,9 @@ function MarketDetailsReview({
   onStartOver,
   onCreateMarket,
   isCreating,
+  showImmediateSettlementToggle,
+  useImmediateSettlement,
+  onToggleImmediateSettlement,
 }: {
   marketName: string;
   marketDescription: string;
@@ -600,6 +612,9 @@ function MarketDetailsReview({
   onStartOver: () => void;
   onCreateMarket: () => void;
   isCreating: boolean;
+  showImmediateSettlementToggle?: boolean;
+  useImmediateSettlement?: boolean;
+  onToggleImmediateSettlement?: (value: boolean) => void;
 }) {
   const [hasAnimated, setHasAnimated] = React.useState(false);
   const [bondConfig, setBondConfig] = React.useState<{
@@ -670,7 +685,7 @@ function MarketDetailsReview({
     <div className="mt-4 w-full max-w-[900px]">
       {/* Compact single-view layout */}
       <div
-        className="rounded-2xl border border-white/8 bg-[#0A0A0A] overflow-hidden"
+        className="rounded-2xl border border-white/8 bg-[#0A0A0A] overflow-visible"
         style={{
           opacity: hasAnimated ? 1 : 0,
           transform: hasAnimated ? 'translateY(0)' : 'translateY(16px)',
@@ -704,6 +719,17 @@ function MarketDetailsReview({
             </button>
           </div>
           <div className="flex flex-col items-end gap-1">
+            {showImmediateSettlementToggle ? (
+              <label className="mb-1 flex items-center gap-1.5 text-[10px] text-white/55">
+                <input
+                  type="checkbox"
+                  checked={Boolean(useImmediateSettlement)}
+                  onChange={(e) => onToggleImmediateSettlement?.(e.target.checked)}
+                  className="h-3 w-3 rounded border-white/20 bg-[#111111]"
+                />
+                Immediate settlement (dev)
+              </label>
+            ) : null}
             <button
               type="button"
               onClick={onCreateMarket}
@@ -983,6 +1009,7 @@ export function InteractiveMarketCreation() {
   const devToolsEnabled =
     process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEV_TOOLS === 'true';
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
+  const [useImmediateSettlement, setUseImmediateSettlement] = React.useState(false);
 
   const DEV_REVIEW_PRESET = {
     marketName: 'AVERAGE-RETAIL-PRICE-OF-BANANAS-IN-THE-USA',
@@ -1577,9 +1604,115 @@ export function InteractiveMarketCreation() {
       },
     });
 
+    // Jump immediately to review step.
+    if (stepTimerRef.current) {
+      window.clearTimeout(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+    setIsStepAnimating(false);
+    setVisibleStep('complete');
+
     // Close menu + ensure we land on the end screen.
     setDevToolsOpen(false);
   }, [DEV_REVIEW_PRESET]);
+
+  const devQuickFillTestMarket = React.useCallback(() => {
+    const code = randomDevCode4();
+    setErrorMessage(null);
+    setDiscoveryState('success');
+    setUseImmediateSettlement(true);
+
+    // Fill core fields with minimal test-friendly values.
+    setMarketName(code);
+    setMarketDescription('Development test market for settlement pipeline validation.');
+    setNameTouched(true);
+    setDescriptionTouched(true);
+    setIsNameConfirmed(true);
+    setIsDescriptionConfirmed(true);
+
+    setIconFile(null);
+    setIconPreviewUrl(null);
+    setIconStoredUrl(null);
+    setIsIconConfirmed(true);
+
+    const devSource: MetricSourceOption = {
+      id: `dev-quick-${code.toLowerCase()}`,
+      icon: (
+        <div className="relative h-7 w-7">
+          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/15 text-white/90">
+            <span className="text-[12px] font-semibold">T</span>
+          </div>
+        </div>
+      ),
+      label: 'Dev Source',
+      sublabel: 'example.com',
+      url: 'https://example.com',
+      confidence: 0.8,
+      authority: 'Development',
+      badge: 'Dev',
+      iconBg: 'bg-gradient-to-br from-indigo-400 to-cyan-500',
+    };
+    setSelectedSource(devSource);
+    setSourcesFetchState('success');
+    setDiscoveryResult({
+      measurable: true,
+      metric_definition: {
+        metric_name: code,
+        unit: 'USD',
+        scope: 'Development',
+        time_basis: 'Spot',
+        measurement_method: 'Development test metric from a generic source.',
+      },
+      assumptions: [],
+      sources: null,
+      rejection_reason: null,
+      search_results: [],
+      processing_time_ms: 0,
+    });
+
+    const nowIso = new Date().toISOString();
+    setValidationResult({
+      status: 'completed',
+      processingTime: '0ms',
+      cached: true,
+      data: {
+        metric: code,
+        value: '1',
+        unit: 'USD',
+        as_of: nowIso,
+        confidence: 0.8,
+        asset_price_suggestion: '1',
+        reasoning: 'Dev quick-fill preset for test market creation.',
+        sources: [
+          {
+            url: 'https://example.com',
+            screenshot_url: '',
+            quote: '1',
+            match_score: 0.8,
+          },
+        ],
+      },
+      performance: {
+        totalTime: 0,
+        breakdown: {
+          cacheCheck: '0ms',
+          scraping: '0ms',
+          processing: '0ms',
+          aiAnalysis: '0ms',
+        },
+      },
+    });
+
+    // Jump immediately to review step.
+    if (stepTimerRef.current) {
+      window.clearTimeout(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+    setIsStepAnimating(false);
+    setVisibleStep('complete');
+
+    setDevToolsOpen(false);
+  }, []);
 
   const devJumpToSelectSourceWithManySources = React.useCallback(() => {
     // Ensure we have a base discovery result first
@@ -1811,6 +1944,10 @@ export function InteractiveMarketCreation() {
       const metricUrl = selectedSource.url;
       const dataSource = selectedSource.authority || selectedSource.label || 'User Provided';
       const tags: string[] = [];
+      // Keep a safety buffer so create tx doesn't revert if block time catches up.
+      const settlementDateTs = useImmediateSettlement
+        ? Math.floor(Date.now() / 1000) + 5 * 60
+        : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
       let sourceLocator: { url: string; css_selector?: string; xpath?: string; html_snippet?: string; js_extractor?: string } | null = null;
       let startPrice = validationResult?.data?.asset_price_suggestion || validationResult?.data?.value || '1';
 
@@ -1926,6 +2063,7 @@ export function InteractiveMarketCreation() {
         bannerImageUrl: iconUrl || null,
         iconImageUrl: iconUrl || null,
         aiSourceLocator: sourceLocator,
+        settlementDate: settlementDateTs,
         pipelineId,
         onProgress: ({ step, status }) => {
           const idx = stepIndexMap[step];
@@ -1970,7 +2108,7 @@ export function InteractiveMarketCreation() {
             category: ['CUSTOM'],
             decimals: 6,
             minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
-            settlementDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+            settlementDate: settlementDateTs,
             tradingEndDate: null,
             dataRequestWindowSeconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
             autoSettle: true,
@@ -2032,6 +2170,7 @@ export function InteractiveMarketCreation() {
     iconPreviewUrl,
     iconStoredUrl,
     deploymentOverlay,
+    useImmediateSettlement,
     pusher,
     router,
     pipelineMessages,
@@ -2433,7 +2572,16 @@ export function InteractiveMarketCreation() {
                     Dev
                   </button>
                   {devToolsOpen ? (
-                    <div className="absolute right-0 mt-2 w-[180px] rounded-xl border border-white/10 bg-[#0A0A0A] p-2 shadow-xl z-50">
+                    <div className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-1.5rem))] max-h-[65vh] overflow-y-auto rounded-xl border border-white/10 bg-[#0A0A0A] p-2 shadow-xl z-[120] overscroll-contain">
+                      <div className="px-2 pb-1 text-[11px] text-white/45">Quick actions</div>
+                      <button
+                        type="button"
+                        onClick={() => devQuickFillTestMarket()}
+                        className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-green-200 hover:bg-white/5"
+                      >
+                        Quick-fill test market (4-char + immediate settlement)
+                      </button>
+                      <div className="mt-2 pt-2 border-t border-white/10">
                       <div className="px-2 pb-1 text-[11px] text-white/45">Jump to step</div>
                       {(['clarify_metric', 'name', 'description', 'select_source', 'icon', 'complete'] as CreationStep[]).map(
                         (s) => (
@@ -2453,6 +2601,7 @@ export function InteractiveMarketCreation() {
                           </button>
                         )
                       )}
+                      </div>
                       <div className="mt-2 pt-2 border-t border-white/10">
                         <div className="px-2 pb-1 text-[11px] text-white/45">Presets</div>
                         <button
@@ -2588,7 +2737,18 @@ export function InteractiveMarketCreation() {
                         <span className="text-xs">Dev</span>
                       </button>
                       {devToolsOpen ? (
-                        <div className="absolute left-0 top-full mt-2 w-[200px] rounded-xl border border-white/10 bg-[#0A0A0A] p-2 shadow-xl z-50">
+                        <div className="absolute left-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[65vh] overflow-y-auto rounded-xl border border-white/10 bg-[#0A0A0A] p-2 shadow-xl z-[120] overscroll-contain">
+                          <div className="px-2 pb-1 text-[11px] text-white/45">Quick actions</div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              devQuickFillTestMarket();
+                            }}
+                            className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-green-200 hover:bg-white/5"
+                          >
+                            Quick-fill test market (4-char + immediate settlement)
+                          </button>
+                          <div className="mt-2 pt-2 border-t border-white/10">
                           <div className="px-2 pb-1 text-[11px] text-white/45">Jump to step</div>
                           {(['clarify_metric', 'name', 'description', 'select_source', 'icon', 'complete'] as CreationStep[]).map(
                             (s) => (
@@ -2605,6 +2765,7 @@ export function InteractiveMarketCreation() {
                               </button>
                             )
                           )}
+                          </div>
                           <div className="mt-2 pt-2 border-t border-white/10">
                             <div className="px-2 pb-1 text-[11px] text-white/45">Presets</div>
                             <button
@@ -3087,6 +3248,9 @@ export function InteractiveMarketCreation() {
           onStartOver={handleReset}
           onCreateMarket={handleCreateMarket}
           isCreating={isCreatingMarket}
+          showImmediateSettlementToggle={devToolsEnabled}
+          useImmediateSettlement={useImmediateSettlement}
+          onToggleImmediateSettlement={setUseImmediateSettlement}
         />
       )}
 

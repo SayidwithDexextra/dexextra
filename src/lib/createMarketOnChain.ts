@@ -68,6 +68,8 @@ export async function createMarketOnChain(params: {
   iconImageUrl?: string | null;
   /** Optional AI source locator metadata to persist in DB. */
   aiSourceLocator?: any;
+  /** Optional settlement timestamp (unix seconds). Defaults to now + 1 year. */
+  settlementDate?: number;
   feeRecipient?: string; // optional override; defaults to connected wallet
   onProgress?: (event: ProgressEvent) => void;
   pipelineId?: string; // optional: used for server push progress via Pusher
@@ -87,6 +89,7 @@ export async function createMarketOnChain(params: {
     bannerImageUrl,
     iconImageUrl,
     aiSourceLocator,
+    settlementDate,
     feeRecipient,
     onProgress,
     pipelineId,
@@ -226,7 +229,10 @@ export async function createMarketOnChain(params: {
 
   // Params
   const startPrice6 = ethers.parseUnits(String(startPrice ?? '1'), 6);
-  const settlementTs = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+  const fallbackSettlementTs = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+  const settlementTs = Number.isFinite(Number(settlementDate)) && Number(settlementDate) > 0
+    ? Math.floor(Number(settlementDate))
+    : fallbackSettlementTs;
   const owner = feeRecipient && ethers.isAddress(feeRecipient) ? feeRecipient : signerAddress;
 
   // Prevent zero/invalid start price before signing

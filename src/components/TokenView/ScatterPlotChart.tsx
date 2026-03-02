@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Chart } from 'chart.js/auto';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAiWorker';
-import supabaseClient from '@/lib/supabase-browser';
 
 type ScatterPoint = { x: number; y: number; ts?: number };
 
@@ -160,37 +159,8 @@ export default function ScatterPlotChart({
 
     const ingestOnce = async () => {
       try {
-        // Optional: gate by active viewers in metric_subscriptions
-        // Always gate by recent viewers; if none in last 2 minutes, skip
-        try {
-          const supabase = supabaseClient;
-          const viewerWindowMs =
-            Number.parseInt(
-              String(
-                (process as any)?.env?.NEXT_PUBLIC_VIEWER_WINDOW_MS ||
-                  (globalThis as any)?.process?.env?.NEXT_PUBLIC_VIEWER_WINDOW_MS ||
-                  ''
-              ),
-              10
-            ) || 120000; // default 2 minutes
-          const sinceIso = new Date(Date.now() - viewerWindowMs).toISOString();
-          const { data, error } = await supabase
-            .from('metric_subscriptions')
-            .select('client_id, last_seen_at')
-            .eq('market_id', marketId)
-            .gt('last_seen_at', sinceIso);
-          if (!error) {
-            try { console.log('[ScatterIngest] gating check', { viewers: Array.isArray(data) ? data.length : 0, windowMs: viewerWindowMs }); } catch {}
-          }
-          if (!error && Array.isArray(data) && data.length === 0) {
-            try { console.log('[ScatterIngest] skip: no active viewers in window'); } catch {}
-            return; // no active viewers -> skip ingestion
-          }
-        } catch {
-          // If select fails due to RLS or network, conservatively skip to avoid unwanted calls
-          try { console.log('[ScatterIngest] gating error, skipping ingestion'); } catch {}
-          return;
-        }
+        // Table-gated ingestion was removed with metric_subscriptions cleanup.
+        // Keep ingestion lightweight via TTL and one-shot-per-slot logic below.
         try { console.log('[ScatterIngest] start', { marketId, tf: selectedTimeframe, metricUrl }); } catch {}
         // Resolve current metric value via worker (short budget)
         try { console.log('[ScatterIngest] calling worker'); } catch {}

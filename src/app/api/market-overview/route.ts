@@ -19,8 +19,29 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search');
 
     let query = supabase
-      .from('market_overview')
-      .select('*', { count: 'exact' })
+      .from('markets')
+      .select(
+        `
+        id,
+        market_identifier,
+        symbol,
+        name,
+        category,
+        icon_image_url,
+        banner_image_url,
+        market_address,
+        chain_id,
+        network,
+        tick_size,
+        decimals,
+        is_active,
+        market_status,
+        total_volume,
+        total_trades
+      `,
+        { count: 'exact' }
+      )
+      .eq('is_active', true)
       .order('symbol', { ascending: true });
 
       // Support multiple statuses via comma-separated list, e.g. status=ACTIVE,SETTLEMENT_REQUESTED
@@ -46,13 +67,58 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    const markets = data || [];
+    const marketIds = markets.map((m: any) => m.id).filter(Boolean);
+
+    // Preserve the old market_overview shape by joining latest ticker fields.
+    const tickersByMarketId = new Map<string, any>();
+    if (marketIds.length > 0) {
+      const { data: tickers, error: tickersError } = await supabase
+        .from('market_tickers')
+        .select('market_id, mark_price, last_update, is_stale')
+        .in('market_id', marketIds);
+
+      if (tickersError) {
+        return NextResponse.json({ error: tickersError.message }, { status: 500 });
+      }
+
+      for (const ticker of tickers || []) {
+        tickersByMarketId.set(ticker.market_id, ticker);
+      }
+    }
+
+    const overviewRows = markets.map((m: any) => {
+      const ticker = tickersByMarketId.get(m.id);
+      return {
+        market_id: m.id,
+        market_identifier: m.market_identifier,
+        symbol: m.symbol,
+        name: m.name,
+        category: m.category,
+        icon_image_url: m.icon_image_url,
+        banner_image_url: m.banner_image_url,
+        market_address: m.market_address,
+        chain_id: m.chain_id,
+        network: m.network,
+        tick_size: m.tick_size,
+        decimals: m.decimals,
+        is_active: m.is_active,
+        market_status: m.market_status,
+        total_volume: m.total_volume,
+        total_trades: m.total_trades,
+        mark_price: ticker?.mark_price ?? null,
+        last_update: ticker?.last_update ?? null,
+        is_stale: ticker?.is_stale ?? null
+      };
+    });
+
     return NextResponse.json({
       success: true,
-      markets: data || [],
+      markets: overviewRows,
       pagination: {
         limit,
         offset,
-        total: count || data?.length || 0
+        total: count || markets.length || 0
       }
     });
   } catch (e) {

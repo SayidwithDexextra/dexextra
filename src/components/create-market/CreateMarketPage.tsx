@@ -216,6 +216,11 @@ export const CreateMarketPage = () => {
       const tags = marketData.tags || [];
       let sourceLocator = (marketData as any).sourceLocator || null;
       const skipMetricWorker = Boolean((marketData as any).skipMetricWorker);
+      const useImmediateSettlement = Boolean((marketData as any).useImmediateSettlement);
+      // Keep a short safety buffer so create tx doesn't revert near settlement time.
+      const settlementDateTs = useImmediateSettlement
+        ? Math.floor(Date.now() / 1000) + 5 * 60
+        : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
       // Attempt to prefill startPrice using background worker (non-blocking with timeout)
       try {
         const workerUrl = getMetricAIWorkerBaseUrl();
@@ -389,6 +394,7 @@ export const CreateMarketPage = () => {
         startPrice: String(marketData.startPrice || '1'),
         dataSource,
         tags,
+        settlementDate: settlementDateTs,
         pipelineId,
         onProgress: ({ step, status, data }) => {
           const idx = stepIndexMap[step];
@@ -459,7 +465,7 @@ export const CreateMarketPage = () => {
               category: Array.isArray(tags) && tags.length ? tags : ['CUSTOM'],
               decimals: 6,
               minimumOrderSize: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
-              settlementDate: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+              settlementDate: settlementDateTs,
               tradingEndDate: null,
               dataRequestWindowSeconds: Number(process.env.DEFAULT_DATA_REQUEST_WINDOW_SECONDS || 3600),
               autoSettle: true,

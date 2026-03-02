@@ -27,6 +27,7 @@ export interface MarketFormData {
   // Debug/ops flags
   skipArchive?: boolean;
   skipMetricWorker?: boolean;
+  useImmediateSettlement?: boolean;
 }
 
 const DEFAULT_MARGIN_BPS = 10000; // 100%

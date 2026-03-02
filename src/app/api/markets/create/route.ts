@@ -1388,13 +1388,60 @@ export async function POST(req: Request) {
           deployed_at: new Date().toISOString(),
         };
         // Idempotent save: allow safe retries on timeouts / client refresh.
-        const { data: savedRow, error: saveErr } = await supabase
+        let { data: savedRow, error: saveErr } = await supabase
           .from('markets')
           .upsert([insertPayload], { onConflict: 'market_identifier' })
           .select('id')
           .limit(1)
           .maybeSingle();
-        if (saveErr) throw saveErr;
+        if (saveErr) {
+          const rawMsg = String(saveErr?.message || saveErr || '');
+          const isSettlementPastConstraint =
+            rawMsg.includes('settlement_date_future_for_active') ||
+            (rawMsg.includes('check constraint') && rawMsg.toLowerCase().includes('settlement_date') && rawMsg.toLowerCase().includes('active'));
+
+          // If settlement time elapsed before DB save, persist as SETTLEMENT_REQUESTED instead of failing.
+          if (isSettlementPastConstraint) {
+            const nowIso = new Date().toISOString();
+            const fallbackPayload: any = {
+              ...insertPayload,
+              market_status: 'SETTLEMENT_REQUESTED',
+              proposed_settlement_at: nowIso,
+              settlement_window_expires_at: nowIso,
+              proposed_settlement_by: 'SYSTEM_BACKFILL',
+              market_config: {
+                ...(insertPayload.market_config || {}),
+                settlement_scheduler: {
+                  stage: 'window_started_backfill',
+                  started_at: nowIso,
+                  expires_at: nowIso,
+                  reason: 'save_after_settlement_date_constraint',
+                },
+              },
+              updated_at: nowIso,
+            };
+
+            const fallback = await supabase
+              .from('markets')
+              .upsert([fallbackPayload], { onConflict: 'market_identifier' })
+              .select('id')
+              .limit(1)
+              .maybeSingle();
+
+            if (fallback.error) {
+              throw new Error(`primary save failed: ${rawMsg}; fallback save failed: ${String(fallback.error?.message || fallback.error)}`);
+            }
+
+            savedRow = fallback.data;
+            saveErr = null;
+            logS('save_market', 'success', {
+              fallback: 'settlement_date_past_at_save',
+              marketStatus: 'SETTLEMENT_REQUESTED',
+            });
+          } else {
+            throw saveErr;
+          }
+        }
 
         // Ensure a ticker row exists immediately to prevent frontend 404 spam.
         const markPriceScaled = (() => {

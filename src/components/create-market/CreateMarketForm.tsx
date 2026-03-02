@@ -423,7 +423,16 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
 
         {/* Debug Bypass: Skip AI Validation and Create Immediately */}
         {isLocalhost && (
-          <div className="pt-1">
+          <div className="pt-1 space-y-2">
+            <label className="flex items-center gap-2 text-[11px] text-[#9CA3AF]">
+              <input
+                type="checkbox"
+                checked={Boolean(formData.useImmediateSettlement)}
+                onChange={(e) => setFormData(prev => ({ ...prev, useImmediateSettlement: e.target.checked }))}
+                className="h-3.5 w-3.5 rounded border-[#333333] bg-[#111111]"
+              />
+              <span>Dev Only: Use near-immediate settlement date (about 5 minutes)</span>
+            </label>
             <button
               type="button"
               disabled={isLoading}
