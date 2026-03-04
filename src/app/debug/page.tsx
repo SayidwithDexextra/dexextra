@@ -31,7 +31,7 @@ type IconSearchResponse = {
 type MetricDiscoveryResponse = {
   measurable: boolean;
   metric_definition: unknown | null;
-  assumptions: string[];
+  search_query: string | null;
   sources: unknown | null;
   rejection_reason: string | null;
   search_results: unknown[];
@@ -167,7 +167,7 @@ export default function DebugSearchPage() {
       const step3Res = await fetch('/api/metric-discovery', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: mdDescription, mode: 'full', searchVariation: mdSearchVariation }),
+        body: JSON.stringify({ description: mdDescription, mode: 'full', search_query: step1.search_query || undefined, searchVariation: mdSearchVariation }),
       });
       const step3 = (await step3Res.json().catch(() => ({}))) as MetricDiscoveryResponse & {
         message?: string;
@@ -180,8 +180,7 @@ export default function DebugSearchPage() {
         ...step1,
         ...step3,
         metric_definition: step3.metric_definition || step1.metric_definition,
-        assumptions:
-          Array.isArray(step3.assumptions) && step3.assumptions.length > 0 ? step3.assumptions : step1.assumptions,
+        search_query: step3.search_query || step1.search_query,
       };
       if (step1.metric_definition && step3.measurable === false) {
         merged.measurable = true;

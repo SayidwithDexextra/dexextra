@@ -50,8 +50,8 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
       <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-500 ${showSplash ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-          <div className="text-xs sm:text-sm text-[#9CA3AF] uppercase tracking-wide">{title}</div>
-          <div className="text-[11px] sm:text-xs text-[#808080] text-center max-w-[28rem]">{subtitle}</div>
+          <div className="text-[11px] text-[#9CA3AF] uppercase tracking-wide">{title}</div>
+          <div className="text-[10px] text-[#808080] text-center max-w-[28rem]">{subtitle}</div>
         </div>
       </div>
 
@@ -63,8 +63,8 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
               <div className="min-w-0">
-                <div className="text-xs sm:text-sm font-medium text-[#9CA3AF] uppercase tracking-wide truncate leading-tight">{title}</div>
-                <div className="text-[10px] sm:text-xs text-[#606060] truncate">{subtitle}</div>
+                <div className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide truncate leading-tight">{title}</div>
+                <div className="text-[10px] text-[#606060] truncate">{subtitle}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -82,8 +82,8 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
             {/* Section 1: Finalized deployments */}
             <div className="px-3 sm:px-4 pt-3 sm:pt-4">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] sm:text-xs md:text-sm font-medium text-[#9CA3AF] uppercase tracking-wide">Finalized deployments</div>
-                <div className="text-[10px] sm:text-[11px] md:text-xs text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                <div className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">Finalized deployments</div>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
                   {completedMessages.length}/{messages.length}
                 </div>
               </div>
@@ -93,18 +93,18 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
                 {previewFinalized.length === 0 ? (
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                    <span className="text-[11px] sm:text-xs md:text-sm text-[#808080] truncate">None yet</span>
+                    <span className="text-[10px] text-[#808080] truncate">None yet</span>
                   </div>
                 ) : (
                   previewFinalized.map((m, i) => (
                     <div key={`${i}-${m}`} className="flex items-center gap-2 min-w-0">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-                      <span className="text-[11px] sm:text-xs md:text-sm text-white truncate leading-snug">{m}</span>
+                      <span className="text-[10px] text-white truncate leading-snug">{m}</span>
                     </div>
                   ))
                 )}
                 {moreFinalized > 0 ? (
-                  <div className="text-[10px] sm:text-[11px] text-[#606060]">+{moreFinalized} more</div>
+                  <div className="text-[9px] text-[#606060]">+{moreFinalized} more</div>
                 ) : null}
               </div>
             </div>
@@ -115,10 +115,10 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
             {/* Section 2: Pipeline progression */}
             <div className="px-3 sm:px-4 pt-3 sm:pt-4 pb-4">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] sm:text-xs md:text-sm font-medium text-[#9CA3AF] uppercase tracking-wide">
+                <div className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
                   Progression of the deployment pipeline
                 </div>
-                <div className="text-[10px] sm:text-[11px] md:text-xs text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
                   {Math.max(0, Math.min(100, percentComplete))}%
                 </div>
               </div>
@@ -129,22 +129,22 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
                   <div key={`${i}-${m}`} className="flex items-center justify-between gap-3 min-h-[1.75rem] sm:min-h-[2rem]">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${i === 0 ? 'bg-blue-400' : 'bg-[#404040]'}`} />
-                      <span className="text-xs sm:text-sm text-white truncate leading-snug">{m}</span>
+                      <span className="text-[10px] text-white truncate leading-snug">{m}</span>
                     </div>
-                    <span className={`text-[10px] sm:text-[11px] md:text-xs whitespace-nowrap ${i === 0 ? 'text-blue-400' : 'text-[#606060]'}`}>
+                    <span className={`text-[9px] whitespace-nowrap ${i === 0 ? 'text-blue-400' : 'text-[#606060]'}`}>
                       {i === 0 ? 'In Progress' : 'Pending'}
                     </span>
                   </div>
                 ))}
                 {morePending > 0 ? (
-                  <div className="text-[10px] sm:text-[11px] text-[#606060]">+{morePending} more pending</div>
+                  <div className="text-[9px] text-[#606060]">+{morePending} more pending</div>
                 ) : null}
               </div>
 
               {/* Expandable detail (subtle) */}
               <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
                 <div className="px-0 pt-2 border-t border-[#1A1A1A]">
-                  <div className="text-[10px] sm:text-[11px]">
+                  <div className="text-[9px]">
                     <span className="text-[#606060]">Deployment actions executing securely on backend...</span>
                   </div>
                 </div>
@@ -158,7 +158,7 @@ export const ProgressOverlay: React.FC<ProgressOverlayProps> = ({
             {typeof onMinimize === 'function' ? (
               <button
                 onClick={onMinimize}
-                className="w-full sm:w-auto text-xs sm:text-sm text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-3 py-2 transition-all duration-200"
+                className="w-full sm:w-auto text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-3 py-2 transition-all duration-200"
                 title="Continue in background"
                 aria-label="Continue in background"
               >

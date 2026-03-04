@@ -264,6 +264,7 @@ export default function Settings({ className }: SettingsProps) {
   const [myMarketsLoading, setMyMarketsLoading] = useState(false)
   const [myMarketsError, setMyMarketsError] = useState<string | null>(null)
   const [myMarketsSearch, setMyMarketsSearch] = useState('')
+  const [myMarketsOnchainSettlementById, setMyMarketsOnchainSettlementById] = useState<Record<string, string | null>>({})
   const fetchedForCreatorRef = useRef<string | null>(null)
 
   type BondEligibility = {
@@ -664,12 +665,53 @@ export default function Settings({ className }: SettingsProps) {
         .filter((m) => Boolean(m.id))
 
       setMyMarkets(cleaned)
+      setMyMarketsOnchainSettlementById({})
+      void hydrateOnchainSettlementDates(cleaned)
       fetchedForCreatorRef.current = creator
     } catch (e: any) {
       setMyMarketsError(String(e?.message || e || 'Failed to fetch markets'))
       setMyMarkets([])
     } finally {
       setMyMarketsLoading(false)
+    }
+  }
+
+  const hydrateOnchainSettlementDates = async (rows: MyMarketRow[]) => {
+    if (!Array.isArray(rows) || rows.length === 0) return
+    if (typeof window === 'undefined' || !(window as any).ethereum) return
+
+    try {
+      const provider = new ethers.BrowserProvider((window as any).ethereum)
+      const next: Record<string, string | null> = {}
+
+      await Promise.all(
+        rows.map(async (m) => {
+          const dbId = String(m.id || '').trim()
+          const orderBook = String(m.market_address || '').trim()
+          if (!dbId || !orderBook || !orderBook.startsWith('0x') || orderBook.length !== 42) return
+
+          try {
+            const c = new ethers.Contract(orderBook, ['function settlementDate() view returns (uint256)'], provider)
+            const ts = BigInt(await c.settlementDate())
+            if (ts <= 0n) {
+              next[dbId] = null
+              return
+            }
+            const ms = Number(ts) * 1000
+            if (!Number.isFinite(ms) || ms <= 0) {
+              next[dbId] = null
+              return
+            }
+            next[dbId] = new Date(ms).toISOString()
+          } catch {
+            next[dbId] = null
+          }
+        })
+      )
+
+      setMyMarketsOnchainSettlementById(next)
+    } catch {
+      // Keep DB fallback if provider or RPC calls fail.
     }
   }
 
@@ -1706,7 +1748,7 @@ export default function Settings({ className }: SettingsProps) {
                                         <div className="min-w-0">
                                           <div className="text-[9px] text-[#606060] uppercase tracking-wide">Settlement</div>
                                           <div className="mt-1 text-[10px] text-white font-mono truncate">
-                                            {fmtDate(m.settlement_date)}
+                                            {fmtDate(myMarketsOnchainSettlementById[m.id] ?? m.settlement_date)}
                                           </div>
                                         </div>
                                       </div>

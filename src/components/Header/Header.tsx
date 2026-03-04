@@ -65,6 +65,7 @@ export default function Header() {
   const { walletData, portfolio } = useWallet()
   const router = useRouter()
   const [hasMounted, setHasMounted] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   const [vaultEvent, setVaultEvent] = useState<any | null>(null)
   // Sequence counter used to force DecryptedText to re-animate on each vault refresh
   const [vaultUpdateSeq, setVaultUpdateSeq] = useState(0)
@@ -137,6 +138,15 @@ export default function Header() {
   // No manual polling; useCoreVault already polls and debounces
   useEffect(() => {
     setHasMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia('(max-width: 767px)')
+    const updateMobileState = () => setIsMobile(mediaQuery.matches)
+    updateMobileState()
+    mediaQuery.addEventListener('change', updateMobileState)
+    return () => mediaQuery.removeEventListener('change', updateMobileState)
   }, [])
 
   // Walkthrough hooks: allow global tours to open/close the deposit modal.
@@ -355,8 +365,8 @@ export default function Header() {
           padding: '0 16px',
           borderBottom: '1px solid #333333',
           fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-          left: '60px', // Fixed position for collapsed navbar only
-          width: 'calc(100vw - 60px)' // Fixed width for collapsed navbar only
+          left: isMobile ? '0px' : '60px', // Mobile uses full width
+          width: isMobile ? '100vw' : 'calc(100vw - 60px)' // Desktop keeps collapsed navbar offset
         }}
       >
         {/* Brand + Search Section */}

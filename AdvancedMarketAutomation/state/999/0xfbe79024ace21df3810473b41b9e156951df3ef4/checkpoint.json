@@ -11,15 +11,15 @@
     "tick_size": 0.01
   },
   "run": {
-    "runId": "d6ffc832-4660-46e1-8365-ed7b4b409cac",
-    "startedAt": "2026-02-13T05:05:51.818Z",
-    "updatedAt": "2026-02-13T05:17:11.517Z"
+    "runId": "7d57dbdb-3f9f-4123-8e0b-aca15a77ba86",
+    "startedAt": "2026-03-04T17:13:52.342Z",
+    "updatedAt": "2026-03-04T19:08:21.075Z"
   },
   "config": {
     "makerRatio": 0,
     "maxOpenOrdersPerMaker": 0,
-    "minDelayMs": 250,
-    "maxDelayMs": 1200,
+    "minDelayMs": 100,
+    "maxDelayMs": 500,
     "sizeMin": 0.05,
     "sizeMax": 0.25,
     "mode": "MEAN"
@@ -28,72 +28,72 @@
     "0x724cbe7b515dab1ce4b0e262990d2e3c47c6ca36": {
       "nickname": "User001",
       "role": "MAKER",
-      "sessionId": "0x44a1263decab3af1368b17b4531689579bc5103fdc30cc6d95bfe578002e3edc",
-      "sessionExpiry": 1771045491,
-      "lastActionAt": 1770959642946
+      "sessionId": "0xc47b17e35cf71526516a77db838785413facb00064c286c9a6e4f8ee6aed7c9f",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772643197817
     },
     "0x53aca02402062a61c871d1b5b4ded3e4232826e5": {
       "nickname": "User002",
       "role": "MAKER",
-      "sessionId": "0x645e33118b25744fad0e4e27458d5f9a9c5bd32fdbb0762dc01ac8e593740290",
-      "sessionExpiry": 1771045491,
-      "lastActionAt": 1770959680094
+      "sessionId": "0xbe39f5ad7b6344d344422e7e0c1e4e42435f4b5eca04c139f273a1e082f5a3fb",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772643293033
     },
     "0x89bd0af6fe5292ed96fc026770b24f4b4f6de7c6": {
       "nickname": "User003",
       "role": "MAKER",
-      "sessionId": "0x9497d90bc4d8f55bee54ef4f0b07b458a194d858f30028696a9551c542556eec",
-      "sessionExpiry": 1771045491,
-      "lastActionAt": 1770959721727
+      "sessionId": "0xa63b28a90e4d0ac129b10ff81a97f3a72b4c20cf372b4874b90dd58f42043e53",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772643420486
     },
     "0xb5bac03724f123dd70bd6804fc1d3a5a8f611b25": {
       "nickname": "User004",
       "role": "MAKER",
-      "sessionId": "0x6bc8f7ce4f934f4ac4601ed10bd0fbf610755e9be6d79c048508a790e2df26e1",
-      "sessionExpiry": 1771045491,
-      "lastActionAt": 1770959763221
+      "sessionId": "0x7c3693d0a7847b207cc9f35b481dc34fad66e44f34225d2bfc44cfa6d7c14154",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772650602987
     },
     "0xdf4b23491a85d777dd0be799cbed09368c42f087": {
       "nickname": "User005",
       "role": "MAKER",
-      "sessionId": "0x4f8b4e0d1f02d95f6d8a6ecb9f33b1d56d26494d469a5304b5051c90ea3682fa",
-      "sessionExpiry": 1771045491,
-      "lastActionAt": 1770959802330
+      "sessionId": "0x41651d767839390462717dbf835e02c200f7857be6c9ffeb04f63e5ae4b15b24",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772643582549
     },
     "0xa0f2d53186801ba175f6911d0cae6c99abbe5b19": {
       "nickname": "User006",
       "role": "MAKER",
-      "sessionId": "0x08bfddda5b7f22f18247c04a00baaf888a3e935b92045d4067896214fa72da6b",
-      "sessionExpiry": 1771045491,
-      "lastActionAt": 1770959831027
+      "sessionId": "0x8ec03ab1d5de303b702007990aeb569905e351ead6f6c110370df648babc0a94",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772644550983
     },
     "0xc7d77fde8ea75bc8e3fdf634756ee252095422cd": {
       "nickname": "User007",
       "role": "MAKER",
-      "sessionId": "0xa980b4b1610b5ddcc54ee38b3b2640c3b502dc3acfbbf1939e6de875626d59cb",
-      "sessionExpiry": 1771045491,
-      "lastActionAt": 1770959131092
+      "sessionId": "0xf5c759d737b264140ec630fa3822e81e575a60553725bf90f85eb680fbaf5626",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772644588315
     },
     "0xc8d3da3a29762c2e6503945393a0fd1b70023a5a": {
       "nickname": "User008",
       "role": "MAKER",
-      "sessionId": "0x3469bfc2dfb3d08a100c615ddb8d616ad3a1c316586ad64fa3f71dbf97b65fd3",
-      "sessionExpiry": 1771045551,
-      "lastActionAt": 1770959157836
+      "sessionId": "0x81f203564ff354ca493eb14ad3eda068fcbbf2c78f12be1a4d965d02e7c01f7c",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772644629155
     },
     "0xdb55b652b8cdfabc08623c0995e6d5f572555d9a": {
       "nickname": "User009",
       "role": "MAKER",
-      "sessionId": "0x507c15e1b91997459c3dbf8b82675c80d6ec1f66f3de4456b7930cbc2146d740",
-      "sessionExpiry": 1771045551,
-      "lastActionAt": 1770959163477
+      "sessionId": "0x0b5a674e611718e3b8239eec55c0762550269f48f2e09d8762df4dc3eae4dc4d",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772644741596
     },
     "0x0980f424b427d9d1584093c7b42c86f47113d3ac": {
       "nickname": "User010",
       "role": "MAKER",
-      "sessionId": "0x86637011b63c0ab56d8ba1e361d5c38908222280f72423e667c4d670a6f70c36",
-      "sessionExpiry": 1771045551,
-      "lastActionAt": 1770959169059
+      "sessionId": "0xa1610de27f58406d793c7db2894b15295feaf9408c91821001b6a250d0d1fc28",
+      "sessionExpiry": 1804178985,
+      "lastActionAt": 1772644769868
     }
   }
 }

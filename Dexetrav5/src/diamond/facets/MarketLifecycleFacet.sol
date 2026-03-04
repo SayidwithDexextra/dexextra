@@ -15,11 +15,58 @@ contract MarketLifecycleFacet {
 
     uint256 private constant DEFAULT_ROLLOVER_LEAD = 30 days;
     uint256 private constant DEFAULT_CHALLENGE_LEAD = 24 hours;
+    uint256 private constant DAYS_PER_YEAR = 365 days;
+    uint256 private constant MIN_CHALLENGE_DURATION = 1 minutes;
+
+    enum LifecycleState {
+        Unsettled,
+        Rollover,
+        ChallengeWindow,
+        Settled
+    }
 
     // === Events ===
     event RolloverWindowStarted(address indexed market, uint256 rolloverWindowStart, uint256 rolloverWindowEnd);
     event SettlementChallengeWindowStarted(address indexed market, uint256 challengeWindowStart, uint256 challengeWindowEnd);
     event RolloverCreated(address indexed parentMarket, address indexed childMarket, uint256 childSettlementTimestamp);
+    event LifecycleStateChanged(address indexed market, uint8 oldState, uint8 newState, uint256 timestamp, address indexed caller);
+    event LifecycleInitialized(
+        address indexed market,
+        uint256 settlementTimestamp,
+        address indexed parentMarket,
+        bool devMode,
+        uint256 lifecycleDurationSeconds,
+        uint256 rolloverWindowStart,
+        uint256 challengeWindowDuration
+    );
+    event LifecycleSync(
+        address indexed market,
+        address indexed caller,
+        uint8 previousState,
+        uint8 newState,
+        bool progressed,
+        bool devMode,
+        bool settledOnChain,
+        uint256 rolloverWindowStart,
+        uint256 challengeWindowStart,
+        uint256 challengeWindowEnd,
+        uint256 timestamp
+    );
+    event LifecycleSettled(
+        address indexed market,
+        address indexed caller,
+        bool settledOnChain,
+        uint256 timestamp,
+        uint256 challengeWindowStart,
+        uint256 challengeWindowEnd
+    );
+    event RolloverLineageLinked(
+        address indexed parentMarket,
+        address indexed childMarket,
+        address indexed caller,
+        uint256 parentSettlementTimestamp,
+        uint256 childSettlementTimestamp
+    );
 
     // === Modifiers ===
     modifier onlyOwner() {
@@ -28,13 +75,70 @@ contract MarketLifecycleFacet {
     }
 
     // === Internal helpers ===
+    function _lifecycleDuration(MarketLifecycleStorage.State storage s) private view returns (uint256) {
+        if (s.lifecycleDurationSeconds != 0) return s.lifecycleDurationSeconds;
+        return 365 days;
+    }
+
     function _rolloverLead(MarketLifecycleStorage.State storage s) private view returns (uint256) {
         if (s.testingMode && s.rolloverLeadTimeOverride != 0) return s.rolloverLeadTimeOverride;
-        return DEFAULT_ROLLOVER_LEAD;
+        uint256 duration = _lifecycleDuration(s);
+        if (duration == 0) return DEFAULT_ROLLOVER_LEAD;
+        uint256 lead = duration / 12; // 11/12 point activation
+        return lead == 0 ? 1 : lead;
     }
-    function _challengeLead(MarketLifecycleStorage.State storage s) private view returns (uint256) {
+
+    function _challengeDuration(MarketLifecycleStorage.State storage s) private view returns (uint256) {
         if (s.testingMode && s.challengeLeadTimeOverride != 0) return s.challengeLeadTimeOverride;
-        return DEFAULT_CHALLENGE_LEAD;
+        if (s.challengeWindowDuration != 0) return s.challengeWindowDuration;
+        uint256 duration = _lifecycleDuration(s);
+        if (duration == 0) return DEFAULT_CHALLENGE_LEAD;
+        uint256 proportional = duration / DAYS_PER_YEAR; // 24h for a 1y market, proportional for shorter markets
+        if (proportional < MIN_CHALLENGE_DURATION) return MIN_CHALLENGE_DURATION;
+        return proportional;
+    }
+
+    function _rolloverWindowStart(MarketLifecycleStorage.State storage s) private view returns (uint256) {
+        if (s.settlementTimestamp == 0) return 0;
+        uint256 lead = _rolloverLead(s);
+        if (lead >= s.settlementTimestamp) return 0;
+        return s.settlementTimestamp - lead;
+    }
+
+    function _isContractSettled() private view returns (bool) {
+        (bool ok, bytes memory data) = address(this).staticcall(abi.encodeWithSignature("isSettled()"));
+        if (!ok || data.length < 32) return false;
+        return abi.decode(data, (bool));
+    }
+
+    function _resolveChildSettlementTimestamp(address childMarket, uint256 fallbackTs) private view returns (uint256) {
+        (bool ok, bytes memory data) = childMarket.staticcall(abi.encodeWithSignature("getSettlementTimestamp()"));
+        if (ok && data.length >= 32) {
+            uint256 ts = abi.decode(data, (uint256));
+            if (ts > 0) return ts;
+        }
+        return fallbackTs;
+    }
+
+    function _currentLifecycleState(MarketLifecycleStorage.State storage s) private view returns (LifecycleState) {
+        if (s.lifecycleSettled || _isContractSettled()) {
+            return LifecycleState.Settled;
+        }
+        if (s.challengeWindowStarted) {
+            uint256 challengeEnd = s.challengeWindowStart + _challengeDuration(s);
+            if (block.timestamp >= challengeEnd) {
+                return LifecycleState.Settled;
+            }
+            return LifecycleState.ChallengeWindow;
+        }
+        if (s.rolloverWindowStarted) {
+            return LifecycleState.Rollover;
+        }
+        uint256 rolloverStart = _rolloverWindowStart(s);
+        if (rolloverStart != 0 && block.timestamp >= rolloverStart) {
+            return LifecycleState.Rollover;
+        }
+        return LifecycleState.Unsettled;
     }
 
     // === Initializers ===
@@ -45,13 +149,150 @@ contract MarketLifecycleFacet {
      * @param parent Address of parent market (zero for genesis)
      */
     function initializeLifecycle(uint256 settlementTimestamp, address parent) external onlyOwner {
+        _initializeLifecycle(settlementTimestamp, parent, false);
+    }
+
+    /**
+     * @notice One-time initializer with explicit dev mode toggle.
+     * @dev This is the constructor-equivalent for Diamond facet lifecycle mode configuration.
+     */
+    function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external onlyOwner {
+        _initializeLifecycle(settlementTimestamp, parent, devMode);
+    }
+
+    function _initializeLifecycle(uint256 settlementTimestamp, address parent, bool devMode) private {
         require(settlementTimestamp > block.timestamp, "LC: invalid settlement");
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.settlementTimestamp == 0, "LC: already init");
         s.settlementTimestamp = settlementTimestamp;
+        s.lifecycleDurationSeconds = settlementTimestamp - block.timestamp;
+        uint256 proportionalChallenge = s.lifecycleDurationSeconds / DAYS_PER_YEAR;
+        s.challengeWindowDuration = proportionalChallenge < MIN_CHALLENGE_DURATION ? MIN_CHALLENGE_DURATION : proportionalChallenge;
+        s.lifecycleDevMode = devMode;
         if (parent != address(0)) {
             s.parentMarket = parent;
         }
+        emit LifecycleInitialized(
+            address(this),
+            s.settlementTimestamp,
+            s.parentMarket,
+            s.lifecycleDevMode,
+            s.lifecycleDurationSeconds,
+            _rolloverWindowStart(s),
+            s.challengeWindowDuration
+        );
+    }
+
+    /**
+     * @notice Permissionless lifecycle progression. Any party may call when time/conditions are met.
+     * @dev Idempotent and safe to call frequently from bots/UIs.
+     */
+    function syncLifecycle() external returns (uint8 previousState, uint8 newState) {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        require(s.settlementTimestamp > 0, "LC: unset");
+
+        bool devMode = s.lifecycleDevMode;
+        bool progressed = false;
+        bool settledOnChain = false;
+        previousState = uint8(_currentLifecycleState(s));
+
+        if (devMode) {
+            if (previousState == uint8(LifecycleState.Unsettled)) {
+                uint256 rolloverStart = block.timestamp;
+                s.rolloverWindowStart = rolloverStart;
+                s.rolloverWindowStarted = true;
+                uint256 rolloverEnd = s.settlementTimestamp > rolloverStart ? s.settlementTimestamp : rolloverStart;
+                emit RolloverWindowStarted(address(this), rolloverStart, rolloverEnd);
+                progressed = true;
+            } else if (previousState == uint8(LifecycleState.Rollover)) {
+                uint256 challengeStart = block.timestamp;
+                s.challengeWindowStart = challengeStart;
+                s.challengeWindowStarted = true;
+                emit SettlementChallengeWindowStarted(address(this), challengeStart, challengeStart + _challengeDuration(s));
+                progressed = true;
+            } else if (previousState == uint8(LifecycleState.ChallengeWindow)) {
+                s.lifecycleSettled = true;
+                progressed = true;
+                emit LifecycleSettled(
+                    address(this),
+                    msg.sender,
+                    false,
+                    block.timestamp,
+                    s.challengeWindowStart,
+                    s.challengeWindowStart + _challengeDuration(s)
+                );
+            }
+
+            newState = uint8(_currentLifecycleState(s));
+            if (newState != previousState) {
+                emit LifecycleStateChanged(address(this), previousState, newState, block.timestamp, msg.sender);
+            }
+        } else {
+            if (!s.rolloverWindowStarted) {
+                uint256 rolloverStart = _rolloverWindowStart(s);
+                if (rolloverStart != 0 && block.timestamp >= rolloverStart) {
+                    s.rolloverWindowStart = rolloverStart;
+                    s.rolloverWindowStarted = true;
+                    emit RolloverWindowStarted(address(this), rolloverStart, s.settlementTimestamp);
+                    progressed = true;
+                }
+            }
+
+            if (!s.challengeWindowStarted && block.timestamp >= s.settlementTimestamp) {
+                s.challengeWindowStart = block.timestamp;
+                s.challengeWindowStarted = true;
+                uint256 challengeEnd = s.challengeWindowStart + _challengeDuration(s);
+                emit SettlementChallengeWindowStarted(address(this), s.challengeWindowStart, challengeEnd);
+                progressed = true;
+            }
+
+            settledOnChain = _isContractSettled();
+            if (settledOnChain && !s.lifecycleSettled) {
+                s.lifecycleSettled = true;
+                progressed = true;
+                emit LifecycleSettled(
+                    address(this),
+                    msg.sender,
+                    true,
+                    block.timestamp,
+                    s.challengeWindowStart,
+                    s.challengeWindowStarted ? (s.challengeWindowStart + _challengeDuration(s)) : 0
+                );
+            } else if (!settledOnChain && s.challengeWindowStarted) {
+                uint256 challengeEnd = s.challengeWindowStart + _challengeDuration(s);
+                if (block.timestamp >= challengeEnd && !s.lifecycleSettled) {
+                    s.lifecycleSettled = true;
+                    progressed = true;
+                    emit LifecycleSettled(
+                        address(this),
+                        msg.sender,
+                        false,
+                        block.timestamp,
+                        s.challengeWindowStart,
+                        challengeEnd
+                    );
+                }
+            }
+        }
+
+        newState = uint8(_currentLifecycleState(s));
+        if (newState != previousState) {
+            emit LifecycleStateChanged(address(this), previousState, newState, block.timestamp, msg.sender);
+        }
+        uint256 challengeWindowEnd = s.challengeWindowStarted ? (s.challengeWindowStart + _challengeDuration(s)) : 0;
+        emit LifecycleSync(
+            address(this),
+            msg.sender,
+            previousState,
+            newState,
+            progressed,
+            devMode,
+            settledOnChain,
+            s.rolloverWindowStart,
+            s.challengeWindowStart,
+            challengeWindowEnd,
+            block.timestamp
+        );
     }
 
     // === Keeper/worker signal functions ===
@@ -63,11 +304,11 @@ contract MarketLifecycleFacet {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.settlementTimestamp > 0, "LC: unset");
         require(!s.rolloverWindowStarted, "LC: already started");
-        uint256 windowStart = s.settlementTimestamp - _rolloverLead(s);
+        uint256 windowStart = _rolloverWindowStart(s);
         require(block.timestamp >= windowStart, "LC: too early");
         s.rolloverWindowStart = windowStart;
         s.rolloverWindowStarted = true;
-        uint256 windowEnd = windowStart + _rolloverLead(s);
+        uint256 windowEnd = s.settlementTimestamp;
         emit RolloverWindowStarted(address(this), windowStart, windowEnd);
     }
 
@@ -79,11 +320,11 @@ contract MarketLifecycleFacet {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.settlementTimestamp > 0, "LC: unset");
         require(!s.challengeWindowStarted, "LC: already started");
-        uint256 windowStart = s.settlementTimestamp - _challengeLead(s);
-        require(block.timestamp >= windowStart, "LC: too early");
+        require(block.timestamp >= s.settlementTimestamp, "LC: too early");
+        uint256 windowStart = block.timestamp;
         s.challengeWindowStart = windowStart;
         s.challengeWindowStarted = true;
-        uint256 windowEnd = windowStart + _challengeLead(s);
+        uint256 windowEnd = windowStart + _challengeDuration(s);
         emit SettlementChallengeWindowStarted(address(this), windowStart, windowEnd);
     }
 
@@ -100,12 +341,72 @@ contract MarketLifecycleFacet {
     }
 
     /**
+     * @notice Permissionless lineage linker for rollover markets by contract address.
+     * @dev Best-effort on child linkage via registerParentFromRollover on the child contract.
+     */
+    function linkRolloverChildByAddress(address childMarket, uint256 childSettlementTimestamp) external returns (bool) {
+        require(childMarket != address(0), "LC: child=0");
+        require(childMarket != address(this), "LC: self");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        require(s.settlementTimestamp > 0, "LC: unset");
+
+        if (!s.lifecycleDevMode) {
+            uint256 rolloverStart = _rolloverWindowStart(s);
+            require(rolloverStart != 0 && block.timestamp >= rolloverStart, "LC: pre-rollover");
+            require(block.timestamp < s.settlementTimestamp, "LC: post-settlement");
+        }
+        require(!s.lifecycleLinking, "LC: linking");
+
+        if (s.childMarket == address(0)) {
+            s.childMarket = childMarket;
+            emit RolloverCreated(address(this), childMarket, childSettlementTimestamp);
+        } else {
+            require(s.childMarket == childMarket, "LC: child mismatch");
+        }
+
+        uint256 resolvedChildSettlement = _resolveChildSettlementTimestamp(childMarket, childSettlementTimestamp);
+        s.lifecycleLinking = true;
+        (bool ok, ) = childMarket.call(
+            abi.encodeWithSignature("registerParentFromRollover(address)", address(this))
+        );
+        s.lifecycleLinking = false;
+        require(ok, "LC: child link failed");
+
+        emit RolloverLineageLinked(
+            address(this),
+            childMarket,
+            msg.sender,
+            s.settlementTimestamp,
+            resolvedChildSettlement
+        );
+        return true;
+    }
+
+    /**
      * @notice Sets this market's parent pointer. One-time, owner only.
      */
     function setParent(address parentMarket) external onlyOwner {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.parentMarket == address(0), "LC: parent set");
         s.parentMarket = parentMarket;
+    }
+
+    /**
+     * @notice Called by a parent market to register parent linkage on this child.
+     * @dev Requires msg.sender to be the parent market address.
+     */
+    function registerParentFromRollover(address parentMarket) external returns (bool) {
+        require(parentMarket != address(0), "LC: parent=0");
+        require(msg.sender == parentMarket, "LC: caller!=parent");
+        require(parentMarket != address(this), "LC: self");
+
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        if (s.parentMarket == address(0)) {
+            s.parentMarket = parentMarket;
+        } else {
+            require(s.parentMarket == parentMarket, "LC: parent mismatch");
+        }
+        return true;
     }
 
     // === Views ===
@@ -116,23 +417,34 @@ contract MarketLifecycleFacet {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         if (s.rolloverWindowStart != 0) return s.rolloverWindowStart;
         if (s.settlementTimestamp == 0) return 0;
-        return s.settlementTimestamp - _rolloverLead(s);
+        return _rolloverWindowStart(s);
     }
     function getChallengeWindowStart() external view returns (uint256) {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         if (s.challengeWindowStart != 0) return s.challengeWindowStart;
         if (s.settlementTimestamp == 0) return 0;
-        return s.settlementTimestamp - _challengeLead(s);
+        return s.settlementTimestamp;
     }
     function isInRolloverWindow() external view returns (bool) {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         if (s.settlementTimestamp == 0) return false;
-        return block.timestamp >= (s.settlementTimestamp - _rolloverLead(s));
+        if (_currentLifecycleState(s) == LifecycleState.Settled) return false;
+        uint256 rolloverStart = s.rolloverWindowStart != 0 ? s.rolloverWindowStart : _rolloverWindowStart(s);
+        if (rolloverStart == 0) return false;
+        if (s.lifecycleDevMode && s.rolloverWindowStarted) return !s.challengeWindowStarted;
+        return block.timestamp >= rolloverStart && block.timestamp < s.settlementTimestamp;
     }
     function isInSettlementChallengeWindow() external view returns (bool) {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
-        if (s.settlementTimestamp == 0) return false;
-        return block.timestamp >= (s.settlementTimestamp - _challengeLead(s));
+        if (!s.challengeWindowStarted) return false;
+        if (_currentLifecycleState(s) == LifecycleState.Settled) return false;
+        return block.timestamp < (s.challengeWindowStart + _challengeDuration(s));
+    }
+    function getLifecycleState() external view returns (uint8) {
+        return uint8(_currentLifecycleState(MarketLifecycleStorage.state()));
+    }
+    function isLifecycleDevMode() external view returns (bool) {
+        return MarketLifecycleStorage.state().lifecycleDevMode;
     }
     function getMarketLineage() external view returns (address parent, address child) {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
@@ -163,7 +475,7 @@ contract MarketLifecycleFacet {
         require(!s.rolloverWindowStarted, "LC: already started");
         s.rolloverWindowStart = block.timestamp;
         s.rolloverWindowStarted = true;
-        uint256 windowEnd = s.rolloverWindowStart + _rolloverLead(s);
+        uint256 windowEnd = s.settlementTimestamp;
         emit RolloverWindowStarted(address(this), s.rolloverWindowStart, windowEnd);
     }
     function forceStartSettlementChallengeWindow() external onlyOwner {
@@ -173,7 +485,7 @@ contract MarketLifecycleFacet {
         require(!s.challengeWindowStarted, "LC: already started");
         s.challengeWindowStart = block.timestamp;
         s.challengeWindowStarted = true;
-        uint256 windowEnd = s.challengeWindowStart + _challengeLead(s);
+        uint256 windowEnd = s.challengeWindowStart + _challengeDuration(s);
         emit SettlementChallengeWindowStarted(address(this), s.challengeWindowStart, windowEnd);
     }
 
@@ -200,7 +512,7 @@ contract MarketLifecycleFacet {
         require(s.testingMode, "LC: testing off");
         require(market != address(0), "LC: market=0");
         require(challengeWindowStart > 0, "LC: bad ts");
-        uint256 challengeWindowEnd = challengeWindowStart + _challengeLead(s);
+        uint256 challengeWindowEnd = challengeWindowStart + _challengeDuration(s);
         emit SettlementChallengeWindowStarted(market, challengeWindowStart, challengeWindowEnd);
     }
 

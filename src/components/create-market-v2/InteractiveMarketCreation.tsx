@@ -1329,7 +1329,7 @@ export function InteractiveMarketCreation() {
         time_basis: '',
         measurement_method: '',
       },
-      assumptions: [],
+      search_query: null,
       sources: null,
       rejection_reason: null,
       search_results: [],
@@ -1548,7 +1548,7 @@ export function InteractiveMarketCreation() {
                 measurement_method:
                   'Average retail price of bananas per pound as published by FRED (series APU0000711311).',
               },
-              assumptions: [],
+              search_query: null,
               sources: null,
               rejection_reason: null,
               search_results: [],
@@ -1663,7 +1663,7 @@ export function InteractiveMarketCreation() {
         time_basis: 'Spot',
         measurement_method: 'Development test metric from a generic source.',
       },
-      assumptions: [],
+      search_query: null,
       sources: null,
       rejection_reason: null,
       search_results: [],
@@ -1946,7 +1946,7 @@ export function InteractiveMarketCreation() {
       const tags: string[] = [];
       // Keep a safety buffer so create tx doesn't revert if block time catches up.
       const settlementDateTs = useImmediateSettlement
-        ? Math.floor(Date.now() / 1000) + 5 * 60
+        ? Math.floor(Date.now() / 1000) + 10 * 60
         : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
       let sourceLocator: { url: string; css_selector?: string; xpath?: string; html_snippet?: string; js_extractor?: string } | null = null;
       let startPrice = validationResult?.data?.asset_price_suggestion || validationResult?.data?.value || '1';
@@ -2282,6 +2282,7 @@ export function InteractiveMarketCreation() {
           body: JSON.stringify({ 
             description: query, 
             mode: 'full',
+            search_query: discoveryResult.search_query || undefined,
             searchVariation,
             excludeUrls: deniedSourceUrls.length > 0 ? deniedSourceUrls : undefined,
           }),
@@ -2304,10 +2305,7 @@ export function InteractiveMarketCreation() {
               ...base,
               ...incoming,
               metric_definition: incoming.metric_definition || base.metric_definition,
-              assumptions:
-                Array.isArray(incoming.assumptions) && incoming.assumptions.length > 0
-                  ? incoming.assumptions
-                  : base.assumptions,
+              search_query: incoming.search_query || base.search_query,
             };
 
             // Treat "no sources found" as a discovery limitation, not a measurability rejection.
@@ -2372,7 +2370,7 @@ export function InteractiveMarketCreation() {
                 measurable: discoveryResult.measurable,
                 rejection_reason: discoveryResult.rejection_reason ?? null,
                 metric_definition: discoveryResult.metric_definition ?? null,
-                assumptions: discoveryResult.assumptions ?? [],
+                search_query: discoveryResult.search_query ?? null,
                 sources: discoveryResult.sources ?? null,
                 // Include SERP candidates so the assistant doesn't incorrectly claim none exist.
                 search_results: discoveryResult.search_results ?? [],

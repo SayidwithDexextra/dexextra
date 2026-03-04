@@ -25,6 +25,13 @@ library MarketLifecycleStorage {
         bool testingMode;                  // when true, allow overrides/force operations
         uint256 rolloverLeadTimeOverride;  // seconds; 0 means use default 30d
         uint256 challengeLeadTimeOverride; // seconds; 0 means use default 24h
+
+        // Lifecycle progression metadata (added in v2; append-only for diamond safety)
+        uint256 lifecycleDurationSeconds;   // Derived at initialization: settlementTimestamp - init time
+        uint256 challengeWindowDuration;    // Derived from lifecycle duration (or override in testing)
+        bool lifecycleSettled;              // Final lifecycle stage reached (UI-guidance state)
+        bool lifecycleDevMode;              // When true, permissionless sync can advance stages without time gates
+        bool lifecycleLinking;              // Reentrancy guard for cross-market lineage linking
     }
 
     function state() internal pure returns (State storage s) {

@@ -4,12 +4,16 @@ pragma solidity ^0.8.20;
 interface IMarketLifecycleFacet {
     // Initializer
     function initializeLifecycle(uint256 settlementTimestamp, address parent) external;
+    function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external;
 
     // Keeper signals
     function startRolloverWindow() external;
     function startSettlementChallengeWindow() external;
+    function syncLifecycle() external returns (uint8 previousState, uint8 newState);
     function linkRolloverChild(address childMarket, uint256 childSettlementTimestamp) external;
+    function linkRolloverChildByAddress(address childMarket, uint256 childSettlementTimestamp) external returns (bool);
     function setParent(address parentMarket) external;
+    function registerParentFromRollover(address parentMarket) external returns (bool);
 
     // Testing controls
     function enableTestingMode(bool enabled) external;
@@ -29,6 +33,8 @@ interface IMarketLifecycleFacet {
     function getChallengeWindowStart() external view returns (uint256);
     function isInRolloverWindow() external view returns (bool);
     function isInSettlementChallengeWindow() external view returns (bool);
+    function getLifecycleState() external view returns (uint8);
+    function isLifecycleDevMode() external view returns (bool);
     function getMarketLineage() external view returns (address parent, address child);
 }
 

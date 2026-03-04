@@ -77,7 +77,7 @@ const InputSchema = z.object({
             })
             .nullable()
             .optional(),
-          assumptions: z.array(z.string()).optional(),
+          search_query: z.string().nullable().optional(),
           sources: z
             .object({
               primary_source: z

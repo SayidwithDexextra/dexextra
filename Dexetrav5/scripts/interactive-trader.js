@@ -10724,11 +10724,26 @@ ${colors.brightRed}└───────────────────�
         parentIn && /^0x[a-fA-F0-9]{40}$/.test(parentIn)
           ? parentIn
           : ethers.ZeroAddress;
+      const devModeIn = (
+        await this.askQuestion(
+          colorText(
+            "Enable lifecycle dev mode? (y/N): ",
+            colors.brightMagenta
+          )
+        )
+      ).trim().toLowerCase();
+      const devMode = devModeIn === "y" || devModeIn === "yes" || devModeIn === "true" || devModeIn === "1";
       console.log(colorText("⏳ Initializing lifecycle...", colors.yellow));
-      const tx = await lifecycle.initializeLifecycle(
-        settlementTimestamp,
-        parent
-      );
+      const tx = lifecycle.initializeLifecycleWithMode
+        ? await lifecycle.initializeLifecycleWithMode(
+            settlementTimestamp,
+            parent,
+            devMode
+          )
+        : await lifecycle.initializeLifecycle(
+            settlementTimestamp,
+            parent
+          );
       const rcpt = await tx.wait();
       console.log(
         colorText(

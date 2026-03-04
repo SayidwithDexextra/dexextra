@@ -446,13 +446,11 @@ async function main() {
         if (maxBuy <= 0) return null;
         p = Math.min(p, maxBuy);
       }
-      if (bb && bb > 0) p = Math.min(p, bb); // never become the new best bid above current bb unless spread is empty
     } else {
       if (bb && bb > 0) {
         const minSell = bb + bufferTicks * t;
         p = Math.max(p, minSell);
       }
-      if (ba && ba > 0) p = Math.max(p, ba); // never undercut best ask
     }
     p = clamp(p, t, 1e12);
     p = Math.round(p / t) * t;
@@ -518,15 +516,15 @@ async function main() {
       if (remaining6 <= 0n) return;
 
       if (req6 > remaining6) {
-        // scale amount18 down proportionally, keep a small cushion
         const scaled = (amount18 * remaining6) / req6;
         amount18 = (scaled * 9n) / 10n; // 90% cushion
-        // Minimum size guard (avoid dust reverts)
-        const minAmount18 = 10_000_000_000_000n; // 1e13 (smaller than 1e12 floor used in API precheck)
-        if (amount18 < minAmount18) return;
         req6 = estimateMarginRequired6({ price6, amount18, isBuy });
         if (req6 > remaining6) return;
       }
+
+      // Skip if the resulting order is smaller than sizeMin (avoids polluting the book with dust)
+      const minAmount18 = toAmount18(config.sizeMin);
+      if (amount18 < minAmount18) return;
 
       // Place as a MARGIN limit order so collateral checks apply
       const tx = await submitSessionTrade({

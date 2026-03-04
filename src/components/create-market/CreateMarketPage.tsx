@@ -219,7 +219,7 @@ export const CreateMarketPage = () => {
       const useImmediateSettlement = Boolean((marketData as any).useImmediateSettlement);
       // Keep a short safety buffer so create tx doesn't revert near settlement time.
       const settlementDateTs = useImmediateSettlement
-        ? Math.floor(Date.now() / 1000) + 5 * 60
+        ? Math.floor(Date.now() / 1000) + 10 * 60
         : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
       // Attempt to prefill startPrice using background worker (non-blocking with timeout)
       try {

@@ -431,7 +431,7 @@ export const CreateMarketForm = ({ onSubmit, isLoading }: CreateMarketFormProps)
                 onChange={(e) => setFormData(prev => ({ ...prev, useImmediateSettlement: e.target.checked }))}
                 className="h-3.5 w-3.5 rounded border-[#333333] bg-[#111111]"
               />
-              <span>Dev Only: Use near-immediate settlement date (about 5 minutes)</span>
+              <span>Dev Only: Use near-immediate settlement date (about 10 minutes)</span>
             </label>
             <button
               type="button"

@@ -203,79 +203,105 @@ export function MetricSourceBubble({
   const customInputRef = React.useRef<HTMLInputElement>(null);
 
   const sourceOptions = React.useMemo<MetricSourceOption[]>(() => {
-    const ordered: Array<{ source: MetricSource; isPrimary: boolean }> = [];
-    if (primarySource?.url) ordered.push({ source: primarySource, isPrimary: true });
+    // Build a lookup of AI-ranked sources so we can badge them.
+    const aiRanked = new Map<string, { source: MetricSource; isPrimary: boolean }>();
+    if (primarySource?.url) aiRanked.set(normalizeUrl(primarySource.url), { source: primarySource, isPrimary: true });
     for (const s of secondarySources || []) {
-      if (s?.url) ordered.push({ source: s, isPrimary: false });
+      if (s?.url) aiRanked.set(normalizeUrl(s.url), { source: s, isPrimary: false });
     }
 
-    const map = new Map<string, SearchResult>();
+    // Build a SearchResult lookup by normalized URL.
+    const srMap = new Map<string, SearchResult>();
     for (const r of searchResults || []) {
       if (!r?.url) continue;
-      map.set(normalizeUrl(r.url), r);
+      srMap.set(normalizeUrl(r.url), r);
     }
 
-    // If the AI did not select any sources, fall back to raw SERP results.
-    // This lets the user pick a candidate source even when the model is conservative.
-    if (!ordered.length) {
-      const candidates = (searchResults || [])
-        .filter((r) => Boolean(r?.url))
-        .slice(0, 10);
+    const seen = new Set<string>();
+    const options: MetricSourceOption[] = [];
 
-      return candidates.map((r, idx) => {
-        const domain = r.domain || getHostname(r.url);
-        const label = r.source?.trim() || domain || 'Candidate';
-        const sublabel = domain && domain !== label ? domain : undefined;
-        const faviconUrl = makeFaviconUrl({ favicon: r.favicon, domain });
-        const iconBg = ICON_BACKGROUNDS[hashToIndex(domain || label, ICON_BACKGROUNDS.length)];
-        const confidence = heuristicConfidenceFromDomain(domain);
+    // Helper to create an option from a SearchResult + optional AI ranking.
+    const addOption = (r: SearchResult, idx: number) => {
+      const key = normalizeUrl(r.url);
+      if (seen.has(key)) return;
+      seen.add(key);
 
-        return {
-          id: `candidate-${idx}-${domain || label}`.toLowerCase(),
-          icon: makeIconNode({ faviconUrl, label }),
-          label,
-          sublabel,
-          url: r.url,
-          confidence,
-          authority: r.source?.trim() || label,
-          badge: 'Candidate',
-          iconBg,
-          tooltip: buildTooltip({
-            authority: r.source?.trim() || label,
-            confidence,
-            url: r.url,
-            searchResult: r,
-          }),
-        };
-      });
-    }
-
-    return ordered.map(({ source, isPrimary }, idx) => {
-      const sr = map.get(normalizeUrl(source.url));
-      const domain = sr?.domain || getHostname(source.url);
-      const label = sr?.source?.trim() || source.authority?.trim() || domain || 'Source';
+      const ranked = aiRanked.get(key);
+      const domain = r.domain || getHostname(r.url);
+      const label = r.source?.trim() || ranked?.source.authority?.trim() || domain || 'Source';
       const sublabel = domain && domain !== label ? domain : undefined;
-      const faviconUrl = makeFaviconUrl({ favicon: sr?.favicon, domain });
+      const faviconUrl = makeFaviconUrl({ favicon: r.favicon, domain });
+      const iconBg = ICON_BACKGROUNDS[hashToIndex(domain || label, ICON_BACKGROUNDS.length)];
+      const confidence = ranked ? (ranked.source.confidence ?? 0) : heuristicConfidenceFromDomain(domain);
+      const badge = ranked?.isPrimary ? 'Primary' : ranked ? 'Recommended' : undefined;
+
+      options.push({
+        id: `source-${idx}-${domain || label}`.toLowerCase(),
+        icon: makeIconNode({ faviconUrl, label }),
+        label,
+        sublabel,
+        url: r.url,
+        confidence,
+        authority: ranked?.source.authority ?? r.source?.trim() ?? label,
+        badge,
+        iconBg,
+        tooltip: buildTooltip({
+          authority: ranked?.source.authority ?? r.source?.trim() ?? label,
+          confidence,
+          url: r.url,
+          searchResult: r,
+        }),
+      });
+    };
+
+    // First pass: AI-ranked sources in order (primary first) so they appear at the top.
+    let idx = 0;
+    if (primarySource?.url) {
+      const sr = srMap.get(normalizeUrl(primarySource.url));
+      if (sr) addOption(sr, idx++);
+    }
+    for (const s of secondarySources || []) {
+      if (!s?.url) continue;
+      const sr = srMap.get(normalizeUrl(s.url));
+      if (sr) addOption(sr, idx++);
+    }
+
+    // Second pass: every remaining SERP result (no cap).
+    for (const r of searchResults || []) {
+      if (!r?.url) continue;
+      addOption(r, idx++);
+    }
+
+    // Edge case: AI ranked a URL that wasn't in searchResults (shouldn't happen, but be safe).
+    for (const [key, { source, isPrimary }] of aiRanked) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const domain = getHostname(source.url);
+      const label = source.authority?.trim() || domain || 'Source';
+      const sublabel = domain && domain !== label ? domain : undefined;
+      const faviconUrl = makeFaviconUrl({ domain });
       const iconBg = ICON_BACKGROUNDS[hashToIndex(domain || label, ICON_BACKGROUNDS.length)];
 
-      return {
-        id: `${isPrimary ? 'primary' : 'secondary'}-${idx}-${domain || label}`.toLowerCase(),
+      options.push({
+        id: `ranked-${idx}-${domain || label}`.toLowerCase(),
         icon: makeIconNode({ faviconUrl, label }),
         label,
         sublabel,
         url: source.url,
         confidence: source.confidence ?? 0,
         authority: source.authority ?? label,
-        badge: isPrimary ? 'Primary' : undefined,
+        badge: isPrimary ? 'Primary' : 'Recommended',
         iconBg,
         tooltip: buildTooltip({
           authority: source.authority ?? label,
           confidence: source.confidence ?? 0,
           url: source.url,
-          searchResult: sr,
         }),
-      };
-    });
+      });
+      idx++;
+    }
+
+    return options;
   }, [primarySource, secondarySources, searchResults]);
 
   const validatedKey = React.useMemo(

@@ -47,15 +47,15 @@ export function WatchlistMetricsBar(props: WatchlistMetricsBarProps) {
           <div
             key={m.label}
             className={[
-              'px-5 py-4',
+              'px-3 py-3 sm:px-4 sm:py-4 lg:px-5',
               'min-w-0',
               idx === 0 ? '' : 'border-l border-[#1A1A1A]',
             ].join(' ')}
           >
-            <div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">
+            <div className="text-[10px] sm:text-[11px] leading-none text-[#7A7A7A] tracking-tight">
               {m.label}
             </div>
-            <div className={['mt-2 text-[20px] leading-none text-white font-medium tracking-tight', m.valueClassName || ''].join(' ')}>
+            <div className={['mt-1.5 sm:mt-2 text-[16px] sm:text-[18px] lg:text-[20px] leading-none text-white font-medium tracking-tight', m.valueClassName || ''].join(' ')}>
               {m.value}
             </div>
           </div>

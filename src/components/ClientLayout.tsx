@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Navbar from "./Navbar";
 import Header from "./Header";
@@ -23,15 +23,25 @@ interface ClientLayoutProps {
 export default function ClientLayout({ children }: ClientLayoutProps) {
   const [isNavbarOpen, setIsNavbarOpen] = useState(false);
   const [isPortfolioSidebarOpen, setIsPortfolioSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const pathname = usePathname();
   const isTokenPage = pathname?.startsWith('/token/');
   const collapsedNavbarWidth = isTokenPage ? 52 : 60;
 
-  const handleNavbarOpenChange = (open: boolean) => {
+  const handleNavbarOpenChange = useCallback((open: boolean) => {
     setIsNavbarOpen(open);
-  };
+  }, []);
 
   // Global listener so header (and other components) can open the portfolio sidebar.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const updateMobileState = () => setIsMobile(mediaQuery.matches);
+    updateMobileState();
+    mediaQuery.addEventListener('change', updateMobileState);
+    return () => mediaQuery.removeEventListener('change', updateMobileState);
+  }, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -64,10 +74,10 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                       <main 
                         className="flex-1"
                         style={{ 
-                          marginLeft: `${collapsedNavbarWidth}px`, // Match collapsed navbar width
+                          marginLeft: isMobile ? '0px' : `${collapsedNavbarWidth}px`, // Sidebar does not reserve width on mobile
                           marginTop: '48px', // Account for fixed header
-                          minHeight: 'calc(100vh - 96px)', // Subtract header and footer height
-                          marginBottom: '48px', // Account for fixed footer
+                          minHeight: isMobile ? 'calc(100vh - 48px)' : 'calc(100vh - 96px)', // Desktop still accounts for footer
+                          marginBottom: isMobile ? '0px' : '48px', // Footer reserved only on desktop
                           backgroundColor: '#1a1a1a',
                           minWidth: 0, // Prevent flex child from overflowing
                           overflow: 'hidden', // Contain any overflowing content
@@ -80,7 +90,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                     </div>
                     {/* Global session-aware prompt for enabling trading */}
                     <EnableTradingPrompt />
-                    <Footer />
+                    {!isMobile && <Footer />}
                   </div>
                 </PortfolioSnapshotProvider>
               </WalkthroughProvider>

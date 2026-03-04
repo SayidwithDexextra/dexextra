@@ -6,23 +6,23 @@ import { getSupabaseClient } from '../../lib/supabase-browser';
 export interface MetricLivePriceProps {
   marketId?: string;
   token?: string;
-  marketIdentifier?: string; // legacy prop alias for token
+  marketIdentifier?: string;
   className?: string;
-  label?: string;            // legacy UI label
-  prefix?: string;           // legacy (ignored) — kept for compatibility
-  suffix?: string;           // legacy (ignored) — kept for compatibility
-  isLive?: boolean;          // legacy (ignored) — kept for compatibility
-  compact?: boolean;         // legacy (ignored) — kept for compatibility
-  value?: number | string;   // legacy (ignored) — kept for compatibility
-  isSettlementWindow?: boolean; // legacy (ignored) — kept for compatibility
-  onOpenSettlement?: () => void; // legacy (ignored) — kept for compatibility
-  url?: string;              // optional metric source url (legacy props for compatibility)
+  label?: string;
+  prefix?: string;
+  suffix?: string;
+  isLive?: boolean;
+  compact?: boolean;
+  value?: number | string;
+  isSettlementWindow?: boolean;
+  onOpenSettlement?: () => void;
+  url?: string;
   cssSelector?: string;
   xpath?: string;
   jsExtractor?: string;
   htmlSnippet?: string;
   pollIntervalMs?: number;
-  enableLiveMetric?: boolean; // legacy (ignored) — kept for compatibility
+  enableLiveMetric?: boolean;
 }
 
 export function MetricLivePrice(props: MetricLivePriceProps) {
@@ -34,6 +34,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     label = 'Metric Source',
     url,
     pollIntervalMs,
+    onOpenSettlement,
   } = props;
 
   const supabase = getSupabaseClient();
@@ -46,6 +47,8 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     value: url || null,
     url: url || null,
   }));
+
+  const [settlementActive, setSettlementActive] = React.useState(false);
 
   const stopPollingRef = React.useRef<boolean>(false);
 
@@ -67,15 +70,36 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
   );
 
   React.useEffect(() => {
-    // Keep `source` in sync with `props.url`.
     if (url) {
-      stopPollingRef.current = true; // parent-provided url is authoritative; don't poll.
+      stopPollingRef.current = true;
       setSourceIfChanged({ kind: 'url', value: url, url });
     } else {
       stopPollingRef.current = false;
       setSource((prev) => (prev.kind === 'url' ? { kind: 'none', value: null, url: null } : prev));
     }
   }, [url, setSourceIfChanged]);
+
+  // When url is provided as a prop the main load effect is skipped,
+  // so we need a dedicated fetch for settlement status.
+  React.useEffect(() => {
+    if (!url) return;
+    let cancelled = false;
+    const t = token || marketIdentifier;
+    if (!marketId && !t) return;
+
+    (async () => {
+      try {
+        let q = supabase.from('markets').select('market_status');
+        q = marketId ? q.eq('id', marketId) : q.or(`market_identifier.eq.${t},symbol.eq.${t}`);
+        const { data } = await q.maybeSingle();
+        if (!cancelled && data) {
+          setSettlementActive(String((data as any)?.market_status ?? '') === 'SETTLEMENT_REQUESTED');
+        }
+      } catch { /* non-fatal */ }
+    })();
+
+    return () => { cancelled = true; };
+  }, [supabase, url, marketId, token, marketIdentifier]);
 
   // If `url` is not provided, attempt to load it from the `markets` table.
   React.useEffect(() => {
@@ -90,8 +114,17 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
       }
 
       try {
+        // Always fetch market_status for settlement detection.
+        try {
+          let statusQ = supabase.from('markets').select('market_status');
+          statusQ = marketId ? statusQ.eq('id', marketId) : statusQ.or(`market_identifier.eq.${t},symbol.eq.${t}`);
+          const { data: statusRow } = await statusQ.maybeSingle();
+          if (!cancelled && statusRow) {
+            setSettlementActive(String((statusRow as any)?.market_status ?? '') === 'SETTLEMENT_REQUESTED');
+          }
+        } catch { /* non-fatal */ }
+
         // Prefer DB view if present (encodes our intended fallback order).
-        // If it doesn't exist in an env, we'll fall back to reading `markets` directly.
         try {
           let q = supabase
             .from('market_metric_source_display')
@@ -103,7 +136,6 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
             const displayValue = String((vRow as any)?.display_value ?? '').trim();
             const sourceUrl = String((vRow as any)?.source_url ?? '').trim();
             if (kind === 'script' && displayValue) {
-              // Script-kind has no navigable URL.
               setSourceIfChanged({ kind: 'script', value: displayValue, url: null });
               stopPollingRef.current = true;
               return;
@@ -124,7 +156,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           // non-fatal; fallback to markets query below
         }
 
-        let query = supabase.from('markets').select('market_config, initial_order');
+        let query = supabase.from('markets').select('market_config, initial_order, market_status');
         query = marketId ? query.eq('id', marketId) : query.or(`market_identifier.eq.${t},symbol.eq.${t}`);
 
         const { data, error } = await query.maybeSingle();
@@ -133,6 +165,9 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           setSourceIfChanged({ kind: 'none', value: null, url: null });
           return;
         }
+
+        const status = String((data as any)?.market_status ?? '');
+        if (!cancelled) setSettlementActive(status === 'SETTLEMENT_REQUESTED');
 
         const cfg = (data as any)?.market_config || null;
         const initial = (data as any)?.initial_order || null;
@@ -206,7 +241,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
 
   return (
     <div
-      className={`bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 ${className}`}
+      className={`bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border ${settlementActive ? 'border-yellow-500/40' : 'border-[#222222]'} hover:border-[#333333] transition-all duration-200 ${className}`}
     >
       <div className="flex items-center justify-between p-2">
         <span className="text-[11px] font-medium text-[#808080] leading-none">{label}</span>
@@ -251,6 +286,36 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           )}
         </span>
       </div>
+      {settlementActive && onOpenSettlement && (
+        <button
+          onClick={onOpenSettlement}
+          className="w-full flex items-center justify-between px-2 py-1.5 border-t border-yellow-500/20 bg-yellow-500/5 hover:bg-yellow-500/10 transition-colors duration-200 group"
+        >
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
+            <span className="text-[10px] font-medium text-yellow-300/90">Settlement Requested</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] text-yellow-400/60 group-hover:text-yellow-400/90 transition-colors">
+              Open
+            </span>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-3 w-3 text-yellow-400/50 group-hover:text-yellow-400/80 transition-colors"
+              fill="none"
+            >
+              <path
+                d="M9 5l7 7-7 7"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+        </button>
+      )}
     </div>
   );
 }

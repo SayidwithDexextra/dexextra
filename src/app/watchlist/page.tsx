@@ -395,11 +395,11 @@ export default function WatchlistPage() {
   return (
     <div className="dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-transparent overflow-hidden">
       {/* Main Watchlist Content */}
-      <div className="flex-1 flex flex-col min-w-0 px-6 py-6 overflow-y-auto scrollbar-none">
+      <div className="flex-1 flex flex-col min-w-0 px-3 py-4 sm:px-4 md:px-6 md:py-6 overflow-y-auto scrollbar-none">
         {/* Header */}
-        <div className="mb-4 flex-shrink-0">
-          <h1 className="text-white text-xl font-medium tracking-tight">Watchlist</h1>
-          <p className="text-[#606060] text-[11px] mt-1">
+        <div className="mb-3 md:mb-4 flex-shrink-0">
+          <h1 className="text-white text-lg md:text-xl font-medium tracking-tight">Watchlist</h1>
+          <p className="text-[#606060] text-[10px] md:text-[11px] mt-1">
             Stay Ahead of the Market with Your Personalized Watchlist
           </p>
         </div>
@@ -454,7 +454,7 @@ export default function WatchlistPage() {
                 </svg>
               </div>
             </div>
-            <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+            <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 max-h-20 md:max-h-0 md:group-hover:max-h-20 overflow-hidden transition-all duration-200">
               <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
                 <div className="text-[9px] pt-1.5">
                   <span className="text-[#606060]">Your watchlist is tied to your wallet address. Use the sidebar to connect.</span>
@@ -483,7 +483,7 @@ export default function WatchlistPage() {
                 Add Asset
               </button>
             </div>
-            <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+            <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 max-h-20 md:max-h-0 md:group-hover:max-h-20 overflow-hidden transition-all duration-200">
               <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
                 <div className="text-[9px] pt-1.5">
                   <span className="text-[#606060]">Add markets from the Overview page using the bookmark icon.</span>
@@ -494,8 +494,8 @@ export default function WatchlistPage() {
         ) : (
           <>
             {/* Search and Controls */}
-            <div className="flex items-center gap-2 mb-3 flex-shrink-0">
-              <div className="relative flex-1 max-w-md">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-3 flex-shrink-0">
+              <div className="relative flex-1 w-full sm:max-w-md">
                 <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-[#606060]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
@@ -507,24 +507,26 @@ export default function WatchlistPage() {
                   className="w-full bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] focus:border-[#333333] rounded-md pl-8 pr-3 py-2 text-[11px] text-white placeholder-[#606060] focus:outline-none transition-all duration-200"
                 />
               </div>
-              <button
-                onClick={() => setIsAddAssetsOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] transition-all duration-200"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Add Asset
-              </button>
-              <button className="p-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[#808080] transition-all duration-200">
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  onClick={() => setIsAddAssetsOpen(true)}
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] transition-all duration-200"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Asset
+                </button>
+                <button className="p-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[#808080] transition-all duration-200">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
-            {/* Table with internal scroll */}
-            <div className="flex-1 min-h-0 overflow-hidden rounded-md border border-[#222222]">
+            {/* Desktop table with internal scroll */}
+            <div className="hidden md:block flex-1 min-h-0 overflow-hidden rounded-md border border-[#222222]">
               <div className="h-full overflow-y-auto scrollbar-none">
                 <table className="w-full">
                   <thead className="sticky top-0 z-10 bg-[#0F0F0F]">
@@ -679,7 +681,7 @@ export default function WatchlistPage() {
                               {formatMarketCap(row)}
                             </td>
                             <td className="px-2.5 py-2.5" onClick={(e) => e.stopPropagation()}>
-                              <button className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[#2A2A2A] rounded text-[#606060] hover:text-[#9CA3AF] transition-all duration-200">
+                              <button className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-1 hover:bg-[#2A2A2A] rounded text-[#606060] hover:text-[#9CA3AF] transition-all duration-200">
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
                                 </svg>
@@ -694,6 +696,107 @@ export default function WatchlistPage() {
               </div>
             </div>
 
+            {/* Mobile list */}
+            <div className="md:hidden rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
+              {isLoading ? (
+                <div className="divide-y divide-[#1A1A1A]">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="p-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-4 h-4 bg-[#2A2A2A] rounded animate-pulse" />
+                        <div className="w-9 h-9 bg-[#2A2A2A] rounded-full animate-pulse" />
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="w-24 h-3 bg-[#2A2A2A] rounded animate-pulse" />
+                          <div className="w-12 h-2 bg-[#2A2A2A] rounded animate-pulse" />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="w-14 h-3 bg-[#2A2A2A] rounded animate-pulse" />
+                          <div className="w-10 h-2 bg-[#2A2A2A] rounded animate-pulse" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredAndSortedRows.length === 0 ? (
+                <div className="px-3 py-8 text-center">
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
+                    <span className="text-[11px] text-[#606060]">
+                      {searchQuery ? 'No markets match your search' : 'No markets in your watchlist'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="divide-y divide-[#1A1A1A]">
+                  {filteredAndSortedRows.map((row, index) => {
+                    const changePercent = getChangePercent(row);
+                    const isPositive = changePercent >= 0;
+                    const isPending = watchlistPending.includes(row.market_id);
+                    return (
+                      <button
+                        key={row.market_id}
+                        onClick={() => handleNavigateToMarket(row)}
+                        className="w-full text-left p-3 hover:bg-[#1A1A1A] transition-all duration-200"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => handleWatchlistToggle(row)}
+                              disabled={isPending}
+                              className={`mt-1 text-yellow-400 hover:text-yellow-300 transition-colors duration-200 ${isPending ? 'opacity-50 animate-pulse' : ''}`}
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                              </svg>
+                            </button>
+                          </div>
+
+                          <div className="w-9 h-9 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0">
+                            {row.icon_image_url ? (
+                              <Image
+                                src={row.icon_image_url}
+                                alt={row.name || row.symbol}
+                                width={36}
+                                height={36}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-[#808080]">
+                                {(row.symbol || row.name || '?').slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-[12px] font-medium text-white truncate">
+                                  {row.name || row.symbol}
+                                </div>
+                                <div className="text-[10px] text-[#606060] uppercase">
+                                  #{index + 1} {row.symbol}
+                                </div>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <div className="text-[11px] text-white font-mono">{formatPrice(row)}</div>
+                                <div className={`text-[10px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                                  {isPositive ? '+' : ''}
+                                  {changePercent.toFixed(1)}%
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-1 text-[10px] text-[#808080]">
+                              Market Cap <span className="text-white font-mono">{formatMarketCap(row)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Watched Accounts (separate UI table) */}
             {watchlistUsers.length > 0 && (
               <div className="mt-3 flex-shrink-0">
@@ -706,7 +809,7 @@ export default function WatchlistPage() {
                   </div>
                 </div>
 
-                <div className="rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
+                <div className="hidden md:block rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
                   <div className="max-h-40 overflow-y-auto scrollbar-none">
                     <table className="w-full">
                       <thead className="sticky top-0 z-10 bg-[#0F0F0F]">
@@ -779,6 +882,63 @@ export default function WatchlistPage() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+
+                <div className="md:hidden rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F] divide-y divide-[#1A1A1A]">
+                  {watchlistUsers.map((u) => {
+                    const isPending = watchlistUserPending.includes(u.id);
+                    const label = u.display_name || u.username || 'Anonymous User';
+                    const shortAddr = `${u.wallet_address.slice(0, 6)}...${u.wallet_address.slice(-4)}`;
+                    return (
+                      <div
+                        key={u.id}
+                        className="p-3 hover:bg-[#1A1A1A] transition-all duration-200 cursor-pointer"
+                        onClick={() => router.push(`/user/${encodeURIComponent(u.wallet_address)}`)}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className="w-8 h-8 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0"
+                            style={{
+                              backgroundImage: u.profile_image_url ? `url(${u.profile_image_url})` : undefined,
+                              backgroundSize: 'cover',
+                              backgroundPosition: 'center',
+                            }}
+                          >
+                            {!u.profile_image_url && (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-[#808080]">
+                                {label.slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[12px] font-medium text-white truncate">{label}</div>
+                            <div className="text-[10px] text-[#606060] font-mono">{shortAddr}</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => handleCopyWatchedUserAddress(u)}
+                            className="flex-1 px-2.5 py-1.5 rounded-md text-[11px] border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
+                          >
+                            {copiedWatchedUserId === u.id ? 'Copied' : 'Copy'}
+                          </button>
+                          <button
+                            disabled={isPending}
+                            onClick={() => handleRemoveWatchedUser(u.id)}
+                            className={`flex-1 px-2.5 py-1.5 rounded-md text-[11px] border transition-all duration-200 ${
+                              isPending
+                                ? 'border-[#222222] text-[#808080] animate-pulse'
+                                : 'border-red-500/20 text-red-400 hover:border-red-500/30 hover:bg-red-500/5'
+                            }`}
+                          >
+                            {isPending ? 'Removing…' : 'Remove'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

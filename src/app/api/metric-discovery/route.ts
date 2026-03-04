@@ -12,6 +12,8 @@ const InputSchema = z.object({
   context: z.string().optional(),
   user_address: z.string().optional(),
   mode: z.enum(['full', 'define_only']).optional(),
+  /** AI-generated search query from define_only step, used as the SERPAPI query in full mode */
+  search_query: z.string().max(500).optional(),
   /** Search variation index (0-5) for finding different sources on retry */
   searchVariation: z.number().int().min(0).max(10).optional(),
   /** URLs to exclude from search results (e.g., previously denied sources) */
@@ -25,7 +27,7 @@ Users provide a free-form description of what they want their metric to be based
 Your job is to:
 1) Determine if the metric is objectively measurable using public data
 2) Define the metric in a precise, machine-stable way
-3) List assumptions required to interpret the metric
+3) Generate an optimized web search query that would best find authoritative, quantitative data sources for this metric
 
 Return structured JSON only. No prose.
 
@@ -39,7 +41,7 @@ Return ONE JSON object with this shape:
     "time_basis": string,
     "measurement_method": string
   } | null,
-  "assumptions": string[],
+  "search_query": string | null,
   "sources": null,
   "rejection_reason": string | null
 }
@@ -47,6 +49,11 @@ Return ONE JSON object with this shape:
 Rules:
 - Be conservative. If unclear or subjective, set measurable=false and explain why in rejection_reason.
 - Do NOT include or invent URLs in this mode.
+- search_query must be a Google search string designed to return a wide variety of data sources
+  for this metric. Focus on keywords that describe the data itself (e.g. "titanium price per
+  metric ton monthly data"). Do NOT include site: filters, OR operators, or domain restrictions —
+  the goal is to discover diverse sources, not pre-filter to known ones.
+- If measurable=false, set search_query to null.
 - Treat this as settlement-critical.`;
 
 function buildDefineOnlyUserMessage(description: string): string {
@@ -71,7 +78,7 @@ to be based on. Your job is to:
 
 You MUST NOT hallucinate URLs or data sources.
 You MUST ONLY reason over the information provided to you.
-Return structured JSON only. No prose.`;
+Return structured JSON only. No prose. Do NOT include assumptions.`;
 
 /**
  * Build user message with metric description and search results
@@ -102,7 +109,6 @@ From the metric description, extract:
 - quantity (what aspect is measured, e.g. count, price, rate)
 - scope (global, country, region, entity-level, etc.)
 - time_basis (annual, monthly, real-time, snapshot, etc.)
-- assumptions (list of implicit assumptions required)
 
 If the metric is ambiguous, subjective, or not objectively measurable
 using public data, set measurable = false.
@@ -165,7 +171,6 @@ Return ONE JSON object with the following shape:
     "time_basis": string,
     "measurement_method": string
   },
-  "assumptions": string[],
   "sources": {
     "primary_source": {
       "url": string,
@@ -195,6 +200,7 @@ STRICT RULES:
 - Do NOT invent sources not in the search results
 - Do NOT assume data exists
 - Do NOT output explanations outside JSON
+- Do NOT include assumptions
 - Be conservative: if unsure, reject
 - Treat this as a settlement-critical system`;
 }
@@ -236,7 +242,7 @@ export async function POST(req: NextRequest) {
       const result: MetricDiscoveryResponse = {
         measurable: Boolean(aiResponse.measurable),
         metric_definition: aiResponse.metric_definition || null,
-        assumptions: Array.isArray(aiResponse.assumptions) ? aiResponse.assumptions : [],
+        search_query: typeof aiResponse.search_query === 'string' ? aiResponse.search_query : null,
         sources: null,
         rejection_reason: aiResponse.rejection_reason || null,
         search_results: [],
@@ -249,10 +255,12 @@ export async function POST(req: NextRequest) {
     // Extract search parameters
     const searchVariation = input.searchVariation ?? 0;
     const excludeUrls = input.excludeUrls ?? [];
+    const serpQuery = input.search_query || input.description;
     
-    // Step 1: Search for candidate data sources
+    // Step 1: Search for candidate data sources using AI-generated query when available
     console.log('[MetricDiscovery] SerpApi search starting:', {
-      description_preview: input.description.slice(0, 200),
+      query_source: input.search_query ? 'ai_generated' : 'raw_description',
+      query_preview: serpQuery.slice(0, 200),
       max_results: 10,
       searchVariation,
       excludeUrls_count: excludeUrls.length,
@@ -260,7 +268,7 @@ export async function POST(req: NextRequest) {
     
     let searchResults: SearchResult[];
     try {
-      searchResults = await searchMetricSourcesCached(input.description, {
+      searchResults = await searchMetricSourcesCached(serpQuery, {
         maxResults: 10,
         variation: searchVariation,
         excludeUrls,
@@ -291,7 +299,7 @@ export async function POST(req: NextRequest) {
         {
           measurable: false,
           metric_definition: null,
-          assumptions: [],
+          search_query: serpQuery,
           sources: null,
           rejection_reason: 'No data sources found. The metric may be too specific or use uncommon terminology.',
           search_results: [],
@@ -330,7 +338,7 @@ export async function POST(req: NextRequest) {
     const result: MetricDiscoveryResponse = {
       measurable: Boolean(aiResponse.measurable),
       metric_definition: aiResponse.metric_definition || null,
-      assumptions: Array.isArray(aiResponse.assumptions) ? aiResponse.assumptions : [],
+      search_query: serpQuery,
       sources: aiResponse.sources || null,
       rejection_reason: aiResponse.rejection_reason || null,
       search_results: searchResults,

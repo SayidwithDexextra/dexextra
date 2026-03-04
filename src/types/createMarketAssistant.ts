@@ -27,7 +27,7 @@ export type CreateMarketAssistantContext = {
       time_basis?: string;
       measurement_method?: string;
     } | null;
-    assumptions?: string[];
+    search_query?: string | null;
     sources?: {
       primary_source?: {
         url: string;

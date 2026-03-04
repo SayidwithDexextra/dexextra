@@ -87,9 +87,9 @@ function DeploymentDock(props: {
     >
       <div className="flex items-start justify-between gap-3 p-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] sm:text-xs font-medium text-[#9CA3AF] uppercase tracking-wide truncate leading-tight">{title}</div>
-          <div className="text-[10px] sm:text-[11px] text-[#606060] truncate">{subtitle}</div>
-          <div className="mt-2 text-xs sm:text-sm text-white truncate leading-snug" title={msg}>
+          <div className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide truncate leading-tight">{title}</div>
+          <div className="text-[10px] text-[#606060] truncate">{subtitle}</div>
+          <div className="mt-2 text-[10px] text-white truncate leading-snug" title={msg}>
             {msg}
           </div>
         </div>
@@ -107,14 +107,14 @@ function DeploymentDock(props: {
           </button>
           <button
             onClick={onRestore}
-            className="text-[11px] sm:text-xs text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
+            className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
           >
             View
           </button>
           {marketSymbol ? (
             <button
               onClick={openMarket}
-              className="text-[11px] sm:text-xs text-[#8a8a8a] hover:text-white bg-transparent border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
+              className="text-[10px] text-[#8a8a8a] hover:text-white bg-transparent border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
             >
               Open market
             </button>
@@ -123,7 +123,7 @@ function DeploymentDock(props: {
       </div>
       <div className="h-px bg-[#1A1A1A]" />
       <div className="p-3">
-        <div className="flex items-center justify-between text-[11px] sm:text-xs text-[#808080]">
+        <div className="flex items-center justify-between text-[10px] text-[#808080]">
           <span>Progress</span>
           <span className="font-mono text-[#9CA3AF]">{pct}%</span>
         </div>
@@ -143,14 +143,14 @@ function DeploymentCompleteNotice(props: { marketSymbol: string; onDismiss: () =
       <div className="p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] sm:text-xs font-medium text-green-400 uppercase tracking-wide">Deployment complete</div>
-            <div className="mt-1 text-xs sm:text-sm text-white truncate leading-snug">
+            <div className="text-[11px] font-medium text-green-400 uppercase tracking-wide">Deployment complete</div>
+            <div className="mt-1 text-[10px] text-white truncate leading-snug">
               {marketSymbol} is ready.
             </div>
           </div>
           <button
             onClick={onDismiss}
-            className="text-[11px] sm:text-xs text-[#606060] hover:text-white border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
+            className="text-[10px] text-[#606060] hover:text-white border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
           >
             Dismiss
           </button>
@@ -158,7 +158,7 @@ function DeploymentCompleteNotice(props: { marketSymbol: string; onDismiss: () =
         <div className="mt-3 flex gap-2">
           <button
             onClick={() => router.push(`/token/${encodeURIComponent(marketSymbol)}`)}
-            className="text-[11px] sm:text-xs text-black bg-green-400 hover:bg-green-300 rounded px-3 py-2 transition-all duration-200"
+            className="text-[10px] text-black bg-green-400 hover:bg-green-300 rounded px-3 py-2 transition-all duration-200"
           >
             Open market
           </button>
@@ -168,7 +168,7 @@ function DeploymentCompleteNotice(props: { marketSymbol: string; onDismiss: () =
                 navigator.clipboard?.writeText(marketSymbol);
               } catch {}
             }}
-            className="text-[11px] sm:text-xs text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-3 py-2 transition-all duration-200"
+            className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-3 py-2 transition-all duration-200"
             title="Copy symbol"
           >
             Copy symbol

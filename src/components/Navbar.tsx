@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import useWallet from '@/hooks/useWallet'
 import WalletModal from './WalletModal'
@@ -136,6 +136,7 @@ interface NavbarProps {
 export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
   const [showWalletModal, setShowWalletModal] = useState(false)
   const [showAccountModal, setShowAccountModal] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   const { walletData, formatAddress, formatBalance } = useWallet()
   const router = useRouter()
   const pathname = usePathname()
@@ -144,6 +145,17 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
   const isTokenPage = pathname?.startsWith('/token/')
   const collapsedWidth = isTokenPage ? 52 : 60
   const expandedWidth = isTokenPage ? 208 : 240
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia('(max-width: 767px)')
+    const updateMobileState = () => {
+      setIsMobile(mediaQuery.matches)
+    }
+    updateMobileState()
+    mediaQuery.addEventListener('change', updateMobileState)
+    return () => mediaQuery.removeEventListener('change', updateMobileState)
+  }, [])
 
   // Determine active item based on current pathname
   const getActiveItem = () => {
@@ -155,21 +167,50 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
     return currentItem?.id || ''
   }
 
+  if (isMobile && !isOpen) {
+    return (
+      <>
+        <button
+          onClick={() => onOpenChange(true)}
+          className="fixed left-2 top-[52px] z-[10000] h-11 w-11 rounded-md border border-[#333333] bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] text-white shadow-[2px_0_10px_rgba(0,0,0,0.2)]"
+          aria-label="Open navigation menu"
+        >
+          ☰
+        </button>
+
+        <WalletModal
+          isOpen={showWalletModal}
+          onClose={() => setShowWalletModal(false)}
+        />
+
+        <WalletAccountModal
+          isOpen={showAccountModal}
+          onClose={() => setShowAccountModal(false)}
+        />
+      </>
+    )
+  }
+
       return (
       <>
                 <nav 
           className="fixed left-0 top-0 h-full bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333] transition-all duration-300 ease-in-out"
           data-walkthrough="navbar"
           style={{
-            width: isOpen ? `${expandedWidth}px` : `${collapsedWidth}px`,
+            width: isMobile ? '100vw' : (isOpen ? `${expandedWidth}px` : `${collapsedWidth}px`),
+            height: isMobile ? '100dvh' : '100%',
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             overflowX: 'hidden',
             overflowY: 'auto',
             zIndex: 9999, // High z-index to ensure it overlays all content
             boxShadow: isOpen ? '4px 0 20px rgba(0, 0, 0, 0.3)' : '2px 0 10px rgba(0, 0, 0, 0.2)', // Add shadow when expanded
           }}
-          onMouseEnter={() => onOpenChange(true)}
-          onMouseLeave={() => onOpenChange(false)}
+          onMouseEnter={() => {
+            if (!isMobile) onOpenChange(true)
+          }}
+          onMouseLeave={() => {
+            if (!isMobile) onOpenChange(false)
+          }}
         >
           <div 
             className="h-full flex flex-col"
@@ -181,6 +222,18 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
               width: '100%'
             }}
           >
+            {isMobile && isOpen && (
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-white text-sm font-medium">Menu</span>
+                <button
+                  onClick={() => onOpenChange(false)}
+                  className="w-8 h-8 rounded-md border border-[#2A2A2A] text-[#A0A0A0] hover:text-white hover:border-[#3A3A3A] transition-all duration-200"
+                  aria-label="Close navigation menu"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {/* Wallet Header */}
             {isOpen && (
           <div 
@@ -236,7 +289,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
         )}
 
         {/* Wallet Avatar/Connection */}
-        {!isOpen && (
+        {!isOpen && !isMobile && (
           <div className="mb-5 flex justify-center">
             <div 
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold cursor-pointer"
@@ -277,7 +330,10 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
               return (
                 <button
                   key={item.id}
-                  onClick={() => router.push(item.route)}
+                  onClick={() => {
+                    router.push(item.route)
+                    if (isMobile) onOpenChange(false)
+                  }}
                   className={`w-full flex items-center transition-all duration-200 ${
                     isOpen ? 'gap-2' : 'justify-center'
                   }`}
@@ -321,7 +377,10 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                  {/* Create Market Button - Only show when open */}
          {isOpen && (
            <button
-             onClick={() => router.push('/new-market')}
+             onClick={() => {
+               router.push('/new-market')
+               if (isMobile) onOpenChange(false)
+             }}
              data-walkthrough="new-market"
              className="flex items-center justify-center text-white font-semibold text-base transition-all duration-200 hover:opacity-80 cursor-pointer"
              style={{
@@ -338,9 +397,12 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
          )}
 
          {/* Create Market Icon - Only show when collapsed */}
-         {!isOpen && (
+         {!isOpen && !isMobile && (
            <button
-             onClick={() => router.push('/new-market')}
+             onClick={() => {
+               router.push('/new-market')
+               if (isMobile) onOpenChange(false)
+             }}
              data-walkthrough="new-market"
              className="flex items-center justify-center text-white font-semibold transition-all duration-200 hover:opacity-80 cursor-pointer"
              style={{
@@ -358,7 +420,6 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
          )}
           </div>
         </nav>
-
       {/* Wallet Connection Modal */}
       <WalletModal 
         isOpen={showWalletModal} 

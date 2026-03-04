@@ -38,7 +38,8 @@ export interface MetricDiscoveryInput {
 export interface MetricDiscoveryResult {
   measurable: boolean;
   metric_definition: MetricDefinition | null;
-  assumptions: string[];
+  /** AI-generated search query optimized for finding authoritative data sources via SERPAPI. */
+  search_query: string | null;
   sources: {
     primary_source: MetricSource;
     secondary_sources: MetricSource[];
