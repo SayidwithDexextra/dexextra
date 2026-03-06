@@ -1,5 +1,7 @@
 'use client';
 import React from 'react';
+import { MarketInfoHeader } from '@/components/MarketInfoHeader';
+import { CommentSection, type Comment } from '@/components/CommentSection';
 
 type IconSearchResponse = {
   results: Array<{
@@ -53,6 +55,182 @@ function getErrorMessage(e: unknown) {
   } catch {
     return String(e);
   }
+}
+
+const MOCK_COMMENTS: Comment[] = [
+  {
+    id: '1',
+    author: {
+      id: 'user1',
+      name: 'Toufik Hasan Khan',
+    },
+    text: 'When it comes to trading this token, choosing the right entry point is crucial. Which support level can enhance your position, making the user experience more enjoyable and engaging?',
+    timestamp: new Date(Date.now() - 53 * 60 * 1000).toISOString(),
+    likes: 25,
+    isLiked: false,
+    replies: [
+      {
+        id: '1-1',
+        author: {
+          id: 'user2',
+          name: 'Abu Sayed',
+          badge: 'verified',
+        },
+        text: 'Absolutely! Selecting the right entry point is key in trading. Levels like $1.20, $1.15, and $1.10 are excellent choices as they are designed for strong support. They help create a more enjoyable and engaging trading experience by ensuring that entries are clear and easy to manage.',
+        timestamp: new Date(Date.now() - 17 * 60 * 1000).toISOString(),
+        likes: 7,
+        isLiked: false,
+      },
+    ],
+  },
+  {
+    id: '2',
+    author: {
+      id: 'user3',
+      name: 'Jubayer Rahman',
+    },
+    text: 'In trading, selecting the perfect entry point is essential. A well-chosen level can significantly boost screen readability, ultimately enriching the user experience and keeping users engaged.',
+    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    likes: 25,
+    isLiked: true,
+    isEdited: true,
+  },
+  {
+    id: '3',
+    author: {
+      id: 'user4',
+      name: 'Market Maker',
+      badge: 'creator',
+    },
+    text: 'Just deployed new liquidity to the SPARK/USDC pool. Looking forward to seeing more volume on this pair. The spread is tightening nicely.',
+    timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+    likes: 42,
+    isLiked: true,
+  },
+  {
+    id: '4',
+    author: {
+      id: 'user5',
+      name: 'DeFi Dan',
+      badge: 'moderator',
+    },
+    text: 'Not sure about the recent price action. Volume seems to be declining and we might see a pullback to support levels around $1.20. Anyone else concerned?',
+    timestamp: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
+    likes: 7,
+    isLiked: false,
+    replies: [
+      {
+        id: '4-1',
+        author: {
+          id: 'user2',
+          name: 'Abu Sayed',
+          badge: 'verified',
+        },
+        text: 'Valid concern, but I think the low volume is temporary. Most holders are staking for yield.',
+        timestamp: new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString(),
+        likes: 12,
+        isLiked: false,
+      },
+    ],
+  },
+];
+
+function CommentSectionPreview() {
+  const [comments, setComments] = React.useState<Comment[]>(MOCK_COMMENTS);
+  const [sortBy, setSortBy] = React.useState<'newest' | 'oldest' | 'top'>('newest');
+
+  const currentUser = {
+    id: 'current-user',
+    name: 'You',
+  };
+
+  const handleSubmitComment = (text: string) => {
+    const newComment: Comment = {
+      id: `new-${Date.now()}`,
+      author: currentUser,
+      text,
+      timestamp: new Date().toISOString(),
+      likes: 0,
+      isLiked: false,
+    };
+    setComments([newComment, ...comments]);
+  };
+
+  const handleSubmitReply = (commentId: string, text: string) => {
+    const newReply: Comment = {
+      id: `reply-${Date.now()}`,
+      author: currentUser,
+      text,
+      timestamp: new Date().toISOString(),
+      likes: 0,
+      isLiked: false,
+    };
+    setComments(
+      comments.map((c) =>
+        c.id === commentId
+          ? { ...c, replies: [...(c.replies || []), newReply] }
+          : c
+      )
+    );
+  };
+
+  const handleLikeComment = (commentId: string) => {
+    const toggleLike = (c: Comment): Comment => {
+      if (c.id === commentId) {
+        return {
+          ...c,
+          isLiked: !c.isLiked,
+          likes: c.isLiked ? c.likes - 1 : c.likes + 1,
+        };
+      }
+      if (c.replies) {
+        return { ...c, replies: c.replies.map(toggleLike) };
+      }
+      return c;
+    };
+    setComments(comments.map(toggleLike));
+  };
+
+  const handleDeleteComment = (commentId: string) => {
+    const deleteFromList = (list: Comment[]): Comment[] =>
+      list
+        .filter((c) => c.id !== commentId)
+        .map((c) => (c.replies ? { ...c, replies: deleteFromList(c.replies) } : c));
+    setComments(deleteFromList(comments));
+  };
+
+  const handleSortChange = (sort: 'newest' | 'oldest' | 'top') => {
+    setSortBy(sort);
+    const sorted = [...comments];
+    switch (sort) {
+      case 'newest':
+        sorted.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        break;
+      case 'oldest':
+        sorted.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        break;
+      case 'top':
+        sorted.sort((a, b) => b.likes - a.likes);
+        break;
+    }
+    setComments(sorted);
+  };
+
+  return (
+    <CommentSection
+      comments={comments}
+      totalCount={comments.length}
+      currentUser={currentUser}
+      sortBy={sortBy}
+      onSortChange={handleSortChange}
+      onSubmitComment={handleSubmitComment}
+      onSubmitReply={handleSubmitReply}
+      onLikeComment={handleLikeComment}
+      onDeleteComment={handleDeleteComment}
+      onReportComment={(id) => alert(`Reported comment: ${id}`)}
+      hasMore={false}
+    />
+  );
 }
 
 export default function DebugSearchPage() {
@@ -239,8 +417,58 @@ export default function DebugSearchPage() {
             <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/order-fill-modal">
               Order Fill Modal
             </a>
+            <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/market-preview-modal">
+              Market Preview Modal
+            </a>
           </div>
         </div>
+      </div>
+
+      {/* MarketInfoHeader Component Preview */}
+      <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
+        <div className="text-[12px] font-medium text-white mb-1">MarketInfoHeader Preview</div>
+        <div className="text-[11px] text-[#9CA3AF] mb-4">
+          Minimal trading interface header component for token/market pages.
+        </div>
+        <MarketInfoHeader
+          name="Spark Protocol"
+          symbol="SPARK"
+          description="Spark is a decentralized lending protocol built on Ethereum that enables users to borrow and lend crypto assets. The protocol features competitive interest rates, over-collateralized loans, and integration with major DeFi ecosystems. Spark leverages battle-tested smart contracts and has undergone multiple security audits."
+          logoUrl="https://storage.googleapis.com/public-bubblemaps/app/tokens-images/ethereum/0xD31a59c85aE9D8edEFec411D448f90841571b89c"
+          verified
+          status="live"
+          settlementDate={new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()}
+          orderbookAddress="0xE9B225Dfc187b657F199dBbEd573567b0e53b945"
+          marketId="0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2"
+          tags={[
+            { label: 'DeFi' },
+            { label: 'Lending' },
+            { label: 'Ethereum' },
+          ]}
+          moreTagsCount={12}
+          stats={[
+            { label: 'Watching', value: '328' },
+          ]}
+          websiteUrl="https://spark.fi"
+          twitterUrl="https://twitter.com/sparkdotfi"
+          waybackSnapshot={{
+            url: 'https://web.archive.org/web/20251216005857/https://markets.businessinsider.com/commodities/copper-price',
+            timestamp: '20251216005857',
+            source_url: 'https://markets.businessinsider.com/commodities/copper-price',
+          }}
+          onWatchlistToggle={() => alert('Watchlist toggled')}
+          isWatchlisted={false}
+          isWatchlistLoading={false}
+        />
+      </div>
+
+      {/* CommentSection Preview */}
+      <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
+        <div className="text-[12px] font-medium text-white mb-1">CommentSection Preview</div>
+        <div className="text-[11px] text-[#9CA3AF] mb-4">
+          Token page comment section with threaded replies, likes, and user interactions.
+        </div>
+        <CommentSectionPreview />
       </div>
 
       {/* Icon search */}

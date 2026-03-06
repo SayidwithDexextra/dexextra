@@ -239,14 +239,35 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     }
   }, [source.kind, source.value]);
 
+  const hasSource = source.kind !== 'none' && !!source.value;
+
   return (
     <div
-      className={`bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border ${settlementActive ? 'border-yellow-500/40' : 'border-[#222222]'} hover:border-[#333333] transition-all duration-200 ${className}`}
+      className={`relative rounded-md border transition-all duration-300 overflow-hidden ${
+        settlementActive
+          ? 'border-yellow-500/40 bg-[#0F0F0F]'
+          : hasSource
+            ? 'border-red-500/25 bg-gradient-to-r from-[#0F0F0F] to-[#130B0B] hover:border-red-500/40 hover:shadow-[0_0_12px_rgba(239,68,68,0.08)]'
+            : 'border-[#222222] bg-[#0F0F0F] hover:border-[#333333]'
+      } ${className}`}
     >
-      <div className="flex items-center justify-between p-2">
-        <span className="text-[11px] font-medium text-[#808080] leading-none">{label}</span>
+      {hasSource && !settlementActive && (
+        <div className="absolute inset-0 bg-gradient-to-r from-red-500/[0.03] via-transparent to-red-500/[0.02] pointer-events-none" />
+      )}
+      <div className="relative flex items-center justify-between p-2">
+        <div className="flex items-center gap-1.5">
+          {hasSource && (
+            <div className="relative flex items-center justify-center w-2 h-2">
+              <div className="absolute w-2 h-2 rounded-full bg-red-500/30 animate-ping" />
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+            </div>
+          )}
+          <span className={`text-[11px] font-medium leading-none ${hasSource ? 'text-[#c0c0c0]' : 'text-[#808080]'}`}>
+            {label}
+          </span>
+        </div>
         <span
-          className="text-[9px] text-[#8a8a8a] leading-none truncate max-w-[180px]"
+          className="text-[9px] leading-none truncate max-w-[180px]"
           title={source.value || undefined}
         >
           {source.kind === 'url' && source.url ? (
@@ -254,13 +275,15 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
               href={source.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="group inline-flex items-center gap-1 underline"
+              className="group inline-flex items-center gap-1 text-red-400/80 hover:text-red-300 transition-colors duration-200"
             >
-              <span>{displayText}</span>
+              <span className="underline underline-offset-2 decoration-red-500/30 group-hover:decoration-red-400/60">
+                {displayText}
+              </span>
               <svg
                 aria-hidden="true"
                 viewBox="0 0 24 24"
-                className="h-3 w-3 text-[#6B7280] opacity-80 transition-opacity group-hover:opacity-100"
+                className="h-3 w-3 opacity-60 transition-opacity group-hover:opacity-100"
                 fill="none"
               >
                 <path
@@ -280,9 +303,9 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
               </svg>
             </a>
           ) : source.kind === 'script' && source.value ? (
-            <span>{displayText}</span>
+            <span className="text-red-400/70">{displayText}</span>
           ) : (
-            '—'
+            <span className="text-[#555]">—</span>
           )}
         </span>
       </div>

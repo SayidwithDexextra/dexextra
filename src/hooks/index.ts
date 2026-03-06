@@ -35,3 +35,7 @@ export { useUSDCDeposit } from './useUSDCDeposit';
 // Performance detection
 export { useDevicePerformance, usePerformanceTier } from './useDevicePerformance';
 export type { PerformanceTier, DevicePerformanceInfo } from './useDevicePerformance';
+
+// Comments system with real-time
+export { useComments } from './useComments';
+export type { Comment, CommentImage } from './useComments';

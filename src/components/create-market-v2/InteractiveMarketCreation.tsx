@@ -18,7 +18,7 @@ import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
 
 type DiscoveryState = 'idle' | 'discovering' | 'success' | 'clarify' | 'rejected' | 'error';
-type CreationStep = 'clarify_metric' | 'name' | 'description' | 'select_source' | 'icon' | 'complete';
+type CreationStep = 'clarify_metric' | 'name' | 'similar_markets' | 'description' | 'select_source' | 'icon' | 'complete';
 
 const PROMPT_EXAMPLE_SUGGESTIONS = [
   'Current price of Bitcoin in USD',
@@ -431,7 +431,7 @@ function StepPanel({
     if (step === 'description') resizeTextarea(descriptionRef.current);
   }, [marketDescription, resizeTextarea, step]);
 
-  const showUserRow = step !== 'select_source' || Boolean(userPrompt.trim());
+  const showUserRow = (step !== 'select_source' && step !== 'similar_markets') || Boolean(userPrompt.trim());
   const isInteractiveUserInput =
     step === 'clarify_metric' || step === 'name' || step === 'description' || step === 'icon';
 
@@ -1231,6 +1231,30 @@ export function InteractiveMarketCreation() {
   const [deniedSourceUrls, setDeniedSourceUrls] = React.useState<string[]>([]);
   const [searchVariation, setSearchVariation] = React.useState(0);
 
+  // Duplicate market detection state
+  type SimilarMarketMatch = {
+    id: string;
+    market_identifier: string;
+    symbol: string;
+    name: string;
+    description: string;
+    score: number;
+    market_status: string;
+    icon_image_url?: string | null;
+  };
+  type MetricUrlDuplicate = {
+    id: string;
+    market_identifier: string;
+    symbol: string;
+    name: string;
+    metric_url: string | null;
+  };
+  const [similarMarkets, setSimilarMarkets] = React.useState<SimilarMarketMatch[]>([]);
+  const [similarMarketsLoading, setSimilarMarketsLoading] = React.useState(false);
+  const [similarMarketsAcknowledged, setSimilarMarketsAcknowledged] = React.useState(false);
+  const [metricUrlDuplicates, setMetricUrlDuplicates] = React.useState<MetricUrlDuplicate[]>([]);
+  const [metricUrlBlockedSource, setMetricUrlBlockedSource] = React.useState<string | null>(null);
+
   // Market creation state
   const [isCreatingMarket, setIsCreatingMarket] = React.useState(false);
   const router = useRouter();
@@ -1392,6 +1416,7 @@ export function InteractiveMarketCreation() {
       // Reset the "downstream" state so desiredStep matches the jump target.
       if (step === 'clarify_metric') {
         setIsNameConfirmed(false);
+        setSimilarMarketsAcknowledged(false);
         setIsDescriptionConfirmed(false);
         setSelectedSource(null);
         setIsIconConfirmed(false);
@@ -1401,6 +1426,7 @@ export function InteractiveMarketCreation() {
 
       if (step === 'name') {
         setIsNameConfirmed(false);
+        setSimilarMarketsAcknowledged(false);
         setIsDescriptionConfirmed(false);
         setSelectedSource(null);
         setIsIconConfirmed(false);
@@ -1414,8 +1440,19 @@ export function InteractiveMarketCreation() {
         setMarketName(suggestMarketName({ metricName: metric }));
       }
 
+      if (step === 'similar_markets') {
+        setIsNameConfirmed(true);
+        setSimilarMarketsAcknowledged(false);
+        setIsDescriptionConfirmed(false);
+        setSelectedSource(null);
+        setIsIconConfirmed(false);
+        setSourcesFetchState('idle');
+        return;
+      }
+
       if (step === 'description') {
         setIsNameConfirmed(true);
+        setSimilarMarketsAcknowledged(true);
         setIsDescriptionConfirmed(false);
         setSelectedSource(null);
         setIsIconConfirmed(false);
@@ -1436,6 +1473,7 @@ export function InteractiveMarketCreation() {
 
       if (step === 'select_source') {
         setIsNameConfirmed(true);
+        setSimilarMarketsAcknowledged(true);
         setIsDescriptionConfirmed(true);
         setSelectedSource(null);
         setIsIconConfirmed(false);
@@ -1462,6 +1500,7 @@ export function InteractiveMarketCreation() {
 
       if (step === 'icon') {
         setIsNameConfirmed(true);
+        setSimilarMarketsAcknowledged(true);
         setIsDescriptionConfirmed(true);
         devEnsureSelectedSource();
         setIsIconConfirmed(false);
@@ -1470,6 +1509,7 @@ export function InteractiveMarketCreation() {
 
       if (step === 'complete') {
         setIsNameConfirmed(true);
+        setSimilarMarketsAcknowledged(true);
         setIsDescriptionConfirmed(true);
         devEnsureSelectedSource();
         setIsIconConfirmed(true);
@@ -1497,6 +1537,7 @@ export function InteractiveMarketCreation() {
     setNameTouched(true);
     setDescriptionTouched(true);
     setIsNameConfirmed(true);
+    setSimilarMarketsAcknowledged(true);
     setIsDescriptionConfirmed(true);
 
     // Pick an icon immediately
@@ -1628,6 +1669,7 @@ export function InteractiveMarketCreation() {
     setNameTouched(true);
     setDescriptionTouched(true);
     setIsNameConfirmed(true);
+    setSimilarMarketsAcknowledged(true);
     setIsDescriptionConfirmed(true);
 
     setIconFile(null);
@@ -1806,6 +1848,12 @@ export function InteractiveMarketCreation() {
     setAssistantIsLoading(false);
     setAssistantHistory([{ role: 'user', content: prompt.trim() }]);
     setCachedValidatedSelection(null);
+    // Reset duplicate detection state
+    setSimilarMarkets([]);
+    setSimilarMarketsLoading(false);
+    setSimilarMarketsAcknowledged(false);
+    setMetricUrlDuplicates([]);
+    setMetricUrlBlockedSource(null);
 
     await runDefineOnlyDiscovery(prompt);
   };
@@ -1838,6 +1886,12 @@ export function InteractiveMarketCreation() {
     // Reset source denial/re-search state
     setDeniedSourceUrls([]);
     setSearchVariation(0);
+    // Reset duplicate detection state
+    setSimilarMarkets([]);
+    setSimilarMarketsLoading(false);
+    setSimilarMarketsAcknowledged(false);
+    setMetricUrlDuplicates([]);
+    setMetricUrlBlockedSource(null);
     // Reset assistant state
     setAssistantMessage('');
     setAssistantIsLoading(false);
@@ -2194,6 +2248,82 @@ export function InteractiveMarketCreation() {
     }
   }, [discoveryState, discoveryResult]);
 
+  // Check for similar existing markets as soon as the user types a market name.
+  // Debounced to avoid hammering the API on every keystroke.
+  const similarSearchTimerRef = React.useRef<number | null>(null);
+  const lastSimilarQueryRef = React.useRef<string>('');
+
+  React.useEffect(() => {
+    console.log('[SimilarMarkets] effect fired', JSON.stringify({ discoveryState, marketName, lastQuery: lastSimilarQueryRef.current }));
+    if (discoveryState !== 'success' && discoveryState !== 'clarify') {
+      console.log('[SimilarMarkets] skipped: discoveryState is', discoveryState);
+      return;
+    }
+    const query = (marketName || '').trim();
+    if (query.length < 2) {
+      console.log('[SimilarMarkets] skipped: query too short', JSON.stringify(query));
+      setSimilarMarkets([]);
+      setSimilarMarketsLoading(false);
+      lastSimilarQueryRef.current = '';
+      return;
+    }
+
+    if (query === lastSimilarQueryRef.current) {
+      console.log('[SimilarMarkets] skipped: same query as last time', JSON.stringify(query));
+      return;
+    }
+
+    if (similarSearchTimerRef.current) {
+      window.clearTimeout(similarSearchTimerRef.current);
+    }
+
+    console.log('[SimilarMarkets] scheduling search for', JSON.stringify(query));
+    setSimilarMarketsLoading(true);
+    setSimilarMarketsAcknowledged(false);
+
+    const controller = new AbortController();
+
+    similarSearchTimerRef.current = window.setTimeout(() => {
+      lastSimilarQueryRef.current = query;
+      console.log('[SimilarMarkets] fetching /api/markets/similar', JSON.stringify({ intent: promptRef.current, name: query }));
+      void (async () => {
+        try {
+          const res = await fetch('/api/markets/similar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              intent: promptRef.current,
+              name: query,
+              limit: 5,
+            }),
+          });
+          const json = await res.json().catch(() => ({}));
+          console.log('[SimilarMarkets] API response', JSON.stringify({ status: res.status, matchCount: json?.matches?.length, matches: json?.matches?.map((m: any) => ({ name: m.name, symbol: m.symbol, score: m.score })) }));
+          if (!controller.signal.aborted && Array.isArray(json?.matches)) {
+            const relevant = (json.matches as SimilarMarketMatch[]).filter(
+              (m) => m.score >= 0.08
+            );
+            console.log('[SimilarMarkets] relevant matches (score >= 0.08):', relevant.length, relevant.map((m) => ({ name: m.name, score: m.score })));
+            setSimilarMarkets(relevant);
+          }
+        } catch (err) {
+          console.warn('[SimilarMarkets] fetch error:', err);
+        } finally {
+          if (!controller.signal.aborted) setSimilarMarketsLoading(false);
+        }
+      })();
+    }, 350);
+
+    return () => {
+      controller.abort();
+      if (similarSearchTimerRef.current) {
+        window.clearTimeout(similarSearchTimerRef.current);
+        similarSearchTimerRef.current = null;
+      }
+    };
+  }, [marketName, discoveryState]);
+
   React.useEffect(() => {
     // Important: `iconPreviewUrl` is the source of truth for remote selections.
     // This effect should ONLY derive a preview URL from an uploaded File (blob:)
@@ -2330,15 +2460,20 @@ export function InteractiveMarketCreation() {
   }, [discoveryResult, discoveryState, isDescriptionConfirmed, isNameConfirmed, visibleStep, sourcesFetchNonce, searchVariation, deniedSourceUrls]);
 
   const desiredStep = React.useMemo<CreationStep>(() => {
-    if (!discoveryResult) return 'clarify_metric';
-    if (discoveryState === 'clarify') return 'clarify_metric';
-    if (discoveryState !== 'success') return 'clarify_metric';
-    if (!isNameConfirmed) return 'name';
-    if (!isDescriptionConfirmed) return 'description';
-    if (!selectedSource) return 'select_source';
-    if (!isIconConfirmed) return 'icon';
-    return 'complete';
-  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource]);
+    const step = (() => {
+      if (!discoveryResult) return 'clarify_metric' as const;
+      if (discoveryState === 'clarify') return 'clarify_metric' as const;
+      if (discoveryState !== 'success') return 'clarify_metric' as const;
+      if (!isNameConfirmed) return 'name' as const;
+      if (similarMarkets.length > 0 && !similarMarketsAcknowledged) return 'similar_markets' as const;
+      if (!isDescriptionConfirmed) return 'description' as const;
+      if (!selectedSource) return 'select_source' as const;
+      if (!isIconConfirmed) return 'icon' as const;
+      return 'complete' as const;
+    })();
+    console.log('[DesiredStep]', step, { isNameConfirmed, similarMarketsCount: similarMarkets.length, similarMarketsAcknowledged, similarMarketsLoading, isDescriptionConfirmed });
+    return step;
+  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, similarMarkets.length, similarMarketsAcknowledged]);
 
   React.useEffect(() => {
     if ((discoveryState !== 'success' && discoveryState !== 'clarify') || !discoveryResult) {
@@ -2436,7 +2571,9 @@ export function InteractiveMarketCreation() {
   ]);
 
   React.useEffect(() => {
+    console.log('[StepTransition]', { visibleStep, desiredStep });
     if (visibleStep === desiredStep) return;
+    console.log('[StepTransition] transitioning from', visibleStep, 'to', desiredStep);
     setIsStepAnimating(true);
 
     if (stepTimerRef.current) {
@@ -2444,8 +2581,8 @@ export function InteractiveMarketCreation() {
     }
 
     stepTimerRef.current = window.setTimeout(() => {
+      console.log('[StepTransition] setting visibleStep to', desiredStep);
       setVisibleStep(desiredStep);
-      // allow next paint before fading in
       requestAnimationFrame(() => setIsStepAnimating(false));
     }, 160);
   }, [desiredStep, visibleStep]);
@@ -2468,6 +2605,10 @@ export function InteractiveMarketCreation() {
 
     if (!isNameConfirmed) {
       return `Great — now pick a market name. I suggested one, but you can edit it.`;
+    }
+
+    if (similarMarkets.length > 0 && !similarMarketsAcknowledged) {
+      return `I found ${similarMarkets.length} similar market${similarMarkets.length > 1 ? 's' : ''} that already exist. Take a look — if none of these match what you need, you can continue creating yours.`;
     }
 
     if (!isDescriptionConfirmed) {
@@ -2499,7 +2640,7 @@ export function InteractiveMarketCreation() {
     }
 
     return `Perfect. Your market setup is ready.`;
-  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, sourcesFetchState, visibleStep]);
+  }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, similarMarkets.length, similarMarketsAcknowledged, sourcesFetchState, visibleStep]);
 
   return (
     <div
@@ -2536,7 +2677,10 @@ export function InteractiveMarketCreation() {
                   setNameTouched(true);
                   setMarketName(v);
                 }}
-                onConfirmName={() => setIsNameConfirmed(true)}
+                onConfirmName={() => {
+                  console.log('[onConfirmName] confirming name', { marketName, similarMarketsCount: similarMarkets.length, similarMarketsLoading, similarMarketsAcknowledged });
+                  setIsNameConfirmed(true);
+                }}
                 marketDescription={marketDescription}
                 onChangeDescription={(v) => {
                   setDescriptionTouched(true);
@@ -3074,7 +3218,94 @@ export function InteractiveMarketCreation() {
             opacity: 1;
           }
         }
+
+        @keyframes similar-market-in {
+          from {
+            transform: translateY(24px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
       `}</style>
+
+      {/* Similar markets bubble display (gate between name → description) */}
+      {(() => { console.log('[SimilarMarketsRender] gate check', { discoveryState, visibleStep, similarMarketsLength: similarMarkets.length }); return null; })()}
+      {discoveryState === 'success' &&
+        visibleStep === 'similar_markets' &&
+        similarMarkets.length > 0 && (
+        <div className="mt-8 w-[calc(100%+320px)] max-w-[calc(100vw-120px)] -ml-[280px]">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-start gap-4">
+              {similarMarkets.map((m, index) => (
+                <a
+                  key={m.id}
+                  href={`/token/${encodeURIComponent(m.symbol || m.market_identifier)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group relative flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200 hover:bg-white/5"
+                  style={{
+                    opacity: 1,
+                    transform: 'translateY(0)',
+                    animation: `similar-market-in 0.5s ease-out ${index * 80 + 100}ms both`,
+                  }}
+                >
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl overflow-hidden shadow-lg bg-gradient-to-br from-amber-400 to-orange-500">
+                    {m.icon_image_url ? (
+                      <img
+                        src={m.icon_image_url}
+                        alt={m.name || m.symbol}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => {
+                          const el = e.currentTarget;
+                          el.style.display = 'none';
+                          const fallback = el.nextElementSibling as HTMLElement | null;
+                          if (fallback) fallback.style.display = '';
+                        }}
+                      />
+                    ) : null}
+                    <span
+                      className="text-[16px] font-semibold text-white"
+                      style={m.icon_image_url ? { display: 'none' } : undefined}
+                    >
+                      {(m.name || m.symbol || '?')[0].toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1 text-left">
+                    <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 items-baseline gap-1">
+                        <div className="shrink-0 text-sm font-medium text-white">{m.name || m.market_identifier}</div>
+                        <div className="min-w-0 truncate text-sm font-medium text-white/60">{m.symbol}</div>
+                      </div>
+                      <span className="ml-auto shrink-0 rounded-full bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 text-[10px] font-medium text-amber-200 pointer-events-none">
+                        {Math.round(m.score * 100)}% match
+                      </span>
+                    </div>
+                    <div className="text-xs text-white/40 mt-0.5 truncate max-w-[320px]">{m.description}</div>
+                  </div>
+                </a>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setSimilarMarketsAcknowledged(true)}
+                className="inline-flex h-9 items-center justify-center rounded-xl bg-white px-5 text-sm font-medium text-black hover:bg-white/90 transition-colors"
+              >
+                Continue anyway
+              </button>
+              <span className="text-[11px] text-white/40">
+                These markets look similar — you can still create yours.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Discovery Results - Source Selection Tiles (Step 3) */}
       {discoveryState === 'success' &&
@@ -3098,11 +3329,31 @@ export function InteractiveMarketCreation() {
             const md = discoveryResult.metric_definition;
             if (!md) return;
 
+            // Clear any previous metric URL block state.
+            setMetricUrlBlockedSource(null);
+            setMetricUrlDuplicates([]);
+
+            // Hard block: check if this exact metric URL is already used by an existing market.
+            try {
+              const dupRes = await fetch('/api/markets/similar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ metric_url: source.url }),
+              });
+              const dupJson = await dupRes.json().catch(() => ({}));
+              if (Array.isArray(dupJson?.metric_url_duplicates) && dupJson.metric_url_duplicates.length > 0) {
+                setMetricUrlDuplicates(dupJson.metric_url_duplicates);
+                setMetricUrlBlockedSource(source.url);
+                return;
+              }
+            } catch {
+              // Non-critical; allow proceeding if the check fails.
+            }
+
             const nextKey = makeValidationCacheKey(md.metric_name, source.url);
             const canReuseValidation =
               Boolean(cachedValidatedSelection?.validation) && cachedValidatedSelection?.key === nextKey;
 
-            // If we already validated this exact URL for this metric, skip AI + keep downstream state.
             if (canReuseValidation) {
               setSelectedSource(source);
               setIsValidating(false);
@@ -3184,6 +3435,57 @@ export function InteractiveMarketCreation() {
         />
       )}
 
+      {/* Hard block: duplicate metric URL */}
+      {metricUrlBlockedSource && metricUrlDuplicates.length > 0 && visibleStep === 'select_source' && (
+        <div className="mt-4 w-full max-w-[560px]">
+          <div className="rounded-2xl border border-red-500/30 bg-red-500/[0.08] px-4 py-3 shadow-lg">
+            <div className="flex items-center gap-2">
+              <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-red-400" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="15" y1="9" x2="9" y2="15" />
+                <line x1="9" y1="9" x2="15" y2="15" />
+              </svg>
+              <span className="text-[13px] font-medium text-red-200">
+                This metric source is already in use
+              </span>
+            </div>
+            <div className="mt-2 text-[12px] text-white/60">
+              The URL you selected is already used by {metricUrlDuplicates.length === 1 ? 'an existing market' : `${metricUrlDuplicates.length} existing markets`}. You cannot create a new market with the same metric source. Please choose a different data source.
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {metricUrlDuplicates.map((m) => (
+                <a
+                  key={m.id}
+                  href={`/token/${encodeURIComponent(m.symbol || m.market_identifier)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-left transition-colors hover:bg-white/8 group"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12px] font-medium text-white/85 truncate">{m.name || m.market_identifier}</div>
+                    <div className="text-[11px] text-white/45 truncate">{m.symbol}</div>
+                  </div>
+                  <span className="shrink-0 text-[10px] text-white/30 group-hover:text-white/50 transition-colors">View</span>
+                </a>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMetricUrlBlockedSource(null);
+                setMetricUrlDuplicates([]);
+              }}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[12px] font-medium text-white/80 hover:bg-white/[0.08] transition-colors"
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+                <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+              </svg>
+              Choose a different source
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Icon Selection Tiles (Step: Icon) */}
       {discoveryState === 'success' &&
         discoveryResult &&
@@ -3219,9 +3521,9 @@ export function InteractiveMarketCreation() {
           iconPreviewUrl={iconPreviewUrl}
           metricDefinition={discoveryResult.metric_definition}
           onEdit={(step) => {
-            // Allow user to go back and edit a specific step
             if (step === 'name') {
               setIsNameConfirmed(false);
+              setSimilarMarketsAcknowledged(false);
               setIsDescriptionConfirmed(false);
               setSelectedSource(null);
               setIsIconConfirmed(false);
@@ -3230,13 +3532,12 @@ export function InteractiveMarketCreation() {
               setSelectedSource(null);
               setIsIconConfirmed(false);
             } else if (step === 'select_source') {
-              // Keep icon + previous validation cached so user can re-select without rerunning AI.
               setSelectedSource(null);
             } else if (step === 'icon') {
               setIsIconConfirmed(false);
             } else if (step === 'clarify_metric') {
-              // Go back to the beginning
               setIsNameConfirmed(false);
+              setSimilarMarketsAcknowledged(false);
               setIsDescriptionConfirmed(false);
               setSelectedSource(null);
               setIsIconConfirmed(false);

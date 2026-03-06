@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { MarketPreviewModalProps } from './types';
 import styles from './MarketPreviewModal.module.css';
 
@@ -18,158 +18,99 @@ const MarketPreviewModal: React.FC<MarketPreviewModalProps> = ({
 }) => {
   const [isAnimating, setIsAnimating] = useState(false);
   const [shouldAnimate, setShouldAnimate] = useState(false);
+  const scrollPositionRef = useRef<number>(0);
 
-  // Cleanup on component unmount
+  const lockScroll = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    scrollPositionRef.current = window.scrollY || 0;
+    document.body.style.overflow = 'hidden';
+  }, []);
+
+  const unlockScroll = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    document.body.style.overflow = '';
+    if (scrollPositionRef.current !== undefined) {
+      window.scrollTo(0, scrollPositionRef.current);
+    }
+  }, []);
+
   useEffect(() => {
     return () => {
-      if (typeof window !== 'undefined' && document.body) {
-        try {
-          document.body.style.overflow = 'unset';
-        } catch (error) {
-          console.warn('Error cleaning up body overflow on unmount:', error);
-        }
+      if (typeof window !== 'undefined') {
+        try { document.body.style.overflow = 'unset'; } catch { /* noop */ }
       }
     };
   }, []);
 
-  // Use useRef to store scroll position to avoid DOM property manipulation
-  const scrollPositionRef = useRef<number>(0);
-
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    
+
     if (isOpen) {
       setIsAnimating(true);
       setShouldAnimate(false);
-      
-      // Store current scroll position in ref
-      scrollPositionRef.current = window.scrollY || 0;
-      
-      // Simple scroll lock
-      if (document.body) {
-        document.body.style.overflow = 'hidden';
-      }
-      
-      // Start animation after a brief delay
-      const timer = setTimeout(() => {
-        setShouldAnimate(true);
-      }, 50);
-      
-      return () => {
-        if (timer) clearTimeout(timer);
-      };
+      lockScroll();
+      const t = setTimeout(() => setShouldAnimate(true), 50);
+      return () => clearTimeout(t);
     } else {
       setShouldAnimate(false);
-      
-      // Restore scroll when modal closes
-      if (document.body) {
-        document.body.style.overflow = '';
-      }
-      
-      // Restore scroll position
-      if (scrollPositionRef.current !== undefined) {
-        window.scrollTo(0, scrollPositionRef.current);
-      }
-      
-      // Reset animation state after a delay
-      const timer = setTimeout(() => {
-        setIsAnimating(false);
-      }, 1000);
-      
-      return () => {
-        if (timer) clearTimeout(timer);
-      };
+      unlockScroll();
+      const t = setTimeout(() => setIsAnimating(false), 700);
+      return () => clearTimeout(t);
     }
-  }, [isOpen]);
-
-  // Cleanup effect to ensure scroll is restored on unmount
-  useEffect(() => {
-    return () => {
-      if (typeof window !== 'undefined' && document?.body) {
-        document.body.style.overflow = '';
-      }
-    };
-  }, []);
+  }, [isOpen, lockScroll, unlockScroll]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isOpen) {
-        onClose();
-      }
-    };
+    return () => { unlockScroll(); };
+  }, [unlockScroll]);
 
-    if (isOpen) {
-      document.addEventListener('keydown', handleEscape);
-    }
-    
-    return () => {
-      if (typeof window !== 'undefined') {
-        document.removeEventListener('keydown', handleEscape);
-      }
-    };
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
-  const handleBackdropClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    try {
-      if (event.target === event.currentTarget) {
-        onClose();
-      }
-    } catch (error) {
-      console.warn('Error in backdrop click handler:', error);
-      onClose(); // Still try to close the modal
-    }
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose();
   };
 
-  const handleAnimationEnd = () => {
-    try {
-      if (!isOpen && !shouldAnimate) {
-        setIsAnimating(false);
-        setShouldAnimate(false);
-      }
-    } catch (error) {
-      console.warn('Error in animation end handler:', error);
-      setIsAnimating(false); // Ensure animation state is reset
+  const handleTransitionEnd = () => {
+    if (!isOpen && !shouldAnimate) {
+      setIsAnimating(false);
       setShouldAnimate(false);
     }
   };
 
-  // Don't render on server-side
-  if (typeof window === 'undefined') {
-    return null;
-  }
+  if (typeof window === 'undefined') return null;
+  if (!isOpen && !isAnimating) return null;
 
-  if (!isOpen && !isAnimating) {
-    return null;
-  }
+  const mainImage = templates.length > 0 && templates[0].image ? templates[0] : null;
 
-  try {
-    return (
-      <div
-        className={`${styles.backdrop} ${shouldAnimate ? styles.open : ''}`}
-        onClick={handleBackdropClick}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-      >
+  return (
+    <div
+      className={`${styles.backdrop} ${shouldAnimate ? styles.open : ''}`}
+      onClick={handleBackdropClick}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
       <div
         className={`${styles.modal} ${shouldAnimate ? styles.open : ''}`}
-        onTransitionEnd={handleAnimationEnd}
+        onTransitionEnd={handleTransitionEnd}
       >
         <div className={styles.dragHandle} />
-        
+
         <button
           className={styles.closeButton}
           onClick={onClose}
           aria-label="Close modal"
         >
-          ×
+          &#x2715;
         </button>
 
         <div className={styles.content}>
           <div className={styles.grid}>
-            {/* Left Column - Product Information */}
+            {/* Left — market info */}
             <div className={styles.leftColumn}>
               {category && (
                 <span className={styles.category}>{category}</span>
@@ -184,53 +125,42 @@ const MarketPreviewModal: React.FC<MarketPreviewModalProps> = ({
                 {author}
               </p>
 
-              {/* Pricing and Button Section with Separators */}
               <div className={styles.pricingSection}>
                 <div className={styles.pricingButtonRow}>
                   <div className={styles.pricing}>
                     <span className={styles.priceLabel}>from</span>
-                    <span className={styles.priceAmount}>
-                      {price}
-                    </span>
+                    <span className={styles.priceAmount}>{price}</span>
                     <span className={styles.currency}>{currency}</span>
                   </div>
-
-                                <button
-                    className={styles.ctaButton}
-                    onClick={onGoToProduct}
-                  >
+                  <button className={styles.ctaButton} onClick={onGoToProduct}>
                     Go to Market
                   </button>
                 </div>
               </div>
 
-              <p className={styles.description}>
-                {description}
-              </p>
+              <p className={styles.description}>{description}</p>
             </div>
 
-            {/* Right Column - Image Preview */}
+            {/* Right — preview images */}
             <div className={styles.rightColumn}>
-              {/* Main Preview Image */}
               <div className={styles.mainPreview}>
                 <div className={styles.previewFrame}>
-                  {templates.length > 0 && templates[0].image ? (
+                  {mainImage ? (
                     <img
-                      src={templates[0].image}
-                      alt={templates[0].title}
+                      src={mainImage.image}
+                      alt={mainImage.title}
                       className={styles.mainPreviewImage}
                     />
                   ) : (
                     <div className={styles.placeholderImage}>
-                      <span>Preview Image</span>
+                      <span>Preview</span>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Template Grid */}
               <div className={styles.templateGrid}>
-                {templates.slice(0, 4).map((template, index) => (
+                {templates.slice(0, 4).map((template) => (
                   <div key={template.id} className={styles.templateCard}>
                     <div className={styles.miniPreview}>
                       {template.image ? (
@@ -247,14 +177,11 @@ const MarketPreviewModal: React.FC<MarketPreviewModalProps> = ({
                     </div>
                   </div>
                 ))}
-                
-                {/* Fill remaining slots with placeholders if needed */}
-                {Array.from({ length: Math.max(0, 4 - templates.length) }, (_, index) => (
-                  <div key={`placeholder-${index}`} className={styles.templateCard}>
+
+                {Array.from({ length: Math.max(0, 4 - templates.length) }, (_, i) => (
+                  <div key={`placeholder-${i}`} className={styles.templateCard}>
                     <div className={styles.miniPreview}>
-                      <div className={styles.placeholderMini}>
-                        <span>+</span>
-                      </div>
+                      <div className={styles.placeholderMini}>+</div>
                     </div>
                   </div>
                 ))}
@@ -264,12 +191,7 @@ const MarketPreviewModal: React.FC<MarketPreviewModalProps> = ({
         </div>
       </div>
     </div>
-    );
-  } catch (error) {
-    console.error('Error rendering MarketPreviewModal:', error);
-    // Return a simple fallback if there's a rendering error
-    return null;
-  }
+  );
 };
 
-export default MarketPreviewModal; 
+export default MarketPreviewModal;

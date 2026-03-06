@@ -1,0 +1,387 @@
+/* ── ShareModal ── */
+/* Sophisticated minimal share modal */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.backdropEnter {
+  animation: backdropFadeIn 200ms ease-out forwards;
+}
+
+.backdropExit {
+  animation: backdropFadeOut 200ms ease-out forwards;
+}
+
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes backdropFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ── Modal Container ── */
+.modal {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: linear-gradient(
+    135deg,
+    rgba(15, 15, 15, 1) 0%,
+    rgba(10, 10, 12, 1) 50%,
+    rgba(15, 15, 15, 1) 100%
+  );
+  border: 1px solid #222222;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.modal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.3) 20%,
+    rgba(139, 92, 246, 0.4) 50%,
+    rgba(99, 102, 241, 0.3) 80%,
+    transparent 100%
+  );
+  z-index: 1;
+}
+
+.modalEnter {
+  animation: modalSlideIn 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.modalExit {
+  animation: modalSlideOut 200ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalSlideOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.closeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: #666666;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.closeBtn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+}
+
+.closeBtn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Share Options Grid ── */
+.content {
+  padding: 16px 20px 20px;
+}
+
+.shareGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.shareOption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.shareOption:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.shareOption:active {
+  transform: scale(0.96);
+}
+
+.iconCircle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+}
+
+.shareOption:hover .iconCircle {
+  transform: scale(1.05);
+}
+
+.iconCircle svg {
+  width: 24px;
+  height: 24px;
+}
+
+.shareLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: #808080;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Platform-specific colors */
+.twitter .iconCircle {
+  background: rgba(29, 155, 240, 0.12);
+  color: #1d9bf0;
+}
+
+.twitter:hover .iconCircle {
+  background: rgba(29, 155, 240, 0.2);
+}
+
+.facebook .iconCircle {
+  background: rgba(24, 119, 242, 0.12);
+  color: #1877f2;
+}
+
+.facebook:hover .iconCircle {
+  background: rgba(24, 119, 242, 0.2);
+}
+
+.reddit .iconCircle {
+  background: rgba(255, 69, 0, 0.12);
+  color: #ff4500;
+}
+
+.reddit:hover .iconCircle {
+  background: rgba(255, 69, 0, 0.2);
+}
+
+.discord .iconCircle {
+  background: rgba(88, 101, 242, 0.12);
+  color: #5865f2;
+}
+
+.discord:hover .iconCircle {
+  background: rgba(88, 101, 242, 0.2);
+}
+
+.telegram .iconCircle {
+  background: rgba(0, 136, 204, 0.12);
+  color: #0088cc;
+}
+
+.telegram:hover .iconCircle {
+  background: rgba(0, 136, 204, 0.2);
+}
+
+.whatsapp .iconCircle {
+  background: rgba(37, 211, 102, 0.12);
+  color: #25d366;
+}
+
+.whatsapp:hover .iconCircle {
+  background: rgba(37, 211, 102, 0.2);
+}
+
+.email .iconCircle {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+}
+
+.email:hover .iconCircle {
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.more .iconCircle {
+  background: rgba(255, 255, 255, 0.06);
+  color: #808080;
+}
+
+.more:hover .iconCircle {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+/* ── Link Copy Section ── */
+.linkSection {
+  margin-top: 4px;
+}
+
+.linkLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: #666666;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.linkBox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.linkBox:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.linkText {
+  flex: 1;
+  font-size: 12px;
+  color: #808080;
+  font-family: var(--font-geist-mono), 'Geist Mono', 'SF Mono', ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.copyBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #808080;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.copyBtn:hover {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.copyBtn:active {
+  transform: scale(0.95);
+}
+
+.copyBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.copyBtnSuccess {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #22c55e;
+}
+
+.copyBtnSuccess:hover {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #22c55e;
+}
+
+/* ── Responsive ── */
+@media (max-width: 500px) {
+  .modal {
+    max-width: 100%;
+  }
+
+  .shareGrid {
+    gap: 8px;
+  }
+
+  .shareOption {
+    padding: 10px 6px;
+  }
+
+  .iconCircle {
+    width: 40px;
+    height: 40px;
+  }
+
+  .iconCircle svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .shareLabel {
+    font-size: 9px;
+  }
+}

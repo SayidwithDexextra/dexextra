@@ -10,6 +10,7 @@ import {
   ThreadPanel,
   MarketActivityTabs
 } from '@/components/TokenView';
+import { MarketInfoHeader } from '@/components/MarketInfoHeader';
 import { TradingViewChart } from '@/components/TradingView';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
@@ -24,9 +25,14 @@ import { MetricLivePrice } from '@/components';
 import SeriesMarketToggle from '@/components/Series/SeriesMarketToggle';
 import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRouting';
 import { SettlementInterface } from '@/components/SettlementInterface';
+import { CommentSection } from '@/components/CommentSection';
+import { CreatorCard } from '@/components/CreatorCard';
+import { SimilarMarkets } from '@/components/SimilarMarkets';
+import { useComments } from '@/hooks/useComments';
 import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAiWorker';
 import { getSupabaseClient } from '@/lib/supabase-browser';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
+import useWallet from '@/hooks/useWallet';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -61,12 +67,16 @@ export default function TokenPage({ params }: TokenPageProps) {
 function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: string; tradingAction: 'long' | 'short' | null; onSwitchNetwork: () => void; }) {
   const md = useMarketData();
   const sp = useSearchParams();
+  const { walletData } = useWallet();
   const isDeploying = sp.get('deploying') === '1';
   const pipelineIdParam = sp.get('pipelineId') || sp.get('pipeline') || null;
   const deploymentOverlay = useDeploymentOverlay();
   const metricDebug = sp.get('metricDebug') === '1' && process.env.NODE_ENV !== 'production';
   const [isSettlementView, setIsSettlementView] = useState(false);
   const [pendingPipelineId, setPendingPipelineId] = useState<string | null>(pipelineIdParam);
+  const [isWatchlisted, setIsWatchlisted] = useState(false);
+  const [isWatchlistLoading, setIsWatchlistLoading] = useState(false);
+  const [watchlistCount, setWatchlistCount] = useState<number | null>(null);
   const symbolUpper = String(symbol || '').toUpperCase();
 
   // If we continued in background, persist a "pending deployment" hint so token pages
@@ -124,6 +134,59 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
   const loadingMessage = "Loading Trading Interface...";
   const loadingSubtitle = `Fetching ${symbol} market data, mark price, and available margin`;
+
+// Comments hook with real-time updates
+  const [commentSortBy, setCommentSortBy] = useState<'newest' | 'oldest' | 'top'>('newest');
+  const {
+    comments: liveComments,
+    totalCount: commentCount,
+    isLoading: commentsLoading,
+    hasMore: hasMoreComments,
+    loadMore: loadMoreComments,
+    submitComment,
+    submitReply,
+    likeComment,
+    unlikeComment,
+    deleteComment,
+    reportComment,
+  } = useComments({
+    marketIdentifier: symbol,
+    userWallet: walletData?.address,
+    userName: walletData?.userProfile?.display_name || walletData?.userProfile?.username || undefined,
+    sortBy: commentSortBy,
+  });
+
+  // Handle comment like toggle
+  const handleLikeComment = useCallback((commentId: string) => {
+    const comment = liveComments.find(c => c.id === commentId) || 
+                    liveComments.flatMap(c => c.replies || []).find(r => r.id === commentId);
+    if (comment?.isLiked) {
+      unlikeComment(commentId);
+    } else {
+      likeComment(commentId);
+    }
+  }, [liveComments, likeComment, unlikeComment]);
+
+  // Handle comment submission
+  const handleSubmitComment = useCallback(async (text: string, images?: File[]) => {
+    const result = await submitComment(text, images);
+    if (!result.success && result.error) {
+      console.error('Comment submission failed:', result.error);
+    }
+  }, [submitComment]);
+
+  // Handle reply submission
+  const handleSubmitReply = useCallback(async (commentId: string, text: string) => {
+    const result = await submitReply(commentId, text);
+    if (!result.success && result.error) {
+      console.error('Reply submission failed:', result.error);
+    }
+  }, [submitReply]);
+
+  // Handle report
+  const handleReportComment = useCallback((commentId: string) => {
+    reportComment(commentId, 'other', 'Reported by user');
+  }, [reportComment]);
 
   const marketAny = md.market as any;
   const marketHasContract = Boolean(marketAny?.market_address);
@@ -606,6 +669,126 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     void refreshScatterInfo();
   }, [metricDebug, currentMarketId, refreshScatterInfo]);
 
+  // Fetch watchlist status for this market
+  useEffect(() => {
+    const marketId = currentMarketId;
+    const walletAddress = walletData?.address;
+    if (!marketId || !walletAddress) {
+      setIsWatchlisted(false);
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`/api/watchlist?wallet=${walletAddress}`, { signal: controller.signal });
+        const json = await res.json();
+        if (json.success && Array.isArray(json.market_ids)) {
+          setIsWatchlisted(json.market_ids.includes(marketId));
+        }
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') console.error('Failed to fetch watchlist:', e);
+      }
+    })();
+    return () => controller.abort();
+  }, [currentMarketId, walletData?.address]);
+
+  // Fetch watchlist count for this market
+  useEffect(() => {
+    const marketId = currentMarketId;
+    if (!marketId) {
+      setWatchlistCount(null);
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`/api/watchlist/count?market_id=${marketId}`, { signal: controller.signal });
+        const json = await res.json();
+        if (json.success && typeof json.count === 'number') {
+          setWatchlistCount(json.count);
+        }
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') console.error('Failed to fetch watchlist count:', e);
+      }
+    })();
+    return () => controller.abort();
+  }, [currentMarketId]);
+
+  // Handle watchlist toggle
+  const handleWatchlistToggle = useCallback(async () => {
+    const marketId = currentMarketId;
+    const walletAddress = walletData?.address;
+    if (!marketId || !walletAddress || isWatchlistLoading) return;
+
+    setIsWatchlistLoading(true);
+    const wasWatchlisted = isWatchlisted;
+    setIsWatchlisted(!wasWatchlisted);
+
+    try {
+      const res = await fetch('/api/watchlist', {
+        method: wasWatchlisted ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet_address: walletAddress,
+          market_id: marketId,
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || 'Failed to update watchlist');
+      }
+    } catch (error) {
+      console.error('Error updating watchlist:', error);
+      setIsWatchlisted(wasWatchlisted);
+    } finally {
+      setIsWatchlistLoading(false);
+    }
+  }, [currentMarketId, walletData?.address, isWatchlisted, isWatchlistLoading]);
+
+  // Compute MarketInfoHeader props from market data (must be before early returns)
+  const marketInfoHeaderProps = useMemo(() => {
+    const market = md.market as any;
+    if (!market) return null;
+
+    const categories = Array.isArray(market.category)
+      ? market.category
+      : market.category
+        ? [market.category]
+        : [];
+
+    const tags = categories.slice(0, 3).map((cat: string) => ({ label: cat }));
+    const moreTagsCount = categories.length > 3 ? categories.length - 3 : undefined;
+
+    const status: 'live' | 'pending' | 'inactive' = 
+      market.market_status === 'ACTIVE' ? 'live' :
+      market.market_status === 'PENDING' || market.market_status === 'DEPLOYING' ? 'pending' :
+      'inactive';
+
+    const formattedWatchlistCount = watchlistCount !== null 
+      ? watchlistCount.toLocaleString() 
+      : '—';
+
+    return {
+      name: market.name || market.market_identifier || symbol,
+      symbol: market.symbol || market.market_identifier || symbol,
+      description: market.description || undefined,
+      logoUrl: market.icon_image_url || undefined,
+      verified: market.market_status === 'ACTIVE',
+      status,
+      settlementDate: market.settlement_date || undefined,
+      orderbookAddress: market.market_address || undefined,
+      marketId: market.market_id_bytes32 || undefined,
+      tags,
+      moreTagsCount,
+      stats: [
+        { label: 'Watching', value: formattedWatchlistCount },
+      ],
+      websiteUrl: market.market_config?.website_url || undefined,
+      twitterUrl: market.market_config?.twitter_url || undefined,
+      waybackSnapshot: market.market_config?.wayback_snapshot || undefined,
+    };
+  }, [md.market, watchlistCount, symbol]);
+
   if (shouldShowLoading) {
     return (
       <LoadingScreen 
@@ -713,6 +896,18 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   return (
     <div className="token-page min-h-screen bg-black text-white">
       <CryptoMarketTicker className="border-b border-gray-800" />
+      {/* Market Info Header */}
+      {marketInfoHeaderProps && (
+        <div className="px-1">
+          <MarketInfoHeader
+            {...marketInfoHeaderProps}
+            onWatchlistToggle={handleWatchlistToggle}
+            isWatchlisted={isWatchlisted}
+            isWatchlistLoading={isWatchlistLoading}
+            isWatchlistDisabled={!walletData?.address}
+          />
+        </div>
+      )}
       <div className="px-1 pb-8 pt-1">
         <div className="relative overflow-x-hidden overflow-y-visible">
           {/* Main trading content (unchanged layout) */}
@@ -935,6 +1130,87 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Comment Section + Creator Card - Desktop */}
+            <div className="hidden md:flex gap-1 mt-0.5 items-stretch">
+              <div style={{ width: 'calc(100% - 320px - 4px)' }}>
+                <CommentSection
+                  comments={liveComments}
+                  totalCount={commentCount}
+                  currentUser={walletData?.address ? {
+                    id: walletData.address,
+                    name: walletData.userProfile?.display_name || walletData.userProfile?.username || `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}`,
+                    avatarUrl: walletData.userProfile?.profile_image_url || undefined,
+                  } : undefined}
+                  sortBy={commentSortBy}
+                  onSortChange={setCommentSortBy}
+                  onSubmitComment={handleSubmitComment}
+                  onSubmitReply={handleSubmitReply}
+                  onLikeComment={handleLikeComment}
+                  onDeleteComment={deleteComment}
+                  onReportComment={handleReportComment}
+                  onLoadMore={loadMoreComments}
+                  hasMore={hasMoreComments}
+                  isLoading={commentsLoading}
+                />
+              </div>
+              <div className="w-80 flex-shrink-0 flex flex-col gap-1">
+                <CreatorCard
+                  creatorWallet={(md.market as any)?.creator_wallet_address}
+                  currentUserWallet={walletData?.address}
+                />
+                <SimilarMarkets
+                  marketName={(md.market as any)?.name || symbol}
+                  marketDescription={(md.market as any)?.description}
+                  categories={Array.isArray((md.market as any)?.category) 
+                    ? (md.market as any)?.category 
+                    : (md.market as any)?.category 
+                      ? [(md.market as any)?.category] 
+                      : undefined}
+                  currentMarketId={(md.market as any)?.id}
+                  limit={5}
+                  fillHeight
+                />
+              </div>
+            </div>
+
+            {/* Creator Card + Similar Markets + Comment Section - Mobile (full width, stacked) */}
+            <div className="block md:hidden mt-0.5 space-y-1">
+              <CreatorCard
+                creatorWallet={(md.market as any)?.creator_wallet_address}
+                currentUserWallet={walletData?.address}
+              />
+              <SimilarMarkets
+                marketName={(md.market as any)?.name || symbol}
+                marketDescription={(md.market as any)?.description}
+                categories={Array.isArray((md.market as any)?.category) 
+                  ? (md.market as any)?.category 
+                  : (md.market as any)?.category 
+                    ? [(md.market as any)?.category] 
+                    : undefined}
+                currentMarketId={(md.market as any)?.id}
+                limit={5}
+              />
+              <CommentSection
+                comments={liveComments}
+                totalCount={commentCount}
+                currentUser={walletData?.address ? {
+                  id: walletData.address,
+                  name: walletData.userProfile?.display_name || walletData.userProfile?.username || `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}`,
+                  avatarUrl: walletData.userProfile?.profile_image_url || undefined,
+                } : undefined}
+                sortBy={commentSortBy}
+                onSortChange={setCommentSortBy}
+                onSubmitComment={handleSubmitComment}
+                onSubmitReply={handleSubmitReply}
+                onLikeComment={handleLikeComment}
+                onDeleteComment={deleteComment}
+                onReportComment={handleReportComment}
+                onLoadMore={loadMoreComments}
+                hasMore={hasMoreComments}
+                isLoading={commentsLoading}
+              />
             </div>
           </div>
           {/* Settlement overlay (no layout shift) */}

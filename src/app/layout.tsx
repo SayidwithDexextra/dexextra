@@ -1,10 +1,16 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, Space_Grotesk } from 'next/font/google'
+import { GeistMono } from 'geist/font/mono'
 import './globals.css'
 import ClientLayout from '@/components/ClientLayout'
 // Removed CentralizedVaultProvider import - smart contract functionality deleted
 
 const inter = Inter({ subsets: ['latin'] })
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin'],
+  variable: '--font-space-grotesk',
+})
 
 export const metadata: Metadata = {
   title: 'Dexetera - DeFi Unlocked',
@@ -33,7 +39,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={`${inter.className} ${spaceGrotesk.variable} ${GeistMono.variable}`}>
         <ClientLayout>
           {children}
         </ClientLayout>
