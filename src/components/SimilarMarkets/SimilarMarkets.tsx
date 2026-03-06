@@ -84,29 +84,75 @@ export default function SimilarMarkets({
     setError(null);
 
     try {
-      const response = await fetch('/api/markets/similar', {
+      const allMatches: SimilarMarket[] = [];
+      const seenIds = new Set<string>();
+
+      // First, fetch by name/description (no category filter)
+      const baseResponse = await fetch('/api/markets/similar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: marketName,
           description: marketDescription,
-          category: categories?.[0],
-          limit: limit + 1,
+          limit: limit + 5,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch similar markets');
+      if (baseResponse.ok) {
+        const baseData = await baseResponse.json();
+        const baseMatches: SimilarMarket[] = Array.isArray(baseData.matches) ? baseData.matches : [];
+        for (const market of baseMatches) {
+          if (!seenIds.has(market.id) && market.id !== currentMarketId) {
+            seenIds.add(market.id);
+            allMatches.push(market);
+          }
+        }
       }
 
-      const data = await response.json();
-      const matches: SimilarMarket[] = Array.isArray(data.matches) ? data.matches : [];
-      
-      const filtered = matches
-        .filter((m) => m.id !== currentMarketId)
-        .slice(0, limit);
+      // Then, fetch for each category to find markets sharing any category
+      if (categories && categories.length > 0) {
+        const categoryPromises = categories.map(async (category) => {
+          try {
+            const response = await fetch('/api/markets/similar', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                intent: category,
+                category,
+                limit: limit + 3,
+              }),
+            });
 
-      setMarkets(filtered);
+            if (response.ok) {
+              const data = await response.json();
+              return Array.isArray(data.matches) ? data.matches : [];
+            }
+            return [];
+          } catch {
+            return [];
+          }
+        });
+
+        const categoryResults = await Promise.all(categoryPromises);
+        
+        for (const matches of categoryResults) {
+          for (const market of matches as SimilarMarket[]) {
+            if (!seenIds.has(market.id) && market.id !== currentMarketId) {
+              seenIds.add(market.id);
+              allMatches.push(market);
+            }
+          }
+        }
+      }
+
+      // Sort by score if available, otherwise keep original order
+      const sorted = allMatches.sort((a, b) => {
+        const scoreA = (a as any).score ?? 0;
+        const scoreB = (b as any).score ?? 0;
+        return scoreB - scoreA;
+      });
+
+      setMarkets(sorted.slice(0, limit));
     } catch (err) {
       console.error('Error fetching similar markets:', err);
       setError('Failed to load similar markets');

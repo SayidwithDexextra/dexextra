@@ -269,105 +269,195 @@ const BANNED_WORDS: string[] = [
   'motherfucker', 'cocksucker',
 ];
 
-// Normalize text for comparison (lowercase, remove special chars used to evade)
+// Unicode confusables map - characters that look like ASCII letters
+const UNICODE_CONFUSABLES: Record<string, string> = {
+  // Cyrillic lookalikes
+  'а': 'a', 'е': 'e', 'і': 'i', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x',
+  'А': 'a', 'Е': 'e', 'І': 'i', 'О': 'o', 'Р': 'p', 'С': 'c', 'У': 'y', 'Х': 'x',
+  'В': 'b', 'Н': 'h', 'К': 'k', 'М': 'm', 'Т': 't',
+  // Greek lookalikes
+  'α': 'a', 'ε': 'e', 'ι': 'i', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x',
+  'Α': 'a', 'Ε': 'e', 'Ι': 'i', 'Ο': 'o', 'Ρ': 'p', 'Τ': 't', 'Υ': 'y', 'Χ': 'x',
+  // Mathematical/special characters
+  'ℓ': 'l', 'ℐ': 'i', 'ℑ': 'i', 'ℕ': 'n', 'ℝ': 'r', 'ℤ': 'z',
+  'ａ': 'a', 'ｂ': 'b', 'ｃ': 'c', 'ｄ': 'd', 'ｅ': 'e', 'ｆ': 'f', 'ｇ': 'g', 'ｈ': 'h',
+  'ｉ': 'i', 'ｊ': 'j', 'ｋ': 'k', 'ｌ': 'l', 'ｍ': 'm', 'ｎ': 'n', 'ｏ': 'o', 'ｐ': 'p',
+  'ｑ': 'q', 'ｒ': 'r', 'ｓ': 's', 'ｔ': 't', 'ｕ': 'u', 'ｖ': 'v', 'ｗ': 'w', 'ｘ': 'x',
+  'ｙ': 'y', 'ｚ': 'z',
+  // Accented characters
+  'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a', 'æ': 'ae',
+  'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
+  'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
+  'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o',
+  'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u',
+  'ñ': 'n', 'ç': 'c', 'ß': 'ss',
+  // Zero-width and invisible characters (strip them)
+  '\u200B': '', '\u200C': '', '\u200D': '', '\uFEFF': '', '\u00AD': '',
+};
+
+// Normalize text for comparison - comprehensive normalization
 function normalizeText(text: string): string {
-  return text
-    .toLowerCase()
-    // Leetspeak number substitutions
-    .replace(/[0-9]/g, (char) => {
-      const leetMap: Record<string, string> = {
-        '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '8': 'b', '9': 'g',
-      };
-      return leetMap[char] || char;
-    })
-    // Symbol substitutions
+  let result = text.toLowerCase();
+  
+  // Replace Unicode confusables with ASCII equivalents
+  for (const [unicode, ascii] of Object.entries(UNICODE_CONFUSABLES)) {
+    result = result.split(unicode).join(ascii);
+  }
+  
+  // Leetspeak number substitutions
+  const leetMap: Record<string, string> = {
+    '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a', '5': 's', 
+    '6': 'g', '7': 't', '8': 'b', '9': 'g',
+  };
+  result = result.replace(/[0-9]/g, (char) => leetMap[char] || char);
+  
+  // Symbol substitutions
+  result = result
     .replace(/[@]/g, 'a')
     .replace(/[$]/g, 's')
-    .replace(/[!|l]/g, 'i')
+    .replace(/[!|ı]/g, 'i')
     .replace(/\+/g, 't')
-    .replace(/ph/g, 'f')
-    .replace(/x/g, 'ck')
-    // Remove separators used to break up words
-    .replace(/[*_.\-~`'^]/g, '')
-    // Normalize whitespace
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/&/g, 'and')
+    .replace(/\(/g, 'c')
+    .replace(/\)/g, '')
+    .replace(/</g, 'c')
+    .replace(/>/g, '')
+    .replace(/\{/g, 'c')
+    .replace(/\}/g, '')
+    .replace(/\[/g, 'c')
+    .replace(/\]/g, '');
+  
+  // Remove separators and special chars used to break up words
+  result = result.replace(/[*_.\-~`'^"'""''«»‹›„‚•·°¨´¸¯˘˙˚˝˛ˇ]/g, '');
+  
+  // Remove emojis and other non-letter characters that might be used as separators
+  result = result.replace(/[\u{1F300}-\u{1F9FF}]/gu, '');
+  
+  return result;
 }
 
-// Collapse repeated characters (e.g., "niggger" -> "niger", "faaag" -> "fag")
-function collapseRepeats(text: string): string {
-  return text.replace(/(.)\1+/g, '$1$1'); // Keep max 2 of same char
+// Remove ALL spaces and separators to catch spaced-out words like "n i g g e r"
+function removeAllSpacing(text: string): string {
+  return text.replace(/\s+/g, '');
 }
 
-// Generate spelling variations for a word to catch single/double letter variations
-function generateVariations(word: string): string[] {
-  const variations: Set<string> = new Set();
-  variations.add(word);
+// Collapse ALL repeated characters to single (niggggger -> niger)
+function collapseAllRepeats(text: string): string {
+  return text.replace(/(.)\1+/g, '$1');
+}
+
+// Collapse to max 2 of same char (niggggger -> nigger)  
+function collapseToDouble(text: string): string {
+  return text.replace(/(.)\1{2,}/g, '$1$1');
+}
+
+// Generate core variations of a word for matching
+function generateCorePatterns(word: string): string[] {
+  const patterns: Set<string> = new Set();
   
-  // Add collapsed version (removes extra repeated chars)
-  const collapsed = word.replace(/(.)\1+/g, '$1');
-  variations.add(collapsed);
+  // Original
+  patterns.add(word);
   
-  // Add version with doubled consonants collapsed to single
-  const singleConsonants = word.replace(/([bcdfghjklmnpqrstvwxyz])\1/g, '$1');
-  variations.add(singleConsonants);
+  // Fully collapsed (all repeats to single)
+  const fullyCollapsed = collapseAllRepeats(word);
+  patterns.add(fullyCollapsed);
   
-  // For each character, generate version with that char doubled
-  for (let i = 0; i < collapsed.length; i++) {
-    const doubled = collapsed.slice(0, i + 1) + collapsed[i] + collapsed.slice(i + 1);
-    variations.add(doubled);
+  // Collapsed to double
+  const doubleCollapsed = collapseToDouble(word);
+  patterns.add(doubleCollapsed);
+  
+  // Without final 's' (niggers -> nigger)
+  if (word.endsWith('s')) {
+    patterns.add(word.slice(0, -1));
+    patterns.add(collapseAllRepeats(word.slice(0, -1)));
+  }
+  
+  // Common suffix variations
+  const suffixVariations: [string, string][] = [
+    ['er', 'a'], ['a', 'er'], ['ers', 'as'], ['as', 'ers'],
+    ['ing', 'in'], ['in', 'ing'], ['ed', ''], ['s', ''],
+  ];
+  for (const [from, to] of suffixVariations) {
+    if (word.endsWith(from)) {
+      patterns.add(word.slice(0, -from.length) + to);
+    }
+  }
+  
+  return Array.from(patterns);
+}
+
+// Common phonetic substitutions that evaders use
+const PHONETIC_SUBS: [string, string][] = [
+  ['ck', 'k'], ['k', 'ck'],
+  ['ph', 'f'], ['f', 'ph'],
+  ['gh', 'g'], ['wh', 'w'],
+  ['ee', 'i'], ['i', 'ee'],
+  ['oo', 'u'], ['u', 'oo'],
+  ['x', 'ks'], ['ks', 'x'],
+  ['qu', 'kw'], ['kw', 'qu'],
+];
+
+// Apply all phonetic variations
+function getPhoneticVariations(text: string): string[] {
+  const variations: Set<string> = new Set([text]);
+  
+  for (const [from, to] of PHONETIC_SUBS) {
+    if (text.includes(from)) {
+      variations.add(text.replace(new RegExp(from, 'g'), to));
+    }
   }
   
   return Array.from(variations);
 }
 
-// Common phonetic substitutions that evaders use
-const PHONETIC_PATTERNS: [RegExp, string][] = [
-  [/ck/g, 'k'],
-  [/ph/g, 'f'],
-  [/gh/g, 'g'],
-  [/wh/g, 'w'],
-  [/er$/g, 'a'],  // nigger -> nigga
-  [/a$/g, 'er'],  // nigga -> nigger
-  [/ee/g, 'i'],
-  [/oo/g, 'u'],
-  [/y$/g, 'ie'],
-  [/ie$/g, 'y'],
-];
-
-// Apply phonetic normalization
-function phoneticNormalize(text: string): string {
-  let result = text;
-  for (const [pattern, replacement] of PHONETIC_PATTERNS) {
-    result = result.replace(pattern, replacement);
-  }
-  return result;
-}
-
-// Check if text contains banned words
+// Check if text contains banned words - comprehensive check
 function containsBannedWord(text: string): { hasBannedWord: boolean; word?: string } {
+  // Create multiple normalized versions of input
   const normalized = normalizeText(text);
-  const collapsed = collapseRepeats(normalized);
-  const phonetic = phoneticNormalize(collapsed);
+  const noSpaces = removeAllSpacing(normalized);
+  const collapsed = collapseAllRepeats(noSpaces);
+  const doubleCollapsed = collapseToDouble(noSpaces);
   
-  // All versions of the input to check against
-  const inputVersions = [normalized, collapsed, phonetic];
+  // All versions of the input to check
+  const inputVersions = new Set([
+    normalized,
+    noSpaces,
+    collapsed,
+    doubleCollapsed,
+    // Also check with spaces normalized but not removed
+    normalized.replace(/\s+/g, ' ').trim(),
+  ]);
+  
+  // Add phonetic variations of each input version
+  for (const version of Array.from(inputVersions)) {
+    for (const phoneticVar of getPhoneticVariations(version)) {
+      inputVersions.add(phoneticVar);
+      inputVersions.add(collapseAllRepeats(phoneticVar));
+    }
+  }
   
   for (const bannedWord of BANNED_WORDS) {
-    const normalizedBanned = normalizeText(bannedWord);
-    const bannedVariations = generateVariations(normalizedBanned);
+    // Get all patterns for this banned word
+    const normalizedBanned = normalizeText(bannedWord).replace(/\s+/g, '');
+    const bannedPatterns = generateCorePatterns(normalizedBanned);
     
-    // Also add phonetic variations of the banned word
-    bannedVariations.push(phoneticNormalize(normalizedBanned));
-    bannedVariations.push(collapseRepeats(normalizedBanned));
+    // Add phonetic variations of each pattern
+    const allPatterns: Set<string> = new Set();
+    for (const pattern of bannedPatterns) {
+      allPatterns.add(pattern);
+      for (const phoneticVar of getPhoneticVariations(pattern)) {
+        allPatterns.add(phoneticVar);
+        allPatterns.add(collapseAllRepeats(phoneticVar));
+      }
+    }
     
-    for (const variant of bannedVariations) {
-      if (!variant) continue;
-      const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-      
-      for (const inputVersion of inputVersions) {
-        if (regex.test(inputVersion)) {
+    // Check each input version against each banned pattern
+    for (const inputVersion of inputVersions) {
+      for (const pattern of allPatterns) {
+        if (!pattern || pattern.length < 2) continue;
+        
+        // Direct substring match (catches embedded slurs)
+        if (inputVersion.includes(pattern)) {
           return { hasBannedWord: true, word: bannedWord };
         }
       }
