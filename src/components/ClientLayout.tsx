@@ -71,22 +71,32 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                   
                     <div className="flex">
                       <Navbar isOpen={isNavbarOpen} onOpenChange={handleNavbarOpenChange} />
-                      <main 
+                      <div 
                         className="flex-1"
-                        style={{ 
-                          marginLeft: isMobile ? '0px' : `${collapsedNavbarWidth}px`, // Sidebar does not reserve width on mobile
-                          marginTop: '48px', // Account for fixed header
-                          minHeight: isMobile ? 'calc(100vh - 48px)' : 'calc(100vh - 96px)', // Desktop still accounts for footer
-                          marginBottom: isMobile ? '0px' : '48px', // Footer reserved only on desktop
-                          backgroundColor: '#1a1a1a',
-                          minWidth: 0, // Prevent flex child from overflowing
-                          overflow: 'hidden', // Contain any overflowing content
+                        style={{
+                          // Mobile: slide content when menu opens (encapsulates screen in sliding animation)
+                          transform: isMobile && isNavbarOpen ? 'translateX(85vw)' : 'translateX(0)',
+                          transition: 'transform 300ms ease-in-out',
+                          minWidth: 0,
                         }}
                       >
-                        <div style={{ backgroundColor: '#1a1a1a', width: '100%', overflow: 'hidden' }}>
-                          {children}
-                        </div>
-                      </main>
+                        <main 
+                          className="flex-1"
+                          style={{ 
+                            marginLeft: isMobile ? '0px' : `${collapsedNavbarWidth}px`, // Sidebar does not reserve width on mobile
+                            marginTop: isMobile ? '56px' : '48px', // Mobile header is 56px
+                            minHeight: isMobile ? 'calc(100vh - 56px)' : 'calc(100vh - 96px)', // Desktop still accounts for footer
+                            marginBottom: isMobile ? '0px' : '48px', // Footer reserved only on desktop
+                            backgroundColor: '#1a1a1a',
+                            minWidth: 0,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <div style={{ backgroundColor: '#1a1a1a', width: '100%', overflow: 'hidden' }}>
+                            {children}
+                          </div>
+                        </main>
+                      </div>
                     </div>
                     {/* Global session-aware prompt for enabling trading */}
                     <EnableTradingPrompt />

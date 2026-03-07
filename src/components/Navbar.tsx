@@ -157,6 +157,16 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
     return () => mediaQuery.removeEventListener('change', updateMobileState)
   }, [])
 
+  // Listen for mobile menu toggle events from Header
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handleMobileMenuToggle = (e: CustomEvent<{ isOpen: boolean }>) => {
+      onOpenChange(e.detail.isOpen)
+    }
+    window.addEventListener('mobileMenu:toggle', handleMobileMenuToggle as EventListener)
+    return () => window.removeEventListener('mobileMenu:toggle', handleMobileMenuToggle as EventListener)
+  }, [onOpenChange])
+
   // Determine active item based on current pathname
   const getActiveItem = () => {
     const currentItem = navigationItems.find(item => {
@@ -167,17 +177,18 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
     return currentItem?.id || ''
   }
 
+  // Dispatch close event to sync with Header
+  const closeMobileMenu = () => {
+    onOpenChange(false)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('mobileMenu:close'))
+    }
+  }
+
+  // On mobile when closed, don't render the hamburger button (Header handles it now)
   if (isMobile && !isOpen) {
     return (
       <>
-        <button
-          onClick={() => onOpenChange(true)}
-          className="fixed left-2 top-[52px] z-[10000] h-11 w-11 rounded-md border border-[#333333] bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] text-white shadow-[2px_0_10px_rgba(0,0,0,0.2)]"
-          aria-label="Open navigation menu"
-        >
-          ☰
-        </button>
-
         <WalletModal
           isOpen={showWalletModal}
           onClose={() => setShowWalletModal(false)}
@@ -193,17 +204,185 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
 
       return (
       <>
-                <nav 
+        {/* Mobile: full-screen sliding overlay - encapsulates entire screen */}
+        {isMobile && (
+          <>
+            {/* Backdrop - fades in when menu opens */}
+            <div 
+              className="fixed inset-0 z-[9997] transition-opacity duration-300 ease-in-out"
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                opacity: isOpen ? 1 : 0,
+                pointerEvents: isOpen ? 'auto' : 'none',
+              }}
+              onClick={closeMobileMenu}
+              aria-hidden="true"
+            />
+            {/* Full-screen sliding panel */}
+            <nav 
+              className="fixed left-0 top-0 bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333] transition-transform duration-300 ease-in-out"
+              data-walkthrough="navbar"
+              style={{
+                width: '100vw',
+                height: '100dvh',
+                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                overflowX: 'hidden',
+                overflowY: 'auto',
+                zIndex: 9999,
+                boxShadow: '4px 0 24px rgba(0, 0, 0, 0.4)',
+                transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
+              }}
+            >
+              <div 
+                className="h-full flex flex-col pt-14"
+                style={{
+                  padding: '20px 16px',
+                  minWidth: 0,
+                  width: '100%',
+                }}
+              >
+                {isMobile && isOpen && (
+                  <div className="mb-4 flex items-center justify-between -mt-2">
+                    <span className="text-white text-base font-semibold">Menu</span>
+                    <button
+                      onClick={closeMobileMenu}
+                      className="w-10 h-10 rounded-full flex items-center justify-center border border-[#2A2A2A] text-[#A0A0A0] hover:text-white hover:border-[#3A3A3A] transition-all duration-200"
+                      aria-label="Close navigation menu"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+                {/* Wallet Header - shown when mobile menu is open */}
+                <div 
+                  className="flex items-center justify-between mb-6 cursor-pointer"
+                  style={{
+                    padding: '14px',
+                    borderRadius: '12px',
+                    backgroundColor: '#2a2a2a',
+                  }}
+                  onClick={async () => {
+                    if (walletData.isConnected) {
+                      setShowAccountModal(true)
+                    } else {
+                      setShowWalletModal(true)
+                    }
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <div 
+                      className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold"
+                      style={{
+                        background: walletData.isConnected 
+                          ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
+                          : 'linear-gradient(135deg, #666 0%, #888 100%)',
+                      }}
+                    >
+                      <span>
+                        {walletData.isConnecting 
+                          ? '⏳' 
+                          : walletData.avatar || '👤'
+                        }
+                      </span>
+                    </div>
+                    <div>
+                      <div className="text-white font-medium text-base">
+                        {walletData.isConnecting 
+                          ? 'Connecting...'
+                          : walletData.isConnected 
+                            ? formatAddress(walletData.address || '')
+                            : 'Connect Wallet'
+                        }
+                      </div>
+                      <div style={{ color: '#a0a0a0', fontSize: '13px' }}>
+                        {walletData.isConnected 
+                          ? formatBalance(walletData.balance || '0')
+                          : 'Tap to connect'
+                        }
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronDownIcon />
+                </div>
+                {/* Navigation Items */}
+                <div className="flex flex-col space-y-1">
+                  {navigationItems.map((item) => {
+                    const Icon = item.icon
+                    const isActive = getActiveItem() === item.id
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          router.push(item.route)
+                          closeMobileMenu()
+                        }}
+                        className="w-full flex items-center gap-3"
+                        data-walkthrough={`nav:${item.id}`}
+                        style={{
+                          height: '48px',
+                          padding: '0 14px',
+                          borderRadius: '10px',
+                          fontSize: '15px',
+                          fontWeight: '500',
+                          backgroundColor: isActive 
+                            ? 'rgba(74, 144, 226, 0.15)' 
+                            : 'transparent',
+                          color: isActive ? '#4a90e2' : '#e5e5e5',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isActive) {
+                            e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.06)'
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isActive) {
+                            e.currentTarget.style.backgroundColor = 'transparent'
+                          }
+                        }}
+                      >
+                        <Icon />
+                        <span>{item.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {/* New Market Button */}
+                <div className="mt-8">
+                  <button
+                    onClick={() => {
+                      router.push('/new-market')
+                      closeMobileMenu()
+                    }}
+                    data-walkthrough="new-market"
+                    className="flex items-center justify-center text-white font-semibold text-base w-full transition-all duration-200 hover:opacity-90"
+                    style={{
+                      height: '52px',
+                      borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)',
+                      border: 'none',
+                    }}
+                  >
+                    ➕ New Market
+                  </button>
+                </div>
+              </div>
+            </nav>
+          </>
+        )}
+
+        {/* Desktop Navbar */}
+        {!isMobile && (
+        <nav 
           className="fixed left-0 top-0 h-full bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333] transition-all duration-300 ease-in-out"
           data-walkthrough="navbar"
           style={{
-            width: isMobile ? '100vw' : (isOpen ? `${expandedWidth}px` : `${collapsedWidth}px`),
-            height: isMobile ? '100dvh' : '100%',
+            width: isOpen ? `${expandedWidth}px` : `${collapsedWidth}px`,
+            height: '100%',
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             overflowX: 'hidden',
             overflowY: 'auto',
-            zIndex: 9999, // High z-index to ensure it overlays all content
-            boxShadow: isOpen ? '4px 0 20px rgba(0, 0, 0, 0.3)' : '2px 0 10px rgba(0, 0, 0, 0.2)', // Add shadow when expanded
+            zIndex: 9999,
+            boxShadow: isOpen ? '4px 0 20px rgba(0, 0, 0, 0.3)' : '2px 0 10px rgba(0, 0, 0, 0.2)',
           }}
           onMouseEnter={() => {
             if (!isMobile) onOpenChange(true)
@@ -222,18 +401,6 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
               width: '100%'
             }}
           >
-            {isMobile && isOpen && (
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-white text-sm font-medium">Menu</span>
-                <button
-                  onClick={() => onOpenChange(false)}
-                  className="w-8 h-8 rounded-md border border-[#2A2A2A] text-[#A0A0A0] hover:text-white hover:border-[#3A3A3A] transition-all duration-200"
-                  aria-label="Close navigation menu"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
             {/* Wallet Header */}
             {isOpen && (
           <div 
@@ -332,7 +499,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                   key={item.id}
                   onClick={() => {
                     router.push(item.route)
-                    if (isMobile) onOpenChange(false)
+                    if (isMobile) closeMobileMenu()
                   }}
                   className={`w-full flex items-center transition-all duration-200 ${
                     isOpen ? 'gap-2' : 'justify-center'
@@ -379,7 +546,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
            <button
              onClick={() => {
                router.push('/new-market')
-               if (isMobile) onOpenChange(false)
+               if (isMobile) closeMobileMenu()
              }}
              data-walkthrough="new-market"
              className="flex items-center justify-center text-white font-semibold text-base transition-all duration-200 hover:opacity-80 cursor-pointer"
@@ -401,7 +568,6 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
            <button
              onClick={() => {
                router.push('/new-market')
-               if (isMobile) onOpenChange(false)
              }}
              data-walkthrough="new-market"
              className="flex items-center justify-center text-white font-semibold transition-all duration-200 hover:opacity-80 cursor-pointer"
@@ -420,6 +586,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
          )}
           </div>
         </nav>
+        )}
       {/* Wallet Connection Modal */}
       <WalletModal 
         isOpen={showWalletModal} 

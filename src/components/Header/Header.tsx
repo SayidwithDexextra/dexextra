@@ -56,11 +56,26 @@ const ChevronDownIcon = () => (
   </svg>
 )
 
+// Hamburger Menu Icon Component (OpenSea-style)
+const HamburgerIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 12H21M3 6H21M3 18H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+)
+
+// Close Icon Component
+const CloseIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+)
+
 export default function Header() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false)
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false)
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const profileTriggerRef = useRef<HTMLButtonElement | null>(null)
   const { walletData, portfolio } = useWallet()
   const router = useRouter()
@@ -355,8 +370,164 @@ export default function Header() {
     )
   }
 
+  // Toggle mobile menu and dispatch event to Navbar
+  const toggleMobileMenu = () => {
+    const newState = !isMobileMenuOpen
+    setIsMobileMenuOpen(newState)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('mobileMenu:toggle', { detail: { isOpen: newState } }))
+    }
+  }
+
+  // Listen for navbar close events
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handleNavbarClose = () => setIsMobileMenuOpen(false)
+    window.addEventListener('mobileMenu:close', handleNavbarClose)
+    return () => window.removeEventListener('mobileMenu:close', handleNavbarClose)
+  }, [])
+
   return (
     <>
+      {/* Mobile Header - OpenSea Style */}
+      {isMobile && (
+        <header 
+          className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between"
+          style={{
+            height: '56px',
+            backgroundColor: '#1a1a1a',
+            padding: '0 12px',
+            borderBottom: '1px solid #2a2a2a',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          }}
+        >
+          {/* Left - Hamburger Menu + Logo */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleMobileMenu}
+              className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-200"
+              style={{ color: '#ffffff' }}
+              aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
+              onMouseEnter={(e) => {
+                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as any).style.backgroundColor = 'transparent'
+              }}
+            >
+              {isMobileMenuOpen ? <CloseIcon /> : <HamburgerIcon />}
+            </button>
+
+            {/* Logo + Brand Name */}
+            <Link 
+              href="/" 
+              className="flex items-center gap-2"
+              aria-label="Go to Dexetera home"
+            >
+              <Image
+                src="/Dexicon/LOGO-Dexetera-02.svg"
+                alt="Dexetera"
+                width={28}
+                height={28}
+                className="w-7 h-7 drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
+                priority
+              />
+              <span
+                className="text-white font-semibold text-[15px]"
+                style={{ letterSpacing: '0.02em' }}
+              >
+                Dexetera
+              </span>
+            </Link>
+          </div>
+
+          {/* Right - Search + Connect */}
+          <div className="flex items-center gap-2">
+            {/* Search Button */}
+            <button
+              onClick={() => setIsSearchModalOpen(true)}
+              className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-200"
+              style={{ color: '#ffffff' }}
+              aria-label="Search"
+              data-walkthrough="header-search"
+              onMouseEnter={(e) => {
+                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as any).style.backgroundColor = 'transparent'
+              }}
+            >
+              <SearchIcon />
+            </button>
+
+            {/* Connect/Profile Button */}
+            <button
+              onClick={() => {
+                if (!walletData.isConnected) {
+                  setIsWalletModalOpen(true)
+                } else {
+                  setIsProfileModalOpen(!isProfileModalOpen)
+                }
+              }}
+              className="flex items-center justify-center h-9 px-4 rounded-full font-medium text-sm transition-all duration-200"
+              style={{
+                backgroundColor: walletData.isConnected ? 'transparent' : '#4a9eff',
+                color: '#ffffff',
+                border: walletData.isConnected ? '1px solid #333333' : 'none',
+              }}
+              ref={walletData.isConnected ? profileTriggerRef : undefined}
+              data-walkthrough="header-connect-wallet"
+              aria-label={walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
+              onMouseEnter={(e) => {
+                if (walletData.isConnected) {
+                  (e.currentTarget as any).style.borderColor = '#444444'
+                  (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
+                } else {
+                  (e.currentTarget as any).style.backgroundColor = '#3d8ae6'
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (walletData.isConnected) {
+                  (e.currentTarget as any).style.borderColor = '#333333'
+                  (e.currentTarget as any).style.backgroundColor = 'transparent'
+                } else {
+                  (e.currentTarget as any).style.backgroundColor = '#4a9eff'
+                }
+              }}
+            >
+              {walletData.isConnected ? (
+                <div className="flex items-center gap-2">
+                  <div 
+                    className="w-6 h-6 rounded-full flex items-center justify-center overflow-hidden"
+                    style={{
+                      backgroundColor: '#00d4aa',
+                    }}
+                  >
+                    {walletData.userProfile?.profile_image_url ? (
+                      <Image 
+                        src={walletData.userProfile.profile_image_url} 
+                        alt="Profile" 
+                        width={24}
+                        height={24}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span style={{ color: '#000', fontSize: '10px', fontWeight: 600 }}>
+                        {getDisplayName().charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                'Connect'
+              )}
+            </button>
+          </div>
+        </header>
+      )}
+
+      {/* Desktop Header */}
+      {!isMobile && (
       <header 
         className="fixed top-0 right-0 z-40 flex items-center justify-between transition-all duration-300 ease-in-out"
         style={{
@@ -365,8 +536,8 @@ export default function Header() {
           padding: '0 16px',
           borderBottom: '1px solid #333333',
           fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-          left: isMobile ? '0px' : '60px', // Mobile uses full width
-          width: isMobile ? '100vw' : 'calc(100vw - 60px)' // Desktop keeps collapsed navbar offset
+          left: '60px',
+          width: 'calc(100vw - 60px)'
         }}
       >
         {/* Brand + Search Section */}
@@ -377,7 +548,7 @@ export default function Header() {
             aria-label="Go to Dexetera home"
           >
             <Image
-              src="/Dexicon/LOGO-Dexetera-02.svg" // Transparent mark
+              src="/Dexicon/LOGO-Dexetera-02.svg"
               alt="Dexetera"
               width={22}
               height={22}
@@ -737,6 +908,7 @@ export default function Header() {
           </button>
         </div>
       </header>
+      )}
 
       {/* User Profile Modal */}
       <UserProfileModal

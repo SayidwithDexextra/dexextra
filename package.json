@@ -25,7 +25,8 @@
     "migrate:clickhouse:add-market-uuid": "node scripts/migrate-add-market-uuid.js",
     "supabase:serve": "npx supabase@latest functions serve --env-file .env.local --no-verify-jwt",
     "supabase:deploy": "npx supabase@latest functions deploy",
-    "dev:edge": "concurrently -k -n next,edge -c blue,green \"next dev\" \"npx supabase@latest functions serve --env-file .env.local --no-verify-jwt\""
+    "dev:edge": "concurrently -k -n next,edge -c blue,green \"next dev\" \"npx supabase@latest functions serve --env-file .env.local --no-verify-jwt\"",
+    "relayer-balance-check": "tsx scripts/relayer-balance-check.ts"
   },
   "dependencies": {
     "@clickhouse/client": "^1.11.2",
