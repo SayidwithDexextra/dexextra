@@ -806,7 +806,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   };
 
   return (
-    <div className="bg-[#0A0A0A] border border-[#333333] rounded-md p-3 flex flex-col overflow-y-auto transaction-table-container" style={{ height }}>
+    <div className="bg-[#0A0A0A] border border-[#333333] rounded-md p-3 flex flex-col overflow-hidden transaction-table-container" style={{ height }}>
       {/* Header with View Toggle - Ultra Compact */}
       {!hideViewToggle && (
       <div className="mb-2">
@@ -893,7 +893,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             <OrderBookSkeleton />
           ) : (
           /* Traditional OrderBook Display */
-          <div className="flex-1 flex flex-col">
+          <div className="flex-1 flex flex-col min-h-0">
             {/* Ask Orders (Sell Orders) - Just above spread */}
             <div className="overflow-hidden flex flex-col justify-end" style={{ minHeight: '200px' }}>
               <div
@@ -976,7 +976,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             </div>
 
             {/* Bid Orders (Buy Orders) - Bottom half */}
-            <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
               <div className="text-[9px] text-gray-200 mb-1 px-1 flex items-center justify-between">
                 <span>BIDS (BUY)</span>
                 <span className="text-[#00D084]">{totalBidOrders} orders</span>
@@ -1033,7 +1033,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           )
         ) : (
           /* Traditional Trades Display */
-          <div className="overflow-y-auto orders-table-scroll">
+          <div className="flex-1 overflow-y-auto orders-table-scroll">
             {filteredAndSortedData.length === 0 ? (
               <div className="text-[10px] text-gray-200 text-center py-4">
                 No filled orders found

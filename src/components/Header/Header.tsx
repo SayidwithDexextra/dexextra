@@ -445,9 +445,9 @@ export default function Header() {
               {/* Option 1: Uppercase Wide Tracking - Professional trading aesthetic */}
               <span
                 className="text-white font-medium text-[13px] uppercase"
-                style={{ letterSpacing: '0.12em' }}
+                style={{ fontFamily: 'Georgia, "Times New Roman", serif', letterSpacing: '0.12em' }}
               >
-                Dexeter
+                Dexetera
               </span>
               {/* Option 2: Lowercase Medium Weight - Modern tech-forward 
               <span
