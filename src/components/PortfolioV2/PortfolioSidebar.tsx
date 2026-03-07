@@ -9,6 +9,7 @@ import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext'
 import { useMarkets } from '@/hooks/useMarkets'
 import { normalizeBytes32Hex } from '@/lib/hex'
 import { usePortfolioSidebarOpenOrders } from '@/hooks/usePortfolioSidebarOpenOrders'
+import { Wallet } from 'lucide-react'
 
 type PortfolioSidebarProps = {
 	isOpen: boolean
@@ -421,6 +422,26 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							<div className="flex items-center justify-between mb-2">
 								<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Overview</h4>
 								<div className="flex items-center gap-2">
+									<button
+										type="button"
+										onClick={() => {
+											onClose()
+											setTimeout(() => {
+												if (typeof window !== 'undefined') {
+													if (!isWalletConnected) {
+														window.dispatchEvent(new CustomEvent('walkthrough:wallet:open'))
+													} else {
+														window.dispatchEvent(new CustomEvent('walkthrough:deposit:open'))
+													}
+												}
+											}, 350)
+										}}
+										className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-[#222222] text-[#808080] hover:border-[#4a9eff] hover:bg-[#4a9eff]/10 hover:text-[#4a9eff]"
+										aria-label="Deposit funds"
+									>
+										<Wallet className="w-3.5 h-3.5" />
+										<span className="text-[10px] font-medium uppercase tracking-wide">Deposit</span>
+									</button>
 									<button
 										type="button"
 										onClick={copyWalletAddress}

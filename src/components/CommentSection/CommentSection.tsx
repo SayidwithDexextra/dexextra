@@ -469,8 +469,8 @@ function containsBannedWord(text: string): { hasBannedWord: boolean; word?: stri
 
 // Render comment text with market mentions as links
 function renderCommentText(text: string): React.ReactNode {
-  // Match @SYMBOL patterns (uppercase letters, numbers, underscores)
-  const mentionRegex = /@([A-Z0-9_]+)/g;
+  // Match @SYMBOL patterns (uppercase letters, numbers, underscores, hyphens)
+  const mentionRegex = /@([A-Z0-9_-]+)/g;
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match;

@@ -17,4 +17,7 @@ export { default as TradingPanel } from './TradingPanel';
 export { default as TransactionTable } from './TransactionTable';
 
 // Market Activity Components
-export { default as MarketActivityTabs } from './MarketActivityTabs'; 
+export { default as MarketActivityTabs } from './MarketActivityTabs';
+
+// Mobile Components
+export { default as MobileTradingTabs } from './MobileTradingTabs';

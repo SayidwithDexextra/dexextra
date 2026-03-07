@@ -49,6 +49,14 @@ function rectFromElement(el: Element): DOMRect | null {
   }
 }
 
+function isWellCentered(r: DOMRect): boolean {
+  if (typeof window === 'undefined') return true;
+  const vh = window.innerHeight;
+  const centerY = r.top + r.height / 2;
+  const marginY = vh * 0.15;
+  return r.top >= -4 && r.bottom <= vh + 4 && centerY >= marginY && centerY <= vh - marginY;
+}
+
 function pickPlacementTowardCenter(target: DOMRect, tipW: number, tipH: number, gap: number): ResolvedPlacement {
   const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
@@ -146,6 +154,11 @@ function computeTooltipPosition(params: {
 function useTargetRect(step: WalkthroughStep | null, enabled: boolean, status: TargetStatus) {
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [targetEl, setTargetEl] = useState<Element | null>(null);
+  const scrollAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    scrollAttemptedRef.current = false;
+  }, [step?.id]);
 
   useEffect(() => {
     if (!enabled || !step || status !== 'searching') {
@@ -168,12 +181,47 @@ function useTargetRect(step: WalkthroughStep | null, enabled: boolean, status: T
 
     const tick = () => {
       const el = safeQuerySelector(selector);
+      const rawRect = el ? (el as HTMLElement).getBoundingClientRect?.() : null;
+      const hasSize = rawRect && rawRect.width > 0 && rawRect.height > 0;
       const r = el ? rectFromElement(el) : null;
+
+      if (el && hasSize && !scrollAttemptedRef.current) {
+        const centered = rawRect ? isWellCentered(rawRect) : false;
+        if (!centered) {
+          scrollAttemptedRef.current = true;
+          const html = document.documentElement;
+          const body = document.body;
+          const prevHtml = html.style.overflow;
+          const prevBody = body.style.overflow;
+          const prevHtmlOSB = (html.style as any).overscrollBehavior || '';
+          const prevBodyOSB = (body.style as any).overscrollBehavior || '';
+          html.style.overflow = '';
+          body.style.overflow = '';
+          (html.style as any).overscrollBehavior = '';
+          (body.style as any).overscrollBehavior = '';
+          try {
+            (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+          } catch {
+            try { (el as HTMLElement).scrollIntoView(); } catch {}
+          }
+          setTimeout(() => {
+            html.style.overflow = prevHtml;
+            body.style.overflow = prevBody;
+            (html.style as any).overscrollBehavior = prevHtmlOSB;
+            (body.style as any).overscrollBehavior = prevBodyOSB;
+          }, 900);
+          timer = window.setTimeout(tick, pollMs);
+          return;
+        }
+        scrollAttemptedRef.current = true;
+      }
+
       if (el && r) {
         setTargetEl(el);
         setRect(r);
         return;
       }
+
       if (Date.now() - startAt >= timeoutMs) {
         setTargetEl(null);
         setRect(null);

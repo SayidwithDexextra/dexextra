@@ -2,6 +2,60 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { metricSourceFromMarket } from '@/lib/metricSource';
 
+const SEARCH_ALIASES: Record<string, string[]> = {
+  ethereum: ['ETH'],
+  eth: ['Ethereum'],
+  bitcoin: ['BTC'],
+  btc: ['Bitcoin'],
+  solana: ['SOL'],
+  sol: ['Solana'],
+  cardano: ['ADA'],
+  ada: ['Cardano'],
+  polkadot: ['DOT'],
+  dot: ['Polkadot'],
+  chainlink: ['LINK'],
+  link: ['Chainlink'],
+  dogecoin: ['DOGE'],
+  doge: ['Dogecoin'],
+  ripple: ['XRP'],
+  xrp: ['Ripple'],
+  litecoin: ['LTC'],
+  ltc: ['Litecoin'],
+  avalanche: ['AVAX'],
+  avax: ['Avalanche'],
+  polygon: ['MATIC', 'POL'],
+  matic: ['Polygon'],
+  uniswap: ['UNI'],
+  uni: ['Uniswap'],
+  nvidia: ['NVDA'],
+  nvda: ['NVIDIA'],
+  apple: ['AAPL'],
+  aapl: ['Apple'],
+  tesla: ['TSLA'],
+  tsla: ['Tesla'],
+  microsoft: ['MSFT'],
+  msft: ['Microsoft'],
+  amazon: ['AMZN'],
+  amzn: ['Amazon'],
+  google: ['GOOG', 'GOOGL'],
+  alphabet: ['GOOG', 'GOOGL'],
+  gold: ['XAU', 'GLD'],
+  silver: ['XAG', 'SLV'],
+  oil: ['WTI', 'CL', 'CRUDE'],
+  copper: ['HG'],
+  jasmy: ['JasmyCoin', 'JASMY'],
+  jasmycoin: ['JASMY'],
+  snp: ['SNP500', 'S&P'],
+  's&p': ['SNP500'],
+  nasdaq: ['IXIC', 'QQQ'],
+};
+
+function expandSearchTerms(term: string): string[] {
+  const lower = term.toLowerCase().trim();
+  const aliases = SEARCH_ALIASES[lower];
+  return aliases ? [term, ...aliases] : [term];
+}
+
 // Initialize Supabase client with service role key for full access
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -147,17 +201,8 @@ export async function GET(request: NextRequest) {
             });
           }
         } else {
-          // FTS returned no results
-          console.log(`✅ FTS returned 0 markets for query "${fts}"`);
-          return NextResponse.json({
-            success: true,
-            markets: [],
-            pagination: {
-              limit,
-              offset: 0,
-              total: 0
-            }
-          });
+          // FTS returned no results — fall through to ilike fallback
+          console.log(`ℹ️ FTS returned 0 markets for query "${fts}", falling back to ilike search`);
         }
       } catch (ftsErr) {
         console.warn('⚠️ FTS exception, falling back to standard query:', ftsErr);
@@ -231,14 +276,27 @@ export async function GET(request: NextRequest) {
     }
 
     if (search) {
-      query = query.or(`market_identifier.ilike.%${search}%,description.ilike.%${search}%,name.ilike.%${search}%,symbol.ilike.%${search}%`);
+      const searchTerms = expandSearchTerms(search);
+      const orClauses = searchTerms.flatMap(t => [
+        `market_identifier.ilike.%${t}%`,
+        `description.ilike.%${t}%`,
+        `name.ilike.%${t}%`,
+        `symbol.ilike.%${t}%`,
+      ]);
+      query = query.or(orClauses.join(','));
     }
 
     // Apply FTS fallback search when RPC failed but fts parameter was provided
     if (fts && fts.trim()) {
       const searchTerm = fts.trim();
-      query = query.or(`market_identifier.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%,name.ilike.%${searchTerm}%,symbol.ilike.%${searchTerm}%`);
-      // Also filter to only deployed markets for search results
+      const terms = expandSearchTerms(searchTerm);
+      const orClauses = terms.flatMap(t => [
+        `market_identifier.ilike.%${t}%`,
+        `description.ilike.%${t}%`,
+        `name.ilike.%${t}%`,
+        `symbol.ilike.%${t}%`,
+      ]);
+      query = query.or(orClauses.join(','));
       query = query.eq('deployment_status', 'DEPLOYED');
     }
 

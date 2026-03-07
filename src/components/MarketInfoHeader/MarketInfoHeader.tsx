@@ -314,7 +314,7 @@ export default function MarketInfoHeader({
   };
 
   return (
-    <div className={`${styles.wrapper} ${className ?? ''}`}>
+    <div className={`${styles.wrapper} ${className ?? ''}`} data-walkthrough="token-market-header">
       <header className={styles.header}>
         {/* Identity */}
         <div className={styles.identity}>
@@ -375,7 +375,7 @@ export default function MarketInfoHeader({
             maxWidth={200}
             delay={100}
           >
-            <div className={styles.settlementBadge}>
+            <div className={styles.settlementBadge} data-walkthrough="token-settlement-date">
               <CalendarIcon />
               <span>{formattedSettlement}</span>
             </div>
@@ -477,6 +477,7 @@ export default function MarketInfoHeader({
               rel="noreferrer"
               className={`${styles.socialLink} ${styles.archiveLink}`}
               title={waybackSnapshot.source_url ? `Archived: ${waybackSnapshot.source_url}` : 'Wayback Archive'}
+              data-walkthrough="token-wayback"
             >
               <ArchiveIcon />
             </a>
@@ -530,6 +531,7 @@ export default function MarketInfoHeader({
         <div 
           className={`${styles.descriptionBar} ${isExpanded ? styles.descriptionBarExpanded : ''}`}
           onClick={() => setIsExpanded(!isExpanded)}
+          data-walkthrough="token-description"
         >
           <div className={styles.descriptionTextWrapper}>
             <p className={styles.descriptionText}>{description}</p>

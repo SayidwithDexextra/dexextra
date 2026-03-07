@@ -5,6 +5,46 @@ export const tokenPageWalkthrough: WalkthroughDefinition = {
   storageKey: 'dexextra:walkthrough:token-page:completed',
   steps: [
     {
+      id: 'market-header',
+      selector: '[data-walkthrough="token-market-header"]',
+      title: 'Market header',
+      description:
+        'This is the market header — it shows the market name, status, tags, contract addresses, and quick links. Everything you need to identify and verify a market at a glance.',
+      placement: 'bottom',
+      paddingPx: 8,
+      radiusPx: 14,
+    },
+    {
+      id: 'settlement-date',
+      selector: '[data-walkthrough="token-settlement-date"]',
+      title: 'Settlement date',
+      description:
+        'This badge shows when the market settles. Hover to see a live countdown. Once the settlement date is reached, the market enters the resolution process.',
+      placement: 'bottom',
+      paddingPx: 6,
+      radiusPx: 10,
+    },
+    {
+      id: 'description',
+      selector: '[data-walkthrough="token-description"]',
+      title: 'Market description',
+      description:
+        'The market description explains what this market is about and what conditions determine its outcome. Click "More" to expand the full description.',
+      placement: 'bottom',
+      paddingPx: 6,
+      radiusPx: 10,
+    },
+    {
+      id: 'wayback-link',
+      selector: '[data-walkthrough="token-wayback"]',
+      title: 'Wayback Machine archive',
+      description:
+        'This links to an archived snapshot of the market\'s source page via the Wayback Machine — a tamper-proof reference so you can verify the original data source.',
+      placement: 'bottom',
+      paddingPx: 6,
+      radiusPx: 10,
+    },
+    {
       id: 'chart',
       selector: '[data-walkthrough="token-chart"]',
       title: 'Chart & price context',
@@ -74,6 +114,16 @@ export const tokenPageWalkthrough: WalkthroughDefinition = {
       title: 'Market metric source',
       description:
         'This card shows the metric URL that the market is centered around — the canonical source used for resolving and verifying this market’s metric value.',
+      placement: 'auto',
+      paddingPx: 10,
+      radiusPx: 14,
+    },
+    {
+      id: 'comments',
+      selector: '[data-walkthrough="token-comments"]',
+      title: 'Community discussion',
+      description:
+        'Join the conversation — post comments, reply to other traders, and discuss market sentiment. This is where the community shares analysis and insights.',
       placement: 'auto',
       paddingPx: 10,
       radiusPx: 14,

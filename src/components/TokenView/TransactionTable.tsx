@@ -10,12 +10,84 @@ import { useMarketData } from '@/contexts/MarketDataContext';
 
 const UI_UPDATE_PREFIX = '[UI,Update]';
 
+const ASK_WIDTHS = [38, 55, 72, 44, 60, 85, 50, 66];
+const BID_WIDTHS = [42, 70, 56, 80, 48, 63, 75, 52, 88, 45];
+
+function OrderBookSkeletonRow({ side, depthPct, delay }: { side: 'ask' | 'bid'; depthPct: number; delay: number }) {
+  const color = side === 'ask' ? 'rgba(255,71,71,' : 'rgba(0,208,132,';
+  return (
+    <div className="relative overflow-hidden" style={{ animationDelay: `${delay}ms` }}>
+      <div
+        className="absolute top-0 h-full rounded-r-sm transition-all duration-700"
+        style={{
+          [side === 'ask' ? 'right' : 'left']: 0,
+          width: `${depthPct}%`,
+          background: `${color}0.08)`,
+        }}
+      />
+      <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-[3px] px-1">
+        <div className="flex items-center justify-center">
+          <span className="ob-shimmer inline-block h-[10px] rounded-sm" style={{ width: 60, background: `${color}0.18)` }} />
+        </div>
+        <div className="flex items-center justify-center">
+          <span className="ob-shimmer inline-block h-[10px] rounded-sm" style={{ width: 46, background: 'rgba(255,255,255,0.06)' }} />
+        </div>
+        <div className="flex items-center justify-center">
+          <span className="ob-shimmer inline-block h-[10px] rounded-sm" style={{ width: 54, background: 'rgba(255,255,255,0.06)' }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrderBookSkeleton() {
+  return (
+    <div className="flex-1 flex flex-col">
+      <div className="overflow-hidden flex flex-col justify-end" style={{ minHeight: '200px' }}>
+        <div className="flex flex-col justify-end" style={{ maxHeight: '200px' }}>
+          {ASK_WIDTHS.map((w, i) => (
+            <OrderBookSkeletonRow key={`a${i}`} side="ask" depthPct={w} delay={i * 60} />
+          ))}
+        </div>
+      </div>
+
+      <div className="text-[9px] text-gray-500 px-1 py-0.5 flex items-center justify-between">
+        <span>ASKS (SELL)</span>
+        <span className="text-[#FF4747]/50">—</span>
+      </div>
+
+      <div className="py-2 px-2 bg-[#111111] border-y border-[#222222]">
+        <div className="flex items-center justify-center gap-3">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+          </span>
+          <span className="text-[11px] text-[#606060] font-medium tracking-wide">Loading order book</span>
+        </div>
+      </div>
+
+      <div className="text-[9px] text-gray-500 px-1 py-0.5 flex items-center justify-between">
+        <span>BIDS (BUY)</span>
+        <span className="text-[#00D084]/50">—</span>
+      </div>
+
+      <div className="flex-1 overflow-hidden">
+        {BID_WIDTHS.map((w, i) => (
+          <OrderBookSkeletonRow key={`b${i}`} side="bid" depthPct={w} delay={i * 60} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface TransactionTableProps {
   marketId?: string; // UUID from markets table
   marketIdentifier?: string; // Market identifier (e.g., 'ALU-USD')
   currentPrice?: number;
   height?: string | number;
   orderBookAddress?: string; // Optional explicit OB address to bypass symbol resolution
+  defaultView?: 'orderbook' | 'transactions';
+  hideViewToggle?: boolean;
 }
 
 // Helper function to transform market depth to order book entries
@@ -75,8 +147,8 @@ function formatAmountDisplay(value: number, displayDecimals = 4): string {
   return value.toFixed(displayDecimals);
 }
 
-export default function TransactionTable({ marketId, marketIdentifier, currentPrice, height = '100%', orderBookAddress }: TransactionTableProps) {
-  const [view, setView] = useState<'transactions' | 'orderbook'>('orderbook');
+export default function TransactionTable({ marketId, marketIdentifier, currentPrice, height = '100%', orderBookAddress, defaultView = 'orderbook', hideViewToggle = false }: TransactionTableProps) {
+  const [view, setView] = useState<'transactions' | 'orderbook'>(defaultView);
   const [sortBy, setSortBy] = useState<'timestamp' | 'price' | 'amount'>('timestamp');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
@@ -736,6 +808,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   return (
     <div className="bg-[#0A0A0A] border border-[#333333] rounded-md p-3 flex flex-col overflow-y-auto transaction-table-container" style={{ height }}>
       {/* Header with View Toggle - Ultra Compact */}
+      {!hideViewToggle && (
       <div className="mb-2">
         <div className="flex bg-[#1A1A1A] rounded p-0.5 w-full">
           <button
@@ -761,6 +834,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         </div>
 
       </div>
+      )}
 
       {/* Filters - Ultra Compact */}
       <div className="mb-2">
@@ -778,16 +852,11 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                   </span>
                 )}
           </div>
+        ) : showOrderBookLoading ? (
+          <div />
         ) : (
           <div className="text-[10px] text-gray-200 text-center py-1">
-            {showOrderBookLoading ? (
-              <span className="inline-flex items-center justify-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                <span>Loading open orders…</span>
-              </span>
-            ) : (
-              'Order Book'
-            )}
+            Order Book
             {!marketIdentifier && (
               <span className="block text-[9px] text-gray-300">
                 Market data unavailable
@@ -800,11 +869,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       {/* Table Headers */}
       <div className="mb-1">
         {view === 'orderbook' ? (
+          showOrderBookLoading ? null : (
           <div className="grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 text-[10px] font-medium text-gray-200 px-1">
             <div className="flex items-center justify-center">PRICE</div>
             <div className="flex items-center justify-center">SIZE (UNITS)</div>
             <div className="flex items-center justify-center">TOTAL (USD)</div>
           </div>
+          )
         ) : (
           <div className="grid grid-cols-[1fr_1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-200 px-1">
             <div className="text-right">SIZE (UNITS)</div>
@@ -818,6 +889,9 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       {/* Orders/Trades Table */}
       <div className="flex-1 overflow-hidden flex flex-col">
         {view === 'orderbook' ? (
+          showOrderBookLoading ? (
+            <OrderBookSkeleton />
+          ) : (
           /* Traditional OrderBook Display */
           <div className="flex-1 flex flex-col">
             {/* Ask Orders (Sell Orders) - Just above spread */}
@@ -828,25 +902,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                 className="overflow-y-auto orders-table-scroll flex-grow-0"
                 style={{ maxHeight: '200px' }}
               >
-                {showOrderBookLoading ? (
-                  <div className="space-y-0 flex flex-col justify-end">
-                    {Array.from({ length: 8 }).map((_, i) => (
-                      <div key={`ask-skel-${i}`} className="relative overflow-hidden">
-                        <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
-                          <div className="flex items-center justify-center">
-                            <span className="inline-block w-[86px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
-                          </div>
-                          <div className="flex items-center justify-center">
-                            <span className="inline-block w-[72px] h-[12px] bg-[#141414] rounded animate-pulse" />
-                          </div>
-                          <div className="flex items-center justify-center">
-                            <span className="inline-block w-[92px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : asks.length === 0 ? (
+                {asks.length === 0 ? (
                   <div className="text-[10px] text-gray-200 text-center py-2">
                     No sell orders
                   </div>
@@ -866,7 +922,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                           side="SELL"
                           isNew={false}
                           animationDelay={0}
-                          className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
+                          className="hover:bg-[#1A1A1A] transition-colors group"
                         >
                           {/* Background depth bar */}
                           <div 
@@ -901,19 +957,20 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             </div>
 
             {/* Spread Display */}
-            <div className="pt-0 pb-1 px-1 bg-[#1A1A1A] border-y border-gray-700">
-              <div className="text-[10px] text-gray-200 text-center font-mono tabular-nums">
-                {showOrderBookLoading ? (
-                  <span className="inline-block w-[180px] h-[12px] bg-[#141414] rounded animate-pulse" />
-                ) : bestAskPrice > 0 && bestBidPrice > 0 ? (
+            <div className="py-1.5 px-2 bg-[#1A1A1A] border-y border-gray-700">
+              <div className="flex items-center justify-center gap-2 font-mono tabular-nums">
+                {bestAskPrice > 0 && bestBidPrice > 0 ? (
                   <>
-                    Spread: ${((bestAskPrice - bestBidPrice)).toFixed(4)}
-                    <span className="text-[9px] text-gray-200 ml-2">
+                    <span className="text-[11px] text-gray-400 font-medium">Spread</span>
+                    <span className="text-[12px] text-white font-semibold">
+                      ${((bestAskPrice - bestBidPrice)).toFixed(4)}
+                    </span>
+                    <span className="text-[11px] text-gray-400">
                       ({((((bestAskPrice - bestBidPrice) / (bestBidPrice || 1)) * 100).toFixed(2))}%)
                     </span>
                   </>
                 ) : (
-                  'No spread data'
+                  <span className="text-[11px] text-gray-400">No spread data</span>
                 )}
               </div>
             </div>
@@ -925,25 +982,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                 <span className="text-[#00D084]">{totalBidOrders} orders</span>
               </div>
               <div className="flex-1 overflow-y-auto orders-table-scroll">
-                {showOrderBookLoading ? (
-                  <div className="space-y-0">
-                    {Array.from({ length: 10 }).map((_, i) => (
-                      <div key={`bid-skel-${i}`} className="relative overflow-hidden">
-                        <div className="relative grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 py-0.5 px-1 text-[11px]">
-                          <div className="flex items-center justify-center">
-                            <span className="inline-block w-[86px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
-                          </div>
-                          <div className="flex items-center justify-center">
-                            <span className="inline-block w-[72px] h-[12px] bg-[#141414] rounded animate-pulse" />
-                          </div>
-                          <div className="flex items-center justify-center">
-                            <span className="inline-block w-[92px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : bids.length === 0 ? (
+                {bids.length === 0 ? (
                   <div className="text-[10px] text-gray-200 text-center py-2">
                     No buy orders
                   </div>
@@ -963,7 +1002,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                           side="BUY"
                           isNew={false}
                           animationDelay={0}
-                          className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
+                          className="hover:bg-[#1A1A1A] transition-colors group"
                         >
                           {/* Background depth bar */}
                           <div 
@@ -991,6 +1030,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
               </div>
             </div>
           </div>
+          )
         ) : (
           /* Traditional Trades Display */
           <div className="overflow-y-auto orders-table-scroll">

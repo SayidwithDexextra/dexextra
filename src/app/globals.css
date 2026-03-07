@@ -1,6 +1,30 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Order book skeleton shimmer */
+@keyframes ob-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.ob-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.ob-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.04) 40%,
+    rgba(255,255,255,0.06) 50%,
+    rgba(255,255,255,0.04) 60%,
+    transparent 100%
+  );
+  animation: ob-shimmer 1.8s ease-in-out infinite;
+}
+
 /* Open order row slide-out to the right (MarketActivityTabs cancel) */
 @keyframes order-row-slide-out {
   from {

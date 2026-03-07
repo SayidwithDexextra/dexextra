@@ -139,6 +139,7 @@ export function OnchainOrdersProvider({ children }: { children: React.ReactNode 
   const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
 
   const inflightRef = useRef<Promise<void> | null>(null);
+  const needsRefreshRef = useRef(false);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -165,8 +166,15 @@ export function OnchainOrdersProvider({ children }: { children: React.ReactNode 
   // ── Core refresh logic ─────────────────────────────────────────────
   const refresh = useCallback(async () => {
     if (!walletAddress) return;
-    // Dedupe concurrent calls
-    if (inflightRef.current) return inflightRef.current;
+    // Dedupe concurrent calls — but flag that a re-fetch is needed once the
+    // in-flight request completes (the in-flight response may be stale, e.g.
+    // when an ordersUpdated event fires while an earlier fetch is pending).
+    if (inflightRef.current) {
+      needsRefreshRef.current = true;
+      return inflightRef.current;
+    }
+
+    needsRefreshRef.current = false;
 
     const run = (async () => {
       if (isMountedRef.current) setIsLoading(true);
@@ -182,10 +190,13 @@ export function OnchainOrdersProvider({ children }: { children: React.ReactNode 
         console.log('[OnchainOrdersV2] Fetched', { count: fetched.length });
       } catch (e) {
         console.error('[OnchainOrdersV2] Fetch failed', e);
-        // keep existing orders on error
       } finally {
         if (isMountedRef.current) setIsLoading(false);
         inflightRef.current = null;
+        if (needsRefreshRef.current && isMountedRef.current) {
+          needsRefreshRef.current = false;
+          void refresh();
+        }
       }
     })();
 

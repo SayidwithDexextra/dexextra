@@ -598,7 +598,7 @@ export async function createGaslessSession(params: {
   console.log('[Gasless] Chain check passed');
 
   const now = Math.floor(Date.now() / 1000);
-  const defaultLifetime = Number((process as any)?.env?.NEXT_PUBLIC_SESSION_DEFAULT_LIFETIME_SECS ?? 86400);
+  const defaultLifetime = Number((process as any)?.env?.NEXT_PUBLIC_SESSION_DEFAULT_LIFETIME_SECS ?? 432000);
   const expiry = BigInt(expirySec ?? (now + defaultLifetime));
   
   // Build domain for global session registry

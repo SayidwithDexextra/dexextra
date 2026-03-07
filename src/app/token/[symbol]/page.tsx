@@ -8,7 +8,8 @@ import {
   TokenStats, 
   TransactionTable,
   ThreadPanel,
-  MarketActivityTabs
+  MarketActivityTabs,
+  MobileTradingTabs
 } from '@/components/TokenView';
 import { MarketInfoHeader } from '@/components/MarketInfoHeader';
 import { TradingViewChart } from '@/components/TradingView';
@@ -930,59 +931,84 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
             )}
             <div className="flex md:hidden flex-col gap-1">
-              <div className="w-full mt-1 h-[70svh] min-h-[520px] relative" data-walkthrough="token-chart">
-                {currentMarketId ? (
-                  isDesktop === false ? (
-                    <TradingViewChart
-                      symbol={symbol}
-                      autosize
-                      className="h-full"
-                      interval="5"
-                      metricOverlay={metricOverlay}
-                    />
-                  ) : (
-                    <div className="w-full h-[399px] rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
-                      Loading chart…
-                    </div>
-                  )
-                ) : (
-                  <div className="w-full h-[399px] rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
-                    Loading market…
+              <MobileTradingTabs
+                className="w-full mt-1 h-[70svh] min-h-[520px]"
+                chartContent={
+                  <div className="h-full w-full relative">
+                    {currentMarketId ? (
+                      isDesktop === false ? (
+                        <TradingViewChart
+                          symbol={symbol}
+                          autosize
+                          className="h-full"
+                          interval="5"
+                          metricOverlay={metricOverlay}
+                        />
+                      ) : (
+                        <div className="w-full h-full rounded-md bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                          Loading chart…
+                        </div>
+                      )
+                    ) : (
+                      <div className="w-full h-full rounded-md bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                        Loading market…
+                      </div>
+                    )}
+                    {metricDebug && currentMarketId && (
+                      <div className="absolute top-2 right-2 z-10 rounded border border-gray-800 bg-black/70 px-3 py-2 text-[11px] text-gray-200">
+                        <div className="font-medium">Metric overlay debug</div>
+                        <div className="text-[10px] text-gray-400">tf: {metricTimeframe}</div>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                            onClick={() => void seedScatter()}
+                            disabled={scatterInfo?.loading}
+                          >
+                            Seed scatter
+                          </button>
+                          <button
+                            className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                            onClick={() => void refreshScatterInfo()}
+                            disabled={scatterInfo?.loading}
+                          >
+                            Refresh
+                          </button>
+                        </div>
+                        <div className="mt-2 text-[10px] text-gray-400">
+                          {scatterInfo?.loading
+                            ? 'checking…'
+                            : scatterInfo?.error
+                              ? `error: ${scatterInfo.error}`
+                              : `ClickHouse points: ${scatterInfo?.count ?? '—'}`}
+                        </div>
+                        <div className="mt-2 text-[10px] text-gray-500">
+                          After seeding, reload to force the indicator to refetch.
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-                {metricDebug && currentMarketId && (
-                  <div className="absolute top-2 right-2 z-10 rounded border border-gray-800 bg-black/70 px-3 py-2 text-[11px] text-gray-200">
-                    <div className="font-medium">Metric overlay debug</div>
-                    <div className="text-[10px] text-gray-400">tf: {metricTimeframe}</div>
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
-                        onClick={() => void seedScatter()}
-                        disabled={scatterInfo?.loading}
-                      >
-                        Seed scatter
-                      </button>
-                      <button
-                        className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
-                        onClick={() => void refreshScatterInfo()}
-                        disabled={scatterInfo?.loading}
-                      >
-                        Refresh
-                      </button>
-                    </div>
-                    <div className="mt-2 text-[10px] text-gray-400">
-                      {scatterInfo?.loading
-                        ? 'checking…'
-                        : scatterInfo?.error
-                          ? `error: ${scatterInfo.error}`
-                          : `ClickHouse points: ${scatterInfo?.count ?? '—'}`}
-                    </div>
-                    <div className="mt-2 text-[10px] text-gray-500">
-                      After seeding, reload to force the indicator to refetch.
-                    </div>
-                  </div>
-                )}
-              </div>
+                }
+                orderbookContent={
+                  <TransactionTable
+                    marketId={(md.market as any)?.id}
+                    marketIdentifier={(md.market as any)?.market_identifier || symbol}
+                    orderBookAddress={(md as any)?.orderBookAddress || (md.market as any)?.market_address || undefined}
+                    height="100%"
+                    defaultView="orderbook"
+                    hideViewToggle
+                  />
+                }
+                tradesContent={
+                  <TransactionTable
+                    marketId={(md.market as any)?.id}
+                    marketIdentifier={(md.market as any)?.market_identifier || symbol}
+                    orderBookAddress={(md as any)?.orderBookAddress || (md.market as any)?.market_address || undefined}
+                    height="100%"
+                    defaultView="transactions"
+                    hideViewToggle
+                  />
+                }
+              />
               <div className="w-full" data-walkthrough="token-activity">
                 <MarketActivityTabs symbol={symbol} className="h-[320px]" />
               </div>
@@ -1133,8 +1159,8 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             </div>
 
             {/* Comment Section + Creator Card - Desktop */}
-            <div className="hidden md:flex gap-1 mt-0.5 items-stretch">
-              <div style={{ width: 'calc(100% - 320px - 4px)' }}>
+            <div className="hidden md:flex gap-1 mt-0.5 relative">
+              <div style={{ width: 'calc(100% - 320px - 4px)' }} data-walkthrough="token-comments">
                 <CommentSection
                   comments={liveComments}
                   totalCount={commentCount}
@@ -1155,7 +1181,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   isLoading={commentsLoading}
                 />
               </div>
-              <div className="w-80 flex-shrink-0 flex flex-col gap-1">
+              <div className="w-80 flex-shrink-0 flex flex-col gap-1 absolute right-0 top-0 bottom-0 overflow-hidden">
                 <CreatorCard
                   creatorWallet={(md.market as any)?.creator_wallet_address}
                   currentUserWallet={walletData?.address}
@@ -1180,17 +1206,6 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               <CreatorCard
                 creatorWallet={(md.market as any)?.creator_wallet_address}
                 currentUserWallet={walletData?.address}
-              />
-              <SimilarMarkets
-                marketName={(md.market as any)?.name || symbol}
-                marketDescription={(md.market as any)?.description}
-                categories={Array.isArray((md.market as any)?.category) 
-                  ? (md.market as any)?.category 
-                  : (md.market as any)?.category 
-                    ? [(md.market as any)?.category] 
-                    : undefined}
-                currentMarketId={(md.market as any)?.id}
-                limit={5}
               />
               <CommentSection
                 comments={liveComments}

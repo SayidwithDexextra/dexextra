@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { ethers } from 'ethers';
 import { useWallet } from '@/hooks/useWallet';
@@ -77,6 +78,20 @@ interface Trade {
   timestamp: number;
 }
 
+interface ClosedPosition {
+  direction: 'LONG' | 'SHORT';
+  entryPrice: number;
+  exitPrice: number;
+  size: number;
+  entryValue: number;
+  exitValue: number;
+  pnl: number;
+  pnlPercent: number;
+  totalFees: number;
+  entryTime: number;
+  exitTime: number;
+}
+
 type TabType = 'positions' | 'orders' | 'trades' | 'history';
 
 interface MarketActivityTabsProps {
@@ -107,6 +122,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
   const [expandedOrderKey, setExpandedOrderKey] = useState<string | null>(null);
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
+  const [isCancelingAll, setIsCancelingAll] = useState(false);
+  const [cancelAllProgress, setCancelAllProgress] = useState<{ done: number; total: number; failed: number }>({ done: 0, total: 0, failed: 0 });
+
+  // Modify order modal state
+  const [showModifyModal, setShowModifyModal] = useState(false);
+  const [modifyOrder, setModifyOrder] = useState<Order | null>(null);
+  const [modifyPrice, setModifyPrice] = useState('');
+  const [modifySize, setModifySize] = useState('');
+  const [modifyError, setModifyError] = useState<string | null>(null);
+  const [isModifying, setIsModifying] = useState(false);
   // Order cancel/close modal (subtle "cup fill" loader)
   const [orderFillModal, setOrderFillModal] = useState<{
     isOpen: boolean;
@@ -764,7 +789,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
       const eventType = String(detail?.eventType || detail?.reason || '').trim();
       const orderId = detail?.orderId !== undefined ? String(detail.orderId) : '';
-      const ttlMs = 8_000;
+      const ttlMs = 30_000;
 
       const isPlacementEvent = eventType === 'OrderPlaced' || eventType === 'order-placed';
       let shouldRefreshSessionOrders = false;
@@ -1125,6 +1150,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [topUpAmount, setTopUpAmount] = useState<string>('');
   const [currentMargin, setCurrentMargin] = useState<number>(0);
   const [isToppingUp, setIsToppingUp] = useState(false);
+  const [topUpSide, setTopUpSide] = useState<'LONG' | 'SHORT'>('LONG');
+  const [topUpEntryPrice, setTopUpEntryPrice] = useState<number>(0);
+  const [topUpLeverage, setTopUpLeverage] = useState<number>(0);
+  const [topUpLiqPrice, setTopUpLiqPrice] = useState<number>(0);
+  const [topUpError, setTopUpError] = useState<string | null>(null);
+
+  const [portalMounted, setPortalMounted] = useState(false);
+  useEffect(() => { setPortalMounted(true); return () => setPortalMounted(false); }, []);
 
   // Add close position state and handler
   const [showCloseModal, setShowCloseModal] = useState(false);
@@ -1193,10 +1226,15 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   };
 
   // Handle top-up action
-  const handleTopUp = (positionId: string, symbol: string, currentMargin: number) => {
-    setTopUpPositionId(positionId);
-    setTopUpSymbol(symbol);
-    setCurrentMargin(currentMargin);
+  const handleTopUp = (position: Position) => {
+    setTopUpPositionId(position.id);
+    setTopUpSymbol(position.symbol);
+    setCurrentMargin(position.margin);
+    setTopUpSide(position.side);
+    setTopUpEntryPrice(position.entryPrice);
+    setTopUpLeverage(position.leverage);
+    setTopUpLiqPrice(position.liquidationPrice);
+    setTopUpError(null);
     setShowTopUpModal(true);
   };
 
@@ -1530,6 +1568,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
   // Reconcile open-orders overlays against refreshed base `openOrders`.
   // This avoids stale optimistic bookkeeping sticking around longer than needed.
+  // Also auto-extends TTL for overlay entries the chain hasn't confirmed yet.
   useEffect(() => {
     const overlay = openOrdersOverlayRef.current;
     if (!overlay) return;
@@ -1541,11 +1580,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       baseKeys.add(getOrderCompositeKey(o.symbol, o.id));
     }
 
+    const now = Date.now();
     let changed = false;
     // If an optimistic "added" order is now in base, drop it early.
-    for (const [k] of overlay.added.entries()) {
+    // If it's NOT in base yet but close to expiring, extend the TTL so
+    // the row stays visible while the chain catches up.
+    for (const [k, rec] of overlay.added.entries()) {
       if (baseKeys.has(k)) {
         overlay.added.delete(k);
+        changed = true;
+      } else if (rec.expiresAt - now < 5_000) {
+        rec.expiresAt = now + 15_000;
         changed = true;
       }
     }
@@ -1728,11 +1773,346 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     };
   }, [activeTab, walletAddress, fetchOrderHistory]);
 
+  const handleCancelAllOrders = useCallback(async () => {
+    if (isCancelingAll || !walletAddress || displayedOpenOrders.length === 0) return;
+
+    const activeSessionId =
+      globalSessionId ||
+      (typeof window !== 'undefined'
+        ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+        : '');
+
+    if (GASLESS && (!activeSessionId || globalSessionActive !== true)) {
+      showError('Trading session is not enabled. Click Enable Trading before using gasless cancel.', 'Session Required');
+      return;
+    }
+
+    const orders = [...displayedOpenOrders];
+    setIsCancelingAll(true);
+    setCancelAllProgress({ done: 0, total: orders.length, failed: 0 });
+
+    setOrderFillModal({
+      isOpen: true,
+      progress: 0,
+      status: 'canceling',
+      allowClose: false,
+      kind: 'cancel',
+      headlineText: `Cancelling all orders (0/${orders.length})`,
+      detailText: 'Please wait while all open orders are cancelled...',
+      showProgressLabel: true,
+    });
+
+    let done = 0;
+    let failed = 0;
+
+    for (const order of orders) {
+      const metric = String(order.metricId || order.symbol);
+      const obAddress = order.orderBookAddress || resolveOrderBookAddress(metric || order.symbol);
+      const removalKey = getOrderCompositeKey(order.symbol, order.id);
+
+      try {
+        if (GASLESS && obAddress) {
+          let oid: bigint;
+          try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
+          if (oid === 0n) throw new Error('Invalid order id');
+
+          setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
+          const r = await submitSessionTrade({
+            method: 'sessionCancelOrder',
+            orderBook: obAddress,
+            sessionId: activeSessionId,
+            trader: walletAddress as string,
+            orderId: oid as unknown as bigint,
+          });
+
+          if (!r.success) {
+            const msg = r.error || 'Gasless cancel failed';
+            if (isSessionErrorMessage(msg)) {
+              clearSession();
+              setIsCancelingAll(false);
+              setCancelAllProgress({ done, total: orders.length, failed: failed + 1 });
+              showError(msg || 'Trading session expired. Click Enable Trading to re-enable.', 'Session Error');
+              return;
+            }
+            failed++;
+            setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
+          } else {
+            setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
+            try {
+              const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
+              let price6 = '0';
+              let amount18 = '0';
+              try { price6 = String(ethers.parseUnits(String(order.price || 0), 6)); } catch {}
+              try { amount18 = String(ethers.parseUnits(String(remaining), 18)); } catch {}
+              window.dispatchEvent(new CustomEvent('ordersUpdated', {
+                detail: {
+                  symbol: metric,
+                  eventType: 'OrderCancelled',
+                  reason: 'cancel',
+                  orderId: String(order.id),
+                  trader: String(walletAddress || ''),
+                  price: price6,
+                  amount: amount18,
+                  isBuy: String(order.side || '').toUpperCase() === 'BUY',
+                  timestamp: Date.now(),
+                },
+              }));
+            } catch {}
+          }
+        } else {
+          setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
+          const ok = await cancelOrderForMarket(order.id, metric);
+          if (!ok) {
+            failed++;
+            setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
+          } else {
+            setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
+            try {
+              const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
+              let price6 = '0';
+              let amount18 = '0';
+              try { price6 = String(ethers.parseUnits(String(order.price || 0), 6)); } catch {}
+              try { amount18 = String(ethers.parseUnits(String(remaining), 18)); } catch {}
+              window.dispatchEvent(new CustomEvent('ordersUpdated', {
+                detail: {
+                  symbol: metric,
+                  eventType: 'OrderCancelled',
+                  reason: 'cancel',
+                  orderId: String(order.id),
+                  trader: String(walletAddress || ''),
+                  price: price6,
+                  amount: amount18,
+                  isBuy: String(order.side || '').toUpperCase() === 'BUY',
+                  timestamp: Date.now(),
+                },
+              }));
+            } catch {}
+          }
+        }
+      } catch {
+        failed++;
+        setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
+      }
+
+      done++;
+      const progress = Math.round((done / orders.length) * 100);
+      setCancelAllProgress({ done, total: orders.length, failed });
+      setOrderFillModal((cur) => ({
+        ...cur,
+        progress,
+        headlineText: `Cancelling all orders (${done}/${orders.length})`,
+      }));
+    }
+
+    try { await refreshGlobalOrders(); } catch {}
+
+    if (failed === 0) {
+      setOrderFillModal((cur) => ({
+        ...cur,
+        status: 'success',
+        progress: 100,
+        allowClose: true,
+        headlineText: `All ${orders.length} orders cancelled`,
+        detailText: undefined,
+        showProgressLabel: false,
+      }));
+    } else {
+      setOrderFillModal((cur) => ({
+        ...cur,
+        status: 'error',
+        progress: 100,
+        allowClose: true,
+        headlineText: `Cancelled ${done - failed}/${orders.length} orders`,
+        detailText: `${failed} order(s) failed to cancel.`,
+        showProgressLabel: false,
+      }));
+    }
+
+    setIsCancelingAll(false);
+  }, [isCancelingAll, walletAddress, displayedOpenOrders, globalSessionId, globalSessionActive, GASLESS, resolveOrderBookAddress, clearSession, refreshGlobalOrders, showError]);
+
+  const handleModifySubmit = useCallback(async () => {
+    if (!modifyOrder || !walletAddress || isModifying) return;
+
+    const newPrice = parseFloat(modifyPrice);
+    const newSize = parseFloat(modifySize);
+    if (!Number.isFinite(newPrice) || newPrice <= 0) {
+      setModifyError('Enter a valid price greater than 0.');
+      return;
+    }
+    if (!Number.isFinite(newSize) || newSize <= 0) {
+      setModifyError('Enter a valid size greater than 0.');
+      return;
+    }
+
+    const metric = String(modifyOrder.metricId || modifyOrder.symbol);
+    const obAddress = modifyOrder.orderBookAddress || resolveOrderBookAddress(metric || modifyOrder.symbol);
+    if (!obAddress) {
+      setModifyError('Could not resolve order book address for this market.');
+      return;
+    }
+
+    const activeSessionId =
+      globalSessionId ||
+      (typeof window !== 'undefined'
+        ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+        : '');
+
+    if (GASLESS && (!activeSessionId || globalSessionActive !== true)) {
+      setModifyError('Trading session is not enabled. Click Enable Trading first.');
+      return;
+    }
+
+    setIsModifying(true);
+    setModifyError(null);
+
+    setOrderFillModal({
+      isOpen: true,
+      progress: 20,
+      status: 'canceling',
+      allowClose: false,
+      kind: 'cancel',
+      headlineText: 'Modifying order (1/2)',
+      detailText: 'Cancelling existing order...',
+      showProgressLabel: true,
+    });
+
+    try {
+      // Step 1: Cancel the existing order
+      let oid: bigint;
+      try { oid = typeof modifyOrder.id === 'bigint' ? (modifyOrder.id as any) : BigInt(modifyOrder.id as any); } catch { oid = 0n; }
+      if (oid === 0n) throw new Error('Invalid order id');
+
+      const removalKey = getOrderCompositeKey(modifyOrder.symbol, modifyOrder.id);
+      setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
+
+      const cancelResult = await submitSessionTrade({
+        method: 'sessionCancelOrder',
+        orderBook: obAddress,
+        sessionId: activeSessionId,
+        trader: walletAddress as string,
+        orderId: oid as unknown as bigint,
+      });
+
+      if (!cancelResult.success) {
+        setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
+        const msg = cancelResult.error || 'Failed to cancel existing order';
+        if (isSessionErrorMessage(msg)) {
+          clearSession();
+          throw new Error(msg || 'Trading session expired.');
+        }
+        throw new Error(msg);
+      }
+
+      setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
+
+      try {
+        const remaining = Math.max(0, Number(modifyOrder.size || 0) - Number(modifyOrder.filled || 0));
+        let price6 = '0';
+        let amount18 = '0';
+        try { price6 = String(ethers.parseUnits(String(modifyOrder.price || 0), 6)); } catch {}
+        try { amount18 = String(ethers.parseUnits(String(remaining), 18)); } catch {}
+        window.dispatchEvent(new CustomEvent('ordersUpdated', {
+          detail: {
+            symbol: metric,
+            eventType: 'OrderCancelled',
+            reason: 'cancel',
+            orderId: String(modifyOrder.id),
+            trader: String(walletAddress || ''),
+            price: price6,
+            amount: amount18,
+            isBuy: String(modifyOrder.side || '').toUpperCase() === 'BUY',
+            timestamp: Date.now(),
+          },
+        }));
+      } catch {}
+
+      // Step 2: Place new order with modified price/size
+      setOrderFillModal((cur) => ({
+        ...cur,
+        progress: 60,
+        headlineText: 'Modifying order (2/2)',
+        detailText: 'Placing new order...',
+      }));
+
+      const priceWei = ethers.parseUnits(String(newPrice), 6);
+      const sizeWei = ethers.parseUnits(String(newSize), 18);
+      const isBuy = String(modifyOrder.side || '').toUpperCase() === 'BUY';
+
+      const placeResult = await submitSessionTrade({
+        method: 'sessionPlaceMarginLimit',
+        orderBook: obAddress,
+        sessionId: activeSessionId,
+        trader: walletAddress as string,
+        priceWei: priceWei as unknown as bigint,
+        amountWei: sizeWei as unknown as bigint,
+        isBuy,
+      });
+
+      if (!placeResult.success) {
+        const msg = placeResult.error || 'Failed to place modified order';
+        if (isSessionErrorMessage(msg)) {
+          clearSession();
+          throw new Error(msg || 'Trading session expired.');
+        }
+        throw new Error(`Old order cancelled but new order failed: ${msg}`);
+      }
+
+      try {
+        window.dispatchEvent(new CustomEvent('ordersUpdated', {
+          detail: {
+            symbol: metric,
+            eventType: 'OrderPlaced',
+            reason: 'order-placed',
+            orderId: '',
+            trader: String(walletAddress || ''),
+            price: String(priceWei),
+            amount: String(sizeWei),
+            isBuy,
+            orderType: 'LIMIT',
+            timestamp: Date.now(),
+          },
+        }));
+      } catch {}
+
+      try { await refreshGlobalOrders(); } catch {}
+
+      setShowModifyModal(false);
+      setModifyOrder(null);
+      setModifyPrice('');
+      setModifySize('');
+      setModifyError(null);
+
+      setOrderFillModal((cur) => ({
+        ...cur,
+        status: 'success',
+        progress: 100,
+        allowClose: true,
+        headlineText: 'Order modified successfully',
+        detailText: undefined,
+        showProgressLabel: false,
+      }));
+    } catch (e: any) {
+      setModifyError(e?.message || 'Modification failed. Please try again.');
+      setOrderFillModal((cur) => ({
+        ...cur,
+        status: 'error',
+        progress: 100,
+        allowClose: true,
+        headlineText: 'Order modification failed',
+        detailText: e?.message || 'Please try again.',
+        showProgressLabel: false,
+      }));
+    } finally {
+      setIsModifying(false);
+    }
+  }, [modifyOrder, modifyPrice, modifySize, walletAddress, isModifying, globalSessionId, globalSessionActive, GASLESS, resolveOrderBookAddress, clearSession, refreshGlobalOrders]);
+
   const tabs = [
-    { id: 'positions' as TabType, label: 'Positions', count: displayedPositions.length },
-    { id: 'orders' as TabType, label: 'Open Orders', count: displayedOpenOrders.length },
-    { id: 'trades' as TabType, label: 'Trade History', count: orderBookState.tradeCount },
-    { id: 'history' as TabType, label: 'Order History', count: orderHistory.length },
+    { id: 'positions' as TabType, label: 'Positions', shortLabel: 'Pos', count: displayedPositions.length },
+    { id: 'orders' as TabType, label: 'Open Orders', shortLabel: 'Orders', count: displayedOpenOrders.length },
+    { id: 'trades' as TabType, label: 'Trade History', shortLabel: 'Trades', count: orderBookState.tradeCount },
+    { id: 'history' as TabType, label: 'Order History', shortLabel: 'History', count: orderHistory.length },
   ];
 
   const formatTime = (timestamp: number) => {
@@ -1848,16 +2228,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
 
     return (
-                  <table className="w-full table-fixed">
+                  <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="w-[clamp(130px,24%,260px)] text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Actions</th>
+                        <th className="text-left pl-1.5 sm:pl-2 pr-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="hidden sm:table-cell text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="hidden md:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
+                        <th className="text-right px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
+                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
+                        <th className="text-right pr-1.5 sm:pr-2 pl-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1881,35 +2261,32 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               className={rowClass}
                               style={{ animationDelay: `${index * 50}ms` }}
                             >
-                              <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 w-[clamp(130px,24%,260px)] max-w-0">
+                              <td className="pl-1.5 sm:pl-2 pr-1 py-1.5">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <span className="w-4 h-4 shrink-0 rounded-full border border-[#333333] bg-[#1A1A1A] animate-pulse" />
                                   <div className="min-w-0 flex-1">
-                                    <span className="block w-[120px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
-                                    <span className="block mt-1 w-[84px] h-[10px] bg-[#141414] rounded animate-pulse" />
+                                    <span className="block w-[60px] sm:w-[120px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                    <span className="hidden md:block mt-1 w-[84px] h-[10px] bg-[#141414] rounded animate-pulse" />
                                   </div>
                                 </div>
                               </td>
-                              <td className="pl-1 pr-2 py-1.5">
-                                <span className="inline-block w-[44px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              <td className="px-1 sm:px-2 py-1.5">
+                                <span className="inline-block w-[32px] sm:w-[44px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                              <td className="hidden sm:table-cell px-1.5 sm:px-2 py-1.5 text-right">
                                 <span className="inline-block w-[64px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                              <td className="hidden md:table-cell px-2 py-1.5 text-right">
                                 <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                                <span className="inline-block w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              <td className="px-1 sm:px-2 py-1.5 text-right">
+                                <span className="inline-block w-[50px] sm:w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                              <td className="hidden sm:table-cell px-2 py-1.5 text-right">
                                 <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
-                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                                <span className="inline-block w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
-                              </td>
-                              <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                                <span className="inline-block w-[52px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                              <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
+                                <span className="inline-block w-[36px] sm:w-[52px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
                               </td>
                             </tr>
                           );
@@ -1918,7 +2295,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         return (
                           <React.Fragment key={`${position.id}-${index}`}>
                             <tr className={rowClass} style={{ animationDelay: `${index * 50}ms` }}>
-                              <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 w-[clamp(130px,24%,260px)] max-w-0">
+                              <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <Link
                                     href={getTokenHref(position.symbol)}
@@ -1931,7 +2308,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                       className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                     />
                                     <div className="min-w-0 flex-1">
-                                      <span className="block truncate text-[10.5px] sm:text-[11px] font-medium text-white">
+                                      <span className="block truncate text-[10px] sm:text-[11px] font-medium text-white">
                                         {truncateMarketName(marketSymbolMap.get(position.symbol)?.name || position.symbol)}
                                       </span>
                                       <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
@@ -1946,44 +2323,42 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   </Link>
                                 </div>
                               </td>
-                              <td className="pl-1 pr-2 py-1.5">
+                              <td className="px-1 sm:px-2 py-1.5 whitespace-nowrap">
                                 <span
-                                  className={`text-[11px] font-medium ${
+                                  className={`text-[10px] sm:text-[11px] font-medium ${
                                     position.side === 'LONG' ? 'text-green-400' : 'text-red-400'
                                   }`}
                                 >
                                   {position.side}
                                 </span>
                               </td>
-                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                          <td className="hidden sm:table-cell px-1.5 sm:px-2 py-1.5 text-right">
                             <span className="text-[11px] text-white font-mono">{formatSize(position.size)}</span>
                           </td>
-                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                          <td className="hidden md:table-cell px-2 py-1.5 text-right">
                             <span className="text-[11px] text-white font-mono">${formatPrice(position.markPrice)}</span>
                           </td>
-                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                            <div className="flex justify-end">
-                              <span className="relative inline-block pr-4">
-                                <span
-                                  className={`text-[11px] font-medium font-mono ${
-                                    position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
-                                  }`}
-                                >
-                                  {position.pnl >= 0 ? '+' : ''}
-                                  {formatPnlAmount(position.pnl)}
-                                </span>
-                                <span
-                                  className={`absolute -top-2 -right-0 text-[9px] font-mono ${
-                                    position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
-                                  }`}
-                                >
-                                  {position.pnlPercent >= 0 ? '+' : ''}
-                                  {formatPnlPercent(position.pnlPercent)}%
-                                </span>
+                          <td className="px-1 sm:px-2 py-1.5 text-right">
+                            <div className="flex flex-col items-end">
+                              <span
+                                className={`text-[10px] sm:text-[11px] font-medium font-mono whitespace-nowrap ${
+                                  position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                                }`}
+                              >
+                                {position.pnl >= 0 ? '+' : ''}
+                                {formatPnlAmount(position.pnl)}
+                              </span>
+                              <span
+                                className={`text-[8px] sm:text-[9px] font-mono ${
+                                  position.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                                }`}
+                              >
+                                {position.pnlPercent >= 0 ? '+' : ''}
+                                {formatPnlPercent(position.pnlPercent)}%
                               </span>
                             </div>
                           </td>
-                          <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                          <td className="hidden sm:table-cell px-2 py-1.5 text-right">
                             <div className="flex flex-col items-end gap-0.5">
                               <div className={`flex items-center justify-end gap-1.5 ${
                                 position.isUnderLiquidation 
@@ -2012,25 +2387,32 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               )}
                             </div>
                           </td>
-                          <td className="px-2 py-1.5 text-right">
+                          <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
                   <button 
                     onClick={() => setExpandedPositionId(expandedPositionId === position.id ? null : position.id)}
                     data-walkthrough="token-activity-manage"
-                    className={`${forcePositionManageVisible ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded`}
+                    className={`${forcePositionManageVisible ? 'opacity-100' : 'sm:opacity-0 sm:group-hover/row:opacity-100'} transition-opacity duration-200 px-1 sm:px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded`}
                   >
-                    {expandedPositionId === position.id ? 'Hide' : 'Manage'}
+                    {expandedPositionId === position.id ? '▾' : '▸'}
+                    <span className="hidden sm:inline ml-0.5">{expandedPositionId === position.id ? 'Hide' : 'Manage'}</span>
                             </button>
                           </td>
                         </tr>
               {expandedPositionId === position.id && (
                 <tr className="bg-[#1A1A1A]">
-                  <td colSpan={7} className="px-0">
+                  <td colSpan={100} className="px-0">
                     <div className="px-2 py-1.5 border-t border-[#222222]">
-                      <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
                             <div className="flex items-center gap-3">
+                              <div className="flex flex-col gap-1 sm:hidden">
+                                <span className="text-[9px] text-[#CBD5E1]">Size</span>
+                                <span className="text-[10px] font-medium font-mono text-white">
+                                  {formatSize(position.size)}
+                                </span>
+                              </div>
                               <div className="flex flex-col gap-1">
-                                <span className="text-[9px] text-[#CBD5E1]">Current Margin</span>
+                                <span className="text-[9px] text-[#CBD5E1]">Margin</span>
                                 <span className={`text-[10px] font-medium font-mono ${
                                   position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
                                 }`}>
@@ -2068,12 +2450,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 </div>
                               )}
                             </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 sm:gap-2">
                             <button
-                              onClick={() => handleTopUp(position.id, position.symbol, position.margin)}
-                              className="px-2.5 py-1 text-[10px] font-medium text-green-400 hover:text-green-300 bg-green-400/5 hover:bg-green-400/10 rounded transition-colors duration-200"
+                              onClick={() => handleTopUp(position)}
+                              className="px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium text-green-400 hover:text-green-300 bg-green-400/5 hover:bg-green-400/10 rounded transition-colors duration-200"
                             >
-                              Top Up Position
+                              <span className="sm:hidden">Top Up</span>
+                              <span className="hidden sm:inline">Top Up Position</span>
                             </button>
                             <button
                               onClick={async () => {
@@ -2096,9 +2479,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 }
                               }}
                               data-walkthrough="token-activity-close-position"
-                              className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200"
+                              className="px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200"
                             >
-                              Close Position
+                              <span className="sm:hidden">Close</span>
+                              <span className="hidden sm:inline">Close Position</span>
                             </button>
                           </div>
                         </div>
@@ -2131,16 +2515,32 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
     return (
                   <div className="w-full overflow-x-hidden">
-                    <table className="w-full table-fixed">
+                    {displayedOpenOrders.length > 1 && (
+                      <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[#222222]">
+                        <span className="text-[10px] text-[#9CA3AF]">
+                          {displayedOpenOrders.length} open order{displayedOpenOrders.length !== 1 ? 's' : ''}
+                        </span>
+                        <button
+                          onClick={handleCancelAllOrders}
+                          disabled={isCancelingAll || isCancelingOrder}
+                          className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 border border-red-400/20 hover:border-red-400/30 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isCancelingAll
+                            ? `Cancelling ${cancelAllProgress.done}/${cancelAllProgress.total}...`
+                            : 'Cancel All'}
+                        </button>
+                      </div>
+                    )}
+                    <table className="w-full">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="w-[clamp(130px,24%,260px)] text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-left px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
-                        <th className="text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                        <th className="text-left pl-1.5 sm:pl-2 pr-1 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-1 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="hidden md:table-cell text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
+                        <th className="text-right px-1 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
+                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
+                        <th className="text-right pr-1.5 sm:pr-2 pl-1 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2160,7 +2560,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                             }}
                           >
-                            <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 w-[clamp(130px,24%,260px)] max-w-0">
+                            <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
                               <div className="flex items-center gap-1 min-w-0">
                                 <Link
                                   href={getTokenHref(order.symbol)}
@@ -2173,7 +2573,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                   />
                                   <div className="min-w-0">
-                                    <span className="block truncate text-[10.5px] sm:text-[11px] font-medium text-white">
+                                    <span className="block truncate text-[10px] sm:text-[11px] font-medium text-white">
                                       {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                     </span>
                                     <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
@@ -2183,39 +2583,46 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 </Link>
                               </div>
                             </td>
-                            <td className="pl-1 pr-2 py-1.5">
-                              <span className={`text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
+                            <td className="px-1 sm:px-2 py-1.5 whitespace-nowrap">
+                              <span className={`text-[10px] sm:text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                             </td>
-                            <td className="px-1.5 sm:px-2 py-1.5">
+                            <td className="hidden md:table-cell px-2 py-1.5">
                               <span className="text-[11px] text-white">{order.type}</span>
                             </td>
-                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                              <span className="text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
+                            <td className="px-1 sm:px-2 py-1.5 text-right">
+                              <span className="text-[10px] sm:text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
                             </td>
-                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
-                              <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
+                            <td className="hidden sm:table-cell px-2 py-1.5 text-right">
+                              <span className="text-[10px] sm:text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                             </td>
-                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                            <td className="hidden sm:table-cell px-2 py-1.5 text-right">
                               <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
                             </td>
-                            <td className="px-1.5 sm:px-2 py-1.5 text-right">
+                            <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
                               <button
                                 onClick={() => setExpandedOrderKey(isExpanded ? null : uiKey)}
-                                className="opacity-0 group-hover/row:opacity-100 transition-opacity duration-200 px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
+                                className="sm:opacity-0 sm:group-hover/row:opacity-100 transition-opacity duration-200 px-1 sm:px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
                               >
-                                {isExpanded ? 'Hide' : 'Manage'}
+                                {isExpanded ? '\u25BE' : '\u25B8'}
+                                <span className="hidden sm:inline ml-0.5">{isExpanded ? 'Hide' : 'Manage'}</span>
                               </button>
                             </td>
                           </tr>
                           {isExpanded && (
                             <tr className={`bg-[#1A1A1A] ${isAnimatingOut ? 'order-row-slide-out' : ''}`}>
-                              <td colSpan={7} className="px-0">
+                              <td colSpan={100} className="px-0">
                                 <div className="px-2 py-1.5 border-t border-[#222222]">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-4">
+                                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                    <div className="flex items-center gap-3 flex-wrap">
                                       <div className="flex items-center gap-3">
+                                        <div className="flex flex-col gap-1 sm:hidden">
+                                          <span className="text-[9px] text-[#CBD5E1]">Size</span>
+                                          <span className="text-[10px] font-medium text-white font-mono">
+                                            {formatAmount(order.size, 4)}
+                                          </span>
+                                        </div>
                                         <div className="flex flex-col gap-1">
-                                          <span className="text-[9px] text-[#CBD5E1]">Order Value</span>
+                                          <span className="text-[9px] text-[#CBD5E1]">Value</span>
                                           <span className="text-[10px] font-medium text-white font-mono">
                                             ${formatPrice(order.price * order.size)}
                                           </span>
@@ -2227,7 +2634,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                           </span>
                                         </div>
                                       </div>
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-1.5 sm:gap-2">
+                                        {order.type === 'LIMIT' && (
+                                          <button
+                                            onClick={() => {
+                                              setModifyOrder(order);
+                                              setModifyPrice(String(order.price));
+                                              setModifySize(String(order.size));
+                                              setModifyError(null);
+                                              setShowModifyModal(true);
+                                            }}
+                                            disabled={isCancelingOrder || isCancelingAll || isModifying}
+                                            className="px-2 sm:px-2.5 py-1 text-[10px] font-medium text-blue-400 hover:text-blue-300 bg-blue-400/5 hover:bg-blue-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                          >
+                                            Modify
+                                          </button>
+                                        )}
                                         <button
                                           onClick={async () => {
                                             const removalKey = getOrderCompositeKey(order.symbol, order.id);
@@ -2352,7 +2774,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                             }
                                           }}
                                           disabled={isCancelingOrder}
-                                          className="px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                          className="px-2 sm:px-2.5 py-1 text-[10px] font-medium text-red-400 hover:text-red-300 bg-red-400/5 hover:bg-red-400/10 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                           {isCancelingOrder ? 'Canceling...' : 'Cancel Order'}
                                         </button>
@@ -2377,6 +2799,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const [tradeLimit, setTradeLimit] = useState(10);
   const [hasMoreTrades, setHasMoreTrades] = useState(false);
   const [isLoadingTrades, setIsLoadingTrades] = useState(false);
+  const [showClosedSummary, setShowClosedSummary] = useState(false);
+  const [tradeFilter, setTradeFilter] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
 
   // Do not reset trade offset on tab changes to avoid re-fetching on click
 
@@ -2449,6 +2873,73 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     };
   }, [walletAddress, tradeOffset, tradeLimit, orderBookActions.getUserTradeHistory]);
 
+  const closedPositions = useMemo((): ClosedPosition[] => {
+    if (!walletAddress || trades.length === 0) return [];
+
+    const sorted = [...trades].sort((a, b) => a.timestamp - b.timestamp);
+    const openLots: Array<{
+      side: 'BUY' | 'SELL';
+      price: number;
+      remaining: number;
+      feePerUnit: number;
+      timestamp: number;
+    }> = [];
+    const results: ClosedPosition[] = [];
+
+    for (const trade of sorted) {
+      const isBuyer = trade.buyer.toLowerCase() === walletAddress.toLowerCase();
+      const side: 'BUY' | 'SELL' = isBuyer ? 'BUY' : 'SELL';
+      const fee = isBuyer ? trade.buyerFee : trade.sellerFee;
+      const oppositeSide = side === 'BUY' ? 'SELL' : 'BUY';
+      let remaining = trade.amount;
+      const feePerUnit = trade.amount > 0 ? fee / trade.amount : 0;
+
+      while (remaining > 0) {
+        const matchIdx = openLots.findIndex((l) => l.side === oppositeSide);
+        if (matchIdx === -1) break;
+
+        const lot = openLots[matchIdx];
+        const matched = Math.min(remaining, lot.remaining);
+
+        const isLong = lot.side === 'BUY';
+        const entryPrice = isLong ? lot.price : trade.price;
+        const exitPrice = isLong ? trade.price : lot.price;
+        const entryValue = entryPrice * matched;
+        const exitValue = exitPrice * matched;
+        const rawPnl = isLong
+          ? (exitPrice - entryPrice) * matched
+          : (entryPrice - exitPrice) * matched;
+        const matchedFees = lot.feePerUnit * matched + feePerUnit * matched;
+        const pnl = rawPnl - matchedFees;
+        const pnlPercent = entryValue > 0 ? (pnl / entryValue) * 100 : 0;
+
+        results.push({
+          direction: isLong ? 'LONG' : 'SHORT',
+          entryPrice: isLong ? lot.price : trade.price,
+          exitPrice: isLong ? trade.price : lot.price,
+          size: matched,
+          entryValue,
+          exitValue,
+          pnl,
+          pnlPercent,
+          totalFees: matchedFees,
+          entryTime: isLong ? lot.timestamp : trade.timestamp,
+          exitTime: isLong ? trade.timestamp : lot.timestamp,
+        });
+
+        lot.remaining -= matched;
+        remaining -= matched;
+        if (lot.remaining <= 0) openLots.splice(matchIdx, 1);
+      }
+
+      if (remaining > 0) {
+        openLots.push({ side, price: trade.price, remaining, feePerUnit, timestamp: trade.timestamp });
+      }
+    }
+
+    return results.sort((a, b) => b.exitTime - a.exitTime);
+  }, [trades, walletAddress]);
+
   const renderTradesTable = () => {
 
     if (isLoadingTrades) {
@@ -2502,93 +2993,259 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     };
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-2 sm:space-y-4">
         {/* Trade Statistics and Controls Header */}
-        <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2 flex items-center justify-between overflow-x-auto">
-          <div className="flex items-center gap-4">
-            <h4 className="text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide whitespace-nowrap">Trading Performance</h4>
-            <div className="flex items-center gap-4 text-nowrap">
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Volume:</span>
-                <span className="text-[10px] font-medium text-white font-mono">${stats.totalVolume.toFixed(2)}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Fees:</span>
-                <span className="text-[10px] font-medium text-white font-mono">${stats.totalFees.toFixed(4)}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Buy/Sell:</span>
-                <span className="text-[10px] font-medium text-white font-mono">{stats.buyCount}/{stats.sellCount}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Avg Size:</span>
-                <span className="text-[10px] font-medium text-white font-mono">${stats.avgTradeSize.toFixed(2)}</span>
+        <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-1.5 sm:p-2 space-y-1.5 sm:space-y-2">
+          {/* Stats row */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 sm:gap-4 flex-wrap min-w-0">
+              <h4 className="text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide whitespace-nowrap">Performance</h4>
+              <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <span className="text-[8px] sm:text-[9px] text-[#CBD5E1] whitespace-nowrap">Vol:</span>
+                  <span className="text-[9px] sm:text-[10px] font-medium text-white font-mono">${stats.totalVolume.toFixed(2)}</span>
+                </div>
+                <div className="hidden sm:flex items-center gap-1">
+                  <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Fees:</span>
+                  <span className="text-[10px] font-medium text-white font-mono">${stats.totalFees.toFixed(4)}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[8px] sm:text-[9px] text-[#CBD5E1] whitespace-nowrap">B/S:</span>
+                  <span className="text-[9px] sm:text-[10px] font-medium text-white font-mono">{stats.buyCount}/{stats.sellCount}</span>
+                </div>
+                <div className="hidden sm:flex items-center gap-1">
+                  <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Avg Size:</span>
+                  <span className="text-[10px] font-medium text-white font-mono">${stats.avgTradeSize.toFixed(2)}</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={tradeLimit}
-              onChange={(e) => {
-                setTradeLimit(Number(e.target.value));
-                setTradeOffset(0);
-              }}
-              className="bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-blue-400"
-            >
-              <option value="10">10 trades</option>
-              <option value="25">25 trades</option>
-              <option value="50">50 trades</option>
-              <option value="100">100 trades</option>
-            </select>
-            <span className="text-[10px] text-[#CBD5E1]">
-              {orderBookState.tradeCount} total trades
+            <span className="text-[9px] sm:text-[10px] text-[#CBD5E1] whitespace-nowrap flex-shrink-0">
+              {orderBookState.tradeCount}
             </span>
           </div>
+          {/* Controls row */}
+          <div className="flex items-center justify-between border-t border-[#1A1A1A] pt-1.5 sm:pt-2 gap-2">
+            <div className="flex items-center rounded border border-[#333333] overflow-hidden flex-shrink-0">
+              {(['ALL', 'BUY', 'SELL'] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setTradeFilter(f)}
+                  className={`px-1.5 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium transition-colors duration-150 ${
+                    tradeFilter === f
+                      ? f === 'BUY' ? 'bg-green-400/15 text-green-400' : f === 'SELL' ? 'bg-red-400/15 text-red-400' : 'bg-[#2A2A2A] text-white'
+                      : 'text-[#808080] hover:text-white hover:bg-[#1A1A1A]'
+                  }`}
+                >
+                  {f === 'ALL' ? 'All' : f === 'BUY' ? 'Long' : 'Short'}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <select
+                value={tradeLimit}
+                onChange={(e) => {
+                  setTradeLimit(Number(e.target.value));
+                  setTradeOffset(0);
+                }}
+                className="bg-[#1A1A1A] border border-[#333333] rounded px-1.5 sm:px-2 py-1 text-[10px] sm:text-[11px] text-white focus:outline-none focus:border-blue-400"
+              >
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+              <button
+                onClick={() => {
+                  const rows = trades
+                    .filter((t) => {
+                      if (tradeFilter === 'ALL') return true;
+                      const isBuyer = t.buyer.toLowerCase() === walletAddress?.toLowerCase();
+                      return tradeFilter === 'BUY' ? isBuyer : !isBuyer;
+                    })
+                    .map((t) => {
+                      const isBuyer = t.buyer.toLowerCase() === walletAddress?.toLowerCase();
+                      return {
+                        Side: isBuyer ? 'BUY' : 'SELL',
+                        Price: t.price.toFixed(6),
+                        Size: t.amount.toFixed(8),
+                        Value: t.tradeValue.toFixed(2),
+                        Fee: (isBuyer ? t.buyerFee : t.sellerFee).toFixed(6),
+                        Type: (isBuyer ? t.buyerIsMargin : t.sellerIsMargin) ? 'Margin' : 'Spot',
+                        Time: new Date(t.timestamp).toISOString(),
+                        TradeId: t.tradeId,
+                      };
+                    });
+                  if (rows.length === 0) return;
+                  const headers = Object.keys(rows[0]);
+                  const csv = [
+                    headers.join(','),
+                    ...rows.map((r) => headers.map((h) => `"${(r as any)[h]}"`).join(',')),
+                  ].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `trade-history-${symbol || 'all'}-${new Date().toISOString().slice(0, 10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-2 py-1 text-[10px] font-medium text-[#808080] hover:text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#333333] hover:border-[#444444] rounded transition-colors duration-150"
+                title="Export trades as CSV"
+              >
+                <svg className="w-3 h-3 inline-block mr-1 -mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                </svg>
+                CSV
+              </button>
+            </div>
+          </div>
         </div>
+
+        {/* Closed Position Summary */}
+        {closedPositions.length > 0 && (
+          <div className="bg-[#0F0F0F] rounded-md border border-[#222222]">
+            <button
+              onClick={() => setShowClosedSummary(!showClosedSummary)}
+              className="w-full flex items-center justify-between p-2 hover:bg-[#141414] transition-colors rounded-md"
+            >
+              <div className="flex items-center gap-2">
+                <h4 className="text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Closed Positions</h4>
+                <span className="text-[10px] text-[#CBD5E1] bg-[#2A2A2A] px-1.5 py-0.5 rounded">{closedPositions.length}</span>
+                {(() => {
+                  const totalPnl = closedPositions.reduce((sum, p) => sum + p.pnl, 0);
+                  return (
+                    <span className={`text-[10px] font-medium font-mono ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {totalPnl >= 0 ? '+' : ''}{formatPrice(totalPnl)} USD
+                    </span>
+                  );
+                })()}
+              </div>
+              <svg
+                className={`w-3 h-3 text-[#9CA3AF] transition-transform duration-200 ${showClosedSummary ? 'rotate-180' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {showClosedSummary && (
+              <div className="overflow-auto scrollbar-hide max-h-60 border-t border-[#222222]">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-[#222222]">
+                      <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Dir</th>
+                      <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                      <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Entry</th>
+                      <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Exit</th>
+                      <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
+                      <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Fees</th>
+                      <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {closedPositions.map((pos, i) => {
+                      const durationMs = Math.abs(pos.exitTime - pos.entryTime);
+                      const durationMin = Math.floor(durationMs / 60_000);
+                      const durationHr = Math.floor(durationMin / 60);
+                      const durationDay = Math.floor(durationHr / 24);
+                      const durationStr = durationDay > 0
+                        ? `${durationDay}d ${durationHr % 24}h`
+                        : durationHr > 0
+                          ? `${durationHr}h ${durationMin % 60}m`
+                          : `${durationMin}m`;
+                      return (
+                        <tr key={`cp-${i}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${i !== closedPositions.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
+                          <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2">
+                            <span className={`text-[10px] sm:text-[11px] font-medium ${pos.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                              {pos.direction}
+                            </span>
+                          </td>
+                          <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-right">
+                            <span className="text-[10px] sm:text-[11px] text-white font-mono">{pos.size.toFixed(4)}</span>
+                          </td>
+                          <td className="hidden sm:table-cell px-2.5 py-2 text-right">
+                            <span className="text-[11px] text-white font-mono">${formatPrice(pos.entryPrice)}</span>
+                          </td>
+                          <td className="hidden sm:table-cell px-2.5 py-2 text-right">
+                            <span className="text-[11px] text-white font-mono">${formatPrice(pos.exitPrice)}</span>
+                          </td>
+                          <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-right">
+                            <div className="flex flex-col items-end">
+                              <span className={`text-[10px] sm:text-[11px] font-medium font-mono ${pos.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {pos.pnl >= 0 ? '+' : ''}${formatPrice(pos.pnl)}
+                              </span>
+                              <span className={`text-[8px] sm:text-[9px] font-mono ${pos.pnlPercent >= 0 ? 'text-green-400/60' : 'text-red-400/60'}`}>
+                                {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent.toFixed(2)}%
+                              </span>
+                            </div>
+                          </td>
+                          <td className="hidden md:table-cell px-2.5 py-2 text-right">
+                            <span className="text-[11px] text-[#9CA3AF] font-mono">${pos.totalFees.toFixed(4)}</span>
+                          </td>
+                          <td className="hidden md:table-cell px-2.5 py-2 text-right">
+                            <span className="text-[11px] text-[#9CA3AF]">{durationStr}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Trade History Table */}
         <div className="overflow-auto scrollbar-hide max-h-96">
           <table className="w-full">
             <thead>
               <tr className="border-b border-[#222222]">
-                <th className="text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
-                <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Fee</th>
-                <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                <th className="text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
+                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
+                <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Fee</th>
+                <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
+                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
               </tr>
             </thead>
             <tbody>
-              {trades.map((trade, index) => {
+              {trades
+                .filter((trade) => {
+                  if (tradeFilter === 'ALL') return true;
+                  const isBuyer = trade.buyer.toLowerCase() === walletAddress?.toLowerCase();
+                  return tradeFilter === 'BUY' ? isBuyer : !isBuyer;
+                })
+                .map((trade, index, filtered) => {
                 const isBuyer = trade.buyer.toLowerCase() === walletAddress?.toLowerCase();
                 const side = isBuyer ? 'BUY' : 'SELL';
                 const fee = isBuyer ? trade.buyerFee : trade.sellerFee;
                 const isMargin = isBuyer ? trade.buyerIsMargin : trade.sellerIsMargin;
 
                 return (
-                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== trades.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
-                    <td className="px-2.5 py-2.5">
-                      <span className={`text-[11px] font-medium ${side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{side}</span>
+                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== filtered.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
+                    <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5">
+                      <span className={`text-[10px] sm:text-[11px] font-medium ${side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{side}</span>
                     </td>
-                    <td className="px-2.5 py-2.5 text-right">
-                      <span className="text-[11px] text-white font-mono">${trade.price.toFixed(2)}</span>
+                    <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
+                      <span className="text-[10px] sm:text-[11px] text-white font-mono">${trade.price.toFixed(2)}</span>
                     </td>
-                    <td className="px-2.5 py-2.5 text-right">
-                      <span className="text-[11px] text-white font-mono">{trade.amount.toFixed(4)}</span>
+                    <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
+                      <span className="text-[10px] sm:text-[11px] text-white font-mono">{trade.amount.toFixed(4)}</span>
                     </td>
-                    <td className="px-2.5 py-2.5 text-right">
+                    <td className="hidden sm:table-cell px-2.5 py-2.5 text-right">
                       <span className="text-[11px] text-white font-mono">${trade.tradeValue.toFixed(2)}</span>
                     </td>
-                    <td className="px-2.5 py-2.5 text-right">
+                    <td className="hidden md:table-cell px-2.5 py-2.5 text-right">
                       <span className="text-[11px] text-white font-mono">${fee.toFixed(4)}</span>
                     </td>
-                    <td className="px-2.5 py-2.5 text-right">
+                    <td className="hidden md:table-cell px-2.5 py-2.5 text-right">
                       <span className="text-[11px] text-[#9CA3AF]">{isMargin ? 'Margin' : 'Spot'}</span>
                     </td>
-                    <td className="px-2.5 py-2.5 text-right">
-                      <span className="text-[11px] text-[#9CA3AF]">{formatTime(trade.timestamp)}</span>
+                    <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
+                      <span className="text-[10px] sm:text-[11px] text-[#9CA3AF]">{formatTime(trade.timestamp)}</span>
                     </td>
                   </tr>
                 );
@@ -2646,19 +3303,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-[#222222]">
-                        <th className="w-[clamp(130px,24%,260px)] text-left px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
-                        <th className="text-left px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="text-left px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
-                        <th className="text-right px-2 sm:px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                        <th className="w-[clamp(100px,24%,260px)] text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
+                        <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
+                        <th className="hidden md:table-cell text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
+                        <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
+                        <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
+                        <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
+                        <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
                     <tbody>
                       {orderHistory.map((order, index) => (
                         <tr key={`${order.id}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
-                          <td className="px-2 sm:px-2.5 py-2.5 w-[clamp(130px,24%,260px)] max-w-0">
+                          <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 w-[clamp(100px,24%,260px)] max-w-0">
                             <div className="flex items-center gap-1 sm:gap-2 min-w-0">
                               <Link
                                 href={getTokenHref(order.symbol)}
@@ -2671,7 +3328,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
                                 />
                                 <div className="min-w-0">
-                                  <span className="block truncate text-[10.5px] sm:text-[11px] font-medium text-white">
+                                  <span className="block truncate text-[10px] sm:text-[11px] font-medium text-white">
                                     {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                   </span>
                                   <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
@@ -2685,7 +3342,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   href={`https://hyperevmscan.io/tx/${encodeURIComponent(order.txHash)}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="shrink-0 inline-flex items-center justify-center rounded border border-[#333333] bg-[#141414] px-1 py-0.5 text-[#6B7280] hover:text-[#E5E7EB] hover:border-[#4B5563] transition-colors"
+                                  className="hidden sm:inline-flex shrink-0 items-center justify-center rounded border border-[#333333] bg-[#141414] px-1 py-0.5 text-[#6B7280] hover:text-[#E5E7EB] hover:border-[#4B5563] transition-colors"
                                   title="View transaction on HyperEVMScan"
                                   onClick={(e) => e.stopPropagation()}
                                 >
@@ -2714,25 +3371,25 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               )}
                             </div>
                           </td>
-                          <td className="px-2 sm:px-2.5 py-2.5">
-                            <span className={`text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
+                          <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5">
+                            <span className={`text-[10px] sm:text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                           </td>
-                          <td className="px-2 sm:px-2.5 py-2.5">
+                          <td className="hidden md:table-cell px-2.5 py-2.5">
                             <span className="text-[11px] text-white">{order.type}</span>
                           </td>
-                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
+                          <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
+                            <span className="text-[10px] sm:text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
                           </td>
-                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
+                          <td className="hidden sm:table-cell px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
                           </td>
-                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
+                          <td className="hidden sm:table-cell px-2.5 py-2.5 text-right">
                             <span className="text-[11px] text-white font-mono">
                               ${formatPrice(order.price * order.size)}
                             </span>
                           </td>
-                          <td className="px-2 sm:px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-[#9CA3AF] whitespace-nowrap">{formatDate(order.timestamp)}</span>
+                          <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
+                            <span className="text-[10px] sm:text-[11px] text-[#9CA3AF] whitespace-nowrap">{formatDate(order.timestamp)}</span>
                           </td>
                         </tr>
                       ))}
@@ -2787,8 +3444,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         showProgressLabel={orderFillModal.showProgressLabel}
       />
       
-      <div className="flex items-center justify-between border-b border-[#222222] p-2.5 flex-shrink-0">
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between border-b border-[#222222] px-1.5 sm:px-2.5 py-1.5 sm:py-2.5 flex-shrink-0">
+        <div className="flex items-center w-full sm:w-auto gap-0 sm:gap-1.5 overflow-x-auto scrollbar-hide">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -2798,21 +3455,22 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   logGoddMat(26, 'Orders tab clicked', { activeTab: tab.id });
                 }
               }}
-              className={`px-2.5 py-1.5 text-[11px] font-medium rounded transition-all duration-200 flex items-center gap-1.5 ${
+              className={`flex-1 sm:flex-none px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[10px] sm:text-[11px] font-medium rounded transition-all duration-200 flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'text-white bg-[#1A1A1A] border border-[#333333]'
                   : 'text-[#E5E7EB] hover:text-white hover:bg-[#1A1A1A] border border-transparent hover:border-[#222222]'
               }`}
             >
-              <span>{tab.label}</span>
-              <div className="text-[10px] text-[#CBD5E1] bg-[#2A2A2A] px-1.5 py-0.5 rounded">
+              <span className="sm:hidden">{tab.shortLabel}</span>
+              <span className="hidden sm:inline">{tab.label}</span>
+              <div className="text-[9px] sm:text-[10px] text-[#CBD5E1] bg-[#2A2A2A] px-1 sm:px-1.5 py-0.5 rounded">
                 {tab.count}
               </div>
             </button>
           ))}
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="hidden sm:flex items-center gap-2">
           {isLoading ? (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
@@ -2847,16 +3505,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         )}
       </div>
 
-      {showCloseModal && (() => {
+      {showCloseModal && portalMounted && (() => {
         const currentPosition = positions.find(p => p.id === closePositionId) ?? null;
         const closeSizeValue = parseFloat(closeSize) || 0;
         const exitPrice = resolveExitPrice(currentPosition);
         const payoutData = calculateExpectedPayout(currentPosition, closeSizeValue, exitPrice);
         const marketIcon = marketSymbolMap.get(closeSymbol)?.icon || FALLBACK_TOKEN_ICON;
 
-        return (
+        return createPortal(
           <div 
             className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
             onClick={() => {
               setShowCloseModal(false);
               setCloseSize('');
@@ -3063,86 +3722,446 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
 
-      {showTopUpModal && (
-        <div 
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+      {showModifyModal && modifyOrder && portalMounted && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
           onClick={() => {
-            setShowTopUpModal(false);
-            setTopUpAmount('');
+            if (!isModifying) {
+              setShowModifyModal(false);
+              setModifyOrder(null);
+              setModifyPrice('');
+              setModifySize('');
+              setModifyError(null);
+            }
           }}
         >
-          <div 
-            className="bg-[#1A1A1A] border border-[#333333] rounded-md p-6 w-96 max-h-[80vh] overflow-auto"
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" />
+          <div
+            className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+            style={{ maxWidth: '520px', padding: '24px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', margin: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Header */}
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
-                Top Up Position - {topUpSymbol}
-              </h3>
+              <div className="flex items-center gap-3 min-w-0">
+                <MarketIconBadge
+                  iconUrl={(marketSymbolMap.get(modifyOrder.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
+                  alt={`${modifyOrder.symbol} icon`}
+                  sizePx={32}
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-white text-sm font-medium tracking-tight">Modify Order</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080]">{modifyOrder.symbol}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                      modifyOrder.side === 'BUY'
+                        ? 'bg-green-400/10 text-green-400'
+                        : 'bg-red-400/10 text-red-400'
+                    }`}>
+                      {modifyOrder.side}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-[#606060]">
+                    Cancel existing order and place a new one with updated values
+                  </div>
+                </div>
+              </div>
               <button
-                onClick={() => setShowTopUpModal(false)}
-                className="text-[#CBD5E1] hover:text-white transition-colors"
+                onClick={() => {
+                  if (!isModifying) {
+                    setShowModifyModal(false);
+                    setModifyOrder(null);
+                    setModifyPrice('');
+                    setModifySize('');
+                    setModifyError(null);
+                  }
+                }}
+                className="p-1.5 rounded-full hover:bg-[#1A1A1A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+                aria-label="Close"
               >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                  <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
             </div>
-            
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-2 bg-[#0F0F0F] rounded">
-                <span className="text-[10px] text-[#E5E7EB]">Current Margin</span>
-                <span className="text-[11px] font-medium text-white font-mono">
-                  ${currentMargin.toFixed(2)}
-                              </span>
-                            </div>
-              
-              <div>
-                <label className="block text-[10px] text-[#9CA3AF] mb-1">
-                  Additional Margin (USDC)
-                </label>
+
+            {/* Current order details */}
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <span className="text-[10px] text-[#606060]">Current Price</span>
+                </div>
+                <div className="text-[13px] font-mono text-white">${formatPrice4(modifyOrder.price)}</div>
+              </div>
+              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <span className="text-[10px] text-[#606060]">Current Size</span>
+                </div>
+                <div className="text-[13px] font-mono text-white">{formatAmount(modifyOrder.size, 4)}</div>
+              </div>
+              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <span className="text-[10px] text-[#606060]">Order Value</span>
+                </div>
+                <div className="text-[13px] font-mono text-white">${formatPrice(modifyOrder.price * modifyOrder.size)}</div>
+              </div>
+            </div>
+
+            {/* New price input */}
+            <div className="mb-3">
+              <label className="block text-[10px] text-[#606060] mb-1.5">New Price (USD)</label>
+              <div className="relative">
                 <input
                   type="number"
-                  value={topUpAmount}
-                  onChange={(e) => setTopUpAmount(e.target.value)}
-                  className="w-full bg-[#0F0F0F] border border-[#333333] rounded px-3 py-2 text-[11px] text-white font-mono focus:outline-none focus:border-blue-400 transition-colors"
-                  placeholder="Enter amount"
+                  value={modifyPrice}
+                  onChange={(e) => { setModifyPrice(e.target.value); setModifyError(null); }}
+                  disabled={isModifying}
+                  className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] focus:border-[#333333] rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+                  placeholder="Enter new price..."
                   min="0"
                   step="0.01"
                 />
+                <button
+                  onClick={() => { setModifyPrice(String(modifyOrder.price)); setModifyError(null); }}
+                  disabled={isModifying}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-[#0F0F0F] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200 disabled:opacity-50"
+                >
+                  RESET
+                </button>
               </div>
-              
-              <div className="flex justify-end gap-2 pt-2">
+            </div>
+
+            {/* New size input */}
+            <div className="mb-4">
+              <label className="block text-[10px] text-[#606060] mb-1.5">New Size</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  value={modifySize}
+                  onChange={(e) => { setModifySize(e.target.value); setModifyError(null); }}
+                  disabled={isModifying}
+                  className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] focus:border-[#333333] rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+                  placeholder="Enter new size..."
+                  min="0"
+                  step="0.0001"
+                />
+                <button
+                  onClick={() => { setModifySize(String(modifyOrder.size)); setModifyError(null); }}
+                  disabled={isModifying}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-[#0F0F0F] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200 disabled:opacity-50"
+                >
+                  RESET
+                </button>
+              </div>
+            </div>
+
+            {/* Change preview */}
+            {(() => {
+              const newP = parseFloat(modifyPrice) || 0;
+              const newS = parseFloat(modifySize) || 0;
+              const newValue = newP * newS;
+              const oldValue = modifyOrder.price * modifyOrder.size;
+              const priceDelta = newP - modifyOrder.price;
+              const sizeDelta = newS - modifyOrder.size;
+              const hasChanges = Math.abs(priceDelta) > 0.001 || Math.abs(sizeDelta) > 0.00001;
+
+              if (!hasChanges || newP <= 0 || newS <= 0) return null;
+
+              return (
+                <div className="rounded-md border border-blue-400/20 bg-blue-400/5 p-3 mb-4">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                    <span className="text-[11px] font-medium text-[#808080]">Change Preview</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {Math.abs(priceDelta) > 0.001 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-[#606060]">Price</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-mono text-[#808080]">${formatPrice4(modifyOrder.price)}</span>
+                          <span className="text-[10px] text-[#606060]">→</span>
+                          <span className="text-[11px] font-mono text-white">${formatPrice4(newP)}</span>
+                          <span className={`text-[10px] font-mono ${priceDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            ({priceDelta >= 0 ? '+' : ''}{formatPrice4(priceDelta)})
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {Math.abs(sizeDelta) > 0.00001 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-[#606060]">Size</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-mono text-[#808080]">{formatAmount(modifyOrder.size, 4)}</span>
+                          <span className="text-[10px] text-[#606060]">→</span>
+                          <span className="text-[11px] font-mono text-white">{formatAmount(newS, 4)}</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between pt-1 border-t border-blue-400/10">
+                      <span className="text-[10px] text-[#606060]">Order Value</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-mono text-[#808080]">${formatPrice(oldValue)}</span>
+                        <span className="text-[10px] text-[#606060]">→</span>
+                        <span className="text-[11px] font-mono font-medium text-white">${formatPrice(newValue)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Error display */}
+            {modifyError && (
+              <div className="mb-4 bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                  <span className="text-[11px] font-medium text-red-400">{modifyError}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (!isModifying) {
+                    setShowModifyModal(false);
+                    setModifyOrder(null);
+                    setModifyPrice('');
+                    setModifySize('');
+                    setModifyError(null);
+                  }
+                }}
+                disabled={isModifying}
+                className="px-4 py-2 rounded-md text-[11px] font-medium border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleModifySubmit}
+                disabled={isModifying || !modifyPrice || parseFloat(modifyPrice) <= 0 || !modifySize || parseFloat(modifySize) <= 0}
+                className={`px-4 py-2 rounded-md text-[11px] font-medium border transition-all duration-200 flex items-center gap-2 ${
+                  isModifying || !modifyPrice || parseFloat(modifyPrice) <= 0 || !modifySize || parseFloat(modifySize) <= 0
+                    ? 'border-[#222222] text-[#606060] cursor-not-allowed'
+                    : 'border-blue-500/20 text-blue-400 hover:border-blue-500/30 hover:bg-blue-500/5'
+                }`}
+              >
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+                {isModifying ? 'Modifying...' : 'Confirm Modify'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showTopUpModal && portalMounted && (() => {
+        const topUpIcon = marketSymbolMap.get(topUpSymbol)?.icon || FALLBACK_TOKEN_ICON;
+        const newMargin = currentMargin + (parseFloat(topUpAmount) || 0);
+        const topUpValue = parseFloat(topUpAmount) || 0;
+
+        return createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+            onClick={() => {
+              if (!isToppingUp) {
+                setShowTopUpModal(false);
+                setTopUpAmount('');
+                setTopUpError(null);
+              }
+            }}
+          >
+            <div
+              className="absolute inset-0 bg-black/50 backdrop-blur-[2px]"
+              onClick={() => {
+                if (!isToppingUp) {
+                  setShowTopUpModal(false);
+                  setTopUpAmount('');
+                  setTopUpError(null);
+                }
+              }}
+            />
+            <div
+              className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+              style={{ maxWidth: '600px', padding: '24px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', margin: 'auto' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header row */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <MarketIconBadge
+                    iconUrl={topUpIcon as string}
+                    alt={`${topUpSymbol} icon`}
+                    sizePx={32}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-white text-sm font-medium tracking-tight">Top Up Position</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080]">{topUpSymbol}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                        topUpSide === 'LONG'
+                          ? 'bg-green-400/10 text-green-400'
+                          : 'bg-red-400/10 text-red-400'
+                      }`}>
+                        {topUpSide}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-[#606060]">
+                      Add margin to reduce liquidation risk
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!isToppingUp) {
+                      setShowTopUpModal(false);
+                      setTopUpAmount('');
+                      setTopUpError(null);
+                    }
+                  }}
+                  className="p-1.5 rounded-full hover:bg-[#1A1A1A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+                  aria-label="Close"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Position details row */}
+              <div className="grid grid-cols-3 gap-2 mb-4">
+                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                    <span className="text-[10px] text-[#606060]">Entry Price</span>
+                  </div>
+                  <div className="text-[13px] font-mono text-white">${formatPrice4(topUpEntryPrice)}</div>
+                </div>
+                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                    <span className="text-[10px] text-[#606060]">Leverage</span>
+                  </div>
+                  <div className="text-[13px] font-mono text-white">{topUpLeverage.toFixed(1)}x</div>
+                </div>
+                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${topUpLiqPrice > 0 ? 'bg-yellow-400' : 'bg-[#404040]'}`} />
+                    <span className="text-[10px] text-[#606060]">Liq. Price</span>
+                  </div>
+                  <div className="text-[13px] font-mono text-white">${formatPrice4(topUpLiqPrice)}</div>
+                </div>
+              </div>
+
+              {/* Top-up amount input */}
+              <div className="mb-4">
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={topUpAmount}
+                    onChange={(e) => {
+                      setTopUpAmount(e.target.value);
+                      setTopUpError(null);
+                    }}
+                    className={`w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-20 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                      topUpError
+                        ? 'border-red-500/50 focus:border-red-400'
+                        : 'border-[#222222] hover:border-[#333333] focus:border-[#333333]'
+                    }`}
+                    placeholder="Enter additional margin (USDC)..."
+                    min="0"
+                    step="0.01"
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
+                    <span className="text-[10px] text-[#606060] font-mono mr-1">USDC</span>
+                  </div>
+                </div>
+                {topUpError && (
+                  <div className="mt-2 bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                      <span className="text-[11px] font-medium text-red-400">{topUpError}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Margin summary */}
+              {topUpValue > 0 && (
+                <div className="rounded-md border border-green-400/20 bg-green-400/5 p-3 mb-4">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                      <span className="text-[11px] font-medium text-[#808080]">Current Margin</span>
+                    </div>
+                    <span className="text-sm font-mono text-white">
+                      ${currentMargin.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                      <span className="text-[11px] font-medium text-[#808080]">Adding</span>
+                    </div>
+                    <span className="text-sm font-mono font-semibold text-green-400">
+                      +${topUpValue.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="border-t border-[#222222] pt-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                        <span className="text-[11px] font-medium text-[#808080]">New Margin</span>
+                      </div>
+                      <span className="text-sm font-mono font-semibold text-white">
+                        ${newMargin.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex items-center justify-end gap-2">
                 <button
                   onClick={() => {
                     setShowTopUpModal(false);
                     setTopUpAmount('');
+                    setTopUpError(null);
                   }}
-                  className="px-3 py-1.5 text-[11px] font-medium text-[#E5E7EB] hover:text-white bg-[#2A2A2A] hover:bg-[#333333] rounded transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   disabled={isToppingUp}
+                  className="px-4 py-2 rounded-md text-[11px] font-medium border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleTopUpSubmit}
                   disabled={!topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp}
-                  className={`px-3 py-1.5 text-[11px] font-medium rounded transition-colors ${
+                  className={`px-4 py-2 rounded-md text-[11px] font-medium border transition-all duration-200 flex items-center gap-2 ${
                     !topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp
-                      ? 'text-[#CBD5E1] bg-[#2A2A2A] cursor-not-allowed'
-                      : 'text-white bg-blue-500 hover:bg-blue-600'
+                      ? 'border-[#222222] text-[#606060] cursor-not-allowed'
+                      : 'border-green-500/20 text-green-400 hover:border-green-500/30 hover:bg-green-500/5'
                   }`}
                 >
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
                   {isToppingUp ? 'Submitting...' : 'Confirm Top-Up'}
                 </button>
               </div>
             </div>
-          </div>
-        </div>
-        )}
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }

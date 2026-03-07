@@ -10,6 +10,7 @@ interface RelayerInfo {
   address: string
   balanceHype: string
   balanceWei: bigint
+  blockType: 'Large' | 'Small' | '??'
 }
 
 async function main() {
@@ -47,7 +48,11 @@ async function main() {
     try {
       const wallet = new ethers.Wallet(privateKey)
       const address = wallet.address
-      const balanceWei = await provider.getBalance(address)
+
+      const [balanceWei, bigBlocks] = await Promise.all([
+        provider.getBalance(address),
+        provider.send('eth_usingBigBlocks', [address]).catch(() => null),
+      ])
       const balanceHype = ethers.formatEther(balanceWei)
 
       relayers.push({
@@ -56,28 +61,30 @@ async function main() {
         address,
         balanceHype,
         balanceWei,
+        blockType: bigBlocks === true ? 'Large' : bigBlocks === false ? 'Small' : '??',
       })
     } catch (e) {
       console.error(`Error processing key at index ${i}:`, e)
     }
   }
 
-  console.log('┌─────┬────────────────────────────────────────────┬──────────────────────┐')
-  console.log('│  #  │ Address                                    │ HYPE Balance         │')
-  console.log('├─────┼────────────────────────────────────────────┼──────────────────────┤')
+  console.log('┌─────┬────────────────────────────────────────────┬─────────┬──────────────────────┐')
+  console.log('│  #  │ Address                                    │ Blocks  │ HYPE Balance         │')
+  console.log('├─────┼────────────────────────────────────────────┼─────────┼──────────────────────┤')
 
   let totalWei = 0n
   for (const r of relayers) {
     const idx = r.index.toString().padStart(3)
+    const blocks = r.blockType.padEnd(5)
     const balance = parseFloat(r.balanceHype).toFixed(6).padStart(18)
-    console.log(`│ ${idx} │ ${r.address} │ ${balance} │`)
+    console.log(`│ ${idx} │ ${r.address} │ ${blocks}   │ ${balance} │`)
     totalWei += r.balanceWei
   }
 
-  console.log('├─────┼────────────────────────────────────────────┼──────────────────────┤')
+  console.log('├─────┼────────────────────────────────────────────┼─────────┼──────────────────────┤')
   const totalHype = parseFloat(ethers.formatEther(totalWei)).toFixed(6).padStart(18)
-  console.log(`│ SUM │                                            │ ${totalHype} │`)
-  console.log('└─────┴────────────────────────────────────────────┴──────────────────────┘')
+  console.log(`│ SUM │                                            │         │ ${totalHype} │`)
+  console.log('└─────┴────────────────────────────────────────────┴─────────┴──────────────────────┘')
 
   console.log(`\n📊 Total relayers: ${relayers.length}`)
   console.log(`💰 Total HYPE: ${ethers.formatEther(totalWei)} HYPE\n`)

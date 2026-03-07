@@ -315,13 +315,16 @@ const Footer: React.FC = () => {
 
   const combinedActiveMarkets = useMemo(() => {
     const ordered: Array<{ hrefId: string; key: string; label: string }> = [];
-    const seen = new Set<string>();
+    const seenKey = new Set<string>();
+    const seenHrefId = new Set<string>();
     const push = (value: unknown) => {
       const normalized = normalizeActiveMarketCandidate(value);
       if (!normalized) return;
       const k = String(normalized.key || '').toUpperCase();
-      if (!k || seen.has(k)) return;
-      seen.add(k);
+      const h = String(normalized.hrefId || '').toUpperCase();
+      if (!k || seenKey.has(k) || seenHrefId.has(h)) return;
+      seenKey.add(k);
+      if (h) seenHrefId.add(h);
       ordered.push({ ...normalized, key: k });
     };
 

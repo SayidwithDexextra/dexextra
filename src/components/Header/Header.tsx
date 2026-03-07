@@ -49,6 +49,15 @@ const NotificationIcon = () => (
   </svg>
 )
 
+// Portfolio Icon Component (wallet style)
+const PortfolioIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M4 6v12a2 2 0 0 0 2 2h14v-4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+)
+
 // Chevron Down Icon Component
 const ChevronDownIcon = () => (
   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -432,16 +441,50 @@ export default function Header() {
                 className="w-7 h-7 drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
                 priority
               />
+              {/* Font Variation Preview - Cycle through options */}
+              {/* Option 1: Uppercase Wide Tracking - Professional trading aesthetic */}
               <span
-                className="text-white font-semibold text-[15px]"
+                className="text-white font-medium text-[13px] uppercase"
+                style={{ letterSpacing: '0.12em' }}
+              >
+                Dexeter
+              </span>
+              {/* Option 2: Lowercase Medium Weight - Modern tech-forward 
+              <span
+                className="text-white font-medium text-[16px]"
+                style={{ letterSpacing: '0.01em' }}
+              >
+                dexetera
+              </span>
+              */}
+              {/* Option 3: Small Caps Style - Sophisticated financial feel
+              <span
+                className="text-white font-semibold text-[14px]"
+                style={{ fontVariant: 'small-caps', letterSpacing: '0.08em' }}
+              >
+                Dexetera
+              </span>
+              */}
+              {/* Option 4: Condensed Bold - Strong, minimal footprint
+              <span
+                className="text-white font-bold text-[15px]"
+                style={{ letterSpacing: '-0.01em', fontStretch: 'condensed' }}
+              >
+                DEXETERA
+              </span>
+              */}
+              {/* Option 5: Light Weight Tight Tracking - Elegant minimal
+              <span
+                className="text-white/90 font-light text-[17px]"
                 style={{ letterSpacing: '0.02em' }}
               >
                 Dexetera
               </span>
+              */}
             </Link>
           </div>
 
-          {/* Right - Search + Connect */}
+          {/* Right - Search + Portfolio + Connect */}
           <div className="flex items-center gap-2">
             {/* Search Button */}
             <button
@@ -458,6 +501,23 @@ export default function Header() {
               }}
             >
               <SearchIcon />
+            </button>
+
+            {/* Portfolio Button */}
+            <button
+              onClick={openPortfolioSidebar}
+              className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-200"
+              style={{ color: '#ffffff' }}
+              aria-label="Open portfolio"
+              data-walkthrough="header-portfolio-mobile"
+              onMouseEnter={(e) => {
+                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as any).style.backgroundColor = 'transparent'
+              }}
+            >
+              <PortfolioIcon />
             </button>
 
             {/* Connect/Profile Button */}
@@ -555,12 +615,14 @@ export default function Header() {
               className="w-5.5 h-5.5 min-w-[22px] min-h-[22px] drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
               priority
             />
+    
             <span
-              className="text-white/90 font-semibold text-[12px] uppercase"
-              style={{ letterSpacing: '0.08em' }}
+              className="text-white font-medium text-[12px] uppercase"
+              style={{ fontFamily: 'Georgia, "Times New Roman", serif', letterSpacing: '0.04em' }}
             >
               Dexetera
             </span>
+
           </Link>
           <div className="relative w-full max-w-sm" data-walkthrough="header-search">
             <div 

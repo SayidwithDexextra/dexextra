@@ -218,6 +218,13 @@ export function OrderFillLoadingModal({
     return () => document.removeEventListener('mousedown', onMouseDown);
   }, [isOpen, canClose, onClose]);
 
+  useEffect(() => {
+    if (!isOpen || !onClose) return;
+    if (status !== 'success' && status !== 'error') return;
+    const timer = setTimeout(() => onClose(), 3000);
+    return () => clearTimeout(timer);
+  }, [isOpen, status, onClose]);
+
   if (!isOpen) return null;
   if (!isMounted) return null;
 
@@ -300,6 +307,10 @@ export function OrderFillLoadingModal({
               </div>
             ) : showProgressLabel ? (
               <div className="mt-2 text-[10px] text-white font-mono tabular-nums">{formatPct(p)}</div>
+            ) : status === 'success' ? (
+              <div className="mt-2 text-[10px] text-green-300/70">Click anywhere to dismiss.</div>
+            ) : status === 'error' ? (
+              <div className="mt-2 text-[10px] text-red-300/70">Click anywhere to dismiss.</div>
             ) : (
               <div className="mt-2 text-[10px] text-[#606060]">Please wait.</div>
             )}
