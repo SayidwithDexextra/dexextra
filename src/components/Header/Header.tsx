@@ -18,7 +18,7 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import UserProfileModal from '../UserProfileModal'
 import SearchModal from '../SearchModal'
@@ -88,6 +88,9 @@ export default function Header() {
   const profileTriggerRef = useRef<HTMLButtonElement | null>(null)
   const { walletData, portfolio } = useWallet()
   const router = useRouter()
+  const pathname = usePathname()
+  const isTokenPage = pathname?.startsWith('/token/')
+  const collapsedNavbarWidth = isTokenPage ? 52 : 60
   const [hasMounted, setHasMounted] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [vaultEvent, setVaultEvent] = useState<any | null>(null)
@@ -596,8 +599,8 @@ export default function Header() {
           padding: '0 16px',
           borderBottom: '1px solid #333333',
           fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-          left: '60px',
-          width: 'calc(100vw - 60px)'
+          left: `${collapsedNavbarWidth}px`,
+          width: `calc(100vw - ${collapsedNavbarWidth}px)`
         }}
       >
         {/* Brand + Search Section */}

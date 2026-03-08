@@ -388,8 +388,8 @@ const Footer: React.FC = () => {
         padding: '0 16px',
         borderTop: '1px solid #333333',
         fontFamily: 'system-ui, -apple-system, sans-serif',
-        left: '60px', // Fixed position for collapsed navbar only
-        width: 'calc(100vw - 60px)' // Fixed width for collapsed navbar only
+        left: `${pathname?.startsWith('/token/') ? 52 : 60}px`,
+        width: `calc(100vw - ${pathname?.startsWith('/token/') ? 52 : 60}px)`
       }}
     >
       {/* Left Section - Status Indicators and Navigation */}

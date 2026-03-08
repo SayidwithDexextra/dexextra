@@ -224,17 +224,25 @@ export function useComments({
       // Get all comment IDs for fetching related data
       const commentIds = commentsData.map((c) => c.id);
 
-      // Fetch replies for these comments
-      const { data: repliesData } = await supabase
-        .from('comments')
-        .select('*')
-        .in('parent_id', commentIds)
-        .eq('is_deleted', false)
-        .eq('is_hidden', false)
-        .order('created_at', { ascending: true });
+      // Recursively fetch all reply descendants
+      const allReplies: DbComment[] = [];
+      let parentIds = commentIds;
+      while (parentIds.length > 0) {
+        const { data: repliesData } = await supabase
+          .from('comments')
+          .select('*')
+          .in('parent_id', parentIds)
+          .eq('is_deleted', false)
+          .eq('is_hidden', false)
+          .order('created_at', { ascending: true });
 
-      // Fetch images for all comments (including replies)
-      const allCommentIds = [...commentIds, ...(repliesData?.map((r) => r.id) || [])];
+        if (!repliesData || repliesData.length === 0) break;
+        allReplies.push(...repliesData);
+        parentIds = repliesData.map((r) => r.id);
+      }
+
+      // Fetch images for all comments (including nested replies)
+      const allCommentIds = [...commentIds, ...allReplies.map((r) => r.id)];
       const { data: imagesData } = await supabase
         .from('comment_images')
         .select('*')
@@ -256,7 +264,7 @@ export function useComments({
       // Collect all unique author wallets
       const authorWallets = new Set<string>();
       commentsData.forEach((c) => authorWallets.add(c.author_wallet.toLowerCase()));
-      repliesData?.forEach((r) => authorWallets.add(r.author_wallet.toLowerCase()));
+      allReplies.forEach((r) => authorWallets.add(r.author_wallet.toLowerCase()));
 
       // Fetch user profiles for all authors
       const userProfiles = new Map<string, UserProfile>();
@@ -279,27 +287,25 @@ export function useComments({
         imagesByComment.set(img.comment_id, existing);
       });
 
-      // Group replies by parent
-      const repliesByParent = new Map<string, DbComment[]>();
-      repliesData?.forEach((reply) => {
+      // Build reply tree: group all replies by parent_id
+      const childrenMap = new Map<string, DbComment[]>();
+      allReplies.forEach((reply) => {
         if (reply.parent_id) {
-          const existing = repliesByParent.get(reply.parent_id) || [];
-          existing.push(reply);
-          repliesByParent.set(reply.parent_id, existing);
+          const children = childrenMap.get(reply.parent_id) || [];
+          children.push(reply);
+          childrenMap.set(reply.parent_id, children);
         }
       });
 
-      // Transform comments
-      const transformedComments = commentsData.map((dbComment) => {
+      // Recursively build the comment tree
+      function buildCommentTree(dbComment: DbComment): Comment {
         const commentImages = imagesByComment.get(dbComment.id) || [];
-        const commentReplies = repliesByParent.get(dbComment.id) || [];
-
-        const transformedReplies = commentReplies.map((reply) =>
-          transformComment(reply, imagesByComment.get(reply.id) || [], userLikes, userProfiles)
-        );
-
+        const children = childrenMap.get(dbComment.id) || [];
+        const transformedReplies = children.map((child) => buildCommentTree(child));
         return transformComment(dbComment, commentImages, userLikes, userProfiles, transformedReplies);
-      });
+      }
+
+      const transformedComments = commentsData.map((c) => buildCommentTree(c));
 
       if (reset) {
         setComments(transformedComments);
@@ -419,6 +425,22 @@ export function useComments({
       }
 
       try {
+        // Determine root_id for proper thread tracking
+        let rootId: string | null = null;
+        const { data: parentComment } = await supabase
+          .from('comments')
+          .select('id, parent_id, root_id')
+          .eq('id', parentId)
+          .single();
+
+        if (parentComment) {
+          if (parentComment.parent_id === null) {
+            rootId = parentComment.id;
+          } else {
+            rootId = parentComment.root_id || parentComment.parent_id;
+          }
+        }
+
         const { error: insertError } = await supabase.from('comments').insert({
           market_id: marketId || null,
           market_identifier: marketIdentifier || null,
@@ -426,6 +448,7 @@ export function useComments({
           author_name: userName || null,
           content: text.trim(),
           parent_id: parentId,
+          root_id: rootId,
         });
 
         if (insertError) throw insertError;
@@ -443,6 +466,34 @@ export function useComments({
     [marketId, marketIdentifier, userWallet, userName, supabase, refetch]
   );
 
+  // Recursive helper to update a comment at any nesting depth
+  function updateNestedComment(
+    comments: Comment[],
+    commentId: string,
+    updater: (c: Comment) => Comment
+  ): Comment[] {
+    return comments.map((c) => {
+      if (c.id === commentId) return updater(c);
+      if (c.replies && c.replies.length > 0) {
+        const updatedReplies = updateNestedComment(c.replies, commentId, updater);
+        if (updatedReplies !== c.replies) {
+          return { ...c, replies: updatedReplies };
+        }
+      }
+      return c;
+    });
+  }
+
+  // Recursive helper to remove a comment at any nesting depth
+  function removeNestedComment(comments: Comment[], commentId: string): Comment[] {
+    return comments
+      .filter((c) => c.id !== commentId)
+      .map((c) => ({
+        ...c,
+        replies: c.replies ? removeNestedComment(c.replies, commentId) : undefined,
+      }));
+  }
+
   // Like comment
   const likeComment = useCallback(
     async (commentId: string) => {
@@ -454,22 +505,12 @@ export function useComments({
           user_wallet: userWallet,
         });
 
-        // Optimistic update
         setComments((prev) =>
-          prev.map((c) => {
-            if (c.id === commentId) {
-              return { ...c, likes: c.likes + 1, isLiked: true };
-            }
-            if (c.replies) {
-              return {
-                ...c,
-                replies: c.replies.map((r) =>
-                  r.id === commentId ? { ...r, likes: r.likes + 1, isLiked: true } : r
-                ),
-              };
-            }
-            return c;
-          })
+          updateNestedComment(prev, commentId, (c) => ({
+            ...c,
+            likes: c.likes + 1,
+            isLiked: true,
+          }))
         );
       } catch (err) {
         console.error('Error liking comment:', err);
@@ -490,22 +531,12 @@ export function useComments({
           .eq('comment_id', commentId)
           .eq('user_wallet', userWallet);
 
-        // Optimistic update
         setComments((prev) =>
-          prev.map((c) => {
-            if (c.id === commentId) {
-              return { ...c, likes: Math.max(0, c.likes - 1), isLiked: false };
-            }
-            if (c.replies) {
-              return {
-                ...c,
-                replies: c.replies.map((r) =>
-                  r.id === commentId ? { ...r, likes: Math.max(0, r.likes - 1), isLiked: false } : r
-                ),
-              };
-            }
-            return c;
-          })
+          updateNestedComment(prev, commentId, (c) => ({
+            ...c,
+            likes: Math.max(0, c.likes - 1),
+            isLiked: false,
+          }))
         );
       } catch (err) {
         console.error('Error unliking comment:', err);
@@ -577,12 +608,8 @@ export function useComments({
         // Remove from local state and update count
         setComments((prev) => {
           const isTopLevel = prev.some((c) => c.id === commentId);
-          const newComments = prev.filter((c) => c.id !== commentId).map((c) => ({
-            ...c,
-            replies: c.replies?.filter((r) => r.id !== commentId),
-          }));
+          const newComments = removeNestedComment(prev, commentId);
           
-          // Update total count
           if (isTopLevel) {
             setTotalCount((prevCount) => Math.max(0, prevCount - 1));
           }
@@ -648,41 +675,16 @@ export function useComments({
           } else if (payload.eventType === 'UPDATE') {
             const updated = payload.new as DbComment;
             setComments((prev) =>
-              prev.map((c) => {
-                if (c.id === updated.id) {
-                  return {
-                    ...c,
-                    text: updated.content,
-                    likes: updated.like_count,
-                    isEdited: updated.is_edited,
-                  };
-                }
-                if (c.replies) {
-                  return {
-                    ...c,
-                    replies: c.replies.map((r) =>
-                      r.id === updated.id
-                        ? {
-                            ...r,
-                            text: updated.content,
-                            likes: updated.like_count,
-                            isEdited: updated.is_edited,
-                          }
-                        : r
-                    ),
-                  };
-                }
-                return c;
-              })
+              updateNestedComment(prev, updated.id, (c) => ({
+                ...c,
+                text: updated.content,
+                likes: updated.like_count,
+                isEdited: updated.is_edited,
+              }))
             );
           } else if (payload.eventType === 'DELETE') {
             const deleted = payload.old as DbComment;
-            setComments((prev) =>
-              prev.filter((c) => c.id !== deleted.id).map((c) => ({
-                ...c,
-                replies: c.replies?.filter((r) => r.id !== deleted.id),
-              }))
-            );
+            setComments((prev) => removeNestedComment(prev, deleted.id));
           }
         }
       )

@@ -382,7 +382,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
             overflowX: 'hidden',
             overflowY: 'auto',
             zIndex: 9999,
-            boxShadow: isOpen ? '4px 0 20px rgba(0, 0, 0, 0.3)' : '2px 0 10px rgba(0, 0, 0, 0.2)',
+            boxShadow: isOpen ? '4px 0 20px rgba(0, 0, 0, 0.3)' : 'none',
           }}
           onMouseEnter={() => {
             if (!isMobile) onOpenChange(true)

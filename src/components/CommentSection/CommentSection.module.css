@@ -10,9 +10,12 @@
   max-height: 500px;
   background: #0F0F0F;
   border: 1px solid #222222;
-  border-radius: 6px;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
   overflow: hidden;
   transition: all 200ms ease;
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 92%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 0%, black 92%, transparent 100%);
 }
 
 .container:hover {
@@ -23,38 +26,82 @@
 .composeArea {
   position: relative;
   flex-shrink: 0;
-  padding: 20px;
+  padding: 10px 16px;
   border-bottom: 1px solid #1A1A1A;
   background: #0F0F0F;
+  overflow: hidden;
+  transition: padding 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.composeArea:hover,
+.composeArea:focus-within {
+  padding: 16px 20px;
 }
 
 .composeInputWrapper {
   display: flex;
   flex-direction: column;
   gap: 0;
-  background: #1A1A1A;
-  border: 1px solid #2A2A2A;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 8px;
-  transition: border-color 200ms ease;
+  transition: background 300ms ease, border-color 300ms ease;
 }
 
-.composeInputWrapper:focus-within {
+.composeArea:hover .composeInputWrapper,
+.composeArea:focus-within .composeInputWrapper {
+  background: #1A1A1A;
+  border-color: #2A2A2A;
+}
+
+.composeArea:focus-within .composeInputWrapper {
   border-color: #3A3A3A;
 }
 
 .composeInput {
   width: 100%;
-  min-height: 48px;
-  padding: 14px 16px;
+  min-height: 34px;
+  padding: 8px 14px;
   background: transparent;
   border: none;
-  border-left: 3px solid #f97316;
+  border-left: 3px solid transparent;
   color: #ffffff;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   resize: none;
-  transition: all 200ms ease;
+  cursor: pointer;
+  transition: all 300ms cubic-bezier(0.4, 0, 0.2, 1);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.composeArea:hover .composeInput,
+.composeArea:focus-within .composeInput {
+  min-height: 48px;
+  padding: 14px 16px;
+  border-left-color: #f97316;
+  font-size: 14px;
+  cursor: text;
+}
+
+.composeArea:not(:hover):not(:focus-within) .composeActions {
+  max-height: 0;
+  opacity: 0;
+  padding: 0 14px;
+  border-top-color: transparent;
+  pointer-events: none;
+}
+
+.composeArea:not(:hover):not(:focus-within) .imagePreviews {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.composeArea:not(:hover):not(:focus-within) .moderationError {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
 }
 
 .composeInput::placeholder {
@@ -105,11 +152,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  max-height: 60px;
   padding: 10px 14px;
   background: #1A1A1A;
   border-top: 1px solid #252525;
   border-radius: 0 0 8px 8px;
   overflow: visible;
+  transition: max-height 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 300ms ease,
+              padding 300ms cubic-bezier(0.4, 0, 0.2, 1),
+              border-top-color 200ms ease;
 }
 
 .composeTools {
@@ -896,6 +948,12 @@
   border-left: 1px solid #222222;
 }
 
+/* Reduce indentation for deeper nesting levels */
+.repliesContainer .repliesContainer {
+  margin-left: 24px;
+  padding-left: 10px;
+}
+
 .replyItem {
   position: relative;
   padding: 10px 0;
@@ -907,6 +965,10 @@
 
 .replyItem:last-child {
   padding-bottom: 0;
+}
+
+.replyItem:hover .moreBtn {
+  opacity: 1;
 }
 
 .replyItem .avatar {
@@ -948,6 +1010,10 @@
   background: #1A1A1A;
   border: 1px solid #222222;
   border-radius: 6px;
+}
+
+.replyItem .replyInputWrapper {
+  margin-left: 38px;
 }
 
 .replyInputWrapper .composeAvatar {
@@ -1064,6 +1130,10 @@
   transition: color 200ms ease;
 }
 
+.replyItem .showRepliesBtn {
+  margin-left: 38px;
+}
+
 .showRepliesBtn:hover {
   color: #60a5fa;
 }
@@ -1085,7 +1155,7 @@
   flex-shrink: 0;
   padding: 12px 20px;
   border-top: 1px solid #1A1A1A;
-  background: #0F0F0F;
+  background: transparent;
 }
 
 .loadMoreBtn {
@@ -1188,6 +1258,10 @@
   border: 1px solid rgba(239, 68, 68, 0.15);
   border-radius: 6px;
   animation: inlineConfirmSlide 150ms ease;
+}
+
+.replyItem .inlineDeleteConfirm {
+  margin-left: 38px;
 }
 
 @keyframes inlineConfirmSlide {
@@ -1539,12 +1613,25 @@
     padding-left: 10px;
   }
 
+  .repliesContainer .repliesContainer {
+    margin-left: 18px;
+    padding-left: 8px;
+  }
+
   .replyInputWrapper {
     margin-left: 36px;
   }
 
+  .replyItem .replyInputWrapper {
+    margin-left: 32px;
+  }
+
   .showRepliesBtn {
     margin-left: 36px;
+  }
+
+  .replyItem .showRepliesBtn {
+    margin-left: 32px;
   }
 
   .composeArea {

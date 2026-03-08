@@ -640,12 +640,10 @@ function CommentItem({
                 </span>
               )}
             </button>
-            {depth === 0 && (
-              <button className={styles.actionBtn} onClick={() => setShowReplyInput(!showReplyInput)}>
-                <ReplyIcon />
-                Reply
-              </button>
-            )}
+            <button className={styles.actionBtn} onClick={() => setShowReplyInput(!showReplyInput)}>
+              <ReplyIcon />
+              Reply
+            </button>
             <div className={styles.menuWrapper}>
               <button
                 className={styles.moreBtn}
@@ -698,7 +696,7 @@ function CommentItem({
         </div>
       )}
 
-      {showReplyInput && depth === 0 && (
+      {showReplyInput && (
         <div className={styles.replyInputWrapper}>
           <div className={styles.composeAvatar}>
             {currentUserAvatar ? (
@@ -731,7 +729,7 @@ function CommentItem({
         </div>
       )}
 
-      {hasReplies && !showReplies && depth === 0 && (
+      {hasReplies && !showReplies && (
         <button className={styles.showRepliesBtn} onClick={() => setShowReplies(true)}>
           <ChevronRightIcon />
           Show {comment.replies!.length} {comment.replies!.length === 1 ? 'reply' : 'replies'}
