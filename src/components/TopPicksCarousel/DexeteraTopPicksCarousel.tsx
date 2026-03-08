@@ -70,7 +70,7 @@ const VerifiedBadge = ({ className = '' }: { className?: string }) => (
 
 export default function DexeteraTopPicksCarousel({
   title = 'Top Picks',
-  subtitle = "This week’s top picks",
+  subtitle = "This week's top picks",
   items,
   onItemClick,
   className = '',
@@ -79,6 +79,8 @@ export default function DexeteraTopPicksCarousel({
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
   const [cardWidth, setCardWidth] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+  const [cardHeight, setCardHeight] = useState(200);
 
   const updateScrollState = useCallback(() => {
     const el = scrollRef.current;
@@ -94,7 +96,17 @@ export default function DexeteraTopPicksCarousel({
 
     const updateLayout = () => {
       const w = el.clientWidth;
-      setCardWidth(Math.floor((w - 64) / 4.25)); // 64 = 4 gaps × 16px
+      const mobile = window.matchMedia('(max-width: 767px)').matches;
+      setIsMobile(mobile);
+
+      if (mobile) {
+        const mobileCardW = Math.floor(w * 0.82);
+        setCardWidth(mobileCardW);
+        setCardHeight(Math.min(280, Math.max(220, Math.floor(mobileCardW * 0.8))));
+      } else {
+        setCardWidth(Math.floor((w - 64) / 4.25));
+        setCardHeight(200);
+      }
     };
 
     updateLayout();
@@ -107,7 +119,6 @@ export default function DexeteraTopPicksCarousel({
     };
   }, [items.length, updateScrollState]);
 
-  // Re-check scroll boundaries after cardWidth changes and the DOM reflows
   useEffect(() => {
     if (!cardWidth) return;
     requestAnimationFrame(updateScrollState);
@@ -116,36 +127,48 @@ export default function DexeteraTopPicksCarousel({
   const scroll = (direction: 'left' | 'right') => {
     const el = scrollRef.current;
     if (!el) return;
-    const amount = cardWidth * 4 + 16 * 3;
-    el.scrollBy({
-      left: direction === 'left' ? -amount : amount,
-      behavior: 'smooth',
-    });
+    if (isMobile) {
+      const gap = 12;
+      el.scrollBy({
+        left: direction === 'left' ? -(cardWidth + gap) : cardWidth + gap,
+        behavior: 'smooth',
+      });
+    } else {
+      const amount = cardWidth * 4 + 16 * 3;
+      el.scrollBy({
+        left: direction === 'left' ? -amount : amount,
+        behavior: 'smooth',
+      });
+    }
   };
 
   if (!items || items.length === 0) return null;
 
+  const fadeWidth = isMobile
+    ? cardWidth ? Math.round(cardWidth * 0.25) : 0
+    : cardWidth ? Math.round(cardWidth * 0.55) : 0;
+
   return (
     <section className={`w-full py-3 ${className}`}>
       <div>
-        <div className="flex flex-col gap-1">
-          <h2 className="text-[20px] font-medium leading-tight text-white">{title}</h2>
-          {subtitle ? <p className="text-sm text-white/60">{subtitle}</p> : null}
+        <div className="flex flex-col gap-0.5 md:gap-1">
+          <h2 className="text-[17px] font-medium leading-tight text-white md:text-[20px]">{title}</h2>
+          {subtitle ? <p className="text-[13px] text-white/60 md:text-sm">{subtitle}</p> : null}
         </div>
       </div>
 
-      <div className="group/carousel relative mt-5">
-        {/* Right edge fade — subtle gradient over the peeking 5th card */}
+      <div className="group/carousel relative mt-3 md:mt-5">
+        {/* Right edge fade */}
         <div
           className="pointer-events-none absolute inset-y-0 right-0 z-10"
           style={{
-            width: cardWidth ? Math.round(cardWidth * 0.55) : 0,
+            width: fadeWidth,
             background:
               'linear-gradient(to left, var(--primary-bg) 0%, rgba(26,26,26,0.88) 30%, rgba(26,26,26,0.4) 65%, transparent 100%)',
           }}
         />
 
-        {/* Scroll buttons — visible on hover, disabled at scroll boundaries */}
+        {/* Scroll buttons — desktop only */}
         <button
           type="button"
           onClick={() => scroll('left')}
@@ -171,7 +194,9 @@ export default function DexeteraTopPicksCarousel({
 
         <div
           ref={scrollRef}
-          className="scrollbar-none flex snap-x snap-proximity gap-4 overflow-x-auto scroll-smooth pb-2"
+          className={`scrollbar-none flex snap-x overflow-x-auto scroll-smooth pb-2 ${
+            isMobile ? 'snap-mandatory gap-3' : 'snap-proximity gap-4'
+          }`}
           role="region"
           aria-label="Dexetera top picks"
         >
@@ -185,9 +210,13 @@ export default function DexeteraTopPicksCarousel({
                 key={item.id}
                 type="button"
                 onClick={() => onItemClick?.(item.id)}
-                className="group relative snap-start overflow-hidden rounded-md border border-white/10 bg-white/5 shadow-sm transition hover:border-white/20 hover:shadow-md focus:outline-none"
+                className={`group relative snap-start overflow-hidden border bg-white/5 shadow-sm transition hover:shadow-md focus:outline-none ${
+                  isMobile
+                    ? 'rounded-xl border-white/15 hover:border-white/25'
+                    : 'rounded-md border-white/10 hover:border-white/20'
+                }`}
                 style={{
-                  height: 200,
+                  height: cardHeight,
                   minWidth: cardWidth || 200,
                   flexShrink: 0,
                 }}
@@ -197,30 +226,45 @@ export default function DexeteraTopPicksCarousel({
                     src={item.imageUrl || '/template.png'}
                     alt={item.imageAlt || item.title}
                     fill
-                    sizes="(max-width: 640px) 45vw, 22vw"
+                    sizes={isMobile ? '82vw' : '22vw'}
                     className="object-contain transition duration-300 group-hover:scale-[1.02]"
                   />
                   <div className="absolute inset-0 bg-black/20 transition group-hover:bg-black/10" />
                 </div>
 
-                <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-4 text-left">
+                <div className={`absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/40 to-transparent text-left ${
+                  isMobile ? 'p-5' : 'p-4'
+                }`}>
                   <div className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <h3 className="truncate text-sm font-medium text-white" title={item.title}>
+                        <h3
+                          className={`truncate font-medium text-white ${
+                            isMobile ? 'text-base' : 'text-sm'
+                          }`}
+                          title={item.title}
+                        >
                           {item.title}
                         </h3>
-                        {item.isVerified ? <VerifiedBadge className="h-4 w-4 shrink-0" /> : null}
+                        {item.isVerified ? (
+                          <VerifiedBadge className={`shrink-0 ${isMobile ? 'h-5 w-5' : 'h-4 w-4'}`} />
+                        ) : null}
                       </div>
                     </div>
                   </div>
 
                   {(item.statLabel || statValue || changeText) && (
-                    <div className="mt-2 flex items-center gap-2 text-[13px]">
+                    <div className={`mt-2 flex items-center gap-2 ${
+                      isMobile ? 'text-sm' : 'text-[13px]'
+                    }`}>
                       {item.statLabel ? (
                         <span className="text-white/70">{item.statLabel}:</span>
                       ) : null}
-                      {statValue ? <span className="text-white">{statValue}</span> : null}
+                      {statValue ? (
+                        <span className={`font-semibold text-white ${isMobile ? 'font-mono' : ''}`}>
+                          {statValue}
+                        </span>
+                      ) : null}
                       {changeText ? (
                         <span
                           className={`ml-auto font-medium ${
@@ -241,4 +285,3 @@ export default function DexeteraTopPicksCarousel({
     </section>
   );
 }
-

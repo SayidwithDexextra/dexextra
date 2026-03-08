@@ -15,6 +15,7 @@ import {
 
 type WatchlistCacheData = {
   market_ids: string[];
+  watched_markets?: MarketOverviewRow[];
   watched_user_ids: string[];
   watched_users: WatchedUser[];
 };
@@ -37,6 +38,7 @@ export function FooterWatchlistPopup({ isOpen, onClose }: FooterWatchlistPopupPr
   const { walletData } = useWallet();
 
   const [watchlistIds, setWatchlistIds] = useState<string[]>([]);
+  const [watchlistMarkets, setWatchlistMarkets] = useState<MarketOverviewRow[]>([]);
   const [watchlistLoading, setWatchlistLoading] = useState(false);
   const [watchlistError, setWatchlistError] = useState<string | null>(null);
 
@@ -66,6 +68,7 @@ export function FooterWatchlistPopup({ isOpen, onClose }: FooterWatchlistPopupPr
     const cached = getFromCacheOrStorage<WatchlistCacheData>(cacheKey);
     if (cached) {
       setWatchlistIds(cached.market_ids);
+      setWatchlistMarkets(cached.watched_markets || []);
       if (!isDataStale(cacheKey)) {
         setWatchlistLoading(false);
       }
@@ -86,13 +89,19 @@ export function FooterWatchlistPopup({ isOpen, onClose }: FooterWatchlistPopupPr
           throw new Error(json?.error || 'Failed to fetch watchlist');
         }
         const ids = Array.isArray(json.market_ids) ? json.market_ids : [];
+        const markets = Array.isArray(json.watched_markets) ? (json.watched_markets as MarketOverviewRow[]) : [];
         const filteredIds = ids.filter((id: unknown) => typeof id === 'string');
+        const filteredMarkets = markets.filter(
+          (m: any) => m && typeof m.market_id === 'string'
+        );
         setWatchlistIds(filteredIds);
+        setWatchlistMarkets(filteredMarkets);
 
         // Update cache
         const existingCache = getFromCacheOrStorage<WatchlistCacheData>(cacheKey);
         setCache<WatchlistCacheData>(cacheKey, {
           market_ids: filteredIds,
+          watched_markets: filteredMarkets,
           watched_user_ids: existingCache?.watched_user_ids || [],
           watched_users: existingCache?.watched_users || [],
         });
@@ -109,19 +118,45 @@ export function FooterWatchlistPopup({ isOpen, onClose }: FooterWatchlistPopupPr
   }, [walletData?.address, isOpen]);
 
   // Fetch market overview
-  const { data: overview, isLoading: marketsLoading } = useMarketOverview({
+  const { data: overview } = useMarketOverview({
     limit: 500,
     autoRefresh: false,
     realtime: false,
   });
 
-  const watchlistSet = useMemo(() => new Set(watchlistIds), [watchlistIds]);
-
   const watchlistedRows = useMemo(() => {
-    const rows = (overview as MarketOverviewRow[]) || [];
-    if (!rows.length || watchlistSet.size === 0) return [];
-    return rows.filter((row) => watchlistSet.has(String(row?.market_id || '')));
-  }, [overview, watchlistSet]);
+    const overviewRows = (overview as MarketOverviewRow[]) || [];
+    const overviewMap = new Map<string, MarketOverviewRow>();
+    for (const row of overviewRows) {
+      if (row.market_id) overviewMap.set(row.market_id, row);
+    }
+
+    if (watchlistMarkets.length > 0) {
+      return watchlistMarkets.map((market) => {
+        const live = overviewMap.get(market.market_id);
+        if (live) {
+          return {
+            ...market,
+            mark_price: live.mark_price ?? market.mark_price,
+            total_volume: live.total_volume ?? market.total_volume,
+            last_update: live.last_update ?? market.last_update,
+            is_stale: live.is_stale ?? market.is_stale,
+          };
+        }
+        return market;
+      });
+    }
+
+    // Fallback: filter overview data by watchlist IDs
+    if (overviewRows.length > 0 && watchlistIds.length > 0) {
+      const idSet = new Set(watchlistIds);
+      return overviewRows.filter((row) =>
+        idSet.has(String(row?.market_id || ''))
+      );
+    }
+
+    return [];
+  }, [watchlistMarkets, overview, watchlistIds]);
 
   // Get top 5 watchlist items
   const topWatchlistItems = useMemo(() => {
@@ -152,7 +187,7 @@ export function FooterWatchlistPopup({ isOpen, onClose }: FooterWatchlistPopupPr
   };
 
   const isWalletConnected = Boolean(walletData?.address);
-  const isLoading = watchlistLoading || marketsLoading;
+  const isLoading = watchlistLoading;
 
   if (!isOpen) return null;
 

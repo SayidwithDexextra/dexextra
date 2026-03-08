@@ -244,9 +244,66 @@ export async function GET(request: NextRequest) {
       .map((row: any) => row.watched_user)
       .filter((u: any) => u && typeof u.id === 'string');
 
+    // Fetch full market + ticker data for watchlisted market IDs
+    let watchedMarkets: any[] = [];
+    if (marketIds.length > 0) {
+      const [marketsResult, tickersResult] = await Promise.all([
+        supabaseAdmin
+          .from('markets')
+          .select(
+            'id, market_identifier, symbol, name, category, icon_image_url, banner_image_url, market_address, chain_id, network, tick_size, decimals, is_active, market_status, total_volume, total_trades'
+          )
+          .in('id', marketIds),
+        supabaseAdmin
+          .from('market_tickers')
+          .select('market_id, mark_price, last_update, is_stale')
+          .in('market_id', marketIds),
+      ]);
+
+      if (!marketsResult.error && marketsResult.data) {
+        const tickerMap = new Map<string, any>();
+        if (!tickersResult.error && tickersResult.data) {
+          for (const t of tickersResult.data) {
+            tickerMap.set(t.market_id, t);
+          }
+        }
+
+        // Preserve the watchlist ordering (most recently added first)
+        const marketMap = new Map<string, any>();
+        for (const m of marketsResult.data) {
+          const ticker = tickerMap.get(m.id);
+          marketMap.set(m.id, {
+            market_id: m.id,
+            market_identifier: m.market_identifier,
+            symbol: m.symbol,
+            name: m.name,
+            category: m.category,
+            icon_image_url: m.icon_image_url,
+            banner_image_url: m.banner_image_url,
+            market_address: m.market_address,
+            chain_id: m.chain_id,
+            network: m.network,
+            tick_size: m.tick_size,
+            decimals: m.decimals,
+            is_active: m.is_active,
+            market_status: m.market_status,
+            total_volume: m.total_volume,
+            total_trades: m.total_trades,
+            mark_price: ticker?.mark_price ?? null,
+            last_update: ticker?.last_update ?? null,
+            is_stale: ticker?.is_stale ?? null,
+          });
+        }
+        watchedMarkets = marketIds
+          .map((id) => marketMap.get(id))
+          .filter(Boolean);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       market_ids: marketIds,
+      watched_markets: watchedMarkets,
       watched_user_ids: watchedUserIds,
       watched_users: watchedUsers,
     });

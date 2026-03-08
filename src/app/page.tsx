@@ -531,7 +531,7 @@ export default function Home() {
       <Hero data={heroData} />
 
       {/* Shared container — aligns Widget, Top Picks, and Active Markets */}
-      <div className="w-full px-8">
+      <div className="w-full px-4 sm:px-8">
         <div className="pt-8 pb-2">
           <Widget />
         </div>

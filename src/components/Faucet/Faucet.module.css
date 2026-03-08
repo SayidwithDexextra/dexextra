@@ -573,10 +573,10 @@
   }
 
   .formSection {
-    gap: 10px;
+    gap: 12px;
   }
 
-  /* Container padding adjustments */
+  /* Container padding adjustments for touch comfort */
   .warningContainer,
   .connectionContainer,
   .balanceContainer,
@@ -584,17 +584,17 @@
   .messageContainer,
   .claimContainer,
   .infoSection {
-    padding: 8px;
+    padding: 12px;
   }
 
-  /* Typography adjustments */
+  /* Typography: slightly larger for mobile readability */
   .warningTitle,
   .connectionTitle,
   .balanceLabel,
   .inputLabel,
   .claimLabel,
   .infoTitle {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .warningDescription,
@@ -602,45 +602,71 @@
   .balanceDescription,
   .inputDescription,
   .claimDescription,
+  .infoText {
+    font-size: 11px;
+  }
+
   .errorText,
   .successText,
   .errorMessage,
-  .successMessage,
-  .infoText {
-    font-size: 9px;
+  .successMessage {
+    font-size: 11px;
   }
 
   .balanceNumber {
-    font-size: 10px;
+    font-size: 12px;
   }
 
+  /* Balance layout stacks on very small screens */
+  .balanceContainer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  /* Input: taller for touch targets */
   .input {
-    font-size: 11px;
-    padding: 4px 0;
+    font-size: 14px;
+    padding: 8px 0;
   }
 
   .input::placeholder {
-    font-size: 10px;
+    font-size: 12px;
   }
 
-  /* Button adjustments */
+  /* Buttons: 44px min height for touch targets */
   .warningAction,
   .connectionAction,
   .claimButton {
-    padding: 6px 12px;
-    font-size: 10px;
+    padding: 10px 16px;
+    font-size: 12px;
+    min-height: 44px;
+  }
+
+  .connectionAction,
+  .claimButton {
+    width: 100%;
   }
 
   /* Icon adjustments */
   .usdcIcon {
-    width: 14px;
-    height: 14px;
-    font-size: 7px;
+    width: 18px;
+    height: 18px;
+    font-size: 9px;
   }
 
   .loadingSpinner {
-    width: 10px;
-    height: 10px;
-    border-width: 1.5px;
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+  }
+
+  /* Wider gap for touch-friendly spacing in info section */
+  .infoContent {
+    gap: 10px;
+  }
+
+  .infoItem {
+    gap: 10px;
   }
 }

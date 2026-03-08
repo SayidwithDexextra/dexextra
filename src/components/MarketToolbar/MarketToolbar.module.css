@@ -425,43 +425,53 @@
 /* Responsive */
 @media (max-width: 768px) {
   .toolbarStack {
-    gap: 8px;
+    gap: 6px;
   }
 
   .toolbar {
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px 16px;
+    flex-direction: row;
+    gap: 8px;
+    padding: 0;
+    min-height: 44px;
   }
 
   .filtersContainer {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
   }
 
   .filtersScroll {
-    width: 100%;
+    gap: 6px;
   }
 
   .actionsContainer {
-    width: 100%;
-    justify-content: flex-end;
+    flex-shrink: 0;
+    gap: 6px;
+    padding-left: 8px;
+    background: linear-gradient(to left, #1a1a1a 0%, #1a1a1a 70%, transparent 100%);
   }
 
   .advancedFiltersWrapper {
-    padding: 0 16px 4px;
+    padding: 0 0 4px;
   }
 
   .advancedFilters {
-    justify-content: flex-start;
+    gap: 8px;
+    flex-direction: column;
+  }
+
+  .filterChip {
+    min-width: 0;
+    flex: 1 1 100%;
   }
 }
 
 @media (max-width: 640px) {
   .filterButton {
-    padding: 6px 16px;
+    padding: 5px 10px;
     font-size: 12px;
-    min-height: 32px;
-    min-width: 70px;
+    min-height: 30px;
+    min-width: 0;
   }
 
   .iconButton {
@@ -470,8 +480,8 @@
   }
 
   .actionIcon {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
   }
 
   .filterChip,
@@ -482,5 +492,27 @@
 
   .filterSelectWrapper {
     width: 100%;
+  }
+
+  .dropdownTrigger {
+    padding: 8px 10px;
+    border-radius: 10px;
+  }
+
+  .dropdownLabel {
+    font-size: 10px;
+  }
+
+  .dropdownValue {
+    font-size: 12px;
+  }
+
+  .dropdownMenu {
+    border-radius: 12px;
+  }
+
+  .dropdownOption {
+    padding: 8px 10px;
+    font-size: 12px;
   }
 }

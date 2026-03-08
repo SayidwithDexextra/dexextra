@@ -66,11 +66,23 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     error: null
   })
   
+  const [isMobile, setIsMobile] = useState(false)
+
   // Track mount state for portal rendering (document.body not available during SSR)
   useEffect(() => {
     setMounted(true)
     return () => setMounted(false)
   }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(max-width: 767px)')
+    const handler = () => setIsMobile(mq.matches)
+    handler()
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
   const [pairMap, setPairMap] = useState<Record<string, { otherId: string; seriesSlug: string }>>({})
   const [idToMarket, setIdToMarket] = useState<Record<string, Market>>({})
   const [recentSearches, setRecentSearches] = useState<string[]>([])
@@ -370,8 +382,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
   const modalContent = (
     <div 
-      className={`fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
-      style={{
+      className={isMobile ? 'fixed inset-0 z-[9999]' : `fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
+      style={isMobile ? undefined : {
         position: 'fixed',
         top: 0,
         left: 0,
@@ -379,17 +391,27 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         bottom: 0,
       }}
     >
-      {/* Backdrop for click-to-close */}
+      {/* Backdrop */}
       <div 
         className={`absolute inset-0 bg-black/50 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
         onClick={onClose}
       />
       
-      {/* Modal */}
+      {/* Modal panel */}
       <div 
         ref={modalRef}
-        className={`relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
-        style={{
+        className={isMobile
+          ? 'fixed left-0 top-0 bg-[#0F0F0F] transition-transform duration-300 ease-in-out flex flex-col'
+          : `relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`
+        }
+        style={isMobile ? {
+          width: '100vw',
+          height: '100dvh',
+          zIndex: 10000,
+          transform: isAnimating ? 'translateX(0)' : 'translateX(100%)',
+          overflowX: 'hidden',
+          overflowY: 'hidden',
+        } : {
           maxWidth: '900px',
           maxHeight: '85vh',
           padding: '24px',
@@ -397,8 +419,29 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           margin: 'auto',
         }}
       >
+        {/* Mobile header bar */}
+        {isMobile && (
+          <div
+            className="flex items-center justify-between flex-shrink-0"
+            style={{ height: '56px', padding: '0 12px 0 16px', borderBottom: '1px solid #222222' }}
+          >
+            <span className="text-white text-base font-semibold">Search</span>
+            <button
+              onClick={onClose}
+              className="w-10 h-10 rounded-full flex items-center justify-center border border-[#2A2A2A] text-[#A0A0A0] hover:text-white hover:border-[#3A3A3A] transition-all duration-200"
+              aria-label="Close search"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {/* Inner scrollable area (on mobile: flex-1 with padding; on desktop: direct children) */}
+        <div className={isMobile ? 'flex-1 overflow-y-auto' : ''} style={isMobile ? { padding: '12px 16px' } : undefined}>
         {/* Search Input Section */}
-        <div className="mb-3">
+        <div className={isMobile ? 'mb-2' : 'mb-3'}>
           <div className="relative">
             <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#606060]">
               {searchResults.isLoading ? (
@@ -416,7 +459,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
               placeholder="Search markets, categories, and users..."
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
-              className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 focus:outline-none focus:border-[#333333] text-white text-sm pl-10 pr-10 py-2.5"
+              className={isMobile
+                ? 'w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 focus:outline-none focus:border-[#333333] text-white text-base pl-10 pr-10 py-3'
+                : 'w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 focus:outline-none focus:border-[#333333] text-white text-sm pl-10 pr-10 py-2.5'
+              }
             />
             {searchValue && (
               <button
@@ -432,7 +478,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         </div>
 
         {/* Content Sections */}
-        <div className="search-modal-scroll overflow-y-auto" style={{ maxHeight: 'calc(85vh - 100px)' }}>
+        <div className="search-modal-scroll overflow-y-auto" style={{ maxHeight: isMobile ? 'calc(100dvh - 140px)' : 'calc(85vh - 100px)' }}>
           {/* Error Message */}
           {searchResults.error && (
             <div className="bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5 mb-3">
@@ -972,6 +1018,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
             }
           }
         `}</style>
+        </div>
       </div>
     </div>
   )

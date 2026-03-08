@@ -17,6 +17,7 @@ import {
 
 type WatchlistCacheData = {
   market_ids: string[];
+  watched_markets: MarketOverviewRow[];
   watched_user_ids: string[];
   watched_users: WatchedUser[];
 };
@@ -34,6 +35,7 @@ export default function WatchlistPage() {
   const { walletData } = useWallet();
 
   const [watchlistIds, setWatchlistIds] = useState<string[]>([]);
+  const [watchlistMarkets, setWatchlistMarkets] = useState<MarketOverviewRow[]>([]);
   const [watchlistUserIds, setWatchlistUserIds] = useState<string[]>([]);
   const [watchlistUsers, setWatchlistUsers] = useState<WatchedUser[]>([]);
   const [watchlistPending, setWatchlistPending] = useState<string[]>([]);
@@ -50,6 +52,7 @@ export default function WatchlistPage() {
     const walletAddress = walletData?.address;
     if (!walletAddress) {
       setWatchlistIds([]);
+      setWatchlistMarkets([]);
       setWatchlistUserIds([]);
       setWatchlistUsers([]);
       setWatchlistError(null);
@@ -63,6 +66,7 @@ export default function WatchlistPage() {
     const cached = getFromCacheOrStorage<WatchlistCacheData>(cacheKey);
     if (cached) {
       setWatchlistIds(cached.market_ids);
+      setWatchlistMarkets(cached.watched_markets || []);
       setWatchlistUserIds(cached.watched_user_ids);
       setWatchlistUsers(cached.watched_users);
       // If data is fresh, don't show loading state
@@ -87,10 +91,14 @@ export default function WatchlistPage() {
           throw new Error(json?.error || 'Failed to fetch watchlist');
         }
         const ids = Array.isArray(json.market_ids) ? json.market_ids : [];
+        const markets = Array.isArray(json.watched_markets) ? (json.watched_markets as MarketOverviewRow[]) : [];
         const userIds = Array.isArray(json.watched_user_ids) ? json.watched_user_ids : [];
         const watchedUsers = Array.isArray(json.watched_users) ? (json.watched_users as WatchedUser[]) : [];
         
         const filteredIds = ids.filter((id: unknown) => typeof id === 'string');
+        const filteredMarkets = markets.filter(
+          (m: any) => m && typeof m.market_id === 'string'
+        );
         const filteredUserIds = userIds.filter((id: unknown) => typeof id === 'string');
         const filteredUsers = watchedUsers.filter(
           (u: any) => u && typeof u.id === 'string' && typeof u.wallet_address === 'string'
@@ -98,12 +106,14 @@ export default function WatchlistPage() {
 
         // Update state
         setWatchlistIds(filteredIds);
+        setWatchlistMarkets(filteredMarkets);
         setWatchlistUserIds(filteredUserIds);
         setWatchlistUsers(filteredUsers);
 
         // Cache the data
         setCache<WatchlistCacheData>(cacheKey, {
           market_ids: filteredIds,
+          watched_markets: filteredMarkets,
           watched_user_ids: filteredUserIds,
           watched_users: filteredUsers,
         });
@@ -120,7 +130,7 @@ export default function WatchlistPage() {
   }, [walletData?.address]);
 
   // Fetch market overview
-  const { data: overview, isLoading: marketsLoading, error: marketsError } = useMarketOverview({
+  const { data: overview, error: marketsError } = useMarketOverview({
     limit: 500,
     autoRefresh: false,
     realtime: true,
@@ -129,11 +139,41 @@ export default function WatchlistPage() {
 
   const watchlistSet = useMemo(() => new Set(watchlistIds), [watchlistIds]);
 
+  // Primary: use watchlistMarkets from the API (has all watchlisted markets).
+  // Fallback: filter from overview data (covers stale cache without watched_markets).
   const watchlistedRows = useMemo(() => {
-    const rows = (overview as MarketOverviewRow[]) || [];
-    if (!rows.length || watchlistSet.size === 0) return [];
-    return rows.filter((row) => watchlistSet.has(String(row?.market_id || '')));
-  }, [overview, watchlistSet]);
+    const overviewRows = (overview as MarketOverviewRow[]) || [];
+    const overviewMap = new Map<string, MarketOverviewRow>();
+    for (const row of overviewRows) {
+      if (row.market_id) overviewMap.set(row.market_id, row);
+    }
+
+    if (watchlistMarkets.length > 0) {
+      return watchlistMarkets.map((market) => {
+        const live = overviewMap.get(market.market_id);
+        if (live) {
+          return {
+            ...market,
+            mark_price: live.mark_price ?? market.mark_price,
+            total_volume: live.total_volume ?? market.total_volume,
+            total_trades: live.total_trades ?? market.total_trades,
+            last_update: live.last_update ?? market.last_update,
+            is_stale: live.is_stale ?? market.is_stale,
+          };
+        }
+        return market;
+      });
+    }
+
+    // Fallback: filter overview data by watchlist IDs
+    if (overviewRows.length > 0 && watchlistSet.size > 0) {
+      return overviewRows.filter((row) =>
+        watchlistSet.has(String(row?.market_id || ''))
+      );
+    }
+
+    return [];
+  }, [watchlistMarkets, overview, watchlistSet]);
 
   // Apply search and sort
   const filteredAndSortedRows = useMemo(() => {
@@ -202,6 +242,13 @@ export default function WatchlistPage() {
 
       // Optimistic add
       setWatchlistIds((prev) => [...prev, id]);
+      // Try to find the market in the overview data for an optimistic row
+      const overviewRow = ((overview as MarketOverviewRow[]) || []).find(
+        (r) => r.market_id === id
+      );
+      if (overviewRow) {
+        setWatchlistMarkets((prev) => [...prev, overviewRow]);
+      }
       setWatchlistPending((prev) => [...prev, id]);
 
       try {
@@ -221,11 +268,12 @@ export default function WatchlistPage() {
       } catch {
         // Revert optimistic update
         setWatchlistIds((prev) => prev.filter((x) => x !== id));
+        setWatchlistMarkets((prev) => prev.filter((m) => m.market_id !== id));
       } finally {
         setWatchlistPending((prev) => prev.filter((x) => x !== id));
       }
     },
-    [walletData?.address, watchlistIds, watchlistPending]
+    [walletData?.address, watchlistIds, watchlistPending, overview]
   );
 
   const handleAddUserFromModal = useCallback(
@@ -316,6 +364,11 @@ export default function WatchlistPage() {
 
     const isWatchlisted = watchlistIds.includes(marketId);
     setWatchlistIds((prev) => (isWatchlisted ? prev.filter((id) => id !== marketId) : [...prev, marketId]));
+    if (isWatchlisted) {
+      setWatchlistMarkets((prev) => prev.filter((m) => m.market_id !== marketId));
+    } else {
+      setWatchlistMarkets((prev) => [...prev, row]);
+    }
     setWatchlistPending((prev) => [...prev, marketId]);
 
     try {
@@ -335,6 +388,11 @@ export default function WatchlistPage() {
     } catch (e) {
       // Revert optimistic update
       setWatchlistIds((prev) => (isWatchlisted ? [...prev, marketId] : prev.filter((id) => id !== marketId)));
+      if (isWatchlisted) {
+        setWatchlistMarkets((prev) => [...prev, row]);
+      } else {
+        setWatchlistMarkets((prev) => prev.filter((m) => m.market_id !== marketId));
+      }
     } finally {
       setWatchlistPending((prev) => prev.filter((id) => id !== marketId));
     }
@@ -363,10 +421,15 @@ export default function WatchlistPage() {
   const showEmpty =
     isWalletConnected &&
     !watchlistLoading &&
-    !marketsLoading &&
     watchlistIds.length === 0 &&
     watchlistUserIds.length === 0;
-  const isLoading = watchlistLoading || marketsLoading;
+  // Show loading when watchlist is loading OR when we have IDs but
+  // market data hasn't arrived from either source yet.
+  const marketsDataPending =
+    watchlistIds.length > 0 &&
+    watchlistMarkets.length === 0 &&
+    watchlistedRows.length === 0;
+  const isLoading = watchlistLoading || marketsDataPending;
 
   const metrics = useMemo(() => {
     const rows = watchlistedRows || [];
@@ -697,6 +760,16 @@ export default function WatchlistPage() {
             </div>
 
             {/* Mobile list */}
+            <div className="md:hidden flex-shrink-0">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  Watched assets
+                </h4>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  {filteredAndSortedRows.length}
+                </div>
+              </div>
+            </div>
             <div className="md:hidden rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
               {isLoading ? (
                 <div className="divide-y divide-[#1A1A1A]">
@@ -733,10 +806,13 @@ export default function WatchlistPage() {
                     const isPositive = changePercent >= 0;
                     const isPending = watchlistPending.includes(row.market_id);
                     return (
-                      <button
+                      <div
                         key={row.market_id}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => handleNavigateToMarket(row)}
-                        className="w-full text-left p-3 hover:bg-[#1A1A1A] transition-all duration-200"
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleNavigateToMarket(row); }}
+                        className="w-full text-left p-3 hover:bg-[#1A1A1A] transition-all duration-200 cursor-pointer"
                       >
                         <div className="flex items-start gap-2.5">
                           <div onClick={(e) => e.stopPropagation()}>
@@ -790,7 +866,7 @@ export default function WatchlistPage() {
                             </div>
                           </div>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import useWallet from '@/hooks/useWallet'
 import WalletModal from './WalletModal'
@@ -141,6 +141,12 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
   const router = useRouter()
   const pathname = usePathname()
 
+  // Two-phase mount/unmount for smooth slide animation (mirrors PortfolioSidebar)
+  const [mobileRendered, setMobileRendered] = useState(false)
+  const [mobileEntered, setMobileEntered] = useState(false)
+  const raf1Ref = useRef<number | null>(null)
+  const raf2Ref = useRef<number | null>(null)
+
   // Token page: shrink navbar to give more room to charts/tables
   const isTokenPage = pathname?.startsWith('/token/')
   const collapsedWidth = isTokenPage ? 52 : 60
@@ -167,6 +173,47 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
     return () => window.removeEventListener('mobileMenu:toggle', handleMobileMenuToggle as EventListener)
   }, [onOpenChange])
 
+  // Animate mobile menu enter/exit (same pattern as PortfolioSidebar)
+  useEffect(() => {
+    if (!isMobile) return
+    if (raf1Ref.current) cancelAnimationFrame(raf1Ref.current)
+    if (raf2Ref.current) cancelAnimationFrame(raf2Ref.current)
+    raf1Ref.current = null
+    raf2Ref.current = null
+
+    if (isOpen) {
+      setMobileRendered(true)
+      setMobileEntered(false)
+      raf1Ref.current = requestAnimationFrame(() => {
+        raf2Ref.current = requestAnimationFrame(() => setMobileEntered(true))
+      })
+      return () => {
+        if (raf1Ref.current) cancelAnimationFrame(raf1Ref.current)
+        if (raf2Ref.current) cancelAnimationFrame(raf2Ref.current)
+        raf1Ref.current = null
+        raf2Ref.current = null
+      }
+    }
+    setMobileEntered(false)
+    const t = setTimeout(() => setMobileRendered(false), 320)
+    return () => clearTimeout(t)
+  }, [isOpen, isMobile])
+
+  // Lock background scroll while mobile menu is rendered
+  useEffect(() => {
+    if (!isMobile || !mobileRendered) return
+    const html = document.documentElement
+    const body = document.body
+    const prevHtmlOverflow = html.style.overflow
+    const prevBodyOverflow = body.style.overflow
+    html.style.overflow = 'hidden'
+    body.style.overflow = 'hidden'
+    return () => {
+      html.style.overflow = prevHtmlOverflow
+      body.style.overflow = prevBodyOverflow
+    }
+  }, [isMobile, mobileRendered])
+
   // Determine active item based on current pathname
   const getActiveItem = () => {
     const currentItem = navigationItems.find(item => {
@@ -185,8 +232,8 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
     }
   }
 
-  // On mobile when closed, don't render the hamburger button (Header handles it now)
-  if (isMobile && !isOpen) {
+  // On mobile when not rendered (after exit animation completes), only keep modals
+  if (isMobile && !mobileRendered) {
     return (
       <>
         <WalletModal
@@ -205,22 +252,25 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
       return (
       <>
         {/* Mobile: full-screen sliding overlay - encapsulates entire screen */}
-        {isMobile && (
+        {isMobile && mobileRendered && (
           <>
             {/* Backdrop - fades in when menu opens */}
-            <div 
-              className="fixed inset-0 z-[9997] transition-opacity duration-300 ease-in-out"
+            <button
+              type="button"
+              aria-label="Close navigation menu"
+              className={`fixed inset-0 z-[9997] transition-opacity duration-300 ease-in-out ${mobileEntered ? 'opacity-100' : 'opacity-0'}`}
               style={{
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                opacity: isOpen ? 1 : 0,
-                pointerEvents: isOpen ? 'auto' : 'none',
+                background: 'rgba(0, 0, 0, 0.6)',
               }}
               onClick={closeMobileMenu}
-              aria-hidden="true"
             />
             {/* Full-screen sliding panel */}
             <nav 
-              className="fixed left-0 top-0 bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333] transition-transform duration-300 ease-in-out"
+              className={[
+                'fixed left-0 top-0 bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333]',
+                'transform-gpu transition-transform duration-300 ease-in-out will-change-transform',
+                mobileEntered ? 'translate-x-0' : '-translate-x-full',
+              ].join(' ')}
               data-walkthrough="navbar"
               style={{
                 width: '100vw',
@@ -230,7 +280,6 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                 overflowY: 'auto',
                 zIndex: 9999,
                 boxShadow: '4px 0 24px rgba(0, 0, 0, 0.4)',
-                transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
               }}
             >
               <div 

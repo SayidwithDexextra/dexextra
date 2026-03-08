@@ -77,17 +77,56 @@
 /* Responsive Design */
 @media (max-width: 768px) {
   .hero {
-    min-height: 360px;
+    min-height: 240px;
+    margin: 10px;
+    border-radius: 14px;
+  }
+
+  .heroOverlay {
+    padding: 16px;
+  }
+
+  .heroOverlayInner {
+    gap: 8px;
   }
 
   .heroLogo {
-    height: 56px;
+    height: 40px;
+  }
+
+  .heroTitle {
+    font-size: clamp(26px, 5vw, 42px);
+  }
+
+  .heroSubtitle {
+    font-size: 13px;
   }
 }
 
 @media (max-width: 480px) {
   .hero {
-    min-height: 320px;
+    min-height: 200px;
+    margin: 8px;
+    border-radius: 12px;
   }
 
+  .heroOverlay {
+    padding: 12px;
+  }
+
+  .heroOverlayInner {
+    gap: 6px;
+  }
+
+  .heroLogo {
+    height: 36px;
+  }
+
+  .heroTitle {
+    font-size: 24px;
+  }
+
+  .heroSubtitle {
+    font-size: 12px;
+  }
 }
