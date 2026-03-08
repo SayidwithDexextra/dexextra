@@ -770,7 +770,7 @@ export default function WatchlistPage() {
                 </div>
               </div>
             </div>
-            <div className="md:hidden rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
+            <div className="md:hidden flex-shrink-0 rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
               {isLoading ? (
                 <div className="divide-y divide-[#1A1A1A]">
                   {Array.from({ length: 6 }).map((_, i) => (

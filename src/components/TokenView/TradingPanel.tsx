@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { TokenData } from '@/types/token';
 import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
@@ -2123,24 +2124,26 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         onClose={() => setShowWalletModal(false)} 
       />
 
-      {/* Slippage Config Modal */}
-      {isSlippageModalOpen && (
+      {/* Slippage Config Modal (portaled to body for true screen-center, matching close/modify modals) */}
+      {isSlippageModalOpen && createPortal(
         <div
-          className="fixed inset-0 z-[120] flex items-center justify-center px-4"
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
           role="dialog"
           aria-modal="true"
           aria-label="Adjust max slippage"
+          onClick={closeSlippageModal}
         >
           {/* Backdrop */}
-          <button
-            type="button"
-            aria-label="Close slippage modal"
-            onClick={closeSlippageModal}
+          <div
             className="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
           />
 
           {/* Panel */}
-          <div className="relative w-full max-w-md rounded-md border border-[#222222] bg-[#0F0F0F] shadow-[0_20px_60px_rgba(0,0,0,0.6)]">
+          <div
+            className="relative z-10 w-full max-w-md rounded-md border border-[#222222] bg-[#0F0F0F] shadow-[0_20px_60px_rgba(0,0,0,0.6)]"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-start justify-between gap-4 p-4 border-b border-[#1A1A1A]">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -2223,7 +2226,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       
       <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full flex flex-col overflow-hidden">
