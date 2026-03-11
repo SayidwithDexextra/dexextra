@@ -9,6 +9,8 @@ import { initializeContracts, formatTokenAmount, parseTokenAmount } from '@/lib/
 import { CONTRACT_ADDRESSES } from '@/lib/contractConfig';
 import { env } from '@/lib/env';
 import { getReadProvider, getRunner, getChainId, getWsProvider, getSnapshotBlockNumber } from '@/lib/network';
+import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet'
+import { getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry } from '@/lib/magic'
 
 // Module-level singletons to avoid duplicate watchers across multiple hook instances
 let coreVaultWatchersAttached = false;
@@ -81,11 +83,24 @@ export function useCoreVault(walletAddress?: string) {
         let runner: ethers.Signer | ethers.Provider = hlProvider;
         let usingSigner = false;
 
-        // Try to connect with wallet signer if available
-        if (typeof window !== 'undefined' && (window as any).ethereum && isConnected) {
+        // Try to connect with wallet signer if available (prefer active provider over window.ethereum)
+        if (typeof window !== 'undefined' && isConnected) {
           try {
             console.log('Attempting to connect with wallet signer...');
-            const browserProvider = new ethers.BrowserProvider((window as any).ethereum)
+            const preferred = window.localStorage.getItem('walletProvider')
+            const isMagic = preferred === 'magic'
+            const eip1193: EthereumProvider | undefined =
+              (isMagic ? (getMagicProvider() as any as EthereumProvider) : null) ??
+              (getActiveEthereumProvider() ?? ((window as any).ethereum as EthereumProvider | undefined)) ??
+              undefined
+            if (!eip1193) throw new Error('No wallet provider available')
+
+            // Ensure chain matches configured chain for signer usage.
+            if (isMagic) {
+              await switchMagicChainWithRetry(getChainId(), { retries: 2 })
+            }
+
+            const browserProvider = new ethers.BrowserProvider(eip1193 as any)
             const injectedSigner = await browserProvider.getSigner()
             const net = await browserProvider.getNetwork()
             const chainOk = Number(net.chainId) === getChainId()
@@ -159,10 +174,22 @@ export function useCoreVault(walletAddress?: string) {
     const hlProvider = getReadProvider();
     let writeSigner: ethers.Signer | null = null;
 
-    // Prefer injected wallet on correct chain
-    if (typeof window !== 'undefined' && (window as any).ethereum) {
+    // Prefer active wallet provider on correct chain
+    if (typeof window !== 'undefined') {
       try {
-        const browserProvider = new ethers.BrowserProvider((window as any).ethereum)
+        const preferred = window.localStorage.getItem('walletProvider')
+        const isMagic = preferred === 'magic'
+        const eip1193: EthereumProvider | undefined =
+          (isMagic ? (getMagicProvider() as any as EthereumProvider) : null) ??
+          (getActiveEthereumProvider() ?? ((window as any).ethereum as EthereumProvider | undefined)) ??
+          undefined
+        if (!eip1193) throw new Error('No wallet provider available')
+
+        if (isMagic) {
+          await switchMagicChainWithRetry(getChainId(), { retries: 2 })
+        }
+
+        const browserProvider = new ethers.BrowserProvider(eip1193 as any)
         const net = await browserProvider.getNetwork()
         const chainOk = Number(net.chainId) === getChainId()
         if (!chainOk) {
@@ -214,8 +241,24 @@ export function useCoreVault(walletAddress?: string) {
 
       if (env.PRIVATE_KEY) {
         writeSigner = new ethers.Wallet(env.PRIVATE_KEY, hlProvider);
-      } else if (typeof window !== 'undefined' && (window as any).ethereum) {
-        const browserProvider = new ethers.BrowserProvider((window as any).ethereum)
+      } else if (typeof window !== 'undefined') {
+        const preferred = window.localStorage.getItem('walletProvider')
+        const isMagic = preferred === 'magic'
+        const eip1193: EthereumProvider | undefined =
+          (isMagic ? (getMagicProvider() as any as EthereumProvider) : null) ??
+          (getActiveEthereumProvider() ?? ((window as any).ethereum as EthereumProvider | undefined)) ??
+          undefined
+        if (!eip1193) {
+          setIsInitialized(false);
+          setContracts(null);
+          return null;
+        }
+
+        if (isMagic) {
+          await switchMagicChainWithRetry(getChainId(), { retries: 2 })
+        }
+
+        const browserProvider = new ethers.BrowserProvider(eip1193 as any)
         const injectedSigner = await browserProvider.getSigner()
         const net = await browserProvider.getNetwork()
         const chainOk = Number(net.chainId) === getChainId()

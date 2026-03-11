@@ -12,9 +12,9 @@ import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
 import { initializeContracts } from '@/lib/contracts';
 // Removed gas override utilities to rely on provider estimation
-import { ensureHyperliquidWallet } from '@/lib/network';
+import { ensureHyperliquidWallet, isOnCorrectChain } from '@/lib/network';
 import type { Address } from 'viem';
-import { submitSessionTrade, isSessionErrorMessage } from '@/lib/gasless';
+import { submitSessionTrade, isSessionErrorMessage, ensureGaslessChain } from '@/lib/gasless';
 import { useSession } from '@/contexts/SessionContext';
 import WalletModal from '@/components/WalletModal';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
@@ -1069,7 +1069,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     if (isCancelingOrder) return 'Canceling Order...';
     // Gasless session: prompt to enable trading when session is not active
     const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
-    if (GASLESS_ENABLED && address && globalSessionActive === false) return 'Enable Trading';
+    if (GASLESS_ENABLED && address && globalSessionActive === false) {
+      const activeChainId = (wallet?.walletData?.chainId ?? wallet?.chainId) as number | null | undefined;
+      if (activeChainId != null && !isOnCorrectChain(activeChainId)) return 'Switch Network';
+      return 'Enable Trading';
+    }
     if (!selectedOption) return 'Select Position Direction';
     if (orderType === 'limit' && triggerPrice <= 0) return 'Set Limit Price';
 
@@ -1992,7 +1996,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   };
 
   const handleShortClick = () => {
-    navigateToTab('sell', 'short');
+    navigateToTab('buy', 'short');
   };
 
   const handleTradeClick = async () => {
@@ -2005,6 +2009,15 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     try {
       const GASLESS_ENABLED = process.env.NEXT_PUBLIC_GASLESS_ENABLED === 'true';
       if (GASLESS_ENABLED && address && globalSessionActive === false) {
+        // Ensure wallet is actually on the trading chain BEFORE requesting any signature.
+        const activeChainId = (wallet?.walletData?.chainId ?? wallet?.chainId) as number | null | undefined;
+        if (activeChainId != null && !isOnCorrectChain(activeChainId)) {
+          const chainRes = await ensureGaslessChain();
+          if (!chainRes.ok) {
+            showError(chainRes.error || 'Wrong network. Please switch to Hyperliquid Mainnet and retry.', 'Wrong Network');
+            return;
+          }
+        }
         const created = await globalEnableTrading();
         if (created.success) {
           showSuccess('Trading enabled for your account. You can place orders now.', 'Session Enabled');
@@ -2037,7 +2050,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   useEffect(() => {
     if (initialAction) {
       setSelectedOption(initialAction);
-      setActiveTab(initialAction === 'long' ? 'buy' : 'sell');
+      setActiveTab('buy');
+      if (initialAction === 'short') {
+        setOrderType('limit');
+      }
     }
   }, [initialAction]);
 
@@ -2235,11 +2251,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
         {/* Header section */}
         <div className="mb-2">
-          {/*
-            Top tabs removed per request (Buy / Orders).
-            If we bring them back later, they toggle `activeTab` between 'buy' and 'sell'.
-          */}
-
           {/* Order Type Toggle - Full Width */}
           <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-1 w-full">
             <div className="flex w-full gap-1">
@@ -2285,368 +2296,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             ref={scrollAreaRef}
             className="h-full space-y-1.5 pb-1.5 trading-panel-scroll overflow-y-auto"
           >
-            {/* Sell Tab - Current Positions */}
-            {activeTab === 'sell' && (
-              <div className="space-y-2">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-semibold text-white">Current Positions</h4>
-                <button
-                  onClick={() => {
-                    refreshOrders();
-                  }}
-                  disabled={ordersLoading}
-                  className="text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-500 disabled:cursor-not-allowed"
-                >
-                  {ordersLoading ? '⟳ Loading...' : '⟳ Refresh'}
-                </button>
-              </div>
-              
-              {/* Filled Orders Summary (Positions) */}
-              {!ordersLoading && filledOrdersForThisMarket.length > 0 && (
-                <div className="mb-3 p-2 bg-[#1A1A1A] rounded-lg border border-[#333333]">
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-[#808080]">Filled Orders:</span>
-                      <span className="text-white font-medium">{filledOrdersForThisMarket.length}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#808080]">Total Volume:</span>
-                      <span className="text-white font-medium">
-                        ${formatNumber(filledOrdersForThisMarket.reduce((sum, order) => sum + (order.quantity * (order.price || 0)), 0))}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#808080]">Buy Orders:</span>
-                      <span className="text-green-400 font-medium">
-                        {filledOrdersForThisMarket.filter(order => order.side === 'buy').length}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#808080]">Sell Orders:</span>
-                      <span className="text-red-400 font-medium">
-                        {filledOrdersForThisMarket.filter(order => order.side === 'sell').length}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {ordersLoading && (
-                <div className="space-y-1.5 mb-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Trade History</h4>
-                    <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                      •••
-                    </div>
-                  </div>
-                  
-                  <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                    <div className="flex items-center justify-between p-2.5">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        {/* Side indicator - animated for loading */}
-                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
-                        
-                        {/* Loading state info */}
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <span className="text-[11px] font-medium text-[#808080]">
-                            Loading orders...
-                          </span>
-                        </div>
-                      </div>
-                      
-                      {/* Status and visual consistency */}
-                      <div className="flex items-center gap-2">
-                        {/* Animated progress indicator */}
-                        <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
-                        </div>
-                        
-                        {/* Status dot - animated */}
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                        
-                        {/* Loading icon */}
-                        <svg className="w-3 h-3 text-blue-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                      </div>
-                    </div>
-                    
-                    {/* Expandable details on hover/focus */}
-                    <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                      <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                        <div className="text-[9px] pt-1.5">
-                          <span className="text-[#606060]">Fetching your trade history and positions...</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {!ordersLoading && filledOrdersForThisMarket.length > 0 && (
-                <div className="space-y-1.5 mb-3">
-                  {/* Section Header */}
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Trade History</h4>
-                    <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                      {filledOrdersForThisMarket.length}
-                    </div>
-                  </div>
-                  
-                  {/* Trade Items */}
-                  {filledOrdersForThisMarket.slice(0, 10).map((order) => (
-                    <div key={order.id} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                      <div className="flex items-center justify-between p-2.5">
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          {/* Side indicator dot */}
-                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${order.side === 'buy' ? 'bg-green-400' : 'bg-red-400'}`} />
-                          
-                          {/* Trade info */}
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <span className={`text-[11px] font-medium ${order.side === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
-                              {order.side.toUpperCase()}
-                            </span>
-                            <span className="text-[10px] text-[#808080]">
-                              {order.quantity.toFixed(4)}
-                            </span>
-                            <span className="text-[10px] text-[#606060]">
-                              @ {order.price ? `$${order.price.toFixed(4)}` : 'MKT'}
-                            </span>
-                          </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                          {/* Value */}
-                          <span className="text-[10px] text-white font-mono">
-                            {order.price ? `$${(order.quantity * order.price).toFixed(2)}` : 'PENDING'}
-                          </span>
-                          
-                          {/* Status dot */}
-                          <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                        </div>
-                      </div>
-                      
-                      {/* Expandable details on hover */}
-                      <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                        <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                          <div className="text-[9px] pt-1.5">
-                            <span className="text-[#606060]">ID: {order.id.slice(0, 8)}... • {order.timestamp ? new Date(order.timestamp).toLocaleDateString() : 'N/A'}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
 
-              {/* Sell Tab - No Orders Message */}
-              {!ordersLoading && filledOrdersForThisMarket.length === 0 && (
-                <div className="space-y-1.5 mb-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Trade History</h4>
-                    <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                      0
-                    </div>
-                  </div>
-                  
-                  <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                    <div className="flex items-center justify-between p-2.5">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        {/* Side indicator */}
-                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                        
-                        {/* Empty state info */}
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <span className="text-[11px] font-medium text-[#808080]">
-                            No filled orders for {tokenData.symbol}
-                          </span>
-                        </div>
-                      </div>
-                      
-                      {/* Status and visual consistency */}
-                      <div className="flex items-center gap-2">
-                        {/* Status dot */}
-                        <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
-                        
-                        {/* Subtle icon */}
-                        <svg className="w-3 h-3 text-[#404040]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-                    </div>
-                    
-                    {/* Expandable details on hover/focus */}
-                    <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                      <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                        <div className="text-[9px] pt-1.5">
-                          <span className="text-[#606060]">Your trade history will appear here after placing orders</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              </div>
-            )}
-
-          {/* Sell Tab - Active Limit Orders */}
-          {activeTab === 'sell' && (
-            <div className="space-y-1.5 mb-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Active Orders</h4>
-                <div className="flex items-center gap-2">
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                    {activeOrders.length}
-                  </div>
-                  <button
-                    onClick={() => {
-                      refreshOrders();
-                    }}
-                    disabled={ordersLoading}
-                    className="text-xs text-blue-400 hover:text-blue-300 disabled:text-gray-500 disabled:cursor-not-allowed"
-                  >
-                    {ordersLoading ? '⟳ Loading...' : '⟳ Refresh'}
-                  </button>
-                </div>
-              </div>
-              
-              {ordersError && (
-                <div className="text-center py-4 text-red-400 bg-[#1A1A1A] rounded-lg border border-red-900/30 mb-3">
-                  <div className="text-sm font-medium">Error Fetching Orders</div>
-                  <div className="text-xs mt-1 max-w-[90%] mx-auto">{ordersError}</div>
-                  <button
-                    onClick={() => {
-                      refreshOrders();
-                    }}
-                    disabled={ordersLoading}
-                    className="mt-2 px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs rounded border border-blue-800/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-                  >
-                    Retry Now
-                  </button>
-                </div>
-              )}
-
-              {activeOrders.length === 0 && !ordersError ? (
-                <div className="text-center py-4 text-[#606060]">
-                  <div className="text-sm">No active orders</div>
-                  <div className="text-xs mt-1">
-                    {ordersLoading ? 'Loading orders...' : 
-                     !isConnected ? 'Wallet not connected' :
-                     !metricId ? 'No market selected' :
-                     'No active orders for this market'}
-                  </div>
-                </div>
-              ) : !ordersError ? (
-                activeOrders.map((order) => (
-                  <div key={order.id} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                    {/* Main order row - compact single line */}
-                    <div className="flex items-center justify-between p-2.5">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      {/* Side indicator */}
-                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${order.side === 'buy' ? 'bg-green-400' : 'bg-red-400'}`} />
-                      
-                      {/* Order info */}
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                        <span className={`text-[11px] font-medium ${order.side === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
-                          {order.side.toUpperCase()}
-                        </span>
-                        <span className="text-[10px] text-[#808080]">
-                          {order.quantity.toFixed(2)}
-                        </span>
-                        <span className="text-[10px] text-[#606060]">@</span>
-                        <span className="text-[10px] text-white font-mono">
-                          ${order.price ? order.price.toFixed(4) : 'N/A'}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    {/* Status and actions */}
-                    <div className="flex items-center gap-2">
-                      {/* Progress indicator for partially filled */}
-                      {order.filledQuantity > 0 && (
-                        <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-blue-400 transition-all duration-300"
-                            style={{ width: `${order.quantity > 0 ? (order.filledQuantity / order.quantity) * 100 : 0}%` }}
-                          />
-                        </div>
-                      )}
-                      
-                      {/* Status dot */}
-                      <div className={`w-1.5 h-1.5 rounded-full ${
-                        order.status === 'pending' ? 'bg-yellow-400' : 
-                        order.status === 'partially_filled' ? 'bg-blue-400' :
-                        'bg-gray-400'
-                      }`} />
-                      
-                      {/* Cancel button */}
-                      <button
-                        onClick={async () => {
-                          try {
-                            setIsCancelingOrder(true);
-                            await handleCancelOrder(order.id);
-                          } finally {
-                            setIsCancelingOrder(false);
-                          }
-                        }}
-                        disabled={ordersLoading || isCancelingOrder}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 hover:bg-red-500/10 rounded text-red-400 hover:text-red-300 disabled:opacity-50"
-                        title="Cancel order"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* Expandable details on hover/focus */}
-                  <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                    <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] pt-1.5">
-                        <div className="flex justify-between">
-                          <span className="text-[#606060]">Total:</span>
-                          <span className="text-[#9CA3AF] font-mono">${order.price ? (order.quantity * order.price).toFixed(2) : 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-[#606060]">Filled:</span>
-                          <span className="text-[#9CA3AF]">{order.quantity > 0 ? ((order.filledQuantity / order.quantity) * 100).toFixed(1) : '0.0'}%</span>
-                        </div>
-                        {order.expiryTime && (
-                          <div className="flex justify-between col-span-2">
-                            <span className="text-[#606060]">Expires:</span>
-                            <span className="text-[#9CA3AF]">{new Date(order.expiryTime).toLocaleDateString()}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                ))
-              ) : (
-                <div className="text-center py-4 text-red-400 bg-[#1A1A1A] rounded-lg border border-red-900/30 mb-3">
-                  <div className="text-sm font-medium">Error Fetching Orders</div>
-                  <div className="text-xs mt-1 max-w-[90%] mx-auto">{ordersError}</div>
-                  <button
-                    onClick={() => {
-                      refreshOrders();
-                    }}
-                    disabled={ordersLoading}
-                    className="mt-2 px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs rounded border border-blue-800/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-                  >
-                    Retry Now
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Buy Tab - Trading Interface */}
-          {activeTab === 'buy' && (
-            <>
-
-
-              {/* Contract & Market Info removed to reduce height */}
+          {/* Trading Interface */}
 
           {/* Long/Short Option Buttons - Sophisticated Design */}
           <div className="space-y-1 mb-2">
@@ -3143,8 +2794,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
 
           </div>
-            </>
-          )}
           </div>
 
           {/* Bottom fade hint (shows when content is cut off) */}

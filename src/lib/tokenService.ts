@@ -171,7 +171,7 @@ async function getEthBalance(provider: EthereumProvider, address: string): Promi
 }
 
 // Arbitrum mainnet RPC URL (fallback to public RPC if env not set)
-const ARBITRUM_RPC_URL = env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc'
+const ARBITRUM_RPC_URL = env.ARBITRUM_RPC_URL || 'https://arbitrum-one-rpc.publicnode.com'
 
 // Get ETH balance specifically from Arbitrum mainnet
 async function getArbitrumEthBalance(address: string): Promise<string> {

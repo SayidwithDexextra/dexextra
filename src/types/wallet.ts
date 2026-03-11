@@ -71,6 +71,7 @@ export interface WalletContextType {
   portfolio: WalletPortfolio
   providers: WalletProvider[]
   connect: (providerId?: string) => Promise<void>
+  connectWithMagic: (provider: 'google') => Promise<void>
   disconnect: () => Promise<void>
   refreshBalance: () => Promise<void>
   refreshPortfolio: () => Promise<void>

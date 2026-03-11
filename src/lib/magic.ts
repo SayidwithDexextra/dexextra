@@ -1,0 +1,251 @@
+import { Magic } from 'magic-sdk'
+import { OAuthExtension } from '@magic-ext/oauth2'
+import { EVMExtension } from '@magic-ext/evm'
+import { env } from './env'
+
+let magicInstance: InstanceType<typeof Magic> | null = null
+let magicConfigSig: string | null = null
+
+// IMPORTANT:
+// Magic runs parts of its provider in an embedded context (iframe/popup).
+// That context can enforce a CSP which blocks `http://localhost:*` RPC URLs.
+// So for Magic we MUST default to an https RPC, not a local proxy.
+const FALLBACK_ARBITRUM_RPCS = [
+  'https://rpc.ankr.com/arbitrum',
+  'https://arbitrum-one-rpc.publicnode.com',
+  'https://arb1.arbitrum.io/rpc',
+] as const
+
+const MAGIC_ARB_RPC_OVERRIDE_KEY = 'magic:arbRpcOverride'
+
+function isSafeHttpsRpc(url: string): boolean {
+  return /^https:\/\//i.test(url) && !/localhost|127\.0\.0\.1/i.test(url)
+}
+
+function getClientRpcOverride(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const v = window.localStorage.getItem(MAGIC_ARB_RPC_OVERRIDE_KEY)
+    if (v && isSafeHttpsRpc(v)) return v
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+function setClientRpcOverride(url: string | null): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (!url) window.localStorage.removeItem(MAGIC_ARB_RPC_OVERRIDE_KEY)
+    else window.localStorage.setItem(MAGIC_ARB_RPC_OVERRIDE_KEY, url)
+  } catch {
+    // ignore
+  }
+}
+
+function rotateClientRpcOverride(): string {
+  const current = getClientRpcOverride()
+  const list = [...FALLBACK_ARBITRUM_RPCS]
+  const idx = current ? list.indexOf(current as any) : -1
+  const next = list[(idx + 1) % list.length]
+  setClientRpcOverride(next)
+  return next
+}
+
+function getArbitrumRpcUrlForMagic(): string {
+  // On the client, only NEXT_PUBLIC_* vars are available. If none is provided,
+  // fall back to a public https RPC known to work cross-origin.
+  const envUrl = env.NEXT_PUBLIC_ARBITRUM_RPC_URL || env.ARBITRUM_RPC_URL
+  if (envUrl && isSafeHttpsRpc(envUrl)) return envUrl
+
+  const override = getClientRpcOverride()
+  if (override) return override
+
+  return FALLBACK_ARBITRUM_RPCS[0]
+}
+
+export function resetMagic(): void {
+  magicInstance = null
+  magicConfigSig = null
+}
+
+export function getMagic(): InstanceType<typeof Magic> {
+  const key = process.env.NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY
+  if (!key) {
+    throw new Error('NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY is not set')
+  }
+
+  const arbitrumRpcUrl = getArbitrumRpcUrlForMagic()
+  const hlChainId = env.CHAIN_ID
+  const hlRpcUrl = isSafeHttpsRpc(env.RPC_URL) ? env.RPC_URL : null
+  const sig = `${key}|arb:${arbitrumRpcUrl}|hl:${hlChainId}:${hlRpcUrl || 'none'}`
+  if (magicInstance && magicConfigSig === sig) return magicInstance
+
+  // Avoid stale instances across Next.js HMR / hot reloads.
+  magicConfigSig = sig
+  try {
+    if (typeof window !== 'undefined') {
+      console.log('[Magic] Initializing with Arbitrum rpcUrl:', arbitrumRpcUrl)
+    }
+  } catch {
+    // ignore
+  }
+  magicInstance = new Magic(key, {
+    extensions: [
+      new OAuthExtension(),
+      new EVMExtension([
+        // Hyperliquid / CoreVault chain (custom). Needed so Magic can sign core-vault deposits.
+        // If RPC_URL is not https (e.g. localhost), we skip configuring it for Magic.
+        ...(hlRpcUrl ? [{ rpcUrl: hlRpcUrl, chainId: hlChainId, default: true }] : []),
+        // Arbitrum One (Rewards faucet / spoke actions).
+        //
+        // Note: Many public RPCs don't allow browser CORS. Magic runs in-browser,
+        // so we default to a same-origin proxy. Configure upstream via env, not here.
+        { rpcUrl: arbitrumRpcUrl, chainId: 42161, default: !hlRpcUrl },
+      ]),
+    ],
+  })
+
+  return magicInstance
+}
+
+export async function loginWithGoogle() {
+  const magic = getMagic()
+  const result = await (magic.oauth2 as OAuthExtension).loginWithPopup({
+    provider: 'google',
+    scope: ['openid', 'profile', 'email'],
+  })
+  return result
+}
+
+export async function getMagicUserAddress(): Promise<string | null> {
+  const magic = getMagic()
+  const isLoggedIn = await magic.user.isLoggedIn()
+  if (!isLoggedIn) return null
+
+  const metadata = await magic.user.getInfo()
+  return metadata.publicAddress ?? null
+}
+
+export async function logoutMagic(): Promise<void> {
+  const magic = getMagic()
+  const isLoggedIn = await magic.user.isLoggedIn()
+  if (isLoggedIn) {
+    await magic.user.logout()
+  }
+}
+
+export function getMagicProvider() {
+  const magic = getMagic()
+  return magic.rpcProvider as unknown as {
+    request: (args: { method: string; params?: unknown[] }) => Promise<unknown>
+    on: (event: string, callback: (...args: unknown[]) => void) => void
+    removeListener: (event: string, callback: (...args: unknown[]) => void) => void
+  }
+}
+
+export async function magicRequestWithRetry<T = unknown>(
+  args: { method: string; params?: unknown[] },
+  opts: { retries?: number; baseDelayMs?: number } = {}
+): Promise<T> {
+  const retries = Math.max(0, opts.retries ?? 2)
+  const baseDelayMs = Math.max(50, opts.baseDelayMs ?? 250)
+
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const provider = getMagicProvider()
+      return (await provider.request(args)) as T
+    } catch (e) {
+      lastErr = e
+      const msg = String((e as any)?.message || '')
+      const isFetchy = msg.toLowerCase().includes('failed to fetch')
+      if (!isFetchy || attempt === retries) break
+      // If we got here due to a stale cached instance/config OR a blocked RPC,
+      // rotate the RPC (unless user explicitly configured one) and retry.
+      if (attempt === 0) {
+        const envUrl = env.NEXT_PUBLIC_ARBITRUM_RPC_URL || env.ARBITRUM_RPC_URL
+        if (!envUrl) {
+          const next = rotateClientRpcOverride()
+          try {
+            console.warn('[Magic] RPC fetch failed; rotating Arbitrum rpcUrl to:', next)
+          } catch {}
+        }
+        resetMagic()
+      }
+      await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)))
+    }
+  }
+  throw lastErr
+}
+
+export async function switchMagicChain(chainId: number): Promise<void> {
+  const magic = getMagic() as unknown as InstanceType<typeof Magic> & {
+    evm?: { switchChain?: (id: number) => Promise<void> }
+  }
+
+  if (!magic.evm?.switchChain) {
+    throw new Error('Magic EVM chain switching is not available')
+  }
+
+  await magic.evm.switchChain(chainId)
+}
+
+export async function switchMagicChainWithRetry(
+  chainId: number,
+  opts: { retries?: number; baseDelayMs?: number } = {}
+): Promise<void> {
+  const retries = Math.max(0, opts.retries ?? 2)
+  const baseDelayMs = Math.max(50, opts.baseDelayMs ?? 250)
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      await switchMagicChain(chainId)
+      return
+    } catch (e) {
+      lastErr = e
+      const msg = String((e as any)?.message || '')
+      const isFetchy = msg.toLowerCase().includes('failed to fetch')
+      if (!isFetchy || attempt === retries) break
+      if (attempt === 0) {
+        const envUrl = env.NEXT_PUBLIC_ARBITRUM_RPC_URL || env.ARBITRUM_RPC_URL
+        if (!envUrl) {
+          const next = rotateClientRpcOverride()
+          try {
+            console.warn('[Magic] switchChain fetch failed; rotating Arbitrum rpcUrl to:', next)
+          } catch {}
+        }
+        resetMagic()
+      }
+      await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt)))
+    }
+  }
+  throw lastErr
+}
+
+export function isMagicSelectedWallet(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem('walletProvider') === 'magic'
+  } catch {
+    return false
+  }
+}
+
+export async function showMagicWalletUI(): Promise<{ success: boolean; error?: string }> {
+  try {
+    const magic: any = getMagic() as any
+    if (magic?.wallet?.showUI && typeof magic.wallet.showUI === 'function') {
+      await magic.wallet.showUI()
+      return { success: true }
+    }
+    // Fallback: open Magic account settings if wallet UI is unavailable.
+    if (magic?.user?.showSettings && typeof magic.user.showSettings === 'function') {
+      await magic.user.showSettings()
+      return { success: true }
+    }
+    return { success: false, error: 'Magic wallet UI is not available in this build.' }
+  } catch (e: any) {
+    return { success: false, error: e?.message || 'Failed to open Magic wallet UI.' }
+  }
+}

@@ -7,6 +7,7 @@ import searchModalDesign from '../../design/searchModal.json'
 import { getSupabaseClient } from '@/lib/supabase-browser'
 import MarketPairBadge from './Series/MarketPairBadge'
 import { metricSourceFromMarket } from '@/lib/metricSource'
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 
 interface SearchModalProps {
   isOpen: boolean
@@ -777,14 +778,11 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                         <div
                           className="flex items-center justify-center text-2xl font-semibold rounded-full w-[90px] h-[90px] mb-2 transition-all duration-200 shadow-lg group-hover:shadow-xl group-hover:scale-105"
                           style={{
-                            backgroundColor: user.profile_image_url ? 'transparent' : '#282828',
-                            backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
+                            backgroundImage: `url(${user.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
                             backgroundSize: 'cover',
                             backgroundPosition: 'center',
-                            color: '#ffffff'
                           }}
                         >
-                          {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
                         </div>
                         <div className="text-center w-full">
                           <div className="text-[13px] font-semibold text-white truncate">
@@ -838,14 +836,11 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                           <div
                             className="flex items-center justify-center text-3xl font-semibold rounded-full w-[115px] h-[115px] mb-3 transition-all duration-200 shadow-lg group-hover:shadow-xl"
                             style={{
-                              backgroundColor: user.profile_image_url ? 'transparent' : '#282828',
-                              backgroundImage: user.profile_image_url ? `url(${user.profile_image_url})` : undefined,
+                              backgroundImage: `url(${user.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
                               backgroundSize: 'cover',
                               backgroundPosition: 'center',
-                              color: '#ffffff'
                             }}
                           >
-                            {!user.profile_image_url && (user.display_name || user.username || user.wallet_address).charAt(0).toUpperCase()}
                           </div>
                           <div className="text-left w-full">
                             <div className="text-[14px] font-semibold text-white truncate">

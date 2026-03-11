@@ -11,14 +11,18 @@ import {
   onChainChanged,
   removeListeners,
   getBalance,
+  getChainId,
   generateAvatar,
   diagnoseWalletIssues,
   getActiveEthereumProvider,
+  setActiveEthereumProvider,
   hardLogout,
   clearWalletAutoConnectDisabled,
 } from '@/lib/wallet'
 import { fetchWalletPortfolio } from '@/lib/tokenService'
 import { ProfileApi } from '@/lib/profileApi'
+import { withDefaultProfileImage } from '@/types/userProfile'
+import { loginWithGoogle, getMagicUserAddress, logoutMagic, getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry } from '@/lib/magic'
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined)
 
@@ -93,7 +97,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
   const createOrGetUserProfile = useCallback(async (walletAddress: string): Promise<void> => {
     try {
        console.log('Creating/getting user profile for:', walletAddress)
-      const userProfile = await ProfileApi.createOrGetProfile(walletAddress)
+      const userProfile = withDefaultProfileImage(await ProfileApi.createOrGetProfile(walletAddress))
       
       setWalletData(prev => ({ 
         ...prev, 
@@ -115,7 +119,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
     try {
       // Use createOrGetProfile (full profile) so Settings can load private fields like email.
-      const userProfile = await ProfileApi.createOrGetProfile(address)
+      const userProfile = withDefaultProfileImage(await ProfileApi.createOrGetProfile(address))
       setWalletData(prev => ({ 
         ...prev, 
         userProfile 
@@ -133,6 +137,54 @@ export function WalletProvider({ children }: WalletProviderProps) {
         const detectedProviders = detectWalletProviders()
         setProviders(detectedProviders)
         console.log('Detected wallet providers:', detectedProviders.map(p => ({ name: p.name, isInstalled: p.isInstalled })));
+
+        // Check if user was previously connected via Magic
+        const lastProvider = typeof window !== 'undefined' ? localStorage.getItem('walletProvider') : null
+        if (lastProvider === 'magic') {
+          try {
+            const magicAddress = await getMagicUserAddress()
+            if (magicAddress) {
+              const magicProvider = getMagicProvider()
+              setActiveEthereumProvider(magicProvider as any)
+
+              // Ensure Magic exposes accounts to EIP-1193 consumers.
+              try {
+                await magicRequestWithRetry({ method: 'eth_requestAccounts' }, { retries: 2 })
+              } catch {
+                // Some Magic sessions may already be authorized; ignore.
+              }
+
+              // ChainId is frequently the first request after restore; use retry to avoid transient fetch failures.
+              const [balance, chainId] = await Promise.all([
+                getBalance(magicAddress, magicProvider as any).catch(() => '0'),
+                (async () => {
+                  try {
+                    const hex = await magicRequestWithRetry<string>({ method: 'eth_chainId' }, { retries: 2 })
+                    const parsed = parseInt(hex, 16)
+                    return Number.isFinite(parsed) ? parsed : 1
+                  } catch {
+                    return await getChainId(magicProvider as any).catch(() => 1)
+                  }
+                })(),
+              ])
+              setWalletData({
+                address: magicAddress,
+                balance,
+                isConnected: true,
+                isConnecting: false,
+                chainId,
+                ensName: null,
+                avatar: generateAvatar(magicAddress),
+                userProfile: null,
+              })
+              await createOrGetUserProfile(magicAddress)
+              console.log('Magic session restored:', magicAddress)
+              return
+            }
+          } catch (error) {
+            console.warn('Magic session restore failed:', error)
+          }
+        }
 
         // Check for existing connection
         const existingConnection = await checkConnection()
@@ -373,8 +425,70 @@ export function WalletProvider({ children }: WalletProviderProps) {
     }
   }
 
+  const connectWithMagic = async (provider: 'google'): Promise<void> => {
+    setWalletData(prev => ({ ...prev, isConnecting: true }))
+
+    try {
+      clearWalletAutoConnectDisabled()
+
+      const result = await loginWithGoogle()
+      const address = result.magic.userMetadata.publicAddress
+
+      if (!address) {
+        throw new Error('Magic login succeeded but no wallet address returned')
+      }
+
+      const magicProvider = getMagicProvider()
+      setActiveEthereumProvider(magicProvider as any)
+
+      // Make sure downstream components relying on EIP-1193 see an account.
+      try {
+        await magicRequestWithRetry({ method: 'eth_requestAccounts' }, { retries: 2 })
+      } catch {
+        // ignore
+      }
+
+      const [balance, chainId] = await Promise.all([
+        getBalance(address, magicProvider as any).catch(() => '0'),
+        (async () => {
+          try {
+            const hex = await magicRequestWithRetry<string>({ method: 'eth_chainId' }, { retries: 2 })
+            const parsed = parseInt(hex, 16)
+            return Number.isFinite(parsed) ? parsed : 1
+          } catch {
+            return await getChainId(magicProvider as any).catch(() => 1)
+          }
+        })(),
+      ])
+
+      setWalletData({
+        address,
+        balance,
+        isConnected: true,
+        isConnecting: false,
+        chainId,
+        ensName: null,
+        avatar: generateAvatar(address),
+        userProfile: null,
+      })
+
+      localStorage.setItem('walletProvider', 'magic')
+
+      createOrGetUserProfile(address).catch(error =>
+        console.warn('User profile creation failed (non-blocking):', error)
+      )
+    } catch (error: unknown) {
+      console.error('Magic login error:', error)
+      setWalletData(prev => ({ ...prev, isConnecting: false }))
+      throw error
+    }
+  }
+
   const disconnect = async (): Promise<void> => {
     try {
+      // Logout Magic if that was the active provider
+      await logoutMagic().catch(() => {})
+
       // Hard logout: clear all cached state and prevent silent reconnect on reload.
       await hardLogout()
       
@@ -426,6 +540,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
     portfolio,
     providers,
     connect,
+    connectWithMagic,
     disconnect,
     refreshBalance,
     refreshPortfolio,

@@ -8,6 +8,7 @@ import { useMarketOverview } from '@/hooks/useMarketOverview';
 import type { MarketOverviewRow } from '@/hooks/useMarketOverview';
 import { WatchlistMetricsBar } from '@/components/watchlist/WatchlistMetricsBar';
 import { AddAssetsModal } from '@/components/watchlist/AddAssetsModal';
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 import {
   getFromCacheOrStorage,
   setCache,
@@ -914,16 +915,11 @@ export default function WatchlistPage() {
                                   <div
                                     className="w-7 h-7 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0"
                                     style={{
-                                      backgroundImage: u.profile_image_url ? `url(${u.profile_image_url})` : undefined,
+                                      backgroundImage: `url(${u.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
                                       backgroundSize: 'cover',
                                       backgroundPosition: 'center',
                                     }}
                                   >
-                                    {!u.profile_image_url && (
-                                      <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-[#808080]">
-                                        {label.slice(0, 1).toUpperCase()}
-                                      </div>
-                                    )}
                                   </div>
                                   <div className="min-w-0">
                                     <div className="text-[11px] font-medium text-white truncate group-hover:underline">{label}</div>
@@ -975,16 +971,11 @@ export default function WatchlistPage() {
                           <div
                             className="w-8 h-8 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0"
                             style={{
-                              backgroundImage: u.profile_image_url ? `url(${u.profile_image_url})` : undefined,
+                              backgroundImage: `url(${u.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
                               backgroundSize: 'cover',
                               backgroundPosition: 'center',
                             }}
                           >
-                            {!u.profile_image_url && (
-                              <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-[#808080]">
-                                {label.slice(0, 1).toUpperCase()}
-                              </div>
-                            )}
                           </div>
 
                           <div className="flex-1 min-w-0">

@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { ethers } from 'ethers'
 import { useWallet } from '@/hooks/useWallet'
 import { ProfileApi } from '@/lib/profileApi'
-import { formDataToUserProfile, userProfileToFormData } from '@/types/userProfile'
+import { formDataToUserProfile, userProfileToFormData, DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import FuturesMarketFactoryAbi from '@/lib/abis/FuturesMarketFactory.json'
 import ActionStatusModal from '@/components/watchlist/ActionStatusModal'
 
@@ -49,7 +49,8 @@ export default function Settings({ className }: SettingsProps) {
     if (walletData.userProfile) {
       // Convert profile data to form data (includes saved email)
       setFormData(userProfileToFormData(walletData.userProfile))
-      setProfileImage(walletData.userProfile.profile_image_url || null)
+      const imgUrl = walletData.userProfile.profile_image_url
+      setProfileImage(imgUrl && imgUrl !== DEFAULT_PROFILE_IMAGE ? imgUrl : null)
       setBannerImage(walletData.userProfile.banner_image_url || null)
     } else if (walletData.isConnected && walletData.address) {
       // If wallet is connected but no profile data, try to refresh it
@@ -150,7 +151,8 @@ export default function Settings({ className }: SettingsProps) {
       
       // Reset to previous state on error
       if (type === 'profile') {
-        setProfileImage(walletData.userProfile?.profile_image_url || null)
+        const prevImg = walletData.userProfile?.profile_image_url
+        setProfileImage(prevImg && prevImg !== DEFAULT_PROFILE_IMAGE ? prevImg : null)
       } else {
         setBannerImage(walletData.userProfile?.banner_image_url || null)
       }
@@ -1022,25 +1024,13 @@ export default function Settings({ className }: SettingsProps) {
             <div className="absolute left-6 bottom-5">
               <div className="relative group">
                 <div className="w-[92px] h-[92px] md:w-[112px] md:h-[112px] rounded-full overflow-hidden border border-[#222222] bg-[#0F0F0F] shadow-2xl">
-                  {profileImage ? (
-                    <Image
-                      src={profileImage}
-                      alt={profileLabel}
-                      width={112}
-                      height={112}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div
-                      className="w-full h-full flex items-center justify-center text-[28px] md:text-[34px] font-semibold text-white"
-                      style={{
-                        background:
-                          'linear-gradient(135deg, rgba(74,158,255,0.22), rgba(16,185,129,0.16))',
-                      }}
-                    >
-                      {profileInitial}
-                    </div>
-                  )}
+                  <Image
+                    src={profileImage || DEFAULT_PROFILE_IMAGE}
+                    alt={profileLabel}
+                    width={112}
+                    height={112}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
 
                 {/* Avatar actions */}

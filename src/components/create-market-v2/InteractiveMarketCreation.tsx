@@ -276,16 +276,22 @@ function AssistantResponseBubble({
   const typingTimerRef = React.useRef<number | null>(null);
   const prevTextRef = React.useRef<string>('');
 
+  // Clear stale text synchronously before paint to prevent flash of old text on step transitions.
+  React.useLayoutEffect(() => {
+    if (text !== prevTextRef.current) {
+      setDisplayedText('');
+      setIsTyping(true);
+    }
+  }, [text]);
+
   React.useEffect(() => {
-    // Respect reduced motion.
+    if (text === prevTextRef.current) return;
+    prevTextRef.current = text;
+
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    // If the text didn't change, don't re-type.
-    if (text === prevTextRef.current) return;
-    prevTextRef.current = text;
 
     if (typingTimerRef.current) {
       window.clearTimeout(typingTimerRef.current);
@@ -298,8 +304,6 @@ function AssistantResponseBubble({
       return;
     }
 
-    setDisplayedText('');
-    setIsTyping(true);
     let i = 0;
 
     const tick = () => {
@@ -332,7 +336,7 @@ function AssistantResponseBubble({
   }, [text]);
 
   return (
-    <div className="rounded-2xl border border-white/8 bg-[#0F0F0F] px-4 py-3 text-[13px] leading-relaxed text-white/85 shadow-lg whitespace-pre-wrap w-[520px]">
+    <div className="rounded-2xl border border-white/8 bg-[#0F0F0F] px-4 py-3 text-[13px] leading-relaxed text-white/85 shadow-lg whitespace-pre-wrap w-full sm:w-[520px]">
       {isLoading && !displayedText ? (
         <span className="text-white/65">
           Thinking<span className="inline-block w-[1ch] animate-pulse">.</span>
@@ -436,7 +440,7 @@ function StepPanel({
     step === 'clarify_metric' || step === 'name' || step === 'description' || step === 'icon';
 
   return (
-    <div className={step === 'select_source' ? 'space-y-2' : 'space-y-4'}>
+    <div className={step === 'select_source' ? 'space-y-2' : 'space-y-3 sm:space-y-4'}>
       {/* Row 1: AI message on left side of page (top) */}
       <div
         className={[
@@ -444,7 +448,7 @@ function StepPanel({
           isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0',
         ].join(' ')}
       >
-        <div className="flex items-start gap-3 max-w-[520px]">
+        <div className="flex items-start gap-3 w-full sm:max-w-[520px]">
           <AssistantResponseBubble text={message} isLoading={isAssistantLoading} />
         </div>
       </div>
@@ -453,12 +457,12 @@ function StepPanel({
       {showUserRow ? (
         <div
           className={[
-            'flex justify-end transition-all duration-200 ease-out delay-75',
+            'flex flex-col sm:flex-row sm:justify-end transition-all duration-200 ease-out delay-75',
             isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0',
           ].join(' ')}
         >
-          <div className="flex items-start gap-3">
-            <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-[520px]">
+          <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3 w-full sm:w-auto">
+            <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-full sm:max-w-[520px] order-1">
               {!isInteractiveUserInput && step === 'select_source' ? (
                 <div>
                   <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
@@ -566,7 +570,7 @@ function StepPanel({
                 </div>
               ) : null}
             </div>
-            <div className="mt-1 shrink-0 flex flex-col items-end gap-2">
+            <div className="order-2 shrink-0 flex flex-row sm:flex-col items-center sm:items-end gap-2 sm:mt-1">
               <button
                 type="button"
                 onClick={onStartOver}
@@ -682,7 +686,7 @@ function MarketDetailsReview({
   }, [bondConfig.defaultBondAmount, bondConfig.penaltyBps]);
 
   return (
-    <div className="mt-4 w-full max-w-[900px]">
+    <div className="mt-4 w-full max-w-[900px] px-1 sm:px-0">
       {/* Compact single-view layout */}
       <div
         className="rounded-2xl border border-white/8 bg-[#0A0A0A] overflow-visible"
@@ -693,7 +697,7 @@ function MarketDetailsReview({
         }}
       >
         {/* Header bar */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/5 bg-black/40">
+        <div className="flex flex-col gap-3 px-4 py-3 border-b border-white/5 bg-black/40 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <svg
@@ -718,7 +722,7 @@ function MarketDetailsReview({
               Start over
             </button>
           </div>
-          <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-col items-start gap-1 sm:items-end">
             {showImmediateSettlementToggle ? (
               <label className="mb-1 flex items-center gap-1.5 text-[10px] text-white/55">
                 <input
@@ -734,7 +738,7 @@ function MarketDetailsReview({
               type="button"
               onClick={onCreateMarket}
               disabled={isCreating}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium shadow transition-all active:scale-[0.98] ${
+              className={`inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium shadow transition-all active:scale-[0.98] sm:w-auto sm:py-1.5 ${
                 isCreating
                   ? 'bg-white/50 text-black/50 cursor-not-allowed'
                   : 'bg-white text-black hover:bg-white/90'
@@ -768,8 +772,8 @@ function MarketDetailsReview({
           </div>
         </div>
 
-        {/* Main content - 2 column grid */}
-        <div className="grid grid-cols-[1fr_1.2fr] divide-x divide-white/5">
+        {/* Main content - 2 column grid (stacks on mobile) */}
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.2fr] sm:divide-x divide-white/5">
           {/* Left column - Identity */}
           <div className="p-4 space-y-3">
             {/* Icon + Name row */}
@@ -889,7 +893,7 @@ function MarketDetailsReview({
           </div>
 
           {/* Right column - Metric details */}
-          <div className="p-4 bg-black/20">
+          <div className="p-4 bg-black/20 border-t border-white/5 sm:border-t-0">
             <button
               type="button"
               onClick={() => onEdit('clarify_metric')}
@@ -907,7 +911,7 @@ function MarketDetailsReview({
                 <div className="text-sm font-medium text-white">{metricDefinition.metric_name}</div>
 
                 {/* Grid of metric properties */}
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
                   {metricDefinition.unit && (
                     <div className="rounded-lg bg-black/40 border border-white/5 px-2.5 py-2">
                       <div className="text-[9px] text-white/40 uppercase tracking-wider mb-0.5">Unit</div>
@@ -946,7 +950,7 @@ function MarketDetailsReview({
 
             {/* Bond + penalty notice */}
             <div className="mt-4 rounded-xl border border-white/5 bg-black/40 p-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
                   Bond &amp; Penalty
                 </div>
@@ -956,13 +960,13 @@ function MarketDetailsReview({
               </div>
 
               <div className="mt-2 space-y-1.5 text-xs">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-3">
                   <span className="text-white/55">Bond required</span>
                   <span className="text-white/85 font-medium tabular-nums">
                     {bondSummary ? formatUsdc6(bondSummary.amount) : bondConfig.status === 'loading' ? 'Loading…' : 'Configured by protocol'}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-3">
                   <span className="text-white/55">Creation penalty</span>
                   <span className="text-white/80 font-medium tabular-nums">
                     {bondSummary
@@ -974,7 +978,7 @@ function MarketDetailsReview({
                           : 'Applies on refund'}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-3">
                   <span className="text-white/55">Refund if market is unused</span>
                   <span className="text-white/80 font-medium tabular-nums">
                     {bondSummary ? formatUsdc6(bondSummary.refundable) : 'Net of penalty'}
@@ -2582,6 +2586,8 @@ export function InteractiveMarketCreation() {
 
     stepTimerRef.current = window.setTimeout(() => {
       console.log('[StepTransition] setting visibleStep to', desiredStep);
+      setAssistantMessage('');
+      setAssistantIsLoading(true);
       setVisibleStep(desiredStep);
       requestAnimationFrame(() => setIsStepAnimating(false));
     }, 160);
@@ -2652,11 +2658,11 @@ export function InteractiveMarketCreation() {
       {/* Right bubble: 100px from screen edge */}
       {/* Hide when at 'complete' step - we show the MarketDetailsReview instead */}
       {(discoveryState === 'success' || discoveryState === 'clarify') && discoveryResult && visibleStep !== 'complete' ? (
-        <div className="mt-6 w-full lg:w-[calc(100vw-60px)] lg:ml-[calc(50%-50vw+60px)] lg:pl-[40px] lg:pr-[100px]">
+        <div className="mt-6 w-full px-1 sm:px-0 lg:w-[calc(100vw-60px)] lg:ml-[calc(50%-50vw+60px)] lg:pl-[40px] lg:pr-[100px]">
           <StepPanel
                 step={visibleStep}
                 isAnimating={isStepAnimating}
-                message={assistantMessage || fallbackAssistantResponseText}
+                message={assistantMessage || (assistantIsLoading ? '' : fallbackAssistantResponseText)}
                 isAssistantLoading={assistantIsLoading}
                 userPrompt={
                   (assistantHistory.find((m) => m.role === 'user')?.content || promptRef.current || '').trim()
@@ -2705,120 +2711,13 @@ export function InteractiveMarketCreation() {
                 onStartOver={handleReset}
             devTools={
               devToolsEnabled ? (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setDevToolsOpen((v) => !v)}
-                    className="rounded-md border border-dashed border-purple-500/40 bg-purple-500/10 px-2 py-1 text-[11px] font-medium text-purple-300 hover:bg-purple-500/20"
-                  >
-                    Dev
-                  </button>
-                  {devToolsOpen ? (
-                    <div className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-1.5rem))] max-h-[65vh] overflow-y-auto rounded-xl border border-white/10 bg-[#0A0A0A] p-2 shadow-xl z-[120] overscroll-contain">
-                      <div className="px-2 pb-1 text-[11px] text-white/45">Quick actions</div>
-                      <button
-                        type="button"
-                        onClick={() => devQuickFillTestMarket()}
-                        className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-green-200 hover:bg-white/5"
-                      >
-                        Quick-fill test market (4-char + immediate settlement)
-                      </button>
-                      <div className="mt-2 pt-2 border-t border-white/10">
-                      <div className="px-2 pb-1 text-[11px] text-white/45">Jump to step</div>
-                      {(['clarify_metric', 'name', 'description', 'select_source', 'icon', 'complete'] as CreationStep[]).map(
-                        (s) => (
-                          <button
-                            key={s}
-                            type="button"
-                            onClick={() => {
-                              devJumpToStep(s);
-                              setDevToolsOpen(false);
-                            }}
-                            className={[
-                              'w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5',
-                              visibleStep === s ? 'bg-white/5' : '',
-                            ].join(' ')}
-                          >
-                            {s.replace('_', ' ')}
-                          </button>
-                        )
-                      )}
-                      </div>
-                      <div className="mt-2 pt-2 border-t border-white/10">
-                        <div className="px-2 pb-1 text-[11px] text-white/45">Presets</div>
-                        <button
-                          type="button"
-                          onClick={() => devSkipToReviewWithPreset()}
-                          className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                        >
-                          Skip to review (Bananas preset)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => devJumpToSelectSourceWithManySources()}
-                          className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                        >
-                          Select source (10 sources)
-                        </button>
-                      </div>
-                      <div className="mt-2 pt-2 border-t border-white/10">
-                        <div className="px-2 pb-1 text-[11px] text-white/45">Modals</div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            // Create mock validation result for preview
-                            setValidationResult({
-                              status: 'completed',
-                              processingTime: '1,234ms',
-                              cached: false,
-                              data: {
-                                metric: marketName || 'Bitcoin Price',
-                                value: '97,245.50',
-                                unit: 'USD',
-                                as_of: new Date().toISOString(),
-                                confidence: 0.92,
-                                asset_price_suggestion: '97,245.50',
-                                reasoning: 'The current Bitcoin price was retrieved from the CoinGecko API endpoint. The value reflects the latest spot price in USD with high confidence based on multiple exchange aggregation.',
-                                sources: [{
-                                  url: selectedSource?.url || 'https://api.coingecko.com/api/v3/simple/price',
-                                  screenshot_url: '',
-                                  quote: 'BTC: $97,245.50 USD',
-                                  match_score: 0.95,
-                                }],
-                              },
-                              performance: {
-                                totalTime: 1234,
-                                breakdown: {
-                                  cacheCheck: '12ms',
-                                  scraping: '456ms',
-                                  processing: '234ms',
-                                  aiAnalysis: '532ms',
-                                },
-                              },
-                            });
-                            setShowValidationModal(true);
-                            setDevToolsOpen(false);
-                          }}
-                          className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                        >
-                          Validation Modal
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            // Show loading state
-                            setValidationResult(null);
-                            setShowValidationModal(true);
-                            setDevToolsOpen(false);
-                          }}
-                          className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                        >
-                          Validation (Loading)
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setDevToolsOpen((v) => !v)}
+                  className="rounded-md border border-dashed border-purple-500/40 bg-purple-500/10 px-2 py-1 text-[11px] font-medium text-purple-300 hover:bg-purple-500/20"
+                >
+                  Dev
+                </button>
               ) : null
             }
           />
@@ -2867,125 +2766,16 @@ export function InteractiveMarketCreation() {
             <div className="flex items-center gap-2 text-xs text-white/70 sm:gap-3">
               {discoveryState === 'idle' && (
                 <>
-                  {/* Dev-only step skipper */}
+                  {/* Dev-only toggle */}
                   {devToolsEnabled ? (
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setDevToolsOpen((v) => !v)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-purple-500/40 bg-purple-500/10 px-2 py-1 text-purple-300 hover:bg-purple-500/20 transition-colors"
-                        aria-label="Dev tools"
-                      >
-                        <span className="text-xs">Dev</span>
-                      </button>
-                      {devToolsOpen ? (
-                        <div className="absolute left-0 top-full mt-2 w-[min(22rem,calc(100vw-1.5rem))] max-h-[65vh] overflow-y-auto rounded-xl border border-white/10 bg-[#0A0A0A] p-2 shadow-xl z-[120] overscroll-contain">
-                          <div className="px-2 pb-1 text-[11px] text-white/45">Quick actions</div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              devQuickFillTestMarket();
-                            }}
-                            className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-green-200 hover:bg-white/5"
-                          >
-                            Quick-fill test market (4-char + immediate settlement)
-                          </button>
-                          <div className="mt-2 pt-2 border-t border-white/10">
-                          <div className="px-2 pb-1 text-[11px] text-white/45">Jump to step</div>
-                          {(['clarify_metric', 'name', 'description', 'select_source', 'icon', 'complete'] as CreationStep[]).map(
-                            (s) => (
-                              <button
-                                key={s}
-                                type="button"
-                                onClick={() => {
-                                  devJumpToStep(s);
-                                  setDevToolsOpen(false);
-                                }}
-                                className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                              >
-                                {s.replace('_', ' ')}
-                              </button>
-                            )
-                          )}
-                          </div>
-                          <div className="mt-2 pt-2 border-t border-white/10">
-                            <div className="px-2 pb-1 text-[11px] text-white/45">Presets</div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                devSkipToReviewWithPreset();
-                                setDevToolsOpen(false);
-                              }}
-                              className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                            >
-                              Skip to review (Bananas preset)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                devJumpToSelectSourceWithManySources();
-                              }}
-                              className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                            >
-                              Select source (10 sources)
-                            </button>
-                          </div>
-                          <div className="mt-2 pt-2 border-t border-white/10">
-                            <div className="px-2 pb-1 text-[11px] text-white/45">Modals</div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setValidationResult({
-                                  status: 'completed',
-                                  processingTime: '1,234ms',
-                                  cached: false,
-                                  data: {
-                                    metric: 'Bitcoin Price',
-                                    value: '97,245.50',
-                                    unit: 'USD',
-                                    as_of: new Date().toISOString(),
-                                    confidence: 0.92,
-                                    asset_price_suggestion: '97,245.50',
-                                    reasoning: 'The current Bitcoin price was retrieved from the CoinGecko API endpoint. The value reflects the latest spot price in USD with high confidence based on multiple exchange aggregation.',
-                                    sources: [{
-                                      url: 'https://api.coingecko.com/api/v3/simple/price',
-                                      screenshot_url: '',
-                                      quote: 'BTC: $97,245.50 USD',
-                                      match_score: 0.95,
-                                    }],
-                                  },
-                                  performance: {
-                                    totalTime: 1234,
-                                    breakdown: {
-                                      cacheCheck: '12ms',
-                                      scraping: '456ms',
-                                      processing: '234ms',
-                                      aiAnalysis: '532ms',
-                                    },
-                                  },
-                                });
-                                setShowValidationModal(true);
-                                setDevToolsOpen(false);
-                              }}
-                              className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                            >
-                              Validation Modal
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setValidationResult(null);
-                                setShowValidationModal(true);
-                                setDevToolsOpen(false);
-                              }}
-                              className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-white/80 hover:bg-white/5"
-                            >
-                              Validation (Loading)
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDevToolsOpen((v) => !v)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-purple-500/40 bg-purple-500/10 px-2 py-1 text-purple-300 hover:bg-purple-500/20 transition-colors"
+                      aria-label="Dev tools"
+                    >
+                      <span className="text-xs">Dev</span>
+                    </button>
                   ) : null}
                 </>
               )}
@@ -3236,16 +3026,16 @@ export function InteractiveMarketCreation() {
       {discoveryState === 'success' &&
         visibleStep === 'similar_markets' &&
         similarMarkets.length > 0 && (
-        <div className="mt-8 w-[calc(100%+320px)] max-w-[calc(100vw-120px)] -ml-[280px]">
+        <div className="mt-8 w-full sm:w-[calc(100%+320px)] sm:max-w-[calc(100vw-120px)] sm:-ml-[280px]">
           <div className="space-y-3">
-            <div className="flex flex-wrap items-start gap-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">
               {similarMarkets.map((m, index) => (
                 <a
                   key={m.id}
                   href={`/token/${encodeURIComponent(m.symbol || m.market_identifier)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="group relative flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200 hover:bg-white/5"
+                  className="group relative flex items-center gap-3 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 transition-all duration-200 hover:bg-white/5"
                   style={{
                     opacity: 1,
                     transform: 'translateY(0)',
@@ -3285,13 +3075,13 @@ export function InteractiveMarketCreation() {
                         {Math.round(m.score * 100)}% match
                       </span>
                     </div>
-                    <div className="text-xs text-white/40 mt-0.5 truncate max-w-[320px]">{m.description}</div>
+                    <div className="text-xs text-white/40 mt-0.5 truncate max-w-[200px] sm:max-w-[320px]">{m.description}</div>
                   </div>
                 </a>
               ))}
             </div>
 
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:gap-3">
               <button
                 type="button"
                 onClick={() => setSimilarMarketsAcknowledged(true)}
@@ -3325,6 +3115,9 @@ export function InteractiveMarketCreation() {
             setSourcesFetchNonce((n) => n + 1);
           }}
           isVisible={true}
+          onBack={() => {
+            setIsDescriptionConfirmed(false);
+          }}
           onSelectSource={async (source) => {
             const md = discoveryResult.metric_definition;
             if (!md) return;
@@ -3507,6 +3300,9 @@ export function InteractiveMarketCreation() {
           }}
           selectedIconUrl={iconPreviewUrl}
           isVisible={true}
+          onBack={() => {
+            setSelectedSource(null);
+          }}
         />
       )}
 
@@ -3583,13 +3379,9 @@ export function InteractiveMarketCreation() {
         response={validationResult}
         error={validationError}
         onAccept={() => {
-          // Handle accepted validation - proceed to next step
           setShowValidationModal(false);
-          // The source is already selected, validation is complete
-          // User can now proceed to icon step
         }}
         onPickAnotherSource={() => {
-          // Keep the user on select_source so they can pick a different suggestion or use Custom URL.
           setSelectedSource(null);
           setShowValidationModal(false);
           setValidationResult(null);
@@ -3597,24 +3389,134 @@ export function InteractiveMarketCreation() {
           setCachedValidatedSelection(null);
         }}
         onDeny={() => {
-          // Track the denied source URL to exclude from future searches
           if (selectedSource?.url) {
             setDeniedSourceUrls((prev) => [...prev, selectedSource.url]);
           }
-          // Clear the selected source so user stays on select_source step
           setSelectedSource(null);
-          // Increment search variation to get different results
           setSearchVariation((prev) => prev + 1);
-          // Reset sources fetch state to trigger a new search
           setSourcesFetchState('idle');
           setSourcesFetchNonce((n) => n + 1);
-          // Clear validation state
           setShowValidationModal(false);
           setValidationResult(null);
           setValidationError(null);
           setCachedValidatedSelection(null);
         }}
       />
+
+      {/* Fixed dev tools panel */}
+      {devToolsEnabled && devToolsOpen && (
+        <div className="fixed bottom-4 left-4 z-[9999] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-purple-500/25 bg-[#111] shadow-2xl shadow-purple-900/20 ring-1 ring-black">
+          <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+            <span className="text-[11px] font-semibold tracking-wide text-purple-300 uppercase">Dev Tools</span>
+            <button
+              type="button"
+              onClick={() => setDevToolsOpen(false)}
+              className="flex h-5 w-5 items-center justify-center rounded text-white/40 hover:bg-white/10 hover:text-white/80 transition-colors"
+              aria-label="Close dev tools"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+          <div className="max-h-[60vh] overflow-y-auto overscroll-contain p-2 space-y-1">
+            <div className="px-1.5 pt-1 pb-0.5 text-[10px] font-medium text-white/35 uppercase tracking-wider">Quick fill</div>
+            <button
+              type="button"
+              onClick={() => { devQuickFillTestMarket(); setDevToolsOpen(false); }}
+              className="w-full rounded-lg px-2 py-1.5 text-left text-[12px] text-green-300 hover:bg-green-500/10 transition-colors"
+            >
+              Test market (4-char + immediate)
+            </button>
+
+            <div className="px-1.5 pt-2 pb-0.5 text-[10px] font-medium text-white/35 uppercase tracking-wider">Jump to step</div>
+            <div className="flex flex-wrap gap-1 px-1">
+              {(['clarify_metric', 'name', 'description', 'select_source', 'icon', 'complete'] as CreationStep[]).map(
+                (s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => { devJumpToStep(s); setDevToolsOpen(false); }}
+                    className={[
+                      'rounded-md border px-2 py-1 text-[11px] transition-colors',
+                      visibleStep === s
+                        ? 'border-purple-500/40 bg-purple-500/15 text-purple-200'
+                        : 'border-white/8 bg-white/[0.03] text-white/60 hover:bg-white/[0.07] hover:text-white/80',
+                    ].join(' ')}
+                  >
+                    {s.replace(/_/g, ' ')}
+                  </button>
+                )
+              )}
+            </div>
+
+            <div className="px-1.5 pt-2 pb-0.5 text-[10px] font-medium text-white/35 uppercase tracking-wider">Presets</div>
+            <div className="flex flex-wrap gap-1 px-1">
+              <button
+                type="button"
+                onClick={() => { devSkipToReviewWithPreset(); setDevToolsOpen(false); }}
+                className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-[11px] text-white/60 hover:bg-white/[0.07] hover:text-white/80 transition-colors"
+              >
+                Bananas preset
+              </button>
+              <button
+                type="button"
+                onClick={() => { devJumpToSelectSourceWithManySources(); setDevToolsOpen(false); }}
+                className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-[11px] text-white/60 hover:bg-white/[0.07] hover:text-white/80 transition-colors"
+              >
+                10 sources
+              </button>
+            </div>
+
+            <div className="px-1.5 pt-2 pb-0.5 text-[10px] font-medium text-white/35 uppercase tracking-wider">Modals</div>
+            <div className="flex flex-wrap gap-1 px-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setValidationResult({
+                    status: 'completed',
+                    processingTime: '1,234ms',
+                    cached: false,
+                    data: {
+                      metric: marketName || 'Bitcoin Price',
+                      value: '97,245.50',
+                      unit: 'USD',
+                      as_of: new Date().toISOString(),
+                      confidence: 0.92,
+                      asset_price_suggestion: '97,245.50',
+                      reasoning: 'The current Bitcoin price was retrieved from the CoinGecko API endpoint.',
+                      sources: [{
+                        url: selectedSource?.url || 'https://api.coingecko.com/api/v3/simple/price',
+                        screenshot_url: '',
+                        quote: 'BTC: $97,245.50 USD',
+                        match_score: 0.95,
+                      }],
+                    },
+                    performance: {
+                      totalTime: 1234,
+                      breakdown: { cacheCheck: '12ms', scraping: '456ms', processing: '234ms', aiAnalysis: '532ms' },
+                    },
+                  });
+                  setShowValidationModal(true);
+                  setDevToolsOpen(false);
+                }}
+                className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-[11px] text-white/60 hover:bg-white/[0.07] hover:text-white/80 transition-colors"
+              >
+                Validation
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setValidationResult(null);
+                  setShowValidationModal(true);
+                  setDevToolsOpen(false);
+                }}
+                className="rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-[11px] text-white/60 hover:bg-white/[0.07] hover:text-white/80 transition-colors"
+              >
+                Validation (loading)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

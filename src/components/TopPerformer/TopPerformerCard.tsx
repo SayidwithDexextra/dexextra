@@ -3,6 +3,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { TopPerformerCardProps } from './types';
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 import styles from './TopPerformer.module.css';
 
 const TopPerformerCard: React.FC<TopPerformerCardProps> = ({ 
@@ -35,7 +36,7 @@ const TopPerformerCard: React.FC<TopPerformerCardProps> = ({
     >
       <div className={styles.avatarContainer}>
         <Image
-          src={performer.avatarUrl || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNzIiIGhlaWdodD0iNzIiIHZpZXdCb3g9IjAgMCA3MiA3MiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjcyIiBoZWlnaHQ9IjcyIiByeD0iMzYiIGZpbGw9IiMzMzMzMzMiLz4KPHN2ZyB4PSIyNCIgeT0iMTgiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSIjNjY2NjY2Ij4KPHA+YXRoIGQ9Ik0xMiAxMmMyLjIxIDAgNC0xLjc5IDQtNHMtMS43OS00LTQtNC00IDEuNzktNCA0IDEuNzkgNCA0IDR6bTAgMmMtMi42NyAwLTggMS4zNC04IDR2MmgxNnYtMmMwLTIuNjYtNS4zMy00LTgtNHoiLz4KPC9zdmc+Cjwvc3ZnPgo='}
+          src={performer.avatarUrl || DEFAULT_PROFILE_IMAGE}
           alt={`${performer.name} avatar`}
           width={72}
           height={72}

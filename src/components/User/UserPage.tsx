@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import type { PublicUserProfile } from '@/types/userProfile'
+import { type PublicUserProfile, DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import { useWallet } from '@/hooks/useWallet'
 
 export interface UserPageProps {
@@ -191,7 +191,7 @@ export default function UserPage({ walletAddress, initialProfile, className }: U
   }, [profileLabel])
 
   const bannerImage = profile?.banner_image_url ? String(profile.banner_image_url) : null
-  const profileImage = profile?.profile_image_url ? String(profile.profile_image_url) : null
+  const profileImage = profile?.profile_image_url ? String(profile.profile_image_url) : DEFAULT_PROFILE_IMAGE
 
   const fmtDate = (iso: string | null | undefined) => {
     if (!iso) return '—'
@@ -247,18 +247,7 @@ export default function UserPage({ walletAddress, initialProfile, className }: U
             {/* Profile icon (bottom-left) */}
             <div className="absolute left-6 bottom-5">
               <div className="w-[92px] h-[92px] md:w-[112px] md:h-[112px] rounded-full overflow-hidden border border-[#222222] bg-[#0F0F0F] shadow-2xl">
-                {profileImage ? (
-                  <Image src={profileImage} alt={profileLabel} width={112} height={112} className="w-full h-full object-cover" />
-                ) : (
-                  <div
-                    className="w-full h-full flex items-center justify-center text-[28px] md:text-[34px] font-semibold text-white"
-                    style={{
-                      background: 'linear-gradient(135deg, rgba(74,158,255,0.22), rgba(16,185,129,0.16))',
-                    }}
-                  >
-                    {profileInitial}
-                  </div>
-                )}
+                <Image src={profileImage} alt={profileLabel} width={112} height={112} className="w-full h-full object-cover" />
               </div>
             </div>
           </div>

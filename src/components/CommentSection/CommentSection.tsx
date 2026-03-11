@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import styles from './CommentSection.module.css';
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 
 export interface CommentImage {
   id: string;
@@ -580,11 +581,7 @@ function CommentItem({
       <div className={styles.commentWrapper}>
         <div className={styles.avatarWrapper}>
           <div className={styles.avatar}>
-            {comment.author.avatarUrl ? (
-              <img src={comment.author.avatarUrl} alt="" className={styles.avatarImg} />
-            ) : (
-              getInitials(comment.author.name)
-            )}
+            <img src={comment.author.avatarUrl || DEFAULT_PROFILE_IMAGE} alt="" className={styles.avatarImg} />
           </div>
           {hasThreadLine && <div className={styles.threadLine} />}
         </div>
@@ -699,11 +696,7 @@ function CommentItem({
       {showReplyInput && (
         <div className={styles.replyInputWrapper}>
           <div className={styles.composeAvatar}>
-            {currentUserAvatar ? (
-              <img src={currentUserAvatar} alt="" className={styles.composeAvatarImg} />
-            ) : (
-              currentUserName ? getInitials(currentUserName) : '?'
-            )}
+            <img src={currentUserAvatar || DEFAULT_PROFILE_IMAGE} alt="" className={styles.composeAvatarImg} />
           </div>
           <div className={styles.replyInputInner}>
             <textarea

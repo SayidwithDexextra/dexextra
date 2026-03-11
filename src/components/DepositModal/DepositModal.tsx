@@ -14,6 +14,8 @@ import { CONTRACT_ADDRESSES } from '@/lib/contractConfig'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { env } from '@/lib/env'
 import SpokeVaultAbi from '@/lib/abis/SpokeVault.json'
+import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet'
+import { getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry } from '@/lib/magic'
 
 // Close Icon Component
 const CloseIcon = () => (
@@ -306,11 +308,23 @@ export default function DepositModal({
     if (!tokenAddress) {
       throw new Error('Arbitrum USDC address is not configured.')
     }
-    if (typeof window === 'undefined' || !(window as any).ethereum) {
+    const preferred = typeof window !== 'undefined' ? window.localStorage.getItem('walletProvider') : null
+    const isMagic = preferred === 'magic'
+    const eip1193: EthereumProvider | undefined =
+      (isMagic ? (getMagicProvider() as any as EthereumProvider) : null) ??
+      (getActiveEthereumProvider() ?? (typeof window !== 'undefined' ? ((window as any).ethereum as EthereumProvider | undefined) : undefined)) ??
+      undefined
+
+    if (!eip1193) {
       throw new Error('Wallet not detected. Please connect your wallet.')
     }
 
-    const provider = new ethers.BrowserProvider((window as any).ethereum)
+    // Ensure correct chain before building a signer.
+    if (isMagic) {
+      await switchMagicChainWithRetry(42161, { retries: 2 })
+    }
+
+    const provider = new ethers.BrowserProvider(eip1193 as any)
     const targetChainId = 42161n
     const targetChainIdHex = '0xa4b1'
 
@@ -320,7 +334,9 @@ export default function DepositModal({
 
       const getWalletChainId = async (): Promise<bigint | null> => {
         try {
-          const raw = await (window as any).ethereum.request({ method: 'eth_chainId' })
+          const raw = isMagic
+            ? await magicRequestWithRetry({ method: 'eth_chainId' }, { retries: 2 })
+            : await eip1193.request({ method: 'eth_chainId' })
           if (typeof raw === 'bigint') return raw
           if (typeof raw === 'number') return BigInt(raw)
           if (typeof raw === 'string') return BigInt(raw) // supports hex ("0xa4b1") and decimal ("42161")
@@ -337,10 +353,14 @@ export default function DepositModal({
       }
 
       const requestSwitch = async () => {
-        await (window as any).ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: targetChainIdHex }]
-        })
+        if (isMagic) {
+          await switchMagicChainWithRetry(42161, { retries: 2 })
+        } else {
+          await eip1193.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: targetChainIdHex }]
+          })
+        }
         currentChainId = await getWalletChainId()
         return currentChainId === targetChainId
       }
@@ -371,16 +391,18 @@ export default function DepositModal({
       // If the chain is missing, attempt to add then switch again.
       try {
         if (env.ARBITRUM_RPC_URL) {
-          await (window as any).ethereum.request({
-            method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: targetChainIdHex,
-              chainName: 'Arbitrum One',
-              nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-              rpcUrls: [env.ARBITRUM_RPC_URL],
-              blockExplorerUrls: ['https://arbiscan.io']
-            }]
-          })
+          if (!isMagic) {
+            await eip1193.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: targetChainIdHex,
+                chainName: 'Arbitrum One',
+                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+                rpcUrls: [env.ARBITRUM_RPC_URL],
+                blockExplorerUrls: ['https://arbiscan.io']
+              }]
+            })
+          }
 
           const switchedAfterAdd = await requestSwitch().catch(() => false)
           if (switchedAfterAdd) return
@@ -405,15 +427,6 @@ export default function DepositModal({
 
     await ensureArbitrumNetwork()
     const signer = await provider.getSigner()
-    const feeData = await provider.getFeeData()
-    const bump = (v?: bigint | null, fallbackGwei = 2n) => {
-      if (v && v > 0) return (v * 13n) / 10n + 1n // ~+30%
-      const fallback = fallbackGwei * 1_000_000_000n
-      return (fallback * 13n) / 10n + 1n
-    }
-    const maxPriorityFeePerGas = bump(feeData.maxPriorityFeePerGas ?? feeData.gasPrice)
-    const maxFeePerGas = bump(feeData.maxFeePerGas ?? feeData.gasPrice)
-    const txOpts = { maxFeePerGas, maxPriorityFeePerGas }
 
     const erc20Abi = [
       'function allowance(address owner, address spender) view returns (uint256)',
@@ -436,11 +449,11 @@ export default function DepositModal({
 
     const currentAllowance: bigint = await token.allowance(userAddress, vaultAddress)
     if (currentAllowance < amountWei) {
-      const approveTx = await token.approve(vaultAddress, amountWei, txOpts)
+      const approveTx = await token.approve(vaultAddress, amountWei)
       await approveTx.wait()
     }
 
-    const depositTx = await vault.deposit(tokenAddress, amountWei, txOpts)
+    const depositTx = await vault.deposit(tokenAddress, amountWei)
     await depositTx.wait()
   }
 

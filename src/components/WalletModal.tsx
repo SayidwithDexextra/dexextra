@@ -115,7 +115,7 @@ const WalletIcons = {
 }
 
 export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
-  const { providers, connect } = useWallet()
+  const { providers, connect, connectWithMagic } = useWallet()
   const [connecting, setConnecting] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
@@ -393,7 +393,21 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
 
           {/* Alternative Authentication - Sophisticated Button */}
           <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-            <button className="w-full flex items-center justify-between p-3">
+            <button
+              className="w-full flex items-center justify-between p-3"
+              onClick={async () => {
+                setConnecting('magic-google')
+                try {
+                  await connectWithMagic('google')
+                  onClose()
+                } catch (error) {
+                  console.error('Google login failed:', error)
+                } finally {
+                  setConnecting(null)
+                }
+              }}
+              disabled={connecting === 'magic-google'}
+            >
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
                 <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -417,6 +431,11 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
               </div>
               
               <div className="flex items-center gap-2">
+                {connecting === 'magic-google' && (
+                  <div className="w-3 h-3">
+                    <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
                 <svg className="w-3 h-3 text-[#404040] group-hover:text-[#606060] transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
                 </svg>

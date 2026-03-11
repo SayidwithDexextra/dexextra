@@ -31,6 +31,8 @@ interface IconSearchBubbleProps {
   selectedIconUrl: string | null;
   /** Whether the bubble is visible */
   isVisible: boolean;
+  /** Navigate back to the previous step. */
+  onBack?: () => void;
 }
 
 type FetchState = 'idle' | 'loading' | 'success' | 'error';
@@ -43,6 +45,7 @@ export function IconSearchBubble({
   onUploadIcon,
   selectedIconUrl,
   isVisible,
+  onBack,
 }: IconSearchBubbleProps) {
   const [fetchState, setFetchState] = React.useState<FetchState>('idle');
   const [iconOptions, setIconOptions] = React.useState<IconOption[]>([]);
@@ -176,22 +179,36 @@ export function IconSearchBubble({
       className={
         layout === 'contained'
           ? 'mt-8 w-full max-w-full'
-          : 'mt-8 w-[calc(100%+320px)] max-w-[calc(100vw-120px)] -ml-[280px]'
+          : 'mt-8 w-full sm:w-[calc(100%+320px)] sm:max-w-[calc(100vw-120px)] sm:-ml-[280px]'
       }
     >
       {/* Section Header */}
       <div
-        className="mb-4 text-left"
+        className="mb-4 text-left flex items-start gap-3"
         style={{
           opacity: hasAnimated ? 1 : 0,
           transform: hasAnimated ? 'translateY(0)' : 'translateY(20px)',
           transition: 'opacity 0.4s ease-out, transform 0.4s ease-out',
         }}
       >
-        <h2 className="text-base font-medium text-white/90">Select Icon</h2>
-        <p className="mt-1 text-sm text-white/50">
-          Choose an icon for your market
-        </p>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="mt-0.5 inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/85 hover:bg-white/10 transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+              <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+            </svg>
+            Back
+          </button>
+        )}
+        <div>
+          <h2 className="text-base font-medium text-white/90">Select Icon</h2>
+          <p className="mt-1 text-sm text-white/50">
+            Choose an icon for your market
+          </p>
+        </div>
       </div>
 
       {/* Animated mode switcher: bubbles <-> custom upload (in the same row area) */}
@@ -202,10 +219,10 @@ export function IconSearchBubble({
             'overflow-hidden transition-all duration-300 ease-out',
             customMode
               ? 'max-h-0 opacity-0 -translate-y-2 pointer-events-none'
-              : 'max-h-[180px] opacity-100 translate-y-0',
+              : 'max-h-[320px] sm:max-h-[180px] opacity-100 translate-y-0',
           ].join(' ')}
         >
-          <div className="grid grid-cols-5 gap-3" style={{ maxWidth: '100%' }}>
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-3" style={{ maxWidth: '100%' }}>
             {/* Icon options from search (max 8 + 1 custom = 9 total, 2 rows) */}
             {iconOptions.slice(0, 8).map((icon, index) => (
               <button
@@ -227,7 +244,7 @@ export function IconSearchBubble({
                 title={icon.title || icon.domain}
               >
                 {/* Icon thumbnail */}
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-black/40 border border-white/8 overflow-hidden">
+                <div className="flex h-10 w-10 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-xl bg-black/40 border border-white/8 overflow-hidden">
                   <Image
                     src={icon.thumbnail}
                     alt={icon.title || 'Icon option'}
@@ -274,7 +291,7 @@ export function IconSearchBubble({
               }}
               title="Upload custom icon"
             >
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white shadow-lg bg-gradient-to-br from-gray-500 to-gray-700 border border-white/8">
+              <div className="flex h-10 w-10 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-xl text-white shadow-lg bg-gradient-to-br from-gray-500 to-gray-700 border border-white/8">
                 {/* Upload icon */}
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
                   <path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z" />

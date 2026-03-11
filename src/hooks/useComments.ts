@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getSupabaseClient } from '@/lib/supabase-browser';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 
 // Database types
 export interface DbComment {
@@ -126,7 +127,7 @@ function transformComment(
     author: {
       id: dbComment.author_wallet,
       name: displayName || `${dbComment.author_wallet.slice(0, 6)}...${dbComment.author_wallet.slice(-4)}`,
-      avatarUrl: profile?.profile_image_url || undefined,
+      avatarUrl: profile?.profile_image_url || DEFAULT_PROFILE_IMAGE,
       badge: dbComment.author_badge || undefined,
     },
     text: dbComment.content,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 
 type Market = {
   id: string;
@@ -487,14 +488,11 @@ export function AddAssetsModal({
                                 <div
                                   className="flex items-center justify-center text-[9px] font-medium rounded-full w-7 h-7 sm:w-6 sm:h-6 flex-shrink-0"
                                   style={{
-                                    backgroundColor: u.profile_image_url ? 'transparent' : '#404040',
-                                    backgroundImage: u.profile_image_url ? `url(${u.profile_image_url})` : undefined,
+                                    backgroundImage: `url(${u.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
                                     backgroundSize: 'cover',
                                     backgroundPosition: 'center',
-                                    color: '#ffffff',
                                   }}
                                 >
-                                  {!u.profile_image_url && (u.display_name || u.username || u.wallet_address).charAt(0).toUpperCase()}
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="text-[11px] sm:text-[11px] font-medium text-white truncate">{u.display_name || u.username || 'Anonymous User'}</div>

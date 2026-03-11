@@ -4,7 +4,7 @@ import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
 
 type Hex = `0x${string}`;
 
-type ChainCheckResult = { ok: true } | { ok: false; error: string };
+export type ChainCheckResult = { ok: true } | { ok: false; error: string };
 
 const TARGET_CHAIN_ID = Number(CHAIN_CONFIG.chainId || 0);
 const TARGET_CHAIN_HEX = `0x${TARGET_CHAIN_ID.toString(16)}`;
@@ -14,57 +14,111 @@ function getWalletProvider(): EthereumProvider | null {
   return (getActiveEthereumProvider() ?? (window as any)?.ethereum ?? null) as any;
 }
 
-async function ensureCorrectChain(ethereum: EthereumProvider): Promise<ChainCheckResult> {
-  let activeChainId: number | null = null;
-
+async function readActiveChainId(ethereum: EthereumProvider): Promise<number | null> {
   try {
     const active = await ethereum.request({ method: 'eth_chainId' });
     if (typeof active === 'string') {
-      activeChainId = parseInt(active, 16);
+      const parsed = parseInt(active, 16);
+      return Number.isFinite(parsed) ? parsed : null;
     }
-    if (activeChainId === TARGET_CHAIN_ID) {
-      return { ok: true };
+    if (typeof active === 'number') {
+      return Number.isFinite(active) ? active : null;
     }
+    return null;
   } catch {
-    // Fallback to switch attempt below
+    return null;
   }
+}
 
-  try {
-    await ethereum.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: TARGET_CHAIN_HEX }],
-    });
-    return { ok: true };
-  } catch (switchErr: any) {
-    if (switchErr?.code === 4902) {
-      try {
-        await ethereum.request({
-          method: 'wallet_addEthereumChain',
-          params: [{
-            chainId: TARGET_CHAIN_HEX,
-            chainName: 'Hyperliquid Mainnet',
-            rpcUrls: [CHAIN_CONFIG.rpcUrl].filter(Boolean),
-            nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
-          }],
-        });
-        return { ok: true };
-      } catch (addErr: any) {
-        return {
-          ok: false,
-          error: 'Add Hyperliquid Mainnet (chainId 999) to your wallet, then retry.',
-        };
-      }
-    }
+async function ensureCorrectChain(ethereum: EthereumProvider): Promise<ChainCheckResult> {
+  const initialChainId = await readActiveChainId(ethereum);
+  if (initialChainId === TARGET_CHAIN_ID) return { ok: true };
 
-    const activeText = activeChainId
-      ? `Current chainId is ${activeChainId}.`
-      : 'Current chain is unknown.';
+  const activeText = initialChainId ? `Current chainId is ${initialChainId}.` : 'Current chain is unknown.';
 
+  const verifyNow = async (): Promise<ChainCheckResult> => {
+    const after = await readActiveChainId(ethereum);
+    if (after === TARGET_CHAIN_ID) return { ok: true };
+    const afterText = after ? `Current chainId is ${after}.` : activeText;
     return {
       ok: false,
-      error: `Switch your wallet to Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) before enabling trading. ${activeText}`,
+      error: `Switch your wallet to Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) before enabling trading. ${afterText}`,
     };
-  }
+  };
+
+  const trySwitch = async (): Promise<ChainCheckResult> => {
+    try {
+      await ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: TARGET_CHAIN_HEX }],
+      });
+      return await verifyNow();
+    } catch (switchErr: any) {
+      const userRejected = switchErr?.code === 4001;
+      const chainMissing = switchErr?.code === 4902;
+
+      if (userRejected) {
+        return {
+          ok: false,
+          error: `You rejected the network switch. Please switch to Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) and retry.`,
+        };
+      }
+
+      if (chainMissing) {
+        const rpcUrls = [CHAIN_CONFIG.rpcUrl].filter(Boolean);
+        if (rpcUrls.length === 0) {
+          return {
+            ok: false,
+            error: `Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) is not available in your wallet and the app is missing an RPC URL to add it. Please add chainId ${TARGET_CHAIN_ID} in your wallet settings, then retry.`,
+          };
+        }
+        try {
+          await ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: TARGET_CHAIN_HEX,
+              chainName: 'Hyperliquid Mainnet',
+              rpcUrls,
+              nativeCurrency: { name: 'HYPE', symbol: 'HYPE', decimals: 18 },
+            }],
+          });
+        } catch (addErr: any) {
+          const addRejected = addErr?.code === 4001;
+          return {
+            ok: false,
+            error: addRejected
+              ? 'You rejected adding Hyperliquid Mainnet to your wallet. Please approve the prompt, then retry.'
+              : `Add Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) to your wallet, then retry.`,
+          };
+        }
+
+        // Some wallets add but do not auto-switch. Try switching again, then verify.
+        try {
+          await ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: TARGET_CHAIN_HEX }],
+          });
+        } catch {
+          // Ignore; verification below will surface mismatch if still wrong.
+        }
+        return await verifyNow();
+      }
+
+      return {
+        ok: false,
+        error: `Switch your wallet to Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) before enabling trading. ${activeText}`,
+      };
+    }
+  };
+
+  return await trySwitch();
+}
+
+// Public helper so UI can trigger chain switch BEFORE signing.
+export async function ensureGaslessChain(): Promise<ChainCheckResult> {
+  const ethereum = getWalletProvider();
+  if (!ethereum) return { ok: false, error: 'No wallet provider detected. Please install or enable a wallet.' };
+  return ensureCorrectChain(ethereum);
 }
 
 export type GaslessMethod =

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
 import { supabase } from '@/lib/supabase'
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 
 // Eye Icon Component
 const EyeIcon = () => (
@@ -197,22 +198,15 @@ export default function UserProfileModal({
               <div 
                 className="w-7 h-7 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0 border border-[#222222]"
               >
-                {/* Profile Photo or Fallback */}
-                {profilePhotoUrl && !imageError ? (
-                  <Image
-                    src={profilePhotoUrl}
-                    alt="Profile"
-                    width={28}
-                    height={28}
-                    className="w-full h-full object-cover"
-                    onError={() => setImageError(true)}
-                    unoptimized={profilePhotoUrl.startsWith('data:') || profilePhotoUrl.startsWith('blob:')}
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-[#808080]">
-                    {(walletAddress || 'U').slice(0, 1).toUpperCase()}
-                  </div>
-                )}
+                <Image
+                  src={(!imageError && profilePhotoUrl) || DEFAULT_PROFILE_IMAGE}
+                  alt="Profile"
+                  width={28}
+                  height={28}
+                  className="w-full h-full object-cover"
+                  onError={() => setImageError(true)}
+                  unoptimized={(profilePhotoUrl || '').startsWith('data:') || (profilePhotoUrl || '').startsWith('blob:')}
+                />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-[11px] font-medium text-white font-mono truncate">{walletAddress}</div>

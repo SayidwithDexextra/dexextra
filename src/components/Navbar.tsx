@@ -2,9 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import Image from 'next/image'
 import useWallet from '@/hooks/useWallet'
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import WalletModal from './WalletModal'
 import WalletAccountModal from './WalletAccountModal'
+import { isMagicSelectedWallet, showMagicWalletUI } from '@/lib/magic'
 
 // Icon components - using SVG for now, can be replaced with icon library
 const ChevronDownIcon = () => (
@@ -232,6 +235,20 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
     }
   }
 
+  const openWalletSurface = async () => {
+    // If the user is using Magic, prefer Magic's built-in wallet UI.
+    if (walletData.isConnected && isMagicSelectedWallet()) {
+      const res = await showMagicWalletUI()
+      if (res.success) return
+      try {
+        console.warn('[Navbar] showMagicWalletUI failed:', res.error)
+      } catch {}
+      // Fall through to existing modals if Magic UI isn't available.
+    }
+    if (walletData.isConnected) setShowAccountModal(true)
+    else setShowWalletModal(true)
+  }
+
   // On mobile when not rendered (after exit animation completes), only keep modals
   if (isMobile && !mobileRendered) {
     return (
@@ -310,29 +327,21 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                     borderRadius: '12px',
                     backgroundColor: '#2a2a2a',
                   }}
-                  onClick={async () => {
-                    if (walletData.isConnected) {
-                      setShowAccountModal(true)
-                    } else {
-                      setShowWalletModal(true)
-                    }
-                  }}
+                  onClick={openWalletSurface}
                 >
                   <div className="flex items-center gap-3">
                     <div 
-                      className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold"
+                      className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden text-white text-sm font-bold"
                       style={{
                         background: walletData.isConnected 
                           ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                           : 'linear-gradient(135deg, #666 0%, #888 100%)',
                       }}
                     >
-                      <span>
-                        {walletData.isConnecting 
-                          ? '⏳' 
-                          : walletData.avatar || '👤'
-                        }
-                      </span>
+                      {walletData.isConnecting 
+                        ? <span>⏳</span>
+                        : <Image src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} alt="Profile" width={40} height={40} className="w-full h-full object-cover" />
+                      }
                     </div>
                     <div>
                       <div className="text-white font-medium text-base">
@@ -459,29 +468,21 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
               borderRadius: '10px',
               backgroundColor: '#2a2a2a',
             }}
-            onClick={async () => {
-              if (walletData.isConnected) {
-                setShowAccountModal(true)
-              } else {
-                setShowWalletModal(true)
-              }
-            }}
+            onClick={openWalletSurface}
           >
             <div className="flex items-center gap-2">
               <div 
-                className="w-9 h-9 rounded-lg flex items-center justify-center text-white text-sm font-bold"
+                className="w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden text-white text-sm font-bold"
                 style={{
                   background: walletData.isConnected 
                     ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                     : 'linear-gradient(135deg, #666 0%, #888 100%)',
                 }}
               >
-                <span>
-                  {walletData.isConnecting 
-                    ? '⏳' 
-                    : walletData.avatar || '👤'
-                  }
-                </span>
+                {walletData.isConnecting 
+                  ? <span>⏳</span>
+                  : <Image src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} alt="Profile" width={36} height={36} className="w-full h-full object-cover" />
+                }
               </div>
               <div>
                 <div className="text-white font-medium text-sm">
@@ -508,30 +509,22 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
         {!isOpen && !isMobile && (
           <div className="mb-5 flex justify-center">
             <div 
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold cursor-pointer"
+              className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden text-white text-xs font-bold cursor-pointer"
               style={{
                 background: walletData.isConnected 
                   ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                   : 'linear-gradient(135deg, #666 0%, #888 100%)',
               }}
-              onClick={async () => {
-                if (walletData.isConnected) {
-                  setShowAccountModal(true)
-                } else {
-                  setShowWalletModal(true)
-                }
-              }}
+              onClick={openWalletSurface}
               title={walletData.isConnected 
                 ? `${formatAddress(walletData.address || '')} - ${formatBalance(walletData.balance || '0')}`
                 : 'Connect Wallet'
               }
             >
-              <span>
-                {walletData.isConnecting 
-                  ? '⏳' 
-                  : walletData.avatar || '👤'
-                }
-              </span>
+              {walletData.isConnecting 
+                ? <span>⏳</span>
+                : <Image src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} alt="Profile" width={32} height={32} className="w-full h-full object-cover" />
+              }
             </div>
           </div>
         )}

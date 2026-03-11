@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Image from 'next/image'
 import useWallet from '@/hooks/useWallet'
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import { TokenBalance } from '@/types/wallet'
 import TokenList from './TokenList'
 
@@ -92,18 +93,14 @@ export default function WalletAccountModal({ isOpen, onClose }: WalletAccountMod
                   boxShadow: '0 8px 32px rgba(74, 222, 128, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
                 }}
               >
-                {walletData.userProfile?.profile_image_url ? (
-                  <Image
-                    src={walletData.userProfile.profile_image_url}
-                    alt="Profile"
-                    width={48}
-                    height={48}
-                    className="w-full h-full object-cover rounded-xl"
-                    unoptimized={walletData.userProfile.profile_image_url.startsWith('data:') || walletData.userProfile.profile_image_url.startsWith('blob:')}
-                  />
-                ) : (
-                  <span>{walletData.avatar || '👤'}</span>
-                )}
+                <Image
+                  src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE}
+                  alt="Profile"
+                  width={48}
+                  height={48}
+                  className="w-full h-full object-cover rounded-xl"
+                  unoptimized={(walletData.userProfile?.profile_image_url || '').startsWith('data:') || (walletData.userProfile?.profile_image_url || '').startsWith('blob:')}
+                />
               </div>
               {/* Subtle Ring Effect */}
               <div className="absolute inset-0 rounded-xl border border-white/10 group-hover:border-white/20 transition-colors duration-200" />

@@ -58,7 +58,8 @@ function setWalletAutoConnectDisabled(): void {
 
 export const getActiveEthereumProvider = (): EthereumProvider | null => activeEthereumProvider
 
-function setActiveEthereumProvider(provider: EthereumProvider | null) {
+// Exposed so non-injected providers (e.g. embedded wallets) can become the active EIP-1193 provider.
+export function setActiveEthereumProvider(provider: EthereumProvider | null) {
   activeEthereumProvider = provider
 }
 

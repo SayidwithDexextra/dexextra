@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react'
 import { ethers } from 'ethers'
 import { useWalletAddress } from '@/hooks/useWalletAddress'
 import { env } from '@/lib/env'
+import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet'
+import { getMagicProvider, switchMagicChain } from '@/lib/magic'
 
 const ARBITRUM_CHAIN_ID = 42161
 const ARBITRUM_CHAIN_HEX = `0x${ARBITRUM_CHAIN_ID.toString(16)}`
-const DEFAULT_ARBITRUM_RPC = 'https://arb1.arbitrum.io/rpc'
+const DEFAULT_ARBITRUM_RPC = 'https://arbitrum-one-rpc.publicnode.com'
 
 const SPOKE_TOKEN_ABI = [
   'function faucet(uint256 amount) external',
@@ -24,6 +26,10 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
   const { walletAddress, isConnected, connectWallet, isConnecting } = useWalletAddress()
   const tokenAddress = env.SPOKE_ARBITRUM_USDC_ADDRESS
   const rpcUrl = env.ARBITRUM_RPC_URL || DEFAULT_ARBITRUM_RPC
+
+  // Avoid hydration mismatches caused by browser extensions that mutate inputs
+  // (e.g., injecting attributes before React hydrates).
+  const [hasMounted, setHasMounted] = useState(false)
 
   const [amount, setAmount] = useState('100')
   const [isArbitrumNetwork, setIsArbitrumNetwork] = useState(false)
@@ -54,6 +60,12 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
     if (error?.code === 4001 || msg.includes('user rejected') || msg.includes('user denied')) {
       return 'Transaction cancelled in wallet.'
     }
+    if (
+      error?.code === -32603 &&
+      (msg.includes('failed to fetch') || msg.includes('network error') || msg.includes('fetch'))
+    ) {
+      return 'Wallet RPC request failed (network/CORS). If you are using Magic, set `NEXT_PUBLIC_ARBITRUM_RPC_URL` (CORS-enabled) and retry.'
+    }
     if (msg.includes('insufficient funds')) {
       return 'Not enough ETH to pay gas on Arbitrum.'
     }
@@ -65,12 +77,17 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
   }
 
   const checkNetwork = async () => {
-    if (typeof window === 'undefined' || !(window as any).ethereum) {
+    const provider: EthereumProvider | undefined =
+      (getActiveEthereumProvider() ??
+        (typeof window !== 'undefined' ? ((window as any).ethereum as EthereumProvider | undefined) : undefined)) ||
+      undefined
+
+    if (!provider) {
       setIsArbitrumNetwork(false)
       return
     }
     try {
-      const chainId = await (window as any).ethereum.request({ method: 'eth_chainId' })
+      const chainId = await provider.request({ method: 'eth_chainId' })
       setIsArbitrumNetwork(parseInt(chainId, 16) === ARBITRUM_CHAIN_ID)
     } catch {
       setIsArbitrumNetwork(false)
@@ -107,11 +124,18 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
   }
 
   const ensureArbitrumSigner = async (): Promise<ethers.Signer> => {
-    if (typeof window === 'undefined' || !(window as any).ethereum) {
+    const active = getActiveEthereumProvider()
+    const injected: EthereumProvider | undefined =
+      typeof window !== 'undefined' ? ((window as any).ethereum as EthereumProvider | undefined) : undefined
+    const ethereum: EthereumProvider | undefined = (active ?? injected) || undefined
+
+    if (!ethereum) {
       throw new Error('No wallet provider available')
     }
 
-    const ethereum = (window as any).ethereum
+    const preferred =
+      typeof window !== 'undefined' ? window.localStorage.getItem('walletProvider') : null
+    const isMagic = preferred === 'magic'
 
     const getSignerOnCurrentNetwork = async () => {
       const provider = new ethers.BrowserProvider(ethereum)
@@ -131,33 +155,40 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
       }
     }
 
-    try {
-      await ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: ARBITRUM_CHAIN_HEX }],
-      })
-    } catch (switchError: any) {
-      if (switchError?.code === 4902) {
+    if (isMagic) {
+      // Magic does not use wallet_switchEthereumChain; use its EVM module instead.
+      await switchMagicChain(ARBITRUM_CHAIN_ID)
+    } else {
+      try {
         await ethereum.request({
-          method: 'wallet_addEthereumChain',
-          params: [
-            {
-              chainId: ARBITRUM_CHAIN_HEX,
-              chainName: 'Arbitrum One',
-              nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
-              rpcUrls: [rpcUrl || DEFAULT_ARBITRUM_RPC],
-              blockExplorerUrls: ['https://arbiscan.io/'],
-            },
-          ],
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: ARBITRUM_CHAIN_HEX }],
         })
-      } else if (switchError?.code === 4001) {
-        throw new Error('Please approve switching to Arbitrum in your wallet.')
-      } else {
-        throw new Error('Unable to switch to Arbitrum. Check your wallet settings.')
+      } catch (switchError: any) {
+        if (switchError?.code === 4902) {
+          await ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [
+              {
+                chainId: ARBITRUM_CHAIN_HEX,
+                chainName: 'Arbitrum One',
+                nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 },
+                rpcUrls: [rpcUrl || DEFAULT_ARBITRUM_RPC],
+                blockExplorerUrls: ['https://arbiscan.io/'],
+              },
+            ],
+          })
+        } else if (switchError?.code === 4001) {
+          throw new Error('Please approve switching to Arbitrum in your wallet.')
+        } else {
+          throw new Error('Unable to switch to Arbitrum. Check your wallet settings.')
+        }
       }
     }
 
-    const provider = new ethers.BrowserProvider(ethereum)
+    // After switch, rebuild provider. For Magic, use the current rpcProvider reference.
+    const switchedProvider = isMagic ? (getMagicProvider() as any as EthereumProvider) : ethereum
+    const provider = new ethers.BrowserProvider(switchedProvider)
     const network = await provider.getNetwork()
     setIsArbitrumNetwork(Number(network.chainId) === ARBITRUM_CHAIN_ID)
     return provider.getSigner()
@@ -215,13 +246,21 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
   }
 
   useEffect(() => {
+    setHasMounted(true)
+  }, [])
+
+  useEffect(() => {
     checkNetwork()
     const handler = () => checkNetwork()
-    ;(window as any)?.ethereum?.on?.('chainChanged', handler)
+    const provider: EthereumProvider | undefined =
+      (getActiveEthereumProvider() ??
+        (typeof window !== 'undefined' ? ((window as any).ethereum as EthereumProvider | undefined) : undefined)) ||
+      undefined
+    provider?.on?.('chainChanged', handler)
     return () => {
-      ;(window as any)?.ethereum?.removeListener?.('chainChanged', handler)
+      provider?.removeListener?.('chainChanged', handler)
     }
-  }, [])
+  }, [isConnected])
 
   useEffect(() => {
     if (tokenAddress) {
@@ -237,6 +276,15 @@ export function ArbitrumFaucet({ className = '' }: ArbitrumFaucetProps) {
 
   const canClaim =
     isConnected && isArbitrumNetwork && !!tokenAddress && validateAmount(amount) && !isClaiming
+
+  if (!hasMounted) {
+    return (
+      <div
+        className={`group bg-[#0F0F0F] rounded-md border border-[#222222] p-3 md:p-2.5 ${className}`}
+        suppressHydrationWarning
+      />
+    )
+  }
 
   return (
     <div

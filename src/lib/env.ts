@@ -21,8 +21,13 @@ const envSchema = z.object({
   // WalletConnect (Client-side)
   NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: z.string().optional(),
 
+  // Magic (Client-side social login)
+  NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY: z.string().optional(),
+
   // Blockchain Configuration
   RPC_URL: z.string().url().default('https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-'),
+  // Arbitrum RPC needs to be available client-side for Magic + browser fetches.
+  NEXT_PUBLIC_ARBITRUM_RPC_URL: z.string().url().optional(),
   ARBITRUM_RPC_URL: z.string().url().optional(),
   // Optional backup RPC HTTP URLs
   RPC_URL_BACKUP: z.string().url().optional(),
@@ -167,6 +172,8 @@ const processEnv = {
   
   // Blockchain
   RPC_URL: process.env.NEXT_PUBLIC_RPC_URL || 'https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',
+  NEXT_PUBLIC_ARBITRUM_RPC_URL: process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL,
+  ARBITRUM_RPC_URL: process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL || process.env.ARBITRUM_RPC_URL,
   RPC_URL_BACKUP: process.env.RPC_URL_BACKUP,
   RPC_URLS: process.env.RPC_URLS,
   WS_RPC_URL: process.env.WS_RPC_URL || 'wss://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-',

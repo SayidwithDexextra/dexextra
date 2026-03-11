@@ -4,12 +4,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import { useCoreVault } from '@/hooks/useCoreVault'
 import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext'
 import { useMarkets } from '@/hooks/useMarkets'
 import { normalizeBytes32Hex } from '@/lib/hex'
 import { usePortfolioSidebarOpenOrders } from '@/hooks/usePortfolioSidebarOpenOrders'
 import { Wallet } from 'lucide-react'
+import { isMagicSelectedWallet, showMagicWalletUI } from '@/lib/magic'
 
 type PortfolioSidebarProps = {
 	isOpen: boolean
@@ -42,7 +44,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const { walletData } = useWallet() as any
 	const walletAddress: string | null = walletData?.address || null
 	const isWalletConnected = Boolean(walletData?.isConnected && walletAddress)
-	const profileImageUrl: string | null = walletData?.userProfile?.profile_image_url || null
+	const isMagicWallet = Boolean(isWalletConnected && isMagicSelectedWallet())
+	const profileImageUrl: string | null = walletData?.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE
 	const profileLabel: string = String(
 		walletData?.userProfile?.display_name ||
 		walletData?.userProfile?.username ||
@@ -123,6 +126,16 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			setTimeout(() => setWalletCopied(false), 1200)
 		} catch {
 			// ignore
+		}
+	}
+
+	const openMagicWallet = async () => {
+		const res = await showMagicWalletUI()
+		if (!res.success) {
+			// Best-effort only: avoid hard UI errors in the sidebar.
+			try {
+				console.warn('[PortfolioSidebar] showMagicWalletUI failed:', res.error)
+			} catch {}
 		}
 	}
 
@@ -359,25 +372,13 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							{/* Profile icon (bottom-left of banner, fixed at top) */}
 							<div className="absolute left-3 bottom-3">
 								<div className="w-14 h-14 rounded-full overflow-hidden border border-[#222222] bg-[#0F0F0F] shadow-2xl">
-									{profileImageUrl ? (
-										<Image
-											src={profileImageUrl}
-											alt={profileLabel}
-											width={56}
-											height={56}
-											className="w-full h-full object-cover"
-										/>
-									) : (
-										<div
-											className="w-full h-full flex items-center justify-center text-[16px] font-semibold text-white"
-											style={{
-												background:
-													'linear-gradient(135deg, rgba(74,158,255,0.20), rgba(16,185,129,0.14))',
-											}}
-										>
-											{profileInitial}
-										</div>
-									)}
+									<Image
+										src={profileImageUrl}
+										alt={profileLabel}
+										width={56}
+										height={56}
+										className="w-full h-full object-cover"
+									/>
 								</div>
 							</div>
 						</div>
@@ -442,6 +443,17 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										<Wallet className="w-3.5 h-3.5" />
 										<span className="text-[10px] font-medium uppercase tracking-wide">Deposit</span>
 									</button>
+										{isMagicWallet ? (
+											<button
+												type="button"
+												onClick={openMagicWallet}
+												className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-[#222222] text-[#808080] hover:border-[#7C3AED] hover:bg-[#7C3AED]/10 hover:text-[#C4B5FD]"
+												aria-label="Open Magic wallet"
+												title="Open Magic wallet"
+											>
+												<span className="text-[10px] font-semibold uppercase tracking-wide">Magic</span>
+											</button>
+										) : null}
 									<button
 										type="button"
 										onClick={copyWalletAddress}

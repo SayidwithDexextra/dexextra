@@ -34,6 +34,7 @@ import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAi
 import { getSupabaseClient } from '@/lib/supabase-browser';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import useWallet from '@/hooks/useWallet';
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -938,7 +939,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     {currentMarketId ? (
                       isDesktop === false ? (
                         <TradingViewChart
-                          symbol={symbol}
+                          symbol={currentMarketId}
                           autosize
                           className="h-full"
                           interval="5"
@@ -1041,7 +1042,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   {currentMarketId ? (
                     isDesktop === true ? (
                       <TradingViewChart
-                        symbol={symbol}
+                        symbol={currentMarketId}
                         autosize
                         className="h-full"
                         interval="5"
@@ -1167,7 +1168,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   currentUser={walletData?.address ? {
                     id: walletData.address,
                     name: walletData.userProfile?.display_name || walletData.userProfile?.username || `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}`,
-                    avatarUrl: walletData.userProfile?.profile_image_url || undefined,
+                    avatarUrl: walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE,
                   } : undefined}
                   sortBy={commentSortBy}
                   onSortChange={setCommentSortBy}
@@ -1213,7 +1214,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 currentUser={walletData?.address ? {
                   id: walletData.address,
                   name: walletData.userProfile?.display_name || walletData.userProfile?.username || `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}`,
-                  avatarUrl: walletData.userProfile?.profile_image_url || undefined,
+                  avatarUrl: walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE,
                 } : undefined}
                 sortBy={commentSortBy}
                 onSortChange={setCommentSortBy}

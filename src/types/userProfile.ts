@@ -1,5 +1,7 @@
 // User Profile Types - matches database schema from 002_create_user_profiles.sql
 
+export const DEFAULT_PROFILE_IMAGE = '/GenericDexeteraUser. .jpg';
+
 export interface UserProfile {
   id: string;
   wallet_address: string;
@@ -105,6 +107,17 @@ export function formDataToUserProfile(
     profile_image_url: profileImageUrl,
     banner_image_url: bannerImageUrl,
   };
+}
+
+/**
+ * Ensures profile_image_url falls back to the generic Dexetera avatar
+ * when no custom image has been set.
+ */
+export function withDefaultProfileImage<T extends { profile_image_url?: string }>(profile: T): T {
+  if (!profile.profile_image_url) {
+    return { ...profile, profile_image_url: DEFAULT_PROFILE_IMAGE };
+  }
+  return profile;
 }
 
 // Helper function to convert user profile to form data

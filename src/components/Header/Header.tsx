@@ -25,6 +25,7 @@ import SearchModal from '../SearchModal'
 import DepositModal from '../DepositModal/DepositModal'
 import WalletModal from '../WalletModal'
 import { useWallet } from '@/hooks/useWallet'
+import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 // Removed direct contract reads; align with useCoreVault hook outputs
 import DecryptedText from './DecryptedText';
 // Removed NetworkStatus import (only used in commented code)
@@ -360,25 +361,15 @@ export default function Header() {
 
   // Helper function to get avatar
   const getAvatarContent = () => {
-    if (walletData.userProfile?.profile_image_url) {
-      return (
-        <Image 
-          src={walletData.userProfile.profile_image_url} 
-          alt="Profile" 
-          width={20}
-          height={20}
-          className="w-full h-full object-cover rounded-full"
-        />
-      )
-    }
-    
-    // Fallback to initials or default
-    const displayName = getDisplayName()
-    const initial = displayName.charAt(0).toUpperCase()
+    const imgUrl = walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE
     return (
-      <span style={{ color: '#000000', fontSize: '10px', fontWeight: 600 }}>
-        {initial}
-      </span>
+      <Image 
+        src={imgUrl} 
+        alt="Profile" 
+        width={20}
+        height={20}
+        className="w-full h-full object-cover rounded-full"
+      />
     )
   }
 
@@ -566,19 +557,13 @@ export default function Header() {
                       backgroundColor: '#00d4aa',
                     }}
                   >
-                    {walletData.userProfile?.profile_image_url ? (
-                      <Image 
-                        src={walletData.userProfile.profile_image_url} 
-                        alt="Profile" 
-                        width={24}
-                        height={24}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span style={{ color: '#000', fontSize: '10px', fontWeight: 600 }}>
-                        {getDisplayName().charAt(0).toUpperCase()}
-                      </span>
-                    )}
+                    <Image 
+                      src={walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} 
+                      alt="Profile" 
+                      width={24}
+                      height={24}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                 </div>
               ) : (

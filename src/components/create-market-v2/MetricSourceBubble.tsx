@@ -30,6 +30,8 @@ interface MetricSourceBubbleProps {
   isVisible: boolean;
   /** If provided, marks a previously validated URL with a small badge. */
   validatedSourceUrl?: string | null;
+  /** Navigate back to the previous step. */
+  onBack?: () => void;
 }
 
 function normalizeUrl(url: string) {
@@ -192,6 +194,7 @@ export function MetricSourceBubble({
   onRetry,
   isVisible,
   validatedSourceUrl = null,
+  onBack,
 }: MetricSourceBubbleProps) {
   // "Focused" is the extra step: user clicks a bubble to inspect it,
   // then explicitly hits Select to validate/continue.
@@ -397,7 +400,7 @@ export function MetricSourceBubble({
   const getStaggerDelay = (index: number) => index * 80;
 
   return (
-    <div className="mt-8 w-[calc(100%+320px)] max-w-[calc(100vw-120px)] -ml-[280px]">
+    <div className="mt-8 w-full sm:w-[calc(100%+320px)] sm:max-w-[calc(100vw-120px)] sm:-ml-[280px]">
 
       {/* Focused source details (extra step) */}
       <div
@@ -512,6 +515,24 @@ export function MetricSourceBubble({
       {/* Source Options Grid - matching Generate panel style */}
       {/* Animated mode switcher: bubbles <-> custom URL input (in the same row area) */}
       <div className="space-y-3">
+        {/* Back button */}
+        {onBack && !isFocused && !customMode && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/85 hover:bg-white/10 transition-colors"
+            style={{
+              opacity: hasAnimated ? 1 : 0,
+              transition: 'opacity 0.4s ease-out 50ms',
+            }}
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+              <path d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+            </svg>
+            Back
+          </button>
+        )}
+
         {/* Bubbles row */}
         <div
           className={[
@@ -521,7 +542,7 @@ export function MetricSourceBubble({
               : 'max-h-[900px] opacity-100 translate-y-0',
           ].join(' ')}
         >
-          <div className="flex flex-wrap items-start gap-4">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-start gap-2 sm:gap-4">
             {sourceOptions.map((source, index) => (
               <DataSourceTooltip
                 key={source.id}
@@ -532,7 +553,7 @@ export function MetricSourceBubble({
                 <button
                   onClick={() => handleFocus(source)}
                   className={[
-                    'group relative flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200',
+                    'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 transition-all duration-200 w-full sm:w-auto',
                     focusedId === source.id ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5',
                   ].join(' ')}
                   style={{
@@ -542,7 +563,7 @@ export function MetricSourceBubble({
                   }}
                 >
                   {/* Icon */}
-                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-lg ${source.iconBg}`}>
+                  <div className={`flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-lg ${source.iconBg}`}>
                     {source.icon}
                   </div>
                   
@@ -550,9 +571,9 @@ export function MetricSourceBubble({
                   <div className="min-w-0 flex-1 text-left">
                     <div className="flex items-center gap-2">
                       <div className="flex min-w-0 items-baseline gap-1">
-                        <div className="shrink-0 text-sm font-medium text-white">{source.label}</div>
+                        <div className="shrink-0 text-[13px] sm:text-sm font-medium text-white">{source.label}</div>
                         {source.sublabel ? (
-                          <div className="min-w-0 truncate text-sm font-medium text-white/60">
+                          <div className="min-w-0 truncate text-[13px] sm:text-sm font-medium text-white/60">
                             {source.sublabel}
                           </div>
                         ) : null}
@@ -597,7 +618,7 @@ export function MetricSourceBubble({
                   setFocusedSource(null);
                   setCustomError(null);
                 }}
-                className={`group relative flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-200 ${
+                className={`group relative flex items-center gap-3 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 transition-all duration-200 w-full sm:w-auto ${
                   focusedId === 'custom-url' ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5'
                 }`}
                 style={{
@@ -606,13 +627,13 @@ export function MetricSourceBubble({
                   transition: `opacity 0.5s ease-out ${getStaggerDelay(sourceOptions.length) + 100}ms, transform 0.5s ease-out ${getStaggerDelay(sourceOptions.length) + 100}ms`,
                 }}
               >
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-lg bg-gradient-to-br from-gray-500 to-gray-700">
-                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor" aria-hidden="true">
+                <div className="flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-lg bg-gradient-to-br from-gray-500 to-gray-700">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5 sm:h-6 sm:w-6" fill="currentColor" aria-hidden="true">
                     <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
                   </svg>
                 </div>
                 <div className="text-left">
-                  <div className="text-sm font-medium text-white">
+                  <div className="text-[13px] sm:text-sm font-medium text-white">
                     Custom URL <span className="ml-1 text-white/60">Endpoint</span>
                   </div>
                 </div>

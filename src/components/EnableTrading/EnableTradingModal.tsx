@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback } from 'react'
 import useWallet from '@/hooks/useWallet'
 import { useSession } from '@/contexts/SessionContext'
+import { ensureGaslessChain } from '@/lib/gasless'
 
 export interface EnableTradingModalProps {
   isOpen: boolean
@@ -111,6 +112,14 @@ export default function EnableTradingModal({
     console.log('[EnableTradingModal] Starting enableTrading...');
     try {
       setIsWorking(true)
+
+      // Prompt chain switch BEFORE any signing request.
+      const chainRes = await ensureGaslessChain()
+      if (!chainRes.ok) {
+        setErrorMessage(chainRes.error)
+        return
+      }
+
       const res = await enableTrading()
       console.log('[EnableTradingModal] enableTrading result:', res);
       

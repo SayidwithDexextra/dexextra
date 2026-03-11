@@ -1,6 +1,7 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Image from 'next/image';
 
 interface LoadingScreenProps {
@@ -14,7 +15,13 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
   message = "Loading...",
   subtitle
 }) => {
-  return (
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const content = (
     <div className="fixed inset-0 z-[9999] bg-white flex flex-col items-center justify-center">
       <div className="animate-pulse">
         <Image
@@ -27,7 +34,6 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
         />
       </div>
       
-      {/* Loading text */}
       {message && (
         <div className="text-center">
           <h2 className="text-xl font-medium text-gray-900 mb-2">
@@ -42,6 +48,10 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
       )}
     </div>
   );
+
+  if (!mounted) return null;
+
+  return createPortal(content, document.body);
 };
 
 export default LoadingScreen; 
