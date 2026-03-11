@@ -1681,3 +1681,16 @@
     max-height: 150px;
   }
 }
+
+/* Prevent iOS Safari "focus zoom" on small-font textareas */
+@media (pointer: coarse) {
+  .composeInput,
+  .replyInput {
+    font-size: 16px;
+  }
+
+  .composeArea:hover .composeInput,
+  .composeArea:focus-within .composeInput {
+    font-size: 16px;
+  }
+}
