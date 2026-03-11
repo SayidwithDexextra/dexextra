@@ -69,6 +69,10 @@ export function resetMagic(): void {
   magicConfigSig = null
 }
 
+export function hasMagicPublishableKey(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY)
+}
+
 export function getMagic(): InstanceType<typeof Magic> {
   const key = process.env.NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY
   if (!key) {

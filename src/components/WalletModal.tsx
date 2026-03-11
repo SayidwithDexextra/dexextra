@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import useWallet from '@/hooks/useWallet'
 import { debugWalletDetection } from '@/lib/wallet'
+import { hasMagicPublishableKey } from '@/lib/magic'
 
 interface WalletModalProps {
   isOpen: boolean
@@ -119,6 +120,7 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
+  const [magicError, setMagicError] = useState<string | null>(null)
 
   // Mirror SearchModal/DepositTokenSelect animation behavior (fade/scale in)
   useEffect(() => {
@@ -397,16 +399,22 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
               className="w-full flex items-center justify-between p-3"
               onClick={async () => {
                 setConnecting('magic-google')
+                setMagicError(null)
                 try {
                   await connectWithMagic('google')
                   onClose()
                 } catch (error) {
                   console.error('Google login failed:', error)
+                  const raw = String((error as any)?.message || error || '')
+                  const msg = raw.includes('NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY is not set')
+                    ? 'Magic login is not configured for this deployment. Set `NEXT_PUBLIC_MAGIC_PUBLISHABLE_KEY` in your Vercel Production env vars and redeploy.'
+                    : raw || 'Google login failed. Please try again.'
+                  setMagicError(msg)
                 } finally {
                   setConnecting(null)
                 }
               }}
-              disabled={connecting === 'magic-google'}
+              disabled={connecting === 'magic-google' || !hasMagicPublishableKey()}
             >
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
@@ -441,6 +449,22 @@ export default function WalletModal({ isOpen, onClose }: WalletModalProps) {
                 </svg>
               </div>
             </button>
+
+            {!hasMagicPublishableKey() && (
+              <div className="px-3 pb-3 border-t border-[#1A1A1A]">
+                <div className="text-[10px] pt-2 text-[#fbbf24]">
+                  Magic is not configured on this deployment.
+                </div>
+              </div>
+            )}
+
+            {magicError && (
+              <div className="px-3 pb-3 border-t border-[#1A1A1A]">
+                <div className="text-[10px] pt-2 text-[#f87171]">
+                  {magicError}
+                </div>
+              </div>
+            )}
             
             {/* Expandable Details on Hover */}
             <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-16 overflow-hidden transition-all duration-200">

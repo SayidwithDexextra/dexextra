@@ -359,3 +359,25 @@ body::-webkit-scrollbar {
   }
 }
 
+/*
+  Mobile Safari zooms the page when focusing form fields with font-size < 16px.
+  Keep text-entry controls at 16px on touch devices to prevent "focus zoom".
+*/
+@media (pointer: coarse) {
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="number"],
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="month"],
+  input[type="week"],
+  input[type="time"],
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
