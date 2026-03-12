@@ -38,6 +38,8 @@ function isHttpProtocol(protocol: string): boolean {
 export default function ExternalAppOpenGuard() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    // If the token layout already installed the early (beforeInteractive) guard, don't patch again.
+    if ((window as any).__DEXEXTRA_EXTERNAL_OPEN_GUARD_INSTALLED__) return;
     if (!isProbablyMetaMaskInAppBrowser()) return;
 
     const ALLOW_WINDOW_MS = 1200;
