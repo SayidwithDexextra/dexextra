@@ -18,6 +18,8 @@ type PortfolioSidebarProps = {
 	onClose: () => void
 }
 
+type SidebarView = 'portfolio' | 'withdraw'
+
 type Metric = { label: string; value: string; valueClassName?: string; valueTone?: 'default' | 'pos' | 'neg' }
 
 function formatUsd(n: number, digits = 2) {
@@ -53,6 +55,9 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	)
 	const profileInitial = (profileLabel.trim().slice(0, 1) || 'D').toUpperCase()
 
+	// Sidebar view state (portfolio overview vs inline withdraw)
+	const [sidebarView, setSidebarView] = useState<SidebarView>('portfolio')
+
 	// Mount/unmount for exit animation
 	const [rendered, setRendered] = useState(false)
 	const [entered, setEntered] = useState(false)
@@ -61,14 +66,11 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const raf2Ref = useRef<number | null>(null)
 
 	// Only enable data hooks while the drawer is rendered.
-	// This prevents background polling/refreshes when closed and stabilizes the UI while open.
 	const dataEnabled = Boolean(isWalletConnected && rendered)
 
 	const coreVault = useCoreVault()
-	// Single global source of truth (shared with Header).
 	const { snapshot, isReady: snapshotReady, positions, positionsIsLoading } = usePortfolioSnapshot()
 
-	// Market metadata (for icons). No auto-refresh: sidebar should be stable while open.
 	const { markets } = useMarkets({ limit: 500, autoRefresh: false, refreshInterval: 0 })
 
 	const iconUrlByMarketId = useMemo(() => {
@@ -101,7 +103,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		return m
 	}, [markets])
 
-	// Local-first open orders (session/local storage) + secondary on-chain backfill.
 	const sidebarOrders = usePortfolioSidebarOpenOrders({
 		enabled: dataEnabled,
 		walletAddress,
@@ -132,7 +133,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const openMagicWallet = async () => {
 		const res = await showMagicWalletUI()
 		if (!res.success) {
-			// Best-effort only: avoid hard UI errors in the sidebar.
 			try {
 				console.warn('[PortfolioSidebar] showMagicWalletUI failed:', res.error)
 			} catch {}
@@ -140,7 +140,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	}
 
 	useEffect(() => {
-		// Cleanup any pending animation frames
 		if (raf1Ref.current) cancelAnimationFrame(raf1Ref.current)
 		if (raf2Ref.current) cancelAnimationFrame(raf2Ref.current)
 		raf1Ref.current = null
@@ -148,8 +147,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 
 		if (isOpen) {
 			setRendered(true)
-			// Force at least one paint at the "offscreen" position before entering,
-			// so the transform transition always animates (no snap).
 			setEntered(false)
 			raf1Ref.current = requestAnimationFrame(() => {
 				raf2Ref.current = requestAnimationFrame(() => setEntered(true))
@@ -162,12 +159,13 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			}
 		}
 		setEntered(false)
-		// Match the drawer's 300ms transition so exit animation completes.
-		const t = setTimeout(() => setRendered(false), 320)
+		const t = setTimeout(() => {
+			setRendered(false)
+			setSidebarView('portfolio')
+		}, 320)
 		return () => clearTimeout(t)
 	}, [isOpen])
 
-	// Lock background scroll while drawer is rendered (modal behavior).
 	useEffect(() => {
 		if (!rendered) return
 		const html = document.documentElement
@@ -182,19 +180,22 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		}
 	}, [rendered])
 
-	// Close on escape key
 	useEffect(() => {
 		if (!isOpen) return
 		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') onClose()
+			if (e.key === 'Escape') {
+				if (sidebarView !== 'portfolio') {
+					setSidebarView('portfolio')
+				} else {
+					onClose()
+				}
+			}
 		}
 		document.addEventListener('keydown', onKeyDown)
 		return () => document.removeEventListener('keydown', onKeyDown)
-	}, [isOpen, onClose])
+	}, [isOpen, onClose, sidebarView])
 
 	const totals = useMemo(() => {
-		// Match Header behavior: avoid briefly showing fallback values that can be wrong
-		// (stale from a previous wallet, or partial data before the first snapshot completes).
 		const hideUntilSummaryReady = Boolean(isWalletConnected && dataEnabled && !snapshotReady)
 
 		const tc = parseFloat(coreVault?.totalCollateral || '0') || 0
@@ -202,7 +203,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		const unrealizedFromSummary = Number.isFinite(Number(snapshot?.unrealizedPnl))
 			? Number(snapshot?.unrealizedPnl)
 			: (hideUntilSummaryReady ? Number.NaN : (parseFloat(coreVault?.unrealizedPnL || '0') || 0))
-		// Match EvaluationCard logic: avoid liquidation double-count by not subtracting negative realized again
 		const realizedForPortfolioValue = Math.max(0, realized)
 		const value = Number.isFinite(Number(snapshot?.portfolioValue))
 			? Number(snapshot?.portfolioValue)
@@ -279,7 +279,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		return (sidebarOrders.orders || []).slice(0, 8)
 	}, [sidebarOrders.orders])
 
-	// Prevent UI blinking: keep last non-empty lists during transient empty/loading flips.
 	const prevNonEmptyTopPositionsRef = useRef<any[]>([])
 	const prevNonEmptyFlatOrdersRef = useRef<Array<{ id: string; symbol: string; side: 'BUY' | 'SELL'; price: number; size: number }>>([])
 
@@ -311,17 +310,13 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	}, [positionsAny, sidebarOrders.orders, totals.availableCash, totals.hideUntilSummaryReady, totals.realizedPnl, totals.totalValue, totals.valueDelta, totals.valueDeltaPct])
 
 	const isHealthy = Boolean(coreVault?.isHealthy)
-	// Important: don't let background refresh cycles "blink" the sidebar content.
-	// Treat the sidebar as a snapshot panel; only show "Updating…" during the first load per-open.
 	const [didPaintSnapshot, setDidPaintSnapshot] = useState(false)
 	useEffect(() => {
-		// Reset per open/close cycle
 		if (!isOpen) {
 			setDidPaintSnapshot(false)
 			return
 		}
 		if (!dataEnabled) return
-		// Consider "snapshot ready" once all initial fetches have completed at least once
 		const ready = Boolean(snapshotReady && !positionsIsLoading && sidebarOrders.hasLoadedOnce)
 		if (ready) setDidPaintSnapshot(true)
 	}, [isOpen, dataEnabled, snapshotReady, positionsIsLoading, sidebarOrders.hasLoadedOnce])
@@ -330,7 +325,60 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const showPositionsSkeleton = topPositionsToRender.length === 0 && Boolean(positionsIsLoading)
 	const showOrdersSkeleton = flatOrdersToRender.length === 0 && Boolean(sidebarOrders.isLoading || sidebarOrders.isRefreshing)
 
+	// ─── Inline withdraw state ───
+	const [withdrawAmount, setWithdrawAmount] = useState('')
+	const [withdrawSubmitting, setWithdrawSubmitting] = useState(false)
+	const [withdrawNotice, setWithdrawNotice] = useState<{ kind: 'none' | 'cancelled' | 'error' | 'success'; message: string }>({ kind: 'none', message: '' })
+	const [withdrawTxHash, setWithdrawTxHash] = useState('')
+
+	const withdrawableNum = parseFloat(coreVault?.withdrawableBalance || '0') || 0
+	const crossChainCreditNum = parseFloat(coreVault?.crossChainCredit || '0') || 0
+	const withdrawParsedAmount = useMemo(() => {
+		const n = parseFloat(withdrawAmount)
+		return Number.isFinite(n) && n > 0 ? n : 0
+	}, [withdrawAmount])
+	const canWithdraw = !withdrawSubmitting && withdrawParsedAmount > 0 && withdrawParsedAmount <= Math.max(0, withdrawableNum)
+
+	// Reset withdraw form when switching views
+	useEffect(() => {
+		if (sidebarView === 'withdraw') {
+			setWithdrawAmount('')
+			setWithdrawSubmitting(false)
+			setWithdrawNotice({ kind: 'none', message: '' })
+			setWithdrawTxHash('')
+		}
+	}, [sidebarView])
+
+	const handleWithdraw = async () => {
+		if (!canWithdraw) return
+		setWithdrawSubmitting(true)
+		setWithdrawNotice({ kind: 'none', message: '' })
+		setWithdrawTxHash('')
+		try {
+			const tx = await coreVault.withdrawCollateral(withdrawAmount.trim())
+			setWithdrawTxHash(tx)
+			setWithdrawNotice({ kind: 'success', message: 'Withdrawal submitted successfully.' })
+			setWithdrawAmount('')
+		} catch (e: any) {
+			const code = e?.code ?? e?.error?.code
+			const msg: string = String(e?.message || e?.error?.message || '').toLowerCase()
+			if (code === 'ACTION_REJECTED' || code === 4001 || msg.includes('user denied') || msg.includes('user rejected')) {
+				setWithdrawNotice({ kind: 'cancelled', message: 'Transaction cancelled by user.' })
+			} else {
+				setWithdrawNotice({ kind: 'error', message: 'Something went wrong. Please try again.' })
+			}
+		} finally {
+			setWithdrawSubmitting(false)
+		}
+	}
+
 	if (!rendered) return null
+
+	const headerBadgeLabel = sidebarView === 'withdraw'
+		? 'Withdraw'
+		: isWalletConnected
+			? (showUpdatingBadge ? 'Updating…' : 'Snapshot')
+			: 'Connect wallet'
 
 	return (
 		<div className="fixed inset-0 z-[10000]">
@@ -338,7 +386,13 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 				aria-label="Close portfolio sidebar"
 				className={`absolute inset-0 transition-opacity duration-300 ${entered ? 'opacity-100' : 'opacity-0'}`}
 				style={{ background: 'rgba(0,0,0,0.6)' }}
-				onClick={onClose}
+				onClick={() => {
+					if (sidebarView !== 'portfolio') {
+						setSidebarView('portfolio')
+					} else {
+						onClose()
+					}
+				}}
 			/>
 
 			<div
@@ -369,7 +423,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							/>
 							<div className="absolute inset-0" style={{ boxShadow: 'inset 0 -1px 0 rgba(34,34,34,0.9)' }} />
 
-							{/* Profile icon (bottom-left of banner, fixed at top) */}
 							<div className="absolute left-3 bottom-3">
 								<div className="w-14 h-14 rounded-full overflow-hidden border border-[#222222] bg-[#0F0F0F] shadow-2xl">
 									<Image
@@ -390,18 +443,20 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide truncate">
 									Portfolio
 								</h4>
-								{isWalletConnected ? (
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-										{showUpdatingBadge ? 'Updating…' : 'Snapshot'}
-									</div>
-								) : (
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-										Connect wallet
-									</div>
-								)}
+								<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+									{headerBadgeLabel}
+								</div>
 							</div>
 
 							<div className="flex items-center gap-2">
+								{sidebarView !== 'portfolio' ? (
+									<button
+										onClick={() => setSidebarView('portfolio')}
+										className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded hover:text-[#9CA3AF] transition-all duration-200"
+									>
+										← Back
+									</button>
+								) : null}
 								<button
 									onClick={onClose}
 									className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded hover:text-[#9CA3AF] transition-all duration-200"
@@ -412,12 +467,19 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						</div>
 					</div>
 
-					{/* Body */}
-					<div
-						className="flex-1 min-h-0 overflow-y-auto scrollbar-none p-2.5"
-						data-walkthrough="portfolio-sidebar-body"
-						style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}
-					>
+					{/* Body — animated view switch */}
+					<div className="flex-1 min-h-0 overflow-hidden relative">
+						{/* Portfolio view */}
+						<div
+							className="absolute inset-0 overflow-y-auto scrollbar-none p-2.5 transition-all duration-300 ease-in-out"
+							style={{
+								opacity: sidebarView === 'portfolio' ? 1 : 0,
+								transform: sidebarView === 'portfolio' ? 'translateX(0)' : 'translateX(-40px)',
+								pointerEvents: sidebarView === 'portfolio' ? 'auto' : 'none',
+								paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
+							}}
+							data-walkthrough="portfolio-sidebar-body"
+						>
 						{/* Overview */}
 						<div className="mb-3" data-walkthrough="portfolio-sidebar-overview">
 							<div className="flex items-center justify-between mb-2">
@@ -442,6 +504,20 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									>
 										<Wallet className="w-3.5 h-3.5" />
 										<span className="text-[10px] font-medium uppercase tracking-wide">Deposit</span>
+									</button>
+									<button
+										type="button"
+										onClick={() => setSidebarView('withdraw')}
+										disabled={!isWalletConnected}
+										className={[
+											'h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200',
+											!isWalletConnected
+												? 'border-[#222222] text-[#606060] opacity-60 cursor-not-allowed'
+												: 'border-[#222222] text-[#808080] hover:border-[#ef4444] hover:bg-[#ef4444]/10 hover:text-[#ef4444]',
+										].join(' ')}
+										aria-label="Withdraw funds"
+									>
+										<span className="text-[10px] font-medium uppercase tracking-wide">Withdraw</span>
 									</button>
 										{isMagicWallet ? (
 											<button
@@ -749,10 +825,122 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								)}
 							</div>
 						) : null}
+						</div>
+
+						{/* Withdraw view */}
+						<div
+							className="absolute inset-0 overflow-y-auto scrollbar-none p-2.5 transition-all duration-300 ease-in-out"
+							style={{
+								opacity: sidebarView === 'withdraw' ? 1 : 0,
+								transform: sidebarView === 'withdraw' ? 'translateX(0)' : 'translateX(40px)',
+								pointerEvents: sidebarView === 'withdraw' ? 'auto' : 'none',
+								paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
+							}}
+						>
+							<div className="mb-3">
+								<div className="flex items-center justify-between mb-2">
+									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Withdraw Collateral</h4>
+									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Hub</div>
+								</div>
+
+								{/* Balance cards */}
+								<div className="rounded-md border border-[#222222] bg-[#0F0F0F] overflow-hidden mb-3">
+									<div className="grid grid-cols-2">
+										<div className="px-4 py-3 min-w-0">
+											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Withdrawable</div>
+											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
+												{withdrawableNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+											</div>
+										</div>
+										<div className="px-4 py-3 min-w-0 border-l border-[#1A1A1A]">
+											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Total Collateral</div>
+											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
+												{(parseFloat(coreVault?.totalCollateral || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+											</div>
+										</div>
+										<div className="px-4 py-3 min-w-0 border-t border-[#1A1A1A]">
+											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Available (Trading)</div>
+											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
+												{(parseFloat(coreVault?.availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+											</div>
+										</div>
+										<div className="px-4 py-3 min-w-0 border-l border-[#1A1A1A] border-t">
+											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Cross-chain Credit</div>
+											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
+												{crossChainCreditNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+											</div>
+										</div>
+									</div>
+								</div>
+
+								{/* Amount input */}
+								<div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
+									<label className="block text-[11px] font-medium text-[#808080] mb-2">
+										Amount (USDC)
+									</label>
+									<div className="flex items-center gap-2">
+										<input
+											type="number"
+											min="0"
+											step="0.01"
+											inputMode="decimal"
+											placeholder="0.00"
+											value={withdrawAmount}
+											onChange={(e) => setWithdrawAmount(e.target.value)}
+											className="w-full rounded-md px-3 py-2.5 text-[12px] border outline-none font-mono transition-colors duration-200 focus:border-[#333333]"
+											style={{ background: '#141414', color: '#E5E7EB', borderColor: '#222222' }}
+										/>
+										<button
+											onClick={() => setWithdrawAmount(String(withdrawableNum))}
+											className="text-[10px] px-2.5 py-2 rounded-md border border-[#222222] bg-[#141414] text-[#9CA3AF] hover:text-white hover:border-[#333333] transition-all duration-200 whitespace-nowrap"
+										>
+											Max
+										</button>
+									</div>
+
+									{crossChainCreditNum > 0 ? (
+										<div className="mt-3 text-[10px] text-[#606060] leading-relaxed">
+											{crossChainCreditNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} USDC is cross-chain credit and cannot be withdrawn via hub.
+										</div>
+									) : null}
+
+									{withdrawNotice.kind !== 'none' ? (
+										<div
+											className="mt-3 text-[10px] rounded-md px-3 py-2 border"
+											style={{
+												background: withdrawNotice.kind === 'success' ? 'rgba(16,185,129,0.08)' : withdrawNotice.kind === 'cancelled' ? '#1F2937' : 'rgba(239,68,68,0.10)',
+												borderColor: withdrawNotice.kind === 'success' ? '#065F46' : withdrawNotice.kind === 'cancelled' ? '#2D2D2D' : '#7F1D1D',
+												color: withdrawNotice.kind === 'success' ? '#10B981' : withdrawNotice.kind === 'cancelled' ? '#9CA3AF' : '#EF4444',
+											}}
+										>
+											{withdrawNotice.message}
+										</div>
+									) : null}
+
+									{withdrawTxHash ? (
+										<div className="mt-2 text-[10px] text-green-400 font-mono truncate">
+											Tx: {withdrawTxHash}
+										</div>
+									) : null}
+
+									<button
+										disabled={!canWithdraw || coreVault.isLoading || withdrawSubmitting}
+										onClick={handleWithdraw}
+										className={[
+											'w-full mt-4 text-[11px] font-medium rounded-md px-3 py-2.5 border transition-all duration-200',
+											!canWithdraw || coreVault.isLoading || withdrawSubmitting
+												? 'bg-[#141414] border-[#222222] text-[#606060] cursor-not-allowed'
+												: 'bg-[#141414] border-[#222222] text-white hover:border-[#ef4444] hover:bg-[#ef4444]/10 hover:text-[#ef4444]',
+										].join(' ')}
+									>
+										{withdrawSubmitting ? 'Submitting…' : 'Withdraw'}
+									</button>
+								</div>
+							</div>
+						</div>
 					</div>
 				</div>
 			</div>
 		</div>
 	)
 }
-

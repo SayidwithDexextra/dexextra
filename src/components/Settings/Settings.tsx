@@ -5,10 +5,12 @@ import Image from 'next/image'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { ethers } from 'ethers'
 import { useWallet } from '@/hooks/useWallet'
+import { useCoreVault } from '@/hooks/useCoreVault'
 import { ProfileApi } from '@/lib/profileApi'
 import { formDataToUserProfile, userProfileToFormData, DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 import FuturesMarketFactoryAbi from '@/lib/abis/FuturesMarketFactory.json'
 import ActionStatusModal from '@/components/watchlist/ActionStatusModal'
+import VaultActionModal from '@/components/PortfolioV2/VaultActionModal'
 
 export interface SettingsProps {
   className?: string
@@ -20,6 +22,7 @@ export default function Settings({ className }: SettingsProps) {
   const searchParams = useSearchParams()
   const { walletData, refreshProfile } = useWallet()
   const [walletCopied, setWalletCopied] = useState(false)
+  const [showVaultWithdraw, setShowVaultWithdraw] = useState(false)
   const [uiStatusModal, setUiStatusModal] = useState<{
     isOpen: boolean
     tone: 'warning' | 'success' | 'error' | 'info'
@@ -202,6 +205,7 @@ export default function Settings({ className }: SettingsProps) {
 
   const walletAddress: string | null = walletData?.address || null
   const isWalletConnected = Boolean(walletData?.isConnected && walletAddress)
+  const coreVault = useCoreVault(walletAddress || undefined)
   const profileLabel: string = String(
     walletData?.userProfile?.display_name ||
       walletData?.userProfile?.username ||
@@ -221,7 +225,7 @@ export default function Settings({ className }: SettingsProps) {
     }
   }
 
-  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'preferences'
+  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'withdrawals' | 'preferences'
   const tabs = useMemo(
     () =>
       [
@@ -229,6 +233,7 @@ export default function Settings({ className }: SettingsProps) {
         { id: 'links' as const, label: 'Links' },
         { id: 'notifications' as const, label: 'Notifications' },
         { id: 'markets' as const, label: 'My Markets' },
+        { id: 'withdrawals' as const, label: 'Withdrawals' },
         { id: 'preferences' as const, label: 'Preferences' },
       ] satisfies Array<{ id: SettingsTabId; label: string }>,
     []
@@ -240,6 +245,11 @@ export default function Settings({ className }: SettingsProps) {
   useEffect(() => {
     if (tabParam) setActiveTab(tabParam)
   }, [tabParam])
+
+  const activeTabLabel = useMemo(
+    () => tabs.find((t) => t.id === activeTab)?.label || 'Settings',
+    [tabs, activeTab]
+  )
 
   type MyMarketRow = {
     id: string
@@ -787,6 +797,7 @@ export default function Settings({ className }: SettingsProps) {
   }
 
   return (
+    <>
     <div className={`dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-transparent overflow-hidden ${className || ''}`}>
       <div className="flex-1 min-w-0 overflow-y-auto scrollbar-none text-white font-sans">
         <ActionStatusModal
@@ -1079,7 +1090,7 @@ export default function Settings({ className }: SettingsProps) {
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWalletConnected ? 'bg-green-400' : 'bg-[#404040]'}`} />
               <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide truncate">Settings</h4>
-              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Profile</div>
+              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">{activeTabLabel}</div>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -1939,6 +1950,67 @@ export default function Settings({ className }: SettingsProps) {
           </>
         ) : null}
 
+        {activeTab === 'withdrawals' ? (
+          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Vault & Withdrawals</h4>
+                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">USDC</div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+                  <p className="text-[11px] font-medium text-[#808080] mb-1">Available (Trading)</p>
+                  <p className="text-[11px] text-white font-mono">
+                    {(parseFloat(coreVault?.availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
+                    <span className="text-[#606060]">USDC</span>
+                  </p>
+                </div>
+                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+                  <p className="text-[11px] font-medium text-[#808080] mb-1">Withdrawable (Hub)</p>
+                  <p className="text-[11px] text-white font-mono">
+                    {(parseFloat(coreVault?.withdrawableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
+                    <span className="text-[#606060]">USDC</span>
+                  </p>
+                </div>
+                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+                  <p className="text-[11px] font-medium text-[#808080] mb-1">Cross-chain Credit</p>
+                  <p className="text-[11px] text-white font-mono">
+                    {(parseFloat(coreVault?.crossChainCredit || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
+                    <span className="text-[#606060]">USDC</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 mt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      if (typeof window === 'undefined') return
+                      if (!isWalletConnected) {
+                        window.dispatchEvent(new CustomEvent('walkthrough:wallet:open'))
+                        return
+                      }
+                      window.dispatchEvent(new CustomEvent('walkthrough:deposit:open'))
+                    } catch {}
+                  }}
+                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#0F0F0F] border border-[#222222] text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  Deposit
+                </button>
+                <button
+                  type="button"
+                  disabled={!isWalletConnected}
+                  onClick={() => setShowVaultWithdraw(true)}
+                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#0F0F0F] border border-[#222222] text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  Withdraw (Hub)
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {activeTab === 'preferences' ? (
           <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
             <div className="p-6">
@@ -2035,5 +2107,8 @@ export default function Settings({ className }: SettingsProps) {
         </div>
       </div>
     </div>
+
+    <VaultActionModal isOpen={showVaultWithdraw} action="withdraw" onClose={() => setShowVaultWithdraw(false)} />
+    </>
   )
 } 

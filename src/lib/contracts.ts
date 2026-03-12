@@ -7,6 +7,26 @@ import { env } from './env'
 import CoreVaultGenerated from '@/lib/abis/CoreVault.json';
 
 // Core contract ABIs (fallback if generated not present)
+// NOTE: We intentionally include a small "extras" ABI so UI can call newer view helpers
+// even if the checked-in Hardhat artifact ABI lags behind the deployed contract.
+const CoreVaultExtrasABI = [
+  "function getCollateralBreakdown(address user) external view returns (uint256 depositedCollateral, uint256 crossChainCredit, uint256 withdrawableCollateral, uint256 availableForTrading)",
+  "function userCrossChainCredit(address user) external view returns (uint256)",
+] as const;
+
+function mergeAbi(base: any, extras: readonly any[]): any[] {
+  const arr: any[] = Array.isArray(base) ? base : [];
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const item of [...arr, ...extras]) {
+    const key = typeof item === 'string' ? item : JSON.stringify(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 const CoreVaultFallbackABI = [
   // Events needed for listener management
   "event CollateralDeposited(address indexed user, uint256 amount)",
@@ -45,7 +65,12 @@ const CoreVaultFallbackABI = [
   "function marketToOrderBook(bytes32) external view returns (address)"
 ];
 
-export const CoreVaultABI = (CoreVaultGenerated as any)?.abi || (CoreVaultGenerated as any) || CoreVaultFallbackABI;
+const CoreVaultBaseABI =
+  (CoreVaultGenerated as any)?.abi ||
+  (Array.isArray(CoreVaultGenerated as any) ? (CoreVaultGenerated as any) : null) ||
+  CoreVaultFallbackABI;
+
+export const CoreVaultABI = mergeAbi(CoreVaultBaseABI, CoreVaultExtrasABI);
 
 const LiquidationManagerABI = [
   // Liquidation functions

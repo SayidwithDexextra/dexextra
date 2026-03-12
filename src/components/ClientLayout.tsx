@@ -15,6 +15,7 @@ import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { OnchainOrdersProvider } from "@/contexts/OnchainOrdersContextV2";
 import PortfolioSidebar from "@/components/PortfolioV2/PortfolioSidebar";
 import { PortfolioSnapshotProvider } from "@/contexts/PortfolioSnapshotContext";
+import ExternalAppOpenGuard from "@/components/ExternalAppOpenGuard";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
@@ -65,6 +66,7 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
             <ActiveMarketsProvider>
               <WalkthroughProvider>
                 <PortfolioSnapshotProvider>
+                  <ExternalAppOpenGuard />
                   <div className="relative">
                     <Header />
                     <PortfolioSidebar isOpen={isPortfolioSidebarOpen} onClose={() => setIsPortfolioSidebarOpen(false)} />

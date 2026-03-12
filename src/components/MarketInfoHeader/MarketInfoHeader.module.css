@@ -152,6 +152,36 @@
   overflow: hidden;
 }
 
+/* ── Inline Mark Price (mobile-visible) ── */
+.markPriceInline {
+  display: none; /* Hidden on desktop */
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(16, 185, 129, 0.06) 100%);
+  border: 1px solid rgba(34, 197, 94, 0.18);
+  flex-shrink: 0;
+}
+
+.markPriceDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.markPriceValue {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  font-family: var(--font-geist-mono), 'Geist Mono', 'SF Mono', ui-monospace, monospace;
+}
+
 .nameRow {
   display: flex;
   align-items: center;
@@ -843,6 +873,11 @@
     gap: 10px;
     padding: 10px 12px;
   }
+
+  .markPriceInline {
+    display: inline-flex;
+    margin-left: auto;
+  }
   
   .identity {
     max-width: 50%;
@@ -894,6 +929,20 @@
 @media (max-width: 480px) {
   .header {
     padding: 8px 10px;
+  }
+
+  .markPriceInline {
+    padding: 3px 8px 3px 6px;
+    gap: 5px;
+  }
+
+  .markPriceValue {
+    font-size: 12px;
+  }
+
+  .markPriceDot {
+    width: 5px;
+    height: 5px;
   }
   
   .identity {
@@ -977,4 +1026,13 @@
   .descriptionTextWrapper {
     transition: none;
   }
+}
+
+/* Force-show hidden sections when rendered inside an overlay/sheet context */
+.overlayMode .socials {
+  display: flex !important;
+}
+
+.overlayMode .tags {
+  display: flex !important;
 }

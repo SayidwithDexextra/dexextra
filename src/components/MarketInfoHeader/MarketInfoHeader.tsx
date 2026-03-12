@@ -27,6 +27,9 @@ export interface MarketInfoHeaderProps {
   settlementDate?: string | Date;
   orderbookAddress?: string;
   marketId?: string;
+  markPrice?: number | null;
+  markPriceLabel?: string;
+  markPricePrefix?: string;
   tags?: MarketInfoHeaderTag[];
   moreTagsCount?: number;
   stats?: Array<{ label: string; value: string }>;
@@ -186,6 +189,15 @@ function formatSettlementDate(date: string | Date): string {
   }
 }
 
+function formatPriceMaybe(value: number | null | undefined, prefix = '$'): string {
+  const n = Number(value ?? NaN);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return `${prefix}${n.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 8,
+  })}`;
+}
+
 interface CountdownResult {
   isSettled: boolean;
   days: number;
@@ -268,6 +280,9 @@ export default function MarketInfoHeader({
   settlementDate,
   orderbookAddress,
   marketId,
+  markPrice,
+  markPriceLabel = 'Mark',
+  markPricePrefix = '$',
   tags = [],
   moreTagsCount,
   stats = [],
@@ -289,6 +304,7 @@ export default function MarketInfoHeader({
   const hasDescription = description && description.trim().length > 0;
   const formattedSettlement = settlementDate ? formatSettlementDate(settlementDate) : null;
   const countdown = useCountdown(settlementDate);
+  const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
 
   const handleWatchlistClick = () => {
     if (!isWatchlistLoading && !isWatchlistDisabled && onWatchlistToggle) {
@@ -335,6 +351,14 @@ export default function MarketInfoHeader({
             {symbol && <span className={styles.symbol}>{symbol}</span>}
           </div>
         </div>
+
+        {/* Mobile inline mark price – sits between identity and settlement badge */}
+        {markPrice !== undefined && (
+          <div className={styles.markPriceInline} data-walkthrough="token-mark-price">
+            <span className={styles.markPriceDot} />
+            <span className={styles.markPriceValue}>{formattedMarkPrice}</span>
+          </div>
+        )}
 
         {/* Settlement Date Badge */}
         {formattedSettlement && (

@@ -14,7 +14,7 @@ type VaultActionModalProps = {
 }
 
 export default function VaultActionModal({ isOpen, action, onClose }: VaultActionModalProps) {
-	const { availableBalance, totalCollateral, depositCollateral, withdrawCollateral, isLoading } = useCoreVault()
+	const { availableBalance, totalCollateral, withdrawableBalance, crossChainCredit, depositCollateral, withdrawCollateral, isLoading } = useCoreVault()
 	const { walletData } = useWallet() as any
 	const portfolio = usePortfolioSummary(walletData?.address || null, {
 		enabled: Boolean(walletData?.isConnected && walletData?.address),
@@ -56,18 +56,20 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 		if (submitting) return false
 		if (parsedAmount <= 0) return false
 		if (action === 'withdraw') {
-			const avail = Number.isFinite(Number(portfolio?.summary?.availableCash))
-				? Number(portfolio?.summary?.availableCash)
-				: (parseFloat(availableBalance || '0') || 0)
-			return parsedAmount <= Math.max(0, avail)
+			// Withdraw uses hub-withdrawable collateral (excludes cross-chain credit).
+			const hubWithdrawable = parseFloat(withdrawableBalance || '0') || 0
+			// Fallback to availableBalance if breakdown view isn't available (best-effort).
+			const fallback = parseFloat(availableBalance || '0') || 0
+			const max = hubWithdrawable > 0 ? hubWithdrawable : fallback
+			return parsedAmount <= Math.max(0, max)
 		}
 		return true
-	}, [parsedAmount, submitting, action, availableBalance, portfolio?.summary?.availableCash])
+	}, [parsedAmount, submitting, action, availableBalance, withdrawableBalance])
 
 	if (!isOpen) return null
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center">
+		<div className="fixed inset-0 z-[10050] flex items-center justify-center">
 			<div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => !submitting && onClose()} />
 			<div
 				className="relative w-full max-w-md bg-[#1A1A1A] rounded-md border border-[#222222]"
@@ -86,13 +88,24 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 				<div className="px-4 py-3">
 					<div className="mb-3">
 						<div className="flex items-center justify-between">
-							<span className="text-[11px] font-medium text-[#808080]">Available</span>
+							<span className="text-[11px] font-medium text-[#808080]">Available (Trading)</span>
 							<span className="text-[10px] text-white font-mono">{(Number.isFinite(Number(portfolio?.summary?.availableCash)) ? Number(portfolio?.summary?.availableCash) : (parseFloat(availableBalance || '0') || 0)).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} <span className="text-[#606060]">USDC</span></span>
 						</div>
+						{action === 'withdraw' ? (
+							<div className="flex items-center justify-between mt-1">
+								<span className="text-[11px] font-medium text-[#808080]">Withdrawable (Hub)</span>
+								<span className="text-[10px] text-white font-mono">{(parseFloat(withdrawableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} <span className="text-[#606060]">USDC</span></span>
+							</div>
+						) : null}
 						<div className="flex items-center justify-between mt-1">
 							<span className="text-[11px] font-medium text-[#808080]">Total Collateral</span>
 							<span className="text-[10px] text-white font-mono">{(parseFloat(totalCollateral || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} <span className="text-[#606060]">USDC</span></span>
 						</div>
+						{action === 'withdraw' && (parseFloat(crossChainCredit || '0') || 0) > 0 ? (
+							<div className="mt-2 text-[10px] text-[#808080]">
+								Note: {((parseFloat(crossChainCredit || '0') || 0)).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} USDC is cross-chain credit and can’t be withdrawn via hub withdraw.
+							</div>
+						) : null}
 					</div>
 					<label className="block text-[11px] font-medium text-[#808080] mb-1.5">
 						Amount (USDC)
@@ -112,7 +125,7 @@ export default function VaultActionModal({ isOpen, action, onClose }: VaultActio
 						/>
 						{action === 'withdraw' ? (
 							<button
-								onClick={() => setAmount(String(Number.isFinite(Number(portfolio?.summary?.availableCash)) ? Number(portfolio?.summary?.availableCash) : (parseFloat(availableBalance || '0') || 0)))}
+								onClick={() => setAmount(String(parseFloat(withdrawableBalance || availableBalance || '0') || 0))}
 								className="text-[10px] px-2 py-1 rounded-md border border-[#222222] bg-[#1A1A1A] text-[#9CA3AF]"
 							>
 								Max

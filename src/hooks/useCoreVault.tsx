@@ -40,6 +40,9 @@ export function useCoreVault(walletAddress?: string) {
   const [error, setError] = useState<Error | null>(null);
   const [availableBalance, setAvailableBalance] = useState<string>('0');
   const [totalCollateralStr, setTotalCollateralStr] = useState<string>('0');
+  const [withdrawableBalance, setWithdrawableBalance] = useState<string>('0');
+  const [crossChainCredit, setCrossChainCredit] = useState<string>('0');
+  const [depositedCollateral, setDepositedCollateral] = useState<string>('0');
   const [healthy, setHealthy] = useState<boolean>(true);
   const [socializedLoss, setSocializedLoss] = useState<string>('0');
   // State for margin values (kept near top so we can reset on address changes)
@@ -327,6 +330,9 @@ export function useCoreVault(walletAddress?: string) {
     setError(null);
     setAvailableBalance('0');
     setTotalCollateralStr('0');
+    setWithdrawableBalance('0');
+    setCrossChainCredit('0');
+    setDepositedCollateral('0');
     setHealthy(true);
     setSocializedLoss('0');
     setMarginValues({
@@ -379,13 +385,18 @@ export function useCoreVault(walletAddress?: string) {
         console.log(`[AVBAL] Requesting vault summary (totalCollateral, availableCollateral) for ${userAddress.slice(0, 6)}...`);
       } catch {}
       const hasUserSocializedLoss = typeof (contracts.vault as any)?.userSocializedLoss === 'function';
+      const hasCollateralBreakdown = typeof (contracts.vault as any)?.getCollateralBreakdown === 'function';
       type MarginSummary = [bigint, bigint, bigint, bigint, bigint, bigint, bigint, boolean];
-      const [usdcBalance, marginSummary, socializedLossRaw] = await Promise.all([
+      type CollateralBreakdown = [bigint, bigint, bigint, bigint];
+      const [usdcBalance, marginSummary, socializedLossRaw, collateralBreakdown] = await Promise.all([
         withRetry<bigint>(() => contracts.mockUSDC.balanceOf(userAddress, { blockTag: snapshotBlock })),
         withRetry<MarginSummary>(() => contracts.vault.getUnifiedMarginSummary(userAddress, { blockTag: snapshotBlock })),
         hasUserSocializedLoss
           ? withRetry<bigint>(() => (contracts.vault as any).userSocializedLoss(userAddress, { blockTag: snapshotBlock }))
           : Promise.resolve(0n as bigint),
+        hasCollateralBreakdown
+          ? withRetry<CollateralBreakdown>(() => (contracts.vault as any).getCollateralBreakdown(userAddress, { blockTag: snapshotBlock })).catch(() => null as any)
+          : Promise.resolve(null as any),
       ]);
       
       const [
@@ -404,9 +415,29 @@ export function useCoreVault(walletAddress?: string) {
       if ((lastUserAddressRef.current || '').toLowerCase() !== addrAtStartLc) return;
 
       // Format the available balance for the UI
-      setAvailableBalance(formatTokenAmount(availableCollateral));
-      setTotalCollateralStr(formatTokenAmount(totalCollateral));
+      const nextAvailableBalance = formatTokenAmount(availableCollateral)
+      const nextTotalCollateral = formatTokenAmount(totalCollateral)
+      setAvailableBalance(nextAvailableBalance);
+      setTotalCollateralStr(nextTotalCollateral);
       setHealthy(Boolean(isHealthy));
+
+      // Collateral breakdown (best-effort; older deployments may not expose this view)
+      let nextDepositedCollateral = '0'
+      let nextCrossChainCredit = '0'
+      let nextWithdrawableBalance = nextAvailableBalance
+      try {
+        if (collateralBreakdown && Array.isArray(collateralBreakdown) && collateralBreakdown.length >= 4) {
+          const [deposited6, credit6, withdrawable6] = collateralBreakdown as any as [bigint, bigint, bigint, bigint]
+          nextDepositedCollateral = formatTokenAmount(deposited6)
+          nextCrossChainCredit = formatTokenAmount(credit6)
+          nextWithdrawableBalance = formatTokenAmount(withdrawable6)
+        }
+      } catch {
+        // ignore (keep fallbacks)
+      }
+      setDepositedCollateral(nextDepositedCollateral)
+      setCrossChainCredit(nextCrossChainCredit)
+      setWithdrawableBalance(nextWithdrawableBalance)
       try {
         const duration = Date.now() - avbalStart;
         console.log(`[AVBAL] Received vault summary in ${duration}ms`, {
@@ -452,8 +483,11 @@ export function useCoreVault(walletAddress?: string) {
       try {
         if (typeof window !== 'undefined') {
           const detail = {
-            availableCollateral: formatTokenAmount(availableCollateral),
-            totalCollateral: formatTokenAmount(totalCollateral),
+            availableCollateral: nextAvailableBalance,
+            totalCollateral: nextTotalCollateral,
+            withdrawableCollateral: nextWithdrawableBalance,
+            crossChainCredit: nextCrossChainCredit,
+            depositedCollateral: nextDepositedCollateral,
             marginUsed: formatTokenAmount(marginUsed),
             marginReserved: formatTokenAmount(marginReserved),
             realizedPnL: realizedPnLStr,
@@ -768,6 +802,9 @@ export function useCoreVault(walletAddress?: string) {
     error,
     availableBalance,
     totalCollateral: totalCollateralStr,
+    withdrawableBalance,
+    crossChainCredit,
+    depositedCollateral,
     isHealthy: healthy,
     ...marginValues, // Expose margin values
     socializedLoss,

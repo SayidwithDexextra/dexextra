@@ -9,9 +9,11 @@ import {
   TransactionTable,
   ThreadPanel,
   MarketActivityTabs,
-  MobileTradingTabs
+  MobileTradingTabs,
+  MobileBottomSheet
 } from '@/components/TokenView';
 import { MarketInfoHeader } from '@/components/MarketInfoHeader';
+import headerStyles from '@/components/MarketInfoHeader/MarketInfoHeader.module.css';
 import { TradingViewChart } from '@/components/TradingView';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
@@ -75,6 +77,8 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const deploymentOverlay = useDeploymentOverlay();
   const metricDebug = sp.get('metricDebug') === '1' && process.env.NODE_ENV !== 'production';
   const [isSettlementView, setIsSettlementView] = useState(false);
+  const [mobileSheet, setMobileSheet] = useState<'trade' | 'comments' | 'activity' | 'info' | null>(null);
+  const [mobileTradeAction, setMobileTradeAction] = useState<'long' | 'short'>('long');
   const [pendingPipelineId, setPendingPipelineId] = useState<string | null>(pipelineIdParam);
   const [isWatchlisted, setIsWatchlisted] = useState(false);
   const [isWatchlistLoading, setIsWatchlistLoading] = useState(false);
@@ -780,6 +784,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       settlementDate: market.settlement_date || undefined,
       orderbookAddress: market.market_address || undefined,
       marketId: market.market_id_bytes32 || undefined,
+      markPrice: Number(markPrice || 0),
       tags,
       moreTagsCount,
       stats: [
@@ -789,7 +794,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       twitterUrl: market.market_config?.twitter_url || undefined,
       waybackSnapshot: market.market_config?.wayback_snapshot || undefined,
     };
-  }, [md.market, watchlistCount, symbol]);
+  }, [md.market, watchlistCount, symbol, markPrice]);
 
   if (shouldShowLoading) {
     return (
@@ -896,11 +901,53 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   }
 
   return (
-    <div className="token-page min-h-screen bg-black text-white">
-      <CryptoMarketTicker className="border-b border-gray-800" />
-      {/* Market Info Header */}
+    <div className="token-page flex flex-col h-[calc(100dvh-56px)] md:block md:h-auto md:min-h-screen bg-black text-white overflow-hidden md:overflow-visible">
+      <CryptoMarketTicker className="border-b border-gray-800 flex-shrink-0" />
+      {/* Mobile: compact tappable market bar */}
       {marketInfoHeaderProps && (
-        <div className="px-1">
+        <div className="flex md:hidden items-center gap-2 w-full px-3 py-1.5 border-b border-[#1a1a1a] bg-[#0A0A0A] flex-shrink-0">
+          <div
+            className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer"
+            onClick={() => setMobileSheet('info')}
+            role="button"
+            tabIndex={0}
+          >
+            {marketInfoHeaderProps.logoUrl ? (
+              <img src={marketInfoHeaderProps.logoUrl} className="w-5 h-5 rounded-full flex-shrink-0" alt="" />
+            ) : (
+              <div className="w-5 h-5 rounded-full flex-shrink-0 bg-[#222]" />
+            )}
+            <span className="text-[11px] font-medium text-white truncate">{marketInfoHeaderProps.name}</span>
+            <span className="text-[10px] text-[#606060] flex-shrink-0">{marketInfoHeaderProps.symbol}</span>
+            <span className="ml-auto text-[11px] font-medium text-white tabular-nums flex-shrink-0">
+              ${Number(markPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <svg className="w-3 h-3 text-[#606060] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </div>
+          {marketInfoHeaderProps.waybackSnapshot?.url && (
+            <a
+              href={marketInfoHeaderProps.waybackSnapshot.url}
+              target="_blank"
+              rel="noreferrer"
+              className="w-7 h-7 flex items-center justify-center rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 flex-shrink-0"
+              title={marketInfoHeaderProps.waybackSnapshot.source_url ? `Archived: ${marketInfoHeaderProps.waybackSnapshot.source_url}` : 'Wayback Archive'}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 8v8" />
+                <path d="M3 4h18v4H3z" />
+                <rect x="5" y="8" width="14" height="12" rx="1" />
+                <path d="M9 12h6" />
+              </svg>
+            </a>
+          )}
+        </div>
+      )}
+      {/* Desktop: full header */}
+      {marketInfoHeaderProps && (
+        <div className="px-1 flex-shrink-0 hidden md:block">
           <MarketInfoHeader
             {...marketInfoHeaderProps}
             onWatchlistToggle={handleWatchlistToggle}
@@ -910,10 +957,9 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           />
         </div>
       )}
-      <div className="px-1 pb-8 pt-1">
-        <div className="relative overflow-x-hidden overflow-y-visible">
-          {/* Main trading content (unchanged layout) */}
-          <div className={`transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
+      <div className="flex-1 min-h-0 flex flex-col md:block px-1 md:pb-8 pt-1">
+        <div className="flex-1 min-h-0 flex flex-col md:block relative overflow-x-hidden md:overflow-y-visible">
+          <div className={`flex-1 min-h-0 flex flex-col md:block transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
             {/* Rollover toggle (if active pair exists) */}
             {pair && seriesMkts && seriesMkts.length >= 2 && (
               <div className="mb-1">
@@ -931,9 +977,9 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 />
               </div>
             )}
-            <div className="flex md:hidden flex-col gap-1">
+            <div className="flex md:hidden flex-col flex-1 min-h-0">
               <MobileTradingTabs
-                className="w-full mt-1 h-[70svh] min-h-[520px]"
+                className="w-full mt-0.5 flex-1 min-h-0"
                 chartContent={
                   <div className="h-full w-full relative">
                     {currentMarketId ? (
@@ -1010,29 +1056,65 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   />
                 }
               />
-              <div className="w-full" data-walkthrough="token-activity">
-                <MarketActivityTabs symbol={symbol} className="h-[320px]" />
-              </div>
-              <div className="w-full" data-walkthrough="token-trade">
-                {tokenData ? (
-                  <TradingPanel 
-                    tokenData={tokenData} 
-                    initialAction={tradingAction}
-                    marketData={{
-                      markPrice: Number(markPrice || 0),
-                      fundingRate: Number(fundingRate || 0),
-                      currentPrice: Number(currentPrice || 0),
-                      priceChange24h: Number(priceChange24h || 0),
-                      priceChangePercent24h: Number(priceChangePercent24h || 0),
-                      dataSource: 'contract',
-                      lastUpdated: String(lastUpdated || '')
-                    }}
-                  />
-                ) : (
-                  <div className="w-full h-64 rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
-                    {isDeploying ? 'Setting up market…' : 'Loading data…'}
+              {/* Compact action bar: Activity | Long | Short | Chat */}
+              <div className="flex-shrink-0 flex items-center gap-1.5 px-2 py-2 border-t border-[#1a1a1a] bg-[#0A0A0A]">
+                <button
+                  onClick={() => setMobileSheet('activity')}
+                  className={`w-9 h-9 flex items-center justify-center rounded-md border transition-colors ${
+                    mobileSheet === 'activity' ? 'text-white border-[#444]' : 'text-[#606060] border-[#222222] active:text-white'
+                  }`}
+                  aria-label="Activity"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => { setMobileTradeAction('long'); setMobileSheet('trade'); }}
+                  className="flex-1 bg-[#0F0F0F] active:bg-[#1A1A1A] rounded-md border border-green-400 bg-green-400/10 transition-all duration-200"
+                  data-walkthrough="token-trade-long"
+                >
+                  <div className="flex items-center justify-center py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
+                      <span className="text-xs font-medium text-green-400">Long</span>
+                      <svg className="w-3 h-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                      </svg>
+                    </div>
                   </div>
-                )}
+                </button>
+                <button
+                  onClick={() => { setMobileTradeAction('short'); setMobileSheet('trade'); }}
+                  className="flex-1 bg-[#0F0F0F] active:bg-[#1A1A1A] rounded-md border border-red-400 bg-red-400/10 transition-all duration-200"
+                  data-walkthrough="token-trade-short"
+                >
+                  <div className="flex items-center justify-center py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
+                      <span className="text-xs font-medium text-red-400">Short</span>
+                      <svg className="w-3 h-3 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+                      </svg>
+                    </div>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setMobileSheet('comments')}
+                  className={`w-9 h-9 flex items-center justify-center rounded-md border transition-colors relative ${
+                    mobileSheet === 'comments' ? 'text-white border-[#444]' : 'text-[#606060] border-[#222222] active:text-white'
+                  }`}
+                  aria-label="Comments"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                  </svg>
+                  {commentCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full bg-[#7c3aed] text-[9px] text-white flex items-center justify-center px-1 font-medium">
+                      {commentCount > 99 ? '99+' : commentCount}
+                    </span>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -1202,32 +1284,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               </div>
             </div>
 
-            {/* Creator Card + Similar Markets + Comment Section - Mobile (full width, stacked) */}
-            <div className="block md:hidden mt-0.5 space-y-1">
-              <CreatorCard
-                creatorWallet={(md.market as any)?.creator_wallet_address}
-                currentUserWallet={walletData?.address}
-              />
-              <CommentSection
-                comments={liveComments}
-                totalCount={commentCount}
-                currentUser={walletData?.address ? {
-                  id: walletData.address,
-                  name: walletData.userProfile?.display_name || walletData.userProfile?.username || `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}`,
-                  avatarUrl: walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE,
-                } : undefined}
-                sortBy={commentSortBy}
-                onSortChange={setCommentSortBy}
-                onSubmitComment={handleSubmitComment}
-                onSubmitReply={handleSubmitReply}
-                onLikeComment={handleLikeComment}
-                onDeleteComment={deleteComment}
-                onReportComment={handleReportComment}
-                onLoadMore={loadMoreComments}
-                hasMore={hasMoreComments}
-                isLoading={commentsLoading}
-              />
-            </div>
+            {/* Mobile bottom sheets are rendered below, outside the transition wrapper */}
           </div>
           {/* Settlement overlay (no layout shift) */}
           <div
@@ -1260,6 +1317,101 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           </div>
         </div>
       </div>
+
+      {/* Mobile overlay sheets (portaled to body) */}
+      {isDesktop === false && (
+        <>
+          <MobileBottomSheet
+            isOpen={mobileSheet === 'info'}
+            onClose={() => setMobileSheet(null)}
+            title="Market Info"
+            height="half"
+          >
+            {marketInfoHeaderProps && (
+              <div className={`px-1 pt-1 ${headerStyles.overlayMode}`}>
+                <MarketInfoHeader
+                  {...marketInfoHeaderProps}
+                  onWatchlistToggle={handleWatchlistToggle}
+                  isWatchlisted={isWatchlisted}
+                  isWatchlistLoading={isWatchlistLoading}
+                  isWatchlistDisabled={!walletData?.address}
+                />
+              </div>
+            )}
+          </MobileBottomSheet>
+
+          <MobileBottomSheet
+            isOpen={mobileSheet === 'trade'}
+            onClose={() => setMobileSheet(null)}
+            title="Trade"
+            height="tall"
+          >
+            <div className="px-1 pt-1 h-full">
+              {tokenData ? (
+                <TradingPanel
+                  key={mobileTradeAction}
+                  tokenData={tokenData}
+                  initialAction={mobileTradeAction}
+                  marketData={{
+                    markPrice: Number(markPrice || 0),
+                    fundingRate: Number(fundingRate || 0),
+                    currentPrice: Number(currentPrice || 0),
+                    priceChange24h: Number(priceChange24h || 0),
+                    priceChangePercent24h: Number(priceChangePercent24h || 0),
+                    dataSource: 'contract',
+                    lastUpdated: String(lastUpdated || '')
+                  }}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-32 text-xs text-gray-400">
+                  {isDeploying ? 'Setting up market…' : 'Loading data…'}
+                </div>
+              )}
+            </div>
+          </MobileBottomSheet>
+
+          <MobileBottomSheet
+            isOpen={mobileSheet === 'activity'}
+            onClose={() => setMobileSheet(null)}
+            title="Activity"
+            height="tall"
+          >
+            <MarketActivityTabs symbol={symbol} className="h-full" />
+          </MobileBottomSheet>
+
+          <MobileBottomSheet
+            isOpen={mobileSheet === 'comments'}
+            onClose={() => setMobileSheet(null)}
+            title={`Chat${commentCount > 0 ? ` (${commentCount})` : ''}`}
+          >
+            <div className="px-1 pt-2 pb-1">
+              <CreatorCard
+                creatorWallet={(md.market as any)?.creator_wallet_address}
+                currentUserWallet={walletData?.address}
+              />
+            </div>
+            <CommentSection
+              comments={liveComments}
+              totalCount={commentCount}
+              currentUser={walletData?.address ? {
+                id: walletData.address,
+                name: walletData.userProfile?.display_name || walletData.userProfile?.username || `${walletData.address.slice(0, 6)}...${walletData.address.slice(-4)}`,
+                avatarUrl: walletData.userProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE,
+              } : undefined}
+              sortBy={commentSortBy}
+              onSortChange={setCommentSortBy}
+              onSubmitComment={handleSubmitComment}
+              onSubmitReply={handleSubmitReply}
+              onLikeComment={handleLikeComment}
+              onDeleteComment={deleteComment}
+              onReportComment={handleReportComment}
+              onLoadMore={loadMoreComments}
+              hasMore={hasMoreComments}
+              isLoading={commentsLoading}
+            />
+          </MobileBottomSheet>
+        </>
+      )}
     </div>
   );
 }

@@ -21,3 +21,4 @@ export { default as MarketActivityTabs } from './MarketActivityTabs';
 
 // Mobile Components
 export { default as MobileTradingTabs } from './MobileTradingTabs';
+export { default as MobileBottomSheet } from './MobileBottomSheet';

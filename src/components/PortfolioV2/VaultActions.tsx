@@ -7,7 +7,7 @@ import { usePortfolioSummary } from '@/hooks/usePortfolioSummary'
 import { useWallet } from '@/hooks/useWallet'
 
 export default function VaultActions() {
-	const { availableBalance, totalCollateral } = useCoreVault()
+	const { availableBalance, totalCollateral, withdrawableBalance } = useCoreVault()
 	const { walletData } = useWallet() as any
 	const portfolio = usePortfolioSummary(walletData?.address || null, {
 		enabled: Boolean(walletData?.isConnected && walletData?.address),
@@ -20,6 +20,8 @@ export default function VaultActions() {
 		? Number(portfolio?.summary?.availableCash)
 		: (parseFloat(availableBalance || '0') || 0)
 	const avail = availNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+	const hubWithdrawableNum = parseFloat(withdrawableBalance || '0') || 0
+	const hubWithdrawable = hubWithdrawableNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
 	const total = (parseFloat(totalCollateral || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
 
 	return (
@@ -30,10 +32,14 @@ export default function VaultActions() {
 					<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">USDC</div>
 				</div>
 				<div className="px-3 pb-3">
-					<div className="grid grid-cols-2 gap-3">
+					<div className="grid grid-cols-3 gap-3">
 						<div className="rounded-md border border-[#222222] bg-[#1A1A1A] p-3">
-							<p className="text-[11px] font-medium text-[#808080] mb-1">Available</p>
+							<p className="text-[11px] font-medium text-[#808080] mb-1">Available (Trading)</p>
 							<p className="text-[10px] text-white font-mono">{avail} <span className="text-[#606060]">USDC</span></p>
+						</div>
+						<div className="rounded-md border border-[#222222] bg-[#1A1A1A] p-3">
+							<p className="text-[11px] font-medium text-[#808080] mb-1">Withdrawable (Hub)</p>
+							<p className="text-[10px] text-white font-mono">{hubWithdrawable} <span className="text-[#606060]">USDC</span></p>
 						</div>
 						<div className="rounded-md border border-[#222222] bg-[#1A1A1A] p-3">
 							<p className="text-[11px] font-medium text-[#808080] mb-1">Total Collateral</p>
