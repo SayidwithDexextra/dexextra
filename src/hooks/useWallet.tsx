@@ -22,7 +22,7 @@ import {
 import { fetchWalletPortfolio } from '@/lib/tokenService'
 import { ProfileApi } from '@/lib/profileApi'
 import { withDefaultProfileImage } from '@/types/userProfile'
-import { loginWithGoogle, getMagicUserAddress, logoutMagic, getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry } from '@/lib/magic'
+import { loginWithGoogle, getMagicUserAddress, logoutMagic, getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry, blockMagicAutoInit, unblockMagicAutoInit, suppressMagicUIOverlay } from '@/lib/magic'
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined)
 
@@ -68,6 +68,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
     currentAddressRef.current = walletData.address
     isConnectedRef.current = walletData.isConnected
   }, [walletData.address, walletData.isConnected])
+
+  // DOM-level safety net: suppress Magic's iframe overlay when it shouldn't appear
+  useEffect(() => {
+    return suppressMagicUIOverlay()
+  }, [])
 
   // Define a stable refreshBalance function that doesn't depend on walletData.address
   const refreshBalance = useCallback(async (): Promise<void> => {
@@ -138,11 +143,21 @@ export function WalletProvider({ children }: WalletProviderProps) {
         setProviders(detectedProviders)
         console.log('Detected wallet providers:', detectedProviders.map(p => ({ name: p.name, isInstalled: p.isInstalled })));
 
+        // ── Magic UI blockade ──
+        // If any external wallet provider is installed (MetaMask, Rabby, etc.),
+        // block Magic SDK from auto-initializing its iframe. This prevents the
+        // "Sign in" popup from appearing for non-Magic users.
+        const lastProvider = typeof window !== 'undefined' ? localStorage.getItem('walletProvider') : null
+        const hasExternalWallet = detectedProviders.some(p => p.isInstalled) ||
+          !!(window as any).ethereum
+        if (lastProvider !== 'magic' || hasExternalWallet) {
+          blockMagicAutoInit()
+        }
+
         // Check for existing injected-wallet connection FIRST (MetaMask, Rabby, etc.).
-        // This prevents Magic's iframe from loading and auto-prompting its login UI
-        // when the user already has a regular wallet connected.
         const existingConnection = await checkConnection()
         if (existingConnection) {
+          blockMagicAutoInit()
           setWalletData(existingConnection)
           console.log('Existing connection found:', existingConnection.address);
           
@@ -152,20 +167,18 @@ export function WalletProvider({ children }: WalletProviderProps) {
           return
         }
 
-        // No injected wallet found – try restoring a previous Magic session.
-        // Skip inside MetaMask's in-app browser where Magic's iframe preload
-        // triggers a "blocked from automatically opening" warning.
-        const lastProvider = typeof window !== 'undefined' ? localStorage.getItem('walletProvider') : null
+        // No injected wallet connected – try restoring a previous Magic session,
+        // but ONLY if walletProvider is 'magic' and no external wallet is installed.
         const isMetaMaskBrowser = /metamask/i.test(navigator?.userAgent ?? '') ||
           !!(window as any).ethereum?.isMetaMask
-        if (lastProvider === 'magic' && !isMetaMaskBrowser) {
+        if (lastProvider === 'magic' && !hasExternalWallet && !isMetaMaskBrowser) {
+          unblockMagicAutoInit()
           try {
             const magicAddress = await getMagicUserAddress()
             if (magicAddress) {
               const magicProvider = getMagicProvider()
               setActiveEthereumProvider(magicProvider as any)
 
-              // Passively read accounts so EIP-1193 consumers see them.
               try {
                 await magicRequestWithRetry({ method: 'eth_accounts' }, { retries: 2 })
               } catch {
@@ -203,10 +216,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
           }
         }
 
-        // No wallet connection found at all
-        {
-          console.log('No existing connection found.');
-        }
+        console.log('No existing connection found.')
       } catch (error) {
         console.error('Error initializing wallet:', error)
       }
@@ -438,6 +448,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
     try {
       clearWalletAutoConnectDisabled()
+      unblockMagicAutoInit()
 
       const result = await loginWithGoogle()
       const address = result.magic.userMetadata.publicAddress
