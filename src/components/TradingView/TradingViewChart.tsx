@@ -478,12 +478,13 @@ export default function TradingViewChart({
       disabled_features: disabledFeatures,
       // NOTE: `study_templates` requires a save/load adapter endpoint; enabling it without backend support
       // causes noisy 404s + unhandled promise rejections in the console.
-      // IMPORTANT:
-      // Do NOT enable `iframe_loading_same_origin` here.
-      // TradingView may try to iframe the site origin (`/`) during init; if any deployment variant
-      // serves `X-Frame-Options: DENY` (e.g. Vercel `?dpl=...` pinned deployments), the chart will fail
-      // with "Refused to display ... in a frame".
-      enabled_features: ['remove_library_container_border'],
+      //
+      // `iframe_loading_same_origin` makes TradingView use /charting_library/sameorigin.html
+      // instead of a blob: URL for its internal iframe. MetaMask's in-app WebView blocks
+      // blob: navigations as "automatically opening an external application", so we must
+      // use same-origin loading. This is safe because vercel.json sets
+      // X-Frame-Options: SAMEORIGIN (not DENY).
+      enabled_features: ['remove_library_container_border', 'iframe_loading_same_origin'],
       debug: true,
       loading_screen: {
         // NOTE: TradingView loading screen does not support gradients; use the start color.

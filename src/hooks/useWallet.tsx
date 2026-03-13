@@ -138,20 +138,27 @@ export function WalletProvider({ children }: WalletProviderProps) {
         setProviders(detectedProviders)
         console.log('Detected wallet providers:', detectedProviders.map(p => ({ name: p.name, isInstalled: p.isInstalled })));
 
-        // Check if user was previously connected via Magic
+        // Check if user was previously connected via Magic.
+        // Skip Magic restore inside MetaMask's in-app browser: the user has a native
+        // injected provider there, and Magic's iframe preload triggers MetaMask's
+        // "blocked from automatically opening an external application" warning.
         const lastProvider = typeof window !== 'undefined' ? localStorage.getItem('walletProvider') : null
-        if (lastProvider === 'magic') {
+        const isMetaMaskBrowser = /metamask/i.test(navigator?.userAgent ?? '') ||
+          !!(window as any).ethereum?.isMetaMask
+        if (lastProvider === 'magic' && !isMetaMaskBrowser) {
           try {
             const magicAddress = await getMagicUserAddress()
             if (magicAddress) {
               const magicProvider = getMagicProvider()
               setActiveEthereumProvider(magicProvider as any)
 
-              // Ensure Magic exposes accounts to EIP-1193 consumers.
+              // Passively read accounts so EIP-1193 consumers see them.
+              // Use eth_accounts (not eth_requestAccounts) to avoid triggering
+              // Magic's login UI when the session is already valid.
               try {
-                await magicRequestWithRetry({ method: 'eth_requestAccounts' }, { retries: 2 })
+                await magicRequestWithRetry({ method: 'eth_accounts' }, { retries: 2 })
               } catch {
-                // Some Magic sessions may already be authorized; ignore.
+                // ignore – session is already validated above
               }
 
               // ChainId is frequently the first request after restore; use retry to avoid transient fetch failures.
@@ -442,8 +449,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
       setActiveEthereumProvider(magicProvider as any)
 
       // Make sure downstream components relying on EIP-1193 see an account.
+      // Use eth_accounts (passive) since loginWithGoogle already authenticated.
       try {
-        await magicRequestWithRetry({ method: 'eth_requestAccounts' }, { retries: 2 })
+        await magicRequestWithRetry({ method: 'eth_accounts' }, { retries: 2 })
       } catch {
         // ignore
       }

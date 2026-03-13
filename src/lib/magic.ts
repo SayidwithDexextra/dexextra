@@ -95,16 +95,11 @@ export function getMagic(): InstanceType<typeof Magic> {
     // ignore
   }
   magicInstance = new Magic(key, {
+    deferPreload: true,
     extensions: [
       new OAuthExtension(),
       new EVMExtension([
-        // Hyperliquid / CoreVault chain (custom). Needed so Magic can sign core-vault deposits.
-        // If RPC_URL is not https (e.g. localhost), we skip configuring it for Magic.
         ...(hlRpcUrl ? [{ rpcUrl: hlRpcUrl, chainId: hlChainId, default: true }] : []),
-        // Arbitrum One (Rewards faucet / spoke actions).
-        //
-        // Note: Many public RPCs don't allow browser CORS. Magic runs in-browser,
-        // so we default to a same-origin proxy. Configure upstream via env, not here.
         { rpcUrl: arbitrumRpcUrl, chainId: 42161, default: !hlRpcUrl },
       ]),
     ],

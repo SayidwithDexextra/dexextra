@@ -1,0 +1,16 @@
+{
+  "/api/markets/route": "app/api/markets/route.js",
+  "/api/orderbook/live/route": "app/api/orderbook/live/route.js",
+  "/api/market-ticker/route": "app/api/market-ticker/route.js",
+  "/api/debug/orders-v2/route": "app/api/debug/orders-v2/route.js",
+  "/api/market-overview/route": "app/api/market-overview/route.js",
+  "/api/market-rankings/route": "app/api/market-rankings/route.js",
+  "/api/eth-price/route": "app/api/eth-price/route.js",
+  "/api/profile/route": "app/api/profile/route.js",
+  "/api/watchlist/route": "app/api/watchlist/route.js",
+  "/api/wallet/portfolio/route": "app/api/wallet/portfolio/route.js",
+  "/api/orders/active-buckets/route": "app/api/orders/active-buckets/route.js",
+  "/api/token-prices/route": "app/api/token-prices/route.js",
+  "/page": "app/page.js",
+  "/token/[symbol]/page": "app/token/[symbol]/page.js"
+}

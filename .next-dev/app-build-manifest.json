@@ -1,0 +1,127 @@
+{
+  "pages": {
+    "/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/css/app/layout.css",
+      "static/chunks/app/layout.js"
+    ],
+    "/token/[symbol]/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/token/[symbol]/layout.js"
+    ],
+    "/token/[symbol]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/css/app/token/[symbol]/page.css",
+      "static/chunks/app/token/[symbol]/page.js"
+    ],
+    "/api/markets/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/markets/route.js"
+    ],
+    "/api/market-overview/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/market-overview/route.js"
+    ],
+    "/api/market-ticker/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/market-ticker/route.js"
+    ],
+    "/api/watchlist/count/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/watchlist/count/route.js"
+    ],
+    "/api/orderbook/live/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/orderbook/live/route.js"
+    ],
+    "/api/eth-price/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/eth-price/route.js"
+    ],
+    "/api/charts/metric/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/charts/metric/route.js"
+    ],
+    "/api/profile/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/profile/route.js"
+    ],
+    "/api/tradingview/config/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/tradingview/config/route.js"
+    ],
+    "/api/markets/similar/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/markets/similar/route.js"
+    ],
+    "/api/tradingview/symbols/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/tradingview/symbols/route.js"
+    ],
+    "/api/watchlist/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/watchlist/route.js"
+    ],
+    "/api/debug/orders-v2/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/debug/orders-v2/route.js"
+    ],
+    "/api/orders/query/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/orders/query/route.js"
+    ],
+    "/api/orders/active-buckets/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/orders/active-buckets/route.js"
+    ],
+    "/api/tradingview/history/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/tradingview/history/route.js"
+    ],
+    "/api/wallet/portfolio/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/wallet/portfolio/route.js"
+    ],
+    "/api/token-prices/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/token-prices/route.js"
+    ],
+    "/api/tradingview/time/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/tradingview/time/route.js"
+    ],
+    "/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/css/app/page.css",
+      "static/chunks/app/page.js"
+    ],
+    "/api/market-rankings/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/market-rankings/route.js"
+    ]
+  }
+}
