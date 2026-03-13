@@ -22,7 +22,7 @@ import {
 import { fetchWalletPortfolio } from '@/lib/tokenService'
 import { ProfileApi } from '@/lib/profileApi'
 import { withDefaultProfileImage } from '@/types/userProfile'
-import { loginWithGoogle, getMagicUserAddress, logoutMagic, getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry, blockMagicAutoInit, unblockMagicAutoInit, suppressMagicUIOverlay } from '@/lib/magic'
+import { loginWithGoogle, getMagicUserAddress, logoutMagic, getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry, blockMagicAutoInit, unblockMagicAutoInit, isMagicSelectedWallet } from '@/lib/magic'
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined)
 
@@ -69,10 +69,6 @@ export function WalletProvider({ children }: WalletProviderProps) {
     isConnectedRef.current = walletData.isConnected
   }, [walletData.address, walletData.isConnected])
 
-  // DOM-level safety net: suppress Magic's iframe overlay when it shouldn't appear
-  useEffect(() => {
-    return suppressMagicUIOverlay()
-  }, [])
 
   // Define a stable refreshBalance function that doesn't depend on walletData.address
   const refreshBalance = useCallback(async (): Promise<void> => {
@@ -158,6 +154,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
         const existingConnection = await checkConnection()
         if (existingConnection) {
           blockMagicAutoInit()
+          // If localStorage still says 'magic' but we reconnected to an injected
+          // wallet, clear it so isMagicSelectedWallet() returns false and the UI
+          // doesn't show Magic-specific controls (portfolio sidebar button, etc.).
+          if (lastProvider === 'magic') {
+            localStorage.removeItem('walletProvider')
+          }
           setWalletData(existingConnection)
           console.log('Existing connection found:', existingConnection.address);
           
@@ -506,13 +508,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
   const disconnect = async (): Promise<void> => {
     try {
-      // Logout Magic if that was the active provider
-      await logoutMagic().catch(() => {})
+      if (isMagicSelectedWallet()) {
+        await logoutMagic().catch(() => {})
+      }
 
-      // Hard logout: clear all cached state and prevent silent reconnect on reload.
       await hardLogout()
       
-      // Reset wallet state
       setWalletData(initialWalletData)
       setPortfolio(initialPortfolio)
     } catch (error) {

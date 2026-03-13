@@ -144,10 +144,15 @@ export async function getMagicUserAddress(): Promise<string | null> {
 }
 
 export async function logoutMagic(): Promise<void> {
-  const magic = getMagic()
-  const isLoggedIn = await magic.user.isLoggedIn()
-  if (isLoggedIn) {
-    await magic.user.logout()
+  if (!isMagicSelectedWallet() && !magicInstance) return
+  try {
+    const magic = getMagic()
+    const isLoggedIn = await magic.user.isLoggedIn()
+    if (isLoggedIn) {
+      await magic.user.logout()
+    }
+  } catch {
+    // ignore – Magic may not be configured
   }
 }
 
@@ -237,58 +242,6 @@ export async function switchMagicChainWithRetry(
     }
   }
   throw lastErr
-}
-
-/**
- * DOM-level safety net: watches for Magic's iframe overlay and hides it
- * immediately when an external wallet is connected. Returns a cleanup function.
- */
-export function suppressMagicUIOverlay(): () => void {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {}
-
-  const hideIfBlocked = (node: Node) => {
-    if (!(node instanceof HTMLElement)) return
-    const isIframe = node.tagName === 'IFRAME'
-    const src = (node as HTMLIFrameElement).src || ''
-    const isMagicFrame =
-      isIframe && (src.includes('auth.magic.link') || src.includes('fortmatic.com'))
-    const hasMagicAttr =
-      node.id?.toLowerCase().includes('magic') ||
-      node.className?.toString().toLowerCase().includes('magic')
-
-    if (isMagicFrame || hasMagicAttr) {
-      if (_magicAutoInitBlocked) {
-        ;(node as HTMLElement).style.display = 'none'
-        ;(node as HTMLElement).style.visibility = 'hidden'
-        ;(node as HTMLElement).style.pointerEvents = 'none'
-      }
-    }
-
-    // Magic wraps its UI in a full-screen container div
-    if (node.parentElement && _magicAutoInitBlocked) {
-      const parent = node.parentElement
-      const pId = parent.id?.toLowerCase() || ''
-      const pClass = parent.className?.toString().toLowerCase() || ''
-      if (pId.includes('magic') || pClass.includes('magic')) {
-        parent.style.display = 'none'
-        parent.style.visibility = 'hidden'
-      }
-    }
-  }
-
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      for (const node of mutation.addedNodes) {
-        hideIfBlocked(node)
-        if (node instanceof HTMLElement) {
-          node.querySelectorAll('iframe').forEach(hideIfBlocked)
-        }
-      }
-    }
-  })
-
-  observer.observe(document.body, { childList: true, subtree: true })
-  return () => observer.disconnect()
 }
 
 export function isMagicSelectedWallet(): boolean {
