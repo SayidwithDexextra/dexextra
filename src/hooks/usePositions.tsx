@@ -93,6 +93,16 @@ export function usePositions(
     };
   }, []);
 
+  // Clear stale positions immediately when the wallet address changes so
+  // consumers (PortfolioSnapshotContext) never see data from a previous wallet.
+  const prevAddressRef = useRef<string | null>(walletAddress);
+  useEffect(() => {
+    if (prevAddressRef.current !== walletAddress) {
+      prevAddressRef.current = walletAddress;
+      setState({ positions: [], isLoading: !!walletAddress, error: null });
+    }
+  }, [walletAddress]);
+
   // Initialize contracts when wallet is connected
   useEffect(() => {
     const init = async () => {

@@ -211,6 +211,8 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
     }
 
     if (lastKeyRef.current !== key) {
+      // Wallet changed: clear stale snapshot immediately, then hydrate from cache.
+      setSnapshot(null)
       lastKeyRef.current = key
       const mem = memoryCache.get(key) || null
       const sess = mem ? null : loadFromSession(key)
@@ -227,10 +229,14 @@ export function PortfolioSnapshotProvider({ children }: { children: React.ReactN
     }
 
     if (lastPosKeyRef.current !== posKey) {
+      // Wallet changed: clear stale positions immediately, then hydrate from cache.
+      setPositions([])
       lastPosKeyRef.current = posKey
       const mem = memoryPositionsCache.get(posKey) || null
       const sess = mem ? null : loadPositionsFromSession(posKey)
-      setPositions(mem?.positions || sess?.positions || [])
+      if (mem?.positions?.length || sess?.positions?.length) {
+        setPositions(mem?.positions || sess?.positions || [])
+      }
     }
   }, [posKey, walletAddress, isConnected])
 
