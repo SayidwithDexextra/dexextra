@@ -138,10 +138,23 @@ export function WalletProvider({ children }: WalletProviderProps) {
         setProviders(detectedProviders)
         console.log('Detected wallet providers:', detectedProviders.map(p => ({ name: p.name, isInstalled: p.isInstalled })));
 
-        // Check if user was previously connected via Magic.
-        // Skip Magic restore inside MetaMask's in-app browser: the user has a native
-        // injected provider there, and Magic's iframe preload triggers MetaMask's
-        // "blocked from automatically opening an external application" warning.
+        // Check for existing injected-wallet connection FIRST (MetaMask, Rabby, etc.).
+        // This prevents Magic's iframe from loading and auto-prompting its login UI
+        // when the user already has a regular wallet connected.
+        const existingConnection = await checkConnection()
+        if (existingConnection) {
+          setWalletData(existingConnection)
+          console.log('Existing connection found:', existingConnection.address);
+          
+          if (existingConnection.address) {
+            await createOrGetUserProfile(existingConnection.address)
+          }
+          return
+        }
+
+        // No injected wallet found – try restoring a previous Magic session.
+        // Skip inside MetaMask's in-app browser where Magic's iframe preload
+        // triggers a "blocked from automatically opening" warning.
         const lastProvider = typeof window !== 'undefined' ? localStorage.getItem('walletProvider') : null
         const isMetaMaskBrowser = /metamask/i.test(navigator?.userAgent ?? '') ||
           !!(window as any).ethereum?.isMetaMask
@@ -153,15 +166,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
               setActiveEthereumProvider(magicProvider as any)
 
               // Passively read accounts so EIP-1193 consumers see them.
-              // Use eth_accounts (not eth_requestAccounts) to avoid triggering
-              // Magic's login UI when the session is already valid.
               try {
                 await magicRequestWithRetry({ method: 'eth_accounts' }, { retries: 2 })
               } catch {
                 // ignore – session is already validated above
               }
 
-              // ChainId is frequently the first request after restore; use retry to avoid transient fetch failures.
               const [balance, chainId] = await Promise.all([
                 getBalance(magicAddress, magicProvider as any).catch(() => '0'),
                 (async () => {
@@ -193,17 +203,8 @@ export function WalletProvider({ children }: WalletProviderProps) {
           }
         }
 
-        // Check for existing connection
-        const existingConnection = await checkConnection()
-        if (existingConnection) {
-          setWalletData(existingConnection)
-          console.log('Existing connection found:', existingConnection.address);
-          
-          // If wallet is already connected, also load the user profile
-          if (existingConnection.address) {
-            await createOrGetUserProfile(existingConnection.address)
-          }
-        } else {
+        // No wallet connection found at all
+        {
           console.log('No existing connection found.');
         }
       } catch (error) {
