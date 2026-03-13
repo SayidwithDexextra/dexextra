@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { CreateMarketV2Page } from '@/components/create-market-v2';
 
 export const metadata = {
@@ -7,6 +7,9 @@ export const metadata = {
 };
 
 export default function NewMarketRoute() {
-  return <CreateMarketV2Page />;
+  return (
+    <Suspense>
+      <CreateMarketV2Page />
+    </Suspense>
+  );
 }
-

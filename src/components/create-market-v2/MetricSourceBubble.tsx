@@ -59,7 +59,7 @@ function normalizeHttpUrl(raw: string) {
   }
 }
 
-function getHostname(url: string) {
+export function getHostname(url: string) {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
@@ -128,7 +128,7 @@ function hashToIndex(input: string, mod: number) {
   return mod ? hash % mod : 0;
 }
 
-function makeFaviconUrl(params: { favicon?: string; domain?: string }) {
+export function makeFaviconUrl(params: { favicon?: string; domain?: string }) {
   if (params.favicon) return params.favicon;
   const domain = (params.domain || '').trim();
   if (!domain) return undefined;
@@ -136,7 +136,7 @@ function makeFaviconUrl(params: { favicon?: string; domain?: string }) {
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`;
 }
 
-function makeIconNode(params: { faviconUrl?: string; label: string }) {
+export function makeIconNode(params: { faviconUrl?: string; label: string }) {
   const letter = (params.label || '?').trim().slice(0, 1).toUpperCase();
   return (
     <div className="relative h-7 w-7">
@@ -204,6 +204,38 @@ export function MetricSourceBubble({
   const [customUrl, setCustomUrl] = React.useState('');
   const [customError, setCustomError] = React.useState<string | null>(null);
   const customInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Browser history management: push a state entry when entering a sub-view
+  // (focused source or custom URL) so the mobile back button dismisses the
+  // sub-view instead of navigating away from the page.
+  const historyPushedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    const handlePopState = () => {
+      if (historyPushedRef.current) {
+        historyPushedRef.current = false;
+        setFocusedSource(null);
+        setCustomMode(false);
+        setCustomError(null);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const pushSubView = React.useCallback(() => {
+    if (!historyPushedRef.current) {
+      window.history.pushState({ _srcSubView: true }, '');
+      historyPushedRef.current = true;
+    }
+  }, []);
+
+  const popSubView = React.useCallback(() => {
+    if (historyPushedRef.current) {
+      historyPushedRef.current = false;
+      window.history.back();
+    }
+  }, []);
 
   const sourceOptions = React.useMemo<MetricSourceOption[]>(() => {
     // Build a lookup of AI-ranked sources so we can badge them.
@@ -326,6 +358,7 @@ export function MetricSourceBubble({
     if (!isVisible) {
       setHasAnimated(false);
       setFocusedSource(null);
+      historyPushedRef.current = false;
     }
   }, [isVisible]);
 
@@ -352,13 +385,18 @@ export function MetricSourceBubble({
   }, [focusedSource?.id, sourceOptions]); // intentionally only track the id
 
   const handleFocus = React.useCallback((source: MetricSourceOption) => {
+    pushSubView();
     setFocusedSource(source);
     setCustomMode(false);
     setCustomError(null);
-  }, []);
+  }, [pushSubView]);
 
   const handleConfirmSelect = React.useCallback(() => {
     if (!focusedSource) return;
+    if (historyPushedRef.current) {
+      historyPushedRef.current = false;
+      window.history.back();
+    }
     onSelectSource?.(focusedSource);
   }, [focusedSource, onSelectSource]);
 
@@ -415,7 +453,10 @@ export function MetricSourceBubble({
             <div className="flex items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={() => setFocusedSource(null)}
+                onClick={() => {
+                  setFocusedSource(null);
+                  popSubView();
+                }}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white/85 hover:bg-white/7 transition-colors"
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
@@ -494,6 +535,10 @@ export function MetricSourceBubble({
                   href={focusedSource.url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    const w = window.open(focusedSource.url, '_blank', 'noopener,noreferrer');
+                    if (w) e.preventDefault();
+                  }}
                   className="inline-flex h-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 text-sm font-medium text-white/90 hover:bg-white/7 transition-colors"
                 >
                   View
@@ -614,6 +659,7 @@ export function MetricSourceBubble({
               <button
                 type="button"
                 onClick={() => {
+                  pushSubView();
                   setCustomMode(true);
                   setFocusedSource(null);
                   setCustomError(null);
@@ -658,6 +704,7 @@ export function MetricSourceBubble({
                   onClick={() => {
                     setCustomMode(false);
                     setCustomError(null);
+                    popSubView();
                   }}
                   className="shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/80 hover:bg-white/7 transition-colors"
                   aria-label="Go back"
@@ -681,6 +728,7 @@ export function MetricSourceBubble({
                     } else if (e.key === 'Escape') {
                       setCustomMode(false);
                       setCustomError(null);
+                      popSubView();
                     }
                   }}
                   placeholder="Custom metric URL (https://...)"

@@ -18,7 +18,7 @@ import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
 
 type DiscoveryState = 'idle' | 'discovering' | 'success' | 'clarify' | 'rejected' | 'error';
-type CreationStep = 'clarify_metric' | 'name' | 'similar_markets' | 'description' | 'select_source' | 'icon' | 'complete';
+export type CreationStep = 'clarify_metric' | 'name' | 'similar_markets' | 'description' | 'select_source' | 'icon' | 'complete';
 
 const PROMPT_EXAMPLE_SUGGESTIONS = [
   'Current price of Bitcoin in USD',
@@ -462,7 +462,7 @@ function StepPanel({
           ].join(' ')}
         >
           <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3 w-full sm:w-auto">
-            <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-full sm:max-w-[520px] order-1">
+            <div className="rounded-2xl border border-white/8 bg-[#0A0A0A] px-4 py-3 shadow-lg w-full sm:w-[520px] sm:max-w-[520px] order-1">
               {!isInteractiveUserInput && step === 'select_source' ? (
                 <div>
                   <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
@@ -1009,7 +1009,19 @@ function MarketDetailsReview({
   );
 }
 
-export function InteractiveMarketCreation() {
+import type { CreationStateSnapshot } from '@/lib/marketDraftSerializer';
+
+export interface InteractiveMarketCreationProps {
+  initialState?: CreationStateSnapshot | null;
+  onStateChange?: (snap: CreationStateSnapshot) => void;
+  onDeploySuccess?: (symbol: string, marketId: string) => void;
+}
+
+export function InteractiveMarketCreation({
+  initialState,
+  onStateChange,
+  onDeploySuccess,
+}: InteractiveMarketCreationProps = {}) {
   const devToolsEnabled =
     process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEV_TOOLS === 'true';
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
@@ -1114,7 +1126,7 @@ export function InteractiveMarketCreation() {
   };
 
   const promptTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
-  const [prompt, setPrompt] = React.useState('');
+  const [prompt, setPrompt] = React.useState(initialState?.prompt ?? '');
   const [isFocused, setIsFocused] = React.useState(false);
   const [promptPlaceholderIdx, setPromptPlaceholderIdx] = React.useState(0);
   const [introHelpKey, setIntroHelpKey] = React.useState<IntroHelpKey | null>(null);
@@ -1184,27 +1196,29 @@ export function InteractiveMarketCreation() {
       'Current price of Bitcoin in USD'
     );
   }, [promptPlaceholderIdx]);
-  const [discoveryState, setDiscoveryState] = React.useState<DiscoveryState>('idle');
-  const [discoveryResult, setDiscoveryResult] = React.useState<MetricDiscoveryResponse | null>(null);
+  const [discoveryState, setDiscoveryState] = React.useState<DiscoveryState>(initialState?.discoveryState ?? 'idle');
+  const [discoveryResult, setDiscoveryResult] = React.useState<MetricDiscoveryResponse | null>(initialState?.discoveryResult ?? null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
-  const [sourcesFetchState, setSourcesFetchState] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [sourcesFetchState, setSourcesFetchState] = React.useState<'idle' | 'loading' | 'success' | 'error'>(
+    initialState?.discoveryResult && initialState?.discoveryState === 'success' ? 'success' : 'idle'
+  );
   const [sourcesFetchNonce, setSourcesFetchNonce] = React.useState(0);
-  const [selectedSource, setSelectedSource] = React.useState<MetricSourceOption | null>(null);
-  const [marketName, setMarketName] = React.useState('');
-  const [marketDescription, setMarketDescription] = React.useState('');
-  const [isNameConfirmed, setIsNameConfirmed] = React.useState(false);
-  const [isDescriptionConfirmed, setIsDescriptionConfirmed] = React.useState(false);
+  const [selectedSource, setSelectedSource] = React.useState<MetricSourceOption | null>(initialState?.selectedSource ?? null);
+  const [marketName, setMarketName] = React.useState(initialState?.marketName ?? '');
+  const [marketDescription, setMarketDescription] = React.useState(initialState?.marketDescription ?? '');
+  const [isNameConfirmed, setIsNameConfirmed] = React.useState(initialState?.isNameConfirmed ?? false);
+  const [isDescriptionConfirmed, setIsDescriptionConfirmed] = React.useState(initialState?.isDescriptionConfirmed ?? false);
   const [iconFile, setIconFile] = React.useState<File | null>(null);
-  const [iconPreviewUrl, setIconPreviewUrl] = React.useState<string | null>(null);
-  const [iconStoredUrl, setIconStoredUrl] = React.useState<string | null>(null);
+  const [iconPreviewUrl, setIconPreviewUrl] = React.useState<string | null>(initialState?.iconPreviewUrl ?? null);
+  const [iconStoredUrl, setIconStoredUrl] = React.useState<string | null>(initialState?.iconStoredUrl ?? null);
   const [isIconSaving, setIsIconSaving] = React.useState(false);
-  const [isIconConfirmed, setIsIconConfirmed] = React.useState(false);
-  const [nameTouched, setNameTouched] = React.useState(false);
-  const [descriptionTouched, setDescriptionTouched] = React.useState(false);
+  const [isIconConfirmed, setIsIconConfirmed] = React.useState(initialState?.isIconConfirmed ?? false);
+  const [nameTouched, setNameTouched] = React.useState(initialState?.nameTouched ?? false);
+  const [descriptionTouched, setDescriptionTouched] = React.useState(initialState?.descriptionTouched ?? false);
 
   // Validation state
   const [isValidating, setIsValidating] = React.useState(false);
-  const [validationResult, setValidationResult] = React.useState<MetricResolutionResponse | null>(null);
+  const [validationResult, setValidationResult] = React.useState<MetricResolutionResponse | null>(initialState?.validationResult ?? null);
   const [showValidationModal, setShowValidationModal] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | null>(null);
 
@@ -1232,7 +1246,7 @@ export function InteractiveMarketCreation() {
   );
 
   // Source denial/re-search state
-  const [deniedSourceUrls, setDeniedSourceUrls] = React.useState<string[]>([]);
+  const [deniedSourceUrls, setDeniedSourceUrls] = React.useState<string[]>(initialState?.deniedSourceUrls ?? []);
   const [searchVariation, setSearchVariation] = React.useState(0);
 
   // Duplicate market detection state
@@ -1255,7 +1269,7 @@ export function InteractiveMarketCreation() {
   };
   const [similarMarkets, setSimilarMarkets] = React.useState<SimilarMarketMatch[]>([]);
   const [similarMarketsLoading, setSimilarMarketsLoading] = React.useState(false);
-  const [similarMarketsAcknowledged, setSimilarMarketsAcknowledged] = React.useState(false);
+  const [similarMarketsAcknowledged, setSimilarMarketsAcknowledged] = React.useState(initialState?.similarMarketsAcknowledged ?? false);
   const [metricUrlDuplicates, setMetricUrlDuplicates] = React.useState<MetricUrlDuplicate[]>([]);
   const [metricUrlBlockedSource, setMetricUrlBlockedSource] = React.useState<string | null>(null);
 
@@ -1280,11 +1294,13 @@ export function InteractiveMarketCreation() {
   // Create Market assistant state
   const [assistantMessage, setAssistantMessage] = React.useState<string>('');
   const [assistantIsLoading, setAssistantIsLoading] = React.useState(false);
-  const [assistantHistory, setAssistantHistory] = React.useState<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>([]);
+  const [assistantHistory, setAssistantHistory] = React.useState<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>>(
+    (initialState?.assistantHistory as any) ?? []
+  );
 
-  const [metricClarification, setMetricClarification] = React.useState('');
+  const [metricClarification, setMetricClarification] = React.useState(initialState?.metricClarification ?? '');
 
-  const [visibleStep, setVisibleStep] = React.useState<CreationStep>('clarify_metric');
+  const [visibleStep, setVisibleStep] = React.useState<CreationStep>(initialState?.visibleStep ?? 'clarify_metric');
   const [isStepAnimating, setIsStepAnimating] = React.useState(false);
   const stepTimerRef = React.useRef<number | null>(null);
 
@@ -1306,6 +1322,41 @@ export function InteractiveMarketCreation() {
   React.useEffect(() => {
     marketDescriptionRef.current = marketDescription;
   }, [marketDescription]);
+
+  // Report state changes to parent for draft auto-save
+  const onStateChangeRef = React.useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+  React.useEffect(() => {
+    if (!onStateChangeRef.current) return;
+    const snap: CreationStateSnapshot = {
+      prompt,
+      metricClarification,
+      marketName,
+      marketDescription,
+      isNameConfirmed,
+      nameTouched,
+      isDescriptionConfirmed,
+      descriptionTouched,
+      isIconConfirmed,
+      similarMarketsAcknowledged,
+      discoveryResult,
+      discoveryState,
+      selectedSource,
+      validationResult,
+      deniedSourceUrls,
+      iconStoredUrl,
+      iconPreviewUrl,
+      assistantHistory,
+      visibleStep,
+    };
+    onStateChangeRef.current(snap);
+  }, [
+    prompt, metricClarification, marketName, marketDescription,
+    isNameConfirmed, nameTouched, isDescriptionConfirmed, descriptionTouched,
+    isIconConfirmed, similarMarketsAcknowledged, discoveryResult, discoveryState,
+    selectedSource, validationResult, deniedSourceUrls, iconStoredUrl,
+    iconPreviewUrl, assistantHistory, visibleStep,
+  ]);
 
   const assistantRequestKey = React.useMemo(() => {
     if ((discoveryState !== 'success' && discoveryState !== 'clarify') || !discoveryResult) return '';
@@ -2208,6 +2259,7 @@ export function InteractiveMarketCreation() {
       try {
         window.dispatchEvent(new CustomEvent('marketDeployed', { detail: { symbol } }));
       } catch {}
+      onDeploySuccess?.(symbol, marketId);
       router.replace(`/token/${encodeURIComponent(symbol)}`);
       deploymentOverlay.fadeOutAndClose(500);
     } catch (error) {
@@ -2235,6 +2287,7 @@ export function InteractiveMarketCreation() {
     stepIndexMap,
     updateOverlayIndex,
     gaslessEnabled,
+    onDeploySuccess,
   ]);
 
   React.useEffect(() => {
@@ -2255,7 +2308,7 @@ export function InteractiveMarketCreation() {
   // Check for similar existing markets as soon as the user types a market name.
   // Debounced to avoid hammering the API on every keystroke.
   const similarSearchTimerRef = React.useRef<number | null>(null);
-  const lastSimilarQueryRef = React.useRef<string>('');
+  const lastSimilarQueryRef = React.useRef<string>(initialState?.marketName?.trim() || '');
 
   React.useEffect(() => {
     console.log('[SimilarMarkets] effect fired', JSON.stringify({ discoveryState, marketName, lastQuery: lastSimilarQueryRef.current }));

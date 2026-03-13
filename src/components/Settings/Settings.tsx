@@ -11,6 +11,8 @@ import { formDataToUserProfile, userProfileToFormData, DEFAULT_PROFILE_IMAGE } f
 import FuturesMarketFactoryAbi from '@/lib/abis/FuturesMarketFactory.json'
 import ActionStatusModal from '@/components/watchlist/ActionStatusModal'
 import VaultActionModal from '@/components/PortfolioV2/VaultActionModal'
+import { useMarketDraft } from '@/hooks/useMarketDraft'
+import { stepLabel, stepIndex, STEP_ORDER } from '@/types/marketDraft'
 
 export interface SettingsProps {
   className?: string
@@ -60,6 +62,9 @@ export default function Settings({ className }: SettingsProps) {
       refreshProfile()
     }
   }, [walletData.userProfile, walletData.isConnected, walletData.address, refreshProfile])
+
+  // Draft markets
+  const { drafts: userDrafts, isLoading: draftsLoading, deleteDraft: deleteDraftById } = useMarketDraft(walletData.address ?? null)
 
   // Validate username as user types
   const validateUsername = (username: string): string | null => {
@@ -225,7 +230,7 @@ export default function Settings({ className }: SettingsProps) {
     }
   }
 
-  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'withdrawals' | 'preferences'
+  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'drafts' | 'withdrawals' | 'preferences'
   const tabs = useMemo(
     () =>
       [
@@ -233,6 +238,7 @@ export default function Settings({ className }: SettingsProps) {
         { id: 'links' as const, label: 'Links' },
         { id: 'notifications' as const, label: 'Notifications' },
         { id: 'markets' as const, label: 'My Markets' },
+        { id: 'drafts' as const, label: 'Drafts' },
         { id: 'withdrawals' as const, label: 'Withdrawals' },
         { id: 'preferences' as const, label: 'Preferences' },
       ] satisfies Array<{ id: SettingsTabId; label: string }>,
@@ -1948,6 +1954,113 @@ export default function Settings({ className }: SettingsProps) {
               </div>
             </div>
           </>
+        ) : null}
+
+        {activeTab === 'drafts' ? (
+          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="min-w-0">
+                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Draft Markets</h4>
+                  <div className="mt-1 text-[10px] text-[#606060]">
+                    Markets you started creating but haven't deployed yet
+                  </div>
+                </div>
+                <button
+                  onClick={() => router.push('/new-market')}
+                  className="shrink-0 rounded-md bg-white/10 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-white/15 transition-colors"
+                >
+                  + New Market
+                </button>
+              </div>
+
+              {!walletData.address ? (
+                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                    <span className="text-[11px] text-[#808080]">
+                      Connect your wallet to view your draft markets.
+                    </span>
+                  </div>
+                </div>
+              ) : draftsLoading ? (
+                <div className="flex items-center gap-2 py-4">
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border border-[#333] border-t-white/60" />
+                  <span className="text-[11px] text-[#808080]">Loading drafts…</span>
+                </div>
+              ) : userDrafts.length === 0 ? (
+                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4 text-center">
+                  <div className="text-[11px] text-[#808080]">No draft markets yet.</div>
+                  <div className="mt-1 text-[10px] text-[#606060]">
+                    When you start creating a market on the{' '}
+                    <button onClick={() => router.push('/new-market')} className="text-blue-400 hover:underline">
+                      New Market
+                    </button>{' '}
+                    page, your progress will be auto-saved here.
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {userDrafts.map((draft) => {
+                    const step = stepIndex(draft.currentStep) + 1;
+                    const total = STEP_ORDER.length;
+                    const pct = Math.round((step / total) * 100);
+                    const age = Date.now() - new Date(draft.updatedAt).getTime();
+                    const mins = Math.floor(age / 60_000);
+                    const timeAgo = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : Math.floor(mins / 60) < 24 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`;
+
+                    return (
+                      <div
+                        key={draft.id}
+                        className="group/draft flex items-center gap-3 rounded-md border border-[#222222] bg-[#0F0F0F] hover:bg-[#141414] hover:border-[#333333] p-3 transition-all duration-200"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-[12px] font-medium text-white/90">
+                              {draft.title || 'Untitled market'}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-2">
+                            <div className="h-1 w-20 rounded-full bg-[#222]">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] text-[#606060]">{stepLabel(draft.currentStep)}</span>
+                            <span className="text-[10px] text-[#404040]">·</span>
+                            <span className="text-[10px] text-[#606060]">{timeAgo}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            onClick={() => {
+                              if (confirm('Delete this draft? This cannot be undone.')) {
+                                void deleteDraftById(draft.id);
+                              }
+                            }}
+                            className="rounded p-1 text-[#606060] hover:text-red-400 hover:bg-white/5 transition-colors opacity-0 group-hover/draft:opacity-100"
+                            title="Delete draft"
+                          >
+                            <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
+                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => router.push(`/new-market?draft=${draft.id}`)}
+                            className="rounded-md bg-white/8 px-2.5 py-1 text-[11px] font-medium text-white/80 hover:bg-white/12 transition-colors"
+                          >
+                            Continue
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         ) : null}
 
         {activeTab === 'withdrawals' ? (
