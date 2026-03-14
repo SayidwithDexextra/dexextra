@@ -46,6 +46,113 @@ type UdfCompatibleDatafeed = {
   getServerTime?: (cb: (time: number) => void) => void;
 };
 
+// ══════════════════════════════════════════════════════════════════════════════
+// PREFETCH STORE
+// Fire HTTP requests for history + symbol data *before* the TradingView widget
+// initializes.  When TradingView eventually calls getBars / resolveSymbol, the
+// response is already waiting and returned instantly (zero network latency).
+// ══════════════════════════════════════════════════════════════════════════════
+
+type PrefetchEntry<T> = { promise: Promise<T>; resolvedAt?: number };
+
+const historyPrefetchStore = new Map<string, PrefetchEntry<any>>();
+const symbolPrefetchStore = new Map<string, PrefetchEntry<any>>();
+const PREFETCH_TTL_MS = 30_000;
+
+function prefetchKey(symbol: string, resolution: string): string {
+  return `${symbol}|${resolution}`;
+}
+
+const RESOLUTION_MAP: Record<string, string> = {
+  '1': '1m', '5': '5m', '15': '15m', '30': '30m',
+  '60': '1h', '240': '4h', '1D': '1d', 'D': '1d',
+  '1W': '1w', 'W': '1w', '1M': '1mo', 'M': '1mo',
+};
+
+const TIMEFRAME_SECONDS: Record<string, number> = {
+  '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
+  '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800, '1mo': 2592000,
+};
+
+/**
+ * Pre-fetch chart history from the API while TradingView scripts are still loading.
+ * Call this as early as possible (e.g. when the chart component mounts).
+ */
+export function prefetchChartHistory(symbol: string, resolution: string): void {
+  if (typeof window === 'undefined' || !symbol) return;
+  const key = prefetchKey(symbol, resolution);
+  const existing = historyPrefetchStore.get(key);
+  if (existing && existing.resolvedAt && Date.now() - existing.resolvedAt < PREFETCH_TTL_MS) return;
+
+  const tf = RESOLUTION_MAP[resolution] || '1m';
+  const tfSec = TIMEFRAME_SECONDS[tf] || 60;
+  const to = Math.floor(Date.now() / 1000);
+  const countback = 200;
+  const from = to - countback * tfSec * 2;
+
+  const url =
+    `/api/tradingview/history?symbol=${encodeURIComponent(symbol)}` +
+    `&resolution=${encodeURIComponent(resolution)}` +
+    `&from=${from}&to=${to}&countback=${countback}`;
+
+  const promise = fetch(url)
+    .then(async (res) => {
+      if (!res.ok) return null;
+      const body = await res.json();
+      const entry = historyPrefetchStore.get(key);
+      if (entry) entry.resolvedAt = Date.now();
+      return body;
+    })
+    .catch(() => null);
+
+  historyPrefetchStore.set(key, { promise });
+}
+
+/**
+ * Pre-fetch symbol info from the API while TradingView scripts are still loading.
+ */
+export function prefetchSymbolInfo(symbol: string): void {
+  if (typeof window === 'undefined' || !symbol) return;
+  const existing = symbolPrefetchStore.get(symbol);
+  if (existing && existing.resolvedAt && Date.now() - existing.resolvedAt < PREFETCH_TTL_MS) return;
+
+  const url = `/api/tradingview/symbols?symbol=${encodeURIComponent(symbol)}`;
+  const promise = fetch(url)
+    .then(async (res) => {
+      if (!res.ok) return null;
+      const body = await res.json();
+      const entry = symbolPrefetchStore.get(symbol);
+      if (entry) entry.resolvedAt = Date.now();
+      return body;
+    })
+    .catch(() => null);
+
+  symbolPrefetchStore.set(symbol, { promise });
+}
+
+/**
+ * Consume (and remove) a prefetched history response if one exists and is fresh.
+ */
+function consumePrefetchedHistory(symbol: string, resolution: string): Promise<any> | null {
+  const key = prefetchKey(symbol, resolution);
+  const entry = historyPrefetchStore.get(key);
+  if (!entry) return null;
+  historyPrefetchStore.delete(key);
+  if (entry.resolvedAt && Date.now() - entry.resolvedAt > PREFETCH_TTL_MS) return null;
+  return entry.promise;
+}
+
+/**
+ * Consume a prefetched symbol info response if one exists and is fresh.
+ */
+function consumePrefetchedSymbol(symbol: string): Promise<any> | null {
+  const entry = symbolPrefetchStore.get(symbol);
+  if (!entry) return null;
+  symbolPrefetchStore.delete(symbol);
+  if (entry.resolvedAt && Date.now() - entry.resolvedAt > PREFETCH_TTL_MS) return null;
+  return entry.promise;
+}
+
 // Prevent infinite subscribe/unsubscribe loops when TradingView keeps reporting `no_data`.
 // We allow at most one auto-reset per (marketUuid,resolution) in a short window.
 const resetCacheGuard = new Map<string, number>();
@@ -198,6 +305,33 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
     }
   }
 
+  // ── resolveSymbol override: serve from prefetch when available ──
+  const originalResolveSymbol = typeof udfAny.resolveSymbol === 'function' ? udfAny.resolveSymbol.bind(udfAny) : null;
+  if (originalResolveSymbol) {
+    udfAny.resolveSymbol = (
+      symbolName: string,
+      onSymbolResolvedCallback: (symbolInfo: any) => void,
+      onResolveErrorCallback: (reason: string) => void,
+      extension?: any
+    ) => {
+      const prefetched = consumePrefetchedSymbol(symbolName);
+      if (prefetched) {
+        prefetched.then((data: any) => {
+          if (data && data.ticker) {
+            onSymbolResolvedCallback(data);
+          } else {
+            originalResolveSymbol(symbolName, onSymbolResolvedCallback, onResolveErrorCallback, extension);
+          }
+        }).catch(() => {
+          originalResolveSymbol(symbolName, onSymbolResolvedCallback, onResolveErrorCallback, extension);
+        });
+        return;
+      }
+      return originalResolveSymbol(symbolName, onSymbolResolvedCallback, onResolveErrorCallback, extension);
+    };
+  }
+
+  // ── getBars override: serve first request from prefetch, wrap callback for noData tracking ──
   const originalGetBars = typeof udfAny.getBars === 'function' ? udfAny.getBars.bind(udfAny) : null;
   if (originalGetBars) {
     udfAny.getBars = async (
@@ -214,6 +348,54 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
       const marketUuid = looksLikeUuid(ticker) ? ticker : (looksLikeUuid(customMarketId) ? customMarketId : '');
 
       const first = Boolean(periodParams?.firstDataRequest);
+
+      // Wrap the callback so we can detect `no_data` and avoid unnecessary resetCache loops.
+      const wrappedOnHistory = (bars: any[], meta?: any) => {
+        try {
+          if (marketUuid) {
+            const key = `${marketUuid}|${String(resolution)}`;
+            const metaNoData = Boolean(meta?.noData === true || meta?.no_data === true);
+            const noData = metaNoData || !Array.isArray(bars) || bars.length === 0;
+            historyNoDataByKey.set(key, { noData, at: Date.now() });
+          }
+        } catch {
+          // ignore
+        }
+        onHistoryCallback(bars, meta);
+      };
+
+      // On the first data request, try to serve from the prefetch store (fired during script load).
+      if (first) {
+        const prefetchSymbol = marketUuid || ticker;
+        const prefetched = consumePrefetchedHistory(prefetchSymbol, resolution);
+        if (prefetched) {
+          try {
+            const body = await prefetched;
+            if (body && body.s === 'ok' && Array.isArray(body.t) && body.t.length > 0) {
+              const bars: TvBar[] = [];
+              for (let i = 0; i < body.t.length; i++) {
+                bars.push({
+                  time: body.t[i] * 1000,
+                  open: body.o[i],
+                  high: body.h[i],
+                  low: body.l[i],
+                  close: body.c[i],
+                  volume: body.v[i],
+                });
+              }
+              wrappedOnHistory(bars, { noData: false });
+              return;
+            }
+            if (body && body.s === 'no_data') {
+              wrappedOnHistory([], { noData: true, nextTime: body.nextTime });
+              return;
+            }
+          } catch {
+            // prefetch failed — fall through to normal UDF path
+          }
+        }
+      }
+
       if (first && marketUuid && devSeedEnabled() && !devSeeded.has(marketUuid)) {
         devSeeded.add(marketUuid);
         try {
@@ -221,7 +403,6 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
           const to = periodParams?.to;
           const countback = periodParams?.countBack ?? periodParams?.countback;
 
-          // Seed OHLCV via history endpoint (debugSeed=1 inserts synthetic ticks + returns ok once MV catches up).
           const historyUrl =
             `/api/tradingview/history?symbol=${encodeURIComponent(marketUuid)}` +
             `&resolution=${encodeURIComponent(String(resolution))}` +
@@ -230,8 +411,6 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
             (countback ? `&countback=${encodeURIComponent(String(countback))}` : '') +
             `&debugSeed=1`;
 
-          // Seed metric series used by the TradingView metric overlay.
-          // Keep this aligned with `src/lib/tradingview/metricIndicator.ts` which reads `/api/charts/metric`.
           const metricNameSeedRaw = String(
             (symbolInfo as any)?.custom?.metric_id || (symbolInfo as any)?.name || (symbolInfo as any)?.ticker || ''
           ).trim();
@@ -253,21 +432,6 @@ export function createMarketUuidDatafeed(udf: UdfCompatibleDatafeed): UdfCompati
           console.warn('[TradingViewDatafeed] Dev seed failed:', (e as any)?.message || String(e));
         }
       }
-
-      // Wrap the callback so we can detect `no_data` and avoid unnecessary resetCache loops.
-      const wrappedOnHistory = (bars: any[], meta?: any) => {
-        try {
-          if (marketUuid) {
-            const key = `${marketUuid}|${String(resolution)}`;
-            const metaNoData = Boolean(meta?.noData === true || meta?.no_data === true);
-            const noData = metaNoData || !Array.isArray(bars) || bars.length === 0;
-            historyNoDataByKey.set(key, { noData, at: Date.now() });
-          }
-        } catch {
-          // ignore
-        }
-        onHistoryCallback(bars, meta);
-      };
 
       return originalGetBars(symbolInfo, resolution, periodParams, wrappedOnHistory, onErrorCallback);
     };

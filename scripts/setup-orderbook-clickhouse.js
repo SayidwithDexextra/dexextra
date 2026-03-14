@@ -198,7 +198,58 @@ async function setupOrderbookClickHouse() {
       `Ensured ${db}.ohlcv_1h table`
     );
 
-    // 5b) Chained materialized view: ohlcv_1m → ohlcv_1h
+    // 5b) Pre-aggregated 5m candles table
+    // Reduces scan volume for 5m/15m/30m queries (3-6x fewer rows than ohlcv_1m).
+    await exec(
+      `CREATE TABLE IF NOT EXISTS ${db}.ohlcv_5m (
+        market_uuid LowCardinality(String),
+        symbol LowCardinality(String),
+        ts DateTime('UTC'),
+        open Float64,
+        high Float64,
+        low Float64,
+        close Float64,
+        volume Float64,
+        trades UInt64,
+        first_ts DateTime('UTC'),
+        last_ts DateTime('UTC'),
+        INDEX idx_market_uuid market_uuid TYPE bloom_filter(0.01) GRANULARITY 4
+      )
+      ENGINE = MergeTree()
+      PARTITION BY toYYYYMM(ts)
+      ORDER BY (market_uuid, ts)
+      TTL ts + INTERVAL 180 DAY DELETE
+      SETTINGS index_granularity = 8192`,
+      `Ensured ${db}.ohlcv_5m table`
+    );
+
+    // 5c) Chained materialized view: ohlcv_1m → ohlcv_5m
+    await exec(
+      `DROP VIEW IF EXISTS ${db}.mv_1m_to_5m`,
+      `Dropped existing ${db}.mv_1m_to_5m (if any)`
+    );
+
+    await exec(
+      `CREATE MATERIALIZED VIEW ${db}.mv_1m_to_5m
+        TO ${db}.ohlcv_5m AS
+      SELECT
+        market_uuid,
+        any(symbol) AS symbol,
+        bucket_ts AS ts,
+        argMin(open, ts) AS open,
+        max(high) AS high,
+        min(low) AS low,
+        argMax(close, ts) AS close,
+        sum(volume) AS volume,
+        sum(trades) AS trades,
+        min(ts) AS first_ts,
+        max(ts) AS last_ts
+      FROM ${db}.ohlcv_1m
+      GROUP BY market_uuid, toStartOfFiveMinutes(ts) AS bucket_ts`,
+      `Created ${db}.mv_1m_to_5m (ohlcv_1m → ohlcv_5m)`
+    );
+
+    // 5d) Chained materialized view: ohlcv_1m → ohlcv_1h
     await exec(
       `DROP VIEW IF EXISTS ${db}.mv_1m_to_1h`,
       `Dropped existing ${db}.mv_1m_to_1h (if any)`

@@ -25,17 +25,6 @@ interface SimilarMarketsProps {
   className?: string;
 }
 
-function MarketIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M3 3v18h18" />
-      <path d="M18 17V9" />
-      <path d="M13 17V5" />
-      <path d="M8 17v-3" />
-    </svg>
-  );
-}
-
 function EmptyIcon() {
   return (
     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -197,17 +186,16 @@ export default function SimilarMarkets({
           className={styles.marketItem}
         >
           <div className={styles.marketLogo}>
-            {market.icon_image_url ? (
-              <img
-                src={market.icon_image_url}
-                alt=""
-                className={styles.marketLogoImg}
-              />
-            ) : (
-              <div className={styles.marketLogoPlaceholder}>
-                <MarketIcon />
-              </div>
-            )}
+            <img
+              src={market.icon_image_url || PLACEHOLDER_LOGO}
+              alt=""
+              className={styles.marketLogoImg}
+              onError={(e) => {
+                const el = e.currentTarget;
+                if (el.src === PLACEHOLDER_LOGO) return;
+                el.src = PLACEHOLDER_LOGO;
+              }}
+            />
           </div>
           <div className={styles.marketInfo}>
             <span className={styles.marketName}>{market.name}</span>

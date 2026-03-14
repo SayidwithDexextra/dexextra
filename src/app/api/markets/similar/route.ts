@@ -363,6 +363,30 @@ export async function POST(request: NextRequest) {
         }
 
         candidates = all;
+
+        // The search_markets RPC does not return icon_image_url.
+        // Supplement RPC results with icon URLs from the markets table.
+        if (candidates.length > 0) {
+          const idsToFetch = candidates
+            .filter((c) => !c.icon_image_url)
+            .map((c) => c.id);
+          if (idsToFetch.length > 0) {
+            const { data: iconRows } = await supabase
+              .from('markets')
+              .select('id, icon_image_url')
+              .in('id', idsToFetch);
+            if (iconRows && Array.isArray(iconRows)) {
+              const iconMap = new Map(
+                iconRows.map((r: any) => [r.id, r.icon_image_url])
+              );
+              for (const c of candidates) {
+                if (!c.icon_image_url && iconMap.has(c.id)) {
+                  c.icon_image_url = iconMap.get(c.id) ?? null;
+                }
+              }
+            }
+          }
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn('search_markets RPC threw:', msg);

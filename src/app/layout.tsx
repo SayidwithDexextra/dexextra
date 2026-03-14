@@ -40,6 +40,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        {/* Preload TradingView charting library so it's cached before the chart component mounts */}
+        <link rel="preload" href="/charting_library/charting_library.js" as="script" />
+        <link rel="preload" href="/charting_library/datafeeds/udf/dist/bundle.js" as="script" />
         {/*
           MetaMask in-app browser blocks automatic external-app opens on page load.
           Install a guard BEFORE any third-party scripts / React hydration.

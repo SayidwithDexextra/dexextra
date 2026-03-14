@@ -489,6 +489,7 @@ export class ClickHouseDataPipeline {
   }
 
   private ohlcv1hAvailable: boolean | null = null;
+  private ohlcv5mAvailable: boolean | null = null;
 
   /**
    * Check if the pre-aggregated ohlcv_1h table exists (cached per instance lifetime).
@@ -505,6 +506,23 @@ export class ClickHouseDataPipeline {
       this.ohlcv1hAvailable = false;
     }
     return this.ohlcv1hAvailable;
+  }
+
+  /**
+   * Check if the pre-aggregated ohlcv_5m table exists (cached per instance lifetime).
+   */
+  private async hasOhlcv5m(): Promise<boolean> {
+    if (this.ohlcv5mAvailable !== null) return this.ohlcv5mAvailable;
+    try {
+      await this.ensureClient().query({
+        query: 'SELECT 1 FROM ohlcv_5m LIMIT 0',
+        format: 'JSONEachRow',
+      });
+      this.ohlcv5mAvailable = true;
+    } catch {
+      this.ohlcv5mAvailable = false;
+    }
+    return this.ohlcv5mAvailable;
   }
 
   /**
@@ -955,6 +973,12 @@ export class ClickHouseDataPipeline {
   private static readonly HOURLY_PLUS_TIMEFRAMES = new Set(['1h', '4h', '1d', '1w', '1mo']);
 
   /**
+   * Timeframes that benefit from the pre-aggregated ohlcv_5m table.
+   * 15m = aggregate 3 rows vs 15, 30m = aggregate 6 rows vs 30.
+   */
+  private static readonly FIVE_MIN_PLUS_TIMEFRAMES = new Set(['5m', '15m', '30m']);
+
+  /**
    * Build PREWHERE/WHERE clauses from filter params.
    * PREWHERE targets primary-key columns (market_uuid, ts) for fast granule skipping.
    * WHERE handles non-primary-key columns (symbol).
@@ -1023,6 +1047,15 @@ export class ClickHouseDataPipeline {
         return await this.getOHLCVCandlesFrom1h(timeframe, config, limit, filterOpts);
       } catch (error) {
         console.warn(`⚠️ ohlcv_1h query failed, falling back to ohlcv_1m:`, error instanceof Error ? error.message : error);
+      }
+    }
+
+    // Route 5m/15m/30m through ohlcv_5m when available (3-6x fewer rows to scan)
+    if (ClickHouseDataPipeline.FIVE_MIN_PLUS_TIMEFRAMES.has(timeframe) && await this.hasOhlcv5m()) {
+      try {
+        return await this.getOHLCVCandlesFrom5m(timeframe, config, limit, filterOpts);
+      } catch (error) {
+        console.warn(`⚠️ ohlcv_5m query failed, falling back to ohlcv_1m:`, error instanceof Error ? error.message : error);
       }
     }
 
@@ -1106,8 +1139,84 @@ export class ClickHouseDataPipeline {
   }
 
   /**
+   * Query from the pre-aggregated ohlcv_5m table.
+   * For exact 5m: GROUP BY ts (merges partial rows from different insert batches).
+   * For 15m/30m: GROUP BY bucket from ohlcv_5m (scans 3-6 rows per bucket vs 15-30 from 1m).
+   */
+  private async getOHLCVCandlesFrom5m(
+    timeframe: string,
+    config: TimeframeConfig,
+    limit: number,
+    filterOpts: { safeMarketUuid?: string; safeSymbol?: string; startEpochSec?: number; endEpochSec?: number }
+  ): Promise<OHLCVCandle[]> {
+    const { prewhere, where } = this.buildFilterClauses(filterOpts);
+
+    let query: string;
+
+    if (timeframe === '5m') {
+      query = `
+        SELECT
+          any(symbol) AS symbol,
+          toUnixTimestamp(ts) AS time,
+          argMin(open, first_ts) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          argMax(close, last_ts) AS close,
+          sum(volume) AS volume,
+          sum(trades) AS trades
+        FROM ohlcv_5m
+        ${prewhere}
+        ${where}
+        GROUP BY ts
+        ORDER BY ts DESC
+        LIMIT ${limit}
+        SETTINGS
+          max_execution_time = 8,
+          max_threads = 4,
+          optimize_aggregation_in_order = 1
+      `;
+    } else {
+      query = `
+        SELECT
+          any(symbol) AS symbol,
+          toStartOfInterval(ts, ${config.clickhouseInterval}, 'UTC') AS bucket_ts,
+          toUnixTimestamp(bucket_ts) AS time,
+          argMin(open, first_ts) AS open,
+          max(high) AS high,
+          min(low) AS low,
+          argMax(close, last_ts) AS close,
+          sum(volume) AS volume,
+          sum(trades) AS trades
+        FROM ohlcv_5m
+        ${prewhere}
+        ${where}
+        GROUP BY bucket_ts
+        ORDER BY bucket_ts DESC
+        LIMIT ${limit}
+        SETTINGS
+          max_execution_time = 8,
+          max_threads = 4,
+          optimize_aggregation_in_order = 1
+      `;
+    }
+
+    const result = await this.ensureClient().query({ query, format: 'JSONEachRow' });
+    const data = (await result.json()) as any[];
+    return (data || []).map((row: any) => ({
+      symbol: String(row.symbol),
+      time: Number(row.time),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: Number(row.volume),
+      trades: Number(row.trades),
+    })).reverse();
+  }
+
+  /**
    * Original dynamic-aggregation path from ohlcv_1m.
-   * Used for sub-hour timeframes and as fallback when ohlcv_1h is unavailable.
+   * Used for sub-hour timeframes and as fallback when ohlcv_1h/ohlcv_5m is unavailable.
    */
   private async getOHLCVCandlesFrom1m(
     timeframe: string,
@@ -1136,7 +1245,7 @@ export class ClickHouseDataPipeline {
         ORDER BY ts DESC
         LIMIT ${limit}
         SETTINGS
-          max_execution_time = 8,
+          max_execution_time = 5,
           max_threads = 4,
           optimize_read_in_order = 1,
           read_in_order_two_level_merge_threshold = 100
@@ -1160,9 +1269,10 @@ export class ClickHouseDataPipeline {
         ORDER BY bucket_ts DESC
         LIMIT ${limit}
         SETTINGS
-          max_execution_time = 8,
+          max_execution_time = 5,
           max_threads = 4,
-          optimize_aggregation_in_order = 1
+          optimize_aggregation_in_order = 1,
+          optimize_read_in_order = 1
       `;
     }
 

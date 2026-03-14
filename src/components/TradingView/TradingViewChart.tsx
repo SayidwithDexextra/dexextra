@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createMarketUuidDatafeed } from '@/lib/tradingview/marketUuidDatafeed';
+import { createMarketUuidDatafeed, prefetchChartHistory, prefetchSymbolInfo } from '@/lib/tradingview/marketUuidDatafeed';
 import {
   createCustomIndicatorsGetter,
   getMetricStudyName,
@@ -136,6 +136,7 @@ export default function TradingViewChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<any>(null);
   const metricStudyCreatedRef = useRef<boolean>(false);
+  const metricConfigRef = useRef<MetricIndicatorConfig | null>(null);
   const [scriptReady, setScriptReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +281,9 @@ export default function TradingViewChart({
     [metricConfig]
   );
 
+  // Keep ref in sync so the widget-creation effect can read the latest config without re-running
+  metricConfigRef.current = metricConfig;
+
   const metricOnlyResolved = typeof metricOnly === 'boolean' ? metricOnly : metricOnlyAuto;
 
   // Apply `metricOnlyResolved` without recreating the widget (recreating can drop realtime subs).
@@ -379,6 +383,12 @@ export default function TradingViewChart({
     let cancelled = false;
 
     setDebugStep('loading-library');
+
+    // Fire data prefetch in parallel with script loading so the API round-trip
+    // overlaps with the ~1-2s it takes to parse the charting library JS.
+    prefetchChartHistory(symbol, interval);
+    prefetchSymbolInfo(symbol);
+
     Promise.all([ensureChartingLibrary(), ensureUdfDatafeed()])
       .then(() => {
         if (!cancelled) setScriptReady(true);
@@ -411,14 +421,11 @@ export default function TradingViewChart({
     setHasWidget(false);
     metricStudyCreatedRef.current = false;
 
-    // OPTIMIZATION: Reduced timeout from 60s to 15s for better UX
-    // The chart usually loads within 5-10 seconds; 15s accounts for slow networks
     const readyTimeout = window.setTimeout(() => {
-      // Timeout is non-fatal if the chart finishes later; keep it as a warning.
       setError('Chart is taking longer than expected. This may indicate limited data for this market.');
       setIsLoading(false);
       setDebugStep('timeout');
-    }, 15_000);
+    }, 10_000);
 
     const disabledFeatures = [
       ...(hideTopToolbar ? ['header_widget'] : []),
@@ -438,9 +445,12 @@ export default function TradingViewChart({
           )
         : null;
 
+    // Read metric config from ref so this effect doesn't re-run when only metric config changes
+    const currentMetricConfig = metricConfigRef.current;
+
     // Build custom_indicators_getter if metric overlay is configured
-    const customIndicatorsGetter = metricConfig
-      ? createCustomIndicatorsGetter([metricConfig])
+    const customIndicatorsGetter = currentMetricConfig
+      ? createCustomIndicatorsGetter([currentMetricConfig])
       : undefined;
 
     // Helpful runtime breadcrumbs for debugging indicator wiring.
@@ -449,11 +459,11 @@ export default function TradingViewChart({
       displaySymbol,
       interval,
       metricOverlayEnabled: metricOverlay?.enabled !== false,
-      metricConfig: metricConfig
+      metricConfig: currentMetricConfig
         ? {
-            marketId: metricConfig.marketId,
-            timeframe: metricConfig.timeframe,
-            displayName: metricConfig.displayName,
+            marketId: currentMetricConfig.marketId,
+            timeframe: currentMetricConfig.timeframe,
+            displayName: currentMetricConfig.displayName,
           }
         : null,
       hasCustomIndicatorsGetter: Boolean(customIndicatorsGetter),
@@ -485,7 +495,7 @@ export default function TradingViewChart({
       // use same-origin loading. This is safe because vercel.json sets
       // X-Frame-Options: SAMEORIGIN (not DENY).
       enabled_features: ['remove_library_container_border', 'iframe_loading_same_origin'],
-      debug: true,
+      debug: false,
       loading_screen: {
         // NOTE: TradingView loading screen does not support gradients; use the start color.
         backgroundColor: theme === 'dark' ? '#18181a' : '#ffffff',
@@ -551,11 +561,11 @@ export default function TradingViewChart({
         symbol,
         displaySymbol,
         interval,
-        metricConfig: metricConfig
+        metricConfig: currentMetricConfig
           ? {
-              marketId: metricConfig.marketId,
-              timeframe: metricConfig.timeframe,
-              displayName: metricConfig.displayName,
+              marketId: currentMetricConfig.marketId,
+              timeframe: currentMetricConfig.timeframe,
+              displayName: currentMetricConfig.displayName,
             }
           : null,
       });
@@ -588,11 +598,10 @@ export default function TradingViewChart({
         }
       };
       applyChartOverrides();
-      window.setTimeout(applyChartOverrides, 250);
 
       // Remove volume indicator/pane if requested (belt-and-suspenders).
       // Even with `create_volume_indicator_by_default` + `addVolume:false`, some saved templates/builds
-      // can still render Volume asynchronously. We attempt removal a few times.
+      // can still render Volume asynchronously.
       const removeVolumeStudies = () => {
         if (!hideVolumePanel || !chart) return;
         try {
@@ -602,11 +611,9 @@ export default function TradingViewChart({
             const id = (s as any)?.id;
             const name = String((s as any)?.name ?? (s as any)?.title ?? '').toLowerCase();
             if (!id) continue;
-            // "Volume" is the built-in default study name, but be tolerant.
             if (name === 'volume' || name.includes('volume')) {
               try {
                 chart.removeEntity(id);
-                console.warn(`[TradingViewChart] Removed volume study: ${name} (${id})`);
               } catch {
                 // noop
               }
@@ -617,8 +624,7 @@ export default function TradingViewChart({
         }
       };
       removeVolumeStudies();
-      window.setTimeout(removeVolumeStudies, 750);
-      window.setTimeout(removeVolumeStudies, 2500);
+      window.setTimeout(removeVolumeStudies, 500);
 
       // Add standard studies
       if (studies.length && chart) {
@@ -633,8 +639,8 @@ export default function TradingViewChart({
 
       // Auto-add metric overlay study if configured
       // OPTIMIZATION: Reduced retry attempts and using exponential backoff to minimize blocking time
-      if (metricConfig && chart) {
-        const studyName = getMetricStudyName(metricConfig.displayName || 'Metric Value');
+      if (currentMetricConfig && chart) {
+        const studyName = getMetricStudyName(currentMetricConfig.displayName || 'Metric Value');
         const tryCreateMetricStudy = (attempt: number) => {
           if (metricStudyCreatedRef.current) return;
           // TradingView loads custom studies asynchronously. Before calling `createStudy`,
@@ -752,6 +758,7 @@ export default function TradingViewChart({
         widgetRef.current = null;
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- metricConfig is read from ref to avoid widget recreation
   }, [
     scriptReady,
     symbol,
@@ -768,9 +775,7 @@ export default function TradingViewChart({
     hideVolumePanel,
     studiesKey,
     onSymbolChange,
-    onIntervalChange,
-    metricConfig,
-    metricConfigKey
+    onIntervalChange
   ]);
 
   return (

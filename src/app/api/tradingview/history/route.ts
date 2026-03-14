@@ -11,13 +11,27 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// === CONNECTION PRE-WARMING ===
+// === CONNECTION PRE-WARMING + KEEP-ALIVE ===
 // Eagerly establish the ClickHouse TLS connection at module load so the first
 // real chart request doesn't pay the 1-3s cold-start penalty.
+// Also ping periodically to prevent ClickHouse Cloud from dropping idle connections.
+const KEEPALIVE_INTERVAL_MS = 30_000;
+let _keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+
 const _chWarmup = (() => {
   try {
     const ch = getClickHouseDataPipeline();
-    if (ch.isConfigured()) ch.warmConnection().catch(() => {});
+    if (ch.isConfigured()) {
+      ch.warmConnection().catch(() => {});
+      if (!_keepAliveTimer) {
+        _keepAliveTimer = setInterval(() => {
+          ch.warmConnection().catch(() => {});
+        }, KEEPALIVE_INTERVAL_MS);
+        if (typeof _keepAliveTimer === 'object' && 'unref' in _keepAliveTimer) {
+          (_keepAliveTimer as any).unref();
+        }
+      }
+    }
   } catch {}
 })();
 
@@ -26,9 +40,13 @@ const CLICKHOUSE_QUERY_TIMEOUT_MS = 4_000;
 const SUPABASE_QUERY_TIMEOUT_MS = 2_000;
 const METRIC_SERIES_TIMEOUT_MS = 3_000;
 
-type CachedHistory = { expiresAt: number; body: any; headers: Record<string, string> };
+type CachedHistory = { expiresAt: number; staleAt: number; body: any; headers: Record<string, string> };
 const HISTORY_CACHE = new Map<string, CachedHistory>();
 const HISTORY_CACHE_MAX_KEYS = 500;
+// Track which keys are currently being revalidated to avoid duplicate fetches
+const SWR_INFLIGHT = new Set<string>();
+// Stale entries can be served for up to 2x the TTL while revalidating in the background
+const SWR_GRACE_MULTIPLIER = 2;
 
 // Timeframe-aware cache TTLs — longer TFs change less frequently, cache longer
 const HISTORY_CACHE_TTL_BY_TF: Record<string, number> = {
@@ -368,6 +386,56 @@ async function fetchMetricSeriesAsOhlcv(params: {
 // REMOVED: generateSeedCandles1m function - synthetic OHLCV seeding to market_ticks/ohlcv_1m is disabled.
 // Metric-only markets should rely on metric_series_1m fallback instead.
 
+/**
+ * Background revalidation for stale-while-revalidate cache strategy.
+ * Runs without blocking the response — updates the cache for the next request.
+ */
+async function revalidateHistoryCache(
+  cacheKey: string,
+  symbol: string,
+  isUuid: boolean,
+  timeframe: string,
+  limit: number,
+  startTime: Date,
+  endTime: Date,
+  ttl: number,
+  clickhouse: ReturnType<typeof getClickHouseDataPipeline>
+): Promise<void> {
+  try {
+    const marketUuid = isUuid ? symbol : undefined;
+    const candles = await clickhouse.getOHLCVCandles(
+      marketUuid ? undefined : symbol,
+      timeframe,
+      limit,
+      startTime,
+      endTime,
+      marketUuid
+    );
+    if (candles && candles.length > 0) {
+      const t: number[] = [];
+      const o: number[] = [];
+      const h: number[] = [];
+      const l: number[] = [];
+      const c: number[] = [];
+      const v: number[] = [];
+      candles.forEach(candle => {
+        t.push(candle.time);
+        o.push(candle.open);
+        h.push(candle.high);
+        l.push(candle.low);
+        c.push(candle.close);
+        v.push(candle.volume);
+      });
+      const body = { s: 'ok', t, o, h, l, c, v, meta: { count: candles.length, symbol, timeframe, architecture: 'dynamic_aggregation' } };
+      const headers: Record<string, string> = { 'Access-Control-Allow-Origin': '*' };
+      const now = Date.now();
+      HISTORY_CACHE.set(cacheKey, { expiresAt: now + ttl, staleAt: now + ttl * SWR_GRACE_MULTIPLIER, body, headers });
+    }
+  } catch {
+    // Revalidation failure is non-fatal — stale data continues to be served
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const t0 = Date.now();
@@ -416,7 +484,7 @@ export async function GET(request: NextRequest) {
     // ClickHouse can end up scanning/sorting a massive range for no reason.
     // OPTIMIZATION: Cap at 500 bars for initial load, which is plenty for most charts
     const requestedCountback = countbackParam ? parseInt(countbackParam, 10) : NaN;
-    const limit = clampInt(Number.isFinite(requestedCountback) ? requestedCountback : 300, 1, 500);
+    const limit = clampInt(Number.isFinite(requestedCountback) ? requestedCountback : 200, 1, 500);
 
     const tfSec = TIMEFRAME_SECONDS[timeframe] || 60;
     // OPTIMIZATION: Clamp time range more aggressively - only look back 1.5x the requested bars
@@ -466,111 +534,140 @@ export async function GET(request: NextRequest) {
     const historyCacheTtl = HISTORY_CACHE_TTL_BY_TF[timeframe] ?? HISTORY_CACHE_TTL_DEFAULT_MS;
 
     const cached = HISTORY_CACHE.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      return NextResponse.json(cached.body, {
-        headers: {
-          ...cached.headers,
-          'X-Cache': 'HIT',
-        },
-      });
+    const now = Date.now();
+    if (cached) {
+      if (cached.expiresAt > now) {
+        // Fresh cache hit — serve immediately
+        return NextResponse.json(cached.body, {
+          headers: { ...cached.headers, 'X-Cache': 'HIT' },
+        });
+      }
+      if (cached.staleAt > now) {
+        // Stale but within grace window — serve stale immediately while revalidating
+        // Fire a background revalidation (non-blocking) if not already in-flight
+        if (!SWR_INFLIGHT.has(cacheKey)) {
+          SWR_INFLIGHT.add(cacheKey);
+          // The revalidation will update the cache entry for subsequent requests
+          // We don't await this — it runs in the background
+          revalidateHistoryCache(cacheKey, symbol, isUuid, timeframe, limit, effectiveStartTime, endTime, historyCacheTtl, clickhouse)
+            .finally(() => SWR_INFLIGHT.delete(cacheKey));
+        }
+        return NextResponse.json(cached.body, {
+          headers: { ...cached.headers, 'X-Cache': 'STALE' },
+        });
+      }
     }
     if (HISTORY_CACHE.size > HISTORY_CACHE_MAX_KEYS) {
       HISTORY_CACHE.clear();
     }
 
-    // ── UUID RESOLUTION ──
-    // Only reached on cache miss. Resolve metric_id → market_uuid for ClickHouse.
+    // ── UUID RESOLUTION + CLICKHOUSE QUERY (parallelized) ──
+    // When the symbol is already a UUID, skip Supabase entirely and go straight to ClickHouse.
+    // When it's NOT a UUID, fire Supabase lookup AND a speculative symbol-based ClickHouse query
+    // in parallel so neither blocks the other.
     const tResolve0 = Date.now();
+    let tCh0 = tResolve0;
     let marketUuid: string | undefined;
+    let candles: Awaited<ReturnType<typeof clickhouse.getOHLCVCandles>>;
+
     if (isUuid) {
+      // Fast path: symbol IS the UUID — skip Supabase, query ClickHouse directly
       marketUuid = symbol;
+      tCh0 = Date.now();
+      try {
+        const candlesResult = await withTimeout(
+          clickhouse.getOHLCVCandles(undefined, timeframe, limit, effectiveStartTime, endTime, marketUuid),
+          CLICKHOUSE_QUERY_TIMEOUT_MS,
+          `OHLCV candles for ${marketUuid}`
+        );
+        if (candlesResult === null) {
+          FAILED_QUERY_CACHE.set(failedCacheKey, { expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, reason: 'timeout' });
+          return NextResponse.json(
+            { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
+            { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store', 'X-Timeout': '1' } }
+          );
+        }
+        candles = candlesResult;
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : 'unknown';
+        console.error(`❌ ClickHouse query failed for ${marketUuid}:`, errorMsg);
+        FAILED_QUERY_CACHE.set(failedCacheKey, { expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, reason: errorMsg.slice(0, 50) });
+        return NextResponse.json(
+          { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
+          { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store', 'X-Error': '1' } }
+        );
+      }
     } else {
+      // Slow path: need UUID resolution. Check cache first, then parallelize Supabase + ClickHouse.
       const cachedMarket = MARKET_UUID_CACHE.get(symbol);
       if (cachedMarket && cachedMarket.expiresAt > Date.now()) {
         marketUuid = cachedMarket.id;
-      } else {
-        if (MARKET_UUID_CACHE.size > MARKET_UUID_CACHE_MAX_KEYS) {
-          MARKET_UUID_CACHE.clear();
-        }
+      } else if (MARKET_UUID_CACHE.size > MARKET_UUID_CACHE_MAX_KEYS) {
+        MARKET_UUID_CACHE.clear();
       }
-      try {
-        if (!marketUuid) {
-          const supabaseResult = await withTimeout(
-            supabase
-              .from('orderbook_markets_view')
-              .select('id')
-              .eq('metric_id', symbol)
-              .limit(1)
-              .maybeSingle(),
-            SUPABASE_QUERY_TIMEOUT_MS,
-            `Supabase market lookup for ${symbol}`
+
+      if (marketUuid) {
+        // UUID was in cache — query ClickHouse directly
+        try {
+          const candlesResult = await withTimeout(
+            clickhouse.getOHLCVCandles(undefined, timeframe, limit, effectiveStartTime, endTime, marketUuid),
+            CLICKHOUSE_QUERY_TIMEOUT_MS,
+            `OHLCV candles for ${marketUuid}`
           );
-          if (supabaseResult?.data?.id) {
-            marketUuid = String(supabaseResult.data.id);
-            MARKET_UUID_CACHE.set(symbol, { id: marketUuid, expiresAt: Date.now() + MARKET_UUID_CACHE_TTL_MS });
+          if (candlesResult === null) {
+            FAILED_QUERY_CACHE.set(failedCacheKey, { expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, reason: 'timeout' });
+            return NextResponse.json(
+              { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
+              { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store', 'X-Timeout': '1' } }
+            );
           }
+          candles = candlesResult;
+        } catch (e) {
+          const errorMsg = e instanceof Error ? e.message : 'unknown';
+          console.error(`❌ ClickHouse query failed for ${marketUuid}:`, errorMsg);
+          FAILED_QUERY_CACHE.set(failedCacheKey, { expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, reason: errorMsg.slice(0, 50) });
+          return NextResponse.json(
+            { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
+            { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store', 'X-Error': '1' } }
+          );
         }
-      } catch {
-        // proceed without market UUID
+      } else {
+        // UUID not cached — fire Supabase + speculative ClickHouse query in parallel
+        const supabasePromise = withTimeout(
+          supabase.from('orderbook_markets_view').select('id').eq('metric_id', symbol).limit(1).maybeSingle(),
+          SUPABASE_QUERY_TIMEOUT_MS,
+          `Supabase market lookup for ${symbol}`
+        ).catch(() => null);
+
+        const symbolCandlesPromise = withTimeout(
+          clickhouse.getOHLCVCandles(symbol, timeframe, limit, effectiveStartTime, endTime, undefined),
+          CLICKHOUSE_QUERY_TIMEOUT_MS,
+          `OHLCV candles (symbol) for ${symbol}`
+        ).catch(() => null);
+
+        const [supabaseResult, symbolCandles] = await Promise.all([supabasePromise, symbolCandlesPromise]);
+
+        if (supabaseResult?.data?.id) {
+          marketUuid = String(supabaseResult.data.id);
+          MARKET_UUID_CACHE.set(symbol, { id: marketUuid, expiresAt: Date.now() + MARKET_UUID_CACHE_TTL_MS });
+
+          // Re-query by UUID for canonical results (the speculative symbol query may not match)
+          try {
+            const uuidCandles = await withTimeout(
+              clickhouse.getOHLCVCandles(undefined, timeframe, limit, effectiveStartTime, endTime, marketUuid),
+              CLICKHOUSE_QUERY_TIMEOUT_MS,
+              `OHLCV candles (uuid) for ${marketUuid}`
+            );
+            candles = uuidCandles ?? [];
+          } catch {
+            candles = symbolCandles ?? [];
+          }
+        } else {
+          candles = symbolCandles ?? [];
+        }
       }
     }
     const tResolve1 = Date.now();
-
-    // Fetch candles using dynamic aggregation with timeout protection.
-    // Prefer market_uuid filtering (canonical). If we can't resolve, fall back to symbol filtering.
-    const tCh0 = Date.now();
-    let candles: Awaited<ReturnType<typeof clickhouse.getOHLCVCandles>>;
-    try {
-      const candlesResult = await withTimeout(
-        clickhouse.getOHLCVCandles(
-          marketUuid ? undefined : symbol,
-          timeframe,
-          limit,
-          effectiveStartTime,
-          endTime,
-          marketUuid
-        ),
-        CLICKHOUSE_QUERY_TIMEOUT_MS,
-        `OHLCV candles for ${marketUuid || symbol}`
-      );
-      
-      if (candlesResult === null) {
-        // Timeout occurred - cache this failure and return no_data quickly
-        FAILED_QUERY_CACHE.set(failedCacheKey, { 
-          expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, 
-          reason: 'timeout' 
-        });
-        return NextResponse.json(
-          { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
-          { 
-            headers: { 
-              'Access-Control-Allow-Origin': '*',
-              'Cache-Control': 'no-store',
-              'X-Timeout': '1',
-            } 
-          }
-        );
-      }
-      candles = candlesResult;
-    } catch (e) {
-      // Query failed - cache the failure and return no_data
-      const errorMsg = e instanceof Error ? e.message : 'unknown';
-      console.error(`❌ ClickHouse query failed for ${marketUuid || symbol}:`, errorMsg);
-      FAILED_QUERY_CACHE.set(failedCacheKey, { 
-        expiresAt: Date.now() + FAILED_QUERY_CACHE_TTL_MS, 
-        reason: errorMsg.slice(0, 50) 
-      });
-      return NextResponse.json(
-        { s: 'no_data', nextTime: Math.floor(endTime.getTime() / 1000) + tfSec },
-        { 
-          headers: { 
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'no-store',
-            'X-Error': '1',
-          } 
-        }
-      );
-    }
     const tCh1 = Date.now();
 
     // Some older dev seed runs accidentally inserted OHLCV with price=0 due to empty-query-param parsing.
@@ -633,7 +730,8 @@ export async function GET(request: NextRequest) {
                 'X-Cache': 'MISS',
                 'X-Metric-Bars': '1',
               };
-              HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + historyCacheTtl, body, headers });
+              const _now = Date.now();
+              HISTORY_CACHE.set(cacheKey, { expiresAt: _now + historyCacheTtl, staleAt: _now + historyCacheTtl * SWR_GRACE_MULTIPLIER, body, headers });
               return NextResponse.json(body, { headers });
             } else {
               // Cache that this market has no metric data to avoid repeated queries
@@ -674,7 +772,8 @@ export async function GET(request: NextRequest) {
         'X-No-Data': '1',
       };
       // Short in-memory cache to prevent hammering DB on repeated no_data requests
-      HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + 5_000, body, headers });
+      const _now2 = Date.now();
+      HISTORY_CACHE.set(cacheKey, { expiresAt: _now2 + 5_000, staleAt: _now2 + 10_000, body, headers });
       return NextResponse.json(body, { headers });
     }
 
@@ -725,7 +824,8 @@ export async function GET(request: NextRequest) {
       ].join(', '),
       'X-Cache': 'MISS',
     };
-    HISTORY_CACHE.set(cacheKey, { expiresAt: Date.now() + historyCacheTtl, body, headers });
+    const _now3 = Date.now();
+    HISTORY_CACHE.set(cacheKey, { expiresAt: _now3 + historyCacheTtl, staleAt: _now3 + historyCacheTtl * SWR_GRACE_MULTIPLIER, body, headers });
     return NextResponse.json(body, { headers });
 
   } catch (error) {
