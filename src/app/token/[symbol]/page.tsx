@@ -244,6 +244,26 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     return () => mq.removeEventListener?.('change', update);
   }, []);
 
+  useEffect(() => {
+    if (isDesktop !== false) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    html.style.position = 'fixed';
+    html.style.width = '100%';
+    html.style.height = '100%';
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+      html.style.position = '';
+      html.style.width = '';
+      html.style.height = '';
+    };
+  }, [isDesktop]);
+
   // Metric overlay config for TradingView charts
   const metricOverlay = useMemo(() => {
     if (!currentMarketId) return undefined;
@@ -901,7 +921,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   }
 
   return (
-    <div className="token-page flex flex-col h-[calc(100dvh-56px)] md:block md:h-auto md:min-h-screen bg-black text-white overflow-hidden md:overflow-visible">
+    <div className="token-page flex flex-col h-[calc(100dvh-56px)] md:block md:h-auto md:min-h-screen bg-black text-white overflow-hidden md:overflow-visible overscroll-none touch-manipulation">
       <CryptoMarketTicker className="border-b border-gray-800 flex-shrink-0" />
       {/* Mobile: compact tappable market bar */}
       {marketInfoHeaderProps && (
@@ -958,7 +978,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         </div>
       )}
       <div className="flex-1 min-h-0 flex flex-col md:block px-1 md:pb-8 pt-1">
-        <div className="flex-1 min-h-0 flex flex-col md:block relative overflow-x-hidden md:overflow-y-visible">
+        <div className="flex-1 min-h-0 flex flex-col md:block relative overflow-hidden md:overflow-y-visible">
           <div className={`flex-1 min-h-0 flex flex-col md:block transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
             {/* Rollover toggle (if active pair exists) */}
             {pair && seriesMkts && seriesMkts.length >= 2 && (
