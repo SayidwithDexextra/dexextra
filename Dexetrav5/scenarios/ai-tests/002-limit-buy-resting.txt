@@ -1,0 +1,14 @@
+# Test 002: Resting Limit Buy (No Match)
+# A limit buy placed below best ask should rest on the book.
+# Verifies: order placement without matching, bid updates.
+
+STRICT ON
+U1 DEP 5000
+
+# Place a buy at $2.00 with no opposing sell — should rest
+U1 LB 2.00 1 50
+
+SLEEP 300
+
+# Best bid should now be $2.00
+ASSERT BID == 2.00

@@ -1,0 +1,22 @@
+# Test 005: Market Sell Sweeping Bids
+# U1 posts a limit buy, U2 sends a market sell → immediate fill.
+# Verifies: market order execution, taker fills against resting bids.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Seed the bid side
+U1 LB 2.50 1 40
+
+SLEEP 300
+ASSERT BID == 2.50
+
+# Market sell should sweep the bid
+U2 MS 1 40
+
+SLEEP 500
+
+# Bid should be cleared, U1 long, U2 short
+ASSERT POSITION U1 LONG == 40
+ASSERT POSITION U2 SHORT == 40

@@ -1,0 +1,37 @@
+# Test 056: Deep FIFO Queue at Single Price Level
+# 4 users each place 5 orders at the same price → 20 orders at one level.
+# Then a large taker sweeps through them all.
+# Verifies: FIFO ordering, gas usage for deep queue, correct fill allocation.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+U3 DEP 10000
+U4 DEP 10000
+
+# Stack bids at $2.00 from multiple users
+U1 LB 2.00 1 10
+U1 LB 2.00 1 10
+U1 LB 2.00 1 10
+U2 LB 2.00 1 10
+U2 LB 2.00 1 10
+U2 LB 2.00 1 10
+U3 LB 2.00 1 10
+U3 LB 2.00 1 10
+U3 LB 2.00 1 10
+U4 LB 2.00 1 10
+
+SLEEP 500
+
+ASSERT BID == 2.00
+
+# Deployer sells through entire queue (100 units)
+@ DEP 50000
+@ LS 2.00 1 100
+
+SLEEP 1000
+
+ASSERT POSITION U1 LONG == 30
+ASSERT POSITION U2 LONG == 30
+ASSERT POSITION U3 LONG == 30
+ASSERT POSITION U4 LONG == 10

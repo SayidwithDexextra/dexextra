@@ -1,0 +1,17 @@
+# Test 022: Cancel Nth Order (CNO)
+# Place multiple orders, cancel the 2nd one by index.
+# Verifies: CNO command, selective cancellation.
+
+STRICT ON
+U1 DEP 5000
+
+U1 LB 1.50 1 20
+U1 LB 2.00 1 30
+U1 LB 2.50 1 40
+
+SLEEP 300
+
+# Cancel the 2nd order (1-based index)
+U1 CNO 2
+
+SLEEP 300

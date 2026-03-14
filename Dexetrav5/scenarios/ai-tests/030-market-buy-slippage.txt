@@ -1,0 +1,21 @@
+# Test 030: Market Buy Slippage Protection
+# Place asks at increasing prices. Market buy with tight slippage should not overpay.
+# Verifies: slippage cap enforcement.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 10000
+
+U1 LS 2.00 1 10
+U2 LS 3.00 1 10
+U3 LS 5.00 1 10
+
+SLEEP 300
+
+# Market buy 30 with tight slippage (50bps = 0.5%)
+# Should only fill at $2.00 level and stop
+U4 MB 1 30 50
+
+SLEEP 500

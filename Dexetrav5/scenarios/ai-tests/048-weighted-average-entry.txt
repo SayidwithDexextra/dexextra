@@ -1,0 +1,22 @@
+# Test 048: Weighted Average Entry Price
+# U1 buys at two different prices; entry should be the weighted average.
+# Verifies: entry price averaging, position accumulation.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+
+# Buy 50 at $2.00
+U2 LS 2.00 1 50
+U1 LB 2.00 1 50
+
+SLEEP 500
+
+# Buy 50 more at $3.00
+U2 LS 3.00 1 50
+U1 LB 3.00 1 50
+
+SLEEP 500
+
+# U1 should hold 100 units long
+ASSERT POSITION U1 LONG == 100

@@ -1,0 +1,23 @@
+# Test 024: Best Bid/Ask Updates After Fill
+# After a full fill, the next-best price level should become BBO.
+# Verifies: BBO update after level exhaustion.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 5000
+U3 DEP 5000
+
+# Two bid levels
+U1 LB 2.00 1 50
+U1 LB 2.10 1 50
+
+SLEEP 300
+ASSERT BID == 2.10
+
+# Sell into the best bid (2.10) — exhaust it
+U2 LS 2.10 1 50
+
+SLEEP 500
+
+# Best bid should now fall to 2.00
+ASSERT BID == 2.00

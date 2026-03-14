@@ -1,0 +1,26 @@
+# Test 090: Three-Level Ask Sweep With Different Makers
+# Each price level has a different maker. Buyer sweeps all three.
+# Verifies: multi-maker matching, correct per-maker position allocation.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 20000
+
+U1 LS 2.00 1 30
+U2 LS 2.50 1 30
+U3 LS 3.00 1 30
+
+SLEEP 300
+
+# U4 buys 90 — fills all 3 levels
+U4 LB 3.00 1 90
+
+SLEEP 500
+
+ASSERT BOOK_EMPTY
+ASSERT POSITION U1 SHORT == 30
+ASSERT POSITION U2 SHORT == 30
+ASSERT POSITION U3 SHORT == 30
+ASSERT POSITION U4 LONG == 90

@@ -1,0 +1,16 @@
+# Test 055: Very High Price Trading
+# Trade at a very high price to stress margin and notional calculations.
+# Verifies: high-price arithmetic, no overflow in price * amount.
+
+STRICT ON
+U1 DEP 500000
+U2 DEP 500000
+
+# $1000.00 per ALU
+U1 LB 1000.00 1 100
+U2 LS 1000.00 1 100
+
+SLEEP 500
+
+ASSERT BOOK_EMPTY
+ASSERT POSITION U1 LONG == 100

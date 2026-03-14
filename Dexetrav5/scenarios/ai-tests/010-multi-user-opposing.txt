@@ -1,0 +1,24 @@
+# Test 010: Multi-User Opposing Positions
+# 3 users: U1 buys, U2 and U3 sell at same price. Split fill.
+# Verifies: multi-party matching, position distribution.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 5000
+U3 DEP 5000
+
+# U2 and U3 each sell 50 units
+U2 LS 2.50 1 50
+U3 LS 2.50 1 50
+
+SLEEP 300
+
+# U1 buys 100 — should sweep both sells
+U1 LB 2.50 1 100
+
+SLEEP 500
+
+ASSERT BOOK_EMPTY
+ASSERT POSITION U1 LONG == 100
+ASSERT POSITION U2 SHORT == 50
+ASSERT POSITION U3 SHORT == 50

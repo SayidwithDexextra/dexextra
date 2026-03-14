@@ -1,0 +1,14 @@
+# Test 051: Dust Position (Very Small Size)
+# Open a position with an extremely small amount (0.001 ALU).
+# Verifies: sub-unit handling, entry price precision, margin calculation for dust.
+# PositionManager rounds wholeSize=0 to 1, which can skew entry price.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Tiny amount: 0.001 ALU
+U2 LS 2.50 1 0.001
+U1 LB 2.50 1 0.001
+
+SLEEP 500

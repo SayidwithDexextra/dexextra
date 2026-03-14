@@ -1,0 +1,19 @@
+# Test 068: Short Margin Requirement (150%)
+# SHORT_MARGIN_REQUIREMENT_BPS = 15000 (150%).
+# Opening a short requires 1.5× the notional in margin.
+# Deposit enough for long but not enough for short at same size.
+# Verifies: asymmetric margin enforcement for shorts.
+
+STRICT ON
+U1 DEP 300
+U2 DEP 5000
+
+# 100 ALU at $2.50 = $250 notional.
+# Long margin (100%) = $250 — fits in $300.
+# Short margin (150%) = $375 — does NOT fit in $300.
+
+# This sell (opening a short) may fail due to insufficient margin
+U2 LB 2.50 1 100
+U1 LS 2.50 1 100
+
+SLEEP 500

@@ -1,0 +1,15 @@
+# Test 011: Bid-Ask Spread Maintenance
+# Place bids and asks at distinct prices; verify spread is maintained.
+# Verifies: spread tracking, no phantom matches across spread.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+U1 LB 2.00 1 50
+U2 LS 3.00 1 50
+
+SLEEP 300
+
+ASSERT BID == 2.00
+ASSERT ASK == 3.00

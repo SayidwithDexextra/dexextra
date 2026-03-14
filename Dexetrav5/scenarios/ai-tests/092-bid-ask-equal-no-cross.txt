@@ -1,0 +1,15 @@
+# Test 092: Bid and Ask at Same Price From Same User
+# If a user posts both a buy and sell at the exact same price,
+# the contract should handle self-cross (netting without execution).
+# Verifies: self-cross detection, OBOrderPlacementFacet.sol:455-456.
+
+STRICT ON
+U1 DEP 5000
+
+# Post ask first
+U1 LS 2.50 1 50
+SLEEP 300
+
+# Post bid at same price — should trigger self-cross netting
+U1 LB 2.50 1 50
+SLEEP 500

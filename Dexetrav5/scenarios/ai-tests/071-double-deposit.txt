@@ -1,0 +1,11 @@
+# Test 071: Double Deposit Same Block
+# Two deposits from the same user in rapid succession.
+# Verifies: no double-spend, cumulative collateral is correct.
+
+STRICT ON
+U1 DEP 1000
+U1 DEP 2000
+
+SLEEP 500
+
+ASSERT COLLAT U1 >= 3000

@@ -1,0 +1,19 @@
+# Test 062: Spoofing — Cancel Before Fill
+# User places a large order to influence the book, then cancels before it fills.
+# Verifies: cancellation before matching, no phantom fills, clean book state.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 5000
+
+# U1 places a large "spoof" bid
+U1 LB 3.00 1 500
+
+SLEEP 300
+ASSERT BID == 3.00
+
+# Cancel before anyone can fill against it
+U1 CA
+
+SLEEP 300
+ASSERT BOOK_EMPTY

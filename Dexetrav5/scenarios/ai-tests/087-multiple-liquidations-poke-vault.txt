@@ -1,0 +1,26 @@
+# Test 087: Multiple Liquidations via POKE_VAULT
+# Set up multiple underwater users, then use POKE_VAULT to sweep them all.
+# Verifies: batch liquidation sweep, multiple users handled in one tx.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 100
+U3 DEP 5000
+U4 DEP 5000
+
+# U1 and U2 open leveraged longs
+U3 LS 2.50 1 400
+U1 LB 2.50 1 200
+U2 LB 2.50 1 200
+
+SLEEP 500
+
+# Crash
+U4 LS 0.50 1 100
+
+SLEEP 500
+
+# Sweep via vault
+POKE_VAULT
+
+SLEEP 1000

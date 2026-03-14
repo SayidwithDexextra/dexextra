@@ -1057,7 +1057,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 }
               />
               {/* Compact action bar: Activity | Long | Short | Chat */}
-              <div className="flex-shrink-0 flex items-center gap-1.5 px-2 py-2 border-t border-[#1a1a1a] bg-[#0A0A0A]">
+              <div className="flex-shrink-0 flex items-center gap-1.5 px-2 pt-2 pb-4 border-t border-[#1a1a1a] bg-[#0A0A0A]">
                 <button
                   onClick={() => setMobileSheet('activity')}
                   className={`w-9 h-9 flex items-center justify-center rounded-md border transition-colors ${

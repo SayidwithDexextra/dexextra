@@ -1,0 +1,38 @@
+# Test 057: Many Price Levels (Gas Stress)
+# Place orders at 20 different price levels, then sweep through them all.
+# _getNextSellPrice / _getPrevBuyPrice do linear scans — gas grows O(n).
+# Verifies: gas viability at many price levels, correct price traversal.
+
+STRICT ON
+U1 DEP 50000
+U2 DEP 50000
+
+U1 LS 2.01 1 5
+U1 LS 2.02 1 5
+U1 LS 2.03 1 5
+U1 LS 2.04 1 5
+U1 LS 2.05 1 5
+U1 LS 2.06 1 5
+U1 LS 2.07 1 5
+U1 LS 2.08 1 5
+U1 LS 2.09 1 5
+U1 LS 2.10 1 5
+U1 LS 2.11 1 5
+U1 LS 2.12 1 5
+U1 LS 2.13 1 5
+U1 LS 2.14 1 5
+U1 LS 2.15 1 5
+U1 LS 2.16 1 5
+U1 LS 2.17 1 5
+U1 LS 2.18 1 5
+U1 LS 2.19 1 5
+U1 LS 2.20 1 5
+
+SLEEP 1000
+
+# Sweep all 20 levels (100 units total)
+U2 LB 2.20 1 100
+
+SLEEP 1000
+
+ASSERT POSITION U2 LONG == 100

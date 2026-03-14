@@ -1,0 +1,15 @@
+# Test 009: Deposit and Withdraw Collateral
+# Deposit, check collateral, then withdraw a portion.
+# Verifies: collateral accounting, deposit/withdraw flow.
+
+STRICT ON
+U1 DEP 3000
+
+SLEEP 300
+ASSERT COLLAT U1 == 3000
+
+# Withdraw half
+U1 WDR 1500
+
+SLEEP 300
+ASSERT COLLAT U1 == 1500

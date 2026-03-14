@@ -1,0 +1,20 @@
+# Test 094: Order Replacement at Same Price Level
+# Cancel an order and immediately place a new one at the same price.
+# Verifies: level management after cancel+re-add, firstOrderId update.
+
+STRICT ON
+U1 DEP 5000
+
+U1 LB 2.00 1 50
+SLEEP 300
+ASSERT BID == 2.00
+
+# Cancel
+U1 CA
+SLEEP 300
+ASSERT BOOK_EMPTY
+
+# Re-place at same price
+U1 LB 2.00 1 75
+SLEEP 300
+ASSERT BID == 2.00

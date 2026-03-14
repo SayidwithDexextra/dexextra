@@ -1,0 +1,25 @@
+# Test 042: Socialized Loss Scenario
+# User with minimal collateral gets liquidated at a loss that exceeds their margin.
+# The excess loss is socialized across profitable users.
+# Verifies: socialized loss mechanics, haircut distribution.
+
+STRICT ON
+U1 DEP 50
+U2 DEP 5000
+U3 DEP 5000
+
+# U1 opens leveraged long with tiny margin
+U2 LS 2.50 1 500
+U1 LB 2.50 1 500
+
+SLEEP 500
+
+# Crash the price severely
+U3 LS 0.10 1 100
+
+SLEEP 500
+
+# Liquidate the underwater user
+LD 1
+
+SLEEP 500

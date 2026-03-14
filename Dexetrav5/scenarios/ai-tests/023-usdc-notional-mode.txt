@@ -1,0 +1,16 @@
+# Test 023: USDC Notional Sizing (Mode 2)
+# Place a limit buy using mode 2 (USDC notional) instead of ALU units.
+# $1000 notional at $2.50/ALU should yield ~400 ALU.
+# Verifies: mode 2 conversion, correct unit calculation.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Mode 2: $500 notional at $2.50 → 200 ALU
+U2 LS 2.50 1 200
+U1 LB 2.50 2 500
+
+SLEEP 500
+
+ASSERT POSITION U1 LONG == 200

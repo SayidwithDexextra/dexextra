@@ -1,0 +1,20 @@
+# Test 037: Market Sell Slippage Protection
+# Place bids at decreasing prices. Market sell with tight slippage.
+# Verifies: sell-side slippage cap enforcement.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 5000
+
+U1 LB 3.00 1 10
+U2 LB 2.00 1 10
+U3 LB 1.00 1 10
+
+SLEEP 300
+
+# Market sell 30 with tight slippage (50bps)
+U4 MS 1 30 50
+
+SLEEP 500

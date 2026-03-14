@@ -1,0 +1,27 @@
+# Test 029: Order Book Depth Stacking
+# Multiple users stack orders at the same price level.
+# Verifies: same-level aggregation, FIFO priority.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 5000
+
+# 3 users all bid at $2.00
+U1 LB 2.00 1 30
+U2 LB 2.00 1 40
+U3 LB 2.00 1 50
+
+SLEEP 300
+ASSERT BID == 2.00
+
+# U4 sells 80 into the $2.00 level — should fill U1(30) + U2(40) + U3(10)
+U4 LS 2.00 1 80
+
+SLEEP 500
+
+# U3 should have 40 remaining at $2.00
+ASSERT BID == 2.00
+ASSERT POSITION U1 LONG == 30
+ASSERT POSITION U2 LONG == 40

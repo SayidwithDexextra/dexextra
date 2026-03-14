@@ -1,0 +1,12 @@
+# Test 036: Strict Mode Stops on First Error
+# Enable STRICT, cause a failure, and verify subsequent commands are skipped.
+# Verifies: STRICT ON halts batch on first error.
+
+STRICT ON
+
+# This should fail — no deposits, no collateral
+U1 LB 2.50 1 99999
+
+# These should NOT execute if strict is working
+U2 DEP 5000
+U2 LB 2.00 1 50

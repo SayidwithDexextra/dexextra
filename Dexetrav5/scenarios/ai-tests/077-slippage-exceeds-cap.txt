@@ -1,0 +1,16 @@
+# Test 077: Slippage Exceeds Cap (>5000bps Rejected)
+# Pass slippage > 5000. Contract should reject it.
+# Verifies: slippage validation, require(slippageBps <= 5000).
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+U2 LS 2.50 1 50
+
+SLEEP 300
+
+# 6000bps = 60% — exceeds contract max of 5000
+U1 MB 1 50 6000
+
+SLEEP 300

@@ -1,0 +1,25 @@
+# Test 078: Position Size After Successful Liquidation
+# After liquidation, the liquidated user's position should be zero.
+# Verifies: position zeroed after full liquidation.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 5000
+U3 DEP 5000
+
+U2 LS 2.50 1 100
+U1 LB 2.50 1 100
+
+SLEEP 500
+
+# Provide liquidity to absorb liquidation
+U3 LB 0.50 1 200
+
+# Crash price
+U2 LS 0.50 1 20
+
+SLEEP 500
+
+LD 1
+
+SLEEP 500

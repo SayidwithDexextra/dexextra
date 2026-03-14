@@ -1,0 +1,24 @@
+# Test 073: Liquidation Penalty (10%) Verification
+# LIQUIDATION_PENALTY_BPS = 1000 (10%).
+# After liquidation, user should lose their remaining margin + 10% penalty.
+# Verifies: penalty deduction, confiscated margin accounting.
+
+STRICT ON
+U1 DEP 500
+U2 DEP 5000
+U3 DEP 5000
+
+# U1 opens leveraged long
+U2 LS 2.50 1 400
+U1 LB 2.50 1 400
+
+SLEEP 500
+
+# Crash price to trigger liquidation
+U3 LS 0.50 1 100
+
+SLEEP 500
+
+LD 1
+
+SLEEP 500

@@ -1,0 +1,16 @@
+# Test 053: High-Precision Price (6-Decimal Boundary)
+# Use prices with maximum precision (6 decimals) to test price encoding.
+# Verifies: 6-decimal price storage, no truncation, correct matching at precise prices.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Price with full 6-decimal precision: $2.123456
+U1 LB 2.123456 1 50
+U2 LS 2.123456 1 50
+
+SLEEP 500
+
+ASSERT BOOK_EMPTY
+ASSERT POSITION U1 LONG == 50

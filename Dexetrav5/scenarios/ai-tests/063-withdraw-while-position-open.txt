@@ -1,0 +1,19 @@
+# Test 063: Withdraw While Position Is Open
+# Open a position, then try to withdraw more than available margin.
+# Should fail or only allow partial withdrawal.
+# Verifies: withdrawal guard when margin is locked.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Open position — locks margin
+U2 LS 2.50 1 100
+U1 LB 2.50 1 100
+
+SLEEP 500
+
+# Try to withdraw all 5000 — should be blocked (margin is committed)
+U1 WDR 5000
+
+SLEEP 300

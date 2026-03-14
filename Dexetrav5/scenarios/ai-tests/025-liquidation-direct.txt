@@ -1,0 +1,25 @@
+# Test 025: Direct Liquidation (LD)
+# Open a highly leveraged position, then move the mark price against it and liquidate.
+# Verifies: liquidation triggers, position closure on liquidation.
+# NOTE: This test may need mark price manipulation which depends on the oracle setup.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 5000
+U3 DEP 5000
+
+# U1 takes a small-collateral long at $2.50
+U2 LS 2.50 1 200
+U1 LB 2.50 1 200
+
+SLEEP 500
+
+# U3 sells at a much lower price to crash the mark
+U3 LS 0.50 1 100
+
+SLEEP 500
+
+# Attempt liquidation of U1
+LD 1
+
+SLEEP 500

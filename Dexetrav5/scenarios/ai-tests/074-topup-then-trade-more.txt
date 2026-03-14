@@ -1,0 +1,25 @@
+# Test 074: Top Up Then Increase Position
+# Top up margin on existing position, then open more at a different price.
+# Verifies: top-up frees capacity for additional exposure, margin accounting.
+
+STRICT ON
+U1 DEP 3000
+U2 DEP 10000
+
+# Open initial long
+U2 LS 2.50 1 100
+U1 LB 2.50 1 100
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 100
+
+# Top up margin
+U1 TUP 1 500
+
+SLEEP 300
+
+# Open more at a different price
+U2 LS 3.00 1 50
+U1 LB 3.00 1 50
+
+SLEEP 500

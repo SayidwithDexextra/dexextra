@@ -1,0 +1,24 @@
+# Test 028: Margin Top-Up Prevents Liquidation
+# User is near liquidation, tops up margin, and survives.
+# Verifies: top-up margin flow, health status improvement.
+
+STRICT ON
+U1 DEP 200
+U2 DEP 5000
+U3 DEP 5000
+
+# U1 opens leveraged long
+U2 LS 2.50 1 200
+U1 LB 2.50 1 200
+
+SLEEP 500
+
+# Top up before price drops — add more collateral
+U1 DEP 2000
+
+SLEEP 300
+
+# Price drops moderately
+U3 LS 1.80 1 50
+
+SLEEP 500

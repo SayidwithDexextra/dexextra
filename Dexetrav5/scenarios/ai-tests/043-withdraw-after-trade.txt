@@ -1,0 +1,25 @@
+# Test 043: Withdraw After Closing a Trade
+# Open and close a trade, then withdraw all available collateral.
+# Verifies: collateral freeing after position close, withdrawal accounting.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+# Open
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500
+
+# Close at same price (no PnL)
+U3 LB 2.50 1 50
+U1 LS 2.50 1 50
+
+SLEEP 500
+
+# Withdraw
+U1 WDR 1000
+
+SLEEP 300

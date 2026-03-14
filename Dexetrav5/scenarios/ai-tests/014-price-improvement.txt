@@ -1,0 +1,22 @@
+# Test 014: Price Improvement
+# U1 posts a sell at $2.00. U2 posts a buy at $2.50 (above the ask).
+# Should match at the resting order's price ($2.00), giving U2 price improvement.
+# Verifies: price-time priority, taker gets best resting price.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Resting ask at $2.00
+U1 LS 2.00 1 50
+
+SLEEP 300
+
+# Aggressive buy at $2.50 — should fill at $2.00
+U2 LB 2.50 1 50
+
+SLEEP 500
+
+ASSERT BOOK_EMPTY
+ASSERT POSITION U2 LONG == 50
+ASSERT POSITION U1 SHORT == 50

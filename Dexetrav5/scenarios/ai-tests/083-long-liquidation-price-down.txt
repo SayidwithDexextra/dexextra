@@ -1,0 +1,25 @@
+# Test 083: Long Liquidation (Price Moves Down)
+# U1 opens a long. Price drops sharply → U1 should be liquidatable.
+# Verifies: long-side liquidation trigger, correct detection.
+
+STRICT ON
+U1 DEP 200
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 5000
+
+# U1 opens long at $5.00
+U2 LS 5.00 1 200
+U1 LB 5.00 1 200
+
+SLEEP 500
+
+# Price drops sharply
+U3 LB 0.50 1 50
+U4 LS 0.50 1 50
+
+SLEEP 500
+
+LD 1
+
+SLEEP 500

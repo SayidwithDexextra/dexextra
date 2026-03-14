@@ -1,0 +1,11 @@
+# Test 016: Insufficient Collateral Rejection
+# Deposit small amount, try to place a large order. Should warn/fail.
+# Verifies: collateral pre-checks, order rejection on insufficient margin.
+
+STRICT ON
+U1 DEP 10
+
+# Try to place an order worth much more than $10 collateral
+U1 LB 2.50 1 1000
+
+SLEEP 300

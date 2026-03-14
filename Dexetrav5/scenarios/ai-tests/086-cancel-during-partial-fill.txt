@@ -1,0 +1,24 @@
+# Test 086: Cancel After Partial Fill
+# Place a large buy, partially fill it, then cancel the remainder.
+# Verifies: partial fill + cancel, residual collateral release, book cleanup.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 5000
+
+# U1 wants 200 units
+U1 LB 2.50 1 200
+
+SLEEP 300
+
+# U2 only sells 80 — partial fill
+U2 LS 2.50 1 80
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 80
+
+# Cancel the remaining 120 resting
+U1 CA
+
+SLEEP 300
+ASSERT BOOK_EMPTY

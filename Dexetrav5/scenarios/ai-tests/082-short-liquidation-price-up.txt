@@ -1,0 +1,26 @@
+# Test 082: Short Liquidation (Price Moves Up)
+# U1 opens a short. Price rises sharply → U1 should be liquidatable.
+# Verifies: short-side liquidation trigger, correct direction detection.
+
+STRICT ON
+U1 DEP 200
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 5000
+
+# U1 opens short at $2.00
+U2 LB 2.00 1 200
+U1 LS 2.00 1 200
+
+SLEEP 500
+
+# Price rises sharply — bad for shorts
+U3 LB 5.00 1 50
+U4 LS 5.00 1 50
+
+SLEEP 500
+
+# Liquidate the underwater short
+LD 1
+
+SLEEP 500

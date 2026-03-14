@@ -1,0 +1,13 @@
+# Test 088: Order at Minimum Price ($0.000001)
+# Place an order at the smallest representable price (1 wei in 6 decimals).
+# Verifies: minimum price handling, no zero-price errors.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# $0.000001 per ALU — minimum 6-decimal price
+U1 LB 0.000001 1 1000
+U2 LS 0.000001 1 1000
+
+SLEEP 500

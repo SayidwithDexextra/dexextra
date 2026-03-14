@@ -1,0 +1,14 @@
+# Test 035: Deployer as Counterparty
+# Use the deployer account (@) to act as counterparty.
+# Verifies: deployer can trade, @ prefix works.
+
+STRICT ON
+@ DEP 10000
+U1 DEP 5000
+
+# Deployer sells, U1 buys
+@ LS 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500
+ASSERT BOOK_EMPTY

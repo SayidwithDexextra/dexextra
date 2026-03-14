@@ -1,0 +1,31 @@
+# Test 075: Four-User Circular Trade
+# U1→U2→U3→U4→U1 in a circle. Tests that positions net correctly globally.
+# Verifies: multi-party netting, global PnL zero-sum.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+U3 DEP 10000
+U4 DEP 10000
+
+# U1 sells to U2
+U2 LB 2.50 1 50
+U1 LS 2.50 1 50
+SLEEP 300
+
+# U2 sells to U3
+U3 LB 2.50 1 50
+U2 LS 2.50 1 50
+SLEEP 300
+
+# U3 sells to U4
+U4 LB 2.50 1 50
+U3 LS 2.50 1 50
+SLEEP 300
+
+# U4 sells to U1 (closing the circle)
+U1 LB 2.50 1 50
+U4 LS 2.50 1 50
+SLEEP 500
+
+ASSERT BOOK_EMPTY

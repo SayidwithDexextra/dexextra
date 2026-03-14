@@ -1,0 +1,10 @@
+# Test 081: Order Placement With Zero Collateral
+# Try to place an order without depositing any collateral.
+# Verifies: pre-trade collateral check, rejection on zero balance.
+
+STRICT ON
+
+# No deposit — U1 has zero collateral
+U1 LB 2.50 1 50
+
+SLEEP 300

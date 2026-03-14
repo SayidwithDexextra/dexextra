@@ -1,0 +1,23 @@
+# Test 038: Cancel and Replace (Order Modification)
+# Place an order, cancel it, and place a new one at a different price.
+# Verifies: cancel → re-place flow, book state transitions.
+
+STRICT ON
+U1 DEP 5000
+
+# Place initial order
+U1 LB 2.00 1 50
+
+SLEEP 300
+ASSERT BID == 2.00
+
+# Cancel all, then place at a new price
+U1 CA
+
+SLEEP 300
+ASSERT BOOK_EMPTY
+
+U1 LB 2.50 1 50
+
+SLEEP 300
+ASSERT BID == 2.50

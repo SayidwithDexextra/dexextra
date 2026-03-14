@@ -1,0 +1,21 @@
+# Test 006: Partial Fill
+# U1 posts a large limit buy, U2 posts a smaller limit sell at the same price.
+# Only partial fill should occur; remaining buy should rest.
+# Verifies: partial matching, residual orders on book.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 5000
+
+# U1 wants to buy 200 units at $2.00
+U1 LB 2.00 1 200
+
+# U2 sells only 80 units at $2.00
+U2 LS 2.00 1 80
+
+SLEEP 500
+
+# 80 units matched. U1 should have remaining 120 on the bid
+ASSERT BID == 2.00
+ASSERT POSITION U1 LONG == 80
+ASSERT POSITION U2 SHORT == 80

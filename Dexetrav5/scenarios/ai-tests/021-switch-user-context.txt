@@ -1,0 +1,19 @@
+# Test 021: Switch User Context
+# Use SU to switch user, then place orders from the switched context.
+# Verifies: SU command, user context persistence.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+SU 1
+LB 2.00 1 30
+
+SLEEP 300
+ASSERT BID == 2.00
+
+SU 2
+LS 2.00 1 30
+
+SLEEP 500
+ASSERT BOOK_EMPTY

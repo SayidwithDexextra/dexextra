@@ -1,0 +1,15 @@
+# Test 039: Large Position Open (Stress Test)
+# Open a very large position to test gas and state handling.
+# Verifies: large-value transactions, gas limits.
+
+STRICT ON
+U1 DEP 50000
+U2 DEP 50000
+
+U2 LS 2.50 1 5000
+U1 LB 2.50 1 5000
+
+SLEEP 1000
+
+ASSERT POSITION U1 LONG == 5000
+ASSERT POSITION U2 SHORT == 5000

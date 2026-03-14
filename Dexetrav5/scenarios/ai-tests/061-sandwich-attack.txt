@@ -1,0 +1,32 @@
+# Test 061: Sandwich Attack Simulation
+# Attacker front-runs a large market buy with their own buy, then back-runs with a sell.
+# Verifies: price impact, PnL for attacker vs victim, slippage protection.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+U3 DEP 10000
+U4 DEP 10000
+
+# Seed asks at multiple levels
+U1 LS 2.00 1 50
+U1 LS 2.20 1 50
+U1 LS 2.40 1 50
+
+SLEEP 300
+
+# Step 1: Attacker (U3) front-runs — buys at $2.00
+U3 LB 2.00 1 50
+
+SLEEP 300
+
+# Step 2: Victim (U4) market buys — now has to pay $2.20+
+U4 MB 1 50
+
+SLEEP 300
+
+# Step 3: Attacker sells back at the elevated price
+U2 LB 2.40 1 50
+U3 LS 2.40 1 50
+
+SLEEP 500

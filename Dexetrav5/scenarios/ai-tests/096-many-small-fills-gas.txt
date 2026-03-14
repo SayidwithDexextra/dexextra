@@ -1,0 +1,24 @@
+# Test 096: Many Small Fills (Gas Benchmark)
+# 4 makers each post 1-unit orders at the same price.
+# Taker sweeps all 4 in one fill. Measures multi-order matching gas.
+# Verifies: per-fill gas cost, FIFO traversal efficiency.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 5000
+
+U1 LS 2.50 1 1
+U2 LS 2.50 1 1
+U3 LS 2.50 1 1
+U4 LS 2.50 1 1
+
+SLEEP 300
+
+@ DEP 5000
+@ LB 2.50 1 4
+
+SLEEP 500
+
+ASSERT BOOK_EMPTY

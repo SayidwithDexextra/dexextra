@@ -1,0 +1,39 @@
+# Test 067: Repeated Partial Close
+# Open 100 units long, then close in 5 batches of 20.
+# Verifies: partial close accounting, position decrement, PnL realization per tranche.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+U3 DEP 10000
+
+# Open 100 long
+U2 LS 2.50 1 100
+U1 LB 2.50 1 100
+SLEEP 500
+ASSERT POSITION U1 LONG == 100
+
+# Close 20 at a time
+U3 LB 2.50 1 20
+U1 LS 2.50 1 20
+SLEEP 300
+ASSERT POSITION U1 LONG == 80
+
+U3 LB 2.50 1 20
+U1 LS 2.50 1 20
+SLEEP 300
+ASSERT POSITION U1 LONG == 60
+
+U3 LB 2.50 1 20
+U1 LS 2.50 1 20
+SLEEP 300
+ASSERT POSITION U1 LONG == 40
+
+U3 LB 2.50 1 20
+U1 LS 2.50 1 20
+SLEEP 300
+ASSERT POSITION U1 LONG == 20
+
+U3 LB 2.50 1 20
+U1 LS 2.50 1 20
+SLEEP 300

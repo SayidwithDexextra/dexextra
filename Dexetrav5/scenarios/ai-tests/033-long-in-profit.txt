@@ -1,0 +1,21 @@
+# Test 033: Long Position Realizes Profit
+# U1 buys at $2.00, sells at $3.00 → profit.
+# Verifies: profitable long close, realized PnL positive.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+# Open long at $2.00
+U2 LS 2.00 1 50
+U1 LB 2.00 1 50
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 50
+
+# Close at $3.00
+U3 LB 3.00 1 50
+U1 LS 3.00 1 50
+
+SLEEP 500

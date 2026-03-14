@@ -20,8 +20,12 @@ export default function MobileBottomSheet({
 }: MobileBottomSheetProps) {
   const [mounted, setMounted] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
+  const currentOffsetRef = useRef(0);
   const isDraggingRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     setMounted(true);
@@ -39,40 +43,96 @@ export default function MobileBottomSheet({
   useEffect(() => {
     if (!isOpen) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    startYRef.current = e.touches[0].clientY;
-    isDraggingRef.current = true;
-  }, []);
-
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!isDraggingRef.current) return;
-    const diff = e.touches[0].clientY - startYRef.current;
-    if (diff > 0 && sheetRef.current) {
-      sheetRef.current.style.transform = `translateY(${diff}px)`;
+  const applyTransform = useCallback((offset: number) => {
+    if (sheetRef.current && offset > 0) {
+      currentOffsetRef.current = offset;
+      sheetRef.current.style.transform = `translateY(${offset}px)`;
       sheetRef.current.style.transition = 'none';
     }
   }, []);
 
-  const handleTouchEnd = useCallback(() => {
-    if (!isDraggingRef.current) return;
+  const finishDrag = useCallback(() => {
     isDraggingRef.current = false;
     if (sheetRef.current) {
       sheetRef.current.style.transition = '';
-      const raw = sheetRef.current.style.transform;
-      const match = raw.match(/translateY\((\d+)px\)/);
-      const yOffset = match ? parseInt(match[1], 10) : 0;
-      if (yOffset > 80) {
-        onClose();
+      if (currentOffsetRef.current > 80) {
+        onCloseRef.current();
       }
       sheetRef.current.style.transform = '';
+      currentOffsetRef.current = 0;
     }
-  }, [onClose]);
+  }, []);
+
+  // --- Header drag (grab handle + title bar) ---
+  const handleHeaderTouchStart = useCallback((e: React.TouchEvent) => {
+    startYRef.current = e.touches[0].clientY;
+    currentOffsetRef.current = 0;
+    isDraggingRef.current = true;
+  }, []);
+
+  const handleHeaderTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isDraggingRef.current) return;
+    const diff = e.touches[0].clientY - startYRef.current;
+    if (diff > 0) applyTransform(diff);
+  }, [applyTransform]);
+
+  const handleHeaderTouchEnd = useCallback(() => {
+    finishDrag();
+  }, [finishDrag]);
+
+  // --- Content pull-to-close (native listeners for passive:false) ---
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || !isOpen) return;
+
+    let contentStartY = 0;
+    let pulling = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      contentStartY = e.touches[0].clientY;
+      pulling = false;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      const diff = e.touches[0].clientY - contentStartY;
+      const scrollTop = content.scrollTop;
+
+      if (!pulling && scrollTop <= 0 && diff > 8) {
+        pulling = true;
+        isDraggingRef.current = true;
+        startYRef.current = e.touches[0].clientY;
+      }
+
+      if (pulling) {
+        e.preventDefault();
+        const offset = e.touches[0].clientY - startYRef.current;
+        if (offset > 0) applyTransform(offset);
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (pulling) {
+        finishDrag();
+        pulling = false;
+      }
+    };
+
+    content.addEventListener('touchstart', onTouchStart, { passive: true });
+    content.addEventListener('touchmove', onTouchMove, { passive: false });
+    content.addEventListener('touchend', onTouchEnd, { passive: true });
+
+    return () => {
+      content.removeEventListener('touchstart', onTouchStart);
+      content.removeEventListener('touchmove', onTouchMove);
+      content.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [isOpen, applyTransform, finishDrag]);
 
   if (!mounted) return null;
 
@@ -95,29 +155,37 @@ export default function MobileBottomSheet({
           isOpen ? 'translate-y-0' : 'translate-y-full'
         }`}
       >
+        {/* Draggable header: grab handle + title */}
         <div
-          className="flex-shrink-0 flex justify-center pt-2.5 pb-1 cursor-grab active:cursor-grabbing"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
+          onTouchStart={handleHeaderTouchStart}
+          onTouchMove={handleHeaderTouchMove}
+          onTouchEnd={handleHeaderTouchEnd}
+          className="flex-shrink-0 cursor-grab active:cursor-grabbing"
         >
-          <div className="w-8 h-1 rounded-full bg-[#444444]" />
-        </div>
-        {title && (
-          <div className="flex-shrink-0 flex items-center justify-between px-4 pb-2.5 border-b border-[#1a1a1a]">
-            <h3 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">{title}</h3>
-            <button
-              onClick={onClose}
-              className="w-6 h-6 flex items-center justify-center rounded-full text-[#606060] hover:text-white hover:bg-[#222222] transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
+          <div className="flex justify-center pt-2.5 pb-1">
+            <div className="w-8 h-1 rounded-full bg-[#444444]" />
           </div>
-        )}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          {title && (
+            <div className="flex items-center justify-between px-4 pb-2.5 border-b border-[#1a1a1a]">
+              <h3 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">{title}</h3>
+              <button
+                onClick={onClose}
+                className="w-6 h-6 flex items-center justify-center rounded-full text-[#606060] hover:text-white hover:bg-[#222222] transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Scrollable content with pull-to-close */}
+        <div
+          ref={contentRef}
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
+        >
           {children}
         </div>
       </div>

@@ -641,8 +641,6 @@
   padding: 0;
   scrollbar-width: thin;
   scrollbar-color: #333333 transparent;
-  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 88%, transparent 100%);
-  mask-image: linear-gradient(to bottom, black 0%, black 88%, transparent 100%);
 }
 
 .commentsList::-webkit-scrollbar {

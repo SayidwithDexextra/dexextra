@@ -1,0 +1,30 @@
+# Test 050: Partial Liquidation Fill (Thin Book)
+# Liquidation requires 200 ALU but only 50 ALU available on the book.
+# Contract treats >= 50% fill as success; verify behavior with 25% fill.
+# Verifies: partial liquidation fill handling, remaining amount accounting.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 5000
+U3 DEP 5000
+
+# U1 opens leveraged long of 200
+U2 LS 2.50 1 200
+U1 LB 2.50 1 200
+
+SLEEP 500
+
+# Only post 50 units of liquidity to absorb the liquidation
+U3 LB 0.50 1 50
+
+SLEEP 300
+
+# Crash the price
+U2 LS 0.50 1 10
+
+SLEEP 500
+
+# Liquidate — only 50/200 available = 25% fill
+LD 1
+
+SLEEP 500

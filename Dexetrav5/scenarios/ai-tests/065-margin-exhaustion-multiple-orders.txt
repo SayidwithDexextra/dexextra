@@ -1,0 +1,20 @@
+# Test 065: Margin Exhaustion via Multiple Open Orders
+# Place orders until available margin is consumed. Next order should fail.
+# Verifies: margin reservation for pending orders, exhaustion boundary.
+
+STRICT ON
+U1 DEP 500
+
+# Each order at $2.50 × 50 ALU = $125 notional.
+# With $500, should fit 4 orders. 5th should fail or warn.
+U1 LB 2.50 1 50
+U1 LB 2.50 1 50
+U1 LB 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500
+
+# This should exceed available
+U1 LB 2.50 1 50
+
+SLEEP 300

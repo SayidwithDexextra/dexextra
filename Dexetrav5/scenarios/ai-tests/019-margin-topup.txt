@@ -1,0 +1,19 @@
+# Test 019: Margin Top-Up on Open Position
+# Open a position, then top up its margin.
+# Verifies: top-up mechanics, available collateral adjustment.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Open position
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 50
+
+# Top up position margin by $200
+U1 TUP 1 200
+
+SLEEP 300

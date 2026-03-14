@@ -1,0 +1,14 @@
+# Test 072: Withdraw Entire Collateral to Zero
+# Deposit then withdraw the full amount. Collateral should be zero.
+# Verifies: full withdrawal, no dust remaining.
+
+STRICT ON
+U1 DEP 5000
+
+SLEEP 300
+ASSERT COLLAT U1 >= 5000
+
+U1 WDR 5000
+
+SLEEP 300
+ASSERT COLLAT U1 == 0

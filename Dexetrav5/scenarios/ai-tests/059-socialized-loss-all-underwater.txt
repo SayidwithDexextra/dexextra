@@ -1,0 +1,25 @@
+# Test 059: Socialized Loss When All Positions Are Underwater
+# Every user with a position is losing. No profitable positions to distribute haircut to.
+# Verifies: edge case in _findProfitablePositions returning empty array.
+
+STRICT ON
+U1 DEP 200
+U2 DEP 200
+U3 DEP 5000
+
+# U1 and U2 both go long — U3 takes the short side
+U3 LS 2.50 1 200
+U1 LB 2.50 1 100
+U2 LB 2.50 1 100
+
+SLEEP 500
+
+# Price crashes — all longs underwater. U3 (short) is the only winner but we liquidate longs.
+U3 LS 0.30 1 50
+
+SLEEP 500
+
+# Liquidate U1 — U2 is also underwater, so no one to distribute socialized loss to
+LD 1
+
+SLEEP 500

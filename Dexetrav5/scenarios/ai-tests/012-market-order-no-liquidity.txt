@@ -1,0 +1,9 @@
+# Test 012: Market Order With No Liquidity
+# Attempt a market buy on an empty book. Should fail gracefully.
+# Verifies: no-liquidity guard, error handling.
+
+STRICT ON
+U1 DEP 5000
+
+# No asks on book — market buy should error
+U1 MB 1 50

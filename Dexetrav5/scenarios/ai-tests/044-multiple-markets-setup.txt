@@ -1,0 +1,24 @@
+# Test 044: Multiple Deposits and Withdrawals
+# Deposit in chunks, withdraw in chunks, verify accounting.
+# Verifies: incremental deposit/withdraw, running balance correctness.
+
+STRICT ON
+U1 DEP 1000
+
+SLEEP 200
+ASSERT COLLAT U1 >= 1000
+
+U1 DEP 2000
+
+SLEEP 200
+ASSERT COLLAT U1 >= 3000
+
+U1 WDR 500
+
+SLEEP 200
+ASSERT COLLAT U1 >= 2500
+
+U1 WDR 500
+
+SLEEP 200
+ASSERT COLLAT U1 >= 2000

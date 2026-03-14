@@ -1,0 +1,25 @@
+# Test 049: Liquidation With Empty Order Book
+# Liquidate a user when there is zero liquidity on the opposite side.
+# Should trigger ADL/socialized-loss fallback rather than a market order.
+# Verifies: no-liquidity liquidation path, ADL/socialized-loss fallback.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 5000
+
+# U1 opens leveraged long
+U2 LS 2.50 1 200
+U1 LB 2.50 1 200
+
+SLEEP 500
+
+# Cancel all resting orders so book is empty
+U2 CA
+
+SLEEP 300
+ASSERT BOOK_EMPTY
+
+# Now attempt to liquidate U1 — book is dry
+LD 1
+
+SLEEP 500

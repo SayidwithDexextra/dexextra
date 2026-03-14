@@ -1,0 +1,4 @@
+# Test 041: Snapshot a Clean State
+# No commands — just verify a clean state can be captured.
+# Run with --snapshot flag to just get state. This file tests that
+# empty batch returns a valid state without errors.

@@ -1,0 +1,14 @@
+# Test 003: Resting Limit Sell (No Match)
+# A limit sell placed above best bid should rest on the book.
+# Verifies: order placement without matching, ask updates.
+
+STRICT ON
+U1 DEP 5000
+
+# Place a sell at $5.00 with no opposing buy — should rest
+U1 LS 5.00 1 50
+
+SLEEP 300
+
+# Best ask should now be $5.00
+ASSERT ASK == 5.00

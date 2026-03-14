@@ -1,0 +1,16 @@
+# Test 007: Multiple Price Levels on the Book
+# Stack multiple bids at different prices. Verify best bid tracks correctly.
+# Verifies: multi-level book construction, best-bid tracking.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+
+U1 LB 2.00 1 50
+U1 LB 2.10 1 50
+U1 LB 2.20 1 50
+
+SLEEP 500
+
+# Best bid should be the highest: $2.20
+ASSERT BID == 2.20

@@ -1,0 +1,22 @@
+# Test 018: Position Reversal (Long → Short)
+# U1 goes long, then sells more than position to flip short.
+# Verifies: position reversal, net calculation.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+U3 DEP 10000
+
+# Step 1: U1 buys 50 from U2
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 50
+
+# Step 2: U3 buys aggressively, U1 sells 100 (50 closes long, 50 opens short)
+U3 LB 2.50 1 100
+U1 LS 2.50 1 100
+
+SLEEP 500
+ASSERT POSITION U1 SHORT == 50

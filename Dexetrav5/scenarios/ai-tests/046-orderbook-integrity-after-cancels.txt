@@ -1,0 +1,28 @@
+# Test 046: Order Book Integrity After Multiple Cancels
+# Place orders across multiple levels and users, cancel selectively, verify book state.
+# Verifies: book integrity after selective cancellation.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+U1 LB 2.00 1 30
+U2 LB 2.10 1 40
+U3 LB 2.20 1 50
+U1 LS 3.00 1 20
+U2 LS 3.10 1 30
+
+SLEEP 300
+
+ASSERT BID == 2.20
+ASSERT ASK == 3.00
+
+# Cancel U2's orders
+U2 CA
+
+SLEEP 300
+
+# U2's bid at 2.10 and ask at 3.10 should be gone
+ASSERT BID == 2.20
+ASSERT ASK == 3.00

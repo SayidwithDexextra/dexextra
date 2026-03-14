@@ -1,0 +1,25 @@
+# Test 020: Multiple Users Deposit and Trade
+# All 4 non-deployer users deposit and interact.
+# Verifies: multi-user state isolation, correct accounting.
+
+STRICT ON
+U1 DEP 3000
+U2 DEP 3000
+U3 DEP 3000
+U4 DEP 3000
+
+SLEEP 300
+
+ASSERT COLLAT U1 >= 3000
+ASSERT COLLAT U2 >= 3000
+ASSERT COLLAT U3 >= 3000
+ASSERT COLLAT U4 >= 3000
+
+# U1 and U2 trade
+U1 LB 2.00 1 50
+U2 LS 2.00 1 50
+
+SLEEP 500
+
+ASSERT POSITION U1 LONG == 50
+ASSERT POSITION U2 SHORT == 50

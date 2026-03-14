@@ -1,0 +1,24 @@
+# Test 097: Position Flip in a Single Transaction
+# U1 is long 50, then sells 150 in one shot → should end short 100.
+# Tests the atomic flip path in PositionManager.
+# Verifies: single-tx reversal, correct entry price after flip.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+U3 DEP 10000
+
+# U1 goes long 50
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+SLEEP 500
+ASSERT POSITION U1 LONG == 50
+
+# U3 provides buy liquidity for a massive sell
+U3 LB 2.50 1 150
+
+# U1 sells 150 — closes 50 long + opens 100 short
+U1 LS 2.50 1 150
+SLEEP 500
+
+ASSERT POSITION U1 SHORT == 100

@@ -1,0 +1,23 @@
+# Test 093: Short Liquidation — All Margin Consumed
+# Short user's loss exceeds their entire margin.
+# Verifies: bad debt handling, socialized loss trigger, margin confiscation.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 10000
+U3 DEP 10000
+U4 DEP 10000
+
+# U1 opens short at $1.00 with tiny margin
+U2 LB 1.00 1 500
+U1 LS 1.00 1 500
+SLEEP 500
+
+# Price spikes to $5.00 — U1's loss = ($5-$1) × 500 = $2000, but U1 only has $100
+U3 LB 5.00 1 100
+U4 LS 5.00 1 100
+SLEEP 500
+
+# Liquidate U1 — expect bad debt
+LD 1
+SLEEP 500

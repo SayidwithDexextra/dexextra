@@ -1,0 +1,21 @@
+# Test 031: Short Position Open and Close
+# U1 goes short, then closes with a buy.
+# Verifies: short opening, short closing, PnL realization.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+# Open short: U1 sells to U2
+U2 LB 2.50 1 50
+U1 LS 2.50 1 50
+
+SLEEP 500
+ASSERT POSITION U1 SHORT == 50
+
+# Close short: U1 buys back from U3
+U3 LS 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500

@@ -1,0 +1,21 @@
+# Test 032: Short Position Realizes Profit
+# U1 shorts at $3.00, price drops to $2.00. U1 buys back at lower price.
+# Verifies: profitable short close, realized PnL positive.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+# Open short at $3.00
+U2 LB 3.00 1 50
+U1 LS 3.00 1 50
+
+SLEEP 500
+ASSERT POSITION U1 SHORT == 50
+
+# Close at $2.00 (profit for the short)
+U3 LS 2.00 1 50
+U1 LB 2.00 1 50
+
+SLEEP 500

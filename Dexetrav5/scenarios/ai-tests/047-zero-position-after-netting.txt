@@ -1,0 +1,20 @@
+# Test 047: Zero Position After Full Netting
+# Two equal-and-opposite trades for the same user → position should be zero.
+# Verifies: complete netting, no residual position.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# U1 goes long
+U2 LS 2.50 1 100
+U1 LB 2.50 1 100
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 100
+
+# U1 closes entire long (U2 buys back)
+U2 LB 2.50 1 100
+U1 LS 2.50 1 100
+
+SLEEP 500

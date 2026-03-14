@@ -1,0 +1,20 @@
+# Test 070: Aggressive Cross-Spread Limit Order
+# Place a buy order far above the resting ask — should execute at ask price, not buy price.
+# Verifies: price-time priority, taker gets resting maker price.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+
+# Resting ask at $1.00
+U1 LS 1.00 1 100
+
+SLEEP 300
+
+# Buy at $10.00 — wildly above the ask. Should fill at $1.00.
+U2 LB 10.00 1 100
+
+SLEEP 500
+
+ASSERT BOOK_EMPTY
+ASSERT POSITION U2 LONG == 100

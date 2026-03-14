@@ -1,0 +1,24 @@
+# Test 015: Cascading Fills Across Price Levels
+# Stack sells at $2.00, $2.10, $2.20. Buyer sweeps through multiple levels.
+# Verifies: multi-level matching, level exhaustion, partial fill at last level.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 10000
+
+U1 LS 2.00 1 30
+U2 LS 2.10 1 30
+U3 LS 2.20 1 30
+
+SLEEP 300
+
+# U4 buys 70 — should fill 30@2.00 + 30@2.10 + 10@2.20
+U4 LB 2.20 1 70
+
+SLEEP 500
+
+# 20 units remain at $2.20
+ASSERT ASK == 2.20
+ASSERT POSITION U4 LONG == 70

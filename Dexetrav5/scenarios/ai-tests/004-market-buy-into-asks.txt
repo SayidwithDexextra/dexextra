@@ -1,0 +1,22 @@
+# Test 004: Market Buy Sweeping Asks
+# U1 posts a limit sell, U2 sends a market buy → immediate fill.
+# Verifies: market order execution, taker fills against resting asks.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Seed the ask side
+U1 LS 3.00 1 50
+
+SLEEP 300
+ASSERT ASK == 3.00
+
+# Market buy should sweep the ask
+U2 MB 1 50
+
+SLEEP 500
+
+# Ask should be cleared, U2 long, U1 short
+ASSERT POSITION U2 LONG == 50
+ASSERT POSITION U1 SHORT == 50

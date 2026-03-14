@@ -1,0 +1,22 @@
+# Test 091: Health Status Transition (Healthy → Unhealthy → Healthy)
+# User starts healthy, becomes unhealthy from price drop, then recovers via top-up.
+# Verifies: isHealthy flag transitions correctly at each step.
+
+STRICT ON
+U1 DEP 500
+U2 DEP 5000
+U3 DEP 5000
+
+# Open position — should be healthy initially
+U2 LS 2.50 1 100
+U1 LB 2.50 1 100
+SLEEP 500
+
+# Price drops moderately — may become unhealthy
+U3 LB 1.50 1 50
+U2 LS 1.50 1 50
+SLEEP 500
+
+# Top up to restore health
+U1 DEP 3000
+SLEEP 300

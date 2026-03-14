@@ -1,0 +1,49 @@
+# Test 069: Rapid Open/Close Cycle (State Churn)
+# Open and close a position 5 times in rapid succession.
+# Verifies: no state corruption from rapid state transitions, gas consistency.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+
+# Cycle 1
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+SLEEP 200
+U2 LB 2.50 1 50
+U1 LS 2.50 1 50
+SLEEP 200
+
+# Cycle 2
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+SLEEP 200
+U2 LB 2.50 1 50
+U1 LS 2.50 1 50
+SLEEP 200
+
+# Cycle 3
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+SLEEP 200
+U2 LB 2.50 1 50
+U1 LS 2.50 1 50
+SLEEP 200
+
+# Cycle 4
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+SLEEP 200
+U2 LB 2.50 1 50
+U1 LS 2.50 1 50
+SLEEP 200
+
+# Cycle 5
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+SLEEP 200
+U2 LB 2.50 1 50
+U1 LS 2.50 1 50
+SLEEP 500
+
+ASSERT BOOK_EMPTY

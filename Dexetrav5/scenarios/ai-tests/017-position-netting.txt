@@ -1,0 +1,21 @@
+# Test 017: Position Netting (Close a Position)
+# U1 goes long, then sells the same amount to close position.
+# Verifies: position netting, PnL realization, collateral release.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+# Step 1: U1 buys from U2 → U1 is long
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 50
+
+# Step 2: U1 sells back to U3 at same price → should net to zero
+U3 LB 2.50 1 50
+U1 LS 2.50 1 50
+
+SLEEP 500

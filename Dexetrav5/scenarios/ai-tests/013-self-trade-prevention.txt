@@ -1,0 +1,12 @@
+# Test 013: Self-Trade (Same User Both Sides)
+# U1 places both a buy and sell at the same price.
+# Depending on contract rules, this may match or reject.
+# Verifies: self-trade handling behavior.
+
+STRICT ON
+U1 DEP 5000
+
+U1 LB 2.50 1 50
+U1 LS 2.50 1 50
+
+SLEEP 500

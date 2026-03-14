@@ -1,0 +1,24 @@
+# Test 080: Collateral Accounting After a Winning Trade
+# Open long at $2.00, close at $3.00. Verify collateral increased by profit.
+# profit = (3.00 - 2.00) × 50 = $50
+# Verifies: realized profit added to collateral.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+# Open at $2.00
+U2 LS 2.00 1 50
+U1 LB 2.00 1 50
+
+SLEEP 500
+
+# Close at $3.00 — profit of $50
+U3 LB 3.00 1 50
+U1 LS 3.00 1 50
+
+SLEEP 500
+
+# U1 original collateral was $5000, should be >= $5000 (plus profit, minus fees)
+ASSERT COLLAT U1 >= 5000

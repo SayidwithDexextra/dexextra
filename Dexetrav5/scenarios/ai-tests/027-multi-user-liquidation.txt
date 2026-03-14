@@ -1,0 +1,27 @@
+# Test 027: Multi-User Simultaneous Liquidation
+# Multiple users take undercollateralized positions; all get liquidated.
+# Verifies: batch liquidation, socialized loss distribution.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 100
+U3 DEP 5000
+U4 DEP 5000
+
+# U1 and U2 open leveraged longs
+U3 LS 2.50 1 200
+U1 LB 2.50 1 100
+U2 LB 2.50 1 100
+
+SLEEP 500
+
+# Crash the price
+U4 LS 0.50 1 100
+
+SLEEP 500
+
+# Liquidate both
+LD 1
+LD 2
+
+SLEEP 500

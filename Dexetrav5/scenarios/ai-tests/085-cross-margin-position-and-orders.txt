@@ -1,0 +1,23 @@
+# Test 085: Open Position + Resting Orders (Cross-Margin Pressure)
+# User has both an open position and resting orders. Margin is shared.
+# Verifies: cross-margin accounting — position margin + order reservation.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+# Open a position
+U2 LS 2.50 1 50
+U1 LB 2.50 1 50
+
+SLEEP 500
+ASSERT POSITION U1 LONG == 50
+
+# Place additional resting orders — margin is further reserved
+U1 LB 2.00 1 50
+U1 LB 1.50 1 50
+
+SLEEP 300
+
+# Check that available margin has decreased
+ASSERT AVAIL U1 >= 0

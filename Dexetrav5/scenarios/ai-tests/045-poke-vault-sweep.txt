@@ -1,0 +1,16 @@
+# Test 045: Poke Vault Sweep
+# Trigger the vault's liquidation sweep function.
+# Verifies: POKE_VAULT command works without crashing.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+
+U1 LB 2.50 1 50
+U2 LS 2.50 1 50
+
+SLEEP 500
+
+POKE_VAULT
+
+SLEEP 300

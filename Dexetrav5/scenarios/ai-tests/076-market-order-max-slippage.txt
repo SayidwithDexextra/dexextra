@@ -1,0 +1,21 @@
+# Test 076: Market Order With Maximum Slippage (5000bps = 50%)
+# Use the contract's max allowed slippage to see how far price can move.
+# Verifies: max slippage enforcement, no exceeding 5000bps cap.
+
+STRICT ON
+U1 DEP 20000
+U2 DEP 5000
+U3 DEP 5000
+U4 DEP 5000
+
+# Sparse asks at wildly different prices
+U2 LS 1.00 1 10
+U3 LS 2.00 1 10
+U4 LS 5.00 1 10
+
+SLEEP 300
+
+# Market buy with max slippage (50%)
+U1 MB 1 30 5000
+
+SLEEP 500

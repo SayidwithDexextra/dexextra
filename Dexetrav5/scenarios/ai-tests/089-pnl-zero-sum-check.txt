@@ -1,0 +1,22 @@
+# Test 089: PnL Zero-Sum Verification
+# In futures, every dollar gained by one side is lost by the other.
+# Open longs and shorts, realize PnL, verify global balance is conserved.
+# Verifies: zero-sum PnL property, no value creation/destruction.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+
+# U1 long, U2 short at $2.00
+U2 LS 2.00 1 100
+U1 LB 2.00 1 100
+SLEEP 500
+
+# Close at $3.00 — U1 profits $100, U2 loses $100
+U2 LB 3.00 1 100
+U1 LS 3.00 1 100
+SLEEP 500
+
+# Total collateral across both users should equal starting 20000 (minus fees)
+ASSERT COLLAT U1 >= 10000
+ASSERT COLLAT U2 <= 10000

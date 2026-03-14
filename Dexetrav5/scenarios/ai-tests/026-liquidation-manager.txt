@@ -1,0 +1,21 @@
+# Test 026: Liquidation via LiquidationManager (LMLD)
+# Same as 025 but uses the LiquidationManager contract path.
+# Verifies: LM-based liquidation flow.
+
+STRICT ON
+U1 DEP 100
+U2 DEP 5000
+U3 DEP 5000
+
+U2 LS 2.50 1 200
+U1 LB 2.50 1 200
+
+SLEEP 500
+
+U3 LS 0.50 1 100
+
+SLEEP 500
+
+LMLD 1
+
+SLEEP 500

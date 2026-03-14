@@ -1,0 +1,19 @@
+# Test 008: Cancel All Orders
+# Place orders, then cancel them all. Book should be empty.
+# Verifies: order cancellation, book cleanup, collateral release.
+
+STRICT ON
+U1 DEP 5000
+
+U1 LB 2.00 1 50
+U1 LB 2.10 1 30
+U1 LS 3.00 1 40
+
+SLEEP 300
+
+# Cancel everything
+U1 CA
+
+SLEEP 300
+
+ASSERT BOOK_EMPTY

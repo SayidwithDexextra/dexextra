@@ -1,0 +1,77 @@
+# Test 100: Stress Test — 100 Sequential Operations
+# Rapid-fire deposits, orders, cancels, and assertions.
+# Verifies: system stability under sustained load, no state corruption.
+
+STRICT ON
+U1 DEP 50000
+U2 DEP 50000
+U3 DEP 50000
+U4 DEP 50000
+
+# Round 1: Build book
+U1 LB 1.00 1 10
+U1 LB 1.10 1 10
+U1 LB 1.20 1 10
+U1 LB 1.30 1 10
+U1 LB 1.40 1 10
+U2 LS 2.00 1 10
+U2 LS 2.10 1 10
+U2 LS 2.20 1 10
+U2 LS 2.30 1 10
+U2 LS 2.40 1 10
+
+SLEEP 500
+ASSERT BID == 1.40
+ASSERT ASK == 2.00
+
+# Round 2: Sweep asks
+U3 LB 2.40 1 50
+SLEEP 500
+
+# Round 3: Sweep bids
+U4 LS 1.00 1 50
+SLEEP 500
+
+ASSERT BOOK_EMPTY
+
+# Round 4: New positions
+U1 LB 3.00 1 100
+U2 LS 3.00 1 100
+SLEEP 300
+
+ASSERT POSITION U1 LONG >= 100
+
+# Round 5: Partial close
+U3 LB 3.00 1 50
+U1 LS 3.00 1 50
+SLEEP 300
+
+# Round 6: More orders
+U3 LB 2.80 1 20
+U3 LB 2.90 1 20
+U4 LS 3.10 1 20
+U4 LS 3.20 1 20
+SLEEP 300
+
+# Round 7: Cancel all for U3 and U4
+U3 CA
+U4 CA
+SLEEP 300
+
+# Round 8: Deposit more and trade again
+U1 DEP 10000
+U2 DEP 10000
+U1 LB 2.50 1 200
+U2 LS 2.50 1 200
+SLEEP 500
+
+# Round 9: Rapid cycle
+U3 LB 2.50 1 30
+U4 LS 2.50 1 30
+SLEEP 200
+U3 LS 2.50 1 30
+U4 LB 2.50 1 30
+SLEEP 200
+
+# Round 10: Final state check
+ASSERT BOOK_EMPTY

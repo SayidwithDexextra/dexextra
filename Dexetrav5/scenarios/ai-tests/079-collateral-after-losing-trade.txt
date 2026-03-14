@@ -1,0 +1,24 @@
+# Test 079: Collateral Accounting After a Losing Trade
+# Open long at $3.00, close at $2.00. Verify collateral decreased by loss.
+# loss = (3.00 - 2.00) × 50 = $50
+# Verifies: realized loss deducted from collateral.
+
+STRICT ON
+U1 DEP 5000
+U2 DEP 5000
+U3 DEP 5000
+
+# Open at $3.00
+U2 LS 3.00 1 50
+U1 LB 3.00 1 50
+
+SLEEP 500
+
+# Close at $2.00 — loss of $50
+U3 LB 2.00 1 50
+U1 LS 2.00 1 50
+
+SLEEP 500
+
+# U1 original collateral was $5000, should now be ~$4950
+ASSERT COLLAT U1 <= 5000

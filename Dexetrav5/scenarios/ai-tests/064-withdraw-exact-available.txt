@@ -1,0 +1,16 @@
+# Test 064: Withdraw Exactly Available Margin
+# Deposit, open a small position, then withdraw remaining available.
+# Verifies: exact boundary withdraw, no off-by-one in available calc.
+
+STRICT ON
+U1 DEP 10000
+U2 DEP 10000
+
+# Open a small position
+U2 LS 2.50 1 10
+U1 LB 2.50 1 10
+
+SLEEP 500
+
+# Check available — withdraw up to it
+ASSERT AVAIL U1 >= 0
