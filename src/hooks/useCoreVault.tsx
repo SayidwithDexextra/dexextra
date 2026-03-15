@@ -11,6 +11,7 @@ import { env } from '@/lib/env';
 import { getReadProvider, getRunner, getChainId, getWsProvider, getSnapshotBlockNumber } from '@/lib/network';
 import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet'
 import { getMagicProvider, magicRequestWithRetry, switchMagicChainWithRetry } from '@/lib/magic'
+import { recordVaultTransaction } from '@/lib/vaultTransactionService'
 
 // Module-level singletons to avoid duplicate watchers across multiple hook instances
 let coreVaultWatchersAttached = false;
@@ -424,16 +425,35 @@ export function useCoreVault(walletAddress?: string) {
       // Collateral breakdown (best-effort; older deployments may not expose this view)
       let nextDepositedCollateral = '0'
       let nextCrossChainCredit = '0'
-      let nextWithdrawableBalance = nextAvailableBalance
+      let nextWithdrawableBalance = '0'
       try {
         if (collateralBreakdown && Array.isArray(collateralBreakdown) && collateralBreakdown.length >= 4) {
           const [deposited6, credit6, withdrawable6] = collateralBreakdown as any as [bigint, bigint, bigint, bigint]
           nextDepositedCollateral = formatTokenAmount(deposited6)
           nextCrossChainCredit = formatTokenAmount(credit6)
           nextWithdrawableBalance = formatTokenAmount(withdrawable6)
+        } else {
+          // getCollateralBreakdown unavailable — read ledger values directly so we
+          // never confuse cross-chain credit for hub-withdrawable balance.
+          const hasUserCC = typeof (contracts.vault as any)?.userCrossChainCredit === 'function';
+          const [rawCollateral, rawCC] = await Promise.all([
+            withRetry<bigint>(() => contracts.vault.userCollateral(userAddress, { blockTag: snapshotBlock })),
+            hasUserCC
+              ? withRetry<bigint>(() => (contracts.vault as any).userCrossChainCredit(userAddress, { blockTag: snapshotBlock }))
+              : Promise.resolve(0n as bigint),
+          ]);
+          nextDepositedCollateral = formatTokenAmount(rawCollateral);
+          nextCrossChainCredit = formatTokenAmount(rawCC);
+          // Hub-withdrawable is capped at deposited collateral (conservative; ignores
+          // realized PnL, but prevents attempting to transfer USDC the vault doesn't hold).
+          const deposited = parseFloat(nextDepositedCollateral) || 0;
+          const available = parseFloat(nextAvailableBalance) || 0;
+          const cc = parseFloat(nextCrossChainCredit) || 0;
+          nextWithdrawableBalance = Math.max(0, Math.min(deposited, available - cc)).toFixed(6);
         }
       } catch {
-        // ignore (keep fallbacks)
+        // Last-resort: assume nothing is hub-withdrawable to prevent revert
+        nextWithdrawableBalance = '0';
       }
       setDepositedCollateral(nextDepositedCollateral)
       setCrossChainCredit(nextCrossChainCredit)
@@ -751,8 +771,16 @@ export function useCoreVault(walletAddress?: string) {
       const durationDeposit = Date.now() - startTimeDeposit;
       console.log(`✅ [RPC] Collateral deposit submitted in ${durationDeposit}ms`, { txHash: depositTx.hash });
       const receipt = await depositTx.wait();
-      
-      // Refresh balances
+
+      recordVaultTransaction({
+        wallet_address: userAddress,
+        tx_type: 'deposit',
+        amount: parseFloat(amount),
+        chain_id: getChainId(),
+        tx_hash: depositTx.hash,
+        method: 'hub_direct',
+      });
+
       fetchBalances();
       
       return depositTx.hash;
@@ -767,34 +795,114 @@ export function useCoreVault(walletAddress?: string) {
     }
   }, [userAddress, fetchBalances, getWriteContracts]);
 
-  // Withdraw collateral
-  const withdrawCollateral = useCallback(async (amount: string): Promise<string> => {
+  // Withdraw collateral — unified: routes hub-direct and cross-chain portions automatically
+  const withdrawCollateral = useCallback(async (amount: string, preferredSpokeChainId?: number): Promise<string> => {
     const currentContracts = await getWriteContracts();
     if (!currentContracts) throw new Error('Contracts not initialized or wallet not connected');
     if (!userAddress) throw new Error('Wallet address not available');
 
     try {
-      console.log(`💸 [RPC] Starting collateral withdrawal for ${userAddress.slice(0, 6)}...`, { amount });
-      // Parse amount to BigInt with 6 decimals (USDC standard)
-      const amountWei = parseTokenAmount(amount);
+      console.log(`[withdraw] Starting unified withdrawal for ${userAddress.slice(0, 6)}...`, { amount });
+      const requestedAmount = parseFloat(amount);
 
-      // Withdraw collateral
-      console.log(`📡 [RPC] Withdrawing collateral from vault`);
-      let startTimeWithdraw = Date.now();
-      const withdrawTx = await currentContracts.vault.withdrawCollateral(amountWei);
-      const durationWithdraw = Date.now() - startTimeWithdraw;
-      console.log(`✅ [RPC] Collateral withdrawal submitted in ${durationWithdraw}ms`, { txHash: withdrawTx.hash });
-      const receipt = await withdrawTx.wait();
-      
-      // Refresh balances
+      let hubWithdrawable = parseFloat(withdrawableBalance || '0') || 0;
+      const ccCredit = parseFloat(crossChainCredit || '0') || 0;
+
+      // Safety: verify the vault actually holds enough USDC for the hub portion.
+      // Prevents ERC20InsufficientBalance revert if the ledger is out of sync
+      // with the vault's token balance (e.g. realized PnL without backing tokens).
+      try {
+        const vaultAddr = CONTRACT_ADDRESSES.CORE_VAULT || await currentContracts.vault.getAddress();
+        const vaultUsdcBal: bigint = await currentContracts.mockUSDC.balanceOf(vaultAddr);
+        const vaultUsdcNum = parseFloat(formatTokenAmount(vaultUsdcBal)) || 0;
+        if (hubWithdrawable > vaultUsdcNum) {
+          console.log(`[withdraw] Clamping hub portion: ledger says ${hubWithdrawable} but vault holds ${vaultUsdcNum} USDC`);
+          hubWithdrawable = vaultUsdcNum;
+        }
+      } catch {
+        // If balance check fails, proceed with ledger value (best-effort)
+      }
+
+      // Determine how much goes through hub vs cross-chain, clamping each to actual balance
+      const hubPortion = Math.min(requestedAmount, hubWithdrawable);
+      const crossChainPortion = Math.min(requestedAmount - hubPortion, ccCredit);
+
+      let hubTxHash = '';
+
+      // Part 1: Withdraw hub portion directly from CoreVault
+      if (hubPortion > 0.001) {
+        console.log(`[withdraw] Hub direct portion: ${hubPortion.toFixed(6)} USDC`);
+        const hubAmountWei = parseTokenAmount(hubPortion.toFixed(6));
+        const startTime = Date.now();
+        const withdrawTx = await currentContracts.vault.withdrawCollateral(hubAmountWei);
+        const duration = Date.now() - startTime;
+        console.log(`[withdraw] Hub withdrawal submitted in ${duration}ms`, { txHash: withdrawTx.hash });
+        await withdrawTx.wait();
+        hubTxHash = withdrawTx.hash;
+
+        recordVaultTransaction({
+          wallet_address: userAddress,
+          tx_type: 'withdraw',
+          amount: hubPortion,
+          chain_id: getChainId(),
+          tx_hash: withdrawTx.hash,
+          method: 'hub_direct',
+        });
+      }
+
+      // Part 2: Withdraw cross-chain portion via relay API
+      if (crossChainPortion > 0.001) {
+        // Default spoke chain: Arbitrum (42161) unless caller specifies
+        const targetChain = preferredSpokeChainId || 42161;
+        console.log(`[withdraw] Cross-chain portion: ${crossChainPortion.toFixed(6)} USDC → chain ${targetChain}`);
+
+        const res = await fetch('/api/withdraw/cross-chain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user: userAddress,
+            amount: crossChainPortion.toFixed(6),
+            targetChainId: targetChain,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || `Cross-chain withdrawal failed (HTTP ${res.status})`);
+        }
+        console.log(`[withdraw] Cross-chain withdrawal complete`, data);
+
+        recordVaultTransaction({
+          wallet_address: userAddress,
+          tx_type: 'withdraw',
+          amount: crossChainPortion,
+          chain_id: targetChain,
+          tx_hash: data.withdrawId || undefined,
+          method: 'cross_chain',
+          metadata: { targetChainId: targetChain, withdrawId: data.withdrawId },
+        });
+
+        if (!hubTxHash) {
+          hubTxHash = data.withdrawId || 'cross-chain-complete';
+        }
+      }
+
       fetchBalances();
-      
-      return withdrawTx.hash;
+      return hubTxHash || 'withdrawal-complete';
     } catch (err) {
       console.error('Withdrawal failed:', err);
       throw err;
     }
-  }, [userAddress, fetchBalances, getWriteContracts]);
+  }, [userAddress, fetchBalances, getWriteContracts, withdrawableBalance, crossChainCredit]);
+
+  // Unified withdrawable = hub withdrawable + cross-chain credit, capped at available
+  // balance (which already accounts for margin locked in open positions).
+  const totalWithdrawable = (() => {
+    const hub = parseFloat(withdrawableBalance || '0') || 0;
+    const cc = parseFloat(crossChainCredit || '0') || 0;
+    const available = parseFloat(availableBalance || '0') || 0;
+    return Math.min(hub + cc, available).toFixed(6);
+  })();
 
   return {
     isConnected: isInitialized,
@@ -803,16 +911,17 @@ export function useCoreVault(walletAddress?: string) {
     availableBalance,
     totalCollateral: totalCollateralStr,
     withdrawableBalance,
+    totalWithdrawable,
     crossChainCredit,
     depositedCollateral,
     isHealthy: healthy,
-    ...marginValues, // Expose margin values
+    ...marginValues,
     socializedLoss,
     depositCollateral,
     withdrawCollateral,
     vaultAddress,
     mockUSDCAddress,
     fetchBalances,
-    refresh: scheduleRefresh // Add a refresh function for external components
+    refresh: scheduleRefresh,
   };
 }

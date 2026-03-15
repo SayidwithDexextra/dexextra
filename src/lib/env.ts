@@ -67,12 +67,21 @@ const envSchema = z.object({
   UMA_ORACLE_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid UMA oracle address').optional(),
   USDC_TOKEN_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid USDC token address').default('0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'),
 
+  // Cross-chain collateral infrastructure
+  COLLATERAL_HUB_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid CollateralHub address').optional(),
+  HUB_OUTBOX_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid HubBridgeOutbox address').optional(),
+
   // Spoke Vault Addresses (per chain) - used for external deposits
   SPOKE_POLYGON_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Polygon spoke vault address').optional(),
+  SPOKE_POLYGON_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Polygon USDC address').optional(),
   SPOKE_ARBITRUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum spoke vault address').optional(),
   SPOKE_ARBITRUM_USDC_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum USDC address').optional(),
   SPOKE_ETHEREUM_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Ethereum spoke vault address').optional(),
   SPOKE_HYPERLIQUID_VAULT_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Hyperliquid spoke vault address').optional(),
+
+  // Spoke Bridge Inbox addresses (per chain) - used for cross-chain withdrawals
+  SPOKE_INBOX_ADDRESS_POLYGON: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Polygon spoke inbox address').optional(),
+  SPOKE_INBOX_ADDRESS_ARBITRUM: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid Arbitrum spoke inbox address').optional(),
 
   // Market Table Default Configuration
   DEFAULT_MARKET_DECIMALS: z.string().transform(val => parseInt(val)).pipe(z.number().min(1).max(18)).default('8'),

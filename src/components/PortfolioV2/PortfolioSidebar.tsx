@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/hooks/useWallet'
@@ -10,8 +10,9 @@ import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext'
 import { useMarkets } from '@/hooks/useMarkets'
 import { normalizeBytes32Hex } from '@/lib/hex'
 import { usePortfolioSidebarOpenOrders } from '@/hooks/usePortfolioSidebarOpenOrders'
-import { Wallet } from 'lucide-react'
+import { Wallet, ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import { isMagicSelectedWallet, showMagicWalletUI } from '@/lib/magic'
+import { supabase } from '@/lib/supabase'
 
 type PortfolioSidebarProps = {
 	isOpen: boolean
@@ -331,13 +332,51 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 	const [withdrawNotice, setWithdrawNotice] = useState<{ kind: 'none' | 'cancelled' | 'error' | 'success'; message: string }>({ kind: 'none', message: '' })
 	const [withdrawTxHash, setWithdrawTxHash] = useState('')
 
-	const withdrawableNum = parseFloat(coreVault?.withdrawableBalance || '0') || 0
-	const crossChainCreditNum = parseFloat(coreVault?.crossChainCredit || '0') || 0
+	// ─── Transaction history state ───
+	type VaultTx = {
+		id: string
+		tx_type: 'deposit' | 'withdraw'
+		amount: number
+		token: string
+		status: string
+		created_at: string
+	}
+	const [txHistory, setTxHistory] = useState<VaultTx[]>([])
+	const [txHistoryLoading, setTxHistoryLoading] = useState(false)
+	const txHistoryFetched = useRef(false)
+
+	const fetchTxHistory = useCallback(async () => {
+		if (!walletAddress) return
+		setTxHistoryLoading(true)
+		try {
+			const { data, error } = await supabase
+				.from('vault_transactions')
+				.select('id, tx_type, amount, token, status, created_at')
+				.eq('wallet_address', walletAddress.toLowerCase())
+				.order('created_at', { ascending: false })
+				.limit(50)
+			if (!error && data) setTxHistory(data as VaultTx[])
+		} catch {} finally {
+			setTxHistoryLoading(false)
+		}
+	}, [walletAddress])
+
+	useEffect(() => {
+		if (sidebarView === 'withdraw' && walletAddress && !txHistoryFetched.current) {
+			txHistoryFetched.current = true
+			fetchTxHistory()
+		}
+		if (sidebarView !== 'withdraw') {
+			txHistoryFetched.current = false
+		}
+	}, [sidebarView, walletAddress, fetchTxHistory])
+
+	const totalWithdrawableNum = parseFloat(coreVault?.totalWithdrawable || '0') || 0
 	const withdrawParsedAmount = useMemo(() => {
 		const n = parseFloat(withdrawAmount)
 		return Number.isFinite(n) && n > 0 ? n : 0
 	}, [withdrawAmount])
-	const canWithdraw = !withdrawSubmitting && withdrawParsedAmount > 0 && withdrawParsedAmount <= Math.max(0, withdrawableNum)
+	const canWithdraw = !withdrawSubmitting && withdrawParsedAmount > 0 && withdrawParsedAmount <= Math.max(0, totalWithdrawableNum)
 
 	// Reset withdraw form when switching views
 	useEffect(() => {
@@ -359,6 +398,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			setWithdrawTxHash(tx)
 			setWithdrawNotice({ kind: 'success', message: 'Withdrawal submitted successfully.' })
 			setWithdrawAmount('')
+			setTimeout(() => fetchTxHistory(), 1500)
 		} catch (e: any) {
 			const code = e?.code ?? e?.error?.code
 			const msg: string = String(e?.message || e?.error?.message || '').toLowerCase()
@@ -840,7 +880,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							<div className="mb-3">
 								<div className="flex items-center justify-between mb-2">
 									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Withdraw Collateral</h4>
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Hub</div>
 								</div>
 
 								{/* Balance cards */}
@@ -849,7 +888,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										<div className="px-4 py-3 min-w-0">
 											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Withdrawable</div>
 											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
-												{withdrawableNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
+												{totalWithdrawableNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
 											</div>
 										</div>
 										<div className="px-4 py-3 min-w-0 border-l border-[#1A1A1A]">
@@ -858,16 +897,10 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 												{(parseFloat(coreVault?.totalCollateral || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
 											</div>
 										</div>
-										<div className="px-4 py-3 min-w-0 border-t border-[#1A1A1A]">
+										<div className="px-4 py-3 min-w-0 border-t border-[#1A1A1A] col-span-2">
 											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Available (Trading)</div>
 											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
 												{(parseFloat(coreVault?.availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
-											</div>
-										</div>
-										<div className="px-4 py-3 min-w-0 border-l border-[#1A1A1A] border-t">
-											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Cross-chain Credit</div>
-											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
-												{crossChainCreditNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
 											</div>
 										</div>
 									</div>
@@ -891,18 +924,12 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											style={{ background: '#141414', color: '#E5E7EB', borderColor: '#222222' }}
 										/>
 										<button
-											onClick={() => setWithdrawAmount(String(withdrawableNum))}
+											onClick={() => setWithdrawAmount(String(totalWithdrawableNum))}
 											className="text-[10px] px-2.5 py-2 rounded-md border border-[#222222] bg-[#141414] text-[#9CA3AF] hover:text-white hover:border-[#333333] transition-all duration-200 whitespace-nowrap"
 										>
 											Max
 										</button>
 									</div>
-
-									{crossChainCreditNum > 0 ? (
-										<div className="mt-3 text-[10px] text-[#606060] leading-relaxed">
-											{crossChainCreditNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} USDC is cross-chain credit and cannot be withdrawn via hub.
-										</div>
-									) : null}
 
 									{withdrawNotice.kind !== 'none' ? (
 										<div
@@ -933,9 +960,76 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 												: 'bg-[#141414] border-[#222222] text-white hover:border-[#ef4444] hover:bg-[#ef4444]/10 hover:text-[#ef4444]',
 										].join(' ')}
 									>
-										{withdrawSubmitting ? 'Submitting…' : 'Withdraw'}
+										{withdrawSubmitting ? 'Processing…' : 'Withdraw'}
 									</button>
 								</div>
+							</div>
+
+							{/* Transaction History */}
+							<div className="mt-5">
+								<h3 className="text-[16px] font-semibold text-white tracking-tight mb-3">Transaction History</h3>
+
+								{txHistoryLoading ? (
+									<div className="space-y-1.5">
+										{Array.from({ length: 4 }).map((_, i) => (
+											<div key={i} className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3">
+												<div className="flex items-center gap-2">
+													<div className="w-7 h-7 bg-[#2A2A2A] rounded-full animate-pulse flex-shrink-0" />
+													<div className="flex-1 space-y-1.5">
+														<div className="w-24 h-3 bg-[#2A2A2A] rounded animate-pulse" />
+														<div className="w-16 h-2.5 bg-[#1A1A1A] rounded animate-pulse" />
+													</div>
+													<div className="w-16 h-3 bg-[#2A2A2A] rounded animate-pulse" />
+												</div>
+											</div>
+										))}
+									</div>
+								) : txHistory.length === 0 ? (
+									<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-4 text-center">
+										<span className="text-[11px] text-[#606060]">No transactions yet</span>
+									</div>
+								) : (
+									<div className="space-y-1">
+										{txHistory.map((tx) => {
+											const isDeposit = tx.tx_type === 'deposit'
+											const dateStr = (() => {
+												try {
+													const d = new Date(tx.created_at)
+													return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+												} catch { return '—' }
+											})()
+											return (
+												<div
+													key={tx.id}
+													className="group bg-[#0F0F0F] hover:bg-[#141414] rounded-md border border-[#222222] hover:border-[#2A2A2A] transition-all duration-200 p-3"
+												>
+													<div className="flex items-center gap-2.5">
+														<div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${isDeposit ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+															{isDeposit
+																? <ArrowDownLeft className="w-3.5 h-3.5 text-green-400" />
+																: <ArrowUpRight className="w-3.5 h-3.5 text-red-400" />
+															}
+														</div>
+														<div className="flex-1 min-w-0">
+															<span className="text-[11px] font-medium text-white">
+																{isDeposit ? 'Deposit' : 'Withdrawal'}
+															</span>
+															<div className="text-[10px] text-[#505050] font-mono mt-0.5">
+																{dateStr}
+															</div>
+														</div>
+														<div className="flex-shrink-0 text-right">
+															<span className={`text-[12px] font-medium font-mono ${isDeposit ? 'text-green-400' : 'text-red-400'}`}>
+																{isDeposit ? '+' : '−'}{Number(tx.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+															</span>
+															<div className="text-[9px] text-[#505050] mt-0.5">{tx.token}</div>
+														</div>
+													</div>
+												</div>
+											)
+										})}
+									</div>
+								)}
 							</div>
 						</div>
 					</div>

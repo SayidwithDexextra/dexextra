@@ -3,6 +3,7 @@ import { createHmac } from 'crypto'
 import { ethers } from 'ethers'
 import { createClient } from '@supabase/supabase-js'
 import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter'
+import { recordVaultTransaction } from '@/lib/vaultTransactionService'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -1083,6 +1084,18 @@ export async function POST(request: NextRequest) {
                   .eq('deposit_id', depositId)
               }
             } catch {}
+
+            // Record in vault_transactions immediately after spoke send succeeds
+            const decimals = Number(process.env.SPOKE_POLYGON_USDC_DECIMALS || '6')
+            recordVaultTransaction({
+              wallet_address: from,
+              tx_type: 'deposit',
+              amount: parseFloat(ethers.formatUnits(finalAmount, decimals)),
+              chain_id: chainIdNum,
+              tx_hash: txId,
+              method: 'bridge_deposit',
+              metadata: { depositId },
+            })
 
             // Optional hub delivery
             let delivered: any = null
