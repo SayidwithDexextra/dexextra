@@ -7,10 +7,13 @@ U1 DEP 5000
 U2 DEP 5000
 
 U2 LS 2.50 1 50
-
 SLEEP 300
 
-# 6000bps = 60% — exceeds contract max of 5000
+# 6000bps = 60% — exceeds contract max of 5000, should revert
+STRICT OFF
 U1 MB 1 50 6000
+STRICT ON
 
 SLEEP 300
+# The order should not have executed — U2's ask should still be on the book
+ASSERT ASK == 2.50

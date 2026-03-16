@@ -5,5 +5,10 @@
 STRICT ON
 U1 DEP 5000
 
-# No asks on book — market buy should error
+# No asks on book — market buy should revert
+STRICT OFF
 U1 MB 1 50
+STRICT ON
+
+# Book should still be empty, no positions created
+ASSERT BOOK_EMPTY

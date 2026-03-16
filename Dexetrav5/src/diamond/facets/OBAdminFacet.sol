@@ -8,6 +8,7 @@ contract OBAdminFacet {
     using OrderBookStorage for OrderBookStorage.State;
 
     event TradingParametersUpdated(uint256 marginRequirement, uint256 tradingFee, address feeRecipient);
+    event FeeStructureUpdated(uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps);
     event LeverageEnabled(address indexed controller, uint256 maxLeverage, uint256 newMarginRequirement);
     event LeverageDisabled(address indexed controller);
     event LeverageControllerUpdated(address indexed oldController, address indexed newController);
@@ -61,6 +62,24 @@ contract OBAdminFacet {
         address old = s.leverageController;
         s.leverageController = _newController;
         emit LeverageControllerUpdated(old, _newController);
+    }
+
+    function updateFeeStructure(
+        uint256 _takerFeeBps,
+        uint256 _makerFeeBps,
+        address _protocolFeeRecipient,
+        uint256 _protocolFeeShareBps
+    ) external onlyOwner {
+        require(_takerFeeBps <= 500, "OB: taker fee too high");
+        require(_makerFeeBps <= 500, "OB: maker fee too high");
+        require(_protocolFeeRecipient != address(0), "OB: bad protocol recipient");
+        require(_protocolFeeShareBps <= 10000, "OB: share > 100%");
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        s.takerFeeBps = _takerFeeBps;
+        s.makerFeeBps = _makerFeeBps;
+        s.protocolFeeRecipient = _protocolFeeRecipient;
+        s.protocolFeeShareBps = _protocolFeeShareBps;
+        emit FeeStructureUpdated(_takerFeeBps, _makerFeeBps, _protocolFeeRecipient, _protocolFeeShareBps);
     }
 
     event MaxSlippageUpdated(uint256 oldSlippage, uint256 newSlippage);

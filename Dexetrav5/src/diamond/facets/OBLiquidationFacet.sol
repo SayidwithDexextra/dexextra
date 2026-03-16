@@ -505,10 +505,12 @@ contract OBLiquidationFacet {
     }
 
     function _executeTradeForLiquidation(address buyer, address seller, uint256 price, uint256 amount, bool buyerMargin, bool sellerMargin) internal {
-        // delegate to trade execution facet
-        (bool ok, bytes memory err) = address(this).call(abi.encodeWithSignature("obExecuteTrade(address,address,uint256,uint256,bool,bool)", buyer, seller, price, amount, buyerMargin, sellerMargin));
+        // Liquidated user is always the taker; the counterparty providing liquidity is the maker.
+        // buyer == address(this) means the liquidated side is the buyer placeholder, so buyerIsTaker = true.
+        // seller == address(this) means the liquidated side is the seller placeholder, so buyerIsTaker = false (seller is taker).
+        bool buyerIsTaker = (buyer == address(this));
+        (bool ok, bytes memory err) = address(this).call(abi.encodeWithSignature("obExecuteTrade(address,address,uint256,uint256,bool,bool,bool)", buyer, seller, price, amount, buyerMargin, sellerMargin, buyerIsTaker));
         if (!ok) {
-            // Revert to avoid order book state divergence if trade execution fails
             if (err.length > 0) {
                 assembly { revert(add(err, 0x20), mload(err)) }
             } else {

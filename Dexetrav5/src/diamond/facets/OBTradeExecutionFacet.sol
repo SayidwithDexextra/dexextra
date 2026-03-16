@@ -55,7 +55,8 @@ contract OBTradeExecutionFacet {
         uint256 price,
         uint256 amount,
         bool buyerMargin,
-        bool sellerMargin
+        bool sellerMargin,
+        bool buyerIsTaker
     ) external {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         require(!s.nonReentrantLock, "reentrancy");
@@ -129,16 +130,38 @@ contract OBTradeExecutionFacet {
             revert("OrderBook: spot trading disabled for futures markets - use margin orders");
         }
 
-        // Fees
+        // Fees: maker/taker split with protocol + market-owner revenue share
         uint256 buyerFee = 0;
         uint256 sellerFee = 0;
-        if (s.tradingFee > 0) {
+        {
             uint256 notional6 = Math.mulDiv(amount, price, 1e18);
-            buyerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
-            sellerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
-            if (buyer != address(this)) { try s.vault.deductFees(buyer, buyerFee, s.feeRecipient) { } catch { } }
-            if (seller != address(this)) { try s.vault.deductFees(seller, sellerFee, s.feeRecipient) { } catch { } }
-            emit FeesDeducted(buyer, buyerFee, seller, sellerFee);
+            bool useSplitFees = s.takerFeeBps > 0 || s.makerFeeBps > 0;
+            if (useSplitFees) {
+                uint256 takerBps = s.takerFeeBps;
+                uint256 makerBps = s.makerFeeBps;
+                buyerFee  = Math.mulDiv(notional6, buyerIsTaker ? takerBps : makerBps, 10000);
+                sellerFee = Math.mulDiv(notional6, buyerIsTaker ? makerBps : takerBps, 10000);
+
+                address protocolAddr = s.protocolFeeRecipient;
+                address ownerAddr    = s.feeRecipient;
+                uint256 shareBps     = s.protocolFeeShareBps; // e.g. 8000 = 80%
+
+                if (buyerFee > 0 && buyer != address(this)) {
+                    _distributeFee(s, buyer, buyerFee, shareBps, protocolAddr, ownerAddr);
+                }
+                if (sellerFee > 0 && seller != address(this)) {
+                    _distributeFee(s, seller, sellerFee, shareBps, protocolAddr, ownerAddr);
+                }
+            } else if (s.tradingFee > 0) {
+                // Legacy flat-fee fallback
+                buyerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
+                sellerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
+                if (buyer != address(this))  { try s.vault.deductFees(buyer,  buyerFee,  s.feeRecipient) { } catch { } }
+                if (seller != address(this)) { try s.vault.deductFees(seller, sellerFee, s.feeRecipient) { } catch { } }
+            }
+            if (buyerFee > 0 || sellerFee > 0) {
+                emit FeesDeducted(buyer, buyerFee, seller, sellerFee);
+            }
         }
 
         // Record trade
@@ -375,6 +398,40 @@ contract OBTradeExecutionFacet {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         totalTrades = s.totalTradeCount; totalVolume = 0; totalFees = 0;
         for (uint256 i = 1; i <= s.totalTradeCount; i++) { OrderBookStorage.Trade storage t = s.trades[i]; totalVolume += t.tradeValue; totalFees += t.buyerFee + t.sellerFee; }
+    }
+
+    /// @dev Deducts the full fee from the trader in a single atomic call, then
+    ///      splits the collected amount between the protocol and market owner.
+    ///      The old approach made two separate deductFees calls (80% then 20%),
+    ///      which meant the second call could revert with InsufficientBalance if
+    ///      the first call consumed the trader's remaining collateral -- silently
+    ///      losing the owner's share inside the try/catch.
+    function _distributeFee(
+        OrderBookStorage.State storage s,
+        address trader,
+        uint256 totalFee,
+        uint256 protocolShareBps,
+        address protocolAddr,
+        address ownerAddr
+    ) internal {
+        // Determine valid recipients
+        bool hasProtocol = protocolAddr != address(0);
+        bool hasOwner    = ownerAddr    != address(0);
+        if (!hasProtocol && !hasOwner) return;
+
+        uint256 toProtocol = Math.mulDiv(totalFee, protocolShareBps, 10000);
+
+        if (hasProtocol && hasOwner) {
+            try s.vault.deductFees(trader, totalFee, ownerAddr) {
+                if (toProtocol > 0) {
+                    s.vault.transferCollateral(ownerAddr, protocolAddr, toProtocol);
+                }
+            } catch { }
+        } else if (hasProtocol) {
+            try s.vault.deductFees(trader, totalFee, protocolAddr) { } catch { }
+        } else {
+            try s.vault.deductFees(trader, totalFee, ownerAddr) { } catch { }
+        }
     }
 }
 

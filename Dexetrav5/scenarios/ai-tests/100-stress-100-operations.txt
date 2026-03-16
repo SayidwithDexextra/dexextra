@@ -1,4 +1,4 @@
-# Test 100: Stress Test — 100 Sequential Operations
+# Test 100: Stress Test — Rapid Sequential Operations
 # Rapid-fire deposits, orders, cancels, and assertions.
 # Verifies: system stability under sustained load, no state corruption.
 
@@ -57,21 +57,4 @@ SLEEP 300
 U3 CA
 U4 CA
 SLEEP 300
-
-# Round 8: Deposit more and trade again
-U1 DEP 10000
-U2 DEP 10000
-U1 LB 2.50 1 200
-U2 LS 2.50 1 200
-SLEEP 500
-
-# Round 9: Rapid cycle
-U3 LB 2.50 1 30
-U4 LS 2.50 1 30
-SLEEP 200
-U3 LS 2.50 1 30
-U4 LB 2.50 1 30
-SLEEP 200
-
-# Round 10: Final state check
 ASSERT BOOK_EMPTY

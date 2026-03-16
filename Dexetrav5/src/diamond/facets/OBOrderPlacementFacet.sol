@@ -461,7 +461,8 @@ contract OBOrderPlacementFacet {
                         currentPrice,
                         matchAmount,
                         buyOrder.isMarginOrder,
-                        sellOrder.isMarginOrder
+                        sellOrder.isMarginOrder,
+                        true // buyer is the taker (incoming buy aggressing against resting sells)
                     );
                 }
                 unchecked { remaining -= matchAmount; }
@@ -524,7 +525,8 @@ contract OBOrderPlacementFacet {
                         currentPrice,
                         matchAmount,
                         buyOrder.isMarginOrder,
-                        sellOrder.isMarginOrder
+                        sellOrder.isMarginOrder,
+                        false // seller is the taker (incoming sell aggressing against resting buys)
                     );
                 }
                 unchecked { remaining -= matchAmount; }

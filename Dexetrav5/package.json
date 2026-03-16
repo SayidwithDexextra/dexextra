@@ -37,7 +37,15 @@
     "Liq:testnet": "hardhat --network hyperliquid_testnet run scripts/test-liquidations-supabase.js",
     "Liq:localhost": "hardhat --network localhost run scripts/test-liquidations-supabase.js",
     "ai:test": "hardhat run scripts/ai-test-runner.js --network localhost --",
-    "ai:snapshot": "hardhat run scripts/ai-test-runner.js --network localhost -- --snapshot"
+    "ai:snapshot": "hardhat run scripts/ai-test-runner.js --network localhost -- --snapshot",
+    "ai:batch": "node scripts/ai-test-batch.js",
+    "upgrade": "hardhat compile && hardhat run scripts/upgrade-fee-structure-interactive.js --network hyperliquid && node scripts/sync-facet-abis.js",
+    "upgrade:localhost": "hardhat compile && hardhat run scripts/upgrade-fee-structure-interactive.js --network localhost && node scripts/sync-facet-abis.js",
+    "upgrade:testnet": "hardhat compile && hardhat run scripts/upgrade-fee-structure-interactive.js --network hyperliquid_testnet && node scripts/sync-facet-abis.js",
+    "upgrade:fees": "hardhat run scripts/upgrade-fee-structure-interactive.js --network hyperliquid",
+    "upgrade:fees:localhost": "hardhat run scripts/upgrade-fee-structure-interactive.js --network localhost",
+    "upgrade:fees:testnet": "hardhat run scripts/upgrade-fee-structure-interactive.js --network hyperliquid_testnet",
+    "sync:abis": "node scripts/sync-facet-abis.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",

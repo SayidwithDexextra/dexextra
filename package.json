@@ -10,6 +10,7 @@
     "ama:liquidity": "tsx AdvancedMarketAutomation/interactive-market-stimulator.ts",
     "ama:liquidation-scenario": "tsx AdvancedMarketAutomation/interactive-liquidation-scenario.ts",
     "read:marks": "tsx scripts/interactive-read-mark-prices.ts",
+    "read:trades": "tsx scripts/interactive-read-all-trades.ts",
     "check:position": "tsx scripts/check-position.ts",
     "backfill:scatter:nickel": "node scripts/backfill-scatter.js --market NICKEL --metric Nickel --timeframe 5m --points 288 --source backfill --version 1",
     "test:price": "tsx scripts/test-price-validation.ts",

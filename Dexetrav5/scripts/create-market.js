@@ -1610,6 +1610,20 @@ async function main() {
   } catch (e) {
     console.log("  ⚠️ Could not set trading params:", e?.message || e);
   }
+  // Configure maker/taker fee structure
+  try {
+    const protocolFeeRecipient = process.env.PROTOCOL_FEE_RECIPIENT || treasury;
+    const takerFeeBps = 45;
+    const makerFeeBps = 15;
+    const protocolShareBps = 8000;
+    console.log(`  • updateFeeStructure(taker=${takerFeeBps}, maker=${makerFeeBps}, proto=${protocolFeeRecipient}, share=${protocolShareBps})`);
+    const fTx = await obAdmin.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolShareBps, await nonceMgr.nextOverrides());
+    console.log("  • updateFeeStructure tx:", fTx.hash);
+    await fTx.wait();
+    console.log("  ✅ Fee structure configured");
+  } catch (e) {
+    console.log("  ⚠️ Could not set fee structure:", e?.message || e);
+  }
   if (disableLeverage) {
     try {
       console.log("  • Disabling leverage...");

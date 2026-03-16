@@ -794,7 +794,6 @@ export default function TradingViewChart({
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-sm text-gray-400">Loading chart…</div>
-          <div className="absolute bottom-2 right-3 text-[10px] text-gray-600 select-none">{debugStep}</div>
         </div>
       )}
 
@@ -802,7 +801,6 @@ export default function TradingViewChart({
       {error && !isLoading && hasWidget && (
         <div className="pointer-events-none absolute top-2 left-2 rounded bg-black/60 border border-gray-800 px-3 py-2">
           <div className="text-[11px] text-gray-300">{error}</div>
-          <div className="text-[10px] text-gray-500">debug: {debugStep}</div>
         </div>
       )}
 

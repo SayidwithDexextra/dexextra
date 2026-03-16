@@ -1,27 +1,32 @@
 # Test 098: Socialized Loss Haircut Persists Through Position Close
-# After a haircut is applied, closing the position should properly
-# account for the haircut (proportional release).
+# After a haircut is applied via liquidation, closing the position should
+# properly account for the haircut (proportional release).
 # Verifies: haircutToConfiscate6 calculation, proportional release logic.
 
 STRICT ON
-U1 DEP 50
+U1 DEP 200
 U2 DEP 5000
-U3 DEP 5000
-U4 DEP 5000
+U3 DEP 10000
+U4 DEP 10000
 
-# Setup: U1 underwater → liquidation → socialized loss hits U2
-U2 LS 2.50 1 300
-U1 LB 2.50 1 300
+# U1 opens short, U2 takes long side
+U1 LS 2.50 1 100
+U2 LB 2.50 1 100
 SLEEP 500
 
-U3 LB 0.50 1 100
-U4 LS 0.50 1 100
+# Pump price — U1 (short) is underwater
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
+SLEEP 300
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
 SLEEP 500
 
+# Liquidate U1 — excess loss socialized to U2 (profitable long)
 LD 1
 SLEEP 500
 
-# Now U2 closes their profitable short — haircut should be deducted proportionally
-U4 LS 2.50 1 300
-U2 LB 2.50 1 300
+# Now U2 closes their profitable long
+U3 LS 10.00 1 100
+U2 LS 10.00 1 100
 SLEEP 500

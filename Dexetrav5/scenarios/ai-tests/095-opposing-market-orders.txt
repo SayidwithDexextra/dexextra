@@ -1,13 +1,18 @@
 # Test 095: Two Opposing Market Orders
 # U1 places a market buy, U2 places a market sell. Neither has a resting order.
-# If no resting liquidity, both should fail.
+# If no resting liquidity, both should fail gracefully.
 # Verifies: market order without resting liquidity rejection.
 
 STRICT ON
 U1 DEP 5000
 U2 DEP 5000
 
-# Both try market orders — no resting orders on book
+# Both try market orders — no resting orders on book, should revert
+STRICT OFF
 U1 MB 1 50
 U2 MS 1 50
+STRICT ON
+
 SLEEP 500
+# Book should still be empty
+ASSERT BOOK_EMPTY

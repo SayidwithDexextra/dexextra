@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Transaction, OrderBookEntry } from '@/types/orders';
 // Legacy useSupabaseRealtimeOrders import removed
 import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
 // Legacy useOrderAnimations import removed
 import { OrderBookAnimatedQuantity } from '@/components/ui/AnimatedQuantity';
 import { useMarketData } from '@/contexts/MarketDataContext';
+import { useAllTrades, type OnChainTrade } from '@/hooks/useAllTrades';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 const UI_UPDATE_PREFIX = '[UI,Update]';
 
@@ -141,10 +143,139 @@ function formatPriceDisplay(value: number, displayDecimals = 4): string {
 function formatAmountDisplay(value: number, displayDecimals = 4): string {
   if (!value || value === 0) return '0.0000';
   if (value < 0.00000001 && value > 0) {
-    // Very small amounts get more precision
     return value.toFixed(12);
   }
   return value.toFixed(displayDecimals);
+}
+
+function shortAddress(addr: string): string {
+  if (!addr || addr.length < 10) return addr || '-';
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+function TradeTooltipContent({ trade, side }: { trade: OnChainTrade; side: string }) {
+  const ts = new Date(trade.timestamp * 1000);
+  const dateStr = ts.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const timeStr = ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+  return (
+    <div className="space-y-1.5 min-w-[200px]">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Trade ID</span>
+        <span className="text-white font-mono">#{trade.tradeId}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Side</span>
+        <span className={side === 'BUY' ? 'text-[#00D084] font-medium' : 'text-[#FF4747] font-medium'}>{side}</span>
+      </div>
+      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Buyer</span>
+        <span className="text-white font-mono">{shortAddress(trade.buyer)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Seller</span>
+        <span className="text-white font-mono">{shortAddress(trade.seller)}</span>
+      </div>
+      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Price</span>
+        <span className="text-white font-mono">${formatPriceDisplay(trade.price)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Amount</span>
+        <span className="text-white font-mono">{formatAmountDisplay(trade.amount)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Value</span>
+        <span className="text-white font-mono">${formatPriceDisplay(trade.tradeValue)}</span>
+      </div>
+      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Buyer Fee</span>
+        <span className="text-white font-mono">${formatPriceDisplay(trade.buyerFee)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Seller Fee</span>
+        <span className="text-white font-mono">${formatPriceDisplay(trade.sellerFee)}</span>
+      </div>
+      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Time</span>
+        <span className="text-white font-mono text-[8px]">{dateStr} {timeStr}</span>
+      </div>
+    </div>
+  );
+}
+
+function RecentTradeTooltipContent({ order }: { order: any }) {
+  const ts = new Date(order.created_at);
+  const dateStr = ts.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const timeStr = ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const hasBuyer = order._buyer && order._buyer !== '' && order._buyer !== '0x0000000000000000000000000000000000000000';
+  const hasSeller = order._seller && order._seller !== '' && order._seller !== '0x0000000000000000000000000000000000000000';
+  const value = order._tradeValue || (order.quantity || 0) * (order.price || 0);
+
+  return (
+    <div className="space-y-1.5 min-w-[200px]">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Trade ID</span>
+        <span className="text-white font-mono">#{order.order_id}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Side</span>
+        <span className={order.side === 'BUY' ? 'text-[#00D084] font-medium' : 'text-[#FF4747] font-medium'}>{order.side}</span>
+      </div>
+      {(hasBuyer || hasSeller) && (
+        <>
+          <div className="border-t border-[#1A1A1A] my-1" />
+          {hasBuyer && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[#606060]">Buyer</span>
+              <span className="text-white font-mono">{shortAddress(order._buyer)}</span>
+            </div>
+          )}
+          {hasSeller && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[#606060]">Seller</span>
+              <span className="text-white font-mono">{shortAddress(order._seller)}</span>
+            </div>
+          )}
+        </>
+      )}
+      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Price</span>
+        <span className="text-white font-mono">${formatPriceDisplay(order.price)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Amount</span>
+        <span className="text-white font-mono">{formatAmountDisplay(order.quantity)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Value</span>
+        <span className="text-white font-mono">${formatPriceDisplay(value)}</span>
+      </div>
+      {(order._buyerFee > 0 || order._sellerFee > 0) && (
+        <>
+          <div className="border-t border-[#1A1A1A] my-1" />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[#606060]">Buyer Fee</span>
+            <span className="text-white font-mono">${formatPriceDisplay(order._buyerFee)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[#606060]">Seller Fee</span>
+            <span className="text-white font-mono">${formatPriceDisplay(order._sellerFee)}</span>
+          </div>
+        </>
+      )}
+      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[#606060]">Time</span>
+        <span className="text-white font-mono text-[8px]">{dateStr} {timeStr}</span>
+      </div>
+    </div>
+  );
 }
 
 export default function TransactionTable({ marketId, marketIdentifier, currentPrice, height = '100%', orderBookAddress, defaultView = 'orderbook', hideViewToggle = false }: TransactionTableProps) {
@@ -383,6 +514,18 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   const [isLoadingTrades, setIsLoadingTrades] = useState(false);
   const [tradeError, setTradeError] = useState<string | null>(null);
 
+  // All-trades paginated state (on-chain getAllTrades)
+  const allTradesHook = useAllTrades(md.orderBookAddress);
+  const tradesMode = allTradesHook.active ? 'all' : 'recent';
+
+  const handleSwitchToAll = useCallback(() => {
+    allTradesHook.loadInitial();
+  }, [allTradesHook]);
+
+  const handleSwitchToRecent = useCallback(() => {
+    allTradesHook.deactivate();
+  }, [allTradesHook]);
+
   // Fetch recent trades and log on any order book update
   useEffect(() => {
     console.log('validMarketIdentifierx', validMarketIdentifier);
@@ -403,8 +546,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           quantity: t.amount ?? 0,
           filled_quantity: t.amount ?? 0,
           created_at: toIsoFromTimestamp(t.timestamp),
-          trader_wallet_address: '0x0000000000000000000000000000000000000000'
-        } as OrderFromAPI;
+          trader_wallet_address: '0x0000000000000000000000000000000000000000',
+          _buyer: (t as any).buyer || '',
+          _seller: (t as any).seller || '',
+          _tradeValue: (t as any).tradeValue || 0,
+          _buyerFee: (t as any).buyerFee || 0,
+          _sellerFee: (t as any).sellerFee || 0,
+        } as OrderFromAPI & { _buyer: string; _seller: string; _tradeValue: number; _buyerFee: number; _sellerFee: number };
       });
       setRecentTrades(formattedTrades);
       setTradeError(null);
@@ -844,13 +992,38 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {error}
           </div>
         ) : view === 'transactions' ? (
-          <div className="text-[10px] text-gray-200 text-center py-1">
-            {filteredAndSortedData.length} filled
-                {!marketIdentifier && (
-                  <span className="block text-[9px] text-gray-300">
-                    Connect wallet to see orders
-                  </span>
-                )}
+          <div className="text-[10px] text-gray-200 text-center py-1 space-y-1">
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={handleSwitchToRecent}
+                className={`px-2 py-0.5 rounded text-[9px] font-medium transition-colors ${
+                  tradesMode === 'recent'
+                    ? 'bg-[#333333] text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                RECENT
+              </button>
+              <button
+                onClick={handleSwitchToAll}
+                className={`px-2 py-0.5 rounded text-[9px] font-medium transition-colors ${
+                  tradesMode === 'all'
+                    ? 'bg-[#333333] text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                ALL TRADES
+              </button>
+            </div>
+            <div>
+              {tradesMode === 'recent'
+                ? `${filteredAndSortedData.length} recent`
+                : allTradesHook.isLoading
+                  ? 'Loading trades...'
+                  : allTradesHook.trades.length > 0
+                    ? `${allTradesHook.trades.length} trades${allTradesHook.stats ? ` · Vol $${allTradesHook.stats.totalVolume.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}${allTradesHook.hasMore ? ' (more available)' : ''}`
+                    : 'No trades'}
+            </div>
           </div>
         ) : showOrderBookLoading ? (
           <div />
@@ -877,8 +1050,8 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           </div>
           )
         ) : (
-          <div className="grid grid-cols-[1fr_1fr_1fr_0.8fr] gap-1 text-[10px] font-medium text-gray-200 px-1">
-            <div className="text-right">SIZE (UNITS)</div>
+          <div className="grid grid-cols-[0.9fr_1.4fr_0.9fr_0.6fr] gap-3 text-[10px] font-medium text-gray-200 px-3">
+            <div className="text-right">SIZE</div>
             <div className="text-right">PRICE</div>
             <div className="text-right">VALUE</div>
             <div className="text-right">TIME</div>
@@ -1034,69 +1207,163 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         ) : (
           /* Traditional Trades Display */
           <div className="flex-1 overflow-y-auto orders-table-scroll">
-            {filteredAndSortedData.length === 0 ? (
-              <div className="text-[10px] text-gray-200 text-center py-4">
-                No filled orders found
-                {!marketIdentifier && (
-                  <div className="text-[9px] text-gray-300 mt-1">
-                    Market data unavailable
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-0">
-                {filteredAndSortedData.map((order, index) => {
-                  const fillPercentage = Math.max(...filteredAndSortedData.map(o => o.quantity)) > 0 
-                    ? (order.quantity / Math.max(...filteredAndSortedData.map(o => o.quantity))) * 100 
-                    : 0;
+            {tradesMode === 'all' ? (
+              /* All Trades - Paginated on-chain view */
+              allTradesHook.error ? (
+                <div className="text-[10px] text-red-500 text-center py-4">
+                  {allTradesHook.error}
+                  <button onClick={allTradesHook.refresh} className="block mx-auto mt-1 text-[9px] text-blue-400 hover:text-blue-300">
+                    Retry
+                  </button>
+                </div>
+              ) : allTradesHook.trades.length === 0 && !allTradesHook.isLoading ? (
+                <div className="text-[10px] text-gray-200 text-center py-4">
+                  No trades recorded on chain
+                </div>
+              ) : (
+                <div className="space-y-0">
+                  {(() => {
+                    const allTrades = allTradesHook.trades;
+                    const maxAmount = allTrades.reduce((max, t) => Math.max(max, t.amount), 0) || 1;
+                    return allTrades.map((trade, index) => {
+                      const fillPercentage = (trade.amount / maxAmount) * 100;
+                      const prevPrice = index > 0 ? allTrades[index - 1].price : trade.price;
+                      const side = trade.price >= prevPrice ? 'BUY' : 'SELL';
 
-                  const isNewRow = isOrderNew(order.order_id);
-                  const animationDelay = getAnimationDelay(index, isNewRow);
-                  
-                  return (
-                    <AnimatedOrderRow
-                      key={order.order_id}
-                      orderId={order.order_id}
-                      side={order.side.toUpperCase() as 'BUY' | 'SELL'}
-                      isNew={isNewRow}
-                      animationDelay={animationDelay}
-                      animationType="slideFromTop"
-                      className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
+                      return (
+                        <Tooltip
+                          key={`${trade.tradeId}-${index}`}
+                          title={`Trade #${trade.tradeId}`}
+                          maxWidth={280}
+                          delay={200}
+                          content={<TradeTooltipContent trade={trade} side={side} />}
+                        >
+                          <div className="relative hover:bg-[#1A1A1A] transition-colors cursor-pointer">
+                            <div
+                              className={`absolute left-0 top-0 h-full opacity-12 rounded-xl ${
+                                side === 'BUY' ? 'bg-[#00D084]' : 'bg-[#FF4747]'
+                              }`}
+                              style={{ width: `${fillPercentage}%` }}
+                            />
+                            <div className="relative grid grid-cols-[0.9fr_1.4fr_0.9fr_0.6fr] gap-3 py-[3px] px-3 text-[11px]">
+                              <div className="text-right text-gray-300 font-mono tabular-nums truncate">
+                                {formatAmountDisplay(trade.amount, 4)}
+                              </div>
+                              <div className={`text-right font-mono font-medium tabular-nums truncate ${side === 'BUY' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
+                                ${formatPriceDisplay(trade.price, 4)}
+                              </div>
+                              <div className="text-right text-white font-mono text-[10px] tabular-nums truncate">
+                                {formatCurrency(trade.tradeValue)}
+                              </div>
+                              <div className="text-right text-gray-200 font-mono text-[10px] tabular-nums">
+                                {formatTime(new Date(trade.timestamp * 1000).toISOString())}
+                              </div>
+                            </div>
+                          </div>
+                        </Tooltip>
+                      );
+                    });
+                  })()}
+
+                  {/* Load More / Loading indicator */}
+                  {allTradesHook.isLoading ? (
+                    <div className="flex items-center justify-center py-3 gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                      </span>
+                      <span className="text-[10px] text-gray-400">Loading trades...</span>
+                    </div>
+                  ) : allTradesHook.hasMore ? (
+                    <button
+                      onClick={allTradesHook.loadMore}
+                      className="w-full py-2 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-[#1A1A1A] transition-colors font-medium"
                     >
-                      {/* Background depth bar */}
-                      <div 
-                        className={`absolute left-0 top-0 h-full opacity-12 rounded-xl ${
-                                                      order.side.toLowerCase() === 'buy' ? 'bg-[#00D084]' : 'bg-[#FF4747]'
-                        }`}
-                        style={{ width: `${fillPercentage}%` }}
-                      />
-                      
-                      {/* Content */}
-                      <div className="relative grid grid-cols-[1fr_1fr_1fr_0.8fr] gap-1 py-0.5 px-1 text-[11px]">
-                        <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums">
-                          <OrderBookAnimatedQuantity
+                      Load more trades...
+                    </button>
+                  ) : allTradesHook.trades.length > 0 ? (
+                    <div className="text-[9px] text-gray-500 text-center py-2 flex items-center justify-center gap-2">
+                      <span>All {allTradesHook.trades.length} trades loaded</span>
+                      <button
+                        onClick={allTradesHook.refresh}
+                        className="text-blue-400 hover:text-blue-300"
+                      >
+                        refresh
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              )
+            ) : (
+              /* Recent Trades - Existing behavior */
+              filteredAndSortedData.length === 0 ? (
+                <div className="text-[10px] text-gray-200 text-center py-4">
+                  No filled orders found
+                  {!marketIdentifier && (
+                    <div className="text-[9px] text-gray-300 mt-1">
+                      Market data unavailable
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-0">
+                  {(() => {
+                    const maxQty = filteredAndSortedData.reduce((max, o) => Math.max(max, o.quantity), 0) || 1;
+                    return filteredAndSortedData.map((order, index) => {
+                      const fillPercentage = (order.quantity / maxQty) * 100;
+                      const isNewRow = isOrderNew(order.order_id);
+                      const animationDelay = getAnimationDelay(index, isNewRow);
+
+                      return (
+                        <Tooltip
+                          key={order.order_id}
+                          title={`Trade #${order.order_id}`}
+                          maxWidth={280}
+                          delay={200}
+                          content={<RecentTradeTooltipContent order={order} />}
+                        >
+                          <AnimatedOrderRow
                             orderId={order.order_id}
-                            quantity={order.quantity}
                             side={order.side.toUpperCase() as 'BUY' | 'SELL'}
-                            isNewOrder={false}
-                            className="text-gray-300"
-                            formatQuantity={(q) => formatAmountDisplay(q, 4)}
-                          />
-                        </div>
-                        <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
-                          {order.price ? `$${formatPriceDisplay(order.price, 4)}` : 'MARKET'}
-                        </div>
-                        <div className="text-right text-white font-mono text-[10px] flex items-center justify-end tabular-nums">
-                          {formatCurrency((order.quantity || 0) * (order.price || 0))}
-                        </div>
-                        <div className="text-right text-gray-200 font-mono text-[10px] flex items-center justify-end tabular-nums">
-                          {formatTime(order.created_at)}
-                        </div>
-                      </div>
-                    </AnimatedOrderRow>
-                  );
-                })}
-              </div>
+                            isNew={isNewRow}
+                            animationDelay={animationDelay}
+                            animationType="slideFromTop"
+                            className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
+                          >
+                            <div
+                              className={`absolute left-0 top-0 h-full opacity-12 rounded-xl ${
+                                order.side.toLowerCase() === 'buy' ? 'bg-[#00D084]' : 'bg-[#FF4747]'
+                              }`}
+                              style={{ width: `${fillPercentage}%` }}
+                            />
+                            <div className="relative grid grid-cols-[0.9fr_1.4fr_0.9fr_0.6fr] gap-3 py-[3px] px-3 text-[11px]">
+                              <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums truncate">
+                                <OrderBookAnimatedQuantity
+                                  orderId={order.order_id}
+                                  quantity={order.quantity}
+                                  side={order.side.toUpperCase() as 'BUY' | 'SELL'}
+                                  isNewOrder={false}
+                                  className="text-gray-300"
+                                  formatQuantity={(q) => formatAmountDisplay(q, 4)}
+                                />
+                              </div>
+                              <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums truncate ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
+                                {order.price ? `$${formatPriceDisplay(order.price, 4)}` : 'MARKET'}
+                              </div>
+                              <div className="text-right text-white font-mono text-[10px] flex items-center justify-end tabular-nums truncate">
+                                {formatCurrency((order.quantity || 0) * (order.price || 0))}
+                              </div>
+                              <div className="text-right text-gray-200 font-mono text-[10px] flex items-center justify-end tabular-nums">
+                                {formatTime(order.created_at)}
+                              </div>
+                            </div>
+                          </AnimatedOrderRow>
+                        </Tooltip>
+                      );
+                    });
+                  })()}
+                </div>
+              )
             )}
           </div>
         )}

@@ -1,25 +1,28 @@
 # Test 025: Direct Liquidation (LD)
-# Open a highly leveraged position, then move the mark price against it and liquidate.
-# Verifies: liquidation triggers, position closure on liquidation.
-# NOTE: This test may need mark price manipulation which depends on the oracle setup.
+# Open a short position, pump the mark price, and liquidate.
+# With 100% initial margin, only shorts are liquidatable (price rise blows out equity).
+# Verifies: liquidation trigger, position closure via direct vault fallback.
 
 STRICT ON
-U1 DEP 100
+U1 DEP 200
 U2 DEP 5000
-U3 DEP 5000
+U3 DEP 10000
+U4 DEP 10000
 
-# U1 takes a small-collateral long at $2.50
-U2 LS 2.50 1 200
-U1 LB 2.50 1 200
+# U1 opens a short at $2.50
+U1 LS 2.50 1 100
+U2 LB 2.50 1 100
+SLEEP 500
+ASSERT POSITION U1 SHORT == 100
 
+# Pump the mark by executing trades at $10
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
+SLEEP 300
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
 SLEEP 500
 
-# U3 sells at a much lower price to crash the mark
-U3 LS 0.50 1 100
-
-SLEEP 500
-
-# Attempt liquidation of U1
+# U1's short is deeply underwater (entry $2.50, mark ~$10) — liquidate
 LD 1
-
 SLEEP 500

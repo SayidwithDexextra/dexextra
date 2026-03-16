@@ -148,6 +148,12 @@ library OrderBookStorage {
         mapping(uint256 => uint256) buyPricePrev;
         mapping(uint256 => uint256) sellPriceNext;
         mapping(uint256 => uint256) sellPricePrev;
+
+        // ============ MAKER / TAKER FEE SPLIT ============
+        uint256 takerFeeBps;              // e.g. 45 = 0.045%
+        uint256 makerFeeBps;              // e.g. 15 = 0.015%
+        address protocolFeeRecipient;     // centralized protocol address (gets protocolFeeShareBps)
+        uint256 protocolFeeShareBps;      // e.g. 8000 = 80% to protocol, remainder to market owner (feeRecipient)
     }
 
     function state() internal pure returns (State storage s) {

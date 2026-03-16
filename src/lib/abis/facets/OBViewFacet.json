@@ -86,6 +86,44 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "getFeeStructure",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "takerFeeBps",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "makerFeeBps",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "protocolFeeRecipient",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "protocolFeeShareBps",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "legacyTradingFee",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "marketOwnerFeeRecipient",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",

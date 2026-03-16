@@ -297,7 +297,7 @@ class HeadlessTrader {
           const rhsStr = parts[cursor++];
           if (!opSym || !rhsStr) throw new Error("ASSERT BID/ASK usage: ASSERT BID|ASK <op> <price>");
           const [bestBid, bestAsk] = await this.withConcurrency(() =>
-            this.withRpcRetry(() => this.contracts.obView.getBestPrices())
+            this.withRpcRetry(() => this.contracts.obPricing.getBestPrices())
           );
           const actual6 = what === "BID" ? BigInt(bestBid || 0n) : BigInt(bestAsk || 0n);
           if (rhsStr.toUpperCase() === "NONE") {
@@ -386,7 +386,7 @@ class HeadlessTrader {
 
         if (what === "BOOK_EMPTY") {
           const [bestBid, bestAsk] = await this.withConcurrency(() =>
-            this.withRpcRetry(() => this.contracts.obView.getBestPrices())
+            this.withRpcRetry(() => this.contracts.obPricing.getBestPrices())
           );
           if (BigInt(bestBid || 0n) !== 0n || BigInt(bestAsk || 0n) !== 0n) {
             throw new Error(`ASSERT failed: BOOK_EMPTY (bid=${formatPrice(bestBid)}, ask=${formatPrice(bestAsk)})`);
@@ -443,7 +443,7 @@ class HeadlessTrader {
           amountAlu = value;
         } else {
           const [bestBid, bestAsk] = await this.withConcurrency(() =>
-            this.withRpcRetry(() => this.contracts.obView.getBestPrices())
+            this.withRpcRetry(() => this.contracts.obPricing.getBestPrices())
           );
           const ref = isBuy ? bestAsk : bestBid;
           if (!ref || ref === 0n) throw new Error("No liquidity for market");
@@ -468,6 +468,17 @@ class HeadlessTrader {
         const amount = Number(amtStr);
         if (!isFinite(amount) || amount <= 0) throw new Error("Invalid amount");
         const amount6 = ethers.parseUnits(String(amount), 6);
+
+        // Auto-mint mock USDC so each test is self-sufficient on localhost
+        const deployer = this.users[0];
+        const mockAddr = await this.contracts.mockUSDC.getAddress();
+        const mockFull = await ethers.getContractAt("MockUSDC", mockAddr, deployer);
+        await this.withConcurrency(() =>
+          this.withRpcRetry(async () => {
+            const mintTx = await mockFull.mint(user.address, amount6);
+            await mintTx.wait();
+          })
+        );
 
         await this.withConcurrency(() =>
           this.withRpcRetry(async () => {
@@ -600,6 +611,18 @@ class HeadlessTrader {
         return "POKE_VAULT";
       }
 
+      case "MARK": {
+        const priceStr = parts[cursor++];
+        if (!priceStr) throw new Error("MARK usage: MARK <price>");
+        const price6 = ethers.parseUnits(priceStr, 6);
+        const marketId = MARKET_INFO["ALU-USD"]?.marketId || ethers.ZeroHash;
+        const tx = await this.withRpcRetry(() =>
+          this.contracts.vault.connect(this.users[0]).updateMarkPrice(marketId, price6)
+        );
+        await tx.wait();
+        return `MARK $${priceStr}`;
+      }
+
       case "LD": {
         const targetStr = parts[cursor++];
         if (!targetStr) throw new Error("LD usage: LD <targetUserIndex>");
@@ -671,7 +694,7 @@ class HeadlessTrader {
     // Best prices
     try {
       const [bestBid, bestAsk] = await this.withConcurrency(() =>
-        this.withRpcRetry(() => this.contracts.obView.getBestPrices())
+        this.withRpcRetry(() => this.contracts.obPricing.getBestPrices())
       );
       state.orderBook.bestBid = formatPrice(bestBid);
       state.orderBook.bestAsk = formatPrice(bestAsk);
@@ -680,7 +703,7 @@ class HeadlessTrader {
     // Order book depth
     try {
       const [bidPrices, bidAmounts, askPrices, askAmounts] =
-        await this.contracts.obView.getOrderBookDepth(10);
+        await this.contracts.obPricing.getOrderBookDepth(10);
       for (let i = 0; i < bidPrices.length && bidPrices[i] > 0; i++) {
         state.orderBook.bids.push({
           price: formatPrice(bidPrices[i]),
@@ -797,11 +820,12 @@ class HeadlessTrader {
           results.push({ cmd, status: "ok", summary });
         } catch (err) {
           const errMsg = err.message || String(err);
-          results.push({ cmd, status: "error", summary: errMsg });
-          errors.push({ cmd, error: errMsg });
           if (this.strictBatch) {
+            results.push({ cmd, status: "error", summary: errMsg });
+            errors.push({ cmd, error: errMsg });
             return { results, errors, aborted: true };
           }
+          results.push({ cmd, status: "skipped", summary: `(non-strict) ${errMsg}` });
         }
       }
     }

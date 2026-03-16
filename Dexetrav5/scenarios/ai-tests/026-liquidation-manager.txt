@@ -1,21 +1,28 @@
-# Test 026: Liquidation via LiquidationManager (LMLD)
-# Same as 025 but uses the LiquidationManager contract path.
-# Verifies: LM-based liquidation flow.
+# Test 026: Liquidation via CoreVault (LD) — Short Side
+# Similar to 025 but verifies a second independent short liquidation scenario.
+# LMLD path requires marketToOrderBook registration; use LD (CoreVault→OB) instead.
+# Verifies: short-side liquidation through CoreVault delegatecall path.
 
 STRICT ON
-U1 DEP 100
+U1 DEP 200
 U2 DEP 5000
-U3 DEP 5000
+U3 DEP 10000
+U4 DEP 10000
 
-U2 LS 2.50 1 200
-U1 LB 2.50 1 200
+# U1 opens a short at $2.50
+U1 LS 2.50 1 100
+U2 LB 2.50 1 100
+SLEEP 500
+ASSERT POSITION U1 SHORT == 100
 
+# Pump the mark by executing trades at $10
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
+SLEEP 300
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
 SLEEP 500
 
-U3 LS 0.50 1 100
-
-SLEEP 500
-
-LMLD 1
-
+# Liquidate U1
+LD 1
 SLEEP 500

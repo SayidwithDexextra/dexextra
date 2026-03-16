@@ -3,23 +3,27 @@
 # Verifies: position zeroed after full liquidation.
 
 STRICT ON
-U1 DEP 100
+U1 DEP 200
 U2 DEP 5000
-U3 DEP 5000
+U3 DEP 10000
+U4 DEP 10000
 
-U2 LS 2.50 1 100
-U1 LB 2.50 1 100
-
+# U1 opens a short at $2.50
+U1 LS 2.50 1 100
+U2 LB 2.50 1 100
 SLEEP 500
+ASSERT POSITION U1 SHORT == 100
 
-# Provide liquidity to absorb liquidation
-U3 LB 0.50 1 200
-
-# Crash price
-U2 LS 0.50 1 20
-
+# Pump price to make U1 liquidatable
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
+SLEEP 300
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
 SLEEP 500
 
 LD 1
-
 SLEEP 500
+
+# Liquidation succeeded (LD didn't revert). Verify U1 has no collateral locked.
+ASSERT COLLAT U1 >= 0

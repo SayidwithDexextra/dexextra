@@ -857,6 +857,11 @@
           "internalType": "bool",
           "name": "sellerMargin",
           "type": "bool"
+        },
+        {
+          "internalType": "bool",
+          "name": "buyerIsTaker",
+          "type": "bool"
         }
       ],
       "name": "obExecuteTrade",

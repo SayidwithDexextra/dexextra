@@ -1,26 +1,26 @@
 # Test 060: Socialized Loss Distributed to Profitable Users
-# U1 loses big, U2 is in profit. Verify the haircut is applied to U2.
+# U1 shorts and gets liquidated. U3 (long) is profitable and receives haircut.
 # Verifies: socialized loss accounting, haircut accrual, user-level tracking.
 
 STRICT ON
-U1 DEP 50
+U1 DEP 200
 U2 DEP 5000
-U3 DEP 5000
-U4 DEP 5000
+U3 DEP 10000
+U4 DEP 10000
 
-# U1 long, U2 short at $2.50
-U2 LS 2.50 1 300
-U1 LB 2.50 1 300
-
+# U1 short at $2.50, U2 takes long side
+U1 LS 2.50 1 100
+U2 LB 2.50 1 100
 SLEEP 500
 
-# Price drops — U2 (short) is profitable, U1 is underwater
-U3 LB 1.00 1 50
-U4 LS 1.00 1 50
-
+# Price pumps — U2 (long) is profitable, U1 (short) is underwater
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
+SLEEP 300
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
 SLEEP 500
 
-# Liquidate U1 — excess loss should be socialized to U2
+# Liquidate U1 — excess loss socialized to profitable users
 LD 1
-
 SLEEP 500

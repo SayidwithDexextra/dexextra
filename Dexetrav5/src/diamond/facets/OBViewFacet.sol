@@ -11,6 +11,18 @@ contract OBViewFacet {
         return (s.marginRequirementBps, s.tradingFee, s.feeRecipient);
     }
 
+    function getFeeStructure() external view returns (
+        uint256 takerFeeBps,
+        uint256 makerFeeBps,
+        address protocolFeeRecipient,
+        uint256 protocolFeeShareBps,
+        uint256 legacyTradingFee,
+        address marketOwnerFeeRecipient
+    ) {
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        return (s.takerFeeBps, s.makerFeeBps, s.protocolFeeRecipient, s.protocolFeeShareBps, s.tradingFee, s.feeRecipient);
+    }
+
     function getLeverageInfo() external view returns (bool enabled, uint256 maxLev, uint256 marginReq, address controller) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         return (s.leverageEnabled, s.leverageEnabled ? (s.maxLeverage == 0 ? 10 : s.maxLeverage) : 1, s.marginRequirementBps, s.leverageController);

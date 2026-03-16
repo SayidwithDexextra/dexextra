@@ -1,32 +1,32 @@
 # Test 058: Liquidation Cascade
-# Multiple users are stacked long at same price with minimal margin.
-# Price drops → first liquidation impacts the book → more users become liquidatable.
+# Multiple users are stacked short at same price with minimal margin.
+# Price pumps → first liquidation proceeds → second user also liquidatable.
 # Verifies: cascading liquidation, no infinite loop, correct state after cascade.
 
 STRICT ON
-U1 DEP 150
-U2 DEP 150
+U1 DEP 200
+U2 DEP 200
 U3 DEP 5000
-U4 DEP 5000
+U4 DEP 10000
 
-# U1 and U2 both go long with thin margin
-U3 LS 2.50 1 200
-U1 LB 2.50 1 100
-U2 LB 2.50 1 100
-
+# U1 and U2 both go short with thin margin
+U1 LS 2.50 1 100
+U2 LS 2.50 1 100
+U3 LB 2.50 1 200
 SLEEP 500
 
-# Price crashes
-U4 LS 0.80 1 50
-
+# Price pumps — bad for shorts
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
+SLEEP 300
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
 SLEEP 500
 
 # Liquidate U1 first
 LD 1
-
 SLEEP 500
 
-# Now liquidate U2 — may be impacted by U1's liquidation
+# Now liquidate U2
 LD 2
-
 SLEEP 500

@@ -5,7 +5,11 @@
 STRICT ON
 U1 DEP 10
 
-# Try to place an order worth much more than $10 collateral
+# Try to place an order worth much more than $10 collateral — should revert
+STRICT OFF
 U1 LB 2.50 1 1000
+STRICT ON
 
 SLEEP 300
+# Book should remain empty since the order was rejected
+ASSERT BOOK_EMPTY

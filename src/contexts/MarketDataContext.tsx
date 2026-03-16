@@ -34,7 +34,17 @@ interface MarketDataContextValue {
     askPrices: number[];
     askAmounts: number[];
   } | null;
-  recentTrades?: Array<{ tradeId: string; price: number; amount: number; timestamp: number }> | null;
+  recentTrades?: Array<{
+    tradeId: string;
+    price: number;
+    amount: number;
+    timestamp: number;
+    buyer?: string;
+    seller?: string;
+    tradeValue?: number;
+    buyerFee?: number;
+    sellerFee?: number;
+  }> | null;
   lastUpdated: string | null;
 
   // Unified token data

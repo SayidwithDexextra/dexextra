@@ -95,7 +95,9 @@ function friendly(step: string) {
     grant_ORDERBOOK_ROLE_mined: 'Grant ORDERBOOK_ROLE (Mined)',
     grant_SETTLEMENT_ROLE_sent: 'Grant SETTLEMENT_ROLE (Sent)',
     grant_SETTLEMENT_ROLE_mined: 'Grant SETTLEMENT_ROLE (Mined)',
-    // Removed: configure_market and immediate OB param updates to speed deploys
+    configure_fees: 'Configure Fee Structure',
+    configure_fees_sent: 'Configure Fee Structure (Sent)',
+    configure_fees_mined: 'Configure Fee Structure (Mined)',
     save_market: 'Save Market (DB)',
     unhandled_error: 'Unhandled Error',
   };
@@ -1274,7 +1276,46 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Admin role grant failed', details: extractError(e) }, { status: 500 });
     }
 
-    // Removed: Immediate trading parameter updates to shorten deployment time
+    // Configure maker/taker fee structure on the new market
+    try {
+      logS('configure_fees', 'start', { orderBook });
+      const protocolFeeRecipient =
+        process.env.PROTOCOL_FEE_RECIPIENT ||
+        (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
+      const takerFeeBps = 45;   // 0.045%
+      const makerFeeBps = 15;   // 0.015%
+      const protocolShareBps = 8000; // 80% to protocol, 20% to market owner
+
+      if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
+        const obAdmin = new ethers.Contract(
+          orderBook,
+          ['function updateFeeStructure(uint256,uint256,address,uint256) external'],
+          nonceMgr
+        );
+        const feeTx = await obAdmin.updateFeeStructure(
+          takerFeeBps,
+          makerFeeBps,
+          protocolFeeRecipient,
+          protocolShareBps,
+          await nonceMgr.nextOverrides()
+        );
+        logS('configure_fees_sent', 'success', { tx: feeTx.hash });
+        const feeRc = await feeTx.wait();
+        logS('configure_fees_mined', 'success', {
+          tx: feeRc?.hash || feeTx.hash,
+          blockNumber: feeRc?.blockNumber,
+          takerFeeBps,
+          makerFeeBps,
+          protocolShareBps,
+          protocolFeeRecipient,
+        });
+      } else {
+        logS('configure_fees', 'success', { skipped: true, reason: 'PROTOCOL_FEE_RECIPIENT not set' });
+      }
+    } catch (e: any) {
+      logS('configure_fees', 'error', { error: e?.message || String(e) });
+      // Non-blocking: market is usable without fees, log and continue
+    }
 
     // Final verification: Inspect GASless readiness (session registry + allowlist + selectors + roles)
     // Non-blocking per user requirement: continue save, but record status in Supabase

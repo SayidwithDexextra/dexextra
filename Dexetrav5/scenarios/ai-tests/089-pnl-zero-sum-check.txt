@@ -1,6 +1,8 @@
 # Test 089: PnL Zero-Sum Verification
 # In futures, every dollar gained by one side is lost by the other.
 # Open longs and shorts, realize PnL, verify global balance is conserved.
+# Deploy pre-funds each user with $1000 collateral.
+# Total per user = $1000 + $10000 = $11000. Combined = $22000.
 # Verifies: zero-sum PnL property, no value creation/destruction.
 
 STRICT ON
@@ -17,6 +19,7 @@ U2 LB 3.00 1 100
 U1 LS 3.00 1 100
 SLEEP 500
 
-# Total collateral across both users should equal starting 20000 (minus fees)
-ASSERT COLLAT U1 >= 10000
-ASSERT COLLAT U2 <= 10000
+# U1 started at $11000, gained ~$100 → should be >= $11000
+# U2 started at $11000, lost ~$100 → should be <= $11000
+ASSERT COLLAT U1 >= 11000
+ASSERT COLLAT U2 <= 11000

@@ -330,6 +330,20 @@ async function main() {
         e?.message || e
       );
     }
+    // Configure maker/taker fee structure
+    try {
+      const protocolFeeRecipient = process.env.PROTOCOL_FEE_RECIPIENT || treasury || coreVaultAddr;
+      const takerFeeBps = 45;
+      const makerFeeBps = 15;
+      const protocolShareBps = 8000;
+      console.log(`  • updateFeeStructure(taker=${takerFeeBps}, maker=${makerFeeBps}, proto=${protocolFeeRecipient}, share=${protocolShareBps})`);
+      const fTx = await obAdmin.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolShareBps, await nonceMgr.nextOverrides());
+      console.log("  • updateFeeStructure sent:", fTx.hash);
+      await fTx.wait();
+      console.log("  ✅ Fee structure configured");
+    } catch (e) {
+      console.log("  ⚠️ updateFeeStructure failed (continuing):", e?.message || e);
+    }
     if (disableLeverage) {
       try {
         const tx2 = await obAdmin.disableLeverage(

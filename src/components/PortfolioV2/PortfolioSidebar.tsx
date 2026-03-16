@@ -13,13 +13,15 @@ import { usePortfolioSidebarOpenOrders } from '@/hooks/usePortfolioSidebarOpenOr
 import { Wallet, ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import { isMagicSelectedWallet, showMagicWalletUI } from '@/lib/magic'
 import { supabase } from '@/lib/supabase'
+import { useUserFees } from '@/hooks/useUserFees'
+import { useOwnerEarnings } from '@/hooks/useOwnerEarnings'
 
 type PortfolioSidebarProps = {
 	isOpen: boolean
 	onClose: () => void
 }
 
-type SidebarView = 'portfolio' | 'withdraw'
+type SidebarView = 'portfolio' | 'withdraw' | 'earnings' | 'revenue'
 
 type Metric = { label: string; value: string; valueClassName?: string; valueTone?: 'default' | 'pos' | 'neg' }
 
@@ -109,6 +111,16 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		walletAddress,
 		positionSymbols: (positions || []).map((p: any) => String(p?.symbol || '').toUpperCase()).filter(Boolean),
 	})
+
+	const { totals: feeTotals, recentFees, isLoading: feesLoading } = useUserFees(
+		dataEnabled ? walletAddress : null,
+		{ recentLimit: 5 }
+	)
+
+	const { markets: ownerMarkets, totals: ownerTotals, isLoading: ownerLoading } = useOwnerEarnings(
+		dataEnabled ? walletAddress : null
+	)
+	const isMarketOwner = ownerMarkets.length > 0
 
 	const navigateToToken = (identifierOrSymbol: string) => {
 		const id = String(identifierOrSymbol || '').trim()
@@ -322,7 +334,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		if (ready) setDidPaintSnapshot(true)
 	}, [isOpen, dataEnabled, snapshotReady, positionsIsLoading, sidebarOrders.hasLoadedOnce])
 
-	const showUpdatingBadge = Boolean(isWalletConnected && !didPaintSnapshot)
 	const showPositionsSkeleton = topPositionsToRender.length === 0 && Boolean(positionsIsLoading)
 	const showOrdersSkeleton = flatOrdersToRender.length === 0 && Boolean(sidebarOrders.isLoading || sidebarOrders.isRefreshing)
 
@@ -414,12 +425,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 
 	if (!rendered) return null
 
-	const headerBadgeLabel = sidebarView === 'withdraw'
-		? 'Withdraw'
-		: isWalletConnected
-			? (showUpdatingBadge ? 'Updating…' : 'Snapshot')
-			: 'Connect wallet'
-
 	return (
 		<div className="fixed inset-0 z-[10000]">
 			<button
@@ -477,32 +482,58 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						</div>
 
 						{/* Header controls row */}
-						<div className="flex items-center justify-between p-2.5">
+						<div className="flex items-center justify-between px-2.5 pt-2.5 pb-0">
 							<div className="flex items-center gap-2 min-w-0 flex-1">
 								<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWalletConnected ? (isHealthy ? 'bg-green-400' : 'bg-yellow-400') : 'bg-[#404040]'}`} />
 								<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide truncate">
 									Portfolio
 								</h4>
-								<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-									{headerBadgeLabel}
-								</div>
 							</div>
 
 							<div className="flex items-center gap-2">
-								{sidebarView !== 'portfolio' ? (
-									<button
-										onClick={() => setSidebarView('portfolio')}
-										className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded hover:text-[#9CA3AF] transition-all duration-200"
-									>
-										← Back
-									</button>
-								) : null}
 								<button
 									onClick={onClose}
 									className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded hover:text-[#9CA3AF] transition-all duration-200"
 								>
 									Close
 								</button>
+							</div>
+						</div>
+
+						{/* Tab navigation */}
+						<div className="px-2.5 border-b border-[#1A1A1A]">
+							<div className="flex items-center gap-3 overflow-x-auto scrollbar-none">
+								{([
+									{ id: 'portfolio' as const, label: 'Overview' },
+									{ id: 'withdraw' as const, label: 'Withdraw' },
+									{ id: 'earnings' as const, label: 'Fees' },
+									...(isMarketOwner ? [{ id: 'revenue' as const, label: 'Revenue' }] : []),
+								] as Array<{ id: SidebarView; label: string }>).map((t) => {
+									const isActive = sidebarView === t.id
+									const isDisabled = t.id !== 'portfolio' && !isWalletConnected
+									return (
+										<button
+											key={t.id}
+											type="button"
+											onClick={() => !isDisabled && setSidebarView(t.id)}
+											disabled={isDisabled}
+											className={[
+												'relative py-2.5 text-[11px] font-medium whitespace-nowrap transition-colors duration-200',
+												isDisabled
+													? 'text-[#404040] cursor-not-allowed'
+													: isActive ? 'text-white' : 'text-[#808080] hover:text-white',
+											].join(' ')}
+										>
+											{t.label}
+											<span
+												className={[
+													'pointer-events-none absolute left-0 right-0 -bottom-[1px] h-[2px] rounded-full transition-opacity duration-200',
+													isActive ? 'bg-white/80 opacity-100' : 'opacity-0',
+												].join(' ')}
+											/>
+										</button>
+									)
+								})}
 							</div>
 						</div>
 					</div>
@@ -544,20 +575,6 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									>
 										<Wallet className="w-3.5 h-3.5" />
 										<span className="text-[10px] font-medium uppercase tracking-wide">Deposit</span>
-									</button>
-									<button
-										type="button"
-										onClick={() => setSidebarView('withdraw')}
-										disabled={!isWalletConnected}
-										className={[
-											'h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200',
-											!isWalletConnected
-												? 'border-[#222222] text-[#606060] opacity-60 cursor-not-allowed'
-												: 'border-[#222222] text-[#808080] hover:border-[#ef4444] hover:bg-[#ef4444]/10 hover:text-[#ef4444]',
-										].join(' ')}
-										aria-label="Withdraw funds"
-									>
-										<span className="text-[10px] font-medium uppercase tracking-wide">Withdraw</span>
 									</button>
 										{isMagicWallet ? (
 											<button
@@ -865,6 +882,265 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								)}
 							</div>
 						) : null}
+
+						</div>
+
+						{/* Fees view */}
+						<div
+							className="absolute inset-0 overflow-y-auto scrollbar-none p-2.5 transition-all duration-300 ease-in-out"
+							style={{
+								opacity: sidebarView === 'earnings' ? 1 : 0,
+								transform: sidebarView === 'earnings' ? 'translateX(0)' : 'translateX(40px)',
+								pointerEvents: sidebarView === 'earnings' ? 'auto' : 'none',
+								paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
+							}}
+						>
+							<div className="mb-3">
+								<div className="flex items-center justify-between mb-2">
+									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Fee Summary</h4>
+									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+										{feeTotals.totalTrades} trades
+									</div>
+								</div>
+
+								{/* Totals card */}
+								<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+									<div className="grid grid-cols-3 gap-3">
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
+											<div className="text-[14px] font-semibold text-white font-mono">
+												${feeTotals.totalFeesUsdc.toFixed(2)}
+											</div>
+										</div>
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Taker</div>
+											<div className="text-[14px] font-semibold text-red-400 font-mono">
+												${feeTotals.takerFeesUsdc.toFixed(2)}
+											</div>
+											<div className="text-[9px] text-[#606060] mt-0.5">{feeTotals.takerTrades} trades</div>
+										</div>
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Maker</div>
+											<div className="text-[14px] font-semibold text-green-400 font-mono">
+												${feeTotals.makerFeesUsdc.toFixed(2)}
+											</div>
+											<div className="text-[9px] text-[#606060] mt-0.5">{feeTotals.makerTrades} trades</div>
+										</div>
+									</div>
+									<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
+											<div className="text-[12px] font-medium text-[#9CA3AF] font-mono">
+												${feeTotals.totalVolumeUsdc >= 1_000_000
+													? `${(feeTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
+													: feeTotals.totalVolumeUsdc >= 1000
+													? `${(feeTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
+													: feeTotals.totalVolumeUsdc.toFixed(2)}
+											</div>
+										</div>
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Avg Fee Rate</div>
+											<div className="text-[12px] font-medium text-[#9CA3AF] font-mono">
+												{feeTotals.totalVolumeUsdc > 0
+													? `${((feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc) * 100).toFixed(3)}%`
+													: '—'}
+											</div>
+										</div>
+									</div>
+								</div>
+
+								{/* Recent fee history */}
+								<div className="flex items-center justify-between mb-2 mt-4">
+									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Recent Fees</h4>
+								</div>
+
+								{feesLoading && recentFees.length === 0 ? (
+									<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+										<div className="flex items-center justify-between p-2.5">
+											<div className="flex items-center gap-2 min-w-0 flex-1">
+												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-yellow-400 animate-pulse" />
+												<span className="text-[11px] font-medium text-[#808080]">Loading fees…</span>
+											</div>
+										</div>
+									</div>
+								) : recentFees.length === 0 ? (
+									<div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+										<div className="flex items-center justify-between p-2.5">
+											<div className="flex items-center gap-2 min-w-0 flex-1">
+												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+												<span className="text-[11px] font-medium text-[#808080]">No fee history yet</span>
+											</div>
+										</div>
+									</div>
+								) : (
+									<div className="space-y-0.5">
+										{recentFees.map((f) => (
+											<div
+												key={f.id}
+												className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+											>
+												<div className="flex items-center justify-between p-2">
+													<div className="flex items-center gap-2 min-w-0 flex-1">
+														<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${f.fee_role === 'taker' ? 'bg-red-400' : 'bg-green-400'}`} />
+														<div className="min-w-0 flex-1">
+															<div className="flex items-center gap-1.5">
+																<span className="text-[11px] font-medium text-white truncate">
+																	{f.market_id ? f.market_id.replace(/-/g, '/').toUpperCase().slice(0, 12) : 'Trade'}
+																</span>
+																<span className={`text-[9px] font-medium px-1 py-0.5 rounded ${
+																	f.fee_role === 'taker'
+																		? 'bg-red-400/10 text-red-400'
+																		: 'bg-green-400/10 text-green-400'
+																}`}>
+																	{f.fee_role.toUpperCase()}
+																</span>
+															</div>
+															<div className="text-[9px] text-[#606060] font-mono">
+																{f.created_at ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+																{' · '}
+																${f.trade_notional >= 1000 ? `${(f.trade_notional / 1000).toFixed(1)}k` : f.trade_notional.toFixed(2)} notional
+															</div>
+														</div>
+													</div>
+													<div className="text-right flex-shrink-0 ml-2">
+														<div className="text-[11px] font-medium text-yellow-400 font-mono">
+															-${f.fee_amount_usdc.toFixed(4)}
+														</div>
+													</div>
+												</div>
+											</div>
+										))}
+									</div>
+								)}
+
+								{/* Link to full breakdown in Settings */}
+								<button
+									type="button"
+									onClick={() => {
+										router.push('/settings?tab=earnings')
+										onClose()
+									}}
+									className="w-full mt-3 text-center text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 py-1.5"
+								>
+									View full breakdown in Settings →
+								</button>
+							</div>
+						</div>
+
+						{/* Revenue view (market owners only) */}
+						<div
+							className="absolute inset-0 overflow-y-auto scrollbar-none p-2.5 transition-all duration-300 ease-in-out"
+							style={{
+								opacity: sidebarView === 'revenue' ? 1 : 0,
+								transform: sidebarView === 'revenue' ? 'translateX(0)' : 'translateX(40px)',
+								pointerEvents: sidebarView === 'revenue' ? 'auto' : 'none',
+								paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
+							}}
+						>
+							<div className="mb-3">
+								<div className="flex items-center justify-between mb-2">
+									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Revenue</h4>
+									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+										{ownerTotals.marketCount} market{ownerTotals.marketCount !== 1 ? 's' : ''}
+									</div>
+								</div>
+
+								{/* Revenue totals */}
+								<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+									<div className="grid grid-cols-2 gap-3">
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Your Earnings</div>
+											<div className="text-[16px] font-semibold text-green-400 font-mono">
+												${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}
+											</div>
+											<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
+										</div>
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol</div>
+											<div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+												${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}
+											</div>
+											<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
+										</div>
+									</div>
+									<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
+											<div className="text-[12px] font-medium text-white font-mono">
+												${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}
+											</div>
+										</div>
+										<div>
+											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
+											<div className="text-[12px] font-medium text-white font-mono">
+												${ownerTotals.totalVolumeUsdc >= 1_000_000
+													? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
+													: ownerTotals.totalVolumeUsdc >= 1000
+													? `${(ownerTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
+													: ownerTotals.totalVolumeUsdc.toFixed(2)}
+											</div>
+										</div>
+									</div>
+								</div>
+
+								{/* Per-market breakdown */}
+								<div className="flex items-center justify-between mb-2 mt-4">
+									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
+								</div>
+
+								{ownerLoading && ownerMarkets.length === 0 ? (
+									<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+										<div className="flex items-center justify-between p-2.5">
+											<div className="flex items-center gap-2 min-w-0 flex-1">
+												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
+												<span className="text-[11px] font-medium text-[#808080]">Loading revenue…</span>
+											</div>
+										</div>
+									</div>
+								) : (
+									<div className="space-y-0.5">
+										{ownerMarkets.map((m) => (
+											<div
+												key={`${m.market_id}-${m.market_address}`}
+												className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+											>
+												<div className="flex items-center justify-between p-2.5">
+													<div className="min-w-0 flex-1">
+														<div className="flex items-center gap-1.5">
+															<span className="text-[11px] font-medium text-white truncate">
+																{m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…'}
+															</span>
+														</div>
+														<div className="text-[9px] text-[#606060] font-mono mt-0.5">
+															{m.total_fee_events} fees · ${m.total_volume_usdc >= 1000 ? `${(m.total_volume_usdc / 1000).toFixed(1)}k` : m.total_volume_usdc.toFixed(2)} vol
+														</div>
+													</div>
+													<div className="text-right flex-shrink-0 ml-2">
+														<div className="text-[12px] font-semibold text-green-400 font-mono">
+															+${m.total_owner_earnings_usdc.toFixed(2)}
+														</div>
+														<div className="text-[9px] text-[#606060] font-mono">
+															of ${m.total_fees_collected_usdc.toFixed(2)}
+														</div>
+													</div>
+												</div>
+											</div>
+										))}
+									</div>
+								)}
+
+								{/* Link to Settings for full view */}
+								<button
+									type="button"
+									onClick={() => {
+										router.push('/settings?tab=markets')
+										onClose()
+									}}
+									className="w-full mt-3 text-center text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 py-1.5"
+								>
+									View in My Markets →
+								</button>
+							</div>
 						</div>
 
 						{/* Withdraw view */}

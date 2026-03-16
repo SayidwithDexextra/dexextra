@@ -8,7 +8,8 @@ interface IOBTradeExecutionFacet {
         uint256 price,
         uint256 amount,
         bool buyerMargin,
-        bool sellerMargin
+        bool sellerMargin,
+        bool buyerIsTaker
     ) external;
 }
 

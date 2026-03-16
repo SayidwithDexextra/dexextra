@@ -935,6 +935,17 @@ async function main() {
       );
       await obAdmin.updateTradingParameters(10000, 0, TREASURY_ADDRESS);
       console.log("     ✅ Diamond OB trading parameters set");
+
+      // Configure maker/taker fee structure
+      const protocolFeeRecipient = process.env.PROTOCOL_FEE_RECIPIENT || TREASURY_ADDRESS;
+      const takerFeeBps = 45;   // 0.045%
+      const makerFeeBps = 15;   // 0.015%
+      const protocolShareBps = 8000; // 80% to protocol, 20% to market owner
+      console.log(
+        `  🔧 Configuring fee structure (taker=${takerFeeBps}bps, maker=${makerFeeBps}bps, proto=${protocolFeeRecipient}, share=${protocolShareBps}bps)...`
+      );
+      await obAdmin.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolShareBps);
+      console.log("     ✅ Fee structure configured");
     } catch (e) {
       console.log(
         "     ⚠️  Could not set Diamond OB trading parameters:",

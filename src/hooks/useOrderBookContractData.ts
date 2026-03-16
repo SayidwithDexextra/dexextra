@@ -26,7 +26,17 @@ type OrderBookLiveData = {
     askPrices: number[];
     askAmounts: number[];
   } | null;
-  recentTrades: Array<{ tradeId: string; price: number; amount: number; timestamp: number }> | null;
+  recentTrades: Array<{
+    tradeId: string;
+    price: number;
+    amount: number;
+    timestamp: number;
+    buyer?: string;
+    seller?: string;
+    tradeValue?: number;
+    buyerFee?: number;
+    sellerFee?: number;
+  }> | null;
   lastUpdated: string;
 };
 
@@ -799,6 +809,11 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
                 price: scalePrice(t?.price ?? 0) || 0,
                 amount: scaleAmount(t?.amount ?? 0),
                 timestamp: Number(t?.timestamp ?? 0),
+                buyer: String(t?.buyer ?? ''),
+                seller: String(t?.seller ?? ''),
+                tradeValue: scalePrice(t?.tradeValue ?? 0) || 0,
+                buyerFee: scalePrice(t?.buyerFee ?? 0) || 0,
+                sellerFee: scalePrice(t?.sellerFee ?? 0) || 0,
               }));
             }
           } catch {}

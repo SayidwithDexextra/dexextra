@@ -1,27 +1,30 @@
 # Test 027: Multi-User Simultaneous Liquidation
-# Multiple users take undercollateralized positions; all get liquidated.
-# Verifies: batch liquidation, socialized loss distribution.
+# Multiple users open shorts with minimal margin; price pumps → all get liquidated.
+# Verifies: sequential liquidation of multiple underwater users.
 
 STRICT ON
-U1 DEP 100
-U2 DEP 100
+U1 DEP 200
+U2 DEP 200
 U3 DEP 5000
-U4 DEP 5000
+U4 DEP 10000
 
-# U1 and U2 open leveraged longs
-U3 LS 2.50 1 200
-U1 LB 2.50 1 100
-U2 LB 2.50 1 100
-
+# U1 and U2 open shorts at $2.50
+U1 LS 2.50 1 100
+U2 LS 2.50 1 100
+U3 LB 2.50 1 200
 SLEEP 500
+ASSERT POSITION U1 SHORT == 100
+ASSERT POSITION U2 SHORT == 100
 
-# Crash the price
-U4 LS 0.50 1 100
-
+# Pump the price — both shorts are underwater
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
+SLEEP 300
+U3 LB 10.00 1 10
+U4 LS 10.00 1 10
 SLEEP 500
 
 # Liquidate both
 LD 1
 LD 2
-
 SLEEP 500

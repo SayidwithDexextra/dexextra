@@ -1,5 +1,7 @@
 # Test 084: Full Lifecycle: Deposit → Trade → Close → Withdraw
 # Complete round-trip verifying all state transitions.
+# Deploy pre-funds each user with $1000 collateral.
+# Total collateral = $1000 (deploy) + $5000 (deposit) = $6000.
 # Verifies: end-to-end lifecycle, collateral recovery after closing.
 
 STRICT ON
@@ -7,7 +9,7 @@ U1 DEP 5000
 U2 DEP 5000
 
 SLEEP 300
-ASSERT COLLAT U1 >= 5000
+ASSERT COLLAT U1 >= 6000
 
 # Open long
 U2 LS 2.50 1 50
@@ -20,8 +22,8 @@ U2 LB 2.50 1 50
 U1 LS 2.50 1 50
 SLEEP 500
 
-# Withdraw everything
-U1 WDR 5000
+# Withdraw everything (all $6000)
+U1 WDR 6000
 SLEEP 300
 
 ASSERT COLLAT U1 == 0

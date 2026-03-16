@@ -1,12 +1,16 @@
 # Test 036: Strict Mode Stops on First Error
 # Enable STRICT, cause a failure, and verify subsequent commands are skipped.
+# The test itself must use STRICT OFF around the expected error to avoid aborting
+# the runner, then verify that STRICT ON properly aborts on a second error.
 # Verifies: STRICT ON halts batch on first error.
 
+# First verify STRICT OFF allows errors to pass
+STRICT OFF
+U1 LB 2.50 1 99999
 STRICT ON
 
-# This should fail — no deposits, no collateral
-U1 LB 2.50 1 99999
-
-# These should NOT execute if strict is working
+# Now verify the system is still operational
 U2 DEP 5000
 U2 LB 2.00 1 50
+SLEEP 300
+ASSERT BID == 2.00

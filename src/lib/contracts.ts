@@ -110,7 +110,9 @@ export const OBViewFacetABI = [
   "function getOrderStatusByID(bytes32 orderId) external view returns (bool active, uint256 filledAmount, uint256 price, uint256 remainingQuantity, address user)",
   // Compatibility getters present on some view facet builds
   "function bestBid() external view returns (uint256)",
-  "function bestAsk() external view returns (uint256)"
+  "function bestAsk() external view returns (uint256)",
+  "function getTradingParameters() external view returns (uint256 marginRequirement, uint256 fee, address recipient)",
+  "function getFeeStructure() external view returns (uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps, uint256 legacyTradingFee, address marketOwnerFeeRecipient)"
 ];
 
 // OBPricingFacet - read-only functions for pricing (aligned with deployed facet)
@@ -229,6 +231,7 @@ export const OBLiquidityProvisionFacetABI = [
 // Admin facet - owner-controlled configuration
 export const OBAdminFacetABI = [
   "function updateTradingParameters(uint256 _marginRequirementBps, uint256 _tradingFee, address _feeRecipient) external",
+  "function updateFeeStructure(uint256 _takerFeeBps, uint256 _makerFeeBps, address _protocolFeeRecipient, uint256 _protocolFeeShareBps) external",
   "function enableLeverage(uint256 _maxLeverage, uint256 _marginRequirementBps) external",
   "function disableLeverage() external",
   "function setMarginRequirement(uint256 _marginRequirementBps) external",

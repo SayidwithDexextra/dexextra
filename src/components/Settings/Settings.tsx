@@ -13,6 +13,8 @@ import ActionStatusModal from '@/components/watchlist/ActionStatusModal'
 import VaultActionModal from '@/components/PortfolioV2/VaultActionModal'
 import { useMarketDraft } from '@/hooks/useMarketDraft'
 import { stepLabel, stepIndex, STEP_ORDER } from '@/types/marketDraft'
+import { useUserFees } from '@/hooks/useUserFees'
+import { useOwnerEarnings } from '@/hooks/useOwnerEarnings'
 
 export interface SettingsProps {
   className?: string
@@ -65,6 +67,12 @@ export default function Settings({ className }: SettingsProps) {
 
   // Draft markets
   const { drafts: userDrafts, isLoading: draftsLoading, deleteDraft: deleteDraftById } = useMarketDraft(walletData.address ?? null)
+
+  // Fee earnings (user's own trades)
+  const { summary: feeSummary, recentFees, totals: feeTotals, isLoading: feesLoading, refetch: refetchFees } = useUserFees(walletData.address ?? null, { recentLimit: 50 })
+
+  // Market owner earnings (20% revenue share from markets you created)
+  const { markets: ownerMarkets, totals: ownerTotals, isLoading: ownerEarningsLoading, refetch: refetchOwnerEarnings } = useOwnerEarnings(walletData.address ?? null)
 
   // Validate username as user types
   const validateUsername = (username: string): string | null => {
@@ -230,7 +238,7 @@ export default function Settings({ className }: SettingsProps) {
     }
   }
 
-  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'drafts' | 'withdrawals' | 'preferences'
+  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'drafts' | 'withdrawals' | 'earnings' | 'preferences'
   const tabs = useMemo(
     () =>
       [
@@ -240,6 +248,7 @@ export default function Settings({ className }: SettingsProps) {
         { id: 'markets' as const, label: 'My Markets' },
         { id: 'drafts' as const, label: 'Drafts' },
         { id: 'withdrawals' as const, label: 'Withdrawals' },
+        { id: 'earnings' as const, label: 'Fees Paid' },
         { id: 'preferences' as const, label: 'Preferences' },
       ] satisfies Array<{ id: SettingsTabId; label: string }>,
     []
@@ -1495,6 +1504,78 @@ export default function Settings({ className }: SettingsProps) {
 
         {activeTab === 'markets' ? (
           <>
+            {/* Market Owner Earnings */}
+            <div className="bg-[#0F0F0F] rounded-md border border-[#222222] mb-6 overflow-hidden">
+              <div className="px-6 py-4 border-b border-[#1A1A1A] flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Revenue</h4>
+                  <p className="text-[10px] text-[#606060] mt-0.5">Your 20% share of fees collected on markets you created</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={refetchOwnerEarnings}
+                  disabled={ownerEarningsLoading}
+                  className="text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 disabled:opacity-50"
+                >
+                  {ownerEarningsLoading ? 'Loading…' : 'Refresh'}
+                </button>
+              </div>
+              <div className="p-6">
+                {ownerEarningsLoading && ownerMarkets.length === 0 ? (
+                  <div className="text-[11px] text-[#606060] text-center py-4">Loading earnings data…</div>
+                ) : ownerMarkets.length === 0 ? (
+                  <div className="text-[11px] text-[#606060] text-center py-4">No fee revenue yet. Revenue will appear here once trades execute on your markets.</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                      <div>
+                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Your Earnings</div>
+                        <div className="text-[18px] font-semibold text-green-400 font-mono">${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Protocol Share</div>
+                        <div className="text-[18px] font-semibold text-[#9CA3AF] font-mono">${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Total Fees</div>
+                        <div className="text-[18px] font-semibold text-white font-mono">${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Volume</div>
+                        <div className="text-[18px] font-semibold text-white font-mono">
+                          ${ownerTotals.totalVolumeUsdc >= 1_000_000
+                            ? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
+                            : ownerTotals.totalVolumeUsdc >= 1_000
+                            ? `${(ownerTotals.totalVolumeUsdc / 1_000).toFixed(1)}k`
+                            : ownerTotals.totalVolumeUsdc.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="divide-y divide-[#1A1A1A] border border-[#1A1A1A] rounded-md overflow-hidden">
+                      {ownerMarkets.map((m) => (
+                        <div key={`${m.market_id}-${m.market_address}`} className="px-4 py-3 hover:bg-[#1A1A1A] transition-colors duration-150">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[12px] font-medium text-white truncate max-w-[200px]">
+                              {m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase() : m.market_address.slice(0, 10) + '…'}
+                            </span>
+                            <span className="text-[12px] font-semibold text-green-400 font-mono">+${m.total_owner_earnings_usdc.toFixed(2)}</span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[10px] text-[#606060]">
+                            <span>{m.total_fee_events} fee events</span>
+                            <span>Protocol: ${m.total_protocol_earnings_usdc.toFixed(2)}</span>
+                            <span className="ml-auto font-mono">
+                              ${m.total_volume_usdc >= 1000 ? `${(m.total_volume_usdc / 1000).toFixed(1)}k` : m.total_volume_usdc.toFixed(2)} vol
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
             <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-3">
@@ -2120,6 +2201,165 @@ export default function Settings({ className }: SettingsProps) {
                   Withdraw (Hub)
                 </button>
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'earnings' ? (
+          <div className="space-y-4 mb-6">
+            {/* Summary cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
+                <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Total Fees Paid</div>
+                <div className="text-[20px] font-semibold text-white font-mono">${feeTotals.totalFeesUsdc.toFixed(2)}</div>
+                <div className="text-[10px] text-[#606060] mt-1">{feeTotals.totalTrades} trades</div>
+              </div>
+              <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
+                <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Taker Fees</div>
+                <div className="text-[20px] font-semibold text-red-400 font-mono">${feeTotals.takerFeesUsdc.toFixed(2)}</div>
+                <div className="text-[10px] text-[#606060] mt-1">{feeTotals.takerTrades} taker trades</div>
+              </div>
+              <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
+                <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Maker Fees</div>
+                <div className="text-[20px] font-semibold text-green-400 font-mono">${feeTotals.makerFeesUsdc.toFixed(2)}</div>
+                <div className="text-[10px] text-[#606060] mt-1">{feeTotals.makerTrades} maker trades</div>
+              </div>
+            </div>
+
+            {/* Volume + Avg fee rate */}
+            <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Total Volume</div>
+                  <div className="text-[16px] font-semibold text-white font-mono">
+                    ${feeTotals.totalVolumeUsdc >= 1_000_000
+                      ? `${(feeTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
+                      : feeTotals.totalVolumeUsdc >= 1_000
+                      ? `${(feeTotals.totalVolumeUsdc / 1_000).toFixed(1)}k`
+                      : feeTotals.totalVolumeUsdc.toFixed(2)}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Avg Fee Rate</div>
+                  <div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+                    {feeTotals.totalVolumeUsdc > 0
+                      ? `${((feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc) * 100).toFixed(3)}%`
+                      : '—'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Per-market breakdown */}
+            {feeSummary.length > 0 && (
+              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] overflow-hidden">
+                <div className="px-5 py-3 border-b border-[#1A1A1A]">
+                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
+                </div>
+                <div className="divide-y divide-[#1A1A1A]">
+                  {feeSummary.map((row) => (
+                    <div key={`${row.market_id}-${row.market_address}`} className="px-5 py-3 hover:bg-[#1A1A1A] transition-colors duration-150">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[12px] font-medium text-white truncate max-w-[200px]">
+                          {row.market_id ? row.market_id.replace(/-/g, '/').toUpperCase() : row.market_address.slice(0, 10) + '…'}
+                        </span>
+                        <span className="text-[12px] font-medium text-white font-mono">${row.total_fees_usdc.toFixed(2)}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] text-[#606060]">
+                        <span>{row.total_trades} trades</span>
+                        <span className="text-red-400/60">{row.taker_trades} taker</span>
+                        <span className="text-green-400/60">{row.maker_trades} maker</span>
+                        <span className="ml-auto font-mono">
+                          ${row.total_volume_usdc >= 1000 ? `${(row.total_volume_usdc / 1000).toFixed(1)}k` : row.total_volume_usdc.toFixed(2)} vol
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recent fee history table */}
+            <div className="bg-[#0F0F0F] rounded-md border border-[#222222] overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#1A1A1A] flex items-center justify-between">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Recent Fee History</h4>
+                <button
+                  type="button"
+                  onClick={refetchFees}
+                  disabled={feesLoading}
+                  className="text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 disabled:opacity-50"
+                >
+                  {feesLoading ? 'Loading…' : 'Refresh'}
+                </button>
+              </div>
+
+              {feesLoading && recentFees.length === 0 ? (
+                <div className="px-5 py-8 text-center">
+                  <div className="text-[11px] text-[#606060]">Loading fee history…</div>
+                </div>
+              ) : recentFees.length === 0 ? (
+                <div className="px-5 py-8 text-center">
+                  <div className="text-[11px] text-[#606060]">No fee history yet. Fees will appear here after your trades are processed.</div>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-[#1A1A1A]">
+                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium">Date</th>
+                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium">Market</th>
+                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium">Role</th>
+                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium text-right">Notional</th>
+                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium text-right">Fee</th>
+                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium text-right">Tx</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1A1A1A]">
+                      {recentFees.map((f) => (
+                        <tr key={f.id} className="hover:bg-[#1A1A1A] transition-colors duration-150">
+                          <td className="px-4 py-2.5 text-[11px] text-[#808080] font-mono whitespace-nowrap">
+                            {f.created_at
+                              ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                              : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 text-[11px] text-white font-medium truncate max-w-[120px]">
+                            {f.market_id ? f.market_id.replace(/-/g, '/').toUpperCase().slice(0, 16) : '—'}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${
+                              f.fee_role === 'taker'
+                                ? 'bg-red-400/10 text-red-400'
+                                : 'bg-green-400/10 text-green-400'
+                            }`}>
+                              {f.fee_role.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-[11px] text-[#9CA3AF] font-mono text-right">
+                            ${f.trade_notional >= 1000 ? `${(f.trade_notional / 1000).toFixed(1)}k` : f.trade_notional.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-2.5 text-[11px] text-yellow-400 font-mono font-medium text-right">
+                            -${f.fee_amount_usdc.toFixed(4)}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {f.tx_hash ? (
+                              <a
+                                href={`https://explorer.hyperliquid.xyz/tx/${f.tx_hash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-[#606060] hover:text-[#9CA3AF] font-mono transition-colors duration-200"
+                              >
+                                {f.tx_hash.slice(0, 6)}…
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-[#404040]">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         ) : null}
