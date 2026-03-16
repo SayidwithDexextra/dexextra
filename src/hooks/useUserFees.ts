@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 
 export interface FeeSummaryRow {
@@ -51,15 +51,33 @@ export interface UseUserFeesResult {
   summary: FeeSummaryRow[]
   recentFees: FeeDetailRow[]
   totals: UserFeeTotals
+  /** IDs of fee rows that arrived via realtime (for animation) */
+  liveIds: Set<number>
   isLoading: boolean
   error: string | null
   refetch: () => void
 }
 
+function parseFeeDetail(r: any): FeeDetailRow {
+  return {
+    ...r,
+    fee_amount_usdc: Number(r.fee_amount_usdc) || 0,
+    protocol_share: Number(r.protocol_share) || 0,
+    owner_share: Number(r.owner_share) || 0,
+    trade_price: Number(r.trade_price) || 0,
+    trade_amount: Number(r.trade_amount) || 0,
+    trade_notional: Number(r.trade_notional) || 0,
+  }
+}
+
+let _userFeesChannelCounter = 0
+
 export function useUserFees(walletAddress: string | null, opts?: { recentLimit?: number }): UseUserFeesResult {
   const recentLimit = opts?.recentLimit ?? 20
+  const channelIdRef = useRef(`user_fees_${++_userFeesChannelCounter}_${Date.now()}`)
   const [summary, setSummary] = useState<FeeSummaryRow[]>([])
   const [recentFees, setRecentFees] = useState<FeeDetailRow[]>([])
+  const [liveIds, setLiveIds] = useState<Set<number>>(new Set())
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
@@ -70,6 +88,8 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
   )
 
   const refetch = useCallback(() => setTick((t) => t + 1), [])
+  const recentLimitRef = useRef(recentLimit)
+  recentLimitRef.current = recentLimit
 
   useEffect(() => {
     if (!normalizedAddr) {
@@ -115,17 +135,7 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
           }))
         )
 
-        setRecentFees(
-          (detailRes.data || []).map((r: any) => ({
-            ...r,
-            fee_amount_usdc: Number(r.fee_amount_usdc) || 0,
-            protocol_share: Number(r.protocol_share) || 0,
-            owner_share: Number(r.owner_share) || 0,
-            trade_price: Number(r.trade_price) || 0,
-            trade_amount: Number(r.trade_amount) || 0,
-            trade_notional: Number(r.trade_notional) || 0,
-          }))
-        )
+        setRecentFees((detailRes.data || []).map(parseFeeDetail))
       } catch (e: any) {
         if (!cancelled) setError(e?.message || 'Failed to load fee data')
       } finally {
@@ -135,6 +145,81 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
 
     return () => { cancelled = true }
   }, [normalizedAddr, recentLimit, tick])
+
+  // Realtime: subscribe to new trading_fees rows for this user
+  useEffect(() => {
+    if (!normalizedAddr) return
+
+    const channel = supabase
+      .channel(`${channelIdRef.current}:${normalizedAddr}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'trading_fees',
+          filter: `user_address=eq.${normalizedAddr}`,
+        },
+        (payload) => {
+          const row = parseFeeDetail(payload.new)
+
+          setRecentFees((prev) => [row, ...prev].slice(0, recentLimitRef.current))
+
+          if (row.id) {
+            setLiveIds((prev) => new Set([...prev, row.id]))
+            setTimeout(() => setLiveIds((prev) => { const s = new Set(prev); s.delete(row.id); return s }), 1500)
+          }
+
+          // Incrementally update totals via summary-level accumulators
+          setSummary((prev) => {
+            const isTaker = row.fee_role === 'taker'
+            const key = `${row.market_id}::${row.market_address}`
+            const existing = prev.find(
+              (s) => `${s.market_id}::${s.market_address}` === key
+            )
+            if (existing) {
+              return prev.map((s) =>
+                `${s.market_id}::${s.market_address}` === key
+                  ? {
+                      ...s,
+                      total_trades: s.total_trades + 1,
+                      taker_trades: s.taker_trades + (isTaker ? 1 : 0),
+                      maker_trades: s.maker_trades + (isTaker ? 0 : 1),
+                      total_fees_usdc: s.total_fees_usdc + row.fee_amount_usdc,
+                      taker_fees_usdc: s.taker_fees_usdc + (isTaker ? row.fee_amount_usdc : 0),
+                      maker_fees_usdc: s.maker_fees_usdc + (isTaker ? 0 : row.fee_amount_usdc),
+                      total_volume_usdc: s.total_volume_usdc + row.trade_notional,
+                      last_trade_at: row.created_at,
+                    }
+                  : s
+              )
+            }
+            return [
+              ...prev,
+              {
+                user_address: row.user_address,
+                market_id: row.market_id,
+                market_address: row.market_address,
+                total_trades: 1,
+                taker_trades: isTaker ? 1 : 0,
+                maker_trades: isTaker ? 0 : 1,
+                total_fees_usdc: row.fee_amount_usdc,
+                taker_fees_usdc: isTaker ? row.fee_amount_usdc : 0,
+                maker_fees_usdc: isTaker ? 0 : row.fee_amount_usdc,
+                total_volume_usdc: row.trade_notional,
+                first_trade_at: row.created_at,
+                last_trade_at: row.created_at,
+              },
+            ]
+          })
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [normalizedAddr])
 
   const totals = useMemo<UserFeeTotals>(() => {
     if (summary.length === 0)
@@ -154,5 +239,5 @@ export function useUserFees(walletAddress: string | null, opts?: { recentLimit?:
     )
   }, [summary])
 
-  return { summary, recentFees, totals, isLoading, error, refetch }
+  return { summary, recentFees, totals, liveIds, isLoading, error, refetch }
 }

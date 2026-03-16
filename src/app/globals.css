@@ -316,6 +316,65 @@ body::-webkit-scrollbar {
   }
 }
 
+/* ─── Slot-machine digit roller ─── */
+
+.dex-slot-wrapper {
+  transition: color 600ms ease-out, text-shadow 600ms ease-out;
+}
+
+.dex-slot-wrapper.dex-slot-active {
+  color: rgba(74, 222, 128, 1);
+  text-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
+}
+
+
+/* Live-update row entrance */
+@keyframes dexLiveRowEnter {
+  0% {
+    opacity: 0;
+    transform: translateX(-12px);
+    background-color: rgba(74, 222, 128, 0.08);
+    box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.25);
+  }
+  40% {
+    opacity: 1;
+    transform: translateX(0);
+    background-color: rgba(74, 222, 128, 0.06);
+    box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.18);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+}
+
+.dex-live-row-enter {
+  animation: dexLiveRowEnter 1.2s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* Live-update card border pulse */
+@keyframes dexLiveCardPulse {
+  0% { border-color: #222222; }
+  25% { border-color: rgba(74, 222, 128, 0.4); }
+  100% { border-color: #222222; }
+}
+
+.dex-live-card-pulse {
+  animation: dexLiveCardPulse 1.2s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dex-live-row-enter,
+  .dex-live-card-pulse {
+    animation: none;
+  }
+  .dex-slot-wrapper {
+    transition: none;
+  }
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

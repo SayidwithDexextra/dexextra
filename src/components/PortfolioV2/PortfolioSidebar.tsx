@@ -15,6 +15,8 @@ import { isMagicSelectedWallet, showMagicWalletUI } from '@/lib/magic'
 import { supabase } from '@/lib/supabase'
 import { useUserFees } from '@/hooks/useUserFees'
 import { useOwnerEarnings } from '@/hooks/useOwnerEarnings'
+import { LiveValue, LiveRow } from '@/components/ui/LiveValue'
+import EarningsPieChart, { type EarningsPieSlice } from '@/components/ui/EarningsPieChart'
 
 type PortfolioSidebarProps = {
 	isOpen: boolean
@@ -112,7 +114,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		positionSymbols: (positions || []).map((p: any) => String(p?.symbol || '').toUpperCase()).filter(Boolean),
 	})
 
-	const { totals: feeTotals, recentFees, isLoading: feesLoading } = useUserFees(
+	const { totals: feeTotals, recentFees, liveIds: feeLiveIds, isLoading: feesLoading } = useUserFees(
 		dataEnabled ? walletAddress : null,
 		{ recentLimit: 5 }
 	)
@@ -122,11 +124,18 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		protocolMarkets,
 		totals: ownerTotals,
 		protocolTotals,
+		liveMarketKeys,
 		isMarketOwner,
 		isProtocolRecipient,
 		hasRevenue,
 		isLoading: ownerLoading,
 	} = useOwnerEarnings(dataEnabled ? walletAddress : null)
+
+	const isActualProtocolAddress = useMemo(() => {
+		const envAddr = process.env.NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT
+		if (!envAddr || !walletAddress) return false
+		return walletAddress.toLowerCase() === envAddr.toLowerCase()
+	}, [walletAddress])
 
 	const navigateToToken = (identifierOrSymbol: string) => {
 		const id = String(identifierOrSymbol || '').trim()
@@ -914,22 +923,22 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									<div className="grid grid-cols-3 gap-3">
 										<div>
 											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
-											<div className="text-[14px] font-semibold text-white font-mono">
+											<LiveValue value={feeTotals.totalFeesUsdc} className="text-[14px] font-semibold text-white font-mono">
 												${feeTotals.totalFeesUsdc.toFixed(2)}
-											</div>
+											</LiveValue>
 										</div>
 										<div>
 											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Taker</div>
-											<div className="text-[14px] font-semibold text-red-400 font-mono">
+											<LiveValue value={feeTotals.takerFeesUsdc} className="text-[14px] font-semibold text-red-400 font-mono">
 												${feeTotals.takerFeesUsdc.toFixed(2)}
-											</div>
+											</LiveValue>
 											<div className="text-[9px] text-[#606060] mt-0.5">{feeTotals.takerTrades} trades</div>
 										</div>
 										<div>
 											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Maker</div>
-											<div className="text-[14px] font-semibold text-green-400 font-mono">
+											<LiveValue value={feeTotals.makerFeesUsdc} className="text-[14px] font-semibold text-green-400 font-mono">
 												${feeTotals.makerFeesUsdc.toFixed(2)}
-											</div>
+											</LiveValue>
 											<div className="text-[9px] text-[#606060] mt-0.5">{feeTotals.makerTrades} trades</div>
 										</div>
 									</div>
@@ -981,8 +990,10 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								) : (
 									<div className="space-y-0.5">
 										{recentFees.map((f) => (
-											<div
+											<LiveRow
 												key={f.id}
+												id={f.id}
+												liveIds={feeLiveIds}
 												className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
 											>
 												<div className="flex items-center justify-between p-2">
@@ -1014,7 +1025,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 														</div>
 													</div>
 												</div>
-											</div>
+											</LiveRow>
 										))}
 									</div>
 								)}
@@ -1044,8 +1055,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							}}
 						>
 							<div className="mb-3">
-								{/* Protocol Revenue (if protocol fee recipient) */}
-								{isProtocolRecipient ? (
+								{/* Protocol Revenue (only for the actual protocol fee address) */}
+								{isProtocolRecipient && isActualProtocolAddress ? (
 									<>
 										<div className="flex items-center justify-between mb-2">
 											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Protocol Revenue</h4>
@@ -1058,38 +1069,53 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											<div className="grid grid-cols-2 gap-3">
 												<div>
 													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol Earnings</div>
-													<div className="text-[16px] font-semibold text-green-400 font-mono">
+													<LiveValue value={protocolTotals.totalProtocolEarningsUsdc} className="text-[16px] font-semibold text-green-400 font-mono">
 														${protocolTotals.totalProtocolEarningsUsdc.toFixed(2)}
-													</div>
+													</LiveValue>
 													<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
 												</div>
 												<div>
 													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">To Market Owners</div>
-													<div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+													<LiveValue value={protocolTotals.totalOwnerEarningsUsdc} className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
 														${protocolTotals.totalOwnerEarningsUsdc.toFixed(2)}
-													</div>
+													</LiveValue>
 													<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
 												</div>
 											</div>
 											<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
 												<div>
 													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
-													<div className="text-[12px] font-medium text-white font-mono">
+													<LiveValue value={protocolTotals.totalFeesCollectedUsdc} className="text-[12px] font-medium text-white font-mono">
 														${protocolTotals.totalFeesCollectedUsdc.toFixed(2)}
-													</div>
+													</LiveValue>
 												</div>
 												<div>
 													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
-													<div className="text-[12px] font-medium text-white font-mono">
+													<LiveValue value={protocolTotals.totalVolumeUsdc} className="text-[12px] font-medium text-white font-mono">
 														${protocolTotals.totalVolumeUsdc >= 1_000_000
 															? `${(protocolTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
 															: protocolTotals.totalVolumeUsdc >= 1000
 															? `${(protocolTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
 															: protocolTotals.totalVolumeUsdc.toFixed(2)}
-													</div>
+													</LiveValue>
 												</div>
 											</div>
 										</div>
+
+										{protocolMarkets.length > 0 && (
+											<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-2">Earnings by Market</div>
+												<EarningsPieChart
+													slices={protocolMarkets.map((m): EarningsPieSlice => ({
+														label: m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…',
+														value: m.total_protocol_earnings_usdc,
+													}))}
+													size={160}
+													compact
+													live={liveMarketKeys.size > 0}
+												/>
+											</div>
+										)}
 
 										<div className="flex items-center justify-between mb-2 mt-4">
 											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
@@ -1106,10 +1132,12 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											</div>
 										) : (
 											<div className="space-y-0.5">
-												{protocolMarkets.map((m) => (
+												{protocolMarkets.map((m) => {
+													const mKey = `proto::${m.market_id}::${m.market_address}`
+													return (
 													<div
 														key={`proto-${m.market_id}-${m.market_address}`}
-														className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+														className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}
 													>
 														<div className="flex items-center justify-between p-2.5">
 															<div className="min-w-0 flex-1">
@@ -1123,16 +1151,17 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 																</div>
 															</div>
 															<div className="text-right flex-shrink-0 ml-2">
-																<div className="text-[12px] font-semibold text-green-400 font-mono">
+																<LiveValue value={m.total_protocol_earnings_usdc} className="text-[12px] font-semibold text-green-400 font-mono">
 																	+${m.total_protocol_earnings_usdc.toFixed(2)}
-																</div>
+																</LiveValue>
 																<div className="text-[9px] text-[#606060] font-mono">
 																	of ${m.total_fees_collected_usdc.toFixed(2)}
 																</div>
 															</div>
 														</div>
 													</div>
-												))}
+													)
+												})}
 											</div>
 										)}
 									</>
@@ -1141,49 +1170,73 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								{/* Market Owner Revenue */}
 								{isMarketOwner ? (
 									<>
-										<div className={`flex items-center justify-between mb-2 ${isProtocolRecipient ? 'mt-5' : ''}`}>
-											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Owner Revenue</h4>
-											<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-												{ownerTotals.marketCount} market{ownerTotals.marketCount !== 1 ? 's' : ''}
-											</div>
+									<div className={`flex items-center justify-between mb-2 ${isProtocolRecipient && isActualProtocolAddress ? 'mt-5' : ''}`}>
+										<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Owner Revenue</h4>
+										<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+											{ownerTotals.marketCount} market{ownerTotals.marketCount !== 1 ? 's' : ''}
 										</div>
+									</div>
 
-										<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+									<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+										{isActualProtocolAddress ? (
 											<div className="grid grid-cols-2 gap-3">
 												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Your Earnings</div>
-													<div className="text-[16px] font-semibold text-green-400 font-mono">
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Owner Earnings</div>
+													<LiveValue value={ownerTotals.totalOwnerEarningsUsdc} className="text-[16px] font-semibold text-green-400 font-mono">
 														${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}
-													</div>
+													</LiveValue>
 													<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
 												</div>
 												<div>
 													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol</div>
-													<div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+													<LiveValue value={ownerTotals.totalProtocolEarningsUsdc} className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
 														${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}
-													</div>
+													</LiveValue>
 													<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
 												</div>
 											</div>
-											<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
-												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
-													<div className="text-[12px] font-medium text-white font-mono">
-														${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}
-													</div>
-												</div>
-												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
-													<div className="text-[12px] font-medium text-white font-mono">
-														${ownerTotals.totalVolumeUsdc >= 1_000_000
-															? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
-															: ownerTotals.totalVolumeUsdc >= 1000
-															? `${(ownerTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
-															: ownerTotals.totalVolumeUsdc.toFixed(2)}
-													</div>
-												</div>
+										) : (
+											<div>
+												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Your Earnings</div>
+												<LiveValue value={ownerTotals.totalOwnerEarningsUsdc} className="text-[16px] font-semibold text-green-400 font-mono">
+													${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}
+												</LiveValue>
+											</div>
+										)}
+										<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+											<div>
+												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
+												<LiveValue value={ownerTotals.totalFeesCollectedUsdc} className="text-[12px] font-medium text-white font-mono">
+													${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}
+												</LiveValue>
+											</div>
+											<div>
+												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
+												<LiveValue value={ownerTotals.totalVolumeUsdc} className="text-[12px] font-medium text-white font-mono">
+													${ownerTotals.totalVolumeUsdc >= 1_000_000
+														? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
+														: ownerTotals.totalVolumeUsdc >= 1000
+														? `${(ownerTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
+														: ownerTotals.totalVolumeUsdc.toFixed(2)}
+												</LiveValue>
 											</div>
 										</div>
+									</div>
+
+										{ownerMarkets.length > 0 && (
+											<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-2">Earnings by Market</div>
+												<EarningsPieChart
+													slices={ownerMarkets.map((m): EarningsPieSlice => ({
+														label: m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…',
+														value: m.total_owner_earnings_usdc,
+													}))}
+													size={160}
+													compact
+													live={liveMarketKeys.size > 0}
+												/>
+											</div>
+										)}
 
 										<div className="flex items-center justify-between mb-2 mt-4">
 											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
@@ -1200,10 +1253,12 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											</div>
 										) : (
 											<div className="space-y-0.5">
-												{ownerMarkets.map((m) => (
+												{ownerMarkets.map((m) => {
+													const mKey = `${m.market_id}::${m.market_address}`
+													return (
 													<div
 														key={`owner-${m.market_id}-${m.market_address}`}
-														className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+														className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}
 													>
 														<div className="flex items-center justify-between p-2.5">
 															<div className="min-w-0 flex-1">
@@ -1217,16 +1272,17 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 																</div>
 															</div>
 															<div className="text-right flex-shrink-0 ml-2">
-																<div className="text-[12px] font-semibold text-green-400 font-mono">
+																<LiveValue value={m.total_owner_earnings_usdc} className="text-[12px] font-semibold text-green-400 font-mono">
 																	+${m.total_owner_earnings_usdc.toFixed(2)}
-																</div>
+																</LiveValue>
 																<div className="text-[9px] text-[#606060] font-mono">
 																	of ${m.total_fees_collected_usdc.toFixed(2)}
 																</div>
 															</div>
 														</div>
 													</div>
-												))}
+													)
+												})}
 											</div>
 										)}
 									</>

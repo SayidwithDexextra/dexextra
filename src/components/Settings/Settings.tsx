@@ -15,6 +15,8 @@ import { useMarketDraft } from '@/hooks/useMarketDraft'
 import { stepLabel, stepIndex, STEP_ORDER } from '@/types/marketDraft'
 import { useUserFees } from '@/hooks/useUserFees'
 import { useOwnerEarnings } from '@/hooks/useOwnerEarnings'
+import { LiveValue, LiveRow } from '@/components/ui/LiveValue'
+import EarningsPieChart, { type EarningsPieSlice } from '@/components/ui/EarningsPieChart'
 
 export interface SettingsProps {
   className?: string
@@ -69,10 +71,10 @@ export default function Settings({ className }: SettingsProps) {
   const { drafts: userDrafts, isLoading: draftsLoading, deleteDraft: deleteDraftById } = useMarketDraft(walletData.address ?? null)
 
   // Fee earnings (user's own trades)
-  const { summary: feeSummary, recentFees, totals: feeTotals, isLoading: feesLoading, refetch: refetchFees } = useUserFees(walletData.address ?? null, { recentLimit: 50 })
+  const { summary: feeSummary, recentFees, totals: feeTotals, liveIds: feeLiveIds, isLoading: feesLoading, refetch: refetchFees } = useUserFees(walletData.address ?? null, { recentLimit: 50 })
 
   // Market owner earnings (20% revenue share from markets you created)
-  const { markets: ownerMarkets, totals: ownerTotals, isLoading: ownerEarningsLoading, refetch: refetchOwnerEarnings } = useOwnerEarnings(walletData.address ?? null)
+  const { markets: ownerMarkets, totals: ownerTotals, liveMarketKeys, isLoading: ownerEarningsLoading, refetch: refetchOwnerEarnings } = useOwnerEarnings(walletData.address ?? null)
 
   // Validate username as user types
   const validateUsername = (username: string): string | null => {
@@ -238,7 +240,7 @@ export default function Settings({ className }: SettingsProps) {
     }
   }
 
-  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'drafts' | 'withdrawals' | 'earnings' | 'preferences'
+  type SettingsTabId = 'profile' | 'links' | 'notifications' | 'markets' | 'withdrawals' | 'earnings' | 'preferences'
   const tabs = useMemo(
     () =>
       [
@@ -246,7 +248,6 @@ export default function Settings({ className }: SettingsProps) {
         { id: 'links' as const, label: 'Links' },
         { id: 'notifications' as const, label: 'Notifications' },
         { id: 'markets' as const, label: 'My Markets' },
-        { id: 'drafts' as const, label: 'Drafts' },
         { id: 'withdrawals' as const, label: 'Withdrawals' },
         { id: 'earnings' as const, label: 'Fees Paid' },
         { id: 'preferences' as const, label: 'Preferences' },
@@ -1192,7 +1193,7 @@ export default function Settings({ className }: SettingsProps) {
           <div
             className={[
               'w-full',
-              activeTab === 'markets' ? 'max-w-none' : 'mx-auto max-w-4xl',
+              (activeTab === 'markets' || activeTab === 'earnings') ? 'max-w-none' : 'mx-auto max-w-4xl',
             ].join(' ')}
           >
             {/* Tab panel enter animation (Watchlist-style) */}
@@ -1530,36 +1531,53 @@ export default function Settings({ className }: SettingsProps) {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                       <div>
                         <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Your Earnings</div>
-                        <div className="text-[18px] font-semibold text-green-400 font-mono">${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}</div>
+                        <LiveValue value={ownerTotals.totalOwnerEarningsUsdc} className="text-[18px] font-semibold text-green-400 font-mono">${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}</LiveValue>
                       </div>
                       <div>
                         <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Protocol Share</div>
-                        <div className="text-[18px] font-semibold text-[#9CA3AF] font-mono">${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}</div>
+                        <LiveValue value={ownerTotals.totalProtocolEarningsUsdc} className="text-[18px] font-semibold text-[#9CA3AF] font-mono">${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}</LiveValue>
                       </div>
                       <div>
                         <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Total Fees</div>
-                        <div className="text-[18px] font-semibold text-white font-mono">${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}</div>
+                        <LiveValue value={ownerTotals.totalFeesCollectedUsdc} className="text-[18px] font-semibold text-white font-mono">${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}</LiveValue>
                       </div>
                       <div>
                         <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Volume</div>
-                        <div className="text-[18px] font-semibold text-white font-mono">
+                        <LiveValue value={ownerTotals.totalVolumeUsdc} className="text-[18px] font-semibold text-white font-mono">
                           ${ownerTotals.totalVolumeUsdc >= 1_000_000
                             ? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
                             : ownerTotals.totalVolumeUsdc >= 1_000
                             ? `${(ownerTotals.totalVolumeUsdc / 1_000).toFixed(1)}k`
                             : ownerTotals.totalVolumeUsdc.toFixed(2)}
-                        </div>
+                        </LiveValue>
                       </div>
                     </div>
 
+                    {ownerMarkets.length > 0 && (
+                      <div className="bg-[#111111] rounded-md border border-[#1A1A1A] p-4 mb-5">
+                        <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-3">Earnings by Market</div>
+                        <EarningsPieChart
+                          slices={ownerMarkets.map((m): EarningsPieSlice => ({
+                            label: m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase() : m.market_address.slice(0, 10) + '…',
+                            value: m.total_owner_earnings_usdc,
+                          }))}
+                          size={140}
+                          thickness={0.35}
+                          live={liveMarketKeys.size > 0}
+                        />
+                      </div>
+                    )}
+
                     <div className="divide-y divide-[#1A1A1A] border border-[#1A1A1A] rounded-md overflow-hidden">
-                      {ownerMarkets.map((m) => (
-                        <div key={`${m.market_id}-${m.market_address}`} className="px-4 py-3 hover:bg-[#1A1A1A] transition-colors duration-150">
+                      {ownerMarkets.map((m) => {
+                        const mKey = `${m.market_id}::${m.market_address}`
+                        return (
+                        <div key={`${m.market_id}-${m.market_address}`} className={`px-4 py-3 hover:bg-[#1A1A1A] transition-colors duration-150 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}>
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-[12px] font-medium text-white truncate max-w-[200px]">
                               {m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase() : m.market_address.slice(0, 10) + '…'}
                             </span>
-                            <span className="text-[12px] font-semibold text-green-400 font-mono">+${m.total_owner_earnings_usdc.toFixed(2)}</span>
+                            <LiveValue value={m.total_owner_earnings_usdc} className="text-[12px] font-semibold text-green-400 font-mono">+${m.total_owner_earnings_usdc.toFixed(2)}</LiveValue>
                           </div>
                           <div className="flex items-center gap-3 text-[10px] text-[#606060]">
                             <span>{m.total_fee_events} fee events</span>
@@ -1569,9 +1587,116 @@ export default function Settings({ className }: SettingsProps) {
                             </span>
                           </div>
                         </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </>
+                )}
+              </div>
+            </div>
+
+            {/* Draft Markets */}
+            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="min-w-0">
+                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Draft Markets</h4>
+                    <div className="mt-1 text-[10px] text-[#606060]">
+                      Markets you started creating but haven't deployed yet
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => router.push('/new-market')}
+                    className="shrink-0 rounded-md bg-white/10 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-white/15 transition-colors"
+                  >
+                    + New Market
+                  </button>
+                </div>
+
+                {!walletData.address ? (
+                  <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                      <span className="text-[11px] text-[#808080]">
+                        Connect your wallet to view your draft markets.
+                      </span>
+                    </div>
+                  </div>
+                ) : draftsLoading ? (
+                  <div className="flex items-center gap-2 py-4">
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border border-[#333] border-t-white/60" />
+                    <span className="text-[11px] text-[#808080]">Loading drafts…</span>
+                  </div>
+                ) : userDrafts.length === 0 ? (
+                  <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4 text-center">
+                    <div className="text-[11px] text-[#808080]">No draft markets yet.</div>
+                    <div className="mt-1 text-[10px] text-[#606060]">
+                      When you start creating a market on the{' '}
+                      <button onClick={() => router.push('/new-market')} className="text-blue-400 hover:underline">
+                        New Market
+                      </button>{' '}
+                      page, your progress will be auto-saved here.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {userDrafts.map((draft) => {
+                      const step = stepIndex(draft.currentStep) + 1;
+                      const total = STEP_ORDER.length;
+                      const pct = Math.round((step / total) * 100);
+                      const age = Date.now() - new Date(draft.updatedAt).getTime();
+                      const mins = Math.floor(age / 60_000);
+                      const timeAgo = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : Math.floor(mins / 60) < 24 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`;
+
+                      return (
+                        <div
+                          key={draft.id}
+                          className="group/draft flex items-center gap-3 rounded-md border border-[#222222] bg-[#0F0F0F] hover:bg-[#141414] hover:border-[#333333] p-3 transition-all duration-200"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-[12px] font-medium text-white/90">
+                                {draft.title || 'Untitled market'}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-2">
+                              <div className="h-1 w-20 rounded-full bg-[#222]">
+                                <div
+                                  className="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-[#606060]">{stepLabel(draft.currentStep)}</span>
+                              <span className="text-[10px] text-[#404040]">·</span>
+                              <span className="text-[10px] text-[#606060]">{timeAgo}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                if (confirm('Delete this draft? This cannot be undone.')) {
+                                  void deleteDraftById(draft.id);
+                                }
+                              }}
+                              className="rounded p-1 text-[#606060] hover:text-red-400 hover:bg-white/5 transition-colors opacity-0 group-hover/draft:opacity-100"
+                              title="Delete draft"
+                            >
+                              <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
+                                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => router.push(`/new-market?draft=${draft.id}`)}
+                              className="rounded-md bg-white/8 px-2.5 py-1 text-[11px] font-medium text-white/80 hover:bg-white/12 transition-colors"
+                            >
+                              Continue
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             </div>
@@ -2037,113 +2162,6 @@ export default function Settings({ className }: SettingsProps) {
           </>
         ) : null}
 
-        {activeTab === 'drafts' ? (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-3">
-                <div className="min-w-0">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Draft Markets</h4>
-                  <div className="mt-1 text-[10px] text-[#606060]">
-                    Markets you started creating but haven't deployed yet
-                  </div>
-                </div>
-                <button
-                  onClick={() => router.push('/new-market')}
-                  className="shrink-0 rounded-md bg-white/10 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-white/15 transition-colors"
-                >
-                  + New Market
-                </button>
-              </div>
-
-              {!walletData.address ? (
-                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                    <span className="text-[11px] text-[#808080]">
-                      Connect your wallet to view your draft markets.
-                    </span>
-                  </div>
-                </div>
-              ) : draftsLoading ? (
-                <div className="flex items-center gap-2 py-4">
-                  <span className="h-3.5 w-3.5 animate-spin rounded-full border border-[#333] border-t-white/60" />
-                  <span className="text-[11px] text-[#808080]">Loading drafts…</span>
-                </div>
-              ) : userDrafts.length === 0 ? (
-                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4 text-center">
-                  <div className="text-[11px] text-[#808080]">No draft markets yet.</div>
-                  <div className="mt-1 text-[10px] text-[#606060]">
-                    When you start creating a market on the{' '}
-                    <button onClick={() => router.push('/new-market')} className="text-blue-400 hover:underline">
-                      New Market
-                    </button>{' '}
-                    page, your progress will be auto-saved here.
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {userDrafts.map((draft) => {
-                    const step = stepIndex(draft.currentStep) + 1;
-                    const total = STEP_ORDER.length;
-                    const pct = Math.round((step / total) * 100);
-                    const age = Date.now() - new Date(draft.updatedAt).getTime();
-                    const mins = Math.floor(age / 60_000);
-                    const timeAgo = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : Math.floor(mins / 60) < 24 ? `${Math.floor(mins / 60)}h ago` : `${Math.floor(mins / 1440)}d ago`;
-
-                    return (
-                      <div
-                        key={draft.id}
-                        className="group/draft flex items-center gap-3 rounded-md border border-[#222222] bg-[#0F0F0F] hover:bg-[#141414] hover:border-[#333333] p-3 transition-all duration-200"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-[12px] font-medium text-white/90">
-                              {draft.title || 'Untitled market'}
-                            </span>
-                          </div>
-                          <div className="mt-1 flex items-center gap-2">
-                            <div className="h-1 w-20 rounded-full bg-[#222]">
-                              <div
-                                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all"
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                            <span className="text-[10px] text-[#606060]">{stepLabel(draft.currentStep)}</span>
-                            <span className="text-[10px] text-[#404040]">·</span>
-                            <span className="text-[10px] text-[#606060]">{timeAgo}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <button
-                            onClick={() => {
-                              if (confirm('Delete this draft? This cannot be undone.')) {
-                                void deleteDraftById(draft.id);
-                              }
-                            }}
-                            className="rounded p-1 text-[#606060] hover:text-red-400 hover:bg-white/5 transition-colors opacity-0 group-hover/draft:opacity-100"
-                            title="Delete draft"
-                          >
-                            <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
-                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                            </svg>
-                          </button>
-                          <button
-                            onClick={() => router.push(`/new-market?draft=${draft.id}`)}
-                            className="rounded-md bg-white/8 px-2.5 py-1 text-[11px] font-medium text-white/80 hover:bg-white/12 transition-colors"
-                          >
-                            Continue
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        ) : null}
-
         {activeTab === 'withdrawals' ? (
           <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
             <div className="p-6">
@@ -2211,17 +2229,17 @@ export default function Settings({ className }: SettingsProps) {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
                 <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Total Fees Paid</div>
-                <div className="text-[20px] font-semibold text-white font-mono">${feeTotals.totalFeesUsdc.toFixed(2)}</div>
+                <LiveValue value={feeTotals.totalFeesUsdc} className="text-[20px] font-semibold text-white font-mono">${feeTotals.totalFeesUsdc.toFixed(2)}</LiveValue>
                 <div className="text-[10px] text-[#606060] mt-1">{feeTotals.totalTrades} trades</div>
               </div>
               <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
                 <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Taker Fees</div>
-                <div className="text-[20px] font-semibold text-red-400 font-mono">${feeTotals.takerFeesUsdc.toFixed(2)}</div>
+                <LiveValue value={feeTotals.takerFeesUsdc} className="text-[20px] font-semibold text-red-400 font-mono">${feeTotals.takerFeesUsdc.toFixed(2)}</LiveValue>
                 <div className="text-[10px] text-[#606060] mt-1">{feeTotals.takerTrades} taker trades</div>
               </div>
               <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
                 <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Maker Fees</div>
-                <div className="text-[20px] font-semibold text-green-400 font-mono">${feeTotals.makerFeesUsdc.toFixed(2)}</div>
+                <LiveValue value={feeTotals.makerFeesUsdc} className="text-[20px] font-semibold text-green-400 font-mono">${feeTotals.makerFeesUsdc.toFixed(2)}</LiveValue>
                 <div className="text-[10px] text-[#606060] mt-1">{feeTotals.makerTrades} maker trades</div>
               </div>
             </div>
@@ -2231,21 +2249,21 @@ export default function Settings({ className }: SettingsProps) {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Total Volume</div>
-                  <div className="text-[16px] font-semibold text-white font-mono">
+                  <LiveValue value={feeTotals.totalVolumeUsdc} className="text-[16px] font-semibold text-white font-mono">
                     ${feeTotals.totalVolumeUsdc >= 1_000_000
                       ? `${(feeTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
                       : feeTotals.totalVolumeUsdc >= 1_000
                       ? `${(feeTotals.totalVolumeUsdc / 1_000).toFixed(1)}k`
                       : feeTotals.totalVolumeUsdc.toFixed(2)}
-                  </div>
+                  </LiveValue>
                 </div>
                 <div className="text-right">
                   <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Avg Fee Rate</div>
-                  <div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+                  <LiveValue value={feeTotals.totalVolumeUsdc > 0 ? feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc : 0} className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
                     {feeTotals.totalVolumeUsdc > 0
                       ? `${((feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc) * 100).toFixed(3)}%`
                       : '—'}
-                  </div>
+                  </LiveValue>
                 </div>
               </div>
             </div>
@@ -2263,7 +2281,7 @@ export default function Settings({ className }: SettingsProps) {
                         <span className="text-[12px] font-medium text-white truncate max-w-[200px]">
                           {row.market_id ? row.market_id.replace(/-/g, '/').toUpperCase() : row.market_address.slice(0, 10) + '…'}
                         </span>
-                        <span className="text-[12px] font-medium text-white font-mono">${row.total_fees_usdc.toFixed(2)}</span>
+                        <LiveValue value={row.total_fees_usdc} className="text-[12px] font-medium text-white font-mono">${row.total_fees_usdc.toFixed(2)}</LiveValue>
                       </div>
                       <div className="flex items-center gap-3 text-[10px] text-[#606060]">
                         <span>{row.total_trades} trades</span>
@@ -2316,7 +2334,7 @@ export default function Settings({ className }: SettingsProps) {
                     </thead>
                     <tbody className="divide-y divide-[#1A1A1A]">
                       {recentFees.map((f) => (
-                        <tr key={f.id} className="hover:bg-[#1A1A1A] transition-colors duration-150">
+                        <tr key={f.id} className={`hover:bg-[#1A1A1A] transition-colors duration-150 ${feeLiveIds.has(f.id) ? 'dex-live-row-enter' : ''}`}>
                           <td className="px-4 py-2.5 text-[11px] text-[#808080] font-mono whitespace-nowrap">
                             {f.created_at
                               ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
