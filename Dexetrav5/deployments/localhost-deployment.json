@@ -1,7 +1,7 @@
 {
   "network": "localhost",
   "chainId": 31337,
-  "timestamp": "2026-03-15T14:22:21.550Z",
+  "timestamp": "2026-03-16T03:07:37.329Z",
   "contracts": {
     "MOCK_USDC": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
     "VAULT_ANALYTICS": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
@@ -13,7 +13,7 @@
     "MARKET_LIFECYCLE_FACET": "0x68B1D87F95878fE05B998F19b66F4baba5De1aed",
     "COLLATERAL_HUB": "0x4A679253410272dd5232B3Ff7cF5dbB88f295319",
     "ALUMINUM_ORDERBOOK": "0x3B02fF1e626Ed7a8fd6eC5299e2C54e1421B626B",
-    "ALUMINUM_MARKET_ID": "0x7a90d70adeb75749ea708fd1a2ae66e271f56a098729b076bf7961f016b47693"
+    "ALUMINUM_MARKET_ID": "0xc051904caff40b145dcb799c30bfa3459e3324c75895b68dd04eb258ea83aaab"
   },
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "allUsers": [
@@ -44,7 +44,7 @@
     }
   ],
   "aluminumMarket": {
-    "marketId": "0x7a90d70adeb75749ea708fd1a2ae66e271f56a098729b076bf7961f016b47693",
+    "marketId": "0xc051904caff40b145dcb799c30bfa3459e3324c75895b68dd04eb258ea83aaab",
     "symbol": "ALU-USD",
     "orderBook": "0x3B02fF1e626Ed7a8fd6eC5299e2C54e1421B626B"
   }

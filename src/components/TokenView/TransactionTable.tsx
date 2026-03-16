@@ -1050,7 +1050,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           </div>
           )
         ) : (
-          <div className="grid grid-cols-[0.9fr_1.4fr_0.9fr_0.6fr] gap-3 text-[10px] font-medium text-gray-200 px-3">
+          <div className="grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 text-[10px] font-medium text-gray-200 px-3">
             <div className="text-right">SIZE</div>
             <div className="text-right">PRICE</div>
             <div className="text-right">VALUE</div>
@@ -1245,17 +1245,17 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                               }`}
                               style={{ width: `${fillPercentage}%` }}
                             />
-                            <div className="relative grid grid-cols-[0.9fr_1.4fr_0.9fr_0.6fr] gap-3 py-[3px] px-3 text-[11px]">
-                              <div className="text-right text-gray-300 font-mono tabular-nums truncate">
+                            <div className="relative grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 py-[3px] px-3 text-[11px]">
+                              <div className="text-right text-gray-300 font-mono tabular-nums truncate min-w-0">
                                 {formatAmountDisplay(trade.amount, 4)}
                               </div>
-                              <div className={`text-right font-mono font-medium tabular-nums truncate ${side === 'BUY' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
+                              <div className={`text-right font-mono font-medium tabular-nums truncate min-w-0 ${side === 'BUY' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
                                 ${formatPriceDisplay(trade.price, 4)}
                               </div>
-                              <div className="text-right text-white font-mono text-[10px] tabular-nums truncate">
+                              <div className="text-right text-white font-mono text-[10px] tabular-nums truncate min-w-0">
                                 {formatCurrency(trade.tradeValue)}
                               </div>
-                              <div className="text-right text-gray-200 font-mono text-[10px] tabular-nums">
+                              <div className="text-right text-gray-200 font-mono text-[10px] tabular-nums min-w-0">
                                 {formatTime(new Date(trade.timestamp * 1000).toISOString())}
                               </div>
                             </div>
@@ -1336,8 +1336,8 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                               }`}
                               style={{ width: `${fillPercentage}%` }}
                             />
-                            <div className="relative grid grid-cols-[0.9fr_1.4fr_0.9fr_0.6fr] gap-3 py-[3px] px-3 text-[11px]">
-                              <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums truncate">
+                            <div className="relative grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 py-[3px] px-3 text-[11px]">
+                              <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums truncate min-w-0">
                                 <OrderBookAnimatedQuantity
                                   orderId={order.order_id}
                                   quantity={order.quantity}
@@ -1347,13 +1347,13 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                                   formatQuantity={(q) => formatAmountDisplay(q, 4)}
                                 />
                               </div>
-                              <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums truncate ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
+                              <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums truncate min-w-0 ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
                                 {order.price ? `$${formatPriceDisplay(order.price, 4)}` : 'MARKET'}
                               </div>
-                              <div className="text-right text-white font-mono text-[10px] flex items-center justify-end tabular-nums truncate">
+                              <div className="text-right text-white font-mono text-[10px] flex items-center justify-end tabular-nums truncate min-w-0">
                                 {formatCurrency((order.quantity || 0) * (order.price || 0))}
                               </div>
-                              <div className="text-right text-gray-200 font-mono text-[10px] flex items-center justify-end tabular-nums">
+                              <div className="text-right text-gray-200 font-mono text-[10px] flex items-center justify-end tabular-nums min-w-0">
                                 {formatTime(order.created_at)}
                               </div>
                             </div>

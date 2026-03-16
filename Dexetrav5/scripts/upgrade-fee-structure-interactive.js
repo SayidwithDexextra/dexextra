@@ -2,16 +2,13 @@
 /**
  * upgrade-fee-structure-interactive.js
  *
- * Interactive script to deploy and upgrade Diamond facets on selected markets.
- * Supports upgrading ALL facets or a SINGLE facet.
+ * Sweeps ALL markets from Supabase, checks each Diamond for the full set of
+ * facets, and upgrades any that are missing or pointing at stale addresses.
  *
- * Steps:
- *   1. Fetch deployed markets from Supabase
- *   2. Choose which facet(s) to upgrade (single or all)
- *   3. Let operator select which markets to upgrade (multi-select)
- *   4. Optionally configure fee structure after upgrade
- *   5. Deploy new facet instances (once, reused across all selected markets)
- *   6. For each market: diamondCut to replace/add selectors
+ * Modes:
+ *   --dry-run       Scan only; report which markets need upgrades without executing.
+ *   --deploy        Deploy fresh facet instances instead of reading from env.
+ *   --skip-confirm  Skip the confirmation prompt before executing cuts.
  *
  * Env required:
  *   SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL
@@ -19,12 +16,38 @@
  *   ADMIN_PRIVATE_KEY          (primary deploy + upgrade signer)
  *   ADMIN_PRIVATE_KEY_2/3      (optional fallbacks for diamond ownership)
  *
+ * Facet addresses are read from env (e.g. OB_ADMIN_FACET, META_TRADE_FACET, …).
+ * Any facet whose env var is missing is skipped with a warning.
+ *
  * Usage:
  *   npx hardhat run scripts/upgrade-fee-structure-interactive.js --network hyperliquid
+ *   npx hardhat run scripts/upgrade-fee-structure-interactive.js --network hyperliquid --dry-run
  *   npx hardhat run scripts/upgrade-fee-structure-interactive.js --network localhost
  */
 const { ethers, artifacts } = require("hardhat");
 const readline = require("readline");
+
+// ────────────────────────── CLI flags ──────────────────────────
+
+const DRY_RUN = process.argv.includes("--dry-run");
+const DEPLOY_FRESH = process.argv.includes("--deploy");
+const SKIP_CONFIRM = process.argv.includes("--skip-confirm");
+
+// ────────────────────────── facet registry ──────────────────────────
+
+const ALL_FACETS = [
+  { name: "OBAdminFacet",              envKey: "OB_ADMIN_FACET" },
+  { name: "OBOrderPlacementFacet",     envKey: "OB_ORDER_PLACEMENT_FACET" },
+  { name: "OBTradeExecutionFacet",     envKey: "OB_TRADE_EXECUTION_FACET" },
+  { name: "OBViewFacet",              envKey: "OB_VIEW_FACET" },
+  { name: "OBLiquidationFacet",       envKey: "OB_LIQUIDATION_FACET" },
+  { name: "OBPricingFacet",           envKey: "OB_PRICING_FACET" },
+  { name: "OBSettlementFacet",        envKey: "OB_SETTLEMENT_FACET" },
+  { name: "OBMaintenanceFacet",       envKey: "OB_MAINTENANCE_FACET" },
+  { name: "MetaTradeFacet",           envKey: "META_TRADE_FACET" },
+  { name: "MarketLifecycleFacet",     envKey: "MARKET_LIFECYCLE_FACET" },
+  { name: "OrderBookVaultAdminFacet", envKey: "ORDERBOOK_VAULT_FACET" },
+];
 
 // ────────────────────────── helpers ──────────────────────────
 
@@ -79,7 +102,7 @@ async function fetchMarkets() {
   const supabase = createClient(url, key);
   const { data, error } = await supabase
     .from("markets")
-    .select("id, symbol, market_identifier, market_address, market_status, is_active, created_at")
+    .select("id, symbol, market_identifier, market_address, market_status, is_active, chain_id, created_at")
     .order("created_at", { ascending: false })
     .limit(1000);
   if (error) throw error;
@@ -90,7 +113,10 @@ async function fetchMarkets() {
 
 // ────────────────────────── artifact selectors ──────────────────────────
 
+const _selectorCache = {};
+
 async function selectorsFromArtifact(contractName) {
+  if (_selectorCache[contractName]) return _selectorCache[contractName];
   const artifact = await artifacts.readArtifact(contractName);
   const fns = (artifact.abi || []).filter((e) => e && e.type === "function");
   const sels = fns.map((f) => {
@@ -98,7 +124,8 @@ async function selectorsFromArtifact(contractName) {
     const sig = `${f.name}(${inputsSig})`;
     return ethers.id(sig).slice(0, 10);
   });
-  return { selectors: sels, abi: artifact.abi };
+  _selectorCache[contractName] = { selectors: sels, abi: artifact.abi };
+  return _selectorCache[contractName];
 }
 
 // ────────────────────────── deploy ──────────────────────────
@@ -114,22 +141,25 @@ async function deployFacet(contractName, deploySigner) {
   return addr;
 }
 
-// ────────────────────────── diamondCut ──────────────────────────
+// ────────────────────────── per-market scan ──────────────────────────
 
-async function buildCut(facetNames, facetAddresses, orderBookAddress) {
+async function scanMarket(orderBookAddress, activeFacets) {
   const loupe = await ethers.getContractAt(
     ["function facetAddress(bytes4) view returns (address)"],
     orderBookAddress,
     ethers.provider
   );
+
   const FacetCutAction = { Add: 0, Replace: 1, Remove: 2 };
   const cut = [];
+  const details = [];
 
-  for (const name of facetNames) {
+  for (const { name, address } of activeFacets) {
     const { selectors } = await selectorsFromArtifact(name);
     const add = [];
     const rep = [];
-    const targetFacet = facetAddresses[name].toLowerCase();
+    const targetLc = address.toLowerCase();
+
     for (const sel of selectors) {
       let cur = ethers.ZeroAddress;
       try {
@@ -138,37 +168,26 @@ async function buildCut(facetNames, facetAddresses, orderBookAddress) {
         cur = ethers.ZeroAddress;
       }
       if (!cur || cur === ethers.ZeroAddress) add.push(sel);
-      else if (cur.toLowerCase() !== targetFacet) rep.push(sel);
+      else if (cur.toLowerCase() !== targetLc) rep.push(sel);
     }
-    if (rep.length) cut.push({ facetAddress: facetAddresses[name], action: FacetCutAction.Replace, functionSelectors: rep });
-    if (add.length) cut.push({ facetAddress: facetAddresses[name], action: FacetCutAction.Add, functionSelectors: add });
-    console.log(`   ${name}: replace=${rep.length}  add=${add.length}`);
+
+    if (rep.length) cut.push({ facetAddress: address, action: FacetCutAction.Replace, functionSelectors: rep });
+    if (add.length) cut.push({ facetAddress: address, action: FacetCutAction.Add, functionSelectors: add });
+
+    if (add.length || rep.length) {
+      details.push({ name, add: add.length, replace: rep.length });
+    }
   }
-  return cut;
+
+  return { cut, details };
 }
 
 // ────────────────────────── main ──────────────────────────
 
 async function main() {
-  console.log("\n💎 Diamond Facet Upgrade (Interactive)");
+  console.log("\n💎 Diamond Facet Sweep – All Markets × All Facets");
   console.log("═".repeat(80));
-
-  // ── All available facets ──
-  const ALL_FACETS = [
-    "OBTradeExecutionFacet",
-    "OBOrderPlacementFacet",
-    "OBAdminFacet",
-    "OBViewFacet",
-    "OBLiquidationFacet",
-  ];
-
-  const facetEnvMap = {
-    OBTradeExecutionFacet: "OB_TRADE_EXECUTION_FACET",
-    OBOrderPlacementFacet: "OB_ORDER_PLACEMENT_FACET",
-    OBAdminFacet: "OB_ADMIN_FACET",
-    OBViewFacet: "OB_VIEW_FACET",
-    OBLiquidationFacet: "OB_LIQUIDATION_FACET",
-  };
+  if (DRY_RUN) console.log("🔍 DRY RUN mode — no transactions will be sent.\n");
 
   // ── 1. Resolve admin signers ──
   const pk1 = normalizePk(process.env.ADMIN_PRIVATE_KEY);
@@ -182,29 +201,92 @@ async function main() {
   const primaryDeployer = w1;
   console.log(`Primary deployer: ${await primaryDeployer.getAddress()}`);
 
-  // ── 2. Select which facet(s) to upgrade ──
-  console.log("\nWhich facets do you want to upgrade?");
-  ALL_FACETS.forEach((f, i) => console.log(`   [${i}] ${f}`));
-  console.log(`   [a] ALL facets`);
-  const facetSel = (await ask("\nFacet selection (indices comma-separated, or 'a' for all): ")).trim().toLowerCase();
+  const candidates = [
+    { w: w1, addr: (await w1.getAddress()).toLowerCase(), label: "ADMIN_PRIVATE_KEY" },
+    ...(w2 ? [{ w: w2, addr: (await w2.getAddress()).toLowerCase(), label: "ADMIN_PRIVATE_KEY_2" }] : []),
+    ...(w3 ? [{ w: w3, addr: (await w3.getAddress()).toLowerCase(), label: "ADMIN_PRIVATE_KEY_3" }] : []),
+  ];
 
-  let facetNames;
-  if (facetSel === "a" || facetSel === "all") {
-    facetNames = [...ALL_FACETS];
-  } else {
-    const indices = facetSel.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 0 && n < ALL_FACETS.length);
-    if (!indices.length) throw new Error("No valid facets selected.");
-    facetNames = [...new Set(indices.map((i) => ALL_FACETS[i]))];
+  // ── 1b. Check wallet balances ──
+  const MIN_BALANCE_WEI = ethers.parseUnits("0.0002", "ether"); // ~1 diamondCut worth of gas
+  console.log("\n💰 Signer wallet balances:");
+  let anyLow = false;
+  for (const c of candidates) {
+    const bal = await ethers.provider.getBalance(c.addr);
+    const balFormatted = ethers.formatEther(bal);
+    const sufficient = bal >= MIN_BALANCE_WEI;
+    const icon = sufficient ? "✅" : "⚠️";
+    if (!sufficient) anyLow = true;
+    console.log(`   ${icon} ${padRight(c.label, 22)} ${c.addr}   ${balFormatted} HYPE`);
   }
-  console.log(`\n✅ Upgrading ${facetNames.length} facet(s): ${facetNames.join(", ")}`);
+  if (anyLow) {
+    console.log("\n   ⚠️  One or more signers have low balance. Upgrades requiring those wallets will fail.");
+    if (!SKIP_CONFIRM && !DRY_RUN) {
+      const ans = (await ask("   Continue anyway? [y/N]: ")).trim().toLowerCase();
+      if (ans !== "y" && ans !== "yes") {
+        console.log("   Aborted. Fund the wallets and retry.");
+        return;
+      }
+    }
+  }
 
-  // ── 3. Fetch markets from Supabase ──
+  // ── 2. Resolve facet addresses ──
+  console.log("\n📋 Resolving facet addresses...");
+  const activeFacets = [];
+  const skippedFacets = [];
+
+  if (DEPLOY_FRESH) {
+    console.log("🔧 Deploying fresh facet instances...\n");
+    for (const facet of ALL_FACETS) {
+      try {
+        const addr = await deployFacet(facet.name, primaryDeployer);
+        activeFacets.push({ name: facet.name, envKey: facet.envKey, address: addr });
+      } catch (e) {
+        console.log(`   ⚠️  Failed to deploy ${facet.name}: ${e?.message || e}`);
+        skippedFacets.push({ name: facet.name, reason: `deploy failed: ${e?.message}` });
+      }
+    }
+  } else {
+    for (const facet of ALL_FACETS) {
+      const addr = (process.env[facet.envKey] || process.env[`NEXT_PUBLIC_${facet.envKey}`] || "").trim();
+      if (isAddress(addr)) {
+        activeFacets.push({ name: facet.name, envKey: facet.envKey, address: addr });
+      } else {
+        skippedFacets.push({ name: facet.name, reason: `${facet.envKey} not set` });
+      }
+    }
+  }
+
+  console.log(`\n   Active facets (${activeFacets.length}):`);
+  for (const f of activeFacets) {
+    console.log(`      ${padRight(f.name, 30)} ${f.address}`);
+  }
+  if (skippedFacets.length) {
+    console.log(`\n   ⚠️  Skipped facets (${skippedFacets.length}):`);
+    for (const f of skippedFacets) {
+      console.log(`      ${padRight(f.name, 30)} ${f.reason}`);
+    }
+  }
+
+  if (!activeFacets.length) {
+    throw new Error("No facet addresses available. Set env vars or use --deploy.");
+  }
+
+  // ── 3. Fetch all markets from Supabase ──
   console.log("\n🔎 Fetching markets from Supabase...");
-  const markets = await fetchMarkets();
-  console.log(`   Found ${markets.length} market(s) with contract addresses.\n`);
+  const network = await ethers.provider.getNetwork();
+  const chainId = Number(network.chainId);
+  const allMarkets = await fetchMarkets();
+
+  const markets = allMarkets.filter((m) => {
+    if (m.chain_id && Number(m.chain_id) !== chainId) return false;
+    return true;
+  });
+
+  console.log(`   ${allMarkets.length} total markets, ${markets.length} on chain ${chainId}\n`);
 
   console.log(padRight("Idx", 6), padRight("Symbol", 18), padRight("Address", 44), padRight("Active", 8), "Status");
-  console.log("-".repeat(95));
+  console.log("─".repeat(95));
   markets.forEach((m, i) => {
     console.log(
       padRight(`[${i}]`, 6),
@@ -215,186 +297,145 @@ async function main() {
     );
   });
 
-  // ── 4. Multi-select markets ──
-  console.log("\nEnter market indices to upgrade (comma-separated), 'all' for all, or 'q' to quit.");
-  const selStr = (await ask("Selection: ")).trim();
-  if (selStr.toLowerCase() === "q") return;
+  // ── 4. Scan all markets ──
+  console.log(`\n🔍 Scanning ${markets.length} market(s) against ${activeFacets.length} facet(s)...\n`);
 
-  let selectedIndices;
-  if (selStr.toLowerCase() === "all") {
-    selectedIndices = markets.map((_, i) => i);
-  } else {
-    selectedIndices = selStr.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 0 && n < markets.length);
-  }
-  if (!selectedIndices.length) throw new Error("No valid markets selected.");
+  const scanResults = [];
 
-  const selectedMarkets = selectedIndices.map((i) => markets[i]);
-  console.log(`\n✅ Selected ${selectedMarkets.length} market(s):`);
-  selectedMarkets.forEach((m) => console.log(`   - ${m.symbol || m.market_identifier || m.id} @ ${m.market_address}`));
-
-  // ── 5. Optional fee configuration (only if OBAdminFacet is being upgraded or user wants) ──
-  let configureFees = false;
-  let takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolFeeShareBps;
-
-  const feeAns = (await ask("\nConfigure fee structure after upgrade? [y/N]: ")).trim().toLowerCase();
-  if (feeAns === "y" || feeAns === "yes") {
-    configureFees = true;
-    console.log("\n📊 Fee Configuration");
-    const takerInput = (await ask("Taker fee bps [default: 45 = 0.045%]: ")).trim();
-    const makerInput = (await ask("Maker fee bps [default: 15 = 0.015%]: ")).trim();
-    const protocolAddrInput = (await ask("Protocol fee recipient address: ")).trim();
-    const shareInput = (await ask("Protocol share bps [default: 8000 = 80%]: ")).trim();
-
-    takerFeeBps = takerInput ? Number(takerInput) : 45;
-    makerFeeBps = makerInput ? Number(makerInput) : 15;
-    protocolFeeRecipient = protocolAddrInput;
-    protocolFeeShareBps = shareInput ? Number(shareInput) : 8000;
-
-    if (!isAddress(protocolFeeRecipient)) throw new Error("Invalid protocol fee recipient address.");
-    if (takerFeeBps > 500) throw new Error("Taker fee too high (max 500 bps = 5%).");
-    if (makerFeeBps > 500) throw new Error("Maker fee too high (max 500 bps = 5%).");
-    if (protocolFeeShareBps > 10000) throw new Error("Protocol share > 100%.");
-
-    console.log(`\n   Taker fee:       ${takerFeeBps} bps (${(takerFeeBps / 100).toFixed(3)}%)`);
-    console.log(`   Maker fee:       ${makerFeeBps} bps (${(makerFeeBps / 100).toFixed(3)}%)`);
-    console.log(`   Protocol addr:   ${protocolFeeRecipient}`);
-    console.log(`   Protocol share:  ${protocolFeeShareBps} bps (${(protocolFeeShareBps / 100).toFixed(1)}%)`);
-    console.log(`   Market owner:    ${(10000 - protocolFeeShareBps) / 100}% (goes to existing feeRecipient per market)`);
-  }
-
-  const confirm1 = (await ask("\nProceed with upgrade? [y/N]: ")).trim().toLowerCase();
-  if (confirm1 !== "y" && confirm1 !== "yes") {
-    console.log("Aborted.");
-    return;
-  }
-
-  // ── 6. Deploy new facets or reuse existing ──
-  const deployAns = (await ask("\nDeploy new facet instances? [y = deploy fresh, n = reuse from env]: ")).trim().toLowerCase();
-  const shouldDeploy = deployAns === "y" || deployAns === "yes";
-
-  const facetAddresses = {};
-  if (shouldDeploy) {
-    console.log("\n🔧 Deploying upgraded facets...");
-    for (const name of facetNames) {
-      facetAddresses[name] = await deployFacet(name, primaryDeployer);
-    }
-  } else {
-    console.log("\n📋 Reusing pre-deployed facet addresses from env...");
-    for (const name of facetNames) {
-      const envKey = facetEnvMap[name];
-      const addr = process.env[envKey] || process.env[`NEXT_PUBLIC_${envKey}`] || "";
-      if (!isAddress(addr)) throw new Error(`Missing or invalid env var ${envKey}=${addr}. Set it or choose deploy.`);
-      facetAddresses[name] = addr.trim();
-      console.log(`   ✅ ${name}: ${facetAddresses[name]}  (from ${envKey})`);
-    }
-  }
-
-  console.log("\n📦 Facet addresses for upgrade:");
-  for (const name of facetNames) {
-    console.log(`   ${padRight(name, 30)} ${facetAddresses[name]}`);
-  }
-
-  // ── 7. Upgrade each selected market ──
-  const candidates = [
-    { w: w1, addr: (await w1.getAddress()).toLowerCase() },
-    ...(w2 ? [{ w: w2, addr: (await w2.getAddress()).toLowerCase() }] : []),
-    ...(w3 ? [{ w: w3, addr: (await w3.getAddress()).toLowerCase() }] : []),
-  ];
-
-  const results = [];
-
-  for (let mi = 0; mi < selectedMarkets.length; mi++) {
-    const market = selectedMarkets[mi];
+  for (let i = 0; i < markets.length; i++) {
+    const market = markets[i];
     const label = market.symbol || market.market_identifier || market.id;
     const orderBook = market.market_address.trim();
 
-    console.log(`\n${"─".repeat(80)}`);
-    console.log(`[${mi + 1}/${selectedMarkets.length}] ${label} @ ${orderBook}`);
+    process.stdout.write(`   [${i + 1}/${markets.length}] ${padRight(label, 18)} `);
 
-    // Resolve owner signer
     let owner;
     try {
       const ownerView = await ethers.getContractAt(["function owner() view returns (address)"], orderBook, ethers.provider);
       owner = await ownerView.owner();
     } catch (e) {
-      console.log(`   ⚠️  Cannot read owner(): ${e?.message || e}. Skipping.`);
-      results.push({ label, address: orderBook, status: "SKIPPED", reason: "owner() failed" });
+      console.log(`⚠️  owner() failed – skipping`);
+      scanResults.push({ label, address: orderBook, status: "SKIP", reason: "owner() reverted", cut: [], details: [] });
       continue;
     }
 
     const picked = candidates.find((c) => c.addr === owner.toLowerCase());
     if (!picked) {
-      console.log(`   ⚠️  No ADMIN_PRIVATE_KEY matches diamond owner ${owner}. Skipping.`);
-      results.push({ label, address: orderBook, status: "SKIPPED", reason: `owner=${owner} not in keys` });
+      console.log(`⚠️  owner=${owner} — no matching key`);
+      scanResults.push({ label, address: orderBook, status: "SKIP", reason: `owner=${owner} not in keys`, cut: [], details: [] });
       continue;
     }
-    const signer = picked.w;
-    console.log(`   Owner: ${owner}  |  Signer: ${await signer.getAddress()}`);
 
-    // Build and execute diamondCut
     try {
-      console.log("   Building diamondCut...");
-      const cut = await buildCut(facetNames, facetAddresses, orderBook);
-
-      if (cut.length) {
-        const diamond = await ethers.getContractAt("IDiamondCut", orderBook, signer);
-        console.log("   🧩 Submitting diamondCut...");
-        const tx = await diamond.diamondCut(cut, ethers.ZeroAddress, "0x");
-        console.log(`   tx: ${tx.hash}`);
-        const rc = await tx.wait();
-        console.log(`   ✅ diamondCut mined at block ${rc.blockNumber}, gas=${rc.gasUsed.toString()}`);
+      const { cut, details } = await scanMarket(orderBook, activeFacets);
+      if (cut.length === 0) {
+        console.log(`✅ up to date`);
+        scanResults.push({ label, address: orderBook, status: "CURRENT", signer: picked.w, cut, details });
       } else {
-        console.log("   ℹ️  No selector changes needed (already up to date).");
+        const summary = details.map((d) => `${d.name}(+${d.add}/~${d.replace})`).join(" ");
+        console.log(`🔄 needs upgrade: ${summary}`);
+        scanResults.push({ label, address: orderBook, status: "NEEDS_UPGRADE", signer: picked.w, cut, details });
       }
-
-      // Optionally configure fees
-      if (configureFees) {
-        console.log("   📊 Calling updateFeeStructure...");
-        const admin = await ethers.getContractAt(
-          ["function updateFeeStructure(uint256,uint256,address,uint256) external"],
-          orderBook,
-          signer
-        );
-        const feeTx = await admin.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolFeeShareBps);
-        console.log(`   tx: ${feeTx.hash}`);
-        await feeTx.wait();
-        console.log(`   ✅ Fee structure configured.`);
-
-        const view = await ethers.getContractAt(
-          ["function getFeeStructure() view returns (uint256,uint256,address,uint256,uint256,address)"],
-          orderBook,
-          ethers.provider
-        );
-        const fs = await view.getFeeStructure();
-        console.log(`   Verified: taker=${fs[0].toString()}bps  maker=${fs[1].toString()}bps  proto=${fs[2]}  share=${fs[3].toString()}bps`);
-      }
-
-      results.push({ label, address: orderBook, status: "OK" });
     } catch (e) {
-      console.log(`   ❌ Failed: ${e?.message || e}`);
-      results.push({ label, address: orderBook, status: "FAILED", reason: e?.message || String(e) });
+      console.log(`❌ scan error: ${(e?.message || String(e)).slice(0, 80)}`);
+      scanResults.push({ label, address: orderBook, status: "ERROR", reason: e?.message || String(e), cut: [], details: [] });
     }
   }
 
-  // ── 8. Summary ──
+  // ── 5. Scan summary ──
+  const needsUpgrade = scanResults.filter((r) => r.status === "NEEDS_UPGRADE");
+  const current = scanResults.filter((r) => r.status === "CURRENT");
+  const skipped = scanResults.filter((r) => r.status === "SKIP");
+  const errors = scanResults.filter((r) => r.status === "ERROR");
+
   console.log(`\n${"═".repeat(80)}`);
-  console.log("SUMMARY");
+  console.log("SCAN SUMMARY");
   console.log(`${"═".repeat(80)}`);
-  console.log(`Facets upgraded: ${facetNames.join(", ")}`);
-  results.forEach((r) => {
-    const icon = r.status === "OK" ? "✅" : r.status === "SKIPPED" ? "⏭️ " : "❌";
-    console.log(`${icon} ${padRight(r.label, 18)} ${padRight(r.address, 44)} ${r.status}${r.reason ? ` (${r.reason})` : ""}`);
-  });
+  console.log(`   ✅ Up to date:     ${current.length}`);
+  console.log(`   🔄 Needs upgrade:  ${needsUpgrade.length}`);
+  console.log(`   ⏭️  Skipped:        ${skipped.length}`);
+  console.log(`   ❌ Errors:         ${errors.length}`);
 
-  const ok = results.filter((r) => r.status === "OK").length;
-  const skip = results.filter((r) => r.status === "SKIPPED").length;
-  const fail = results.filter((r) => r.status === "FAILED").length;
-  console.log(`\nTotal: ${ok} upgraded, ${skip} skipped, ${fail} failed out of ${results.length}.`);
-
-  console.log("\nDeployed facet addresses (save to env for reuse):");
-  for (const name of facetNames) {
-    console.log(`   ${facetEnvMap[name]}=${facetAddresses[name]}`);
+  if (needsUpgrade.length) {
+    console.log("\n   Markets needing upgrade:");
+    for (const r of needsUpgrade) {
+      const facetList = r.details.map((d) => `${d.name}(+${d.add}/~${d.replace})`).join(", ");
+      console.log(`      ${padRight(r.label, 18)} ${r.address}  →  ${facetList}`);
+    }
   }
+
+  if (!needsUpgrade.length) {
+    console.log("\n🎉 All markets are up to date. Nothing to do.");
+    return;
+  }
+
+  if (DRY_RUN) {
+    console.log("\n🔍 Dry run complete. Re-run without --dry-run to execute upgrades.");
+    return;
+  }
+
+  // ── 6. Confirm and execute ──
+  if (!SKIP_CONFIRM) {
+    const confirm1 = (await ask(`\nProceed with upgrading ${needsUpgrade.length} market(s)? [y/N]: `)).trim().toLowerCase();
+    if (confirm1 !== "y" && confirm1 !== "yes") {
+      console.log("Aborted.");
+      return;
+    }
+  }
+
+  console.log(`\n🚀 Executing diamondCut on ${needsUpgrade.length} market(s)...\n`);
+  const execResults = [];
+
+  for (let mi = 0; mi < needsUpgrade.length; mi++) {
+    const entry = needsUpgrade[mi];
+    const { label, address: orderBook, cut, signer, details } = entry;
+
+    console.log(`${"─".repeat(80)}`);
+    console.log(`[${mi + 1}/${needsUpgrade.length}] ${label} @ ${orderBook}`);
+    for (const d of details) {
+      console.log(`   ${padRight(d.name, 30)} add=${d.add}  replace=${d.replace}`);
+    }
+
+    try {
+      const diamond = await ethers.getContractAt("IDiamondCut", orderBook, signer);
+      console.log("   🧩 Submitting diamondCut...");
+      const tx = await diamond.diamondCut(cut, ethers.ZeroAddress, "0x");
+      console.log(`   tx: ${tx.hash}`);
+      const rc = await tx.wait();
+      console.log(`   ✅ Mined block ${rc.blockNumber}, gas=${rc.gasUsed.toString()}`);
+      execResults.push({ label, address: orderBook, status: "OK" });
+    } catch (e) {
+      console.log(`   ❌ Failed: ${(e?.message || String(e)).slice(0, 120)}`);
+      execResults.push({ label, address: orderBook, status: "FAILED", reason: e?.message || String(e) });
+    }
+  }
+
+  // ── 7. Final summary ──
+  console.log(`\n${"═".repeat(80)}`);
+  console.log("EXECUTION SUMMARY");
+  console.log(`${"═".repeat(80)}`);
+
+  const ok = execResults.filter((r) => r.status === "OK").length;
+  const fail = execResults.filter((r) => r.status === "FAILED").length;
+
+  for (const r of execResults) {
+    const icon = r.status === "OK" ? "✅" : "❌";
+    console.log(`${icon} ${padRight(r.label, 18)} ${padRight(r.address, 44)} ${r.status}${r.reason ? ` (${r.reason.slice(0, 60)})` : ""}`);
+  }
+  console.log(`\nTotal: ${ok} upgraded, ${fail} failed out of ${execResults.length}.`);
+
+  console.log("\nFacet addresses used:");
+  for (const f of activeFacets) {
+    console.log(`   ${padRight(f.envKey || f.name, 30)} ${f.address}`);
+  }
+
+  if (skipped.length) {
+    console.log("\nSkipped markets:");
+    for (const s of skipped) {
+      console.log(`   ⏭️  ${padRight(s.label, 18)} ${s.address}  (${s.reason})`);
+    }
+  }
+
   console.log("\nDone.");
 }
 

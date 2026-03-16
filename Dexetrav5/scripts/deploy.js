@@ -946,6 +946,12 @@ async function main() {
       );
       await obAdmin.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolShareBps);
       console.log("     ✅ Fee structure configured");
+
+      // Point feeRecipient to the market creator (deployer on localhost)
+      const creatorAddr = process.env.MARKET_CREATOR_ADDRESS || deployer.address;
+      console.log(`  🔧 Setting feeRecipient to creator: ${creatorAddr}...`);
+      await obAdmin.updateTradingParameters(10000, 0, creatorAddr);
+      console.log("     ✅ feeRecipient set to market creator");
     } catch (e) {
       console.log(
         "     ⚠️  Could not set Diamond OB trading parameters:",

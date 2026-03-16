@@ -96,7 +96,7 @@ export function Tooltip({
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
         onMouseMove={handleMouseMove}
-        className="inline-block"
+        className="block"
       >
         {children}
       </div>

@@ -98,6 +98,9 @@ function friendly(step: string) {
     configure_fees: 'Configure Fee Structure',
     configure_fees_sent: 'Configure Fee Structure (Sent)',
     configure_fees_mined: 'Configure Fee Structure (Mined)',
+    set_fee_recipient: 'Set Fee Recipient to Creator',
+    set_fee_recipient_sent: 'Set Fee Recipient (Sent)',
+    set_fee_recipient_mined: 'Set Fee Recipient (Mined)',
     save_market: 'Save Market (DB)',
     unhandled_error: 'Unhandled Error',
   };
@@ -1314,7 +1317,34 @@ export async function POST(req: Request) {
       }
     } catch (e: any) {
       logS('configure_fees', 'error', { error: e?.message || String(e) });
-      // Non-blocking: market is usable without fees, log and continue
+    }
+
+    // Set feeRecipient to the actual market creator (not the factory's global treasury)
+    try {
+      const creatorAddr = creatorWalletAddress || ownerAddress;
+      logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
+      const obAdmin = new ethers.Contract(
+        orderBook,
+        ['function updateTradingParameters(uint256,uint256,address) external',
+         'function getTradingParameters() view returns (uint256,uint256,address)'],
+        nonceMgr
+      );
+      const [marginBps, tradingFee] = await obAdmin.getTradingParameters();
+      const recipientTx = await obAdmin.updateTradingParameters(
+        marginBps,
+        tradingFee,
+        creatorAddr,
+        await nonceMgr.nextOverrides()
+      );
+      logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash });
+      const recipientRc = await recipientTx.wait();
+      logS('set_fee_recipient_mined', 'success', {
+        tx: recipientRc?.hash || recipientTx.hash,
+        blockNumber: recipientRc?.blockNumber,
+        feeRecipient: creatorAddr,
+      });
+    } catch (e: any) {
+      logS('set_fee_recipient', 'error', { error: e?.message || String(e) });
     }
 
     // Final verification: Inspect GASless readiness (session registry + allowlist + selectors + roles)

@@ -117,10 +117,16 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 		{ recentLimit: 5 }
 	)
 
-	const { markets: ownerMarkets, totals: ownerTotals, isLoading: ownerLoading } = useOwnerEarnings(
-		dataEnabled ? walletAddress : null
-	)
-	const isMarketOwner = ownerMarkets.length > 0
+	const {
+		markets: ownerMarkets,
+		protocolMarkets,
+		totals: ownerTotals,
+		protocolTotals,
+		isMarketOwner,
+		isProtocolRecipient,
+		hasRevenue,
+		isLoading: ownerLoading,
+	} = useOwnerEarnings(dataEnabled ? walletAddress : null)
 
 	const navigateToToken = (identifierOrSymbol: string) => {
 		const id = String(identifierOrSymbol || '').trim()
@@ -507,7 +513,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									{ id: 'portfolio' as const, label: 'Overview' },
 									{ id: 'withdraw' as const, label: 'Withdraw' },
 									{ id: 'earnings' as const, label: 'Fees' },
-									...(isMarketOwner ? [{ id: 'revenue' as const, label: 'Revenue' }] : []),
+									...(hasRevenue ? [{ id: 'revenue' as const, label: 'Revenue' }] : []),
 								] as Array<{ id: SidebarView; label: string }>).map((t) => {
 									const isActive = sidebarView === t.id
 									const isDisabled = t.id !== 'portfolio' && !isWalletConnected
@@ -1027,7 +1033,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							</div>
 						</div>
 
-						{/* Revenue view (market owners only) */}
+						{/* Revenue view (market owners + protocol recipients) */}
 						<div
 							className="absolute inset-0 overflow-y-auto scrollbar-none p-2.5 transition-all duration-300 ease-in-out"
 							style={{
@@ -1038,96 +1044,193 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							}}
 						>
 							<div className="mb-3">
-								<div className="flex items-center justify-between mb-2">
-									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Revenue</h4>
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-										{ownerTotals.marketCount} market{ownerTotals.marketCount !== 1 ? 's' : ''}
-									</div>
-								</div>
+								{/* Protocol Revenue (if protocol fee recipient) */}
+								{isProtocolRecipient ? (
+									<>
+										<div className="flex items-center justify-between mb-2">
+											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Protocol Revenue</h4>
+											<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+												{protocolTotals.marketCount} market{protocolTotals.marketCount !== 1 ? 's' : ''}
+											</div>
+										</div>
 
-								{/* Revenue totals */}
-								<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
-									<div className="grid grid-cols-2 gap-3">
-										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Your Earnings</div>
-											<div className="text-[16px] font-semibold text-green-400 font-mono">
-												${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}
-											</div>
-											<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
-										</div>
-										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol</div>
-											<div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
-												${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}
-											</div>
-											<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
-										</div>
-									</div>
-									<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
-										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
-											<div className="text-[12px] font-medium text-white font-mono">
-												${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}
-											</div>
-										</div>
-										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
-											<div className="text-[12px] font-medium text-white font-mono">
-												${ownerTotals.totalVolumeUsdc >= 1_000_000
-													? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
-													: ownerTotals.totalVolumeUsdc >= 1000
-													? `${(ownerTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
-													: ownerTotals.totalVolumeUsdc.toFixed(2)}
-											</div>
-										</div>
-									</div>
-								</div>
-
-								{/* Per-market breakdown */}
-								<div className="flex items-center justify-between mb-2 mt-4">
-									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
-								</div>
-
-								{ownerLoading && ownerMarkets.length === 0 ? (
-									<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
-										<div className="flex items-center justify-between p-2.5">
-											<div className="flex items-center gap-2 min-w-0 flex-1">
-												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
-												<span className="text-[11px] font-medium text-[#808080]">Loading revenue…</span>
-											</div>
-										</div>
-									</div>
-								) : (
-									<div className="space-y-0.5">
-										{ownerMarkets.map((m) => (
-											<div
-												key={`${m.market_id}-${m.market_address}`}
-												className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
-											>
-												<div className="flex items-center justify-between p-2.5">
-													<div className="min-w-0 flex-1">
-														<div className="flex items-center gap-1.5">
-															<span className="text-[11px] font-medium text-white truncate">
-																{m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…'}
-															</span>
-														</div>
-														<div className="text-[9px] text-[#606060] font-mono mt-0.5">
-															{m.total_fee_events} fees · ${m.total_volume_usdc >= 1000 ? `${(m.total_volume_usdc / 1000).toFixed(1)}k` : m.total_volume_usdc.toFixed(2)} vol
-														</div>
+										<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+											<div className="grid grid-cols-2 gap-3">
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol Earnings</div>
+													<div className="text-[16px] font-semibold text-green-400 font-mono">
+														${protocolTotals.totalProtocolEarningsUsdc.toFixed(2)}
 													</div>
-													<div className="text-right flex-shrink-0 ml-2">
-														<div className="text-[12px] font-semibold text-green-400 font-mono">
-															+${m.total_owner_earnings_usdc.toFixed(2)}
-														</div>
-														<div className="text-[9px] text-[#606060] font-mono">
-															of ${m.total_fees_collected_usdc.toFixed(2)}
-														</div>
+													<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
+												</div>
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">To Market Owners</div>
+													<div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+														${protocolTotals.totalOwnerEarningsUsdc.toFixed(2)}
+													</div>
+													<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
+												</div>
+											</div>
+											<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
+													<div className="text-[12px] font-medium text-white font-mono">
+														${protocolTotals.totalFeesCollectedUsdc.toFixed(2)}
+													</div>
+												</div>
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
+													<div className="text-[12px] font-medium text-white font-mono">
+														${protocolTotals.totalVolumeUsdc >= 1_000_000
+															? `${(protocolTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
+															: protocolTotals.totalVolumeUsdc >= 1000
+															? `${(protocolTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
+															: protocolTotals.totalVolumeUsdc.toFixed(2)}
 													</div>
 												</div>
 											</div>
-										))}
-									</div>
-								)}
+										</div>
+
+										<div className="flex items-center justify-between mb-2 mt-4">
+											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
+										</div>
+
+										{ownerLoading && protocolMarkets.length === 0 ? (
+											<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+												<div className="flex items-center justify-between p-2.5">
+													<div className="flex items-center gap-2 min-w-0 flex-1">
+														<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
+														<span className="text-[11px] font-medium text-[#808080]">Loading revenue…</span>
+													</div>
+												</div>
+											</div>
+										) : (
+											<div className="space-y-0.5">
+												{protocolMarkets.map((m) => (
+													<div
+														key={`proto-${m.market_id}-${m.market_address}`}
+														className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+													>
+														<div className="flex items-center justify-between p-2.5">
+															<div className="min-w-0 flex-1">
+																<div className="flex items-center gap-1.5">
+																	<span className="text-[11px] font-medium text-white truncate">
+																		{m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…'}
+																	</span>
+																</div>
+																<div className="text-[9px] text-[#606060] font-mono mt-0.5">
+																	{m.total_fee_events} fees · ${m.total_volume_usdc >= 1000 ? `${(m.total_volume_usdc / 1000).toFixed(1)}k` : m.total_volume_usdc.toFixed(2)} vol
+																</div>
+															</div>
+															<div className="text-right flex-shrink-0 ml-2">
+																<div className="text-[12px] font-semibold text-green-400 font-mono">
+																	+${m.total_protocol_earnings_usdc.toFixed(2)}
+																</div>
+																<div className="text-[9px] text-[#606060] font-mono">
+																	of ${m.total_fees_collected_usdc.toFixed(2)}
+																</div>
+															</div>
+														</div>
+													</div>
+												))}
+											</div>
+										)}
+									</>
+								) : null}
+
+								{/* Market Owner Revenue */}
+								{isMarketOwner ? (
+									<>
+										<div className={`flex items-center justify-between mb-2 ${isProtocolRecipient ? 'mt-5' : ''}`}>
+											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Owner Revenue</h4>
+											<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+												{ownerTotals.marketCount} market{ownerTotals.marketCount !== 1 ? 's' : ''}
+											</div>
+										</div>
+
+										<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+											<div className="grid grid-cols-2 gap-3">
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Your Earnings</div>
+													<div className="text-[16px] font-semibold text-green-400 font-mono">
+														${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}
+													</div>
+													<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
+												</div>
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol</div>
+													<div className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+														${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}
+													</div>
+													<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
+												</div>
+											</div>
+											<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
+													<div className="text-[12px] font-medium text-white font-mono">
+														${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}
+													</div>
+												</div>
+												<div>
+													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
+													<div className="text-[12px] font-medium text-white font-mono">
+														${ownerTotals.totalVolumeUsdc >= 1_000_000
+															? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
+															: ownerTotals.totalVolumeUsdc >= 1000
+															? `${(ownerTotals.totalVolumeUsdc / 1000).toFixed(1)}k`
+															: ownerTotals.totalVolumeUsdc.toFixed(2)}
+													</div>
+												</div>
+											</div>
+										</div>
+
+										<div className="flex items-center justify-between mb-2 mt-4">
+											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
+										</div>
+
+										{ownerLoading && ownerMarkets.length === 0 ? (
+											<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+												<div className="flex items-center justify-between p-2.5">
+													<div className="flex items-center gap-2 min-w-0 flex-1">
+														<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
+														<span className="text-[11px] font-medium text-[#808080]">Loading revenue…</span>
+													</div>
+												</div>
+											</div>
+										) : (
+											<div className="space-y-0.5">
+												{ownerMarkets.map((m) => (
+													<div
+														key={`owner-${m.market_id}-${m.market_address}`}
+														className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+													>
+														<div className="flex items-center justify-between p-2.5">
+															<div className="min-w-0 flex-1">
+																<div className="flex items-center gap-1.5">
+																	<span className="text-[11px] font-medium text-white truncate">
+																		{m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…'}
+																	</span>
+																</div>
+																<div className="text-[9px] text-[#606060] font-mono mt-0.5">
+																	{m.total_fee_events} fees · ${m.total_volume_usdc >= 1000 ? `${(m.total_volume_usdc / 1000).toFixed(1)}k` : m.total_volume_usdc.toFixed(2)} vol
+																</div>
+															</div>
+															<div className="text-right flex-shrink-0 ml-2">
+																<div className="text-[12px] font-semibold text-green-400 font-mono">
+																	+${m.total_owner_earnings_usdc.toFixed(2)}
+																</div>
+																<div className="text-[9px] text-[#606060] font-mono">
+																	of ${m.total_fees_collected_usdc.toFixed(2)}
+																</div>
+															</div>
+														</div>
+													</div>
+												))}
+											</div>
+										)}
+									</>
+								) : null}
 
 								{/* Link to Settings for full view */}
 								<button
