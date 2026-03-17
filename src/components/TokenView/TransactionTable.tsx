@@ -1,11 +1,7 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Transaction, OrderBookEntry } from '@/types/orders';
-// Legacy useSupabaseRealtimeOrders import removed
+import React, { useState, useMemo, useEffect } from 'react';
 import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
-// Legacy useOrderAnimations import removed
-import { OrderBookAnimatedQuantity } from '@/components/ui/AnimatedQuantity';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { useAllTrades, type OnChainTrade } from '@/hooks/useAllTrades';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -92,13 +88,6 @@ interface TransactionTableProps {
   hideViewToggle?: boolean;
 }
 
-// Helper function to transform market depth to order book entries
-const transformMarketDepthToOrderBook = (bids: OrderBookEntry[], asks: OrderBookEntry[]): OrderBookEntry[] => {
-  // Combine and sort all orders by price
-  const allOrders = [...bids, ...asks];
-  return allOrders.sort((a, b) => b.price - a.price); // Sort by price descending
-};
-
 interface OrderFromAPI {
   order_id: string;
   side: string;
@@ -108,18 +97,6 @@ interface OrderFromAPI {
   filled_quantity: number;
   created_at: string;
   trader_wallet_address: string;
-}
-
-function toIsoFromTimestamp(ts: unknown): string {
-  let numeric = 0;
-  if (typeof ts === 'number') numeric = ts;
-  else if (typeof ts === 'bigint') numeric = Number(ts);
-  else if (typeof ts === 'string') numeric = Number(ts);
-
-  if (!Number.isFinite(numeric) || numeric < 0) numeric = 0;
-  const ms = numeric < 1e12 ? numeric * 1000 : numeric;
-  const d = new Date(ms);
-  return Number.isNaN(d.getTime()) ? new Date(0).toISOString() : d.toISOString();
 }
 
 // Port of interactive-trader formatting behavior for display consistency in the UI
@@ -208,80 +185,8 @@ function TradeTooltipContent({ trade, side }: { trade: OnChainTrade; side: strin
   );
 }
 
-function RecentTradeTooltipContent({ order }: { order: any }) {
-  const ts = new Date(order.created_at);
-  const dateStr = ts.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  const timeStr = ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-  const hasBuyer = order._buyer && order._buyer !== '' && order._buyer !== '0x0000000000000000000000000000000000000000';
-  const hasSeller = order._seller && order._seller !== '' && order._seller !== '0x0000000000000000000000000000000000000000';
-  const value = order._tradeValue || (order.quantity || 0) * (order.price || 0);
-
-  return (
-    <div className="space-y-1.5 min-w-[200px]">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Trade ID</span>
-        <span className="text-white font-mono">#{order.order_id}</span>
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Side</span>
-        <span className={order.side === 'BUY' ? 'text-[#00D084] font-medium' : 'text-[#FF4747] font-medium'}>{order.side}</span>
-      </div>
-      {(hasBuyer || hasSeller) && (
-        <>
-          <div className="border-t border-[#1A1A1A] my-1" />
-          {hasBuyer && (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[#606060]">Buyer</span>
-              <span className="text-white font-mono">{shortAddress(order._buyer)}</span>
-            </div>
-          )}
-          {hasSeller && (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[#606060]">Seller</span>
-              <span className="text-white font-mono">{shortAddress(order._seller)}</span>
-            </div>
-          )}
-        </>
-      )}
-      <div className="border-t border-[#1A1A1A] my-1" />
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Price</span>
-        <span className="text-white font-mono">${formatPriceDisplay(order.price)}</span>
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Amount</span>
-        <span className="text-white font-mono">{formatAmountDisplay(order.quantity)}</span>
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Value</span>
-        <span className="text-white font-mono">${formatPriceDisplay(value)}</span>
-      </div>
-      {(order._buyerFee > 0 || order._sellerFee > 0) && (
-        <>
-          <div className="border-t border-[#1A1A1A] my-1" />
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[#606060]">Buyer Fee</span>
-            <span className="text-white font-mono">${formatPriceDisplay(order._buyerFee)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[#606060]">Seller Fee</span>
-            <span className="text-white font-mono">${formatPriceDisplay(order._sellerFee)}</span>
-          </div>
-        </>
-      )}
-      <div className="border-t border-[#1A1A1A] my-1" />
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Time</span>
-        <span className="text-white font-mono text-[8px]">{dateStr} {timeStr}</span>
-      </div>
-    </div>
-  );
-}
-
 export default function TransactionTable({ marketId, marketIdentifier, currentPrice, height = '100%', orderBookAddress, defaultView = 'orderbook', hideViewToggle = false }: TransactionTableProps) {
   const [view, setView] = useState<'transactions' | 'orderbook'>(defaultView);
-  const [sortBy, setSortBy] = useState<'timestamp' | 'price' | 'amount'>('timestamp');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
   // Log when market ID or identifier changes
   const prevMarketId = React.useRef(marketId);
@@ -504,70 +409,25 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     bestBid: md.bestBid ?? 0,
     bestAsk: md.bestAsk ?? 0,
     orderBookAddress: md.orderBookAddress,
-    recentTrades: md.recentTrades ?? [],
     lastUpdated: md.lastUpdated ?? new Date().toISOString()
-  }), [md.depth, md.bestBid, md.bestAsk, md.orderBookAddress, md.recentTrades, md.lastUpdated]);
+  }), [md.depth, md.bestBid, md.bestAsk, md.orderBookAddress, md.lastUpdated]);
 
   const obLoading = md.isLoading;
   const obError = md.error;
-  const [recentTrades, setRecentTrades] = useState<OrderFromAPI[]>([]);
-  const [isLoadingTrades, setIsLoadingTrades] = useState(false);
-  const [tradeError, setTradeError] = useState<string | null>(null);
 
   // All-trades paginated state (on-chain getAllTrades)
   const allTradesHook = useAllTrades(md.orderBookAddress);
-  const tradesMode = allTradesHook.active ? 'all' : 'recent';
 
-  const handleSwitchToAll = useCallback(() => {
-    allTradesHook.loadInitial();
-  }, [allTradesHook]);
-
-  const handleSwitchToRecent = useCallback(() => {
-    allTradesHook.deactivate();
-  }, [allTradesHook]);
-
-  // Fetch recent trades and log on any order book update
   useEffect(() => {
-    console.log('validMarketIdentifierx', validMarketIdentifier);
-    console.log('obDatax', obData);
-    console.log('recentTradesx', recentTrades);
-    try {
-      setIsLoadingTrades(true);
-      const trades = obData?.recentTrades || [];
-      // Map recent trades (price 6dp, amount 18dp, timestamp seconds) to UI rows
-      const formattedTrades = trades.map((t, i, arr) => {
-        const prevPrice = i > 0 ? arr[i - 1].price : (arr.length > 1 ? arr[i + 1]?.price ?? t.price : t.price);
-        const side = (t.price ?? 0) >= (prevPrice ?? 0) ? 'BUY' : 'SELL';
-        return {
-          order_id: `${(t as any).tradeId || t.timestamp || i}`,
-          side,
-          order_status: 'FILLED',
-          price: t.price ?? 0,
-          quantity: t.amount ?? 0,
-          filled_quantity: t.amount ?? 0,
-          created_at: toIsoFromTimestamp(t.timestamp),
-          trader_wallet_address: '0x0000000000000000000000000000000000000000',
-          _buyer: (t as any).buyer || '',
-          _seller: (t as any).seller || '',
-          _tradeValue: (t as any).tradeValue || 0,
-          _buyerFee: (t as any).buyerFee || 0,
-          _sellerFee: (t as any).sellerFee || 0,
-        } as OrderFromAPI & { _buyer: string; _seller: string; _tradeValue: number; _buyerFee: number; _sellerFee: number };
-      });
-      setRecentTrades(formattedTrades);
-      setTradeError(null);
-    } catch (err) {
-      console.error('Failed to transform recent trades:', err);
-      setTradeError((err as Error).message || 'Failed to transform recent trades');
-    } finally {
-      setIsLoadingTrades(false);
+    if (view === 'transactions' && !allTradesHook.active && md.orderBookAddress) {
+      allTradesHook.loadInitial();
     }
-  }, [obData?.lastUpdated]);
+  }, [view, allTradesHook, md.orderBookAddress]);
 
-  const isLoading = view === 'orderbook' ? obLoading : isLoadingTrades;
+  const isLoading = view === 'orderbook' ? obLoading : allTradesHook.isLoading;
   const error = view === 'orderbook' 
     ? (obError ? ((obError as any).message || String(obError)) : null)
-    : tradeError;
+    : allTradesHook.error;
   const isConnected = !!obData?.orderBookAddress;
   // Show a loader on initial render to avoid flashing "No orders" while the first
   // orderbook snapshot is still propagating to the UI. This is intentionally one-shot
@@ -576,15 +436,12 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   useEffect(() => {
     setShowInitialOrderBookLoader(true);
     if (typeof window === 'undefined') return;
-    // Safety valve: if the market is truly empty, stop loading after a short grace window.
     const t = window.setTimeout(() => setShowInitialOrderBookLoader(false), 12_000);
     return () => window.clearTimeout(t);
   }, [validMarketIdentifier]);
-  const refetch = () => {};
 
   // Only log connection status changes, not every render
   const prevIsConnected = React.useRef(isConnected);
-  const prevTradesCount = React.useRef(recentTrades.length);
   
   useEffect(() => {
     if (prevIsConnected.current !== isConnected) {
@@ -592,46 +449,6 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       prevIsConnected.current = isConnected;
     }
   }, [isConnected]);
-
-  useEffect(() => {
-    const currentCount = recentTrades.length;
-    if (prevTradesCount.current !== currentCount) {
-      console.log('📊 [TRANSACTION_TABLE] Trades count changed:', { from: prevTradesCount.current, to: currentCount });
-      prevTradesCount.current = currentCount;
-    }
-  }, [recentTrades.length]);
-
-
-  // Track newly inserted filled trades so we can animate them on insert (TRADES tab).
-  // Note: we intentionally do NOT animate the initial load.
-  const seenFilledOrderIdsRef = React.useRef<Set<string>>(new Set());
-  const [newFilledOrderIds, setNewFilledOrderIds] = useState<Set<string>>(new Set());
-
-  const isOrderNew = (orderId: string) => newFilledOrderIds.has(orderId);
-  const getAnimationDelay = (index: number, isNewRow: boolean) => (isNewRow ? Math.min(index, 8) * 35 : 0);
-
-  // Only log state changes when significant changes occur
-  const prevState = React.useRef<{ tradesCount: number; isLoading: boolean; error: string | null }>({ 
-    tradesCount: 0, 
-    isLoading: true, 
-    error: null 
-  });
-  
-  useEffect(() => {
-    const currentState = {
-      tradesCount: recentTrades.length,
-      isLoading,
-      error
-    };
-    
-    if (JSON.stringify(prevState.current) !== JSON.stringify(currentState)) {
-      console.log('🔍 [TRANSACTION_TABLE] State changed:', {
-        ...currentState,
-        tradesWithPrice: recentTrades.filter(t => t.price !== null).length,
-      });
-      prevState.current = currentState;
-    }
-  }, [recentTrades.length, isLoading, error]);
 
   // Get pending orders for BOOK tab (unfilled limit orders)
   const pendingOrders = useMemo<OrderFromAPI[]>(() => [], []);
@@ -648,50 +465,6 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       // ignore
     }
   };
-
-  // Get filled orders for TRADES tab (completed trades)
-  const filledOrders = useMemo(() => {
-    console.log('🔍 [TRANSACTIONS] Found', recentTrades.length, 'recent trades');
-    return recentTrades;
-  }, [recentTrades]);
-
-  useEffect(() => {
-    // Reset animation tracking when the market changes.
-    seenFilledOrderIdsRef.current.clear();
-    setNewFilledOrderIds(new Set());
-  }, [validMarketIdentifier]);
-
-  useEffect(() => {
-    const ids = filledOrders.map((o) => o.order_id).filter(Boolean) as string[];
-    if (ids.length === 0) return;
-
-    const seen = seenFilledOrderIdsRef.current;
-    // First load: mark all as seen, don't animate.
-    if (seen.size === 0) {
-      ids.forEach((id) => seen.add(id));
-      return;
-    }
-
-    const newlyInserted = ids.filter((id) => !seen.has(id));
-    if (newlyInserted.length === 0) return;
-
-    newlyInserted.forEach((id) => seen.add(id));
-    setNewFilledOrderIds((prev) => {
-      const next = new Set(prev);
-      newlyInserted.forEach((id) => next.add(id));
-      return next;
-    });
-
-    const timer = window.setTimeout(() => {
-      setNewFilledOrderIds((prev) => {
-        const next = new Set(prev);
-        newlyInserted.forEach((id) => next.delete(id));
-        return next;
-      });
-    }, 1200);
-
-    return () => window.clearTimeout(timer);
-  }, [filledOrders]);
 
   // Separate bids and asks for traditional orderbook display (prefer on-chain depth when available)
   const { bids, asks } = useMemo(() => {
@@ -838,8 +611,8 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     return bids.length;
   }, [md.activeBuyOrders, bids.length]);
 
-  // Stop showing initial loader as soon as the first batch of orders is actually in the UI.
   const orderBookHasOrders = (bids?.length || 0) + (asks?.length || 0) > 0;
+  const dataFetchComplete = isConnected && !obLoading && !!obData?.lastUpdated;
   useEffect(() => {
     if (!showInitialOrderBookLoader) return;
     if (error) {
@@ -847,8 +620,8 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       return;
     }
     if (!isConnected) return;
-    if (orderBookHasOrders) setShowInitialOrderBookLoader(false);
-  }, [showInitialOrderBookLoader, error, isConnected, orderBookHasOrders]);
+    if (orderBookHasOrders || dataFetchComplete) setShowInitialOrderBookLoader(false);
+  }, [showInitialOrderBookLoader, error, isConnected, orderBookHasOrders, dataFetchComplete]);
 
   const showOrderBookLoading =
     view === 'orderbook' &&
@@ -870,43 +643,6 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     return (p ?? fallback) || 0;
   }, [asks, obData?.bestAsk]);
 
-  // Filtered and sorted data based on current view
-  const filteredAndSortedData = useMemo(() => {
-    // Choose data source based on view
-    let filtered = view === 'orderbook' ? pendingOrders : filledOrders;
-
-    // Apply sorting
-    filtered.sort((a, b) => {
-      let aValue, bValue;
-      
-      switch (sortBy) {
-        case 'timestamp':
-          aValue = new Date(a.created_at).getTime();
-          bValue = new Date(b.created_at).getTime();
-          break;
-        case 'price':
-          aValue = a.price || 0;
-          bValue = b.price || 0;
-          break;
-        case 'amount':
-          aValue = a.quantity;
-          bValue = b.quantity;
-          break;
-        default:
-          aValue = new Date(a.created_at).getTime();
-          bValue = new Date(b.created_at).getTime();
-      }
-
-      if (sortOrder === 'asc') {
-        return aValue - bValue;
-      } else {
-        return bValue - aValue;
-      }
-    });
-
-    return filtered;
-  }, [view, pendingOrders, filledOrders, sortBy, sortOrder]);
-
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return '';
@@ -926,32 +662,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
     }).format(amount);
   };
 
-  const getStatusColor = (status: Transaction['status']) => {
-    switch (status) {
-      case 'open':
-        return 'text-blue-400';
-      case 'closed':
-        return 'text-green-400';
-      case 'liquidated':
-        return 'text-red-400';
-      default:
-        return 'text-gray-200';
-    }
-  };
 
-  const getPnLColor = (pnl?: number) => {
-    if (!pnl) return 'text-gray-200';
-    return pnl >= 0 ? 'text-[#00D084]' : 'text-[#FF4747]';
-  };
-
-  const handleSort = (newSortBy: typeof sortBy) => {
-    if (sortBy === newSortBy) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(newSortBy);
-      setSortOrder('desc');
-    }
-  };
 
   return (
     <div className="bg-[#0A0A0A] border border-[#333333] rounded-md p-3 flex flex-col overflow-hidden transaction-table-container" style={{ height }}>
@@ -992,38 +703,12 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {error}
           </div>
         ) : view === 'transactions' ? (
-          <div className="text-[10px] text-gray-200 text-center py-1 space-y-1">
-            <div className="flex items-center justify-center gap-2">
-              <button
-                onClick={handleSwitchToRecent}
-                className={`px-2 py-0.5 rounded text-[9px] font-medium transition-colors ${
-                  tradesMode === 'recent'
-                    ? 'bg-[#333333] text-white'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                RECENT
-              </button>
-              <button
-                onClick={handleSwitchToAll}
-                className={`px-2 py-0.5 rounded text-[9px] font-medium transition-colors ${
-                  tradesMode === 'all'
-                    ? 'bg-[#333333] text-white'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-              >
-                ALL TRADES
-              </button>
-            </div>
-            <div>
-              {tradesMode === 'recent'
-                ? `${filteredAndSortedData.length} recent`
-                : allTradesHook.isLoading
-                  ? 'Loading trades...'
-                  : allTradesHook.trades.length > 0
-                    ? `${allTradesHook.trades.length} trades${allTradesHook.stats ? ` · Vol $${allTradesHook.stats.totalVolume.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}${allTradesHook.hasMore ? ' (more available)' : ''}`
-                    : 'No trades'}
-            </div>
+          <div className="text-[10px] text-gray-200 text-center py-1">
+            {allTradesHook.isLoading && allTradesHook.trades.length === 0
+              ? 'Loading trades...'
+              : allTradesHook.trades.length > 0
+                ? `${allTradesHook.trades.length} trades${allTradesHook.stats ? ` · Vol $${allTradesHook.stats.totalVolume.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}${allTradesHook.hasMore ? ' (more available)' : ''}`
+                : 'No trades'}
           </div>
         ) : showOrderBookLoading ? (
           <div />
@@ -1205,165 +890,91 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
           </div>
           )
         ) : (
-          /* Traditional Trades Display */
+          /* Trades Display */
           <div className="flex-1 overflow-y-auto orders-table-scroll">
-            {tradesMode === 'all' ? (
-              /* All Trades - Paginated on-chain view */
-              allTradesHook.error ? (
-                <div className="text-[10px] text-red-500 text-center py-4">
-                  {allTradesHook.error}
-                  <button onClick={allTradesHook.refresh} className="block mx-auto mt-1 text-[9px] text-blue-400 hover:text-blue-300">
-                    Retry
-                  </button>
-                </div>
-              ) : allTradesHook.trades.length === 0 && !allTradesHook.isLoading ? (
-                <div className="text-[10px] text-gray-200 text-center py-4">
-                  No trades recorded on chain
-                </div>
-              ) : (
-                <div className="space-y-0">
-                  {(() => {
-                    const allTrades = allTradesHook.trades;
-                    const maxAmount = allTrades.reduce((max, t) => Math.max(max, t.amount), 0) || 1;
-                    return allTrades.map((trade, index) => {
-                      const fillPercentage = (trade.amount / maxAmount) * 100;
-                      const prevPrice = index > 0 ? allTrades[index - 1].price : trade.price;
-                      const side = trade.price >= prevPrice ? 'BUY' : 'SELL';
+            {allTradesHook.error ? (
+              <div className="text-[10px] text-red-500 text-center py-4">
+                {allTradesHook.error}
+                <button onClick={allTradesHook.refresh} className="block mx-auto mt-1 text-[9px] text-blue-400 hover:text-blue-300">
+                  Retry
+                </button>
+              </div>
+            ) : allTradesHook.trades.length === 0 && !allTradesHook.isLoading ? (
+              <div className="text-[10px] text-gray-200 text-center py-4">
+                No trades recorded on chain
+              </div>
+            ) : (
+              <div className="space-y-0">
+                {(() => {
+                  const allTrades = allTradesHook.trades;
+                  const maxAmount = allTrades.reduce((max, t) => Math.max(max, t.amount), 0) || 1;
+                  return allTrades.map((trade, index) => {
+                    const fillPercentage = (trade.amount / maxAmount) * 100;
+                    const prevPrice = index > 0 ? allTrades[index - 1].price : trade.price;
+                    const side = trade.price >= prevPrice ? 'BUY' : 'SELL';
 
-                      return (
-                        <Tooltip
-                          key={`${trade.tradeId}-${index}`}
-                          title={`Trade #${trade.tradeId}`}
-                          maxWidth={280}
-                          delay={200}
-                          content={<TradeTooltipContent trade={trade} side={side} />}
-                        >
-                          <div className="relative hover:bg-[#1A1A1A] transition-colors cursor-pointer">
-                            <div
-                              className={`absolute left-0 top-0 h-full opacity-12 rounded-xl ${
-                                side === 'BUY' ? 'bg-[#00D084]' : 'bg-[#FF4747]'
-                              }`}
-                              style={{ width: `${fillPercentage}%` }}
-                            />
-                            <div className="relative grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 py-[3px] px-3 text-[11px]">
-                              <div className="text-right text-gray-300 font-mono tabular-nums truncate min-w-0">
-                                {formatAmountDisplay(trade.amount, 4)}
-                              </div>
-                              <div className={`text-right font-mono font-medium tabular-nums truncate min-w-0 ${side === 'BUY' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
-                                ${formatPriceDisplay(trade.price, 4)}
-                              </div>
-                              <div className="text-right text-white font-mono text-[10px] tabular-nums truncate min-w-0">
-                                {formatCurrency(trade.tradeValue)}
-                              </div>
-                              <div className="text-right text-gray-200 font-mono text-[10px] tabular-nums min-w-0">
-                                {formatTime(new Date(trade.timestamp * 1000).toISOString())}
-                              </div>
+                    return (
+                      <Tooltip
+                        key={`${trade.tradeId}-${index}`}
+                        title={`Trade #${trade.tradeId}`}
+                        maxWidth={280}
+                        delay={200}
+                        content={<TradeTooltipContent trade={trade} side={side} />}
+                      >
+                        <div className="relative hover:bg-[#1A1A1A] transition-colors cursor-pointer">
+                          <div
+                            className={`absolute left-0 top-0 h-full opacity-12 rounded-xl ${
+                              side === 'BUY' ? 'bg-[#00D084]' : 'bg-[#FF4747]'
+                            }`}
+                            style={{ width: `${fillPercentage}%` }}
+                          />
+                          <div className="relative grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 py-[3px] px-3 text-[11px]">
+                            <div className="text-right text-gray-300 font-mono tabular-nums truncate min-w-0">
+                              {formatAmountDisplay(trade.amount, 4)}
+                            </div>
+                            <div className={`text-right font-mono font-medium tabular-nums truncate min-w-0 ${side === 'BUY' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
+                              ${formatPriceDisplay(trade.price, 4)}
+                            </div>
+                            <div className="text-right text-white font-mono text-[10px] tabular-nums truncate min-w-0">
+                              {formatCurrency(trade.tradeValue)}
+                            </div>
+                            <div className="text-right text-gray-200 font-mono text-[10px] tabular-nums min-w-0">
+                              {formatTime(new Date(trade.timestamp * 1000).toISOString())}
                             </div>
                           </div>
-                        </Tooltip>
-                      );
-                    });
-                  })()}
+                        </div>
+                      </Tooltip>
+                    );
+                  });
+                })()}
 
-                  {/* Load More / Loading indicator */}
-                  {allTradesHook.isLoading ? (
-                    <div className="flex items-center justify-center py-3 gap-2">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
-                      </span>
-                      <span className="text-[10px] text-gray-400">Loading trades...</span>
-                    </div>
-                  ) : allTradesHook.hasMore ? (
+                {allTradesHook.isLoading ? (
+                  <div className="flex items-center justify-center py-3 gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                    </span>
+                    <span className="text-[10px] text-gray-400">Loading trades...</span>
+                  </div>
+                ) : allTradesHook.hasMore ? (
+                  <button
+                    onClick={allTradesHook.loadMore}
+                    className="w-full py-2 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-[#1A1A1A] transition-colors font-medium"
+                  >
+                    Load more trades...
+                  </button>
+                ) : allTradesHook.trades.length > 0 ? (
+                  <div className="text-[9px] text-gray-500 text-center py-2 flex items-center justify-center gap-2">
+                    <span>All {allTradesHook.trades.length} trades loaded</span>
                     <button
-                      onClick={allTradesHook.loadMore}
-                      className="w-full py-2 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-[#1A1A1A] transition-colors font-medium"
+                      onClick={allTradesHook.refresh}
+                      className="text-blue-400 hover:text-blue-300"
                     >
-                      Load more trades...
+                      refresh
                     </button>
-                  ) : allTradesHook.trades.length > 0 ? (
-                    <div className="text-[9px] text-gray-500 text-center py-2 flex items-center justify-center gap-2">
-                      <span>All {allTradesHook.trades.length} trades loaded</span>
-                      <button
-                        onClick={allTradesHook.refresh}
-                        className="text-blue-400 hover:text-blue-300"
-                      >
-                        refresh
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              )
-            ) : (
-              /* Recent Trades - Existing behavior */
-              filteredAndSortedData.length === 0 ? (
-                <div className="text-[10px] text-gray-200 text-center py-4">
-                  No filled orders found
-                  {!marketIdentifier && (
-                    <div className="text-[9px] text-gray-300 mt-1">
-                      Market data unavailable
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-0">
-                  {(() => {
-                    const maxQty = filteredAndSortedData.reduce((max, o) => Math.max(max, o.quantity), 0) || 1;
-                    return filteredAndSortedData.map((order, index) => {
-                      const fillPercentage = (order.quantity / maxQty) * 100;
-                      const isNewRow = isOrderNew(order.order_id);
-                      const animationDelay = getAnimationDelay(index, isNewRow);
-
-                      return (
-                        <Tooltip
-                          key={order.order_id}
-                          title={`Trade #${order.order_id}`}
-                          maxWidth={280}
-                          delay={200}
-                          content={<RecentTradeTooltipContent order={order} />}
-                        >
-                          <AnimatedOrderRow
-                            orderId={order.order_id}
-                            side={order.side.toUpperCase() as 'BUY' | 'SELL'}
-                            isNew={isNewRow}
-                            animationDelay={animationDelay}
-                            animationType="slideFromTop"
-                            className="hover:bg-[#1A1A1A] transition-colors group cursor-pointer"
-                          >
-                            <div
-                              className={`absolute left-0 top-0 h-full opacity-12 rounded-xl ${
-                                order.side.toLowerCase() === 'buy' ? 'bg-[#00D084]' : 'bg-[#FF4747]'
-                              }`}
-                              style={{ width: `${fillPercentage}%` }}
-                            />
-                            <div className="relative grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 py-[3px] px-3 text-[11px]">
-                              <div className="text-right text-gray-300 font-mono flex items-center justify-end tabular-nums truncate min-w-0">
-                                <OrderBookAnimatedQuantity
-                                  orderId={order.order_id}
-                                  quantity={order.quantity}
-                                  side={order.side.toUpperCase() as 'BUY' | 'SELL'}
-                                  isNewOrder={false}
-                                  className="text-gray-300"
-                                  formatQuantity={(q) => formatAmountDisplay(q, 4)}
-                                />
-                              </div>
-                              <div className={`text-right font-mono font-medium flex items-center justify-end tabular-nums truncate min-w-0 ${order.side.toLowerCase() === 'buy' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
-                                {order.price ? `$${formatPriceDisplay(order.price, 4)}` : 'MARKET'}
-                              </div>
-                              <div className="text-right text-white font-mono text-[10px] flex items-center justify-end tabular-nums truncate min-w-0">
-                                {formatCurrency((order.quantity || 0) * (order.price || 0))}
-                              </div>
-                              <div className="text-right text-gray-200 font-mono text-[10px] flex items-center justify-end tabular-nums min-w-0">
-                                {formatTime(order.created_at)}
-                              </div>
-                            </div>
-                          </AnimatedOrderRow>
-                        </Tooltip>
-                      );
-                    });
-                  })()}
-                </div>
-              )
+                  </div>
+                ) : null}
+              </div>
             )}
           </div>
         )}

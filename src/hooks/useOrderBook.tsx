@@ -74,6 +74,22 @@ export interface TradeHistoryItem {
   timestamp: number;
 }
 
+export interface MarketParams {
+  takerFeeBps: number;
+  makerFeeBps: number;
+  marginReqBps: number;
+  maxLeverage: number;
+  leverageEnabled: boolean;
+}
+
+export const DEFAULT_MARKET_PARAMS: MarketParams = {
+  takerFeeBps: 10,
+  makerFeeBps: 10,
+  marginReqBps: 10000,
+  maxLeverage: 1,
+  leverageEnabled: false,
+};
+
 export interface OrderBookState {
   bestBid: number;
   bestAsk: number;
@@ -89,6 +105,7 @@ export interface OrderBookState {
   sellCount: number;
   isLoading: boolean;
   error: string | null;
+  marketParams: MarketParams;
 }
 
 export interface OrderBookActions {
@@ -108,6 +125,10 @@ export interface OrderBookActions {
   }>;
   getUserTradeCountOnly: () => Promise<number>;
   refreshTradeHistory: () => Promise<void>;
+  estimateMarketOrder: (isBuy: boolean, quantity: number) => Promise<{
+    averagePrice: number;
+    priceImpact: number;
+  } | null>;
 }
 
 type OrdersSessionCachePayload = {
@@ -142,7 +163,8 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     buyCount: 0,
     sellCount: 0,
     isLoading: true,
-    error: null
+    error: null,
+    marketParams: DEFAULT_MARKET_PARAMS,
   });
 
   // Keep track of last successful trade history fetch
@@ -627,6 +649,28 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           console.warn(`[ALTKN] ⚠️ [RPC] Market price data unavailable:`, e);
         }
 
+        // Fetch market parameters (fees + leverage) — config rarely changes, fetched once per init
+        let fetchedMarketParams: MarketParams = { ...DEFAULT_MARKET_PARAMS };
+        try {
+          const [takerFeeBps, makerFeeBps, , , legacyTradingFee] = await contracts.obView.getFeeStructure();
+          const taker = Number(takerFeeBps);
+          const maker = Number(makerFeeBps);
+          const legacy = Number(legacyTradingFee);
+          fetchedMarketParams.takerFeeBps = (taker > 0 || maker > 0) ? taker : legacy;
+          fetchedMarketParams.makerFeeBps = (taker > 0 || maker > 0) ? maker : legacy;
+        } catch (e) {
+          console.warn('[ALTKN] ⚠️ getFeeStructure unavailable, using defaults', e);
+        }
+        try {
+          const [enabled, maxLev, marginReq] = await contracts.obView.getLeverageInfo();
+          const mr = Number(marginReq);
+          fetchedMarketParams.leverageEnabled = Boolean(enabled);
+          fetchedMarketParams.maxLeverage = Number(maxLev);
+          fetchedMarketParams.marginReqBps = mr > 0 ? mr : 10000;
+        } catch (e) {
+          console.warn('[ALTKN] ⚠️ getLeverageInfo unavailable, using defaults', e);
+        }
+
         console.log(`[ALTKN] 📊 [RPC] OrderBook market data fetch complete for ${marketId}`, {
           bestBid: bestBidNum,
           bestAsk: bestAskNum,
@@ -634,7 +678,8 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           indexPrice: indexPriceNum,
           fundingRate: fundingRateNum,
           ordersCount: hydrated.length,
-          walletAddress: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : 'none'
+          walletAddress: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : 'none',
+          marketParams: fetchedMarketParams
         });
 
         setState(prev => ({
@@ -646,7 +691,8 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           fundingRate: fundingRateNum,
           activeOrders: hydrated,
           isLoading: false,
-          error: hydrated.length === 0 && walletAddress && prev.error ? 'No orders found after multiple attempts. Please try again later.' : null
+          error: hydrated.length === 0 && walletAddress && prev.error ? 'No orders found after multiple attempts. Please try again later.' : null,
+          marketParams: fetchedMarketParams,
         }));
         if (walletAddress && marketId) {
           persistOrdersToSession(hydrated);
@@ -1080,20 +1126,20 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       throw new Error('Contracts not initialized');
     }
 
-    // Helper to normalize level objects/tuples to { price, size }
-    const normalizeLevels = (levels: any[]): { price: number; size: number }[] => {
-      return (levels || []).map((lvl: any) => {
-        const getField = (o: any, key: string, index: number) => (o && (o[key] !== undefined ? o[key] : o[index]));
-        const rawPrice = getField(lvl, 'price', 0) ?? 0n;
-        const rawSize = getField(lvl, 'size', 1) ?? 0n;
-        return {
-          price: Number(formatUnits(rawPrice, 6)),
-          size: Number(formatUnits(rawSize, 18))
-        };
-      });
+    // The contract returns 4 parallel arrays: (bidPrices[], bidAmounts[], askPrices[], askAmounts[])
+    // Zip them into {price, size} pairs.
+    const zipLevels = (prices: any[], amounts: any[]): { price: number; size: number }[] => {
+      const len = Math.min(prices?.length || 0, amounts?.length || 0);
+      const levels: { price: number; size: number }[] = [];
+      for (let i = 0; i < len; i++) {
+        const p = Number(formatUnits(BigInt(prices[i]?.toString?.() ?? prices[i] ?? '0'), 6));
+        const s = Number(formatUnits(BigInt(amounts[i]?.toString?.() ?? amounts[i] ?? '0'), 18));
+        if (p > 0 && s > 0) levels.push({ price: p, size: s });
+      }
+      return levels;
     };
 
-    // Primary depth call (some providers return an array, others an object)
+    // Primary depth call — returns (bidPrices[], bidAmounts[], askPrices[], askAmounts[])
     let result: any;
     try {
       result = await contracts.obPricing.getOrderBookDepth(depth);
@@ -1101,15 +1147,19 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       result = null;
     }
 
-    let bidsRaw: any[] = [];
-    let asksRaw: any[] = [];
+    let bids: { price: number; size: number }[] = [];
+    let asks: { price: number; size: number }[] = [];
     if (result) {
-      bidsRaw = Array.isArray(result) ? (result[0] || []) : (result.bids || []);
-      asksRaw = Array.isArray(result) ? (result[1] || []) : (result.asks || []);
+      const bidPrices = result.bidPrices ?? result[0] ?? [];
+      const bidAmounts = result.bidAmounts ?? result[1] ?? [];
+      const askPrices = result.askPrices ?? result[2] ?? [];
+      const askAmounts = result.askAmounts ?? result[3] ?? [];
+      bids = zipLevels(bidPrices, bidAmounts);
+      asks = zipLevels(askPrices, askAmounts);
     }
 
     // Fallback: if empty depth but best pointers indicate liquidity, use pointer-based depth
-    if ((!bidsRaw || bidsRaw.length === 0) || (!asksRaw || asksRaw.length === 0)) {
+    if (bids.length === 0 || asks.length === 0) {
       try {
         let bestBidPtr = false;
         let bestAskPtr = false;
@@ -1124,15 +1174,16 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         if (bestBidPtr || bestAskPtr) {
           const alt = await (contracts.obPricing as any).getOrderBookDepthFromPointers?.(depth);
           if (alt) {
-            bidsRaw = Array.isArray(alt) ? (alt[0] || []) : (alt.bids || []);
-            asksRaw = Array.isArray(alt) ? (alt[1] || []) : (alt.asks || []);
+            const altBidPrices = alt.bidPrices ?? alt[0] ?? [];
+            const altBidAmounts = alt.bidAmounts ?? alt[1] ?? [];
+            const altAskPrices = alt.askPrices ?? alt[2] ?? [];
+            const altAskAmounts = alt.askAmounts ?? alt[3] ?? [];
+            if (bids.length === 0) bids = zipLevels(altBidPrices, altBidAmounts);
+            if (asks.length === 0) asks = zipLevels(altAskPrices, altAskAmounts);
           }
         }
       } catch {}
     }
-
-    const bids = normalizeLevels(bidsRaw);
-    const asks = normalizeLevels(asksRaw);
 
     return { bids, asks };
   }, [contracts]);
@@ -1152,6 +1203,24 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       };
     } catch {
       return { bestBid: 0, bestAsk: 0 };
+    }
+  }, [contracts]);
+
+  const estimateMarketOrder = useCallback(async (
+    isBuy: boolean,
+    quantity: number
+  ): Promise<{ averagePrice: number; priceImpact: number } | null> => {
+    if (!contracts) return null;
+    try {
+      const side = isBuy ? 0 : 1; // IOrderRouter.Side: BUY=0, SELL=1
+      const quantityWei = parseEther(String(quantity));
+      const result = await contracts.obPricing.estimateMarketOrder(side, quantityWei);
+      const avgPrice = Number(formatUnits(result.averagePrice ?? result[0] ?? 0n, 6));
+      const impact = Number(formatUnits(result.priceImpact ?? result[1] ?? 0n, 6));
+      return { averagePrice: avgPrice, priceImpact: impact };
+    } catch (e: any) {
+      console.warn('[useOrderBook] estimateMarketOrder failed, caller should fallback', e?.message);
+      return null;
     }
   }, [contracts]);
 
@@ -1452,7 +1521,8 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
     getBestPrices,
     getUserTradeHistory,
     getUserTradeCountOnly,
-    refreshTradeHistory
+    refreshTradeHistory,
+    estimateMarketOrder
   };
 
   return [state, actions];

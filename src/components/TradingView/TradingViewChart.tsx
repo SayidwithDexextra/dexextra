@@ -421,12 +421,6 @@ export default function TradingViewChart({
     setHasWidget(false);
     metricStudyCreatedRef.current = false;
 
-    const readyTimeout = window.setTimeout(() => {
-      setError('Chart is taking longer than expected. This may indicate limited data for this market.');
-      setIsLoading(false);
-      setDebugStep('timeout');
-    }, 10_000);
-
     const disabledFeatures = [
       ...(hideTopToolbar ? ['header_widget'] : []),
       ...(hideSideToolbar ? ['left_toolbar'] : []),
@@ -533,7 +527,6 @@ export default function TradingViewChart({
     }
 
     if (!udf) {
-      window.clearTimeout(readyTimeout);
       setError(
         'UDF datafeed not loaded. Ensure /public/charting_library/datafeeds/udf/dist/bundle.js exists.'
       );
@@ -549,7 +542,6 @@ export default function TradingViewChart({
       setHasWidget(true);
       registerMetricOverlayKick();
     } catch (e: any) {
-      window.clearTimeout(readyTimeout);
       setError(`Failed to create TradingView widget: ${String(e?.message || e)}`);
       setIsLoading(false);
       setDebugStep('create-widget-threw');
@@ -569,7 +561,6 @@ export default function TradingViewChart({
             }
           : null,
       });
-      window.clearTimeout(readyTimeout);
       setIsLoading(false);
       setDebugStep('ready');
       setError(null);
@@ -740,7 +731,6 @@ export default function TradingViewChart({
     });
 
     return () => {
-      window.clearTimeout(readyTimeout);
       // Clean up bridge function so stale widgets can't be kicked.
       try {
         if ((window as any).__DEXEXTRA_TV_METRIC_OVERLAY_KICK__) {
@@ -794,13 +784,6 @@ export default function TradingViewChart({
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-sm text-gray-400">Loading chart…</div>
-        </div>
-      )}
-
-      {/* If the widget exists, show warning as a small non-blocking banner */}
-      {error && !isLoading && hasWidget && (
-        <div className="pointer-events-none absolute top-2 left-2 rounded bg-black/60 border border-gray-800 px-3 py-2">
-          <div className="text-[11px] text-gray-300">{error}</div>
         </div>
       )}
 

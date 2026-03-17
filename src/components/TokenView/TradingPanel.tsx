@@ -277,7 +277,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     fundingRate,
     activeOrders: orderBookActiveOrders,
     isLoading: orderBookLoading,
-    error: orderBookError
+    error: orderBookError,
+    marketParams
   } = orderBookState;
 
   // Extract actions from orderBookActions
@@ -286,7 +287,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     placeLimitOrder,
     cancelOrder,
     refreshOrders: refreshOrderBookData,
-    getOrderBookDepth
+    getOrderBookDepth,
+    estimateMarketOrder
   } = orderBookActions;
 
   // Portfolio-level orders (Supabase-backed)
@@ -790,8 +792,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   type LiquidationArgs = {
     positionType: 'short' | 'long';
     entryPrice: number;
-    collateralRatio?: number; // initial margin multiplier (e.g. 1.5 = 150%)
-    mmr?: number; // maintenance margin requirement (e.g. 0.2 = 20%)
+    collateralRatio?: number;
+    mmr?: number;
   };
 
   const calculateLiquidationPrice = ({
@@ -805,11 +807,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }
 
     if (positionType === 'short') {
-      // Formula for short positions
-      // P_liq = ((collateralRatio + 1) * entryPrice) / (1 + mmr)
       return ((collateralRatio + 1) * entryPrice) / (1 + mmr);
     } else if (positionType === 'long') {
-      // Longs require 100% collateral, so no liquidation price
       return 0;
     }
     return NaN;
@@ -855,9 +854,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     const entryPrice = effectiveEntryPrice;
     if (!entryPrice || entryPrice <= 0) return null;
 
-    // Use fixed collateralRatio and mmr as specified
-    const collateralRatio = 1.5; // 150%
-    const mmr = 0.2; // 20%
+    // Derive collateralRatio and mmr from on-chain marketParams
+    const marginBps = selectedOption === 'short'
+      ? Math.max(marketParams.marginReqBps, 15000)
+      : marketParams.marginReqBps;
+    const collateralRatio = marginBps / 10000;
+    const mmr = marginBps / 10000 * 0.2;
 
     const price = calculateLiquidationPrice({
       positionType: selectedOption,
@@ -868,10 +870,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
     if (!price || !isFinite(price) || price <= 0) return null;
     return Number(price.toFixed(6));
-  }, [selectedOption, effectiveEntryPrice]);
+  }, [selectedOption, effectiveEntryPrice, marketParams.marginReqBps]);
 
   // =====================
-  // 🧮 QUOTE COMPUTATION (depth-aware)
+  // 🧮 QUOTE COMPUTATION (on-chain estimate with depth-walk fallback)
   // =====================
   useEffect(() => {
     let cancelled = false;
@@ -892,15 +894,55 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         setQuoteState({ isLoading: false, price: px, units, value, partial: false, levelsUsed: 1, error: null });
         return;
       }
-      // Market orders: aggregate across depth
+
+      // Market orders: try on-chain estimateMarketOrder first, fall back to depth walk
       try {
         setQuoteState(prev => ({ ...prev, isLoading: true, error: null }));
+        const isBuy = selectedOption === 'long';
+        const sideLabel: 'ask' | 'bid' = isBuy ? 'ask' : 'bid';
+
+        // Resolve quantity in units (the contract expects units, not notional)
+        let quantityUnits: number;
+        if (isUsdMode) {
+          const refPrice = isBuy
+            ? (bestAsk > 0 ? bestAsk : resolveCurrentPrice())
+            : (bestBid > 0 ? bestBid : resolveCurrentPrice());
+          if (!(refPrice > 0)) {
+            if (!cancelled) setQuoteState({ isLoading: false, price: 0, units: 0, value: 0, partial: false, levelsUsed: 0, error: 'No price available', side: sideLabel });
+            return;
+          }
+          quantityUnits = amount / refPrice;
+        } else {
+          quantityUnits = amount;
+        }
+
+        // Attempt on-chain estimate
+        const estimate = await estimateMarketOrder(isBuy, quantityUnits);
+        if (!cancelled && estimate && estimate.averagePrice > 0) {
+          const estUnits = quantityUnits;
+          const estValue = estUnits * estimate.averagePrice;
+          setQuoteState({
+            isLoading: false,
+            price: estimate.averagePrice,
+            units: estUnits,
+            value: estValue,
+            partial: false,
+            levelsUsed: 0,
+            error: null,
+            topPrice: undefined,
+            topSize: undefined,
+            side: sideLabel,
+          });
+          return;
+        }
+
+        // Fallback: client-side depth walk
         const depth = await getOrderBookDepth(20);
         const asks = (depth.asks || []).filter(l => (l.price > 0 && l.size > 0)).sort((a, b) => a.price - b.price);
         const bids = (depth.bids || []).filter(l => (l.price > 0 && l.size > 0)).sort((a, b) => b.price - a.price);
-        const book = selectedOption === 'long' ? asks : bids;
+        const book = isBuy ? asks : bids;
         if (!book || book.length === 0) {
-          setQuoteState({ isLoading: false, price: 0, units: 0, value: 0, partial: false, levelsUsed: 0, error: 'No liquidity', topPrice: undefined, topSize: undefined, side: selectedOption === 'long' ? 'ask' : 'bid' });
+          if (!cancelled) setQuoteState({ isLoading: false, price: 0, units: 0, value: 0, partial: false, levelsUsed: 0, error: 'No liquidity', topPrice: undefined, topSize: undefined, side: sideLabel });
           return;
         }
         let totalUnits = 0;
@@ -914,7 +956,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           if ((remainingNotional !== null && remainingNotional <= 0) || (remainingUnits !== null && remainingUnits <= 0)) break;
           levelsUsed += 1;
           const levelPrice = level.price;
-          const levelSize = level.size; // units available at this level
+          const levelSize = level.size;
           if (remainingNotional !== null) {
             const levelValueCapacity = levelPrice * levelSize;
             if (remainingNotional <= levelValueCapacity) {
@@ -943,14 +985,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         }
         const partial = (remainingNotional !== null && remainingNotional > 0) || (remainingUnits !== null && remainingUnits > 0);
         const avgPrice = totalUnits > 0 ? totalCost / totalUnits : 0;
-        if (!cancelled) setQuoteState({ isLoading: false, price: avgPrice, units: totalUnits, value: totalCost, partial, levelsUsed, error: null, topPrice, topSize, side: selectedOption === 'long' ? 'ask' : 'bid' });
+        if (!cancelled) setQuoteState({ isLoading: false, price: avgPrice, units: totalUnits, value: totalCost, partial, levelsUsed, error: null, topPrice, topSize, side: sideLabel });
       } catch (e: any) {
         if (!cancelled) setQuoteState({ isLoading: false, price: 0, units: 0, value: 0, partial: false, levelsUsed: 0, error: e?.message || 'Failed to fetch order book', topPrice: undefined, topSize: undefined, side: selectedOption === 'long' ? 'ask' : 'bid' });
       }
     };
     computeQuote();
     return () => { cancelled = true; };
-  }, [amount, isUsdMode, orderType, selectedOption, triggerPrice, bestBid, bestAsk, getOrderBookDepth]);
+  }, [amount, isUsdMode, orderType, selectedOption, triggerPrice, bestBid, bestAsk, getOrderBookDepth, estimateMarketOrder]);
 
   const validateOrderAmount = (): { isValid: boolean; message?: string } => {
     // Check if amount is a valid number
@@ -1312,15 +1354,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         console.log('Available collateral:', available.toString());
         const durationCollateral = Date.now() - startTimeCollateral;
         const notional6: bigint = (sizeWei * referencePrice) / 10n ** 18n;
-        let marginReqBps: bigint = 10000n;
-        try {
-          const levInfo = await (contracts.obView as any).getLeverageInfo?.();
-          if (levInfo && levInfo.length >= 3) {
-            const mr = BigInt(levInfo[2]?.toString?.() ?? levInfo[2]);
-            marginReqBps = mr > 0n ? mr : 10000n;
-          }
-        } catch {}
-        const effectiveBps = (selectedOption === 'short') ? 15000n : marginReqBps;
+        let marginReqBps: bigint = BigInt(marketParams.marginReqBps || 10000);
+        const effectiveBps = (selectedOption === 'short') ? (marginReqBps < 15000n ? 15000n : marginReqBps) : marginReqBps;
         const requiredMargin6: bigint = (notional6 * effectiveBps) / 10000n;
         console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
           available: ethers.formatUnits(available, 6),
@@ -1663,18 +1698,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           const durationCollateral = Date.now() - startTimeCollateral;
           // notional in 6 decimals
           const notional6: bigint = (sizeWei * priceWei) / 10n ** 18n;
-          // get leverage/margin requirement bps from view facet
-          let marginReqBps: bigint = 10000n;
-          try {
-            const levInfo = await (contracts.obView as any).getLeverageInfo?.();
-            if (levInfo && levInfo.length >= 3) {
-              // tuple(enabled, maxLev, marginReqBps, controller)
-              const mr = BigInt(levInfo[2]?.toString?.() ?? levInfo[2]);
-              marginReqBps = mr > 0n ? mr : 10000n;
-            }
-          } catch {}
-          // shorts require 150% margin
-          const effectiveBps = (selectedOption === 'short') ? 15000n : marginReqBps;
+          let marginReqBps: bigint = BigInt(marketParams.marginReqBps || 10000);
+          const effectiveBps = (selectedOption === 'short') ? (marginReqBps < 15000n ? 15000n : marginReqBps) : marginReqBps;
           const requiredMargin6: bigint = (notional6 * effectiveBps) / 10000n;
           console.log(`✅ [RPC] Collateral check completed in ${durationCollateral}ms`, {
             available: ethers.formatUnits(available, 6),
@@ -2674,122 +2699,112 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
             {/* Advanced Setup removed (leverage disabled) */}
 
-            {/* Trade Summary - Sophisticated Design */}
-            <div className="space-y-1 mb-1">
-                <div className="flex items-center justify-between mb-1">
-                  <h4 className="text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Order Summary</h4>
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                    {orderType.toUpperCase()}
-                  </div>
-                </div>
-                
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-                  <div className="p-1.5">
-                    <div className="space-y-0.5 text-[10px]">
-                      <div className="flex items-center justify-between gap-2 min-w-0">
-                        <span className="text-[#606060] flex-1 min-w-0 truncate">Order Amount:</span>
-                        <span className="text-white font-mono whitespace-nowrap">{isUsdMode ? '$' : ''}{formatNumber(amount)}{!isUsdMode ? ' units' : ''}</span>
+            {/* Order Summary */}
+            <div className="mb-1">
+                {(() => {
+                  const currentPrice = resolveCurrentPrice();
+                  const feeBps = orderType === 'limit' ? marketParams.makerFeeBps : marketParams.takerFeeBps;
+                  const feeRate = feeBps / 10000;
+                  const marginBps = selectedOption === 'short'
+                    ? Math.max(marketParams.marginReqBps, 15000)
+                    : marketParams.marginReqBps;
+                  const marginMultiplier = marginBps / 10000;
+                  const marginPct = (marginMultiplier * 100).toFixed(0);
+                  const estPrice = orderType === 'limit' ? (triggerPrice > 0 ? triggerPrice : currentPrice) : (quoteState.price > 0 ? quoteState.price : (selectedOption === 'long' && bestAsk > 0 ? bestAsk : (selectedOption === 'short' && bestBid > 0 ? bestBid : currentPrice)));
+                  const estUnits = orderType === 'limit'
+                    ? (isUsdMode ? (amount > 0 && estPrice > 0 ? amount / estPrice : 0) : amount)
+                    : (quoteState.units > 0 ? quoteState.units : (isUsdMode ? (amount > 0 && estPrice > 0 ? amount / estPrice : 0) : amount));
+                  const orderValue = orderType === 'limit'
+                    ? (isUsdMode ? amount : amount * estPrice)
+                    : (quoteState.value > 0 ? quoteState.value : (isUsdMode ? amount : amount * estPrice));
+                  const tradingFee = orderValue * feeRate;
+                  const marginRequired = orderValue * marginMultiplier;
+                  const hasPriceEstimate = estPrice > 0;
+                  const hasOrderValueEstimate = orderValue > 0;
+                  const hasMarginEstimate = marginRequired > 0;
+                  const quoteUnavailable = orderType === 'market' && !quoteState.isLoading && !!quoteState.error && quoteState.error.includes('No liquidity');
+                  const liquidationDisplay = selectedOption === 'long'
+                    ? 'N/A (100% collateral)'
+                    : (computedLiquidationPrice && computedLiquidationPrice > 0
+                        ? `$${formatNumber(computedLiquidationPrice)}`
+                        : (quoteState.isLoading ? '...' : 'Awaiting quote'));
+                  const slippageRate = maxSlippage / 10000;
+                  const isBuy = selectedOption === 'long';
+                  const worstPrice = hasPriceEstimate
+                    ? (isBuy ? estPrice * (1 + slippageRate) : estPrice * (1 - slippageRate))
+                    : 0;
+                  const estFillAmount = isUsdMode && worstPrice > 0
+                    ? amount / worstPrice
+                    : estUnits;
+                  const estFillAmountBest = estUnits;
+                  const notional = (quoteState.value && quoteState.value > 0) ? quoteState.value : (isUsdMode ? amount : amount * currentPrice);
+                  const isLoading = quoteState.isLoading;
+
+                  return (
+                    <div className="rounded-md border border-[#1A1A1A] overflow-hidden">
+                      {/* Header */}
+                      <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#0A0A0A] border-b border-[#1A1A1A]">
+                        <span className="text-[10px] font-medium text-[#808080] uppercase tracking-wider">Order Summary</span>
+                        <span className="text-[9px] font-mono text-[#606060] bg-[#141414] border border-[#222] px-1.5 py-px rounded-full">{orderType.toUpperCase()}</span>
                       </div>
-                      {/* Leverage and Position Size removed */}
-                      <div className="flex items-center justify-between gap-2 min-w-0">
-                        <span className="text-[#606060] flex-1 min-w-0 truncate">Trading Fee:</span>
-                        <span className="text-white font-mono whitespace-nowrap">${formatNumber((quoteState.value && quoteState.value > 0) ? (quoteState.value * 0.001) : (isUsdMode ? (amount * 0.001) : (amount * resolveCurrentPrice() * 0.001)))}</span>
-                      </div>
-                      {orderType === 'limit' && (
-                        <>
-                          <div className="border-t border-[#1A1A1A] my-1"></div>
-                          <div className="flex items-center justify-between gap-2 min-w-0">
-                            <span className="text-[#606060] flex-1 min-w-0 truncate">Limit Price:</span>
-                            <span className="text-white font-mono whitespace-nowrap">${triggerPrice > 0 ? formatNumber(triggerPrice) : 'Not set'}</span>
+
+                      {/* Primary: Fill Price + Fill Amount */}
+                      <div className="px-2.5 py-1.5 bg-[#0C0C0C] space-y-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-[10px] text-[#707070]">Est. Fill Price</span>
+                          <span className="text-[12px] text-white font-mono font-medium">
+                            {isLoading ? '...' : (hasPriceEstimate ? `$${formatNumber(estPrice)}` : '—')}
+                            {quoteState.partial && <span className="text-[9px] text-[#F59E0B] ml-1">partial</span>}
+                          </span>
+                        </div>
+                        {hasPriceEstimate && estFillAmountBest > 0 && (
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="text-[10px] text-[#707070]">Est. Fill Amount</span>
+                            <span className="text-[12px] text-white font-mono font-medium">
+                              {isLoading ? '...' : (
+                                isUsdMode && orderType === 'market' && estFillAmount < estFillAmountBest
+                                  ? <>{formatNumber(estFillAmount)}<span className="text-[#505050] mx-0.5">–</span>{formatNumber(estFillAmountBest)} <span className="text-[9px] text-[#606060] font-normal">units</span></>
+                                  : <>{formatNumber(estFillAmountBest)} <span className="text-[9px] text-[#606060] font-normal">units</span></>
+                              )}
+                            </span>
                           </div>
-                        </>
+                        )}
+                        {orderType === 'limit' && (
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="text-[10px] text-[#707070]">Limit Price</span>
+                            <span className="text-[12px] text-white font-mono font-medium">{triggerPrice > 0 ? `$${formatNumber(triggerPrice)}` : '—'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {quoteUnavailable && (
+                        <div className="px-2.5 py-1 bg-[#1A1400] border-y border-[#2A2000]">
+                          <span className="text-[9px] text-[#F59E0B]">Order book liquidity unavailable</span>
+                        </div>
                       )}
-                      {/* Additional Details */}
-                      {(() => {
-                        const currentPrice = resolveCurrentPrice();
-                        const tradingFee = (quoteState.value && quoteState.value > 0)
-                          ? (quoteState.value * 0.001)
-                          : amount * (isUsdMode ? 0.001 : 0.001 * currentPrice);
-                        const automationFee = orderType === 'limit' ? 2 : 0;
-                        const executionFee = orderType === 'limit' ? 3 : 0;
-                        const feesTotal = tradingFee + automationFee + executionFee;
-                        const marginMultiplier = selectedOption === 'short' ? 1.5 : 1.0;
-                        // Depth-aware quote values, respecting position type
-                        const estPrice = orderType === 'limit' ? (triggerPrice > 0 ? triggerPrice : currentPrice) : (quoteState.price > 0 ? quoteState.price : (selectedOption === 'long' && bestAsk > 0 ? bestAsk : (selectedOption === 'short' && bestBid > 0 ? bestBid : currentPrice)));
-                        const estUnits = orderType === 'limit'
-                          ? (isUsdMode ? (amount > 0 && estPrice > 0 ? amount / estPrice : 0) : amount)
-                          : (quoteState.units > 0 ? quoteState.units : (isUsdMode ? (amount > 0 && estPrice > 0 ? amount / estPrice : 0) : amount));
-                        const orderValue = orderType === 'limit'
-                          ? (isUsdMode ? amount : amount * estPrice)
-                          : (quoteState.value > 0 ? quoteState.value : (isUsdMode ? amount : amount * estPrice));
-                        const marginRequired = orderValue * marginMultiplier;
-                        const hasPriceEstimate = estPrice > 0;
-                        const hasOrderValueEstimate = orderValue > 0;
-                        const hasMarginEstimate = marginRequired > 0;
-                        const quoteUnavailable = orderType === 'market' && !quoteState.isLoading && !!quoteState.error && quoteState.error.includes('No liquidity');
-                        const liquidationDisplay = selectedOption === 'long'
-                          ? 'N/A (100% collateral)'
-                          : (computedLiquidationPrice && computedLiquidationPrice > 0
-                              ? `$${formatNumber(computedLiquidationPrice)}`
-                              : (quoteState.isLoading ? '...' : 'Awaiting quote'));
-                        return (
-                          <div className="text-[10px] space-y-0.5">
-                            {/* Quote health/status */}
-                            <div className="flex items-center justify-between gap-2 min-w-0">
-                              <span className="text-[#606060] flex-1 min-w-0 truncate">Est. Fill Price:</span>
-                              <span className="text-white font-mono whitespace-nowrap">
-                                {quoteState.isLoading
-                                  ? '...'
-                                  : (hasPriceEstimate
-                                      ? `$${formatNumber(estPrice)}${quoteUnavailable ? ' (est.)' : ''}`
-                                      : 'Awaiting price')}
-                                {quoteState.partial ? ' (partial)' : ''}
-                              </span>
-                            </div>
-                    
-                            <div className="flex items-center justify-end gap-2 min-w-0">
-                              {/* <span className="text-[#606060]">{isUsdMode ? 'Est. Units:' : 'Est. Value:'}</span> */}
-                              <span className="text-white font-mono whitespace-nowrap">
-                                {quoteState.isLoading ? '...'
-                                  : (hasOrderValueEstimate
-                                      ? (isUsdMode
-                                          ? `${formatNumber(estUnits)} units`
-                                          : `$${formatNumber(orderValue)}`)
-                                      : 'Awaiting price')}
-                              </span>
-                            </div>
-                            {quoteUnavailable && (
-                              <div className="flex items-center justify-between gap-2 min-w-0">
-                                <span className="text-[#606060] flex-1 min-w-0 truncate">Liquidity:</span>
-                                <span className="text-[#F59E0B] font-mono whitespace-nowrap">Order book unavailable</span>
-                              </div>
-                            )}
-                            <div className="flex items-center justify-between gap-2 min-w-0">
-                              <span className="text-[#606060] flex-1 min-w-0 truncate">Order Value:</span>
-                              <span className="text-white font-mono whitespace-nowrap">{hasOrderValueEstimate ? `$${formatNumber(orderValue)}` : 'Awaiting price'}</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-2 min-w-0">
-                              <span className="text-[#606060] flex-1 min-w-0 truncate">Margin Required{selectedOption === 'short' ? ' (150%)' : ' (100%)'}:</span>
-                              <span className="text-white font-mono whitespace-nowrap">{hasMarginEstimate ? `$${formatNumber(marginRequired)}` : 'Awaiting price'}</span>
-                            </div>
-                            <div className="flex items-center justify-between gap-2 min-w-0">
-                              <span className="text-[#606060] flex-1 min-w-0 truncate">Liquidation Price:</span>
-                              <span className="text-white font-mono whitespace-nowrap">{liquidationDisplay}</span>
-                            </div>
-                    
-                          </div>
-                        );
-                      })()}
+
+                      {/* Details */}
+                      <div className="px-2.5 py-1.5 bg-[#0F0F0F] space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-[#505050]">{orderType === 'limit' ? 'Maker Fee' : 'Taker Fee'}</span>
+                          <span className="text-[10px] text-[#9CA3AF] font-mono">${formatNumber(notional * feeRate)}<span className="text-[#505050] ml-1">({(feeRate * 100).toFixed(2)}%)</span></span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-[#505050]">Order Value</span>
+                          <span className="text-[10px] text-[#9CA3AF] font-mono">{hasOrderValueEstimate ? `$${formatNumber(orderValue)}` : '—'}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-[#505050]">Margin <span className="text-[#404040]">({marginPct}%)</span></span>
+                          <span className="text-[10px] text-[#9CA3AF] font-mono">{hasMarginEstimate ? `$${formatNumber(marginRequired)}` : '—'}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-[#505050]">Liquidation</span>
+                          <span className="text-[10px] text-[#9CA3AF] font-mono">{liquidationDisplay}</span>
+                        </div>
+                      </div>
                     </div>
-                    
-                    {/* Order validation messages */}
-                    {/* <div className="mt-1.5">
-                      <OrderValidationComponent />
-                    </div> */}
-                  </div>
-                  
-                  
-                </div>
+                  );
+                })()}
               </div>
 
 

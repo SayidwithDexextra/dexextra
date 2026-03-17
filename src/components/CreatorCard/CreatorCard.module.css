@@ -40,6 +40,12 @@
   gap: 12px;
   min-width: 0;
   flex: 1;
+  text-decoration: none;
+  color: inherit;
+}
+
+.creatorInfo:hover .name {
+  color: #818cf8;
 }
 
 .avatar {

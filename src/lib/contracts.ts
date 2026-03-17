@@ -112,7 +112,8 @@ export const OBViewFacetABI = [
   "function bestBid() external view returns (uint256)",
   "function bestAsk() external view returns (uint256)",
   "function getTradingParameters() external view returns (uint256 marginRequirement, uint256 fee, address recipient)",
-  "function getFeeStructure() external view returns (uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps, uint256 legacyTradingFee, address marketOwnerFeeRecipient)"
+  "function getFeeStructure() external view returns (uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps, uint256 legacyTradingFee, address marketOwnerFeeRecipient)",
+  "function getLeverageInfo() external view returns (bool enabled, uint256 maxLev, uint256 marginReq, address controller)"
 ];
 
 // OBPricingFacet - read-only functions for pricing (aligned with deployed facet)
@@ -123,6 +124,7 @@ export const OBPricingFacetABI = [
   "function getSpread() external view returns (uint256)",
   "function calculateMarkPrice() external view returns (uint256)",
   "function getMarketPriceData() external view returns (uint256 midPrice, uint256 bestBidPrice, uint256 bestAskPrice, uint256 lastTradePriceReturn, uint256 markPrice, uint256 spread, uint256 spreadBps, bool isValid)",
+  "function estimateMarketOrder(uint8 side, uint256 quantity) external view returns (uint256 averagePrice, uint256 priceImpact)",
   // Note: bestBid/bestAsk are not part of current OBPricingFacet deployments; they exist on OBViewFacet
 ];
 

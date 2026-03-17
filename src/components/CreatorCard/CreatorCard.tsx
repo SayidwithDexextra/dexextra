@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import styles from './CreatorCard.module.css';
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 
@@ -125,7 +126,7 @@ export default function CreatorCard({
       </div>
       
       <div className={styles.content}>
-        <div className={styles.creatorInfo}>
+        <Link href={`/user/${creatorWallet}`} className={styles.creatorInfo}>
           <div className={styles.avatar}>
             <img 
               src={creatorProfile?.profile_image_url || DEFAULT_PROFILE_IMAGE} 
@@ -140,7 +141,7 @@ export default function CreatorCard({
               <span className={styles.badge}>Creator</span>
             </div>
           </div>
-        </div>
+        </Link>
 
         {!isOwnProfile && currentUserWallet && (
           <button
