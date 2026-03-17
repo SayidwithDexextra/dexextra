@@ -37,7 +37,9 @@ export async function GET(req: NextRequest) {
          market_address, chain_id, network, tick_size, decimals,
          is_active, market_status, total_volume, total_trades,
          open_interest_long, open_interest_short,
-         settlement_date, trading_end_date, created_at, deployed_at`,
+         settlement_date, trading_end_date, created_at, deployed_at,
+         creator_wallet_address,
+         user_profiles!creator_user_id(username, display_name, profile_image_url)`,
         { count: 'exact' }
       )
       .eq('is_active', true);
@@ -77,6 +79,7 @@ export async function GET(req: NextRequest) {
       const ticker = tickersByMarketId.get(m.id);
       const sym = (m.symbol || m.market_identifier || '').toUpperCase();
       const trending = trendingBySymbol.get(sym);
+      const creatorProfile = m.user_profiles;
 
       return {
         market_id: m.id,
@@ -99,6 +102,9 @@ export async function GET(req: NextRequest) {
         decimals: m.decimals,
         open_interest_long: m.open_interest_long ?? 0,
         open_interest_short: m.open_interest_short ?? 0,
+        creator_wallet_address: m.creator_wallet_address || null,
+        creator_display_name: creatorProfile?.display_name || creatorProfile?.username || null,
+        creator_profile_image_url: creatorProfile?.profile_image_url || null,
 
         mark_price: ticker?.mark_price != null
           ? Number(ticker.mark_price) / 1_000_000

@@ -393,7 +393,7 @@ export default function Home() {
 
 
   const heroData = {
-    title: "DexEtera",
+    title: "Dexetera",
     author: "Trading Platform",
     isVerified: true,
     stats: {
@@ -402,47 +402,6 @@ export default function Home() {
       mintStartsIn: "2024-12-31T23:59:59"
     }
   };
-
-  const featuredProducts = [
-    {
-      id: '1',
-      title: 'Monologue — Framer Portfolio Template',
-      author: 'ena',
-      price: 49,
-      currency: 'USD',
-      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhham5seGdodmVtdmg5MzF5c3phdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
-      href: '/product/monologue-framer-template',
-    },
-    {
-      id: '2',
-      title: 'AiNest - Framer Template',
-      subtitle: 'Smarter Design, Seamless Automation',
-      author: 'Dmytri Ivanov',
-      price: 69,
-      currency: 'USD',
-      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhham5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
-      href: '/product/ainest-framer-template',
-    },
-    {
-      id: '3',
-      title: 'Zentro — Modern Creative Agency Template',
-      subtitle: 'Ideas that Move Brands',
-      author: 'Shaig',
-      price: 79,
-      currency: 'USD',
-      imageUrl: 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXVvYjE0cWp2cnpubGdiZjdtOGhham5seGdodmVtdmg5MzF5c3pohdiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xT77XUw1XMVGIxgove/giphy.gif',
-      href: '/product/zentro-agency-template',
-    },
-  ];
-
-  // Mock templates for the modal
-  const mockTemplates = [
-    { id: '1', title: 'Template 1', image: '/placeholder-template.png' },
-    { id: '2', title: 'Template 2', image: '/placeholder-template.png' },
-    { id: '3', title: 'Template 3', image: '/placeholder-template.png' },
-    { id: '4', title: 'Template 4', image: '/placeholder-template.png' },
-    { id: '5', title: 'Template 5', image: '/placeholder-template.png' },
-  ];
 
   const handleViewMarket = (productData: ProductCardData) => {
     setSelectedProduct(productData);
@@ -607,7 +566,7 @@ export default function Home() {
             'High-quality design templates perfect for your next project. Professional crafted with modern aesthetics and user experience in mind.'
           }
           category="Singular  Market"
-          templates={mockTemplates}
+          templates={[]}
           onGoToProduct={handleGoToProduct}
         />
       )}

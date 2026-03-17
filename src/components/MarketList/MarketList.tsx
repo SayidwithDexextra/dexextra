@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { useExploreMarkets, SortMode, ExploreMarket } from '@/hooks/useExploreMarkets';
+import ExploreHero from '@/components/ExploreHero/ExploreHero';
+import { Tooltip } from '@/components/ui/Tooltip';
 
 function formatPrice(price: number | null, decimals?: number): string {
   if (price == null || price === 0) return '—';
@@ -84,6 +86,48 @@ function StatusDot({ status }: { status: string }) {
   return <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${color}`} />;
 }
 
+function formatWallet(addr: string): string {
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+function CreatorBadge({ market }: { market: ExploreMarket }) {
+  if (!market.creator_wallet_address) return <span className="text-t-fg-muted">—</span>;
+
+  const label = market.creator_display_name || formatWallet(market.creator_wallet_address);
+
+  return (
+    <Tooltip
+      content={market.creator_wallet_address}
+      maxWidth={320}
+    >
+      <Link
+        href={`/user/${market.creator_wallet_address}`}
+        onClick={(e) => e.stopPropagation()}
+        className="inline-flex items-center gap-1.5 max-w-[120px] group/creator"
+      >
+        {market.creator_profile_image_url ? (
+          <Image
+            src={market.creator_profile_image_url}
+            alt=""
+            width={14}
+            height={14}
+            className="rounded-full flex-shrink-0"
+          />
+        ) : (
+          <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 bg-t-card border border-t-fg/[0.08] flex items-center justify-center">
+            <span className="text-[6px] font-semibold text-t-fg-muted">
+              {label.slice(0, 1).toUpperCase()}
+            </span>
+          </div>
+        )}
+        <span className="text-[11px] text-t-fg-muted truncate group-hover/creator:text-[#a78bfa] transition-colors duration-150">
+          {label}
+        </span>
+      </Link>
+    </Tooltip>
+  );
+}
+
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: 'trending', label: 'Trending' },
   { value: 'volume', label: 'Top Volume' },
@@ -115,6 +159,7 @@ function SkeletonRows() {
           <td className="hidden sm:table-cell py-3 pr-4"><div className="w-12 h-3 bg-t-inset rounded ml-auto" /></td>
           <td className="hidden sm:table-cell py-3 pr-4"><div className="w-10 h-3 bg-t-inset rounded ml-auto" /></td>
           <td className="hidden sm:table-cell py-3 pr-4"><div className="w-10 h-3 bg-t-inset rounded ml-auto" /></td>
+          <td className="hidden sm:table-cell py-3 pr-4"><div className="w-16 h-3 bg-t-inset rounded" /></td>
           <td className="hidden sm:table-cell py-3 pr-4"><div className="w-2 h-2 bg-t-inset rounded-full mx-auto" /></td>
         </tr>
       ))}
@@ -190,6 +235,13 @@ export default function MarketList() {
           Discover prediction markets across crypto, politics, sports, and more
         </p>
       </div>
+
+      {/* Revolving Hero */}
+      {!isLoading && markets.length > 0 && (
+        <div className="px-2 sm:px-4 pb-6">
+          <ExploreHero markets={markets} />
+        </div>
+      )}
 
       {/* Stats + Controls Bar */}
       <div className="flex items-center justify-between px-4 pb-4 gap-4 flex-wrap">
@@ -305,6 +357,9 @@ export default function MarketList() {
                 <th className="hidden sm:table-cell w-[80px] py-2.5 pr-4 text-right">
                   <span className="text-[10px] text-t-dot uppercase tracking-wider font-medium" style={{ fontFamily: 'var(--font-geist-mono, monospace)' }}>24H</span>
                 </th>
+                <th className="hidden sm:table-cell w-[120px] py-2.5 pr-4 text-left">
+                  <span className="text-[10px] text-t-dot uppercase tracking-wider font-medium" style={{ fontFamily: 'var(--font-geist-mono, monospace)' }}>Maker</span>
+                </th>
                 <th className="hidden sm:table-cell w-[50px] py-2.5 pr-4 text-center">
                   <span className="text-[10px] text-t-dot uppercase tracking-wider font-medium" style={{ fontFamily: 'var(--font-geist-mono, monospace)' }}>Status</span>
                 </th>
@@ -315,7 +370,7 @@ export default function MarketList() {
                 <SkeletonRows />
               ) : error ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={10} className="py-16 text-center">
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-red-400/80" />
                       <span className="text-[11px] text-t-fg-muted">Failed to load markets</span>
@@ -324,7 +379,7 @@ export default function MarketList() {
                 </tr>
               ) : markets.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={10} className="py-16 text-center">
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-t-dot" />
                       <span className="text-[11px] text-t-fg-muted">No markets found</span>
@@ -473,6 +528,9 @@ function MarketRow({ market, rank }: { market: ExploreMarket; rank: number }) {
           <Link href={href}><PriceChangeCell value={market.price_change_24h} /></Link>
         </td>
         <td className="hidden sm:table-cell py-2.5 pr-4">
+          <CreatorBadge market={market} />
+        </td>
+        <td className="hidden sm:table-cell py-2.5 pr-4">
           <Link href={href} className="flex justify-center"><StatusDot status={market.market_status} /></Link>
         </td>
       </tr>
@@ -526,6 +584,36 @@ function MarketRow({ market, rank }: { market: ExploreMarket; rank: number }) {
                         {cat}
                       </Link>
                     ))}
+                  </div>
+                )}
+
+                {market.creator_wallet_address && (
+                  <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-t-fg/[0.04]">
+                    <span className="text-[9px] text-t-dot">Created by</span>
+                    <Link
+                      href={`/user/${market.creator_wallet_address}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1.5 hover:text-[#a78bfa] transition-colors duration-150"
+                    >
+                      {market.creator_profile_image_url ? (
+                        <Image
+                          src={market.creator_profile_image_url}
+                          alt=""
+                          width={14}
+                          height={14}
+                          className="rounded-full flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 bg-t-card border border-t-fg/[0.08] flex items-center justify-center">
+                          <span className="text-[6px] font-semibold text-t-fg-muted">
+                            {(market.creator_display_name || market.creator_wallet_address).slice(0, 1).toUpperCase()}
+                          </span>
+                        </div>
+                      )}
+                      <span className="text-[10px] text-t-fg-sub font-medium">
+                        {market.creator_display_name || formatWallet(market.creator_wallet_address)}
+                      </span>
+                    </Link>
                   </div>
                 )}
               </div>

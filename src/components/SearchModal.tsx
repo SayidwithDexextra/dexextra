@@ -402,8 +402,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       <div 
         ref={modalRef}
         className={isMobile
-          ? 'fixed left-0 top-0 bg-[#0F0F0F] transition-transform duration-300 ease-in-out flex flex-col'
-          : `relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`
+          ? 'fixed left-0 top-0 bg-t-card transition-transform duration-300 ease-in-out flex flex-col'
+          : `relative z-10 w-full bg-t-card rounded-md border border-t-stroke transition-all duration-200 transform ${isAnimating ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`
         }
         style={isMobile ? {
           width: '100vw',
@@ -416,7 +416,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           maxWidth: '900px',
           maxHeight: '85vh',
           padding: '24px',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+          boxShadow: 'var(--t-shadow-lg)',
           margin: 'auto',
         }}
       >
@@ -424,12 +424,12 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         {isMobile && (
           <div
             className="flex items-center justify-between flex-shrink-0"
-            style={{ height: '56px', padding: '0 12px 0 16px', borderBottom: '1px solid #222222' }}
+            style={{ height: '56px', padding: '0 12px 0 16px', borderBottom: '1px solid var(--t-stroke)' }}
           >
-            <span className="text-white text-base font-semibold">Search</span>
+            <span className="text-t-fg text-base font-semibold">Search</span>
             <button
               onClick={onClose}
-              className="w-10 h-10 rounded-full flex items-center justify-center border border-[#2A2A2A] text-[#A0A0A0] hover:text-white hover:border-[#3A3A3A] transition-all duration-200"
+              className="w-10 h-10 rounded-full flex items-center justify-center border border-t-stroke text-t-fg-label hover:text-t-fg hover:border-t-stroke-hover transition-all duration-200"
               aria-label="Close search"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -444,7 +444,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         {/* Search Input Section */}
         <div className={isMobile ? 'mb-2' : 'mb-3'}>
           <div className="relative">
-            <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#606060]">
+            <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-t-fg-muted">
               {searchResults.isLoading ? (
                 <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
               ) : (
@@ -461,14 +461,14 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
               className={isMobile
-                ? 'w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 focus:outline-none focus:border-[#333333] text-white text-base pl-10 pr-10 py-3'
-                : 'w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 focus:outline-none focus:border-[#333333] text-white text-sm pl-10 pr-10 py-2.5'
+                ? 'w-full bg-t-inset hover:bg-t-skeleton border border-t-stroke hover:border-t-stroke-hover rounded-md transition-all duration-200 focus:outline-none focus:border-t-stroke-hover text-t-fg text-base pl-10 pr-10 py-3'
+                : 'w-full bg-t-inset hover:bg-t-skeleton border border-t-stroke hover:border-t-stroke-hover rounded-md transition-all duration-200 focus:outline-none focus:border-t-stroke-hover text-t-fg text-sm pl-10 pr-10 py-2.5'
               }
             />
             {searchValue && (
               <button
                 onClick={() => setSearchValue('')}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-full hover:bg-[#2A2A2A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 rounded-full hover:bg-t-skeleton text-t-fg-muted hover:text-t-fg-sub transition-all duration-200"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -482,7 +482,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         <div className="search-modal-scroll overflow-y-auto" style={{ maxHeight: isMobile ? 'calc(100dvh - 140px)' : 'calc(85vh - 100px)' }}>
           {/* Error Message */}
           {searchResults.error && (
-            <div className="bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5 mb-3">
+            <div className="bg-t-card border border-t-stroke rounded-md p-2.5 mb-3">
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                 <span className="text-[11px] font-medium text-red-400">{searchResults.error}</span>
@@ -494,7 +494,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           {!searchValue && recentSearches.length > 0 && (
             <div className="mb-3">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
                   Recent Searches
                 </h4>
                 <button 
@@ -510,15 +510,15 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   <div
                     key={index}
                     onClick={() => handleRecentSearchSelect(searchTerm)}
-                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
+                    className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 cursor-pointer"
                   >
                     <div className="flex items-center justify-between p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                        <svg className="w-3 h-3 text-[#606060]" viewBox="0 0 24 24" fill="none">
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                        <svg className="w-3 h-3 text-t-fg-muted" viewBox="0 0 24 24" fill="none">
                           <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
-                        <span className="text-[11px] font-medium text-[#808080]">
+                        <span className="text-[11px] font-medium text-t-fg-sub">
                           {searchTerm}
                         </span>
                       </div>
@@ -532,7 +532,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           {/* Trending Categories */}
           {!searchValue && (
             <div className="mb-3">
-              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide mb-2">
+              <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide mb-2">
                 Trending Categories
               </h4>
               
@@ -541,16 +541,16 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   <div
                     key={category}
                     onClick={() => setSearchValue(category)}
-                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 cursor-pointer"
+                    className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 cursor-pointer"
                   >
                     <div className="flex items-center justify-between p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
                         <div className="flex items-center gap-1.5">
-                          <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                          <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                             #
                           </div>
-                          <span className="text-[11px] font-medium text-[#808080]">
+                          <span className="text-[11px] font-medium text-t-fg-sub">
                             {category}
                           </span>
                         </div>
@@ -574,10 +574,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
               }}
             >
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
                   Markets
                 </h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                   {searchResults.markets.length}
                 </div>
               </div>
@@ -593,7 +593,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                     return (
                   <div
                     key={market.id}
-                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+                    className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200"
                   >
                     <div
                       className="flex items-center justify-between p-2.5 cursor-pointer"
@@ -624,10 +624,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                             </div>
                           )}
                           <div className="min-w-0 flex-1">
-                            <div className="text-left text-[13px] font-medium text-white group-hover:underline">
+                            <div className="text-left text-[13px] font-medium text-t-fg group-hover:underline">
                               {market.symbol}
                             </div>
-                            <div className="text-[11px] text-[#606060] truncate max-w-[200px]">
+                            <div className="text-[11px] text-t-fg-muted truncate max-w-[200px]">
                               {market.description}
                             </div>
                           </div>
@@ -635,7 +635,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       </div>
                       <div className="flex items-center gap-3">
                         <div className="text-right min-w-[92px]">
-                          <div className="text-[11px] text-white font-mono">
+                          <div className="text-[11px] text-t-fg font-mono">
                             {formatUsdNumber(market.initial_price, market.price_decimals ?? 4)}
                           </div>
                           <div className={`text-[10px] ${
@@ -644,10 +644,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                             {deploymentStatus || '—'}
                           </div>
                         </div>
-                        <div className="w-px h-6 bg-[#222222]" />
+                        <div className="w-px h-6 bg-t-stroke" />
                         <div className="text-right min-w-[110px] max-w-[160px]">
                           <div
-                            className="text-[11px] text-[#8a8a8a] leading-none truncate"
+                            className="text-[11px] text-t-fg-sub leading-none truncate"
                             title={metricSource.url || undefined}
                           >
                             {metricSource.url ? (
@@ -668,7 +668,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                     </div>
                     {/* Expandable Details (only expands for this row on hover) */}
                     <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                      <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                      <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
                         <div className="text-[9px] pt-1.5">
                           <div className="flex flex-wrap gap-1">
                             {(() => {
@@ -689,7 +689,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                                     </span>
                                   ))}
                                   {categories.length > 3 && (
-                                    <span className="text-[9px] text-[#606060] bg-[#1A1A1A] px-1 py-0.5 rounded">
+                                    <span className="text-[9px] text-t-fg-muted bg-t-inset px-1 py-0.5 rounded">
                                       +{categories.length - 3}
                                     </span>
                                   )}
@@ -702,13 +702,13 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                                 <div className="flex items-center gap-1">
                                   <button
                                     onClick={() => handleMarketSelect(market)}
-                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-white bg-[#1A1A1A] border border-[#333333]"
+                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-t-fg bg-t-inset border border-t-stroke-hover"
                                   >
                                     {market.symbol}
                                   </button>
                                   <button
                                     onClick={() => handleMarketSelect(idToMarket[pairMap[market.id].otherId])}
-                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-[#808080] bg-[#0F0F0F] border border-[#222222] hover:text-white hover:bg-[#1A1A1A] hover:border-[#333333]"
+                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-t-fg-sub bg-t-card border border-t-stroke hover:text-t-fg hover:bg-t-card-hover hover:border-t-stroke-hover"
                                   >
                                     {idToMarket[pairMap[market.id].otherId].symbol}
                                   </button>
@@ -725,7 +725,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                 ))}
               </div>
               {searchResults.markets.length > 6 && (
-                <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-[#0F0F0F] to-transparent rounded-b-md" />
+                <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-t-card to-transparent rounded-b-md" />
               )}
               </div>
             </div>
@@ -738,7 +738,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                 {showAllUsers ? (
                   <button
                     onClick={() => setShowAllUsers(false)}
-                    className="flex items-center gap-2 text-[11px] text-[#808080] hover:text-white transition-colors group"
+                    className="flex items-center gap-2 text-[11px] text-t-fg-sub hover:text-t-fg transition-colors group"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="transition-transform group-hover:-translate-x-0.5">
                       <path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -746,20 +746,20 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                     <span>Back to results</span>
                   </button>
                 ) : (
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
                     Users
                   </h4>
                 )}
                 {!showAllUsers && (
                   <button
                     onClick={() => setShowAllUsers(true)}
-                    className="text-[11px] text-[#808080] hover:text-white hover:underline transition-colors"
+                    className="text-[11px] text-t-fg-sub hover:text-t-fg hover:underline transition-colors"
                   >
                     Show all
                   </button>
                 )}
                 {showAllUsers && (
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                     {searchResults.users.length} users
                   </div>
                 )}
@@ -772,23 +772,23 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       <div
                         key={user.id}
                         onClick={() => handleUserSelect(user)}
-                        className="group flex flex-col items-center cursor-pointer transition-all duration-200 p-3 rounded-lg hover:bg-[#1A1A1A] animate-user-bubble-in"
+                        className="group flex flex-col items-center cursor-pointer transition-all duration-200 p-3 rounded-lg hover:bg-t-card-hover animate-user-bubble-in"
                         style={{ animationDelay: `${i * 30}ms` }}
                       >
                         <div
                           className="flex items-center justify-center text-2xl font-semibold rounded-full w-[90px] h-[90px] mb-2 transition-all duration-200 shadow-lg group-hover:shadow-xl group-hover:scale-105"
                           style={{
-                            backgroundImage: `url(${user.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
+                            backgroundImage: `url('${user.profile_image_url || DEFAULT_PROFILE_IMAGE}')`,
                             backgroundSize: 'cover',
                             backgroundPosition: 'center',
                           }}
                         >
                         </div>
                         <div className="text-center w-full">
-                          <div className="text-[13px] font-semibold text-white truncate">
+                          <div className="text-[13px] font-semibold text-t-fg truncate">
                             {user.display_name || user.username || 'Anonymous'}
                           </div>
-                          <div className="text-[11px] text-[#a0a0a0]">
+                          <div className="text-[11px] text-t-fg-label">
                             User
                           </div>
                         </div>
@@ -801,7 +801,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   {canScrollLeft && (
                     <button
                       onClick={() => scrollUsers('left')}
-                      className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-[#1A1A1A]/90 border border-[#333333] text-[#808080] hover:text-white hover:bg-[#2A2A2A] transition-all duration-200 shadow-lg backdrop-blur-sm"
+                      className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-t-inset/90 border border-t-stroke-hover text-t-fg-sub hover:text-t-fg hover:bg-t-skeleton transition-all duration-200 shadow-lg backdrop-blur-sm"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                         <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -811,7 +811,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   {canScrollRight && (
                     <button
                       onClick={() => scrollUsers('right')}
-                      className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-[#1A1A1A]/90 border border-[#333333] text-[#808080] hover:text-white hover:bg-[#2A2A2A] transition-all duration-200 shadow-lg backdrop-blur-sm"
+                      className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-t-inset/90 border border-t-stroke-hover text-t-fg-sub hover:text-t-fg hover:bg-t-skeleton transition-all duration-200 shadow-lg backdrop-blur-sm"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                         <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -819,10 +819,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                     </button>
                   )}
                   {canScrollLeft && (
-                    <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-12 bg-gradient-to-r from-[#0F0F0F] to-transparent z-[5]" />
+                    <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-12 bg-gradient-to-r from-t-card to-transparent z-[5]" />
                   )}
                   {canScrollRight && (
-                    <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-[#0F0F0F] to-transparent z-[5]" />
+                    <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-t-card to-transparent z-[5]" />
                   )}
                   <div ref={usersScrollRef} className="overflow-x-auto overflow-y-hidden users-horizontal-scroll -mx-2 px-2">
                     <div className="flex gap-4 pb-2" style={{ minWidth: 'max-content' }}>
@@ -830,23 +830,23 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                         <div
                           key={user.id}
                           onClick={() => handleUserSelect(user)}
-                          className="group flex flex-col items-start cursor-pointer transition-all duration-200 flex-shrink-0 p-3 rounded-lg hover:bg-[#1A1A1A]"
+                          className="group flex flex-col items-start cursor-pointer transition-all duration-200 flex-shrink-0 p-3 rounded-lg hover:bg-t-card-hover"
                           style={{ width: '140px' }}
                         >
                           <div
                             className="flex items-center justify-center text-3xl font-semibold rounded-full w-[115px] h-[115px] mb-3 transition-all duration-200 shadow-lg group-hover:shadow-xl"
                             style={{
-                              backgroundImage: `url(${user.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
+                              backgroundImage: `url('${user.profile_image_url || DEFAULT_PROFILE_IMAGE}')`,
                               backgroundSize: 'cover',
                               backgroundPosition: 'center',
                             }}
                           >
                           </div>
                           <div className="text-left w-full">
-                            <div className="text-[14px] font-semibold text-white truncate">
+                            <div className="text-[14px] font-semibold text-t-fg truncate">
                               {user.display_name || user.username || 'Anonymous'}
                             </div>
-                            <div className="text-[12px] text-[#a0a0a0]">
+                            <div className="text-[12px] text-t-fg-label">
                               User
                             </div>
                           </div>
@@ -861,28 +861,28 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           {/* No Results Message */}
           {searchValue && !searchResults.isLoading && searchResults.markets.length === 0 && searchResults.users.length === 0 && !searchResults.error && (
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
               <div className="flex items-center justify-between p-2.5">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="text-[11px] font-medium text-[#808080]">
+                    <span className="text-[11px] font-medium text-t-fg-sub">
                       No results found for "{searchValue}"
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
-                  <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 24 24" fill="none">
+                  <div className="w-1.5 h-1.5 rounded-full bg-t-dot" />
+                  <svg className="w-3 h-3 text-t-dot" viewBox="0 0 24 24" fill="none">
                     <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
                     <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                   </svg>
                 </div>
               </div>
               <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
                   <div className="text-[9px] pt-1.5">
-                    <span className="text-[#606060]">Try searching for market symbols, categories, or usernames</span>
+                    <span className="text-t-fg-muted">Try searching for market symbols, categories, or usernames</span>
                   </div>
                 </div>
               </div>
@@ -891,28 +891,28 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           {/* Empty State */}
           {!searchValue && recentSearches.length === 0 && (
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
               <div className="flex items-center justify-between p-2.5">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span className="text-[11px] font-medium text-[#808080]">
+                    <span className="text-[11px] font-medium text-t-fg-sub">
                       Search Dexextra
                     </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
-                  <svg className="w-3 h-3 text-[#404040]" viewBox="0 0 24 24" fill="none">
+                  <div className="w-1.5 h-1.5 rounded-full bg-t-dot" />
+                  <svg className="w-3 h-3 text-t-dot" viewBox="0 0 24 24" fill="none">
                     <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
                     <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                   </svg>
                 </div>
               </div>
               <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
                   <div className="text-[9px] pt-1.5">
-                    <span className="text-[#606060]">Find smart contract markets by symbol or category, and user accounts</span>
+                    <span className="text-t-fg-muted">Find smart contract markets by symbol or category, and user accounts</span>
                   </div>
                 </div>
               </div>
@@ -932,7 +932,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           .markets-internal-scroll {
             scrollbar-width: thin;
-            scrollbar-color: #333333 transparent;
+            scrollbar-color: var(--t-stroke-hover) transparent;
           }
 
           .markets-internal-scroll::-webkit-scrollbar {
@@ -944,12 +944,12 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           }
 
           .markets-internal-scroll::-webkit-scrollbar-thumb {
-            background-color: #333333;
+            background-color: var(--t-stroke-hover);
             border-radius: 4px;
           }
 
           .markets-internal-scroll::-webkit-scrollbar-thumb:hover {
-            background-color: #444444;
+            background-color: var(--t-dot);
           }
 
           .users-horizontal-scroll {
@@ -963,7 +963,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
           .users-grid-scroll {
             scrollbar-width: thin;
-            scrollbar-color: #333333 transparent;
+            scrollbar-color: var(--t-stroke-hover) transparent;
           }
 
           .users-grid-scroll::-webkit-scrollbar {
@@ -975,12 +975,12 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           }
 
           .users-grid-scroll::-webkit-scrollbar-thumb {
-            background-color: #333333;
+            background-color: var(--t-stroke-hover);
             border-radius: 4px;
           }
 
           .users-grid-scroll::-webkit-scrollbar-thumb:hover {
-            background-color: #444444;
+            background-color: var(--t-dot);
           }
 
           .animate-users-expand {

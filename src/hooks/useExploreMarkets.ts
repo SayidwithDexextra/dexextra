@@ -26,6 +26,10 @@ export interface ExploreMarket {
   open_interest_long: number;
   open_interest_short: number;
 
+  creator_wallet_address: string | null;
+  creator_display_name: string | null;
+  creator_profile_image_url: string | null;
+
   mark_price: number | null;
   is_stale: boolean | null;
 

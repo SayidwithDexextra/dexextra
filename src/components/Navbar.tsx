@@ -119,8 +119,8 @@ interface NavItem {
 
 const navigationItems: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: OverviewIcon, route: '/' },
+  { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
   { id: 'watchlist', label: 'Watchlist', icon: WatchlistIcon, route: '/watchlist' },
-  // { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
   { id: 'rewards', label: 'Rewards', icon: RewardsIcon, route: '/rewards' },
   // { id: 'favorites', label: 'Favorites', icon: FavoritesIcon, route: '/favorites' },
   // { id: 'send', label: 'Send', icon: SendIcon, route: '/send' },
