@@ -54,22 +54,22 @@ export default function TokenStats({ tokenData }: TokenStatsProps) {
   ];
 
   return (
-    <div className="bg-[#1A1A1A] rounded-xl p-2">
+    <div className="bg-t-inset rounded-xl p-2">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
         {stats.map((stat, index) => (
           <div key={index} className="flex flex-col">
-            <span className="text-[#E5E7EB] text-sm font-medium mb-1 uppercase tracking-wider">
+            <span className="text-t-fg text-sm font-medium mb-1 uppercase tracking-wider">
               {stat.label}
             </span>
             <span 
               className={`text-lg font-semibold ${
                 stat.isText 
-                  ? 'text-white' 
+                  ? 'text-t-fg' 
                   : stat.isPositive !== undefined 
                     ? stat.isPositive 
                       ? 'text-[#00D084]' 
                       : 'text-[#FF4747]'
-                    : 'text-white'
+                    : 'text-t-fg'
               }`}
             >
               {stat.value}

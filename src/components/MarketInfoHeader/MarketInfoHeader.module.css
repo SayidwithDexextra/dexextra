@@ -3,12 +3,7 @@
 
 .wrapper {
   position: relative;
-  background: linear-gradient(
-    135deg,
-    rgba(15, 15, 15, 1) 0%,
-    rgba(10, 10, 12, 1) 50%,
-    rgba(15, 15, 15, 1) 100%
-  );
+  background: linear-gradient(135deg, var(--t-card) 0%, var(--t-page) 50%, var(--t-card) 100%);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -99,8 +94,8 @@
   height: 36px;
   border-radius: 8px;
   object-fit: cover;
-  background: #111111;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--t-card);
+  border: 1px solid var(--t-stroke);
   box-shadow: 
     0 0 0 1px rgba(139, 92, 246, 0.1),
     0 4px 12px -4px rgba(0, 0, 0, 0.5);
@@ -121,7 +116,7 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 2px solid #000000;
+  border: 2px solid var(--t-page);
 }
 
 .statusDot.live {
@@ -176,7 +171,7 @@
 .markPriceValue {
   font-size: 13px;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--t-fg);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
   font-family: var(--font-geist-mono), 'Geist Mono', 'SF Mono', ui-monospace, monospace;
@@ -193,7 +188,7 @@
 .name {
   font-size: 14px;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--t-fg);
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
@@ -203,7 +198,7 @@
 }
 
 .nameBlock:hover .name {
-  background: linear-gradient(90deg, #ffffff 0%, #a78bfa 100%);
+  background: linear-gradient(90deg, var(--t-fg) 0%, #a78bfa 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -230,7 +225,7 @@
 .symbol {
   font-size: 11px;
   font-weight: 500;
-  color: #666666;
+  color: var(--t-fg-muted);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   font-family: var(--font-geist-mono), 'Geist Mono', 'SF Mono', ui-monospace, monospace;
@@ -271,14 +266,14 @@
 .countdownTooltipLabel {
   font-size: 9px;
   font-weight: 500;
-  color: #808080;
+  color: var(--t-fg-sub);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .countdownTooltipDate {
   font-size: 9px;
-  color: #606060;
+  color: var(--t-fg-muted);
   margin-top: 2px;
 }
 
@@ -335,7 +330,7 @@
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #999999;
+  color: var(--t-fg-sub);
   font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
@@ -393,7 +388,7 @@
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #808080;
+  color: var(--t-fg-sub);
   font-size: 10px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -427,11 +422,11 @@
 }
 
 .addressValue {
-  color: #999999;
+  color: var(--t-fg-sub);
 }
 
 .addressBadge:hover .addressValue {
-  color: #ffffff;
+  color: var(--t-fg);
 }
 
 .addressBadgeCopied .addressValue {
@@ -506,7 +501,7 @@
 .statValue {
   font-size: 13px;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--t-fg);
   font-variant-numeric: tabular-nums;
   font-family: var(--font-geist-mono), 'Geist Mono', 'SF Mono', ui-monospace, monospace;
 }
@@ -529,7 +524,7 @@
   border-radius: 6px;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #666666;
+  color: var(--t-fg-muted);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -537,7 +532,7 @@
 .actionBtn:hover {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.12);
-  color: #ffffff;
+  color: var(--t-fg);
 }
 
 .actionBtn svg {
@@ -568,7 +563,7 @@
   border-radius: 6px;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #666666;
+  color: var(--t-fg-muted);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -674,7 +669,7 @@
   height: 28px;
   border-radius: 6px;
   background: transparent;
-  color: #666666;
+  color: var(--t-fg-muted);
   cursor: pointer;
   transition: all 0.2s ease;
   text-decoration: none;
@@ -682,7 +677,7 @@
 
 .socialLink:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  color: var(--t-fg);
   transform: translateY(-1px);
 }
 
@@ -705,6 +700,72 @@
   background: rgba(59, 130, 246, 0.15);
   border-color: rgba(59, 130, 246, 0.3);
   color: #93c5fd;
+}
+
+/* ── On-Chain Market Stats Bar ── */
+.marketStatsBar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 5px 12px;
+  border-top: 1px solid var(--t-stroke-sub);
+  background: var(--t-inset);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  z-index: 1;
+  position: relative;
+}
+
+.marketStatsBar::-webkit-scrollbar {
+  display: none;
+}
+
+.marketStatItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.marketStatLabel {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--t-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-family: var(--font-geist-mono), 'Geist Mono', 'SF Mono', ui-monospace, monospace;
+}
+
+.marketStatValue {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t-fg);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-geist-mono), 'Geist Mono', 'SF Mono', ui-monospace, monospace;
+}
+
+.marketStatPositive {
+  color: #22c55e;
+}
+
+.marketStatNegative {
+  color: #ef4444;
+}
+
+.marketStatMuted {
+  color: var(--t-dot);
+  font-weight: 500;
+  font-size: 10px;
+}
+
+.marketStatDivider {
+  width: 1px;
+  height: 14px;
+  background: var(--t-stroke-sub);
+  flex-shrink: 0;
 }
 
 /* ── Always-Visible Description Bar with Fade ── */
@@ -763,7 +824,7 @@
 .descriptionText {
   font-size: 11px;
   font-weight: 400;
-  color: #666666;
+  color: var(--t-fg-muted);
   line-height: 1.6;
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -775,7 +836,7 @@
 }
 
 .descriptionBarExpanded .descriptionText {
-  color: #a0a0a0;
+  color: var(--t-fg-sub);
   opacity: 1;
 }
 
@@ -789,8 +850,8 @@
     to right,
     transparent 0%,
     transparent 40%,
-    rgba(0, 0, 0, 0.6) 70%,
-    rgba(0, 0, 0, 0.95) 100%
+    color-mix(in srgb, var(--t-card) 60%, transparent) 70%,
+    var(--t-card) 100%
   );
   pointer-events: none;
   opacity: 1;
@@ -809,7 +870,7 @@
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #555555;
+  color: var(--t-fg-muted);
   font-size: 10px;
   font-weight: 500;
   cursor: pointer;
@@ -826,7 +887,7 @@
 .descriptionToggle:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.12);
-  color: #888888;
+  color: var(--t-fg-sub);
   transform: translateY(-1px);
 }
 
@@ -911,6 +972,23 @@
   
   .socials {
     display: none;
+  }
+
+  .marketStatsBar {
+    padding: 4px 8px;
+  }
+
+  .marketStatItem {
+    padding: 0 6px;
+    gap: 4px;
+  }
+
+  .marketStatLabel {
+    font-size: 9px;
+  }
+
+  .marketStatValue {
+    font-size: 10px;
   }
   
   .descriptionBar {

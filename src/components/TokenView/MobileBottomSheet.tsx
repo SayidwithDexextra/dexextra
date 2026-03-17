@@ -151,7 +151,7 @@ export default function MobileBottomSheet({
       />
       <div
         ref={sheetRef}
-        className={`fixed bottom-0 left-0 right-0 z-[61] ${heightClass} bg-[#0A0A0A] rounded-t-xl border-t border-[#222222] flex flex-col transition-transform duration-300 ease-out ${
+        className={`fixed bottom-0 left-0 right-0 z-[61] ${heightClass} bg-t-page rounded-t-xl border-t border-t-stroke flex flex-col transition-transform duration-300 ease-out ${
           isOpen ? 'translate-y-0' : 'translate-y-full'
         }`}
       >
@@ -163,14 +163,14 @@ export default function MobileBottomSheet({
           className="flex-shrink-0 cursor-grab active:cursor-grabbing"
         >
           <div className="flex justify-center pt-2.5 pb-1">
-            <div className="w-8 h-1 rounded-full bg-[#444444]" />
+            <div className="w-8 h-1 rounded-full bg-t-dot" />
           </div>
           {title && (
-            <div className="flex items-center justify-between px-4 pb-2.5 border-b border-[#1a1a1a]">
-              <h3 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">{title}</h3>
+            <div className="flex items-center justify-between px-4 pb-2.5 border-b border-t-stroke-sub">
+              <h3 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">{title}</h3>
               <button
                 onClick={onClose}
-                className="w-6 h-6 flex items-center justify-center rounded-full text-[#606060] hover:text-white hover:bg-[#222222] transition-colors"
+                className="w-6 h-6 flex items-center justify-center rounded-full text-t-fg-muted hover:text-t-fg hover:bg-t-stroke transition-colors"
               >
                 <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <line x1="18" y1="6" x2="6" y2="18" />

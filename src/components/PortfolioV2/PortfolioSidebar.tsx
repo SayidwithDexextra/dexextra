@@ -445,7 +445,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 			<button
 				aria-label="Close portfolio sidebar"
 				className={`absolute inset-0 transition-opacity duration-300 ${entered ? 'opacity-100' : 'opacity-0'}`}
-				style={{ background: 'rgba(0,0,0,0.6)' }}
+				style={{ background: 'var(--t-overlay)' }}
 				onClick={() => {
 					if (sidebarView !== 'portfolio') {
 						setSidebarView('portfolio')
@@ -466,25 +466,25 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 					entered ? 'translate-x-0' : 'translate-x-full',
 				].join(' ')}
 			>
-				<div className="h-full flex flex-col rounded-l-md border border-[#1A1A1A] bg-gradient-to-b from-[#141414] to-[#0F0F0F] overflow-hidden shadow-2xl">
+				<div className="h-full flex flex-col rounded-l-md border border-t-stroke-sub overflow-hidden shadow-2xl" style={{ background: 'linear-gradient(to bottom, var(--t-gradient-from), var(--t-gradient-to))' }}>
 					{/* Header */}
-						<div className="border-b border-[#1A1A1A]">
+						<div className="border-b border-t-stroke-sub">
 						{/* Gradient banner + profile icon */}
 						<div className="relative h-[112px] overflow-hidden">
 							<div
 								className="absolute inset-0"
 								style={{
-									background: `
-										radial-gradient(420px 140px at 20% 30%, rgba(74,158,255,0.16), transparent 60%),
-										radial-gradient(380px 140px at 80% 40%, rgba(16,185,129,0.10), transparent 62%),
-										linear-gradient(180deg, #141414 0%, #0F0F0F 100%)
-									`,
+								background: `
+									radial-gradient(420px 140px at 20% 30%, rgba(74,158,255,0.16), transparent 60%),
+									radial-gradient(380px 140px at 80% 40%, rgba(16,185,129,0.10), transparent 62%),
+									linear-gradient(180deg, var(--t-gradient-from) 0%, var(--t-gradient-to) 100%)
+								`,
 								}}
 							/>
-							<div className="absolute inset-0" style={{ boxShadow: 'inset 0 -1px 0 rgba(34,34,34,0.9)' }} />
+							<div className="absolute inset-0" style={{ boxShadow: 'inset 0 -1px 0 var(--t-stroke)' }} />
 
 							<div className="absolute left-3 bottom-3">
-								<div className="w-14 h-14 rounded-full overflow-hidden border border-[#222222] bg-[#0F0F0F] shadow-2xl">
+								<div className="w-14 h-14 rounded-full overflow-hidden border border-t-stroke bg-t-card shadow-2xl">
 									<Image
 										src={profileImageUrl}
 										alt={profileLabel}
@@ -499,8 +499,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						{/* Header controls row */}
 						<div className="flex items-center justify-between px-2.5 pt-2.5 pb-0">
 							<div className="flex items-center gap-2 min-w-0 flex-1">
-								<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWalletConnected ? (isHealthy ? 'bg-green-400' : 'bg-yellow-400') : 'bg-[#404040]'}`} />
-								<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide truncate">
+								<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWalletConnected ? (isHealthy ? 'bg-green-400' : 'bg-yellow-400') : 'bg-t-dot'}`} />
+								<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide truncate">
 									Portfolio
 								</h4>
 							</div>
@@ -508,7 +508,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 							<div className="flex items-center gap-2">
 								<button
 									onClick={onClose}
-									className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded hover:text-[#9CA3AF] transition-all duration-200"
+									className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded hover:text-t-fg-label transition-all duration-200"
 								>
 									Close
 								</button>
@@ -516,7 +516,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						</div>
 
 						{/* Tab navigation */}
-						<div className="px-2.5 border-b border-[#1A1A1A]">
+						<div className="px-2.5 border-b border-t-stroke-sub">
 							<div className="flex items-center gap-3 overflow-x-auto scrollbar-none">
 								{([
 									{ id: 'portfolio' as const, label: 'Overview' },
@@ -535,15 +535,15 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											className={[
 												'relative py-2.5 text-[11px] font-medium whitespace-nowrap transition-colors duration-200',
 												isDisabled
-													? 'text-[#404040] cursor-not-allowed'
-													: isActive ? 'text-white' : 'text-[#808080] hover:text-white',
+													? 'text-t-dot cursor-not-allowed'
+													: isActive ? 'text-t-fg' : 'text-t-fg-sub hover:text-t-fg',
 											].join(' ')}
 										>
 											{t.label}
 											<span
 												className={[
 													'pointer-events-none absolute left-0 right-0 -bottom-[1px] h-[2px] rounded-full transition-opacity duration-200',
-													isActive ? 'bg-white/80 opacity-100' : 'opacity-0',
+													isActive ? 'bg-t-fg/80 opacity-100' : 'opacity-0',
 												].join(' ')}
 											/>
 										</button>
@@ -569,7 +569,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						{/* Overview */}
 						<div className="mb-3" data-walkthrough="portfolio-sidebar-overview">
 							<div className="flex items-center justify-between mb-2">
-								<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Overview</h4>
+								<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Overview</h4>
 								<div className="flex items-center gap-2">
 									<button
 										type="button"
@@ -585,7 +585,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 												}
 											}, 350)
 										}}
-										className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-[#222222] text-[#808080] hover:border-[#4a9eff] hover:bg-[#4a9eff]/10 hover:text-[#4a9eff]"
+										className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-t-stroke text-t-fg-sub hover:border-[#4a9eff] hover:bg-[#4a9eff]/10 hover:text-[#4a9eff]"
 										aria-label="Deposit funds"
 									>
 										<Wallet className="w-3.5 h-3.5" />
@@ -595,7 +595,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											<button
 												type="button"
 												onClick={openMagicWallet}
-												className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-[#222222] text-[#808080] hover:border-[#7C3AED] hover:bg-[#7C3AED]/10 hover:text-[#C4B5FD]"
+												className="h-7 px-2.5 rounded-md border flex items-center justify-center gap-1.5 transition-all duration-200 border-t-stroke text-t-fg-sub hover:border-[#7C3AED] hover:bg-[#7C3AED]/10 hover:text-[#C4B5FD]"
 												aria-label="Open Magic wallet"
 												title="Open Magic wallet"
 											>
@@ -611,10 +611,10 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										className={[
 											'w-7 h-7 rounded-md border flex items-center justify-center transition-all duration-200',
 											!isWalletConnected || !walletAddress
-												? 'border-[#222222] text-[#606060] opacity-60 cursor-not-allowed'
+												? 'border-t-stroke text-t-fg-muted opacity-60 cursor-not-allowed'
 												: walletCopied
 													? 'border-green-500/30 text-green-400 bg-green-500/5'
-													: 'border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white',
+													: 'border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg',
 										].join(' ')}
 									>
 										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -639,27 +639,27 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											/>
 										</svg>
 									</button>
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded font-mono">
+									<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded font-mono">
 										{isWalletConnected ? (walletAddress ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}` : '—') : '—'}
 									</div>
 								</div>
 							</div>
 
-							<div className="rounded-md border border-[#222222] bg-[#0F0F0F] overflow-hidden">
+							<div className="rounded-md border border-t-stroke bg-t-card overflow-hidden">
 								<div className="grid grid-cols-2">
 									{metrics.map((m, idx) => {
 										const tone =
-											m.valueTone === 'pos' ? 'text-green-400' : m.valueTone === 'neg' ? 'text-red-400' : 'text-white'
+											m.valueTone === 'pos' ? 'text-green-400' : m.valueTone === 'neg' ? 'text-red-400' : 'text-t-fg'
 										return (
 											<div
 												key={m.label}
 												className={[
 													'px-4 py-3 min-w-0',
-													idx % 2 === 1 ? 'border-l border-[#1A1A1A]' : '',
-													idx >= 2 ? 'border-t border-[#1A1A1A]' : '',
+													idx % 2 === 1 ? 'border-l border-t-stroke-sub' : '',
+													idx >= 2 ? 'border-t border-t-stroke-sub' : '',
 												].join(' ')}
 											>
-												<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">{m.label}</div>
+												<div className="text-[11px] leading-none text-t-fg-muted tracking-tight">{m.label}</div>
 												<div className={['mt-2 text-[14px] leading-none font-medium tracking-tight', tone, m.valueClassName || ''].join(' ')}>
 													{m.value}
 												</div>
@@ -672,24 +672,24 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 
 						{/* Not connected */}
 						{!isWalletConnected ? (
-							<div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+							<div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
 								<div className="flex items-center justify-between p-2.5">
 									<div className="flex items-center gap-2 min-w-0 flex-1">
-										<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+										<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
 										<div className="flex items-center gap-1.5 min-w-0 flex-1">
-											<span className="text-[11px] font-medium text-[#808080] truncate">
+											<span className="text-[11px] font-medium text-t-fg-sub truncate">
 												Connect your wallet to view portfolio data
 											</span>
 										</div>
 									</div>
-									<svg className="w-3 h-3 text-[#404040] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<svg className="w-3 h-3 text-t-dot flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
 									</svg>
 								</div>
 								<div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-									<div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+									<div className="px-2.5 pb-2 border-t border-t-stroke-sub">
 										<div className="text-[9px] pt-1.5">
-											<span className="text-[#606060]">This drawer mirrors the Watchlist styling and updates live when connected.</span>
+											<span className="text-t-fg-muted">This drawer mirrors the Watchlist styling and updates live when connected.</span>
 										</div>
 									</div>
 								</div>
@@ -700,8 +700,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						{isWalletConnected ? (
 							<div className="mb-3">
 								<div className="flex items-center justify-between mb-2">
-									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Positions</h4>
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+									<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Positions</h4>
+									<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
 										{Array.isArray(positions) ? positions.length : 0}
 									</div>
 								</div>
@@ -709,31 +709,31 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								{showPositionsSkeleton ? (
 									<div className="space-y-1">
 										{Array.from({ length: 3 }).map((_, i) => (
-											<div key={i} className="bg-[#0F0F0F] rounded-md border border-[#222222]">
+											<div key={i} className="bg-t-card rounded-md border border-t-stroke">
 												<div className="flex items-center justify-between p-2.5">
 													<div className="flex items-center gap-2 min-w-0 flex-1">
 														<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
-														<div className="w-6 h-6 bg-[#2A2A2A] rounded-full animate-pulse flex-shrink-0" />
+														<div className="w-6 h-6 bg-t-skeleton rounded-full animate-pulse flex-shrink-0" />
 														<div className="flex items-center gap-1.5 min-w-0 flex-1">
-															<div className="w-16 h-3 bg-[#2A2A2A] rounded animate-pulse" />
+															<div className="w-16 h-3 bg-t-skeleton rounded animate-pulse" />
 														</div>
 													</div>
 													<div className="flex items-center gap-2">
-														<div className="w-12 h-3 bg-[#2A2A2A] rounded animate-pulse" />
-														<div className="w-10 h-3 bg-[#2A2A2A] rounded animate-pulse" />
+														<div className="w-12 h-3 bg-t-skeleton rounded animate-pulse" />
+														<div className="w-10 h-3 bg-t-skeleton rounded animate-pulse" />
 													</div>
 												</div>
 											</div>
 										))}
 									</div>
 								) : topPositionsToRender.length === 0 ? (
-									<div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+									<div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
 										<div className="flex items-center justify-between p-2.5">
 											<div className="flex items-center gap-2 min-w-0 flex-1">
-												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-												<span className="text-[11px] font-medium text-[#808080]">No open positions</span>
+												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+												<span className="text-[11px] font-medium text-t-fg-sub">No open positions</span>
 											</div>
-											<svg className="w-3 h-3 text-[#404040]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<svg className="w-3 h-3 text-t-dot" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 												<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 											</svg>
 										</div>
@@ -761,12 +761,12 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 													type="button"
 													key={String(p?.id || `${displaySymbol}-${side}`)}
 													onClick={() => navigateToToken(routeId)}
-													className="group w-full text-left bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+													className="group w-full text-left bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200"
 												>
 													<div className="flex items-center justify-between p-2.5">
 														<div className="flex items-center gap-2 min-w-0 flex-1">
 															<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotTone}`} />
-															<div className="w-6 h-6 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0">
+															<div className="w-6 h-6 rounded-full overflow-hidden bg-t-skeleton flex-shrink-0">
 																<Image
 																	src={iconSrc}
 																	alt={displaySymbol}
@@ -777,10 +777,10 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 															</div>
 															<div className="min-w-0 flex-1">
 																<div className="flex items-center gap-1.5 min-w-0">
-																	<span className="text-[11px] font-medium text-white truncate">{displayName}</span>
-																	<span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">{side || '—'}</span>
+																	<span className="text-[11px] font-medium text-t-fg truncate">{displayName}</span>
+																	<span className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">{side || '—'}</span>
 																</div>
-																<div className="text-[10px] text-[#606060] font-mono truncate">
+																<div className="text-[10px] text-t-fg-muted font-mono truncate">
 																	{displaySymbol} · {size.toFixed(2)} @ {mark > 0 ? formatUsd(mark, 2) : '—'}
 																</div>
 															</div>
@@ -792,15 +792,15 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 															<span className={`text-[10px] font-medium ${isPos ? 'text-green-400' : 'text-red-400'} font-mono`}>
 																{formatPct(pnlPct, 1)}
 															</span>
-															<svg className="w-3 h-3 text-[#404040] opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+															<svg className="w-3 h-3 text-t-dot opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 																<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
 															</svg>
 														</div>
 													</div>
 													<div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-														<div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+														<div className="px-2.5 pb-2 border-t border-t-stroke-sub">
 															<div className="text-[9px] pt-1.5">
-																<span className="text-[#606060]">
+																<span className="text-t-fg-muted">
 																	Notional: {formatUsd(Math.abs(size) * Math.max(0, mark), 2)} · Leverage: {clamp(Number(p?.leverage || 1), 1, 100)}x
 																</span>
 															</div>
@@ -818,32 +818,32 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						{isWalletConnected ? (
 							<div className="mb-1">
 								<div className="flex items-center justify-between mb-2">
-									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Orders</h4>
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+									<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Orders</h4>
+									<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
 										{Array.isArray(sidebarOrders.orders) ? sidebarOrders.orders.length : 0}
 									</div>
 								</div>
 
 								{showOrdersSkeleton ? (
-									<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+									<div className="group bg-t-card rounded-md border border-t-stroke">
 										<div className="flex items-center justify-between p-2.5">
 											<div className="flex items-center gap-2 min-w-0 flex-1">
 												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
-												<span className="text-[11px] font-medium text-[#808080]">Loading orders…</span>
+												<span className="text-[11px] font-medium text-t-fg-sub">Loading orders…</span>
 											</div>
-											<div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+											<div className="w-8 h-1 bg-t-skeleton rounded-full overflow-hidden">
 												<div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
 											</div>
 										</div>
 									</div>
 								) : flatOrders.length === 0 ? (
-									<div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+									<div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
 										<div className="flex items-center justify-between p-2.5">
 											<div className="flex items-center gap-2 min-w-0 flex-1">
-												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-												<span className="text-[11px] font-medium text-[#808080]">No open orders</span>
+												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+												<span className="text-[11px] font-medium text-t-fg-sub">No open orders</span>
 											</div>
-											<svg className="w-3 h-3 text-[#404040]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<svg className="w-3 h-3 text-t-dot" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 												<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3" />
 												<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 											</svg>
@@ -860,11 +860,11 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 												type="button"
 												key={`${o.symbol}::${o.id}`}
 												onClick={() => navigateToToken(routeId)}
-												className="group w-full text-left bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+												className="group w-full text-left bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200"
 											>
 												<div className="flex items-center justify-between p-2.5">
 													<div className="flex items-center gap-2 min-w-0 flex-1">
-														<div className="w-6 h-6 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0">
+														<div className="w-6 h-6 rounded-full overflow-hidden bg-t-skeleton flex-shrink-0">
 															<Image
 																src={orderIconSrc}
 																alt={o.symbol}
@@ -876,17 +876,17 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 														<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${o.side === 'BUY' ? 'bg-green-400' : 'bg-red-400'}`} />
 														<div className="min-w-0 flex-1">
 															<div className="flex items-center gap-1.5 min-w-0">
-																<span className="text-[11px] font-medium text-white truncate">{o.symbol}</span>
+																<span className="text-[11px] font-medium text-t-fg truncate">{o.symbol}</span>
 																<span className={`text-[10px] font-medium ${o.side === 'BUY' ? 'text-green-400' : 'text-red-400'} font-mono`}>
 																	{o.side}
 																</span>
 															</div>
-															<div className="text-[10px] text-[#606060] font-mono truncate">
+															<div className="text-[10px] text-t-fg-muted font-mono truncate">
 																{Number.isFinite(o.price) && o.price > 0 ? `$${parseFloat(o.price.toFixed(4))}` : '—'} · {Number.isFinite(o.size) ? parseFloat(o.size.toFixed(6)) || '0' : '—'}
 															</div>
 														</div>
 													</div>
-													<svg className="w-3 h-3 text-[#404040] opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+													<svg className="w-3 h-3 text-t-dot opacity-0 group-hover:opacity-100 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 														<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
 													</svg>
 												</div>
@@ -912,40 +912,40 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						>
 							<div className="mb-3">
 								<div className="flex items-center justify-between mb-2">
-									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Fee Summary</h4>
-									<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+									<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Fee Summary</h4>
+									<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
 										{feeTotals.totalTrades} trades
 									</div>
 								</div>
 
 								{/* Totals card */}
-								<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+								<div className="bg-t-card rounded-md border border-t-stroke p-3 mb-2">
 									<div className="grid grid-cols-3 gap-3">
 										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
-											<LiveValue value={feeTotals.totalFeesUsdc} className="text-[14px] font-semibold text-white font-mono">
+											<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Total Fees</div>
+											<LiveValue value={feeTotals.totalFeesUsdc} className="text-[14px] font-semibold text-t-fg font-mono">
 												${feeTotals.totalFeesUsdc.toFixed(2)}
 											</LiveValue>
 										</div>
 										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Taker</div>
+											<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Taker</div>
 											<LiveValue value={feeTotals.takerFeesUsdc} className="text-[14px] font-semibold text-red-400 font-mono">
 												${feeTotals.takerFeesUsdc.toFixed(2)}
 											</LiveValue>
-											<div className="text-[9px] text-[#606060] mt-0.5">{feeTotals.takerTrades} trades</div>
+											<div className="text-[9px] text-t-fg-muted mt-0.5">{feeTotals.takerTrades} trades</div>
 										</div>
 										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Maker</div>
+											<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Maker</div>
 											<LiveValue value={feeTotals.makerFeesUsdc} className="text-[14px] font-semibold text-green-400 font-mono">
 												${feeTotals.makerFeesUsdc.toFixed(2)}
 											</LiveValue>
-											<div className="text-[9px] text-[#606060] mt-0.5">{feeTotals.makerTrades} trades</div>
+											<div className="text-[9px] text-t-fg-muted mt-0.5">{feeTotals.makerTrades} trades</div>
 										</div>
 									</div>
-									<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+									<div className="mt-2 pt-2 border-t border-t-stroke-sub grid grid-cols-2 gap-3">
 										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
-											<div className="text-[12px] font-medium text-[#9CA3AF] font-mono">
+											<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Volume</div>
+											<div className="text-[12px] font-medium text-t-fg-label font-mono">
 												${feeTotals.totalVolumeUsdc >= 1_000_000
 													? `${(feeTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
 													: feeTotals.totalVolumeUsdc >= 1000
@@ -954,8 +954,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											</div>
 										</div>
 										<div>
-											<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Avg Fee Rate</div>
-											<div className="text-[12px] font-medium text-[#9CA3AF] font-mono">
+											<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Avg Fee Rate</div>
+											<div className="text-[12px] font-medium text-t-fg-label font-mono">
 												{feeTotals.totalVolumeUsdc > 0
 													? `${((feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc) * 100).toFixed(3)}%`
 													: '—'}
@@ -966,24 +966,24 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 
 								{/* Recent fee history */}
 								<div className="flex items-center justify-between mb-2 mt-4">
-									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Recent Fees</h4>
+									<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Recent Fees</h4>
 								</div>
 
 								{feesLoading && recentFees.length === 0 ? (
-									<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+									<div className="group bg-t-card rounded-md border border-t-stroke">
 										<div className="flex items-center justify-between p-2.5">
 											<div className="flex items-center gap-2 min-w-0 flex-1">
 												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-yellow-400 animate-pulse" />
-												<span className="text-[11px] font-medium text-[#808080]">Loading fees…</span>
+												<span className="text-[11px] font-medium text-t-fg-sub">Loading fees…</span>
 											</div>
 										</div>
 									</div>
 								) : recentFees.length === 0 ? (
-									<div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+									<div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
 										<div className="flex items-center justify-between p-2.5">
 											<div className="flex items-center gap-2 min-w-0 flex-1">
-												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-												<span className="text-[11px] font-medium text-[#808080]">No fee history yet</span>
+												<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+												<span className="text-[11px] font-medium text-t-fg-sub">No fee history yet</span>
 											</div>
 										</div>
 									</div>
@@ -994,14 +994,14 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 												key={f.id}
 												id={f.id}
 												liveIds={feeLiveIds}
-												className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+												className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200"
 											>
 												<div className="flex items-center justify-between p-2">
 													<div className="flex items-center gap-2 min-w-0 flex-1">
 														<div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${f.fee_role === 'taker' ? 'bg-red-400' : 'bg-green-400'}`} />
 														<div className="min-w-0 flex-1">
 															<div className="flex items-center gap-1.5">
-																<span className="text-[11px] font-medium text-white truncate">
+																<span className="text-[11px] font-medium text-t-fg truncate">
 																	{f.market_id ? f.market_id.replace(/-/g, '/').toUpperCase().slice(0, 12) : 'Trade'}
 																</span>
 																<span className={`text-[9px] font-medium px-1 py-0.5 rounded ${
@@ -1012,7 +1012,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 																	{f.fee_role.toUpperCase()}
 																</span>
 															</div>
-															<div className="text-[9px] text-[#606060] font-mono">
+															<div className="text-[9px] text-t-fg-muted font-mono">
 																{f.created_at ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
 																{' · '}
 																${f.trade_notional >= 1000 ? `${(f.trade_notional / 1000).toFixed(1)}k` : f.trade_notional.toFixed(2)} notional
@@ -1037,7 +1037,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										router.push('/settings?tab=earnings')
 										onClose()
 									}}
-									className="w-full mt-3 text-center text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 py-1.5"
+									className="w-full mt-3 text-center text-[10px] text-t-fg-muted hover:text-t-fg-label transition-colors duration-200 py-1.5"
 								>
 									View full breakdown in Settings →
 								</button>
@@ -1059,39 +1059,39 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								{isProtocolRecipient && isActualProtocolAddress ? (
 									<>
 										<div className="flex items-center justify-between mb-2">
-											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Protocol Revenue</h4>
-											<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+											<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Protocol Revenue</h4>
+											<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
 												{protocolTotals.marketCount} market{protocolTotals.marketCount !== 1 ? 's' : ''}
 											</div>
 										</div>
 
-										<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+										<div className="bg-t-card rounded-md border border-t-stroke p-3 mb-2">
 											<div className="grid grid-cols-2 gap-3">
 												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol Earnings</div>
+													<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Protocol Earnings</div>
 													<LiveValue value={protocolTotals.totalProtocolEarningsUsdc} className="text-[16px] font-semibold text-green-400 font-mono">
 														${protocolTotals.totalProtocolEarningsUsdc.toFixed(2)}
 													</LiveValue>
-													<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
+													<div className="text-[9px] text-t-fg-muted mt-0.5">80% share</div>
 												</div>
 												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">To Market Owners</div>
-													<LiveValue value={protocolTotals.totalOwnerEarningsUsdc} className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+													<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">To Market Owners</div>
+													<LiveValue value={protocolTotals.totalOwnerEarningsUsdc} className="text-[16px] font-semibold text-t-fg-label font-mono">
 														${protocolTotals.totalOwnerEarningsUsdc.toFixed(2)}
 													</LiveValue>
-													<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
+													<div className="text-[9px] text-t-fg-muted mt-0.5">20% share</div>
 												</div>
 											</div>
-											<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+											<div className="mt-2 pt-2 border-t border-t-stroke-sub grid grid-cols-2 gap-3">
 												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
-													<LiveValue value={protocolTotals.totalFeesCollectedUsdc} className="text-[12px] font-medium text-white font-mono">
+													<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Total Fees</div>
+													<LiveValue value={protocolTotals.totalFeesCollectedUsdc} className="text-[12px] font-medium text-t-fg font-mono">
 														${protocolTotals.totalFeesCollectedUsdc.toFixed(2)}
 													</LiveValue>
 												</div>
 												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
-													<LiveValue value={protocolTotals.totalVolumeUsdc} className="text-[12px] font-medium text-white font-mono">
+													<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Volume</div>
+													<LiveValue value={protocolTotals.totalVolumeUsdc} className="text-[12px] font-medium text-t-fg font-mono">
 														${protocolTotals.totalVolumeUsdc >= 1_000_000
 															? `${(protocolTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
 															: protocolTotals.totalVolumeUsdc >= 1000
@@ -1103,8 +1103,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										</div>
 
 										{protocolMarkets.length > 0 && (
-											<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
-												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-2">Earnings by Market</div>
+											<div className="bg-t-card rounded-md border border-t-stroke p-3 mb-2">
+												<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-2">Earnings by Market</div>
 												<EarningsPieChart
 													slices={protocolMarkets.map((m): EarningsPieSlice => ({
 														label: m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…',
@@ -1118,15 +1118,15 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										)}
 
 										<div className="flex items-center justify-between mb-2 mt-4">
-											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
+											<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">By Market</h4>
 										</div>
 
 										{ownerLoading && protocolMarkets.length === 0 ? (
-											<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+											<div className="group bg-t-card rounded-md border border-t-stroke">
 												<div className="flex items-center justify-between p-2.5">
 													<div className="flex items-center gap-2 min-w-0 flex-1">
 														<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
-														<span className="text-[11px] font-medium text-[#808080]">Loading revenue…</span>
+														<span className="text-[11px] font-medium text-t-fg-sub">Loading revenue…</span>
 													</div>
 												</div>
 											</div>
@@ -1137,16 +1137,16 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 													return (
 													<div
 														key={`proto-${m.market_id}-${m.market_address}`}
-														className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}
+														className={`group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}
 													>
 														<div className="flex items-center justify-between p-2.5">
 															<div className="min-w-0 flex-1">
 																<div className="flex items-center gap-1.5">
-																	<span className="text-[11px] font-medium text-white truncate">
+																	<span className="text-[11px] font-medium text-t-fg truncate">
 																		{m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…'}
 																	</span>
 																</div>
-																<div className="text-[9px] text-[#606060] font-mono mt-0.5">
+																<div className="text-[9px] text-t-fg-muted font-mono mt-0.5">
 																	{m.total_fee_events} fees · ${m.total_volume_usdc >= 1000 ? `${(m.total_volume_usdc / 1000).toFixed(1)}k` : m.total_volume_usdc.toFixed(2)} vol
 																</div>
 															</div>
@@ -1154,7 +1154,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 																<LiveValue value={m.total_protocol_earnings_usdc} className="text-[12px] font-semibold text-green-400 font-mono">
 																	+${m.total_protocol_earnings_usdc.toFixed(2)}
 																</LiveValue>
-																<div className="text-[9px] text-[#606060] font-mono">
+																<div className="text-[9px] text-t-fg-muted font-mono">
 																	of ${m.total_fees_collected_usdc.toFixed(2)}
 																</div>
 															</div>
@@ -1171,48 +1171,48 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								{isMarketOwner ? (
 									<>
 									<div className={`flex items-center justify-between mb-2 ${isProtocolRecipient && isActualProtocolAddress ? 'mt-5' : ''}`}>
-										<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Owner Revenue</h4>
-										<div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+										<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Market Owner Revenue</h4>
+										<div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
 											{ownerTotals.marketCount} market{ownerTotals.marketCount !== 1 ? 's' : ''}
 										</div>
 									</div>
 
-									<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
+									<div className="bg-t-card rounded-md border border-t-stroke p-3 mb-2">
 										{isActualProtocolAddress ? (
 											<div className="grid grid-cols-2 gap-3">
 												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Owner Earnings</div>
+													<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Owner Earnings</div>
 													<LiveValue value={ownerTotals.totalOwnerEarningsUsdc} className="text-[16px] font-semibold text-green-400 font-mono">
 														${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}
 													</LiveValue>
-													<div className="text-[9px] text-[#606060] mt-0.5">20% share</div>
+													<div className="text-[9px] text-t-fg-muted mt-0.5">20% share</div>
 												</div>
 												<div>
-													<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Protocol</div>
-													<LiveValue value={ownerTotals.totalProtocolEarningsUsdc} className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+													<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Protocol</div>
+													<LiveValue value={ownerTotals.totalProtocolEarningsUsdc} className="text-[16px] font-semibold text-t-fg-label font-mono">
 														${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}
 													</LiveValue>
-													<div className="text-[9px] text-[#606060] mt-0.5">80% share</div>
+													<div className="text-[9px] text-t-fg-muted mt-0.5">80% share</div>
 												</div>
 											</div>
 										) : (
 											<div>
-												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Your Earnings</div>
+												<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Your Earnings</div>
 												<LiveValue value={ownerTotals.totalOwnerEarningsUsdc} className="text-[16px] font-semibold text-green-400 font-mono">
 													${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}
 												</LiveValue>
 											</div>
 										)}
-										<div className="mt-2 pt-2 border-t border-[#1A1A1A] grid grid-cols-2 gap-3">
+										<div className="mt-2 pt-2 border-t border-t-stroke-sub grid grid-cols-2 gap-3">
 											<div>
-												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Total Fees</div>
-												<LiveValue value={ownerTotals.totalFeesCollectedUsdc} className="text-[12px] font-medium text-white font-mono">
+												<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Total Fees</div>
+												<LiveValue value={ownerTotals.totalFeesCollectedUsdc} className="text-[12px] font-medium text-t-fg font-mono">
 													${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}
 												</LiveValue>
 											</div>
 											<div>
-												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-0.5">Volume</div>
-												<LiveValue value={ownerTotals.totalVolumeUsdc} className="text-[12px] font-medium text-white font-mono">
+												<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-0.5">Volume</div>
+												<LiveValue value={ownerTotals.totalVolumeUsdc} className="text-[12px] font-medium text-t-fg font-mono">
 													${ownerTotals.totalVolumeUsdc >= 1_000_000
 														? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
 														: ownerTotals.totalVolumeUsdc >= 1000
@@ -1224,8 +1224,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 									</div>
 
 										{ownerMarkets.length > 0 && (
-											<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3 mb-2">
-												<div className="text-[9px] text-[#606060] uppercase tracking-wide mb-2">Earnings by Market</div>
+											<div className="bg-t-card rounded-md border border-t-stroke p-3 mb-2">
+												<div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-2">Earnings by Market</div>
 												<EarningsPieChart
 													slices={ownerMarkets.map((m): EarningsPieSlice => ({
 														label: m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…',
@@ -1239,15 +1239,15 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										)}
 
 										<div className="flex items-center justify-between mb-2 mt-4">
-											<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
+											<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">By Market</h4>
 										</div>
 
 										{ownerLoading && ownerMarkets.length === 0 ? (
-											<div className="group bg-[#0F0F0F] rounded-md border border-[#222222]">
+											<div className="group bg-t-card rounded-md border border-t-stroke">
 												<div className="flex items-center justify-between p-2.5">
 													<div className="flex items-center gap-2 min-w-0 flex-1">
 														<div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
-														<span className="text-[11px] font-medium text-[#808080]">Loading revenue…</span>
+														<span className="text-[11px] font-medium text-t-fg-sub">Loading revenue…</span>
 													</div>
 												</div>
 											</div>
@@ -1258,16 +1258,16 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 													return (
 													<div
 														key={`owner-${m.market_id}-${m.market_address}`}
-														className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}
+														className={`group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}
 													>
 														<div className="flex items-center justify-between p-2.5">
 															<div className="min-w-0 flex-1">
 																<div className="flex items-center gap-1.5">
-																	<span className="text-[11px] font-medium text-white truncate">
+																	<span className="text-[11px] font-medium text-t-fg truncate">
 																		{m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase().slice(0, 14) : m.market_address.slice(0, 10) + '…'}
 																	</span>
 																</div>
-																<div className="text-[9px] text-[#606060] font-mono mt-0.5">
+																<div className="text-[9px] text-t-fg-muted font-mono mt-0.5">
 																	{m.total_fee_events} fees · ${m.total_volume_usdc >= 1000 ? `${(m.total_volume_usdc / 1000).toFixed(1)}k` : m.total_volume_usdc.toFixed(2)} vol
 																</div>
 															</div>
@@ -1275,7 +1275,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 																<LiveValue value={m.total_owner_earnings_usdc} className="text-[12px] font-semibold text-green-400 font-mono">
 																	+${m.total_owner_earnings_usdc.toFixed(2)}
 																</LiveValue>
-																<div className="text-[9px] text-[#606060] font-mono">
+																<div className="text-[9px] text-t-fg-muted font-mono">
 																	of ${m.total_fees_collected_usdc.toFixed(2)}
 																</div>
 															</div>
@@ -1295,7 +1295,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										router.push('/settings?tab=markets')
 										onClose()
 									}}
-									className="w-full mt-3 text-center text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 py-1.5"
+									className="w-full mt-3 text-center text-[10px] text-t-fg-muted hover:text-t-fg-label transition-colors duration-200 py-1.5"
 								>
 									View in My Markets →
 								</button>
@@ -1314,27 +1314,27 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 						>
 							<div className="mb-3">
 								<div className="flex items-center justify-between mb-2">
-									<h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Withdraw Collateral</h4>
+									<h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Withdraw Collateral</h4>
 								</div>
 
 								{/* Balance cards */}
-								<div className="rounded-md border border-[#222222] bg-[#0F0F0F] overflow-hidden mb-3">
+								<div className="rounded-md border border-t-stroke bg-t-card overflow-hidden mb-3">
 									<div className="grid grid-cols-2">
 										<div className="px-4 py-3 min-w-0">
-											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Withdrawable</div>
-											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
+											<div className="text-[11px] leading-none text-t-fg-muted tracking-tight">Withdrawable</div>
+											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-t-fg font-mono">
 												{totalWithdrawableNum.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
 											</div>
 										</div>
-										<div className="px-4 py-3 min-w-0 border-l border-[#1A1A1A]">
-											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Total Collateral</div>
-											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
+										<div className="px-4 py-3 min-w-0 border-l border-t-stroke-sub">
+											<div className="text-[11px] leading-none text-t-fg-muted tracking-tight">Total Collateral</div>
+											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-t-fg font-mono">
 												{(parseFloat(coreVault?.totalCollateral || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
 											</div>
 										</div>
-										<div className="px-4 py-3 min-w-0 border-t border-[#1A1A1A] col-span-2">
-											<div className="text-[11px] leading-none text-[#7A7A7A] tracking-tight">Available (Trading)</div>
-											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-white font-mono">
+										<div className="px-4 py-3 min-w-0 border-t border-t-stroke-sub col-span-2">
+											<div className="text-[11px] leading-none text-t-fg-muted tracking-tight">Available (Trading)</div>
+											<div className="mt-2 text-[14px] leading-none font-medium tracking-tight text-t-fg font-mono">
 												{(parseFloat(coreVault?.availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}
 											</div>
 										</div>
@@ -1342,8 +1342,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 								</div>
 
 								{/* Amount input */}
-								<div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
-									<label className="block text-[11px] font-medium text-[#808080] mb-2">
+								<div className="rounded-md border border-t-stroke bg-t-card p-4">
+									<label className="block text-[11px] font-medium text-t-fg-sub mb-2">
 										Amount (USDC)
 									</label>
 									<div className="flex items-center gap-2">
@@ -1355,12 +1355,12 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											placeholder="0.00"
 											value={withdrawAmount}
 											onChange={(e) => setWithdrawAmount(e.target.value)}
-											className="w-full rounded-md px-3 py-2.5 text-[12px] border outline-none font-mono transition-colors duration-200 focus:border-[#333333]"
-											style={{ background: '#141414', color: '#E5E7EB', borderColor: '#222222' }}
+											className="w-full rounded-md px-3 py-2.5 text-[12px] border outline-none font-mono transition-colors duration-200 focus:border-t-stroke-hover"
+											style={{ background: 'var(--t-inset)', color: 'var(--t-fg)', borderColor: 'var(--t-stroke)' }}
 										/>
 										<button
 											onClick={() => setWithdrawAmount(String(totalWithdrawableNum))}
-											className="text-[10px] px-2.5 py-2 rounded-md border border-[#222222] bg-[#141414] text-[#9CA3AF] hover:text-white hover:border-[#333333] transition-all duration-200 whitespace-nowrap"
+											className="text-[10px] px-2.5 py-2 rounded-md border border-t-stroke bg-t-elevated text-t-fg-label hover:text-t-fg hover:border-t-stroke-hover transition-all duration-200 whitespace-nowrap"
 										>
 											Max
 										</button>
@@ -1391,8 +1391,8 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 										className={[
 											'w-full mt-4 text-[11px] font-medium rounded-md px-3 py-2.5 border transition-all duration-200',
 											!canWithdraw || coreVault.isLoading || withdrawSubmitting
-												? 'bg-[#141414] border-[#222222] text-[#606060] cursor-not-allowed'
-												: 'bg-[#141414] border-[#222222] text-white hover:border-[#ef4444] hover:bg-[#ef4444]/10 hover:text-[#ef4444]',
+												? 'bg-t-elevated border-t-stroke text-t-fg-muted cursor-not-allowed'
+												: 'bg-t-elevated border-t-stroke text-t-fg hover:border-[#ef4444] hover:bg-[#ef4444]/10 hover:text-[#ef4444]',
 										].join(' ')}
 									>
 										{withdrawSubmitting ? 'Processing…' : 'Withdraw'}
@@ -1402,26 +1402,26 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 
 							{/* Transaction History */}
 							<div className="mt-5">
-								<h3 className="text-[16px] font-semibold text-white tracking-tight mb-3">Transaction History</h3>
+								<h3 className="text-[16px] font-semibold text-t-fg tracking-tight mb-3">Transaction History</h3>
 
 								{txHistoryLoading ? (
 									<div className="space-y-1.5">
 										{Array.from({ length: 4 }).map((_, i) => (
-											<div key={i} className="bg-[#0F0F0F] rounded-md border border-[#222222] p-3">
+											<div key={i} className="bg-t-card rounded-md border border-t-stroke p-3">
 												<div className="flex items-center gap-2">
-													<div className="w-7 h-7 bg-[#2A2A2A] rounded-full animate-pulse flex-shrink-0" />
+													<div className="w-7 h-7 bg-t-skeleton rounded-full animate-pulse flex-shrink-0" />
 													<div className="flex-1 space-y-1.5">
-														<div className="w-24 h-3 bg-[#2A2A2A] rounded animate-pulse" />
-														<div className="w-16 h-2.5 bg-[#1A1A1A] rounded animate-pulse" />
+														<div className="w-24 h-3 bg-t-skeleton rounded animate-pulse" />
+														<div className="w-16 h-2.5 bg-t-inset rounded animate-pulse" />
 													</div>
-													<div className="w-16 h-3 bg-[#2A2A2A] rounded animate-pulse" />
+													<div className="w-16 h-3 bg-t-skeleton rounded animate-pulse" />
 												</div>
 											</div>
 										))}
 									</div>
 								) : txHistory.length === 0 ? (
-									<div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-4 text-center">
-										<span className="text-[11px] text-[#606060]">No transactions yet</span>
+									<div className="bg-t-card rounded-md border border-t-stroke p-4 text-center">
+										<span className="text-[11px] text-t-fg-muted">No transactions yet</span>
 									</div>
 								) : (
 									<div className="space-y-1">
@@ -1436,7 +1436,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 											return (
 												<div
 													key={tx.id}
-													className="group bg-[#0F0F0F] hover:bg-[#141414] rounded-md border border-[#222222] hover:border-[#2A2A2A] transition-all duration-200 p-3"
+													className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-3"
 												>
 													<div className="flex items-center gap-2.5">
 														<div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${isDeposit ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
@@ -1446,10 +1446,10 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 															}
 														</div>
 														<div className="flex-1 min-w-0">
-															<span className="text-[11px] font-medium text-white">
+															<span className="text-[11px] font-medium text-t-fg">
 																{isDeposit ? 'Deposit' : 'Withdrawal'}
 															</span>
-															<div className="text-[10px] text-[#505050] font-mono mt-0.5">
+															<div className="text-[10px] text-t-fg-muted font-mono mt-0.5">
 																{dateStr}
 															</div>
 														</div>
@@ -1457,7 +1457,7 @@ export default function PortfolioSidebar({ isOpen, onClose }: PortfolioSidebarPr
 															<span className={`text-[12px] font-medium font-mono ${isDeposit ? 'text-green-400' : 'text-red-400'}`}>
 																{isDeposit ? '+' : '−'}{Number(tx.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
 															</span>
-															<div className="text-[9px] text-[#505050] mt-0.5">{tx.token}</div>
+															<div className="text-[9px] text-t-fg-muted mt-0.5">{tx.token}</div>
 														</div>
 													</div>
 												</div>

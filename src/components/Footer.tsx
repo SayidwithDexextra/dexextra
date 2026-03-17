@@ -65,7 +65,7 @@ const Footer: React.FC = () => {
   } = useETHPrice();
 
   const { rankedSymbols } = useActiveMarkets();
-  const { theme } = useTheme();
+  const { theme, toggleTheme, canSwitchTheme } = useTheme();
   const { walletData } = useWallet() as any;
   const walletAddress: string | null = walletData?.address || null;
   const deploymentOverlay = useDeploymentOverlay();
@@ -93,9 +93,21 @@ const Footer: React.FC = () => {
         onClick={() => deploymentOverlay.minimize()}
         title={msg}
         aria-label="Show deployment progress"
-        className="group relative inline-flex items-center justify-center rounded border border-[#222222] bg-[#0F0F0F] px-2 py-1 transition-all duration-200 hover:border-[#333333] hover:bg-[#1A1A1A] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/30 cursor-pointer"
+        className="group relative inline-flex items-center justify-center rounded border px-2 py-1 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/30 cursor-pointer"
+        style={{
+          borderColor: 'var(--t-chrome-border-sub)',
+          backgroundColor: 'var(--t-chrome)',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = 'var(--t-chrome-border)';
+          e.currentTarget.style.backgroundColor = 'var(--t-chrome-hover)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = 'var(--t-chrome-border-sub)';
+          e.currentTarget.style.backgroundColor = 'var(--t-chrome)';
+        }}
       >
-        <div className="w-14 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+        <div className="w-14 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--t-chrome-surface)' }}>
           <div
             className={`h-full bg-blue-500 transition-all duration-300 ${isRunning ? 'animate-pulse' : ''}`}
             style={{ width: `${pct}%` }}
@@ -379,14 +391,14 @@ const Footer: React.FC = () => {
       style={{
         height: '48px',
         background: `
-          radial-gradient(circle at 1px 1px, rgba(255,255,255,0.15) 1px, transparent 0),
-          radial-gradient(circle at 3px 3px, rgba(255,255,255,0.1) 1px, transparent 0),
-          #000000
+          radial-gradient(circle at 1px 1px, var(--t-chrome-dot-1) 1px, transparent 0),
+          radial-gradient(circle at 3px 3px, var(--t-chrome-dot-2) 1px, transparent 0),
+          var(--t-chrome-base)
         `,
         backgroundSize: '4px 4px, 8px 8px',
         backgroundPosition: '0 0, 0 0',
         padding: '0 16px',
-        borderTop: '1px solid #333333',
+        borderTop: '1px solid var(--t-chrome-border)',
         fontFamily: 'system-ui, -apple-system, sans-serif',
         left: `${pathname?.startsWith('/token/') ? 52 : 60}px`,
         width: `calc(100vw - ${pathname?.startsWith('/token/') ? 52 : 60}px)`
@@ -436,17 +448,17 @@ const Footer: React.FC = () => {
             padding: '4px 8px',
             fontSize: '12px',
             fontWeight: '400',
-            color: '#FFFFFF',
+            color: 'var(--t-chrome-fg)',
             textDecoration: 'none',
             cursor: 'pointer',
             transition: 'color 0.2s ease, opacity 0.2s ease',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = '#CCCCCC';
+            e.currentTarget.style.color = 'var(--t-chrome-fg-sub)';
             e.currentTarget.style.opacity = '0.95';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = '#FFFFFF';
+            e.currentTarget.style.color = 'var(--t-chrome-fg)';
             e.currentTarget.style.opacity = '1';
           }}
         >
@@ -480,7 +492,7 @@ const Footer: React.FC = () => {
               padding: '4px 8px',
               fontSize: '12px',
               fontWeight: '400',
-              color: isWatchlistOpen ? '#CCCCCC' : '#FFFFFF',
+              color: isWatchlistOpen ? 'var(--t-chrome-fg-sub)' : 'var(--t-chrome-fg)',
               background: 'none',
               border: 'none',
               cursor: 'pointer',
@@ -515,13 +527,13 @@ const Footer: React.FC = () => {
             padding: '4px 8px',
             fontSize: '14px',
             fontWeight: '400',
-            color: '#FFFFFF',
+            color: 'var(--t-chrome-fg)',
             textDecoration: 'none',
             cursor: 'pointer',
             transition: 'color 0.2s ease',
           }}
-          onMouseEnter={(e) => e.currentTarget.style.color = '#CCCCCC'}
-          onMouseLeave={(e) => e.currentTarget.style.color = '#FFFFFF'}
+          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--t-chrome-fg-sub)'}
+          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--t-chrome-fg)'}
         >
           Terms of Service
         </Link>
@@ -534,13 +546,13 @@ const Footer: React.FC = () => {
             padding: '4px 8px',
             fontSize: '14px',
             fontWeight: '400',
-            color: '#FFFFFF',
+            color: 'var(--t-chrome-fg)',
             textDecoration: 'none',
             cursor: 'pointer',
             transition: 'color 0.2s ease',
           }}
-          onMouseEnter={(e) => e.currentTarget.style.color = '#CCCCCC'}
-          onMouseLeave={(e) => e.currentTarget.style.color = '#FFFFFF'}
+          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--t-chrome-fg-sub)'}
+          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--t-chrome-fg)'}
         >
           Privacy Policy
         </Link>
@@ -553,7 +565,7 @@ const Footer: React.FC = () => {
               height: '20px',
               padding: '2px',
               cursor: 'pointer',
-              color: '#FFFFFF',
+              color: 'var(--t-chrome-fg)',
               background: 'none',
               border: 'none',
               transition: 'opacity 0.2s ease',
@@ -572,7 +584,7 @@ const Footer: React.FC = () => {
               height: '20px',
               padding: '2px',
               cursor: 'pointer',
-              color: '#FFFFFF',
+              color: 'var(--t-chrome-fg)',
               background: 'none',
               border: 'none',
               transition: 'opacity 0.2s ease',
@@ -611,7 +623,7 @@ const Footer: React.FC = () => {
             gap: '8px',
             fontSize: '14px',
             fontWeight: '500',
-            color: '#FFFFFF',
+            color: 'var(--t-chrome-fg)',
             position: 'relative',
           }}
           title={getETHPriceTooltip()}
@@ -628,7 +640,7 @@ const Footer: React.FC = () => {
             
             </span>
           {isLoading ? (
-            <span style={{ color: '#CCCCCC' }}>Loading...</span>
+            <span style={{ color: 'var(--t-chrome-fg-sub)' }}>Loading...</span>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span>${ethPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -675,7 +687,7 @@ const Footer: React.FC = () => {
                 {source && (
                   <span 
                     style={{ 
-                      color: '#CCCCCC', 
+                      color: 'var(--t-chrome-fg-sub)', 
                       fontSize: '8px',
                       opacity: 0.7
                     }}
@@ -710,7 +722,7 @@ const Footer: React.FC = () => {
               padding: '4px 8px',
               fontSize: '14px',
               fontWeight: '400',
-              color: isSupportOpen ? '#CCCCCC' : '#FFFFFF',
+              color: isSupportOpen ? 'var(--t-chrome-fg-sub)' : 'var(--t-chrome-fg)',
               background: 'none',
               border: 'none',
               cursor: 'pointer',
@@ -728,12 +740,11 @@ const Footer: React.FC = () => {
           />
         </div>
 
-        {/* Theme Toggle */}
-        <button 
-          disabled
-          aria-disabled="true"
-          aria-label={`Theme locked to ${theme}`}
-          title="Theme switching is disabled"
+        {/* Theme Toggle — only visible in dev / localhost */}
+        {canSwitchTheme && <button 
+          onClick={toggleTheme}
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -741,13 +752,14 @@ const Footer: React.FC = () => {
             padding: '4px 8px',
             fontSize: '14px',
             fontWeight: '400',
-            color: '#FFFFFF',
+            color: 'var(--t-chrome-fg)',
             background: 'none',
             border: 'none',
-            cursor: 'not-allowed',
+            cursor: 'pointer',
             transition: 'opacity 0.2s ease',
-            opacity: 0.5,
           }}
+          onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
+          onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
         >
           {theme === 'light' ? (
             // Sun icon (light theme indicator)
@@ -774,7 +786,7 @@ const Footer: React.FC = () => {
               <path d="M12.76 2.05a.75.75 0 0 0-.82.3.75.75 0 0 0-.03.88A8.5 8.5 0 0 0 20.77 12a.75.75 0 0 0 1.18.61.75.75 0 0 0 .3-.82A9.75 9.75 0 0 1 12.76 2.05zM3.25 12c0-3.77 2.55-6.93 6.04-7.87a11.25 11.25 0 0 0 10.58 14.58A8.75 8.75 0 0 1 3.25 12z"/>
             </svg>
           )}
-        </button>
+        </button>}
 
         {/* Active Markets (positions first, then orders) */}
         <div 
@@ -784,7 +796,7 @@ const Footer: React.FC = () => {
             gap: '8px',
             fontSize: '12px',
             fontWeight: '500',
-            color: '#FFFFFF',
+            color: 'var(--t-chrome-fg)',
             // Footer is fixed-height; never wrap to a second line.
             flexWrap: 'nowrap',
             minWidth: 0,
@@ -794,8 +806,8 @@ const Footer: React.FC = () => {
         >
           <span
             style={{
-              color: '#9CA3AF',
-              fontSize: '11px',
+            color: 'var(--t-chrome-fg-muted)',
+            fontSize: '11px',
               fontWeight: '500',
               letterSpacing: '0.2px',
               marginRight: '2px',
@@ -820,8 +832,8 @@ const Footer: React.FC = () => {
           >
             {footerNavLinks.map((l: any) => {
               const isActiveMarket = showActiveMarketShortcuts;
-              const baseBorder = isActiveMarket ? '#333333' : '#2A2A2A';
-              const hoverBorder = isActiveMarket ? '#444444' : '#3A3A3A';
+              const baseBorder = isActiveMarket ? 'var(--t-chrome-border)' : 'var(--t-chrome-border-sub)';
+              const hoverBorder = isActiveMarket ? 'var(--t-chrome-border)' : 'var(--t-chrome-border)';
               const keyPrefix = isActiveMarket ? 'active' : 'nav';
               const fullLabel = String(l.label ?? '');
               // Only truncate active market labels, not static nav links
@@ -830,7 +842,7 @@ const Footer: React.FC = () => {
                 padding: '2px 6px',
                 border: `1px solid ${baseBorder}`,
                 borderRadius: '4px',
-                color: '#FFFFFF',
+                color: 'var(--t-chrome-fg)',
                 textDecoration: 'none',
                 cursor: 'pointer',
                 transition: 'opacity 0.2s ease, border-color 0.2s ease',
@@ -895,7 +907,7 @@ const Footer: React.FC = () => {
             height: '20px',
             padding: '2px',
             cursor: 'pointer',
-            color: '#FFFFFF',
+            color: 'var(--t-chrome-fg)',
             background: 'none',
             border: 'none',
             transition: 'opacity 0.2s ease',

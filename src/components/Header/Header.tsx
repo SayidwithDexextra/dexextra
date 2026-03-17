@@ -37,8 +37,8 @@ import { Wallet } from 'lucide-react'
 // Search Icon Component
 const SearchIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="11" cy="11" r="8" stroke="#ffffff" strokeWidth="2"/>
-    <path d="m21 21-4.35-4.35" stroke="#ffffff" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+    <path d="m21 21-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
   </svg>
 )
 
@@ -53,9 +53,9 @@ const NotificationIcon = () => (
 // Portfolio Icon Component (wallet style)
 const PortfolioIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    <path d="M4 6v12a2 2 0 0 0 2 2h14v-4" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M4 6v12a2 2 0 0 0 2 2h14v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 )
 
@@ -139,9 +139,9 @@ export default function Header() {
   })()
   const unrealizedPnL = unrealizedPnLNum
   const unrealizedPnlColor = !walletData.isConnected
-    ? '#FFFFFFFF'
+    ? 'var(--t-chrome-fg)'
     : !Number.isFinite(unrealizedPnL)
-      ? '#FFFFFFFF'
+      ? 'var(--t-chrome-fg)'
       : unrealizedPnL >= 0
         ? '#00d4aa'
         : '#ff6b6b'
@@ -398,9 +398,9 @@ export default function Header() {
           className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between"
           style={{
             height: '56px',
-            backgroundColor: '#1a1a1a',
+            backgroundColor: 'var(--t-chrome)',
             padding: '0 12px',
-            borderBottom: '1px solid #2a2a2a',
+            borderBottom: '1px solid var(--t-chrome-border-sub)',
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
           }}
         >
@@ -409,10 +409,10 @@ export default function Header() {
             <button
               onClick={toggleMobileMenu}
               className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-200"
-              style={{ color: '#ffffff' }}
+              style={{ color: 'var(--t-chrome-fg)' }}
               aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
               onMouseEnter={(e) => {
-                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+                (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as any).style.backgroundColor = 'transparent'
@@ -438,8 +438,8 @@ export default function Header() {
               {/* Font Variation Preview - Cycle through options */}
               {/* Option 1: Uppercase Wide Tracking - Professional trading aesthetic */}
               <span
-                className="text-white font-medium text-[13px] uppercase"
-                style={{ fontFamily: 'Georgia, "Times New Roman", serif', letterSpacing: '0.12em' }}
+                className="font-medium text-[13px] uppercase"
+                style={{ fontFamily: 'Georgia, "Times New Roman", serif', letterSpacing: '0.12em', color: 'var(--t-chrome-fg)' }}
               >
                 Dexetera
               </span>
@@ -484,11 +484,11 @@ export default function Header() {
             <button
               onClick={() => setIsSearchModalOpen(true)}
               className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-200"
-              style={{ color: '#ffffff' }}
+              style={{ color: 'var(--t-chrome-fg)' }}
               aria-label="Search"
               data-walkthrough="header-search"
               onMouseEnter={(e) => {
-                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+                (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as any).style.backgroundColor = 'transparent'
@@ -501,11 +501,11 @@ export default function Header() {
             <button
               onClick={openPortfolioSidebar}
               className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-200"
-              style={{ color: '#ffffff' }}
+              style={{ color: 'var(--t-chrome-fg)' }}
               aria-label="Open portfolio"
               data-walkthrough="header-portfolio-mobile"
               onMouseEnter={(e) => {
-                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+                (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as any).style.backgroundColor = 'transparent'
@@ -526,23 +526,23 @@ export default function Header() {
               className="flex items-center justify-center h-9 px-4 rounded-full font-medium text-sm transition-all duration-200"
               style={{
                 backgroundColor: walletData.isConnected ? 'transparent' : '#4a9eff',
-                color: '#ffffff',
-                border: walletData.isConnected ? '1px solid #333333' : 'none',
+                color: 'var(--t-chrome-fg)',
+                border: walletData.isConnected ? '1px solid var(--t-chrome-border)' : 'none',
               }}
               ref={walletData.isConnected ? profileTriggerRef : undefined}
               data-walkthrough="header-connect-wallet"
               aria-label={walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
               onMouseEnter={(e) => {
                 if (walletData.isConnected) {
-                  (e.currentTarget as any).style.borderColor = '#444444'
-                  (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
+                  (e.currentTarget as any).style.borderColor = 'var(--t-chrome-border)'
+                  (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
                 } else {
                   (e.currentTarget as any).style.backgroundColor = '#3d8ae6'
                 }
               }}
               onMouseLeave={(e) => {
                 if (walletData.isConnected) {
-                  (e.currentTarget as any).style.borderColor = '#333333'
+                  (e.currentTarget as any).style.borderColor = 'var(--t-chrome-border)'
                   (e.currentTarget as any).style.backgroundColor = 'transparent'
                 } else {
                   (e.currentTarget as any).style.backgroundColor = '#4a9eff'
@@ -580,9 +580,9 @@ export default function Header() {
         className="fixed top-0 right-0 z-40 flex items-center justify-between transition-all duration-300 ease-in-out"
         style={{
           height: '48px',
-          backgroundColor: '#1a1a1a',
+          backgroundColor: 'var(--t-chrome)',
           padding: '0 16px',
-          borderBottom: '1px solid #333333',
+          borderBottom: '1px solid var(--t-chrome-border)',
           fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
           left: `${collapsedNavbarWidth}px`,
           width: `calc(100vw - ${collapsedNavbarWidth}px)`
@@ -592,7 +592,7 @@ export default function Header() {
         <div className="flex items-center flex-1 max-w-xl gap-3">
           <Link 
             href="/" 
-            className="flex items-center gap-2 pr-3 border-r border-[#2f2f2f]"
+            className="flex items-center gap-2 pr-3 border-r border-[var(--t-chrome-border)]"
             aria-label="Go to Dexetera home"
           >
             <Image
@@ -605,8 +605,8 @@ export default function Header() {
             />
     
             <span
-              className="text-white font-medium text-[12px] uppercase"
-              style={{ fontFamily: 'Georgia, "Times New Roman", serif', letterSpacing: '0.04em' }}
+              className="font-medium text-[12px] uppercase"
+              style={{ fontFamily: 'Georgia, "Times New Roman", serif', letterSpacing: '0.04em', color: 'var(--t-chrome-fg)' }}
             >
               Dexetera
             </span>
@@ -615,7 +615,7 @@ export default function Header() {
           <div className="relative w-full max-w-sm" data-walkthrough="header-search">
             <div 
               className="absolute left-3 top-1/2 transform -translate-y-1/2 z-10 pointer-events-none"
-              style={{ color: '#ffffff' }}
+              style={{ color: 'var(--t-chrome-fg)' }}
             >
               <SearchIcon />
             </div>
@@ -629,20 +629,20 @@ export default function Header() {
                 className="w-full pl-10 pr-12 py-2 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer"
                 style={{
                   height: '30px',
-                  backgroundColor: '#2a2a2a',
-                  borderColor: '#444444',
-                  color: '#ffffff',
+                  backgroundColor: 'var(--t-chrome-surface)',
+                  borderColor: 'var(--t-chrome-border)',
+                  color: 'var(--t-chrome-fg)',
                   fontSize: '14px',
                   minWidth: '240px'
                 }}
                 onMouseEnter={(e) => {
                   const target = e.target as any
-                  target.style.borderColor = '#555555'
-                  target.style.boxShadow = '0 0 0 2px rgba(255, 255, 255, 0.05)'
+                  target.style.borderColor = 'var(--t-chrome-border)'
+                  target.style.boxShadow = '0 0 0 2px var(--t-chrome-hover)'
                 }}
                 onMouseLeave={(e) => {
                   const target = e.target as any
-                  target.style.borderColor = '#444444'
+                  target.style.borderColor = 'var(--t-chrome-border)'
                   target.style.boxShadow = 'none'
                 }}
               />
@@ -654,20 +654,20 @@ export default function Header() {
                 className="w-full pl-10 pr-12 py-2 rounded-md border transition-all duration-200 focus:outline-none cursor-pointer text-left"
                 style={{
                   height: '30px',
-                  backgroundColor: '#2a2a2a',
-                  borderColor: '#444444',
-                  color: '#ffffff',
+                  backgroundColor: 'var(--t-chrome-surface)',
+                  borderColor: 'var(--t-chrome-border)',
+                  color: 'var(--t-chrome-fg)',
                   fontSize: '14px',
                   minWidth: '240px'
                 }}
                 onMouseEnter={(e) => {
                   const target = e.currentTarget as any
-                  target.style.borderColor = '#555555'
-                  target.style.boxShadow = '0 0 0 2px rgba(255, 255, 255, 0.05)'
+                  target.style.borderColor = 'var(--t-chrome-border)'
+                  target.style.boxShadow = '0 0 0 2px var(--t-chrome-hover)'
                 }}
                 onMouseLeave={(e) => {
                   const target = e.currentTarget as any
-                  target.style.borderColor = '#444444'
+                  target.style.borderColor = 'var(--t-chrome-border)'
                   target.style.boxShadow = 'none'
                 }}
               >
@@ -677,8 +677,8 @@ export default function Header() {
             <div 
               className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs px-1.5 py-0.5 rounded"
               style={{
-                color: '#666666',
-                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                color: 'var(--t-chrome-fg-muted)',
+                backgroundColor: 'var(--t-chrome-hover)',
                 fontSize: '11px'
               }}
             >
@@ -700,7 +700,7 @@ export default function Header() {
                 <span 
                   style={{
                     fontSize: '12px',
-                    color: '#b3b3b3',
+                    color: 'var(--t-chrome-fg-sub)',
                     fontWeight: 400
                   }}
                 >
@@ -708,7 +708,8 @@ export default function Header() {
                 </span>
                 {showPortfolioSkeleton ? (
                   <span
-                    className="inline-block w-[78px] h-[14px] rounded border border-white/10 bg-white/10 animate-pulse"
+                    className="inline-block w-[78px] h-[14px] rounded animate-pulse"
+                    style={{ border: '1px solid var(--t-chrome-border)', backgroundColor: 'var(--t-chrome-surface)' }}
                     aria-label="Loading portfolio value"
                   />
                 ) : (
@@ -717,7 +718,7 @@ export default function Header() {
                     animateTrigger={vaultUpdateSeq}
                     style={{
                       fontSize: '14px',
-                      color: '#FFFFFFFF',
+                      color: 'var(--t-chrome-fg)',
                       fontWeight: 600
                     }}
                     characters="0123456789$.,+-"
@@ -740,7 +741,7 @@ export default function Header() {
                     <span 
                       style={{
                         fontSize: '12px',
-                        color: '#b3b3b3',
+                        color: 'var(--t-chrome-fg-sub)',
                         fontWeight: 400
                       }}
                     >
@@ -758,7 +759,8 @@ export default function Header() {
                   </div>
                   {showPortfolioSkeleton ? (
                     <span
-                      className="inline-block w-[72px] h-[14px] rounded border border-white/10 bg-white/10 animate-pulse"
+                      className="inline-block w-[72px] h-[14px] rounded animate-pulse"
+                      style={{ border: '1px solid var(--t-chrome-border)', backgroundColor: 'var(--t-chrome-surface)' }}
                       aria-label="Loading available cash"
                     />
                   ) : (
@@ -767,7 +769,7 @@ export default function Header() {
                       animateTrigger={vaultUpdateSeq}
                       style={{
                         fontSize: '14px',
-                        color: '#FFFFFFFF',
+                        color: 'var(--t-chrome-fg)',
                         fontWeight: 600
                       }}
                       characters="0123456789$.,+-"
@@ -789,7 +791,7 @@ export default function Header() {
                   <span 
                     style={{
                       fontSize: '12px',
-                      color: '#b3b3b3',
+                      color: 'var(--t-chrome-fg-sub)',
                       fontWeight: 400
                     }}
                   >
@@ -797,7 +799,8 @@ export default function Header() {
                   </span>
                   {showPortfolioSkeleton ? (
                     <span
-                      className="inline-block w-[62px] h-[14px] rounded border border-white/10 bg-white/10 animate-pulse"
+                      className="inline-block w-[62px] h-[14px] rounded animate-pulse"
+                      style={{ border: '1px solid var(--t-chrome-border)', backgroundColor: 'var(--t-chrome-surface)' }}
                       aria-label="Loading unrealized P&L"
                     />
                   ) : (
@@ -849,10 +852,11 @@ export default function Header() {
             >
               <span>Deposit</span>
               <span
-                className="flex items-center justify-center w-6 h-6 rounded-md border border-white/25 bg-white/10"
+                className="flex items-center justify-center w-6 h-6 rounded-md"
+                style={{ border: '1px solid rgba(255,255,255,0.25)', backgroundColor: 'rgba(255,255,255,0.10)' }}
                 aria-hidden="true"
               >
-                <Wallet className="w-4 h-4 text-white" aria-hidden="true" />
+                <Wallet className="w-4 h-4" style={{ color: '#ffffff' }} aria-hidden="true" />
               </span>
             </button>
           </div>
@@ -860,13 +864,13 @@ export default function Header() {
           {/* Notification Icon */}
           <button 
             className="p-1.5 rounded-md transition-all duration-200"
-            style={{ color: '#ffffff' }}
+            style={{ color: 'var(--t-chrome-fg)' }}
             onMouseEnter={(e) => {
-              (e.currentTarget as any).style.color = '#b3b3b3';
-              (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+              (e.currentTarget as any).style.color = 'var(--t-chrome-fg-sub)';
+              (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)';
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as any).style.color = '#ffffff';
+              (e.currentTarget as any).style.color = 'var(--t-chrome-fg)';
               (e.currentTarget as any).style.backgroundColor = 'transparent';
             }}
           >
@@ -880,7 +884,7 @@ export default function Header() {
             aria-expanded={isProfileModalOpen}
             aria-label={walletData.isConnected ? 'Open profile menu' : 'Connect wallet'}
             className={`flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-pointer transition-all duration-200 focus:outline-none ${
-              !walletData.isConnected ? 'border border-[#222222] hover:border-[#333333]' : ''
+              !walletData.isConnected ? 'border border-[var(--t-chrome-border-sub)] hover:border-[var(--t-chrome-border)]' : ''
             }`}
             data-walkthrough="header-connect-wallet"
             ref={profileTriggerRef}
@@ -906,7 +910,7 @@ export default function Header() {
                 `;
                 (e.currentTarget as any).style.boxShadow = '0 0 0 1px rgba(255,184,0,0.28), 0 16px 36px rgba(0, 0, 0, 0.50)';
               } else {
-                (e.currentTarget as any).style.backgroundColor = 'rgba(255, 255, 255, 0.08)'
+                (e.currentTarget as any).style.backgroundColor = 'var(--t-chrome-hover)'
               }
             }}
             onMouseLeave={(e) => {
@@ -946,13 +950,13 @@ export default function Header() {
             {/* Username (hidden on mobile) */}
             <span 
               className="hidden sm:block text-sm font-medium"
-              style={{ color: '#ffffff', fontSize: '13px' }}
+              style={{ color: 'var(--t-chrome-fg)', fontSize: '13px' }}
             >
               {getDisplayName()}
             </span>
 
             {/* Dropdown Arrow */}
-            <div style={{ color: '#b3b3b3' }}>
+            <div style={{ color: 'var(--t-chrome-fg-sub)' }}>
               <ChevronDownIcon />
             </div>
           </button>

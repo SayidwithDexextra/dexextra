@@ -815,7 +815,7 @@ export default function Settings({ className }: SettingsProps) {
   return (
     <>
     <div className={`dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-transparent overflow-hidden ${className || ''}`}>
-      <div className="flex-1 min-w-0 overflow-y-auto scrollbar-none text-white font-sans">
+      <div className="flex-1 min-w-0 overflow-y-auto scrollbar-none text-t-fg font-sans">
         <ActionStatusModal
           isOpen={uiStatusModal.isOpen}
           onClose={() => setUiStatusModal((cur) => ({ ...cur, isOpen: false }))}
@@ -828,7 +828,7 @@ export default function Settings({ className }: SettingsProps) {
             onClick: () => setUiStatusModal((cur) => ({ ...cur, isOpen: false })),
           }}
         >
-          <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+          <div className="rounded-md border border-t-stroke bg-t-card p-3">
             <div className="flex items-center gap-2">
               <div
                 className={[
@@ -842,7 +842,7 @@ export default function Settings({ className }: SettingsProps) {
                         : 'bg-blue-400',
                 ].join(' ')}
               />
-              <span className="text-[11px] text-[#808080]">
+              <span className="text-[11px] text-t-fg-sub">
                 {uiStatusModal.tone === 'error'
                   ? 'Action failed'
                   : uiStatusModal.tone === 'success'
@@ -903,22 +903,22 @@ export default function Settings({ className }: SettingsProps) {
  
             return (
               <div className="space-y-3">
-                <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] p-3">
+                <div className="group bg-t-card rounded-md border border-t-stroke p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="text-[11px] font-medium text-white truncate">{String(m.name || m.symbol || m.market_identifier || 'Market')}</div>
-                      <div className="mt-1 text-[10px] text-[#606060] font-mono truncate">
+                      <div className="text-[11px] font-medium text-t-fg truncate">{String(m.name || m.symbol || m.market_identifier || 'Market')}</div>
+                      <div className="mt-1 text-[10px] text-t-fg-muted font-mono truncate">
                         {String(m.market_identifier || m.symbol || '—').toUpperCase()}
                       </div>
                     </div>
-                    <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded font-mono">
+                    <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded font-mono">
                       {s?.bond ? (s.bond.refunded ? 'Refunded' : formatUsd6(s.bond.refundableAmount6)) : '—'}
                     </div>
                   </div>
                 </div>
  
-                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
-                  <div className="text-[10px] text-[#606060] uppercase tracking-wide">Requirements</div>
+                <div className="rounded-md border border-t-stroke bg-t-card p-3">
+                  <div className="text-[10px] text-t-fg-muted uppercase tracking-wide">Requirements</div>
                   <div className="mt-2 space-y-1">
                     {[
                       { label: 'You are the creator', ok: creatorOk, value: s?.bond?.creator ? 'Verified' : '—' },
@@ -938,17 +938,17 @@ export default function Settings({ className }: SettingsProps) {
                     ].map((r) => (
                       <div key={r.label} className="flex items-center justify-between">
                         <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.ok ? 'bg-green-400' : 'bg-[#404040]'}`} />
-                          <span className="text-[10px] text-[#808080] truncate">{r.label}</span>
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${r.ok ? 'bg-green-400' : 'bg-t-dot'}`} />
+                          <span className="text-[10px] text-t-fg-sub truncate">{r.label}</span>
                         </div>
-                        <span className="text-[10px] text-white font-mono">{r.value}</span>
+                        <span className="text-[10px] text-t-fg font-mono">{r.value}</span>
                       </div>
                     ))}
                   </div>
  
                   {s?.ineligibleReason ? (
-                    <div className="mt-2 text-[10px] text-[#606060]">
-                      <span className="text-[#808080]">Status:</span> {s.ineligibleReason}
+                    <div className="mt-2 text-[10px] text-t-fg-muted">
+                      <span className="text-t-fg-sub">Status:</span> {s.ineligibleReason}
                     </div>
                   ) : null}
  
@@ -974,15 +974,15 @@ export default function Settings({ className }: SettingsProps) {
           }}
         >
           {refundSuccess.txHash ? (
-            <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
-              <div className="text-[10px] text-[#606060] uppercase tracking-wide">Transaction</div>
-              <div className="mt-1 text-[10px] text-[#9CA3AF] font-mono break-all">{refundSuccess.txHash}</div>
+            <div className="rounded-md border border-t-stroke bg-t-card p-3">
+              <div className="text-[10px] text-t-fg-muted uppercase tracking-wide">Transaction</div>
+              <div className="mt-1 text-[10px] text-t-fg-label font-mono break-all">{refundSuccess.txHash}</div>
             </div>
           ) : null}
         </ActionStatusModal>
 
         {/* Expanded profile header (inspired by portfolio sidebar + screenshot) */}
-        <div className="border-b border-[#1A1A1A] bg-gradient-to-b from-[#141414] to-[#0F0F0F]" data-walkthrough="settings-header">
+        <div className="border-b border-t-stroke-sub bg-[var(--t-card)]" data-walkthrough="settings-header">
           <div className="relative h-[190px] md:h-[240px] overflow-hidden">
             <div
               className="absolute inset-0"
@@ -1050,7 +1050,7 @@ export default function Settings({ className }: SettingsProps) {
             {/* Profile icon (bottom-left, like portfolio sidebar) */}
             <div className="absolute left-6 bottom-5">
               <div className="relative group">
-                <div className="w-[92px] h-[92px] md:w-[112px] md:h-[112px] rounded-full overflow-hidden border border-[#222222] bg-[#0F0F0F] shadow-2xl">
+                <div className="w-[92px] h-[92px] md:w-[112px] md:h-[112px] rounded-full overflow-hidden border border-t-stroke bg-t-card shadow-2xl">
                   <Image
                     src={profileImage || DEFAULT_PROFILE_IMAGE}
                     alt={profileLabel}
@@ -1104,9 +1104,9 @@ export default function Settings({ className }: SettingsProps) {
           {/* Header row (uniform with Watchlist) */}
           <div className="flex items-center justify-between px-6 py-4">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWalletConnected ? 'bg-green-400' : 'bg-[#404040]'}`} />
-              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide truncate">Settings</h4>
-              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">{activeTabLabel}</div>
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isWalletConnected ? 'bg-green-400' : 'bg-t-dot'}`} />
+              <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide truncate">Settings</h4>
+              <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">{activeTabLabel}</div>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -1118,10 +1118,10 @@ export default function Settings({ className }: SettingsProps) {
                 className={[
                   'w-8 h-8 rounded-md border flex items-center justify-center transition-all duration-200',
                   !walletAddress
-                    ? 'border-[#222222] text-[#606060] opacity-60 cursor-not-allowed'
+                    ? 'border-t-stroke text-t-fg-muted opacity-60 cursor-not-allowed'
                     : walletCopied
                       ? 'border-green-500/30 text-green-400 bg-green-500/5'
-                      : 'border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white',
+                      : 'border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg',
                 ].join(' ')}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1146,20 +1146,20 @@ export default function Settings({ className }: SettingsProps) {
                   />
                 </svg>
               </button>
-              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded font-mono">
+              <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded font-mono">
                 {shortAddress}
               </div>
             </div>
           </div>
 
           <div className="px-6 pb-5">
-            <div className="text-white text-xl font-medium tracking-tight truncate">{profileLabel}</div>
-            <p className="text-[#606060] text-[11px] mt-1 max-w-2xl">
+            <div className="text-t-fg text-xl font-medium tracking-tight truncate">{profileLabel}</div>
+            <p className="text-t-fg-muted text-[11px] mt-1 max-w-2xl">
               Update your public profile, social links, and notification preferences.
             </p>
 
             {/* Horizontal settings nav (OpenSea-style) */}
-            <div className="mt-4 -mx-6 px-6 border-b border-[#1A1A1A]">
+            <div className="mt-4 -mx-6 px-6 border-b border-t-stroke-sub">
               <div className="flex items-center gap-4 overflow-x-auto scrollbar-none">
                 {tabs.map((t) => {
                   const isActive = activeTab === t.id
@@ -1171,14 +1171,14 @@ export default function Settings({ className }: SettingsProps) {
                       aria-current={isActive ? 'page' : undefined}
                       className={[
                         'relative py-3 text-[12px] font-medium whitespace-nowrap transition-colors duration-200',
-                        isActive ? 'text-white' : 'text-[#808080] hover:text-white',
+                        isActive ? 'text-t-fg' : 'text-t-fg-sub hover:text-t-fg',
                       ].join(' ')}
                     >
                       {t.label}
                       <span
                         className={[
                           'pointer-events-none absolute left-0 right-0 -bottom-[1px] h-[2px] rounded-full transition-opacity duration-200',
-                          isActive ? 'bg-white/80 opacity-100' : 'opacity-0',
+                          isActive ? 'bg-t-fg/80 opacity-100' : 'opacity-0',
                         ].join(' ')}
                       />
                     </button>
@@ -1201,17 +1201,17 @@ export default function Settings({ className }: SettingsProps) {
         {activeTab === 'profile' ? (
           <>
             {/* Basic Information */}
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Basic Information</h4>
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Public</div>
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Basic Information</h4>
+                  <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">Public</div>
                 </div>
 
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <label htmlFor="username" className="block text-[11px] font-medium text-[#808080]">
+                      <label htmlFor="username" className="block text-[11px] font-medium text-t-fg-sub">
                         Username *
                       </label>
                       {formData.username && (
@@ -1233,12 +1233,12 @@ export default function Settings({ className }: SettingsProps) {
                         value={formData.username}
                         onChange={handleInputChange}
                         placeholder="Enter username..."
-                        className={`w-full bg-[#1A1A1A] border rounded-md px-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:outline-none transition-colors duration-200 ${
+                        className={`w-full bg-t-inset border rounded-md px-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:outline-none transition-colors duration-200 ${
                           usernameError
                             ? 'border-red-500/50 focus:border-red-500'
                             : formData.username
                               ? 'border-green-500/50 focus:border-green-500'
-                              : 'border-[#333333] focus:border-[#333333]'
+                              : 'border-t-stroke-hover focus:border-t-stroke-hover'
                         }`}
                       />
                       {formData.username && (
@@ -1269,15 +1269,15 @@ export default function Settings({ className }: SettingsProps) {
                       )}
                     </div>
                     <div className="mt-2 flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-[#606060] flex-shrink-0 mt-1" />
-                      <span className="text-[9px] text-[#606060]">
+                      <div className="w-1.5 h-1.5 rounded-full bg-t-fg-muted flex-shrink-0 mt-1" />
+                      <span className="text-[9px] text-t-fg-muted">
                         Username must be 3-30 characters long and can only contain letters, numbers, underscores, and hyphens
                       </span>
                     </div>
                   </div>
 
                   <div>
-                    <label htmlFor="name" className="block text-[11px] font-medium text-[#808080] mb-2">
+                    <label htmlFor="name" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                       Display Name
                     </label>
                     <input
@@ -1287,12 +1287,12 @@ export default function Settings({ className }: SettingsProps) {
                       value={formData.name}
                       onChange={handleInputChange}
                       placeholder="Enter display name..."
-                      className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md px-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                      className="w-full bg-t-inset border border-t-stroke-hover rounded-md px-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                     />
                   </div>
 
                   <div>
-                    <label htmlFor="bio" className="block text-[11px] font-medium text-[#808080] mb-2">
+                    <label htmlFor="bio" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                       Bio
                     </label>
                     <textarea
@@ -1302,11 +1302,11 @@ export default function Settings({ className }: SettingsProps) {
                       onChange={handleInputChange}
                       placeholder="Tell us about yourself..."
                       rows={4}
-                      className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md px-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200 resize-none"
+                      className="w-full bg-t-inset border border-t-stroke-hover rounded-md px-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200 resize-none"
                     />
                     <div className="flex justify-between items-center mt-2">
-                      <span className="text-[9px] text-[#606060]">Share your story with the community</span>
-                      <span className="text-[9px] text-[#606060]">{formData.bio.length}/180</span>
+                      <span className="text-[9px] text-t-fg-muted">Share your story with the community</span>
+                      <span className="text-[9px] text-t-fg-muted">{formData.bio.length}/180</span>
                     </div>
                   </div>
                 </div>
@@ -1318,19 +1318,19 @@ export default function Settings({ className }: SettingsProps) {
         {activeTab === 'notifications' ? (
           <>
             {/* Email Notifications */}
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Email Notifications</h4>
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Optional</div>
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Email Notifications</h4>
+                  <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">Optional</div>
                 </div>
 
-                <p className="text-[10px] text-[#606060] mb-4">
+                <p className="text-[10px] text-t-fg-muted mb-4">
                   Get notifications about your activity. Your email won&apos;t be shared or visible publicly.
                 </p>
 
                 <div>
-                  <label htmlFor="email" className="block text-[11px] font-medium text-[#808080] mb-2">
+                  <label htmlFor="email" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                     Email Address
                   </label>
                   <input
@@ -1340,7 +1340,7 @@ export default function Settings({ className }: SettingsProps) {
                     value={formData.email}
                     onChange={handleInputChange}
                     placeholder="Enter your email..."
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md px-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded-md px-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                   />
                 </div>
               </div>
@@ -1351,21 +1351,21 @@ export default function Settings({ className }: SettingsProps) {
         {activeTab === 'links' ? (
           <>
             {/* Social Links */}
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Social & Web Links</h4>
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Public</div>
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Social & Web Links</h4>
+                  <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">Public</div>
                 </div>
 
                 <div className="space-y-4">
               <div>
-                <label htmlFor="website" className="block text-[11px] font-medium text-[#808080] mb-2">
+                <label htmlFor="website" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                   Website
                 </label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[#606060]">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-t-fg-muted">
                       <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/>
                       <path d="M8 1a7 7 0 0 0 0 14A7 7 0 0 0 8 1z" stroke="currentColor" strokeWidth="1.5"/>
                       <path d="M1 8h14" stroke="currentColor" strokeWidth="1.5"/>
@@ -1378,18 +1378,18 @@ export default function Settings({ className }: SettingsProps) {
                     value={formData.website}
                     onChange={handleInputChange}
                     placeholder="https://your-website.com"
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded-md pl-10 pr-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="twitter" className="block text-[11px] font-medium text-[#808080] mb-2">
+                <label htmlFor="twitter" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                   Twitter
                 </label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[#606060]">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-t-fg-muted">
                       <path d="M16 3.037a6.5 6.5 0 0 1-1.885.516 3.28 3.28 0 0 0 1.443-1.816 6.57 6.57 0 0 1-2.085.795 3.28 3.28 0 0 0-5.593 2.99A9.32 9.32 0 0 1 1.114 2.1a3.28 3.28 0 0 0 1.015 4.381A3.28 3.28 0 0 1 .64 6.07v.041a3.28 3.28 0 0 0 2.633 3.218 3.28 3.28 0 0 1-1.482.056 3.28 3.28 0 0 0 3.067 2.277A6.58 6.58 0 0 1 0 13.027a9.29 9.29 0 0 0 5.032 1.475c6.038 0 9.34-5.002 9.34-9.34 0-.142-.003-.284-.009-.425A6.68 6.68 0 0 0 16 3.037z" fill="currentColor"/>
                     </svg>
                   </div>
@@ -1400,18 +1400,18 @@ export default function Settings({ className }: SettingsProps) {
                     value={formData.twitter}
                     onChange={handleInputChange}
                     placeholder="https://twitter.com/username"
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded-md pl-10 pr-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="discord" className="block text-[11px] font-medium text-[#808080] mb-2">
+                <label htmlFor="discord" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                   Discord
                 </label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[#606060]">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-t-fg-muted">
                       <path d="M13.545 2.907a13.2 13.2 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.2 12.2 0 0 0-3.658 0 8 8 0 0 0-.412-.833.05.05 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.04.04 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.3 13.3 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.05.05 0 0 0-.018-.011 8.9 8.9 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.05.05 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.05.05 0 0 1 .053.007c.08.066.164.132.248.195a.05.05 0 0 1-.004.085 8.3 8.3 0 0 1-1.249.594.05.05 0 0 0-.03.03.05.05 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.2 13.2 0 0 0 4.001-2.02.05.05 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.03.03 0 0 0-.02-.018" fill="currentColor"/>
                     </svg>
                   </div>
@@ -1422,18 +1422,18 @@ export default function Settings({ className }: SettingsProps) {
                     value={formData.discord}
                     onChange={handleInputChange}
                     placeholder="https://discord.gg/invite"
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded-md pl-10 pr-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="instagram" className="block text-[11px] font-medium text-[#808080] mb-2">
+                <label htmlFor="instagram" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                   Instagram
                 </label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[#606060]">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-t-fg-muted">
                       <rect x="1" y="1" width="14" height="14" rx="3" stroke="currentColor" strokeWidth="1.5"/>
                       <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.5"/>
                       <circle cx="12" cy="4" r="0.5" fill="currentColor"/>
@@ -1446,18 +1446,18 @@ export default function Settings({ className }: SettingsProps) {
                     value={formData.instagram}
                     onChange={handleInputChange}
                     placeholder="@username or https://www.instagram.com/username/"
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded-md pl-10 pr-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="facebook" className="block text-[11px] font-medium text-[#808080] mb-2">
+                <label htmlFor="facebook" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                   Facebook
                 </label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[#606060]">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-t-fg-muted">
                       <path
                         d="M9.2 15V9.2h2l.3-2.3H9.2V5.4c0-.7.2-1.2 1.2-1.2h1.3V2.1c-.2 0-1 0-2 0-2 0-3.3 1.2-3.3 3.5v1.3H4.3v2.3h2.1V15h2.8z"
                         fill="currentColor"
@@ -1471,18 +1471,18 @@ export default function Settings({ className }: SettingsProps) {
                     value={formData.facebook}
                     onChange={handleInputChange}
                     placeholder="@username or https://www.facebook.com/username"
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded-md pl-10 pr-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="youtube" className="block text-[11px] font-medium text-[#808080] mb-2">
+                <label htmlFor="youtube" className="block text-[11px] font-medium text-t-fg-sub mb-2">
                   YouTube
                 </label>
                 <div className="relative">
                   <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[#606060]">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-t-fg-muted">
                       <path d="M15.841 4.258S15.692 3.177 15.225 2.687c-.468-.49-1.135-.49-1.394-.49C11.833 2.087 8.002 2.087 8.002 2.087s-3.831 0-5.829.11c-.259 0-.926 0-1.394.49C.312 3.177.163 4.258.163 4.258S.014 5.438.014 6.619v1.142c0 1.181.149 2.361.149 2.361s.149 1.081.616 1.571c.468.49 1.135.49 1.394.49 2.598.11 5.829.11 5.829.11s3.831 0 5.829-.11c.259 0 .926 0 1.394-.49.467-.49.616-1.571.616-1.571s.149-1.18.149-2.361V6.619c0-1.181-.149-2.361-.149-2.361zM6.4 9.6V5.6l4.267 2L6.4 9.6z" fill="currentColor"/>
                     </svg>
                   </div>
@@ -1493,7 +1493,7 @@ export default function Settings({ className }: SettingsProps) {
                     value={formData.youtube}
                     onChange={handleInputChange}
                     placeholder="https://youtube.com/@username"
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md pl-10 pr-3 py-2.5 text-[11px] text-white placeholder-[#606060] focus:border-[#333333] focus:outline-none transition-colors duration-200"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded-md pl-10 pr-3 py-2.5 text-[11px] text-t-fg placeholder-t-fg-muted focus:border-t-stroke-hover focus:outline-none transition-colors duration-200"
                   />
                 </div>
               </div>
@@ -1506,44 +1506,44 @@ export default function Settings({ className }: SettingsProps) {
         {activeTab === 'markets' ? (
           <>
             {/* Market Owner Earnings */}
-            <div className="bg-[#0F0F0F] rounded-md border border-[#222222] mb-6 overflow-hidden">
-              <div className="px-6 py-4 border-b border-[#1A1A1A] flex items-center justify-between">
+            <div className="bg-t-card rounded-md border border-t-stroke mb-6 overflow-hidden">
+              <div className="px-6 py-4 border-b border-t-stroke-sub flex items-center justify-between">
                 <div>
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market Revenue</h4>
-                  <p className="text-[10px] text-[#606060] mt-0.5">Your 20% share of fees collected on markets you created</p>
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Market Revenue</h4>
+                  <p className="text-[10px] text-t-fg-muted mt-0.5">Your 20% share of fees collected on markets you created</p>
                 </div>
                 <button
                   type="button"
                   onClick={refetchOwnerEarnings}
                   disabled={ownerEarningsLoading}
-                  className="text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 disabled:opacity-50"
+                  className="text-[10px] text-t-fg-muted hover:text-t-fg-label transition-colors duration-200 disabled:opacity-50"
                 >
                   {ownerEarningsLoading ? 'Loading…' : 'Refresh'}
                 </button>
               </div>
               <div className="p-6">
                 {ownerEarningsLoading && ownerMarkets.length === 0 ? (
-                  <div className="text-[11px] text-[#606060] text-center py-4">Loading earnings data…</div>
+                  <div className="text-[11px] text-t-fg-muted text-center py-4">Loading earnings data…</div>
                 ) : ownerMarkets.length === 0 ? (
-                  <div className="text-[11px] text-[#606060] text-center py-4">No fee revenue yet. Revenue will appear here once trades execute on your markets.</div>
+                  <div className="text-[11px] text-t-fg-muted text-center py-4">No fee revenue yet. Revenue will appear here once trades execute on your markets.</div>
                 ) : (
                   <>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                       <div>
-                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Your Earnings</div>
+                        <div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-1">Your Earnings</div>
                         <LiveValue value={ownerTotals.totalOwnerEarningsUsdc} className="text-[18px] font-semibold text-green-400 font-mono">${ownerTotals.totalOwnerEarningsUsdc.toFixed(2)}</LiveValue>
                       </div>
                       <div>
-                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Protocol Share</div>
-                        <LiveValue value={ownerTotals.totalProtocolEarningsUsdc} className="text-[18px] font-semibold text-[#9CA3AF] font-mono">${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}</LiveValue>
+                        <div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-1">Protocol Share</div>
+                        <LiveValue value={ownerTotals.totalProtocolEarningsUsdc} className="text-[18px] font-semibold text-t-fg-label font-mono">${ownerTotals.totalProtocolEarningsUsdc.toFixed(2)}</LiveValue>
                       </div>
                       <div>
-                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Total Fees</div>
-                        <LiveValue value={ownerTotals.totalFeesCollectedUsdc} className="text-[18px] font-semibold text-white font-mono">${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}</LiveValue>
+                        <div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-1">Total Fees</div>
+                        <LiveValue value={ownerTotals.totalFeesCollectedUsdc} className="text-[18px] font-semibold text-t-fg font-mono">${ownerTotals.totalFeesCollectedUsdc.toFixed(2)}</LiveValue>
                       </div>
                       <div>
-                        <div className="text-[9px] text-[#606060] uppercase tracking-wide mb-1">Volume</div>
-                        <LiveValue value={ownerTotals.totalVolumeUsdc} className="text-[18px] font-semibold text-white font-mono">
+                        <div className="text-[9px] text-t-fg-muted uppercase tracking-wide mb-1">Volume</div>
+                        <LiveValue value={ownerTotals.totalVolumeUsdc} className="text-[18px] font-semibold text-t-fg font-mono">
                           ${ownerTotals.totalVolumeUsdc >= 1_000_000
                             ? `${(ownerTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
                             : ownerTotals.totalVolumeUsdc >= 1_000
@@ -1554,8 +1554,8 @@ export default function Settings({ className }: SettingsProps) {
                     </div>
 
                     {ownerMarkets.length > 0 && (
-                      <div className="bg-[#111111] rounded-md border border-[#1A1A1A] p-4 mb-5">
-                        <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-3">Earnings by Market</div>
+                      <div className="bg-t-card rounded-md border border-t-stroke-sub p-4 mb-5">
+                        <div className="text-[10px] text-t-fg-muted uppercase tracking-wide mb-3">Earnings by Market</div>
                         <EarningsPieChart
                           slices={ownerMarkets.map((m): EarningsPieSlice => ({
                             label: m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase() : m.market_address.slice(0, 10) + '…',
@@ -1568,18 +1568,18 @@ export default function Settings({ className }: SettingsProps) {
                       </div>
                     )}
 
-                    <div className="divide-y divide-[#1A1A1A] border border-[#1A1A1A] rounded-md overflow-hidden">
+                    <div className="divide-y divide-t-stroke-sub border border-t-stroke-sub rounded-md overflow-hidden">
                       {ownerMarkets.map((m) => {
                         const mKey = `${m.market_id}::${m.market_address}`
                         return (
-                        <div key={`${m.market_id}-${m.market_address}`} className={`px-4 py-3 hover:bg-[#1A1A1A] transition-colors duration-150 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}>
+                        <div key={`${m.market_id}-${m.market_address}`} className={`px-4 py-3 hover:bg-t-card-hover transition-colors duration-150 ${liveMarketKeys.has(mKey) ? 'dex-live-card-pulse' : ''}`}>
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-[12px] font-medium text-white truncate max-w-[200px]">
+                            <span className="text-[12px] font-medium text-t-fg truncate max-w-[200px]">
                               {m.market_id ? m.market_id.replace(/-/g, '/').toUpperCase() : m.market_address.slice(0, 10) + '…'}
                             </span>
                             <LiveValue value={m.total_owner_earnings_usdc} className="text-[12px] font-semibold text-green-400 font-mono">+${m.total_owner_earnings_usdc.toFixed(2)}</LiveValue>
                           </div>
-                          <div className="flex items-center gap-3 text-[10px] text-[#606060]">
+                          <div className="flex items-center gap-3 text-[10px] text-t-fg-muted">
                             <span>{m.total_fee_events} fee events</span>
                             <span>Protocol: ${m.total_protocol_earnings_usdc.toFixed(2)}</span>
                             <span className="ml-auto font-mono">
@@ -1596,41 +1596,41 @@ export default function Settings({ className }: SettingsProps) {
             </div>
 
             {/* Draft Markets */}
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-3">
                   <div className="min-w-0">
-                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Draft Markets</h4>
-                    <div className="mt-1 text-[10px] text-[#606060]">
+                    <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Draft Markets</h4>
+                    <div className="mt-1 text-[10px] text-t-fg-muted">
                       Markets you started creating but haven't deployed yet
                     </div>
                   </div>
                   <button
                     onClick={() => router.push('/new-market')}
-                    className="shrink-0 rounded-md bg-white/10 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-white/15 transition-colors"
+                    className="shrink-0 rounded-md bg-t-fg/10 px-3 py-1.5 text-[11px] font-medium text-t-fg hover:bg-t-fg/15 transition-colors"
                   >
                     + New Market
                   </button>
                 </div>
 
                 {!walletData.address ? (
-                  <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+                  <div className="rounded-md border border-t-stroke bg-t-card p-3">
                     <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] text-[#808080]">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                      <span className="text-[11px] text-t-fg-sub">
                         Connect your wallet to view your draft markets.
                       </span>
                     </div>
                   </div>
                 ) : draftsLoading ? (
                   <div className="flex items-center gap-2 py-4">
-                    <span className="h-3.5 w-3.5 animate-spin rounded-full border border-[#333] border-t-white/60" />
-                    <span className="text-[11px] text-[#808080]">Loading drafts…</span>
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border border-t-stroke-hover border-t-t-fg/60" />
+                    <span className="text-[11px] text-t-fg-sub">Loading drafts…</span>
                   </div>
                 ) : userDrafts.length === 0 ? (
-                  <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-4 text-center">
-                    <div className="text-[11px] text-[#808080]">No draft markets yet.</div>
-                    <div className="mt-1 text-[10px] text-[#606060]">
+                  <div className="rounded-md border border-t-stroke bg-t-card p-4 text-center">
+                    <div className="text-[11px] text-t-fg-sub">No draft markets yet.</div>
+                    <div className="mt-1 text-[10px] text-t-fg-muted">
                       When you start creating a market on the{' '}
                       <button onClick={() => router.push('/new-market')} className="text-blue-400 hover:underline">
                         New Market
@@ -1651,24 +1651,24 @@ export default function Settings({ className }: SettingsProps) {
                       return (
                         <div
                           key={draft.id}
-                          className="group/draft flex items-center gap-3 rounded-md border border-[#222222] bg-[#0F0F0F] hover:bg-[#141414] hover:border-[#333333] p-3 transition-all duration-200"
+                          className="group/draft flex items-center gap-3 rounded-md border border-t-stroke bg-t-card hover:bg-t-card-hover hover:border-t-stroke-hover p-3 transition-all duration-200"
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="truncate text-[12px] font-medium text-white/90">
+                              <span className="truncate text-[12px] font-medium text-t-fg/90">
                                 {draft.title || 'Untitled market'}
                               </span>
                             </div>
                             <div className="mt-1 flex items-center gap-2">
-                              <div className="h-1 w-20 rounded-full bg-[#222]">
+                              <div className="h-1 w-20 rounded-full bg-t-stroke">
                                 <div
                                   className="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all"
                                   style={{ width: `${pct}%` }}
                                 />
                               </div>
-                              <span className="text-[10px] text-[#606060]">{stepLabel(draft.currentStep)}</span>
-                              <span className="text-[10px] text-[#404040]">·</span>
-                              <span className="text-[10px] text-[#606060]">{timeAgo}</span>
+                              <span className="text-[10px] text-t-fg-muted">{stepLabel(draft.currentStep)}</span>
+                              <span className="text-[10px] text-t-dot">·</span>
+                              <span className="text-[10px] text-t-fg-muted">{timeAgo}</span>
                             </div>
                           </div>
 
@@ -1679,7 +1679,7 @@ export default function Settings({ className }: SettingsProps) {
                                   void deleteDraftById(draft.id);
                                 }
                               }}
-                              className="rounded p-1 text-[#606060] hover:text-red-400 hover:bg-white/5 transition-colors opacity-0 group-hover/draft:opacity-100"
+                              className="rounded p-1 text-t-fg-muted hover:text-red-400 hover:bg-t-fg/5 transition-colors opacity-0 group-hover/draft:opacity-100"
                               title="Delete draft"
                             >
                               <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
@@ -1688,7 +1688,7 @@ export default function Settings({ className }: SettingsProps) {
                             </button>
                             <button
                               onClick={() => router.push(`/new-market?draft=${draft.id}`)}
-                              className="rounded-md bg-white/8 px-2.5 py-1 text-[11px] font-medium text-white/80 hover:bg-white/12 transition-colors"
+                              className="rounded-md bg-t-fg/8 px-2.5 py-1 text-[11px] font-medium text-t-fg/80 hover:bg-t-fg/12 transition-colors"
                             >
                               Continue
                             </button>
@@ -1701,25 +1701,25 @@ export default function Settings({ className }: SettingsProps) {
               </div>
             </div>
 
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
               <div className="p-6">
                 <div className="flex items-center justify-between mb-3">
                   <div className="min-w-0">
-                    <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">My Markets</h4>
-                    <div className="mt-1 text-[10px] text-[#606060] font-mono truncate">
+                    <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">My Markets</h4>
+                    <div className="mt-1 text-[10px] text-t-fg-muted font-mono truncate">
                       Creator: {marketsCreator || '—'}
                       {creatorOverride ? (
-                        <span className="ml-2 text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">override</span>
+                        <span className="ml-2 text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">override</span>
                       ) : null}
                     </div>
                   </div>
                 </div>
 
                 {!marketsCreator ? (
-                  <div className="group bg-[#0F0F0F] rounded-md border border-[#222222] p-3">
+                  <div className="group bg-t-card rounded-md border border-t-stroke p-3">
                     <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] text-[#808080]">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                      <span className="text-[11px] text-t-fg-sub">
                         Connect your wallet to view markets you created.
                       </span>
                     </div>
@@ -1729,7 +1729,7 @@ export default function Settings({ className }: SettingsProps) {
                     <div className="flex items-center gap-2 mb-3">
                       <div className="relative flex-1 max-w-md">
                         <svg
-                          className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-[#606060]"
+                          className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-t-fg-muted"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -1746,16 +1746,16 @@ export default function Settings({ className }: SettingsProps) {
                           placeholder="Search your markets"
                           value={myMarketsSearch}
                           onChange={(e) => setMyMarketsSearch(e.target.value)}
-                          className="w-full bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] focus:border-[#333333] rounded-md pl-8 pr-3 py-2 text-[11px] text-white placeholder-[#606060] focus:outline-none transition-all duration-200"
+                          className="w-full bg-t-card border border-t-stroke hover:border-t-stroke-hover focus:border-t-stroke-hover rounded-md pl-8 pr-3 py-2 text-[11px] text-t-fg placeholder-t-fg-muted focus:outline-none transition-all duration-200"
                         />
                       </div>
-                      <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                      <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                         {myMarkets.length}
                       </div>
                     </div>
 
                     {myMarketsError ? (
-                      <div className="group bg-[#0F0F0F] rounded-md border border-red-500/20 p-3">
+                      <div className="group bg-t-card rounded-md border border-red-500/20 p-3">
                         <div className="flex items-center gap-2">
                           <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                           <span className="text-[11px] text-red-400">Markets error: {myMarketsError}</span>
@@ -1774,10 +1774,10 @@ export default function Settings({ className }: SettingsProps) {
 
                       if (myMarketsLoading && myMarkets.length === 0) {
                         return (
-                          <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
+                          <div className="rounded-md border border-t-stroke bg-t-card p-3">
                             <div className="flex items-center gap-2">
                               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
-                              <span className="text-[11px] text-[#808080]">Loading your markets…</span>
+                              <span className="text-[11px] text-t-fg-sub">Loading your markets…</span>
                             </div>
                           </div>
                         )
@@ -1785,10 +1785,10 @@ export default function Settings({ className }: SettingsProps) {
 
                       if (rows.length === 0) {
                         return (
-                          <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-6 text-center">
+                          <div className="rounded-md border border-t-stroke bg-t-card p-6 text-center">
                             <div className="flex items-center justify-center gap-2">
-                              <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
-                              <span className="text-[11px] text-[#606060]">
+                              <div className="w-1.5 h-1.5 rounded-full bg-t-dot" />
+                              <span className="text-[11px] text-t-fg-muted">
                                 {q ? 'No markets match your search' : 'No markets found for this creator'}
                               </span>
                             </div>
@@ -1817,34 +1817,34 @@ export default function Settings({ className }: SettingsProps) {
                               {Array.from({ length: 6 }).map((_, i) => (
                                 <div
                                   key={i}
-                                  className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 overflow-hidden"
+                                  className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 overflow-hidden"
                                 >
-                                  <div className="h-[104px] bg-[#1A1A1A] border-b border-[#1A1A1A]" />
+                                  <div className="h-[104px] bg-t-inset border-b border-t-stroke-sub" />
                                   <div className="p-2.5">
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-2 min-w-0 flex-1">
                                         <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
-                                        <div className="w-7 h-7 rounded-full bg-[#2A2A2A] animate-pulse flex-shrink-0" />
+                                        <div className="w-7 h-7 rounded-full bg-t-skeleton animate-pulse flex-shrink-0" />
                                         <div className="min-w-0 flex-1 space-y-1">
-                                          <div className="h-3 w-32 bg-[#2A2A2A] rounded animate-pulse" />
-                                          <div className="h-2 w-16 bg-[#2A2A2A] rounded animate-pulse" />
+                                          <div className="h-3 w-32 bg-t-skeleton rounded animate-pulse" />
+                                          <div className="h-2 w-16 bg-t-skeleton rounded animate-pulse" />
                                         </div>
                                       </div>
-                                      <div className="w-10 h-4 bg-[#2A2A2A] rounded animate-pulse" />
+                                      <div className="w-10 h-4 bg-t-skeleton rounded animate-pulse" />
                                     </div>
                                     <div className="mt-3 grid grid-cols-2 gap-2">
                                       <div className="space-y-1">
-                                        <div className="h-2 w-14 bg-[#2A2A2A] rounded animate-pulse" />
-                                        <div className="h-3 w-20 bg-[#2A2A2A] rounded animate-pulse" />
+                                        <div className="h-2 w-14 bg-t-skeleton rounded animate-pulse" />
+                                        <div className="h-3 w-20 bg-t-skeleton rounded animate-pulse" />
                                       </div>
                                       <div className="space-y-1">
-                                        <div className="h-2 w-16 bg-[#2A2A2A] rounded animate-pulse" />
-                                        <div className="h-3 w-20 bg-[#2A2A2A] rounded animate-pulse" />
+                                        <div className="h-2 w-16 bg-t-skeleton rounded animate-pulse" />
+                                        <div className="h-3 w-20 bg-t-skeleton rounded animate-pulse" />
                                       </div>
                                     </div>
                                     <div className="mt-2 space-y-1">
-                                      <div className="h-2 w-24 bg-[#2A2A2A] rounded animate-pulse" />
-                                      <div className="h-3 w-40 bg-[#2A2A2A] rounded animate-pulse" />
+                                      <div className="h-2 w-24 bg-t-skeleton rounded animate-pulse" />
+                                      <div className="h-3 w-40 bg-t-skeleton rounded animate-pulse" />
                                     </div>
                                   </div>
                                 </div>
@@ -1867,7 +1867,7 @@ export default function Settings({ className }: SettingsProps) {
                                       ? 'bg-yellow-400'
                                       : status === 'SETTLED'
                                         ? 'bg-blue-400'
-                                        : 'bg-[#404040]'
+                                        : 'bg-t-dot'
 
                                 const isBondSectionOpen = bondExpandedMarketDbId === m.id
                                 const bondState = bondByMarketDbId[m.id]
@@ -1885,17 +1885,17 @@ export default function Settings({ className }: SettingsProps) {
                                     onKeyDown={(e) => {
                                       if (e.key === 'Enter' || e.key === ' ') goToMarket(m)
                                     }}
-                                    className="group text-left bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 overflow-hidden min-h-[300px] cursor-pointer"
+                                    className="group text-left bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 overflow-hidden min-h-[300px] cursor-pointer"
                                   >
                                     {/* Banner */}
-                                    <div className="relative h-[104px] overflow-hidden border-b border-[#1A1A1A]">
+                                    <div className="relative h-[104px] overflow-hidden border-b border-t-stroke-sub">
                                       <div
                                         className="absolute inset-0"
                                         style={{
                                           background: `
                                             radial-gradient(220px 80px at 20% 30%, rgba(74,158,255,0.16), transparent 60%),
                                             radial-gradient(220px 80px at 80% 40%, rgba(16,185,129,0.10), transparent 62%),
-                                            linear-gradient(180deg, #141414 0%, #0F0F0F 100%)
+                                            linear-gradient(180deg, var(--t-gradient-from) 0%, var(--t-gradient-to) 100%)
                                           `,
                                         }}
                                       />
@@ -1915,7 +1915,7 @@ export default function Settings({ className }: SettingsProps) {
                                       <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2 min-w-0 flex-1">
                                           <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot}`} />
-                                          <div className="w-7 h-7 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0">
+                                          <div className="w-7 h-7 rounded-full overflow-hidden bg-t-skeleton flex-shrink-0">
                                             {icon ? (
                                               <Image
                                                 src={icon}
@@ -1925,26 +1925,26 @@ export default function Settings({ className }: SettingsProps) {
                                                 className="w-full h-full object-cover"
                                               />
                                             ) : (
-                                              <div className="w-full h-full flex items-center justify-center text-[9px] font-medium text-[#808080]">
+                                              <div className="w-full h-full flex items-center justify-center text-[9px] font-medium text-t-fg-sub">
                                                 {(sym || ident || label).slice(0, 2).toUpperCase()}
                                               </div>
                                             )}
                                           </div>
                                           <div className="min-w-0 flex-1">
                                             <div className="flex items-center gap-1.5 min-w-0">
-                                              <span className="text-[11px] font-medium text-white truncate">{label}</span>
-                                              <span className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                                              <span className="text-[11px] font-medium text-t-fg truncate">{label}</span>
+                                              <span className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                                                 {status || '—'}
                                               </span>
                                             </div>
-                                            <div className="text-[10px] text-[#606060] font-mono truncate">
+                                            <div className="text-[10px] text-t-fg-muted font-mono truncate">
                                               {sym || ident || '—'}
                                             </div>
                                           </div>
                                         </div>
 
                                         <svg
-                                          className="w-3 h-3 text-[#404040] opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex-shrink-0"
+                                          className="w-3 h-3 text-t-dot opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex-shrink-0"
                                           fill="none"
                                           viewBox="0 0 24 24"
                                           stroke="currentColor"
@@ -1955,20 +1955,20 @@ export default function Settings({ className }: SettingsProps) {
 
                                       <div className="mt-3 grid grid-cols-2 gap-2">
                                         <div className="min-w-0">
-                                          <div className="text-[9px] text-[#606060] uppercase tracking-wide">Created</div>
-                                          <div className="mt-1 text-[10px] text-white font-mono truncate">{fmtDate(m.created_at)}</div>
+                                          <div className="text-[9px] text-t-fg-muted uppercase tracking-wide">Created</div>
+                                          <div className="mt-1 text-[10px] text-t-fg font-mono truncate">{fmtDate(m.created_at)}</div>
                                         </div>
                                         <div className="min-w-0">
-                                          <div className="text-[9px] text-[#606060] uppercase tracking-wide">Settlement</div>
-                                          <div className="mt-1 text-[10px] text-white font-mono truncate">
+                                          <div className="text-[9px] text-t-fg-muted uppercase tracking-wide">Settlement</div>
+                                          <div className="mt-1 text-[10px] text-t-fg font-mono truncate">
                                             {fmtDate(myMarketsOnchainSettlementById[m.id] ?? m.settlement_date)}
                                           </div>
                                         </div>
                                       </div>
 
                                       <div className="mt-2">
-                                        <div className="text-[9px] text-[#606060] uppercase tracking-wide">Identifier</div>
-                                        <div className="mt-1 text-[10px] text-[#9CA3AF] font-mono truncate">
+                                        <div className="text-[9px] text-t-fg-muted uppercase tracking-wide">Identifier</div>
+                                        <div className="mt-1 text-[10px] text-t-fg-label font-mono truncate">
                                           {ident || sym || '—'}
                                         </div>
                                       </div>
@@ -1986,12 +1986,12 @@ export default function Settings({ className }: SettingsProps) {
                                                     : bondState?.bond?.refunded
                                                       ? 'bg-blue-400'
                                                       : bondState?.loaded
-                                                        ? 'bg-[#404040]'
+                                                        ? 'bg-t-dot'
                                                         : 'bg-yellow-400',
                                                 ].join(' ')}
                                               />
-                                              <div className="text-[10px] text-[#606060] uppercase tracking-wide">Bond refund</div>
-                                              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded font-mono">
+                                              <div className="text-[10px] text-t-fg-muted uppercase tracking-wide">Bond refund</div>
+                                              <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded font-mono">
                                                 {bondState?.bond
                                                   ? bondState.bond.refunded
                                                     ? 'Refunded'
@@ -2012,7 +2012,7 @@ export default function Settings({ className }: SettingsProps) {
                                                     await loadBondEligibility(m)
                                                   }
                                                 }}
-                                                className="px-2.5 py-1.5 rounded-md text-[11px] border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
+                                                className="px-2.5 py-1.5 rounded-md text-[11px] border border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg transition-all duration-200"
                                               >
                                                 {isBondSectionOpen ? 'Hide' : 'Details'}
                                               </button>
@@ -2020,11 +2020,11 @@ export default function Settings({ className }: SettingsProps) {
                                           </div>
 
                                           {isBondSectionOpen ? (
-                                            <div className="mt-2 rounded-md border border-[#222222] bg-[#0F0F0F] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                                            <div className="mt-2 rounded-md border border-t-stroke bg-t-card overflow-hidden" onClick={(e) => e.stopPropagation()}>
                                               <div className="p-2.5">
-                                                <div className="text-[11px] font-medium text-white">Refund requirements</div>
-                                                <div className="mt-1 text-[9px] text-[#606060]">
-                                                  Refunding a bond requires <span className="text-white">deactivating</span> the market.
+                                                <div className="text-[11px] font-medium text-t-fg">Refund requirements</div>
+                                                <div className="mt-1 text-[9px] text-t-fg-muted">
+                                                  Refunding a bond requires <span className="text-t-fg">deactivating</span> the market.
                                                 </div>
 
                                                 <div className="mt-2 space-y-1">
@@ -2075,19 +2075,19 @@ export default function Settings({ className }: SettingsProps) {
                                                         <div
                                                           className={[
                                                             'w-1.5 h-1.5 rounded-full flex-shrink-0',
-                                                            req.ok ? 'bg-green-400' : 'bg-[#404040]',
+                                                            req.ok ? 'bg-green-400' : 'bg-t-dot',
                                                           ].join(' ')}
                                                         />
-                                                        <span className="text-[10px] text-[#808080] truncate">{req.label}</span>
+                                                        <span className="text-[10px] text-t-fg-sub truncate">{req.label}</span>
                                                       </div>
-                                                      <span className="text-[10px] text-white font-mono">{req.value}</span>
+                                                      <span className="text-[10px] text-t-fg font-mono">{req.value}</span>
                                                     </div>
                                                   ))}
                                                 </div>
 
                                                 {bondState?.ineligibleReason ? (
-                                                  <div className="mt-2 text-[10px] text-[#606060]">
-                                                    <span className="text-[#808080]">Status:</span> {bondState.ineligibleReason}
+                                                  <div className="mt-2 text-[10px] text-t-fg-muted">
+                                                    <span className="text-t-fg-sub">Status:</span> {bondState.ineligibleReason}
                                                   </div>
                                                 ) : null}
 
@@ -2104,8 +2104,8 @@ export default function Settings({ className }: SettingsProps) {
                                                     disabled={bondState?.loading}
                                                     className={`px-3 py-2 rounded-md text-[11px] border transition-all duration-200 ${
                                                       bondState?.loading
-                                                        ? 'border-[#222222] text-[#808080]'
-                                                        : 'border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white'
+                                                        ? 'border-t-stroke text-t-fg-sub'
+                                                        : 'border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg'
                                                     }`}
                                                   >
                                                     {bondState?.loading ? 'Checking…' : 'Re-check'}
@@ -2117,7 +2117,7 @@ export default function Settings({ className }: SettingsProps) {
                                                     className={`px-3 py-2 rounded-md text-[11px] border transition-all duration-200 ${
                                                       bondState?.eligible && !bondState?.loading
                                                         ? 'border-yellow-500/20 text-yellow-400 hover:border-yellow-500/30 hover:bg-yellow-500/5'
-                                                        : 'border-[#222222] text-[#606060]'
+                                                        : 'border-t-stroke text-t-fg-muted'
                                                     }`}
                                                   >
                                                     Deactivate & refund
@@ -2125,7 +2125,7 @@ export default function Settings({ className }: SettingsProps) {
                                                 </div>
 
                                                 {bondState?.lastTxHash ? (
-                                                  <div className="mt-2 text-[9px] text-[#606060] font-mono truncate">
+                                                  <div className="mt-2 text-[9px] text-t-fg-muted font-mono truncate">
                                                     Tx: {bondState.lastTxHash}
                                                   </div>
                                                 ) : null}
@@ -2138,9 +2138,9 @@ export default function Settings({ className }: SettingsProps) {
 
                                     {/* Hover details */}
                                     <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-24 overflow-hidden transition-all duration-200">
-                                      <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+                                      <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
                                         <div className="text-[9px] pt-1.5">
-                                          <span className="text-[#606060]">
+                                          <span className="text-t-fg-muted">
                                             {deploy ? `Deployment: ${deploy} · ` : ''}
                                             Status: {status || '—'}
                                           </span>
@@ -2163,32 +2163,32 @@ export default function Settings({ className }: SettingsProps) {
         ) : null}
 
         {activeTab === 'withdrawals' ? (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+          <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
             <div className="p-6">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Vault & Withdrawals</h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">USDC</div>
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Vault & Withdrawals</h4>
+                <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">USDC</div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
-                  <p className="text-[11px] font-medium text-[#808080] mb-1">Available (Trading)</p>
-                  <p className="text-[11px] text-white font-mono">
+                <div className="rounded-md border border-t-stroke bg-t-card p-3">
+                  <p className="text-[11px] font-medium text-t-fg-sub mb-1">Available (Trading)</p>
+                  <p className="text-[11px] text-t-fg font-mono">
                     {(parseFloat(coreVault?.availableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
-                    <span className="text-[#606060]">USDC</span>
+                    <span className="text-t-fg-muted">USDC</span>
                   </p>
                 </div>
-                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
-                  <p className="text-[11px] font-medium text-[#808080] mb-1">Withdrawable (Hub)</p>
-                  <p className="text-[11px] text-white font-mono">
+                <div className="rounded-md border border-t-stroke bg-t-card p-3">
+                  <p className="text-[11px] font-medium text-t-fg-sub mb-1">Withdrawable (Hub)</p>
+                  <p className="text-[11px] text-t-fg font-mono">
                     {(parseFloat(coreVault?.withdrawableBalance || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
-                    <span className="text-[#606060]">USDC</span>
+                    <span className="text-t-fg-muted">USDC</span>
                   </p>
                 </div>
-                <div className="rounded-md border border-[#222222] bg-[#0F0F0F] p-3">
-                  <p className="text-[11px] font-medium text-[#808080] mb-1">Cross-chain Credit</p>
-                  <p className="text-[11px] text-white font-mono">
+                <div className="rounded-md border border-t-stroke bg-t-card p-3">
+                  <p className="text-[11px] font-medium text-t-fg-sub mb-1">Cross-chain Credit</p>
+                  <p className="text-[11px] text-t-fg font-mono">
                     {(parseFloat(coreVault?.crossChainCredit || '0') || 0).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}{' '}
-                    <span className="text-[#606060]">USDC</span>
+                    <span className="text-t-fg-muted">USDC</span>
                   </p>
                 </div>
               </div>
@@ -2206,7 +2206,7 @@ export default function Settings({ className }: SettingsProps) {
                       window.dispatchEvent(new CustomEvent('walkthrough:deposit:open'))
                     } catch {}
                   }}
-                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#0F0F0F] border border-[#222222] text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-t-card border border-t-stroke text-t-fg disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   Deposit
                 </button>
@@ -2214,7 +2214,7 @@ export default function Settings({ className }: SettingsProps) {
                   type="button"
                   disabled={!isWalletConnected}
                   onClick={() => setShowVaultWithdraw(true)}
-                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-[#0F0F0F] border border-[#222222] text-white disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="flex-1 text-xs font-medium rounded-md px-3 py-2 bg-t-card border border-t-stroke text-t-fg disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   Withdraw (Hub)
                 </button>
@@ -2227,29 +2227,29 @@ export default function Settings({ className }: SettingsProps) {
           <div className="space-y-4 mb-6">
             {/* Summary cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
-                <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Total Fees Paid</div>
-                <LiveValue value={feeTotals.totalFeesUsdc} className="text-[20px] font-semibold text-white font-mono">${feeTotals.totalFeesUsdc.toFixed(2)}</LiveValue>
-                <div className="text-[10px] text-[#606060] mt-1">{feeTotals.totalTrades} trades</div>
+              <div className="bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-5">
+                <div className="text-[10px] text-t-fg-muted uppercase tracking-wide mb-1">Total Fees Paid</div>
+                <LiveValue value={feeTotals.totalFeesUsdc} className="text-[20px] font-semibold text-t-fg font-mono">${feeTotals.totalFeesUsdc.toFixed(2)}</LiveValue>
+                <div className="text-[10px] text-t-fg-muted mt-1">{feeTotals.totalTrades} trades</div>
               </div>
-              <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
-                <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Taker Fees</div>
+              <div className="bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-5">
+                <div className="text-[10px] text-t-fg-muted uppercase tracking-wide mb-1">Taker Fees</div>
                 <LiveValue value={feeTotals.takerFeesUsdc} className="text-[20px] font-semibold text-red-400 font-mono">${feeTotals.takerFeesUsdc.toFixed(2)}</LiveValue>
-                <div className="text-[10px] text-[#606060] mt-1">{feeTotals.takerTrades} taker trades</div>
+                <div className="text-[10px] text-t-fg-muted mt-1">{feeTotals.takerTrades} taker trades</div>
               </div>
-              <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
-                <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Maker Fees</div>
+              <div className="bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-5">
+                <div className="text-[10px] text-t-fg-muted uppercase tracking-wide mb-1">Maker Fees</div>
                 <LiveValue value={feeTotals.makerFeesUsdc} className="text-[20px] font-semibold text-green-400 font-mono">${feeTotals.makerFeesUsdc.toFixed(2)}</LiveValue>
-                <div className="text-[10px] text-[#606060] mt-1">{feeTotals.makerTrades} maker trades</div>
+                <div className="text-[10px] text-t-fg-muted mt-1">{feeTotals.makerTrades} maker trades</div>
               </div>
             </div>
 
             {/* Volume + Avg fee rate */}
-            <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-5">
+            <div className="bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Total Volume</div>
-                  <LiveValue value={feeTotals.totalVolumeUsdc} className="text-[16px] font-semibold text-white font-mono">
+                  <div className="text-[10px] text-t-fg-muted uppercase tracking-wide mb-1">Total Volume</div>
+                  <LiveValue value={feeTotals.totalVolumeUsdc} className="text-[16px] font-semibold text-t-fg font-mono">
                     ${feeTotals.totalVolumeUsdc >= 1_000_000
                       ? `${(feeTotals.totalVolumeUsdc / 1_000_000).toFixed(2)}M`
                       : feeTotals.totalVolumeUsdc >= 1_000
@@ -2258,8 +2258,8 @@ export default function Settings({ className }: SettingsProps) {
                   </LiveValue>
                 </div>
                 <div className="text-right">
-                  <div className="text-[10px] text-[#606060] uppercase tracking-wide mb-1">Avg Fee Rate</div>
-                  <LiveValue value={feeTotals.totalVolumeUsdc > 0 ? feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc : 0} className="text-[16px] font-semibold text-[#9CA3AF] font-mono">
+                  <div className="text-[10px] text-t-fg-muted uppercase tracking-wide mb-1">Avg Fee Rate</div>
+                  <LiveValue value={feeTotals.totalVolumeUsdc > 0 ? feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc : 0} className="text-[16px] font-semibold text-t-fg-label font-mono">
                     {feeTotals.totalVolumeUsdc > 0
                       ? `${((feeTotals.totalFeesUsdc / feeTotals.totalVolumeUsdc) * 100).toFixed(3)}%`
                       : '—'}
@@ -2270,20 +2270,20 @@ export default function Settings({ className }: SettingsProps) {
 
             {/* Per-market breakdown */}
             {feeSummary.length > 0 && (
-              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] overflow-hidden">
-                <div className="px-5 py-3 border-b border-[#1A1A1A]">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">By Market</h4>
+              <div className="bg-t-card rounded-md border border-t-stroke overflow-hidden">
+                <div className="px-5 py-3 border-b border-t-stroke-sub">
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">By Market</h4>
                 </div>
-                <div className="divide-y divide-[#1A1A1A]">
+                <div className="divide-y divide-t-stroke-sub">
                   {feeSummary.map((row) => (
-                    <div key={`${row.market_id}-${row.market_address}`} className="px-5 py-3 hover:bg-[#1A1A1A] transition-colors duration-150">
+                    <div key={`${row.market_id}-${row.market_address}`} className="px-5 py-3 hover:bg-t-card-hover transition-colors duration-150">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-[12px] font-medium text-white truncate max-w-[200px]">
+                        <span className="text-[12px] font-medium text-t-fg truncate max-w-[200px]">
                           {row.market_id ? row.market_id.replace(/-/g, '/').toUpperCase() : row.market_address.slice(0, 10) + '…'}
                         </span>
-                        <LiveValue value={row.total_fees_usdc} className="text-[12px] font-medium text-white font-mono">${row.total_fees_usdc.toFixed(2)}</LiveValue>
+                        <LiveValue value={row.total_fees_usdc} className="text-[12px] font-medium text-t-fg font-mono">${row.total_fees_usdc.toFixed(2)}</LiveValue>
                       </div>
-                      <div className="flex items-center gap-3 text-[10px] text-[#606060]">
+                      <div className="flex items-center gap-3 text-[10px] text-t-fg-muted">
                         <span>{row.total_trades} trades</span>
                         <span className="text-red-400/60">{row.taker_trades} taker</span>
                         <span className="text-green-400/60">{row.maker_trades} maker</span>
@@ -2298,14 +2298,14 @@ export default function Settings({ className }: SettingsProps) {
             )}
 
             {/* Recent fee history table */}
-            <div className="bg-[#0F0F0F] rounded-md border border-[#222222] overflow-hidden">
-              <div className="px-5 py-3 border-b border-[#1A1A1A] flex items-center justify-between">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Recent Fee History</h4>
+            <div className="bg-t-card rounded-md border border-t-stroke overflow-hidden">
+              <div className="px-5 py-3 border-b border-t-stroke-sub flex items-center justify-between">
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Recent Fee History</h4>
                 <button
                   type="button"
                   onClick={refetchFees}
                   disabled={feesLoading}
-                  className="text-[10px] text-[#606060] hover:text-[#9CA3AF] transition-colors duration-200 disabled:opacity-50"
+                  className="text-[10px] text-t-fg-muted hover:text-t-fg-label transition-colors duration-200 disabled:opacity-50"
                 >
                   {feesLoading ? 'Loading…' : 'Refresh'}
                 </button>
@@ -2313,34 +2313,34 @@ export default function Settings({ className }: SettingsProps) {
 
               {feesLoading && recentFees.length === 0 ? (
                 <div className="px-5 py-8 text-center">
-                  <div className="text-[11px] text-[#606060]">Loading fee history…</div>
+                  <div className="text-[11px] text-t-fg-muted">Loading fee history…</div>
                 </div>
               ) : recentFees.length === 0 ? (
                 <div className="px-5 py-8 text-center">
-                  <div className="text-[11px] text-[#606060]">No fee history yet. Fees will appear here after your trades are processed.</div>
+                  <div className="text-[11px] text-t-fg-muted">No fee history yet. Fees will appear here after your trades are processed.</div>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="border-b border-[#1A1A1A]">
-                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium">Date</th>
-                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium">Market</th>
-                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium">Role</th>
-                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium text-right">Notional</th>
-                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium text-right">Fee</th>
-                        <th className="px-4 py-2 text-[9px] text-[#606060] uppercase tracking-wide font-medium text-right">Tx</th>
+                      <tr className="border-b border-t-stroke-sub">
+                        <th className="px-4 py-2 text-[9px] text-t-fg-muted uppercase tracking-wide font-medium">Date</th>
+                        <th className="px-4 py-2 text-[9px] text-t-fg-muted uppercase tracking-wide font-medium">Market</th>
+                        <th className="px-4 py-2 text-[9px] text-t-fg-muted uppercase tracking-wide font-medium">Role</th>
+                        <th className="px-4 py-2 text-[9px] text-t-fg-muted uppercase tracking-wide font-medium text-right">Notional</th>
+                        <th className="px-4 py-2 text-[9px] text-t-fg-muted uppercase tracking-wide font-medium text-right">Fee</th>
+                        <th className="px-4 py-2 text-[9px] text-t-fg-muted uppercase tracking-wide font-medium text-right">Tx</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#1A1A1A]">
+                    <tbody className="divide-y divide-t-stroke-sub">
                       {recentFees.map((f) => (
-                        <tr key={f.id} className={`hover:bg-[#1A1A1A] transition-colors duration-150 ${feeLiveIds.has(f.id) ? 'dex-live-row-enter' : ''}`}>
-                          <td className="px-4 py-2.5 text-[11px] text-[#808080] font-mono whitespace-nowrap">
+                        <tr key={f.id} className={`hover:bg-t-card-hover transition-colors duration-150 ${feeLiveIds.has(f.id) ? 'dex-live-row-enter' : ''}`}>
+                          <td className="px-4 py-2.5 text-[11px] text-t-fg-sub font-mono whitespace-nowrap">
                             {f.created_at
                               ? new Date(f.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
                               : '—'}
                           </td>
-                          <td className="px-4 py-2.5 text-[11px] text-white font-medium truncate max-w-[120px]">
+                          <td className="px-4 py-2.5 text-[11px] text-t-fg font-medium truncate max-w-[120px]">
                             {f.market_id ? f.market_id.replace(/-/g, '/').toUpperCase().slice(0, 16) : '—'}
                           </td>
                           <td className="px-4 py-2.5">
@@ -2352,7 +2352,7 @@ export default function Settings({ className }: SettingsProps) {
                               {f.fee_role.toUpperCase()}
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 text-[11px] text-[#9CA3AF] font-mono text-right">
+                          <td className="px-4 py-2.5 text-[11px] text-t-fg-label font-mono text-right">
                             ${f.trade_notional >= 1000 ? `${(f.trade_notional / 1000).toFixed(1)}k` : f.trade_notional.toFixed(2)}
                           </td>
                           <td className="px-4 py-2.5 text-[11px] text-yellow-400 font-mono font-medium text-right">
@@ -2364,12 +2364,12 @@ export default function Settings({ className }: SettingsProps) {
                                 href={`https://explorer.hyperliquid.xyz/tx/${f.tx_hash}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[10px] text-[#606060] hover:text-[#9CA3AF] font-mono transition-colors duration-200"
+                                className="text-[10px] text-t-fg-muted hover:text-t-fg-label font-mono transition-colors duration-200"
                               >
                                 {f.tx_hash.slice(0, 6)}…
                               </a>
                             ) : (
-                              <span className="text-[10px] text-[#404040]">—</span>
+                              <span className="text-[10px] text-t-dot">—</span>
                             )}
                           </td>
                         </tr>
@@ -2383,13 +2383,13 @@ export default function Settings({ className }: SettingsProps) {
         ) : null}
 
         {activeTab === 'preferences' ? (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-6">
+          <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-6">
             <div className="p-6">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Preferences</h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Coming soon</div>
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Preferences</h4>
+                <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">Coming soon</div>
               </div>
-              <p className="text-[11px] text-[#606060]">
+              <p className="text-[11px] text-t-fg-muted">
                 Theme, privacy, and advanced preferences will live here.
               </p>
             </div>
@@ -2421,8 +2421,8 @@ export default function Settings({ className }: SettingsProps) {
                 : saveStatus === 'error'
                 ? 'bg-red-500 text-white'
                 : walletData.isConnected
-                ? 'bg-[#0F0F0F] hover:bg-[#1A1A1A] border border-[#222222] hover:border-[#333333] text-white'
-                : 'bg-[#404040] text-[#666666] cursor-not-allowed'
+                ? 'bg-t-card hover:bg-t-card-hover border border-t-stroke hover:border-t-stroke-hover text-t-fg'
+                : 'bg-t-dot text-t-fg-muted cursor-not-allowed'
             }`}
           >
             {saveStatus === 'saving' && (

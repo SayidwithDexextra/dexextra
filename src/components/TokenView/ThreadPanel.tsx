@@ -77,12 +77,12 @@ export default function ThreadPanel() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3">
+      <div className="rounded-md bg-t-page border border-t-stroke-hover p-3">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-semibold text-white">Community Chat</h3>
+          <h3 className="text-lg font-semibold text-t-fg">Community Chat</h3>
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <span className="text-sm text-zinc-400">0 online</span>
+            <span className="text-sm text-t-fg-muted">0 online</span>
           </div>
         </div>
         
@@ -95,8 +95,8 @@ export default function ThreadPanel() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-white">{msg.user}</span>
-                  <span className="text-xs text-zinc-400">{msg.time}</span>
+                  <span className="text-sm font-medium text-t-fg">{msg.user}</span>
+                  <span className="text-xs text-t-fg-muted">{msg.time}</span>
                 </div>
                 <p className="text-sm text-zinc-300 break-words">{msg.content}</p>
               </div>
@@ -111,12 +111,12 @@ export default function ThreadPanel() {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Type a message..."
-            className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-400 focus:outline-none focus:border-zinc-600"
+            className="flex-1 bg-t-inset border border-t-stroke rounded px-3 py-2 text-sm text-t-fg placeholder-zinc-400 focus:outline-none focus:border-zinc-600"
             onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
           />
           <button
             onClick={handleSendMessage}
-            className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 rounded text-sm text-white transition-colors"
+            className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 rounded text-sm text-t-fg transition-colors"
           >
             Send
           </button>

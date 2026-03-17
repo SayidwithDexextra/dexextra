@@ -2221,8 +2221,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const ActivityEmptyState = ({ message, isLoading: loading = false, dataWalkthrough }: { message: string; isLoading?: boolean; dataWalkthrough?: string }) => (
     <div className="flex flex-col items-center justify-center p-8 pt-6 pb-10 min-h-[140px] gap-4" {...(dataWalkthrough ? { 'data-walkthrough': dataWalkthrough } : {})}>
       <div className="flex items-center gap-2">
-        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${loading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
-        <span className="text-[11px] font-medium text-[#E5E7EB]">{message}</span>
+        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${loading ? 'bg-blue-400 animate-pulse' : 'bg-t-dot'}`} />
+        <span className="text-[11px] font-medium text-t-fg">{message}</span>
       </div>
       <img
         src="/Dexicon/LOGO-Dexetera-03.svg"
@@ -2248,14 +2248,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return (
                   <table className="w-full">
                     <thead>
-                      <tr className="border-b border-[#222222]">
-                        <th className="text-left pl-1.5 sm:pl-2 pr-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="hidden sm:table-cell text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="hidden md:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Mark</th>
-                        <th className="text-right px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
-                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Liq Price</th>
-                        <th className="text-right pr-1.5 sm:pr-2 pl-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide"></th>
+                      <tr className="border-b border-t-stroke">
+                        <th className="text-left pl-1.5 sm:pl-2 pr-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Side</th>
+                        <th className="hidden sm:table-cell text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
+                        <th className="hidden md:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Mark</th>
+                        <th className="text-right px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">PnL</th>
+                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Liq Price</th>
+                        <th className="text-right pr-1.5 sm:pr-2 pl-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2269,8 +2269,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         const rowClass = `mat-slide-rtl group/row transition-colors duration-200 ${
                           position.isUnderLiquidation
                             ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
-                            : 'hover:bg-[#1A1A1A]'
-                        } ${index !== displayedPositions.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`;
+                            : 'hover:bg-t-card-hover'
+                        } ${index !== displayedPositions.length - 1 ? 'border-b border-t-stroke-sub' : ''}`;
 
                         if (showSkeleton) {
                           return (
@@ -2281,30 +2281,30 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             >
                               <td className="pl-1.5 sm:pl-2 pr-1 py-1.5">
                                 <div className="flex items-center gap-1 min-w-0">
-                                  <span className="w-4 h-4 shrink-0 rounded-full border border-[#333333] bg-[#1A1A1A] animate-pulse" />
+                                  <span className="w-4 h-4 shrink-0 rounded-full border border-t-stroke-hover bg-t-inset animate-pulse" />
                                   <div className="min-w-0 flex-1">
-                                    <span className="block w-[60px] sm:w-[120px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
-                                    <span className="hidden md:block mt-1 w-[84px] h-[10px] bg-[#141414] rounded animate-pulse" />
+                                    <span className="block w-[60px] sm:w-[120px] h-[12px] bg-t-inset rounded animate-pulse" />
+                                    <span className="hidden md:block mt-1 w-[84px] h-[10px] bg-t-elevated rounded animate-pulse" />
                                   </div>
                                 </div>
                               </td>
                               <td className="px-1 sm:px-2 py-1.5">
-                                <span className="inline-block w-[32px] sm:w-[44px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                <span className="inline-block w-[32px] sm:w-[44px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                               <td className="hidden sm:table-cell px-1.5 sm:px-2 py-1.5 text-right">
-                                <span className="inline-block w-[64px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                <span className="inline-block w-[64px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                               <td className="hidden md:table-cell px-2 py-1.5 text-right">
-                                <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                <span className="inline-block w-[72px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                               <td className="px-1 sm:px-2 py-1.5 text-right">
-                                <span className="inline-block w-[50px] sm:w-[78px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                <span className="inline-block w-[50px] sm:w-[78px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                               <td className="hidden sm:table-cell px-2 py-1.5 text-right">
-                                <span className="inline-block w-[72px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                <span className="inline-block w-[72px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                               <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
-                                <span className="inline-block w-[36px] sm:w-[52px] h-[12px] bg-[#1A1A1A] rounded animate-pulse" />
+                                <span className="inline-block w-[36px] sm:w-[52px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                             </tr>
                           );
@@ -2323,13 +2323,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                     <img
                                       src={(marketSymbolMap.get(position.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                       alt={`${position.symbol} logo`}
-                                      className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
+                                      className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-t-stroke-hover object-cover"
                                     />
                                     <div className="min-w-0 flex-1">
-                                      <span className="block truncate text-[10px] sm:text-[11px] font-medium text-white">
+                                      <span className="block truncate text-[10px] sm:text-[11px] font-medium text-t-fg">
                                         {truncateMarketName(marketSymbolMap.get(position.symbol)?.name || position.symbol)}
                                       </span>
-                                      <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
+                                      <span className="hidden md:block truncate text-[10px] text-t-fg-label">
                                         {marketSymbolMap.get(position.symbol)?.identifier || position.symbol}
                                       </span>
                                     </div>
@@ -2351,10 +2351,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 </span>
                               </td>
                           <td className="hidden sm:table-cell px-1.5 sm:px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-white font-mono">{formatSize(position.size)}</span>
+                            <span className="text-[11px] text-t-fg font-mono">{formatSize(position.size)}</span>
                           </td>
                           <td className="hidden md:table-cell px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-white font-mono">${formatPrice(position.markPrice)}</span>
+                            <span className="text-[11px] text-t-fg font-mono">${formatPrice(position.markPrice)}</span>
                           </td>
                           <td className="px-1 sm:px-2 py-1.5 text-right">
                             <div className="flex flex-col items-end">
@@ -2393,7 +2393,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 <span className={`text-[11px] font-mono ${
                                   position.isUnderLiquidation 
                                     ? 'text-yellow-400 font-bold'
-                                    : 'text-white'
+                                    : 'text-t-fg'
                                 }`}>
                                   ${formatPrice(position.liquidationPrice)}
                                 </span>
@@ -2409,7 +2409,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <button 
                     onClick={() => setExpandedPositionId(expandedPositionId === position.id ? null : position.id)}
                     data-walkthrough="token-activity-manage"
-                    className={`${forcePositionManageVisible ? 'opacity-100' : 'sm:opacity-0 sm:group-hover/row:opacity-100'} transition-opacity duration-200 px-1 sm:px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded`}
+                    className={`${forcePositionManageVisible ? 'opacity-100' : 'sm:opacity-0 sm:group-hover/row:opacity-100'} transition-opacity duration-200 px-1 sm:px-1.5 py-0.5 text-[9px] text-t-fg hover:text-t-fg hover:bg-t-card-hover rounded`}
                   >
                     {expandedPositionId === position.id ? '▾' : '▸'}
                     <span className="hidden sm:inline ml-0.5">{expandedPositionId === position.id ? 'Hide' : 'Manage'}</span>
@@ -2417,30 +2417,30 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           </td>
                         </tr>
               {expandedPositionId === position.id && (
-                <tr className="bg-[#1A1A1A]">
+                <tr className="bg-t-inset">
                   <td colSpan={100} className="px-0">
-                    <div className="px-2 py-1.5 border-t border-[#222222]">
+                    <div className="px-2 py-1.5 border-t border-t-stroke">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
                             <div className="flex items-center gap-3">
                               <div className="flex flex-col gap-1 sm:hidden">
-                                <span className="text-[9px] text-[#CBD5E1]">Size</span>
-                                <span className="text-[10px] font-medium font-mono text-white">
+                                <span className="text-[9px] text-t-fg-label">Size</span>
+                                <span className="text-[10px] font-medium font-mono text-t-fg">
                                   {formatSize(position.size)}
                                 </span>
                               </div>
                               <div className="flex flex-col gap-1">
-                                <span className="text-[9px] text-[#CBD5E1]">Margin</span>
+                                <span className="text-[9px] text-t-fg-label">Margin</span>
                                 <span className={`text-[10px] font-medium font-mono ${
-                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
+                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-t-fg'
                                 }`}>
                                   ${position.margin.toFixed(2)}
                                 </span>
                               </div>
                               <div className="flex flex-col gap-1">
-                                <span className="text-[9px] text-[#CBD5E1]">Leverage</span>
+                                <span className="text-[9px] text-t-fg-label">Leverage</span>
                                 <span className={`text-[10px] font-medium font-mono ${
-                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-white'
+                                  position.isUnderLiquidation ? 'text-yellow-400' : 'text-t-fg'
                                 }`}>
                                   {position.leverage}x
                                 </span>
@@ -2530,8 +2530,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return (
                   <div className="w-full overflow-x-hidden">
                     {displayedOpenOrders.length > 1 && (
-                      <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[#222222]">
-                        <span className="text-[10px] text-[#9CA3AF]">
+                      <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-t-stroke">
+                        <span className="text-[10px] text-t-fg-label">
                           {displayedOpenOrders.length} open order{displayedOpenOrders.length !== 1 ? 's' : ''}
                         </span>
                         <button
@@ -2547,14 +2547,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     )}
                     <table className="w-full">
                     <thead>
-                      <tr className="border-b border-[#222222]">
-                        <th className="text-left pl-1.5 sm:pl-2 pr-1 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Symbol</th>
-                        <th className="text-left px-1 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="hidden md:table-cell text-left px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-1 sm:px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Status</th>
-                        <th className="text-right pr-1.5 sm:pr-2 pl-1 py-1.5 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide"></th>
+                      <tr className="border-b border-t-stroke">
+                        <th className="text-left pl-1.5 sm:pl-2 pr-1 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Symbol</th>
+                        <th className="text-left px-1 sm:px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Side</th>
+                        <th className="hidden md:table-cell text-left px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Type</th>
+                        <th className="text-right px-1 sm:px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Price</th>
+                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
+                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Status</th>
+                        <th className="text-right pr-1.5 sm:pr-2 pl-1 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2566,7 +2566,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         return (
                         <React.Fragment key={uiKey}>
                           <tr
-                            className={`mat-slide-rtl group/row hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''} ${isAnimatingOut ? 'order-row-slide-out' : ''}`}
+                            className={`mat-slide-rtl group/row hover:bg-t-card-hover transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-t-stroke-sub' : ''} ${isAnimatingOut ? 'order-row-slide-out' : ''}`}
                             style={{ animationDelay: `${index * 50}ms` }}
                             onAnimationEnd={(e) => {
                               if (e.animationName !== 'order-row-slide-out') return;
@@ -2583,13 +2583,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   <img
                                     src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                     alt={`${order.symbol} logo`}
-                                    className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
+                                    className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-t-stroke-hover object-cover"
                                   />
                                   <div className="min-w-0">
-                                    <span className="block truncate text-[10px] sm:text-[11px] font-medium text-white">
+                                    <span className="block truncate text-[10px] sm:text-[11px] font-medium text-t-fg">
                                       {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                     </span>
-                                    <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
+                                    <span className="hidden md:block truncate text-[10px] text-t-fg-label">
                                       {marketSymbolMap.get(order.symbol)?.identifier || order.symbol}
                                     </span>
                                   </div>
@@ -2600,21 +2600,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               <span className={`text-[10px] sm:text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                             </td>
                             <td className="hidden md:table-cell px-2 py-1.5">
-                              <span className="text-[11px] text-white">{order.type}</span>
+                              <span className="text-[11px] text-t-fg">{order.type}</span>
                             </td>
                             <td className="px-1 sm:px-2 py-1.5 text-right">
-                              <span className="text-[10px] sm:text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
+                              <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">${formatPrice(order.price)}</span>
                             </td>
                             <td className="hidden sm:table-cell px-2 py-1.5 text-right">
-                              <span className="text-[10px] sm:text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
+                              <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">{formatAmount(order.size, 4)}</span>
                             </td>
                             <td className="hidden sm:table-cell px-2 py-1.5 text-right">
-                              <span className="text-[11px] text-[#9CA3AF]">{order.status}</span>
+                              <span className="text-[11px] text-t-fg-label">{order.status}</span>
                             </td>
                             <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
                               <button
                                 onClick={() => setExpandedOrderKey(isExpanded ? null : uiKey)}
-                                className="sm:opacity-0 sm:group-hover/row:opacity-100 transition-opacity duration-200 px-1 sm:px-1.5 py-0.5 text-[9px] text-[#E5E7EB] hover:text-white hover:bg-[#2A2A2A] rounded"
+                                className="sm:opacity-0 sm:group-hover/row:opacity-100 transition-opacity duration-200 px-1 sm:px-1.5 py-0.5 text-[9px] text-t-fg hover:text-t-fg hover:bg-t-card-hover rounded"
                               >
                                 {isExpanded ? '\u25BE' : '\u25B8'}
                                 <span className="hidden sm:inline ml-0.5">{isExpanded ? 'Hide' : 'Manage'}</span>
@@ -2622,27 +2622,27 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             </td>
                           </tr>
                           {isExpanded && (
-                            <tr className={`bg-[#1A1A1A] ${isAnimatingOut ? 'order-row-slide-out' : ''}`}>
+                            <tr className={`bg-t-inset ${isAnimatingOut ? 'order-row-slide-out' : ''}`}>
                               <td colSpan={100} className="px-0">
-                                <div className="px-2 py-1.5 border-t border-[#222222]">
+                                <div className="px-2 py-1.5 border-t border-t-stroke">
                                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                     <div className="flex items-center gap-3 flex-wrap">
                                       <div className="flex items-center gap-3">
                                         <div className="flex flex-col gap-1 sm:hidden">
-                                          <span className="text-[9px] text-[#CBD5E1]">Size</span>
-                                          <span className="text-[10px] font-medium text-white font-mono">
+                                          <span className="text-[9px] text-t-fg-label">Size</span>
+                                          <span className="text-[10px] font-medium text-t-fg font-mono">
                                             {formatAmount(order.size, 4)}
                                           </span>
                                         </div>
                                         <div className="flex flex-col gap-1">
-                                          <span className="text-[9px] text-[#CBD5E1]">Value</span>
-                                          <span className="text-[10px] font-medium text-white font-mono">
+                                          <span className="text-[9px] text-t-fg-label">Value</span>
+                                          <span className="text-[10px] font-medium text-t-fg font-mono">
                                             ${formatPrice(order.price * order.size)}
                                           </span>
                                         </div>
                                         <div className="flex flex-col gap-1">
-                                          <span className="text-[9px] text-[#CBD5E1]">Fill Progress</span>
-                                          <span className="text-[10px] font-medium text-white font-mono">
+                                          <span className="text-[9px] text-t-fg-label">Fill Progress</span>
+                                          <span className="text-[10px] font-medium text-t-fg font-mono">
                                             {order.size > 0 ? ((order.filled / order.size) * 100).toFixed(1) : '0.0'}%
                                           </span>
                                         </div>
@@ -2985,45 +2985,45 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return (
       <div className="space-y-2 sm:space-y-4">
         {/* Trade Statistics and Controls Header */}
-        <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-1.5 sm:p-2 space-y-1.5 sm:space-y-2">
+        <div className="bg-t-card rounded-md border border-t-stroke p-1.5 sm:p-2 space-y-1.5 sm:space-y-2">
           {/* Stats row */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 sm:gap-4 flex-wrap min-w-0">
-              <h4 className="text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide whitespace-nowrap">Performance</h4>
+              <h4 className="text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide whitespace-nowrap">Performance</h4>
               <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
                 <div className="flex items-center gap-1">
-                  <span className="text-[8px] sm:text-[9px] text-[#CBD5E1] whitespace-nowrap">Vol:</span>
-                  <span className="text-[9px] sm:text-[10px] font-medium text-white font-mono">${stats.totalVolume.toFixed(2)}</span>
+                  <span className="text-[8px] sm:text-[9px] text-t-fg-label whitespace-nowrap">Vol:</span>
+                  <span className="text-[9px] sm:text-[10px] font-medium text-t-fg font-mono">${stats.totalVolume.toFixed(2)}</span>
                 </div>
                 <div className="hidden sm:flex items-center gap-1">
-                  <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Fees:</span>
-                  <span className="text-[10px] font-medium text-white font-mono">${stats.totalFees.toFixed(4)}</span>
+                  <span className="text-[9px] text-t-fg-label whitespace-nowrap">Fees:</span>
+                  <span className="text-[10px] font-medium text-t-fg font-mono">${stats.totalFees.toFixed(4)}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="text-[8px] sm:text-[9px] text-[#CBD5E1] whitespace-nowrap">B/S:</span>
-                  <span className="text-[9px] sm:text-[10px] font-medium text-white font-mono">{stats.buyCount}/{stats.sellCount}</span>
+                  <span className="text-[8px] sm:text-[9px] text-t-fg-label whitespace-nowrap">B/S:</span>
+                  <span className="text-[9px] sm:text-[10px] font-medium text-t-fg font-mono">{stats.buyCount}/{stats.sellCount}</span>
                 </div>
                 <div className="hidden sm:flex items-center gap-1">
-                  <span className="text-[9px] text-[#CBD5E1] whitespace-nowrap">Avg Size:</span>
-                  <span className="text-[10px] font-medium text-white font-mono">${stats.avgTradeSize.toFixed(2)}</span>
+                  <span className="text-[9px] text-t-fg-label whitespace-nowrap">Avg Size:</span>
+                  <span className="text-[10px] font-medium text-t-fg font-mono">${stats.avgTradeSize.toFixed(2)}</span>
                 </div>
               </div>
             </div>
-            <span className="text-[9px] sm:text-[10px] text-[#CBD5E1] whitespace-nowrap flex-shrink-0">
+            <span className="text-[9px] sm:text-[10px] text-t-fg-label whitespace-nowrap flex-shrink-0">
               {orderBookState.tradeCount}
             </span>
           </div>
           {/* Controls row */}
-          <div className="flex items-center justify-between border-t border-[#1A1A1A] pt-1.5 sm:pt-2 gap-2">
-            <div className="flex items-center rounded border border-[#333333] overflow-hidden flex-shrink-0">
+          <div className="flex items-center justify-between border-t border-t-stroke-sub pt-1.5 sm:pt-2 gap-2">
+            <div className="flex items-center rounded border border-t-stroke-hover overflow-hidden flex-shrink-0">
               {(['ALL', 'BUY', 'SELL'] as const).map((f) => (
                 <button
                   key={f}
                   onClick={() => setTradeFilter(f)}
                   className={`px-1.5 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-medium transition-colors duration-150 ${
                     tradeFilter === f
-                      ? f === 'BUY' ? 'bg-green-400/15 text-green-400' : f === 'SELL' ? 'bg-red-400/15 text-red-400' : 'bg-[#2A2A2A] text-white'
-                      : 'text-[#808080] hover:text-white hover:bg-[#1A1A1A]'
+                      ? f === 'BUY' ? 'bg-green-400/15 text-green-400' : f === 'SELL' ? 'bg-red-400/15 text-red-400' : 'bg-t-skeleton text-t-fg'
+                      : 'text-t-fg-sub hover:text-t-fg hover:bg-t-card-hover'
                   }`}
                 >
                   {f === 'ALL' ? 'All' : f === 'BUY' ? 'Long' : 'Short'}
@@ -3037,7 +3037,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   setTradeLimit(Number(e.target.value));
                   setTradeOffset(0);
                 }}
-                className="bg-[#1A1A1A] border border-[#333333] rounded px-1.5 sm:px-2 py-1 text-[10px] sm:text-[11px] text-white focus:outline-none focus:border-blue-400"
+                className="bg-t-inset border border-t-stroke-hover rounded px-1.5 sm:px-2 py-1 text-[10px] sm:text-[11px] text-t-fg focus:outline-none focus:border-blue-400"
               >
                 <option value="10">10</option>
                 <option value="25">25</option>
@@ -3079,7 +3079,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
-                className="px-2 py-1 text-[10px] font-medium text-[#808080] hover:text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#333333] hover:border-[#444444] rounded transition-colors duration-150"
+                className="px-2 py-1 text-[10px] font-medium text-t-fg-sub hover:text-t-fg bg-t-inset hover:bg-t-card-hover border border-t-stroke-hover hover:border-[#444444] rounded transition-colors duration-150"
                 title="Export trades as CSV"
               >
                 <svg className="w-3 h-3 inline-block mr-1 -mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -3093,14 +3093,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
         {/* Closed Position Summary */}
         {closedPositions.length > 0 && (
-          <div className="bg-[#0F0F0F] rounded-md border border-[#222222]">
+          <div className="bg-t-card rounded-md border border-t-stroke">
             <button
               onClick={() => setShowClosedSummary(!showClosedSummary)}
-              className="w-full flex items-center justify-between p-2 hover:bg-[#141414] transition-colors rounded-md"
+              className="w-full flex items-center justify-between p-2 hover:bg-t-elevated transition-colors rounded-md"
             >
               <div className="flex items-center gap-2">
-                <h4 className="text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Closed Positions</h4>
-                <span className="text-[10px] text-[#CBD5E1] bg-[#2A2A2A] px-1.5 py-0.5 rounded">{closedPositions.length}</span>
+                <h4 className="text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Closed Positions</h4>
+                <span className="text-[10px] text-t-fg-label bg-t-skeleton px-1.5 py-0.5 rounded">{closedPositions.length}</span>
                 {(() => {
                   const totalPnl = closedPositions.reduce((sum, p) => sum + p.pnl, 0);
                   return (
@@ -3111,7 +3111,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 })()}
               </div>
               <svg
-                className={`w-3 h-3 text-[#9CA3AF] transition-transform duration-200 ${showClosedSummary ? 'rotate-180' : ''}`}
+                className={`w-3 h-3 text-t-fg-label transition-transform duration-200 ${showClosedSummary ? 'rotate-180' : ''}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -3121,17 +3121,17 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               </svg>
             </button>
             {showClosedSummary && (
-              <div className="overflow-auto scrollbar-hide max-h-60 border-t border-[#222222]">
+              <div className="overflow-auto scrollbar-hide max-h-60 border-t border-t-stroke">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-[#222222]">
-                      <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Dir</th>
-                      <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                      <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Entry</th>
-                      <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Exit</th>
-                      <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">PnL</th>
-                      <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Fees</th>
-                      <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Duration</th>
+                    <tr className="border-b border-t-stroke">
+                      <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Dir</th>
+                      <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
+                      <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Entry</th>
+                      <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Exit</th>
+                      <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">PnL</th>
+                      <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Fees</th>
+                      <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Duration</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3146,20 +3146,20 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           ? `${durationHr}h ${durationMin % 60}m`
                           : `${durationMin}m`;
                       return (
-                        <tr key={`cp-${i}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${i !== closedPositions.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
+                        <tr key={`cp-${i}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${i !== closedPositions.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
                           <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2">
                             <span className={`text-[10px] sm:text-[11px] font-medium ${pos.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
                               {pos.direction}
                             </span>
                           </td>
                           <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-right">
-                            <span className="text-[10px] sm:text-[11px] text-white font-mono">{pos.size.toFixed(4)}</span>
+                            <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">{pos.size.toFixed(4)}</span>
                           </td>
                           <td className="hidden sm:table-cell px-2.5 py-2 text-right">
-                            <span className="text-[11px] text-white font-mono">${formatPrice(pos.entryPrice)}</span>
+                            <span className="text-[11px] text-t-fg font-mono">${formatPrice(pos.entryPrice)}</span>
                           </td>
                           <td className="hidden sm:table-cell px-2.5 py-2 text-right">
-                            <span className="text-[11px] text-white font-mono">${formatPrice(pos.exitPrice)}</span>
+                            <span className="text-[11px] text-t-fg font-mono">${formatPrice(pos.exitPrice)}</span>
                           </td>
                           <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-right">
                             <div className="flex flex-col items-end">
@@ -3172,10 +3172,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             </div>
                           </td>
                           <td className="hidden md:table-cell px-2.5 py-2 text-right">
-                            <span className="text-[11px] text-[#9CA3AF] font-mono">${pos.totalFees.toFixed(4)}</span>
+                            <span className="text-[11px] text-t-fg-label font-mono">${pos.totalFees.toFixed(4)}</span>
                           </td>
                           <td className="hidden md:table-cell px-2.5 py-2 text-right">
-                            <span className="text-[11px] text-[#9CA3AF]">{durationStr}</span>
+                            <span className="text-[11px] text-t-fg-label">{durationStr}</span>
                           </td>
                         </tr>
                       );
@@ -3191,14 +3191,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         <div className="overflow-auto scrollbar-hide max-h-96">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-[#222222]">
-                <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
-                <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Fee</th>
-                <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+              <tr className="border-b border-t-stroke">
+                <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Side</th>
+                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Price</th>
+                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
+                <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Value</th>
+                <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Fee</th>
+                <th className="hidden md:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Type</th>
+                <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Time</th>
               </tr>
             </thead>
             <tbody>
@@ -3215,27 +3215,27 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 const isMargin = isBuyer ? trade.buyerIsMargin : trade.sellerIsMargin;
 
                 return (
-                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== filtered.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
+                  <tr key={`${trade.tradeId}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${index !== filtered.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5">
                       <span className={`text-[10px] sm:text-[11px] font-medium ${side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{side}</span>
                     </td>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
-                      <span className="text-[10px] sm:text-[11px] text-white font-mono">${trade.price.toFixed(2)}</span>
+                      <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">${trade.price.toFixed(2)}</span>
                     </td>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
-                      <span className="text-[10px] sm:text-[11px] text-white font-mono">{trade.amount.toFixed(4)}</span>
+                      <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">{trade.amount.toFixed(4)}</span>
                     </td>
                     <td className="hidden sm:table-cell px-2.5 py-2.5 text-right">
-                      <span className="text-[11px] text-white font-mono">${trade.tradeValue.toFixed(2)}</span>
+                      <span className="text-[11px] text-t-fg font-mono">${trade.tradeValue.toFixed(2)}</span>
                     </td>
                     <td className="hidden md:table-cell px-2.5 py-2.5 text-right">
-                      <span className="text-[11px] text-white font-mono">${fee.toFixed(4)}</span>
+                      <span className="text-[11px] text-t-fg font-mono">${fee.toFixed(4)}</span>
                     </td>
                     <td className="hidden md:table-cell px-2.5 py-2.5 text-right">
-                      <span className="text-[11px] text-[#9CA3AF]">{isMargin ? 'Margin' : 'Spot'}</span>
+                      <span className="text-[11px] text-t-fg-label">{isMargin ? 'Margin' : 'Spot'}</span>
                     </td>
                     <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
-                      <span className="text-[10px] sm:text-[11px] text-[#9CA3AF]">{formatTime(trade.timestamp)}</span>
+                      <span className="text-[10px] sm:text-[11px] text-t-fg-label">{formatTime(trade.timestamp)}</span>
                     </td>
                   </tr>
                 );
@@ -3250,14 +3250,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
             <button
               onClick={() => setTradeOffset(Math.max(0, tradeOffset - tradeLimit))}
               disabled={tradeOffset === 0}
-              className="px-2 py-1 text-[11px] text-[#E5E7EB] hover:text-white disabled:text-[#404040] disabled:cursor-not-allowed"
+              className="px-2 py-1 text-[11px] text-t-fg hover:text-t-fg disabled:text-t-dot disabled:cursor-not-allowed"
             >
               Previous
             </button>
             <button
               onClick={() => setTradeOffset(tradeOffset + tradeLimit)}
               disabled={!hasMoreTrades}
-              className="px-2 py-1 text-[11px] text-[#E5E7EB] hover:text-white disabled:text-[#404040] disabled:cursor-not-allowed"
+              className="px-2 py-1 text-[11px] text-t-fg hover:text-t-fg disabled:text-t-dot disabled:cursor-not-allowed"
             >
               Next
             </button>
@@ -3265,7 +3265,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         </div>
 
         {/* Legend */}
-        {/* <div className="text-[10px] text-[#606060] pt-2">
+        {/* <div className="text-[10px] text-t-fg-muted pt-2">
           <div>• Side: Your perspective (BUY/SELL)</div>
           <div>• Type: Margin or Spot trade</div>
           <div>• Fees shown are what you paid</div>
@@ -3283,19 +3283,19 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return (
                   <table className="w-full table-fixed">
                     <thead>
-                      <tr className="border-b border-[#222222]">
-                        <th className="w-[clamp(100px,24%,260px)] text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Market</th>
-                        <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Side</th>
-                        <th className="hidden md:table-cell text-left px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Type</th>
-                        <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Price</th>
-                        <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Size</th>
-                        <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Value</th>
-                        <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-[#9CA3AF] uppercase tracking-wide">Time</th>
+                      <tr className="border-b border-t-stroke">
+                        <th className="w-[clamp(100px,24%,260px)] text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Market</th>
+                        <th className="text-left px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Side</th>
+                        <th className="hidden md:table-cell text-left px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Type</th>
+                        <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Price</th>
+                        <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
+                        <th className="hidden sm:table-cell text-right px-2.5 py-2 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Value</th>
+                        <th className="text-right px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Time</th>
                       </tr>
                     </thead>
                     <tbody>
                       {orderHistory.map((order, index) => (
-                        <tr key={`${order.id}-${index}`} className={`hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-[#1A1A1A]' : ''}`}>
+                        <tr key={`${order.id}-${index}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${index !== orderHistory.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
                           <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 w-[clamp(100px,24%,260px)] max-w-0">
                             <div className="flex items-center gap-1 sm:gap-2 min-w-0">
                               <Link
@@ -3306,13 +3306,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                 <img
                                   src={(marketSymbolMap.get(order.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
                                   alt={`${order.symbol} logo`}
-                                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-[#333333] object-cover"
+                                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-t-stroke-hover object-cover"
                                 />
                                 <div className="min-w-0">
-                                  <span className="block truncate text-[10px] sm:text-[11px] font-medium text-white">
+                                  <span className="block truncate text-[10px] sm:text-[11px] font-medium text-t-fg">
                                     {truncateMarketName(marketSymbolMap.get(order.symbol)?.name || order.symbol)}
                                   </span>
-                                  <span className="hidden md:block truncate text-[10px] text-[#9CA3AF]">
+                                  <span className="hidden md:block truncate text-[10px] text-t-fg-label">
                                     {marketSymbolMap.get(order.symbol)?.identifier || order.symbol}
                                   </span>
                                 </div>
@@ -3323,7 +3323,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   href={`https://hyperevmscan.io/tx/${encodeURIComponent(order.txHash)}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="hidden sm:inline-flex shrink-0 items-center justify-center rounded border border-[#333333] bg-[#141414] px-1 py-0.5 text-[#6B7280] hover:text-[#E5E7EB] hover:border-[#4B5563] transition-colors"
+                                  className="hidden sm:inline-flex shrink-0 items-center justify-center rounded border border-t-stroke-hover bg-t-elevated px-1 py-0.5 text-[#6B7280] hover:text-t-fg hover:border-[#4B5563] transition-colors"
                                   title="View transaction on HyperEVMScan"
                                   onClick={(e) => e.stopPropagation()}
                                 >
@@ -3356,21 +3356,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                             <span className={`text-[10px] sm:text-[11px] font-medium ${order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{order.side}</span>
                           </td>
                           <td className="hidden md:table-cell px-2.5 py-2.5">
-                            <span className="text-[11px] text-white">{order.type}</span>
+                            <span className="text-[11px] text-t-fg">{order.type}</span>
                           </td>
                           <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
-                            <span className="text-[10px] sm:text-[11px] text-white font-mono">${formatPrice(order.price)}</span>
+                            <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">${formatPrice(order.price)}</span>
                           </td>
                           <td className="hidden sm:table-cell px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">{formatAmount(order.size, 4)}</span>
+                            <span className="text-[11px] text-t-fg font-mono">{formatAmount(order.size, 4)}</span>
                           </td>
                           <td className="hidden sm:table-cell px-2.5 py-2.5 text-right">
-                            <span className="text-[11px] text-white font-mono">
+                            <span className="text-[11px] text-t-fg font-mono">
                               ${formatPrice(order.price * order.size)}
                             </span>
                           </td>
                           <td className="px-1.5 sm:px-2.5 py-2 sm:py-2.5 text-right">
-                            <span className="text-[10px] sm:text-[11px] text-[#9CA3AF] whitespace-nowrap">{formatDate(order.timestamp)}</span>
+                            <span className="text-[10px] sm:text-[11px] text-t-fg-label whitespace-nowrap">{formatDate(order.timestamp)}</span>
                           </td>
                         </tr>
                       ))}
@@ -3380,7 +3380,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   };
 
   return (
-    <div className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 flex flex-col ${className}`}>
+    <div className={`group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 flex flex-col ${className}`}>
       {/* Status Modals */}
       <style jsx global>{`
         .scrollbar-hide {
@@ -3425,7 +3425,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         showProgressLabel={orderFillModal.showProgressLabel}
       />
       
-      <div className="flex items-center justify-between border-b border-[#222222] px-1.5 sm:px-2.5 py-1.5 sm:py-2.5 flex-shrink-0">
+      <div className="flex items-center justify-between border-b border-t-stroke px-1.5 sm:px-2.5 py-1.5 sm:py-2.5 flex-shrink-0">
         <div className="flex items-center w-full sm:w-auto gap-0 sm:gap-1.5 overflow-x-auto scrollbar-hide">
           {tabs.map((tab) => (
             <button
@@ -3438,13 +3438,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               }}
               className={`flex-1 sm:flex-none px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[10px] sm:text-[11px] font-medium rounded transition-all duration-200 flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5 whitespace-nowrap ${
                 activeTab === tab.id
-                  ? 'text-white bg-[#1A1A1A] border border-[#333333]'
-                  : 'text-[#E5E7EB] hover:text-white hover:bg-[#1A1A1A] border border-transparent hover:border-[#222222]'
+                  ? 'text-t-fg bg-t-inset border border-t-stroke-hover'
+                  : 'text-t-fg hover:text-t-fg hover:bg-t-card-hover border border-transparent hover:border-t-stroke'
               }`}
             >
               <span className="sm:hidden">{tab.shortLabel}</span>
               <span className="hidden sm:inline">{tab.label}</span>
-              <div className="text-[9px] sm:text-[10px] text-[#CBD5E1] bg-[#2A2A2A] px-1 sm:px-1.5 py-0.5 rounded">
+              <div className="text-[9px] sm:text-[10px] text-t-fg-label bg-t-skeleton px-1 sm:px-1.5 py-0.5 rounded">
                 {tab.count}
               </div>
             </button>
@@ -3455,12 +3455,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           {isLoading ? (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-              <span className="text-[10px] text-[#CBD5E1]">Loading...</span>
+              <span className="text-[10px] text-t-fg-label">Loading...</span>
             </>
           ) : (
             <>
               <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-              <span className="text-[10px] text-[#CBD5E1]">Live</span>
+              <span className="text-[10px] text-t-fg-label">Live</span>
             </>
           )}
         </div>
@@ -3509,7 +3509,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               }}
             />
             <div 
-              className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+              className="relative z-10 w-full bg-t-card rounded-md border border-t-stroke transition-all duration-200"
               style={{ maxWidth: '600px', padding: '24px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', margin: 'auto' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -3523,8 +3523,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-white text-sm font-medium tracking-tight">Close Position</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080]">{closeSymbol}</span>
+                      <span className="text-t-fg text-sm font-medium tracking-tight">Close Position</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-t-inset border border-t-stroke text-t-fg-sub">{closeSymbol}</span>
                       {currentPosition && (
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                           currentPosition.side === 'LONG' 
@@ -3535,7 +3535,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         </span>
                       )}
                     </div>
-                    <div className="mt-0.5 text-[11px] text-[#606060]">
+                    <div className="mt-0.5 text-[11px] text-t-fg-muted">
                       {currentPosition?.side === 'LONG' 
                         ? 'Sell at best bid price' 
                         : 'Buy to cover at best ask price'
@@ -3551,7 +3551,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setCloseError(null);
                     setCloseExitPrice(null);
                   }}
-                  className="p-1.5 rounded-full hover:bg-[#1A1A1A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+                  className="p-1.5 rounded-full hover:bg-t-card-hover text-t-fg-muted hover:text-t-fg-sub transition-all duration-200"
                   aria-label="Close"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
@@ -3562,30 +3562,30 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
               {/* Position details row */}
               <div className="grid grid-cols-3 gap-2 mb-4">
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-2.5">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                    <span className="text-[10px] text-[#606060]">Entry Price</span>
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                    <span className="text-[10px] text-t-fg-muted">Entry Price</span>
                   </div>
-                  <div className="text-[13px] font-mono text-white">${formatPrice4(currentPosition?.entryPrice ?? 0)}</div>
+                  <div className="text-[13px] font-mono text-t-fg">${formatPrice4(currentPosition?.entryPrice ?? 0)}</div>
                 </div>
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-2.5">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${exitPrice > 0 ? 'bg-green-400' : 'bg-[#404040]'}`} />
-                    <span className="text-[10px] text-[#606060]">
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${exitPrice > 0 ? 'bg-green-400' : 'bg-t-dot'}`} />
+                    <span className="text-[10px] text-t-fg-muted">
                       {currentPosition?.side === 'LONG' ? 'Best Bid' : 'Best Ask'}
                     </span>
                   </div>
-                  <div className={`text-[13px] font-mono ${exitPrice > 0 ? 'text-white' : 'text-[#606060]'}`}>
+                  <div className={`text-[13px] font-mono ${exitPrice > 0 ? 'text-t-fg' : 'text-t-fg-muted'}`}>
                     {exitPrice > 0 ? `$${formatPrice4(exitPrice)}` : 'Loading...'}
                   </div>
                 </div>
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-2.5">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                    <span className="text-[10px] text-[#606060]">Position Size</span>
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                    <span className="text-[10px] text-t-fg-muted">Position Size</span>
                   </div>
-                  <div className="text-[13px] font-mono text-white">{formatSize(maxSize)}</div>
+                  <div className="text-[13px] font-mono text-t-fg">{formatSize(maxSize)}</div>
                 </div>
               </div>
 
@@ -3599,10 +3599,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       setCloseSize(e.target.value);
                       setCloseError(null);
                     }}
-                    className={`w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                    className={`w-full bg-t-inset hover:bg-t-card-hover border rounded-md transition-all duration-200 focus:outline-none text-t-fg text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                       closeError
                         ? 'border-red-500/50 focus:border-red-400'
-                        : 'border-[#222222] hover:border-[#333333] focus:border-[#333333]'
+                        : 'border-t-stroke hover:border-t-stroke-hover focus:border-t-stroke-hover'
                     }`}
                     placeholder="Enter close size..."
                     min="0"
@@ -3614,13 +3614,13 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       setCloseSize(toDecimalString(maxSize));
                       setCloseError(null);
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-[#0F0F0F] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-t-card border border-t-stroke text-t-fg-sub hover:text-t-fg hover:border-t-stroke-hover transition-all duration-200"
                   >
                     MAX
                   </button>
                 </div>
                 {closeError && (
-                  <div className="mt-2 bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5">
+                  <div className="mt-2 bg-t-card border border-t-stroke rounded-md p-2.5">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                       <span className="text-[11px] font-medium text-red-400">{closeError}</span>
@@ -3639,16 +3639,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   <div className="flex items-center justify-between mb-2.5">
                     <div className="flex items-center gap-2">
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${payoutData.pnl >= 0 ? 'bg-green-400' : 'bg-red-400'}`} />
-                      <span className="text-[11px] font-medium text-[#808080]">You will receive</span>
+                      <span className="text-[11px] font-medium text-t-fg-sub">You will receive</span>
                     </div>
-                    <span className="text-sm font-mono font-semibold text-white">
+                    <span className="text-sm font-mono font-semibold text-t-fg">
                       ${formatPnlAmount(payoutData.payout)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${payoutData.pnl >= 0 ? 'bg-green-400' : 'bg-red-400'}`} />
-                      <span className="text-[11px] font-medium text-[#808080]">Realized P&L</span>
+                      <span className="text-[11px] font-medium text-t-fg-sub">Realized P&L</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`text-sm font-mono font-semibold ${
@@ -3678,7 +3678,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setCloseError(null);
                     setCloseExitPrice(null);
                   }}
-                  className="px-4 py-2 rounded-md text-[11px] font-medium border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
+                  className="px-4 py-2 rounded-md text-[11px] font-medium border border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg transition-all duration-200"
                 >
                   Cancel
                 </button>
@@ -3687,7 +3687,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   disabled={!closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize}
                   className={`px-4 py-2 rounded-md text-[11px] font-medium border transition-all duration-200 flex items-center gap-2 ${
                     !closeSize || parseFloat(closeSize) <= 0 || parseFloat(closeSize) > maxSize
-                      ? 'border-[#222222] text-[#606060] cursor-not-allowed'
+                      ? 'border-t-stroke text-t-fg-muted cursor-not-allowed'
                       : 'border-red-500/20 text-red-400 hover:border-red-500/30 hover:bg-red-500/5'
                   }`}
                 >
@@ -3717,7 +3717,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         >
           <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" />
           <div
-            className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+            className="relative z-10 w-full bg-t-card rounded-md border border-t-stroke transition-all duration-200"
             style={{ maxWidth: '520px', padding: '24px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', margin: 'auto' }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -3731,8 +3731,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-white text-sm font-medium tracking-tight">Modify Order</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080]">{modifyOrder.symbol}</span>
+                    <span className="text-t-fg text-sm font-medium tracking-tight">Modify Order</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-t-inset border border-t-stroke text-t-fg-sub">{modifyOrder.symbol}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                       modifyOrder.side === 'BUY'
                         ? 'bg-green-400/10 text-green-400'
@@ -3741,7 +3741,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       {modifyOrder.side}
                     </span>
                   </div>
-                  <div className="mt-0.5 text-[11px] text-[#606060]">
+                  <div className="mt-0.5 text-[11px] text-t-fg-muted">
                     Cancel existing order and place a new one with updated values
                   </div>
                 </div>
@@ -3756,7 +3756,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setModifyError(null);
                   }
                 }}
-                className="p-1.5 rounded-full hover:bg-[#1A1A1A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+                className="p-1.5 rounded-full hover:bg-t-card-hover text-t-fg-muted hover:text-t-fg-sub transition-all duration-200"
                 aria-label="Close"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
@@ -3767,39 +3767,39 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
             {/* Current order details */}
             <div className="grid grid-cols-3 gap-2 mb-4">
-              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
+              <div className="bg-t-card rounded-md border border-t-stroke p-2.5">
                 <div className="flex items-center gap-1.5 mb-1">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                  <span className="text-[10px] text-[#606060]">Current Price</span>
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                  <span className="text-[10px] text-t-fg-muted">Current Price</span>
                 </div>
-                <div className="text-[13px] font-mono text-white">${formatPrice4(modifyOrder.price)}</div>
+                <div className="text-[13px] font-mono text-t-fg">${formatPrice4(modifyOrder.price)}</div>
               </div>
-              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
+              <div className="bg-t-card rounded-md border border-t-stroke p-2.5">
                 <div className="flex items-center gap-1.5 mb-1">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                  <span className="text-[10px] text-[#606060]">Current Size</span>
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                  <span className="text-[10px] text-t-fg-muted">Current Size</span>
                 </div>
-                <div className="text-[13px] font-mono text-white">{formatAmount(modifyOrder.size, 4)}</div>
+                <div className="text-[13px] font-mono text-t-fg">{formatAmount(modifyOrder.size, 4)}</div>
               </div>
-              <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-2.5">
+              <div className="bg-t-card rounded-md border border-t-stroke p-2.5">
                 <div className="flex items-center gap-1.5 mb-1">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                  <span className="text-[10px] text-[#606060]">Order Value</span>
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                  <span className="text-[10px] text-t-fg-muted">Order Value</span>
                 </div>
-                <div className="text-[13px] font-mono text-white">${formatPrice(modifyOrder.price * modifyOrder.size)}</div>
+                <div className="text-[13px] font-mono text-t-fg">${formatPrice(modifyOrder.price * modifyOrder.size)}</div>
               </div>
             </div>
 
             {/* New price input */}
             <div className="mb-3">
-              <label className="block text-[10px] text-[#606060] mb-1.5">New Price (USD)</label>
+              <label className="block text-[10px] text-t-fg-muted mb-1.5">New Price (USD)</label>
               <div className="relative">
                 <input
                   type="number"
                   value={modifyPrice}
                   onChange={(e) => { setModifyPrice(e.target.value); setModifyError(null); }}
                   disabled={isModifying}
-                  className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] focus:border-[#333333] rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+                  className="w-full bg-t-inset hover:bg-t-card-hover border border-t-stroke hover:border-t-stroke-hover focus:border-t-stroke-hover rounded-md transition-all duration-200 focus:outline-none text-t-fg text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                   placeholder="Enter new price..."
                   min="0"
                   step="0.01"
@@ -3807,7 +3807,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 <button
                   onClick={() => { setModifyPrice(String(modifyOrder.price)); setModifyError(null); }}
                   disabled={isModifying}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-[#0F0F0F] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200 disabled:opacity-50"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-t-card border border-t-stroke text-t-fg-sub hover:text-t-fg hover:border-t-stroke-hover transition-all duration-200 disabled:opacity-50"
                 >
                   RESET
                 </button>
@@ -3816,14 +3816,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
             {/* New size input */}
             <div className="mb-4">
-              <label className="block text-[10px] text-[#606060] mb-1.5">New Size</label>
+              <label className="block text-[10px] text-t-fg-muted mb-1.5">New Size</label>
               <div className="relative">
                 <input
                   type="number"
                   value={modifySize}
                   onChange={(e) => { setModifySize(e.target.value); setModifyError(null); }}
                   disabled={isModifying}
-                  className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] focus:border-[#333333] rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+                  className="w-full bg-t-inset hover:bg-t-card-hover border border-t-stroke hover:border-t-stroke-hover focus:border-t-stroke-hover rounded-md transition-all duration-200 focus:outline-none text-t-fg text-sm font-mono pl-3 pr-16 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
                   placeholder="Enter new size..."
                   min="0"
                   step="0.0001"
@@ -3831,7 +3831,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 <button
                   onClick={() => { setModifySize(String(modifyOrder.size)); setModifyError(null); }}
                   disabled={isModifying}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-[#0F0F0F] border border-[#222222] text-[#808080] hover:text-white hover:border-[#333333] transition-all duration-200 disabled:opacity-50"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded bg-t-card border border-t-stroke text-t-fg-sub hover:text-t-fg hover:border-t-stroke-hover transition-all duration-200 disabled:opacity-50"
                 >
                   RESET
                 </button>
@@ -3854,16 +3854,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 <div className="rounded-md border border-blue-400/20 bg-blue-400/5 p-3 mb-4">
                   <div className="flex items-center gap-2 mb-2.5">
                     <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-                    <span className="text-[11px] font-medium text-[#808080]">Change Preview</span>
+                    <span className="text-[11px] font-medium text-t-fg-sub">Change Preview</span>
                   </div>
                   <div className="space-y-1.5">
                     {Math.abs(priceDelta) > 0.001 && (
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-[#606060]">Price</span>
+                        <span className="text-[10px] text-t-fg-muted">Price</span>
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-mono text-[#808080]">${formatPrice4(modifyOrder.price)}</span>
-                          <span className="text-[10px] text-[#606060]">→</span>
-                          <span className="text-[11px] font-mono text-white">${formatPrice4(newP)}</span>
+                          <span className="text-[11px] font-mono text-t-fg-sub">${formatPrice4(modifyOrder.price)}</span>
+                          <span className="text-[10px] text-t-fg-muted">→</span>
+                          <span className="text-[11px] font-mono text-t-fg">${formatPrice4(newP)}</span>
                           <span className={`text-[10px] font-mono ${priceDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             ({priceDelta >= 0 ? '+' : ''}{formatPrice4(priceDelta)})
                           </span>
@@ -3872,20 +3872,20 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     )}
                     {Math.abs(sizeDelta) > 0.00001 && (
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-[#606060]">Size</span>
+                        <span className="text-[10px] text-t-fg-muted">Size</span>
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-mono text-[#808080]">{formatAmount(modifyOrder.size, 4)}</span>
-                          <span className="text-[10px] text-[#606060]">→</span>
-                          <span className="text-[11px] font-mono text-white">{formatAmount(newS, 4)}</span>
+                          <span className="text-[11px] font-mono text-t-fg-sub">{formatAmount(modifyOrder.size, 4)}</span>
+                          <span className="text-[10px] text-t-fg-muted">→</span>
+                          <span className="text-[11px] font-mono text-t-fg">{formatAmount(newS, 4)}</span>
                         </div>
                       </div>
                     )}
                     <div className="flex items-center justify-between pt-1 border-t border-blue-400/10">
-                      <span className="text-[10px] text-[#606060]">Order Value</span>
+                      <span className="text-[10px] text-t-fg-muted">Order Value</span>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-mono text-[#808080]">${formatPrice(oldValue)}</span>
-                        <span className="text-[10px] text-[#606060]">→</span>
-                        <span className="text-[11px] font-mono font-medium text-white">${formatPrice(newValue)}</span>
+                        <span className="text-[11px] font-mono text-t-fg-sub">${formatPrice(oldValue)}</span>
+                        <span className="text-[10px] text-t-fg-muted">→</span>
+                        <span className="text-[11px] font-mono font-medium text-t-fg">${formatPrice(newValue)}</span>
                       </div>
                     </div>
                   </div>
@@ -3895,7 +3895,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
             {/* Error display */}
             {modifyError && (
-              <div className="mb-4 bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5">
+              <div className="mb-4 bg-t-card border border-t-stroke rounded-md p-2.5">
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                   <span className="text-[11px] font-medium text-red-400">{modifyError}</span>
@@ -3916,7 +3916,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   }
                 }}
                 disabled={isModifying}
-                className="px-4 py-2 rounded-md text-[11px] font-medium border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 rounded-md text-[11px] font-medium border border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
@@ -3925,7 +3925,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 disabled={isModifying || !modifyPrice || parseFloat(modifyPrice) <= 0 || !modifySize || parseFloat(modifySize) <= 0}
                 className={`px-4 py-2 rounded-md text-[11px] font-medium border transition-all duration-200 flex items-center gap-2 ${
                   isModifying || !modifyPrice || parseFloat(modifyPrice) <= 0 || !modifySize || parseFloat(modifySize) <= 0
-                    ? 'border-[#222222] text-[#606060] cursor-not-allowed'
+                    ? 'border-t-stroke text-t-fg-muted cursor-not-allowed'
                     : 'border-blue-500/20 text-blue-400 hover:border-blue-500/30 hover:bg-blue-500/5'
                 }`}
               >
@@ -3966,7 +3966,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               }}
             />
             <div
-              className="relative z-10 w-full bg-[#0F0F0F] rounded-md border border-[#222222] transition-all duration-200"
+              className="relative z-10 w-full bg-t-card rounded-md border border-t-stroke transition-all duration-200"
               style={{ maxWidth: '600px', padding: '24px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)', margin: 'auto' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -3980,8 +3980,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-white text-sm font-medium tracking-tight">Top Up Position</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1A1A1A] border border-[#222222] text-[#808080]">{topUpSymbol}</span>
+                      <span className="text-t-fg text-sm font-medium tracking-tight">Top Up Position</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-t-inset border border-t-stroke text-t-fg-sub">{topUpSymbol}</span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                         topUpSide === 'LONG'
                           ? 'bg-green-400/10 text-green-400'
@@ -3990,7 +3990,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                         {topUpSide}
                       </span>
                     </div>
-                    <div className="mt-0.5 text-[11px] text-[#606060]">
+                    <div className="mt-0.5 text-[11px] text-t-fg-muted">
                       Add margin to reduce liquidation risk
                     </div>
                   </div>
@@ -4003,7 +4003,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       setTopUpError(null);
                     }
                   }}
-                  className="p-1.5 rounded-full hover:bg-[#1A1A1A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+                  className="p-1.5 rounded-full hover:bg-t-card-hover text-t-fg-muted hover:text-t-fg-sub transition-all duration-200"
                   aria-label="Close"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
@@ -4014,26 +4014,26 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
               {/* Position details row */}
               <div className="grid grid-cols-3 gap-2 mb-4">
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-2.5">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                    <span className="text-[10px] text-[#606060]">Entry Price</span>
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                    <span className="text-[10px] text-t-fg-muted">Entry Price</span>
                   </div>
-                  <div className="text-[13px] font-mono text-white">${formatPrice4(topUpEntryPrice)}</div>
+                  <div className="text-[13px] font-mono text-t-fg">${formatPrice4(topUpEntryPrice)}</div>
                 </div>
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-2.5">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                    <span className="text-[10px] text-[#606060]">Leverage</span>
+                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                    <span className="text-[10px] text-t-fg-muted">Leverage</span>
                   </div>
-                  <div className="text-[13px] font-mono text-white">{topUpLeverage.toFixed(1)}x</div>
+                  <div className="text-[13px] font-mono text-t-fg">{topUpLeverage.toFixed(1)}x</div>
                 </div>
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5">
+                <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-2.5">
                   <div className="flex items-center gap-1.5 mb-1">
-                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${topUpLiqPrice > 0 ? 'bg-yellow-400' : 'bg-[#404040]'}`} />
-                    <span className="text-[10px] text-[#606060]">Liq. Price</span>
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${topUpLiqPrice > 0 ? 'bg-yellow-400' : 'bg-t-dot'}`} />
+                    <span className="text-[10px] text-t-fg-muted">Liq. Price</span>
                   </div>
-                  <div className="text-[13px] font-mono text-white">${formatPrice4(topUpLiqPrice)}</div>
+                  <div className="text-[13px] font-mono text-t-fg">${formatPrice4(topUpLiqPrice)}</div>
                 </div>
               </div>
 
@@ -4047,21 +4047,21 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       setTopUpAmount(e.target.value);
                       setTopUpError(null);
                     }}
-                    className={`w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border rounded-md transition-all duration-200 focus:outline-none text-white text-sm font-mono pl-3 pr-20 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                    className={`w-full bg-t-inset hover:bg-t-card-hover border rounded-md transition-all duration-200 focus:outline-none text-t-fg text-sm font-mono pl-3 pr-20 py-2.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                       topUpError
                         ? 'border-red-500/50 focus:border-red-400'
-                        : 'border-[#222222] hover:border-[#333333] focus:border-[#333333]'
+                        : 'border-t-stroke hover:border-t-stroke-hover focus:border-t-stroke-hover'
                     }`}
                     placeholder="Enter additional margin (USDC)..."
                     min="0"
                     step="0.01"
                   />
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center">
-                    <span className="text-[10px] text-[#606060] font-mono mr-1">USDC</span>
+                    <span className="text-[10px] text-t-fg-muted font-mono mr-1">USDC</span>
                   </div>
                 </div>
                 {topUpError && (
-                  <div className="mt-2 bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5">
+                  <div className="mt-2 bg-t-card border border-t-stroke rounded-md p-2.5">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
                       <span className="text-[11px] font-medium text-red-400">{topUpError}</span>
@@ -4075,29 +4075,29 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                 <div className="rounded-md border border-green-400/20 bg-green-400/5 p-3 mb-4">
                   <div className="flex items-center justify-between mb-2.5">
                     <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#808080]">Current Margin</span>
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                      <span className="text-[11px] font-medium text-t-fg-sub">Current Margin</span>
                     </div>
-                    <span className="text-sm font-mono text-white">
+                    <span className="text-sm font-mono text-t-fg">
                       ${currentMargin.toFixed(2)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between mb-2.5">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-                      <span className="text-[11px] font-medium text-[#808080]">Adding</span>
+                      <span className="text-[11px] font-medium text-t-fg-sub">Adding</span>
                     </div>
                     <span className="text-sm font-mono font-semibold text-green-400">
                       +${topUpValue.toFixed(2)}
                     </span>
                   </div>
-                  <div className="border-t border-[#222222] pt-2.5">
+                  <div className="border-t border-t-stroke pt-2.5">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-                        <span className="text-[11px] font-medium text-[#808080]">New Margin</span>
+                        <span className="text-[11px] font-medium text-t-fg-sub">New Margin</span>
                       </div>
-                      <span className="text-sm font-mono font-semibold text-white">
+                      <span className="text-sm font-mono font-semibold text-t-fg">
                         ${newMargin.toFixed(2)}
                       </span>
                     </div>
@@ -4114,7 +4114,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                     setTopUpError(null);
                   }}
                   disabled={isToppingUp}
-                  className="px-4 py-2 rounded-md text-[11px] font-medium border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-md text-[11px] font-medium border border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
@@ -4123,7 +4123,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                   disabled={!topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp}
                   className={`px-4 py-2 rounded-md text-[11px] font-medium border transition-all duration-200 flex items-center gap-2 ${
                     !topUpAmount || parseFloat(topUpAmount) <= 0 || isToppingUp
-                      ? 'border-[#222222] text-[#606060] cursor-not-allowed'
+                      ? 'border-t-stroke text-t-fg-muted cursor-not-allowed'
                       : 'border-green-500/20 text-green-400 hover:border-green-500/30 hover:bg-green-500/5'
                   }`}
                 >

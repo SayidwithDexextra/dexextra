@@ -49,22 +49,22 @@ function OrderBookSkeleton() {
         </div>
       </div>
 
-      <div className="text-[9px] text-gray-500 px-1 py-0.5 flex items-center justify-between">
+      <div className="text-[9px] text-t-fg-muted px-1 py-0.5 flex items-center justify-between">
         <span>ASKS (SELL)</span>
         <span className="text-[#FF4747]/50">—</span>
       </div>
 
-      <div className="py-2 px-2 bg-[#111111] border-y border-[#222222]">
+      <div className="py-2 px-2 bg-t-card border-y border-t-stroke">
         <div className="flex items-center justify-center gap-3">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
           </span>
-          <span className="text-[11px] text-[#606060] font-medium tracking-wide">Loading order book</span>
+          <span className="text-[11px] text-t-fg-muted font-medium tracking-wide">Loading order book</span>
         </div>
       </div>
 
-      <div className="text-[9px] text-gray-500 px-1 py-0.5 flex items-center justify-between">
+      <div className="text-[9px] text-t-fg-muted px-1 py-0.5 flex items-center justify-between">
         <span>BIDS (BUY)</span>
         <span className="text-[#00D084]/50">—</span>
       </div>
@@ -138,48 +138,48 @@ function TradeTooltipContent({ trade, side }: { trade: OnChainTrade; side: strin
   return (
     <div className="space-y-1.5 min-w-[200px]">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Trade ID</span>
-        <span className="text-white font-mono">#{trade.tradeId}</span>
+        <span className="text-t-fg-muted">Trade ID</span>
+        <span className="text-t-fg font-mono">#{trade.tradeId}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Side</span>
+        <span className="text-t-fg-muted">Side</span>
         <span className={side === 'BUY' ? 'text-[#00D084] font-medium' : 'text-[#FF4747] font-medium'}>{side}</span>
       </div>
-      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="border-t border-t-stroke-sub my-1" />
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Buyer</span>
-        <span className="text-white font-mono">{shortAddress(trade.buyer)}</span>
+        <span className="text-t-fg-muted">Buyer</span>
+        <span className="text-t-fg font-mono">{shortAddress(trade.buyer)}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Seller</span>
-        <span className="text-white font-mono">{shortAddress(trade.seller)}</span>
+        <span className="text-t-fg-muted">Seller</span>
+        <span className="text-t-fg font-mono">{shortAddress(trade.seller)}</span>
       </div>
-      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="border-t border-t-stroke-sub my-1" />
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Price</span>
-        <span className="text-white font-mono">${formatPriceDisplay(trade.price)}</span>
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Amount</span>
-        <span className="text-white font-mono">{formatAmountDisplay(trade.amount)}</span>
+        <span className="text-t-fg-muted">Price</span>
+        <span className="text-t-fg font-mono">${formatPriceDisplay(trade.price)}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Value</span>
-        <span className="text-white font-mono">${formatPriceDisplay(trade.tradeValue)}</span>
-      </div>
-      <div className="border-t border-[#1A1A1A] my-1" />
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Buyer Fee</span>
-        <span className="text-white font-mono">${formatPriceDisplay(trade.buyerFee)}</span>
+        <span className="text-t-fg-muted">Amount</span>
+        <span className="text-t-fg font-mono">{formatAmountDisplay(trade.amount)}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Seller Fee</span>
-        <span className="text-white font-mono">${formatPriceDisplay(trade.sellerFee)}</span>
+        <span className="text-t-fg-muted">Value</span>
+        <span className="text-t-fg font-mono">${formatPriceDisplay(trade.tradeValue)}</span>
       </div>
-      <div className="border-t border-[#1A1A1A] my-1" />
+      <div className="border-t border-t-stroke-sub my-1" />
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[#606060]">Time</span>
-        <span className="text-white font-mono text-[8px]">{dateStr} {timeStr}</span>
+        <span className="text-t-fg-muted">Buyer Fee</span>
+        <span className="text-t-fg font-mono">${formatPriceDisplay(trade.buyerFee)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-t-fg-muted">Seller Fee</span>
+        <span className="text-t-fg font-mono">${formatPriceDisplay(trade.sellerFee)}</span>
+      </div>
+      <div className="border-t border-t-stroke-sub my-1" />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-t-fg-muted">Time</span>
+        <span className="text-t-fg font-mono text-[8px]">{dateStr} {timeStr}</span>
       </div>
     </div>
   );
@@ -665,17 +665,17 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
 
   return (
-    <div className="bg-[#0A0A0A] border border-[#333333] rounded-md p-3 flex flex-col overflow-hidden transaction-table-container" style={{ height }}>
+    <div className="bg-t-page border border-t-stroke-hover rounded-md p-3 flex flex-col overflow-hidden transaction-table-container" style={{ height }}>
       {/* Header with View Toggle - Ultra Compact */}
       {!hideViewToggle && (
       <div className="mb-2">
-        <div className="flex bg-[#1A1A1A] rounded p-0.5 w-full">
+        <div className="flex bg-t-inset rounded p-0.5 w-full">
           <button
             onClick={() => setView('orderbook')}
             className={`flex-1 py-1 px-1.5 rounded text-[10px] font-medium transition-colors ${
               view === 'orderbook'
-                ? 'bg-[#333333] text-white'
-                : 'text-gray-200 hover:text-white'
+                ? 'bg-[#333333] text-t-fg'
+                : 'text-t-fg hover:text-t-fg'
             }`}
           >
             BOOK
@@ -684,8 +684,8 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             onClick={() => setView('transactions')}
             className={`flex-1 py-1 px-1.5 rounded text-[10px] font-medium transition-colors ${
               view === 'transactions'
-                ? 'bg-[#333333] text-white'
-                : 'text-gray-200 hover:text-white'
+                ? 'bg-[#333333] text-t-fg'
+                : 'text-t-fg hover:text-t-fg'
             }`}
           >
             TRADES
@@ -703,7 +703,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             {error}
           </div>
         ) : view === 'transactions' ? (
-          <div className="text-[10px] text-gray-200 text-center py-1">
+          <div className="text-[10px] text-t-fg text-center py-1">
             {allTradesHook.isLoading && allTradesHook.trades.length === 0
               ? 'Loading trades...'
               : allTradesHook.trades.length > 0
@@ -713,10 +713,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         ) : showOrderBookLoading ? (
           <div />
         ) : (
-          <div className="text-[10px] text-gray-200 text-center py-1">
+          <div className="text-[10px] text-t-fg text-center py-1">
             Order Book
             {!marketIdentifier && (
-              <span className="block text-[9px] text-gray-300">
+              <span className="block text-[9px] text-t-fg-label">
                 Market data unavailable
               </span>
             )}
@@ -728,14 +728,14 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       <div className="mb-1">
         {view === 'orderbook' ? (
           showOrderBookLoading ? null : (
-          <div className="grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 text-[10px] font-medium text-gray-200 px-1">
+          <div className="grid grid-cols-[2fr_1.5fr_1.5fr] gap-2 text-[10px] font-medium text-t-fg px-1">
             <div className="flex items-center justify-center">PRICE</div>
             <div className="flex items-center justify-center">SIZE (UNITS)</div>
             <div className="flex items-center justify-center">TOTAL (USD)</div>
           </div>
           )
         ) : (
-          <div className="grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 text-[10px] font-medium text-gray-200 px-3">
+          <div className="grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 text-[10px] font-medium text-t-fg px-3">
             <div className="text-right">SIZE</div>
             <div className="text-right">PRICE</div>
             <div className="text-right">VALUE</div>
@@ -761,7 +761,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                 style={{ maxHeight: '200px' }}
               >
                 {asks.length === 0 ? (
-                  <div className="text-[10px] text-gray-200 text-center py-2">
+                  <div className="text-[10px] text-t-fg text-center py-2">
                     No sell orders
                   </div>
                 ) : (
@@ -780,7 +780,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                           side="SELL"
                           isNew={false}
                           animationDelay={0}
-                          className="hover:bg-[#1A1A1A] transition-colors group"
+                          className="hover:bg-t-card-hover transition-colors group"
                         >
                           {/* Background depth bar */}
                           <div 
@@ -793,10 +793,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                             <div className="flex items-center justify-center text-[#FF4747] font-mono font-medium tabular-nums">
                               ${order.price !== undefined && order.price !== null ? formatPriceDisplay(order.price, 4) : '0.0000'}
                             </div>
-                            <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
+                            <div className="flex items-center justify-center text-t-fg-label font-mono tabular-nums">
                               {formatAmountDisplay(remainingQuantity, 4)}
                             </div>
-                            <div className="flex items-center justify-center text-gray-200 font-mono text-[10px] tabular-nums">
+                            <div className="flex items-center justify-center text-t-fg font-mono text-[10px] tabular-nums">
                               {formatCurrency(lineUsd)}
                             </div>
                           </div>
@@ -809,39 +809,39 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
             </div>
 
             {/* Ask Orders Label */}
-            <div className="text-[9px] text-gray-200 px-1 py-0.5 flex items-center justify-between">
+            <div className="text-[9px] text-t-fg px-1 py-0.5 flex items-center justify-between">
               <span>ASKS (SELL)</span>
               <span className="text-[#FF4747]">{totalAskOrders} orders</span>
             </div>
 
             {/* Spread Display */}
-            <div className="py-1.5 px-2 bg-[#1A1A1A] border-y border-gray-700">
+            <div className="py-1.5 px-2 bg-t-inset border-y border-t-stroke">
               <div className="flex items-center justify-center gap-2 font-mono tabular-nums">
                 {bestAskPrice > 0 && bestBidPrice > 0 ? (
                   <>
-                    <span className="text-[11px] text-gray-400 font-medium">Spread</span>
-                    <span className="text-[12px] text-white font-semibold">
+                    <span className="text-[11px] text-t-fg-muted font-medium">Spread</span>
+                    <span className="text-[12px] text-t-fg font-semibold">
                       ${((bestAskPrice - bestBidPrice)).toFixed(4)}
                     </span>
-                    <span className="text-[11px] text-gray-400">
+                    <span className="text-[11px] text-t-fg-muted">
                       ({((((bestAskPrice - bestBidPrice) / (bestBidPrice || 1)) * 100).toFixed(2))}%)
                     </span>
                   </>
                 ) : (
-                  <span className="text-[11px] text-gray-400">No spread data</span>
+                  <span className="text-[11px] text-t-fg-muted">No spread data</span>
                 )}
               </div>
             </div>
 
             {/* Bid Orders (Buy Orders) - Bottom half */}
             <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-              <div className="text-[9px] text-gray-200 mb-1 px-1 flex items-center justify-between">
+              <div className="text-[9px] text-t-fg mb-1 px-1 flex items-center justify-between">
                 <span>BIDS (BUY)</span>
                 <span className="text-[#00D084]">{totalBidOrders} orders</span>
               </div>
               <div className="flex-1 overflow-y-auto orders-table-scroll">
                 {bids.length === 0 ? (
-                  <div className="text-[10px] text-gray-200 text-center py-2">
+                  <div className="text-[10px] text-t-fg text-center py-2">
                     No buy orders
                   </div>
                 ) : (
@@ -860,7 +860,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                           side="BUY"
                           isNew={false}
                           animationDelay={0}
-                          className="hover:bg-[#1A1A1A] transition-colors group"
+                          className="hover:bg-t-card-hover transition-colors group"
                         >
                           {/* Background depth bar */}
                           <div 
@@ -873,10 +873,10 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                             <div className="flex items-center justify-center text-[#00D084] font-mono font-medium tabular-nums">
                               ${order.price !== undefined && order.price !== null ? formatPriceDisplay(order.price, 4) : '0.0000'}
                             </div>
-                            <div className="flex items-center justify-center text-gray-300 font-mono tabular-nums">
+                            <div className="flex items-center justify-center text-t-fg-label font-mono tabular-nums">
                               {formatAmountDisplay(remainingQuantity, 4)}
                             </div>
-                            <div className="flex items-center justify-center text-gray-200 font-mono text-[10px] tabular-nums">
+                            <div className="flex items-center justify-center text-t-fg font-mono text-[10px] tabular-nums">
                               {formatCurrency(lineUsd)}
                             </div>
                           </div>
@@ -900,7 +900,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                 </button>
               </div>
             ) : allTradesHook.trades.length === 0 && !allTradesHook.isLoading ? (
-              <div className="text-[10px] text-gray-200 text-center py-4">
+              <div className="text-[10px] text-t-fg text-center py-4">
                 No trades recorded on chain
               </div>
             ) : (
@@ -921,7 +921,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                         delay={200}
                         content={<TradeTooltipContent trade={trade} side={side} />}
                       >
-                        <div className="relative hover:bg-[#1A1A1A] transition-colors cursor-pointer">
+                        <div className="relative hover:bg-t-card-hover transition-colors cursor-pointer">
                           <div
                             className={`absolute left-0 top-0 h-full opacity-12 rounded-xl ${
                               side === 'BUY' ? 'bg-[#00D084]' : 'bg-[#FF4747]'
@@ -929,16 +929,16 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                             style={{ width: `${fillPercentage}%` }}
                           />
                           <div className="relative grid grid-cols-[1fr_1fr_1fr_0.6fr] gap-2 py-[3px] px-3 text-[11px]">
-                            <div className="text-right text-gray-300 font-mono tabular-nums truncate min-w-0">
+                            <div className="text-right text-t-fg-label font-mono tabular-nums truncate min-w-0">
                               {formatAmountDisplay(trade.amount, 4)}
                             </div>
                             <div className={`text-right font-mono font-medium tabular-nums truncate min-w-0 ${side === 'BUY' ? 'text-[#00D084]' : 'text-[#FF4747]'}`}>
                               ${formatPriceDisplay(trade.price, 4)}
                             </div>
-                            <div className="text-right text-white font-mono text-[10px] tabular-nums truncate min-w-0">
+                            <div className="text-right text-t-fg font-mono text-[10px] tabular-nums truncate min-w-0">
                               {formatCurrency(trade.tradeValue)}
                             </div>
-                            <div className="text-right text-gray-200 font-mono text-[10px] tabular-nums min-w-0">
+                            <div className="text-right text-t-fg font-mono text-[10px] tabular-nums min-w-0">
                               {formatTime(new Date(trade.timestamp * 1000).toISOString())}
                             </div>
                           </div>
@@ -954,17 +954,17 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
                     </span>
-                    <span className="text-[10px] text-gray-400">Loading trades...</span>
+                    <span className="text-[10px] text-t-fg-muted">Loading trades...</span>
                   </div>
                 ) : allTradesHook.hasMore ? (
                   <button
                     onClick={allTradesHook.loadMore}
-                    className="w-full py-2 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-[#1A1A1A] transition-colors font-medium"
+                    className="w-full py-2 text-[10px] text-blue-400 hover:text-blue-300 hover:bg-t-card-hover transition-colors font-medium"
                   >
                     Load more trades...
                   </button>
                 ) : allTradesHook.trades.length > 0 ? (
-                  <div className="text-[9px] text-gray-500 text-center py-2 flex items-center justify-center gap-2">
+                  <div className="text-[9px] text-t-fg-muted text-center py-2 flex items-center justify-center gap-2">
                     <span>All {allTradesHook.trades.length} trades loaded</span>
                     <button
                       onClick={allTradesHook.refresh}

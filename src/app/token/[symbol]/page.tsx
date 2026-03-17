@@ -13,7 +13,9 @@ import {
   MobileBottomSheet
 } from '@/components/TokenView';
 import { MarketInfoHeader } from '@/components/MarketInfoHeader';
+import type { MarketStatsOnChain } from '@/components/MarketInfoHeader/MarketInfoHeader';
 import headerStyles from '@/components/MarketInfoHeader/MarketInfoHeader.module.css';
+import { publicClient } from '@/lib/viemClient';
 import { TradingViewChart } from '@/components/TradingView';
 // Removed smart contract hooks - functionality disabled
 import { TokenData } from '@/types/token';
@@ -119,6 +121,131 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const priceChange24h = 0;
   const priceChangePercent24h = 0;
   const lastUpdated = md.lastUpdated || new Date().toISOString();
+
+  // On-chain market stats assembled from Diamond facet reads + ClickHouse 24h data
+  const [onChainStats, setOnChainStats] = useState<MarketStatsOnChain | null>(null);
+  const marketStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const obAddr =
+      ((md as any)?.orderBookAddress as string | null) ||
+      ((md.market as any)?.market_address as string | null) ||
+      null;
+
+    if (
+      !obAddr ||
+      typeof obAddr !== 'string' ||
+      !obAddr.startsWith('0x') ||
+      obAddr.length !== 42
+    ) {
+      return;
+    }
+
+    const addr = obAddr as `0x${string}`;
+    const marketIdentifier = (md.market as any)?.market_identifier || (md.market as any)?.symbol || symbol;
+
+    const PRICING_ABI = [
+      {
+        type: 'function' as const,
+        name: 'getMarketPriceData' as const,
+        stateMutability: 'view' as const,
+        inputs: [],
+        outputs: [
+          { type: 'uint256', name: 'midPrice' },
+          { type: 'uint256', name: 'bestBidPrice' },
+          { type: 'uint256', name: 'bestAskPrice' },
+          { type: 'uint256', name: 'lastTradePriceReturn' },
+          { type: 'uint256', name: 'markPrice' },
+          { type: 'uint256', name: 'spread' },
+          { type: 'uint256', name: 'spreadBps' },
+          { type: 'bool', name: 'isValid' },
+        ],
+      },
+    ] as const;
+
+    const TRADE_STATS_ABI = [
+      {
+        type: 'function' as const,
+        name: 'getTradeStatistics' as const,
+        stateMutability: 'view' as const,
+        inputs: [],
+        outputs: [
+          { type: 'uint256', name: 'totalTrades' },
+          { type: 'uint256', name: 'totalVolume' },
+          { type: 'uint256', name: 'totalFees' },
+        ],
+      },
+    ] as const;
+
+    const fetchStats = async () => {
+      try {
+        const [priceData, tradeStats, chStats] = await Promise.all([
+          publicClient.readContract({
+            address: addr,
+            abi: PRICING_ABI,
+            functionName: 'getMarketPriceData',
+            args: [],
+          }).catch(() => null),
+          publicClient.readContract({
+            address: addr,
+            abi: TRADE_STATS_ABI,
+            functionName: 'getTradeStatistics',
+            args: [],
+          }).catch(() => null),
+          fetch(`/api/market-stats/24h?identifier=${encodeURIComponent(marketIdentifier)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(j => j?.stats ?? null)
+            .catch(() => null),
+        ]);
+
+        if (cancelled) return;
+
+        const pd = priceData as any;
+        const ts = tradeStats as any;
+
+        if (!pd && !ts && !chStats) {
+          console.warn('[marketStats] All data sources failed');
+          return;
+        }
+
+        setOnChainStats({
+          markPrice: pd ? Number(pd[4] ?? pd.markPrice ?? 0n) / 1e6 : 0,
+          lastTradePrice: pd ? Number(pd[3] ?? pd.lastTradePriceReturn ?? 0n) / 1e6 : 0,
+          bestBid: pd ? Number(pd[1] ?? pd.bestBidPrice ?? 0n) / 1e6 : 0,
+          bestAsk: pd ? Number(pd[2] ?? pd.bestAskPrice ?? 0n) / 1e6 : 0,
+          spread: pd ? Number(pd[5] ?? pd.spread ?? 0n) / 1e6 : 0,
+          spreadBps: pd ? Number(pd[6] ?? pd.spreadBps ?? 0n) : 0,
+          totalTrades: ts ? Number(ts[0] ?? ts.totalTrades ?? 0n) : 0,
+          totalVolume: ts ? Number(ts[1] ?? ts.totalVolume ?? 0n) / 1e6 : 0,
+          totalFees: ts ? Number(ts[2] ?? ts.totalFees ?? 0n) / 1e6 : 0,
+          high24h: chStats?.high24h ?? 0,
+          low24h: chStats?.low24h ?? 0,
+          priceChange24h: chStats?.priceChange24h ?? 0,
+          priceChangePercent24h: chStats?.priceChangePercent24h ?? 0,
+        });
+      } catch (err) {
+        console.warn('[marketStats] Failed to fetch stats:', err);
+      }
+
+      if (!cancelled) {
+        marketStatsTimerRef.current = setTimeout(fetchStats, 30_000);
+      }
+    };
+
+    void fetchStats();
+
+    return () => {
+      cancelled = true;
+      if (marketStatsTimerRef.current) clearTimeout(marketStatsTimerRef.current);
+    };
+  }, [
+    (md as any)?.orderBookAddress,
+    (md.market as any)?.market_address,
+    (md.market as any)?.market_identifier,
+    symbol,
+  ]);
 
   const isNetworkError = !!(md.error && typeof (md.error as any) === 'string' && (
     (md.error as any).includes('Please switch your wallet to Polygon') ||
@@ -782,7 +909,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         ? [market.category]
         : [];
 
-    const tags = categories.slice(0, 3).map((cat: string) => ({ label: cat }));
+    const tags = categories.slice(0, 3).map((cat: string) => ({
+      label: cat,
+      href: `/explore?category=${encodeURIComponent(cat)}`,
+    }));
     const moreTagsCount = categories.length > 3 ? categories.length - 3 : undefined;
 
     const status: 'live' | 'pending' | 'inactive' = 
@@ -810,11 +940,12 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       stats: [
         { label: 'Watching', value: formattedWatchlistCount },
       ],
+      marketStats: onChainStats,
       websiteUrl: market.market_config?.website_url || undefined,
       twitterUrl: market.market_config?.twitter_url || undefined,
       waybackSnapshot: market.market_config?.wayback_snapshot || undefined,
     };
-  }, [md.market, watchlistCount, symbol, markPrice]);
+  }, [md.market, watchlistCount, symbol, markPrice, onChainStats]);
 
   if (shouldShowLoading) {
     return (
@@ -843,22 +974,22 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     })();
 
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-4">
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 w-full max-w-md">
+      <div className="min-h-screen bg-t-page flex items-center justify-center p-4">
+        <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 w-full max-w-md">
           <div className="p-4">
-            <div className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Market is being built</div>
-            <div className="mt-1 text-[10px] text-[#606060]">
+            <div className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Market is being built</div>
+            <div className="mt-1 text-[10px] text-t-fg-muted">
               {symbolUpper} is currently being deployed and configured. Trading will become available automatically once setup is complete.
             </div>
 
             <div className="mt-4 flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-white truncate">
+                <div className="text-[11px] text-t-fg truncate">
                   {overlayMsg || 'Deployment pipeline running in the background…'}
                 </div>
                 {typeof pct === 'number' ? (
-                  <div className="mt-2 w-full h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+                  <div className="mt-2 w-full h-1 bg-t-skeleton rounded-full overflow-hidden">
                     <div className="h-full bg-blue-400 transition-all duration-300" style={{ width: `${pct}%` }} />
                   </div>
                 ) : null}
@@ -869,7 +1000,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               <div className="mt-4 flex items-center justify-end">
                 <button
                   onClick={() => deploymentOverlay.restore()}
-                  className="text-[10px] text-white bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded px-2.5 py-1.5 transition-all duration-200"
+                  className="text-[10px] text-t-fg bg-t-inset hover:bg-t-card-hover border border-t-stroke hover:border-t-stroke-hover rounded px-2.5 py-1.5 transition-all duration-200"
                 >
                   View pipeline
                 </button>
@@ -883,32 +1014,32 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
   if (!isDeploying && (md.error || !tokenData)) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+      <div className="min-h-screen bg-t-page flex items-center justify-center p-4">
         <div className="flex flex-col items-center gap-6 text-center max-w-2xl w-full">
           {isNetworkError ? (
             <>
               <div className="text-yellow-500 text-xl font-semibold">⚠️ Wrong Network</div>
-              <div className="text-gray-300 text-sm mb-4">
+              <div className="text-t-fg-label text-sm mb-4">
                 Please switch your wallet to Polygon to access this market.
               </div>
-              <div className="bg-gray-900 p-6 rounded-xl border border-gray-700 w-full max-w-md">
-                <div className="text-white text-lg font-medium mb-4">Switch to Polygon</div>
+              <div className="bg-t-card p-6 rounded-xl border border-t-stroke w-full max-w-md">
+                <div className="text-t-fg text-lg font-medium mb-4">Switch to Polygon</div>
                 <NetworkSelector compact={false} onNetworkChange={onSwitchNetwork} />
               </div>
-              <div className="text-gray-500 text-xs">
+              <div className="text-t-fg-muted text-xs">
                 Error: {String(md.error)}
               </div>
             </>
           ) : (
             <>
               <div className="text-red-500 text-lg">Market Not Found</div>
-              <div className="text-gray-400 text-sm">
+              <div className="text-t-fg-muted text-sm">
                 {String(md.error || `No market found for symbol: ${symbol}`)}
               </div>
               <div className="mt-4">
                 <a 
                   href="/new-market" 
-                  className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg transition-colors"
+                  className="bg-purple-600 hover:bg-purple-700 text-t-fg px-6 py-2 rounded-lg transition-colors"
                 >
                   Create {symbol} Market
                 </a>
@@ -921,11 +1052,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   }
 
   return (
-    <div className="token-page flex flex-col h-[calc(100dvh-56px)] md:block md:h-auto md:min-h-screen bg-black text-white overflow-hidden md:overflow-visible overscroll-none touch-manipulation">
-      <CryptoMarketTicker className="border-b border-gray-800 flex-shrink-0" />
+    <div className="token-page flex flex-col h-[calc(100dvh-56px)] md:block md:h-auto md:min-h-screen bg-t-page text-t-fg overflow-hidden md:overflow-visible overscroll-none touch-manipulation">
+      <CryptoMarketTicker className="border-b border-t-stroke-sub flex-shrink-0" />
       {/* Mobile: compact tappable market bar */}
       {marketInfoHeaderProps && (
-        <div className="flex md:hidden items-center gap-2 w-full px-3 py-1.5 border-b border-[#1a1a1a] bg-[#0A0A0A] flex-shrink-0">
+        <div className="flex md:hidden items-center gap-2 w-full px-3 py-1.5 border-b border-t-stroke-sub bg-t-page flex-shrink-0">
           <div
             className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer"
             onClick={() => setMobileSheet('info')}
@@ -935,14 +1066,14 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             {marketInfoHeaderProps.logoUrl ? (
               <img src={marketInfoHeaderProps.logoUrl} className="w-5 h-5 rounded-full flex-shrink-0" alt="" />
             ) : (
-              <div className="w-5 h-5 rounded-full flex-shrink-0 bg-[#222]" />
+              <div className="w-5 h-5 rounded-full flex-shrink-0 bg-t-stroke" />
             )}
-            <span className="text-[11px] font-medium text-white truncate">{marketInfoHeaderProps.name}</span>
-            <span className="text-[10px] text-[#606060] flex-shrink-0">{marketInfoHeaderProps.symbol}</span>
-            <span className="ml-auto text-[11px] font-medium text-white tabular-nums flex-shrink-0">
+            <span className="text-[11px] font-medium text-t-fg truncate">{marketInfoHeaderProps.name}</span>
+            <span className="text-[10px] text-t-fg-muted flex-shrink-0">{marketInfoHeaderProps.symbol}</span>
+            <span className="ml-auto text-[11px] font-medium text-t-fg tabular-nums flex-shrink-0">
               ${Number(markPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
-            <svg className="w-3 h-3 text-[#606060] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg className="w-3 h-3 text-t-fg-muted flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </div>
@@ -1012,43 +1143,43 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                           metricOverlay={metricOverlay}
                         />
                       ) : (
-                        <div className="w-full h-full rounded-md bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                        <div className="w-full h-full rounded-md bg-t-card flex items-center justify-center text-xs text-t-fg-muted">
                           Loading chart…
                         </div>
                       )
                     ) : (
-                      <div className="w-full h-full rounded-md bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                      <div className="w-full h-full rounded-md bg-t-card flex items-center justify-center text-xs text-t-fg-muted">
                         Loading market…
                       </div>
                     )}
                     {metricDebug && currentMarketId && (
-                      <div className="absolute top-2 right-2 z-10 rounded border border-gray-800 bg-black/70 px-3 py-2 text-[11px] text-gray-200">
+                      <div className="absolute top-2 right-2 z-10 rounded border border-t-stroke-sub bg-black/70 px-3 py-2 text-[11px] text-t-fg">
                         <div className="font-medium">Metric overlay debug</div>
-                        <div className="text-[10px] text-gray-400">tf: {metricTimeframe}</div>
+                        <div className="text-[10px] text-t-fg-muted">tf: {metricTimeframe}</div>
                         <div className="mt-2 flex gap-2">
                           <button
-                            className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                            className="rounded border border-t-stroke px-2 py-1 hover:border-gray-500"
                             onClick={() => void seedScatter()}
                             disabled={scatterInfo?.loading}
                           >
                             Seed scatter
                           </button>
                           <button
-                            className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                            className="rounded border border-t-stroke px-2 py-1 hover:border-gray-500"
                             onClick={() => void refreshScatterInfo()}
                             disabled={scatterInfo?.loading}
                           >
                             Refresh
                           </button>
                         </div>
-                        <div className="mt-2 text-[10px] text-gray-400">
+                        <div className="mt-2 text-[10px] text-t-fg-muted">
                           {scatterInfo?.loading
                             ? 'checking…'
                             : scatterInfo?.error
                               ? `error: ${scatterInfo.error}`
                               : `ClickHouse points: ${scatterInfo?.count ?? '—'}`}
                         </div>
-                        <div className="mt-2 text-[10px] text-gray-500">
+                        <div className="mt-2 text-[10px] text-t-fg-muted">
                           After seeding, reload to force the indicator to refetch.
                         </div>
                       </div>
@@ -1077,11 +1208,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 }
               />
               {/* Compact action bar: Activity | Long | Short | Chat */}
-              <div className="flex-shrink-0 flex items-center gap-1.5 px-2 pt-2 pb-4 border-t border-[#1a1a1a] bg-[#0A0A0A]">
+              <div className="flex-shrink-0 flex items-center gap-1.5 px-2 pt-2 pb-4 border-t border-t-stroke-sub bg-t-page">
                 <button
                   onClick={() => setMobileSheet('activity')}
                   className={`w-9 h-9 flex items-center justify-center rounded-md border transition-colors ${
-                    mobileSheet === 'activity' ? 'text-white border-[#444]' : 'text-[#606060] border-[#222222] active:text-white'
+                    mobileSheet === 'activity' ? 'text-t-fg border-t-stroke-hover' : 'text-t-fg-muted border-t-stroke active:text-t-fg'
                   }`}
                   aria-label="Activity"
                 >
@@ -1095,7 +1226,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 </button>
                 <button
                   onClick={() => { setMobileTradeAction('long'); setMobileSheet('trade'); }}
-                  className="flex-1 bg-[#0F0F0F] active:bg-[#1A1A1A] rounded-md border border-green-400 bg-green-400/10 transition-all duration-200"
+                  className="flex-1 bg-t-card active:bg-t-card-hover rounded-md border border-green-400 bg-green-400/10 transition-all duration-200"
                   data-walkthrough="token-trade-long"
                 >
                   <div className="flex items-center justify-center py-2">
@@ -1110,7 +1241,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 </button>
                 <button
                   onClick={() => { setMobileTradeAction('short'); setMobileSheet('trade'); }}
-                  className="flex-1 bg-[#0F0F0F] active:bg-[#1A1A1A] rounded-md border border-red-400 bg-red-400/10 transition-all duration-200"
+                  className="flex-1 bg-t-card active:bg-t-card-hover rounded-md border border-red-400 bg-red-400/10 transition-all duration-200"
                   data-walkthrough="token-trade-short"
                 >
                   <div className="flex items-center justify-center py-2">
@@ -1126,7 +1257,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                 <button
                   onClick={() => setMobileSheet('comments')}
                   className={`w-9 h-9 flex items-center justify-center rounded-md border transition-colors relative ${
-                    mobileSheet === 'comments' ? 'text-white border-[#444]' : 'text-[#606060] border-[#222222] active:text-white'
+                    mobileSheet === 'comments' ? 'text-t-fg border-t-stroke-hover' : 'text-t-fg-muted border-t-stroke active:text-t-fg'
                   }`}
                   aria-label="Comments"
                 >
@@ -1134,7 +1265,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
                   </svg>
                   {commentCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full bg-[#7c3aed] text-[9px] text-white flex items-center justify-center px-1 font-medium">
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 rounded-full bg-[#7c3aed] text-[9px] text-t-fg flex items-center justify-center px-1 font-medium">
                       {commentCount > 99 ? '99+' : commentCount}
                     </span>
                   )}
@@ -1155,43 +1286,43 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                         metricOverlay={metricOverlay}
                       />
                     ) : (
-                      <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                      <div className="w-full h-full rounded-md border border-t-stroke-sub bg-t-card flex items-center justify-center text-xs text-t-fg-muted">
                         Loading chart…
                       </div>
                     )
                   ) : (
-                    <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                    <div className="w-full h-full rounded-md border border-t-stroke-sub bg-t-card flex items-center justify-center text-xs text-t-fg-muted">
                       Loading market…
                     </div>
                   )}
                   {metricDebug && currentMarketId && (
-                    <div className="absolute top-2 right-2 z-10 rounded border border-gray-800 bg-black/70 px-3 py-2 text-[11px] text-gray-200">
+                    <div className="absolute top-2 right-2 z-10 rounded border border-t-stroke-sub bg-black/70 px-3 py-2 text-[11px] text-t-fg">
                       <div className="font-medium">Metric overlay debug</div>
-                      <div className="text-[10px] text-gray-400">tf: {metricTimeframe}</div>
+                      <div className="text-[10px] text-t-fg-muted">tf: {metricTimeframe}</div>
                       <div className="mt-2 flex gap-2">
                         <button
-                          className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                          className="rounded border border-t-stroke px-2 py-1 hover:border-gray-500"
                           onClick={() => void seedScatter()}
                           disabled={scatterInfo?.loading}
                         >
                           Seed scatter
                         </button>
                         <button
-                          className="rounded border border-gray-700 px-2 py-1 hover:border-gray-500"
+                          className="rounded border border-t-stroke px-2 py-1 hover:border-gray-500"
                           onClick={() => void refreshScatterInfo()}
                           disabled={scatterInfo?.loading}
                         >
                           Refresh
                         </button>
                       </div>
-                      <div className="mt-2 text-[10px] text-gray-400">
+                      <div className="mt-2 text-[10px] text-t-fg-muted">
                         {scatterInfo?.loading
                           ? 'checking…'
                           : scatterInfo?.error
                             ? `error: ${scatterInfo.error}`
                             : `ClickHouse points: ${scatterInfo?.count ?? '—'}`}
                       </div>
-                      <div className="mt-2 text-[10px] text-gray-500">
+                      <div className="mt-2 text-[10px] text-t-fg-muted">
                         After seeding, reload to force the indicator to refetch.
                       </div>
                     </div>
@@ -1257,7 +1388,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                       }}
                     />
                   ) : (
-                    <div className="w-full h-full rounded-md border border-gray-800 bg-[#0F0F0F] flex items-center justify-center text-xs text-gray-400">
+                    <div className="w-full h-full rounded-md border border-t-stroke-sub bg-t-card flex items-center justify-center text-xs text-t-fg-muted">
                       {isDeploying ? 'Setting up market…' : 'Loading data…'}
                     </div>
                   )}
@@ -1317,10 +1448,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             <div className="h-full overflow-y-auto scrollbar-none px-1 pt-1">
               <div className="mx-auto max-w-5xl">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Settlement Window</h4>
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Settlement Window</h4>
                   <button
                     onClick={() => setIsSettlementView(false)}
-                    className="text-xs text-[#9CA3AF] hover:text-white border border-[#222222] hover:border-[#333333] rounded px-2 py-1 transition-all duration-200"
+                    className="text-xs text-t-fg-label hover:text-t-fg border border-t-stroke hover:border-t-stroke-hover rounded px-2 py-1 transition-all duration-200"
                     title="Back to trading"
                   >
                     Back
@@ -1387,7 +1518,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   }}
                 />
               ) : (
-                <div className="flex items-center justify-center h-32 text-xs text-gray-400">
+                <div className="flex items-center justify-center h-32 text-xs text-t-fg-muted">
                   {isDeploying ? 'Setting up market…' : 'Loading data…'}
                 </div>
               )}

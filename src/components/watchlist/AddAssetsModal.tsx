@@ -89,7 +89,6 @@ export function AddAssetsModal({
   const watchlistUserSet = useMemo(() => new Set(watchlistUserIds), [watchlistUserIds]);
   const pendingUserSet = useMemo(() => new Set(pendingUserIds), [pendingUserIds]);
 
-  // Load recent searches
   useEffect(() => {
     const saved = localStorage.getItem('dexextra-add-assets-recent-searches');
     if (!saved) return;
@@ -133,7 +132,6 @@ export function AddAssetsModal({
 
     setResults((prev) => ({ ...prev, isLoading: true, error: null }));
     try {
-      // Use full-text search for better multi-word query handling
       const [marketsRes, usersRes] = await Promise.all([
         fetch(`/api/markets?fts=${encodeURIComponent(q)}&limit=15`),
         fetch(`/api/profile/search?q=${encodeURIComponent(q)}&limit=10`),
@@ -170,7 +168,6 @@ export function AddAssetsModal({
     }
   }, []);
 
-  // Open/close animation + initial data
   useEffect(() => {
     if (!isOpen) {
       setIsAnimating(false);
@@ -181,7 +178,6 @@ export function AddAssetsModal({
     fetchPopularMarkets();
   }, [fetchPopularMarkets, isOpen]);
 
-  // Escape key
   useEffect(() => {
     if (!isOpen) return;
     const handleEscape = (e: KeyboardEvent) => {
@@ -191,7 +187,6 @@ export function AddAssetsModal({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  // Click outside
   useEffect(() => {
     if (!isOpen) return;
     const handleClickOutside = (event: MouseEvent) => {
@@ -201,7 +196,6 @@ export function AddAssetsModal({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen, onClose]);
 
-  // Debounce search
   useEffect(() => {
     if (!isOpen) return;
     const id = setTimeout(() => performSearch(searchValue), 250);
@@ -253,31 +247,31 @@ export function AddAssetsModal({
 
   return (
     <div className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
-      <div className="absolute inset-0 bg-black/55" onClick={onClose} />
+      <div className="absolute inset-0" style={{ background: 'var(--t-overlay)' }} onClick={onClose} />
 
       <div
         ref={modalRef}
-        className="relative z-10 w-full sm:max-w-[760px] bg-[#0F0F0F] rounded-t-xl sm:rounded-md border border-[#222222] transition-all duration-200 flex flex-col"
+        className="relative z-10 w-full sm:max-w-[760px] bg-t-card rounded-t-xl sm:rounded-md border border-t-stroke transition-all duration-200 flex flex-col"
         style={{
           maxHeight: 'min(90vh, calc(100vh - 40px))',
           padding: '16px',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)',
+          boxShadow: 'var(--t-shadow-lg)',
         }}
       >
         {/* Mobile drag handle */}
         <div className="sm:hidden flex justify-center mb-3">
-          <div className="w-10 h-1 rounded-full bg-[#333333]" />
+          <div className="w-10 h-1 rounded-full bg-t-stroke-hover" />
         </div>
 
         {/* Title + close */}
         <div className="flex items-center justify-between mb-2 flex-shrink-0">
           <div className="min-w-0">
-            <div className="text-white text-[13px] font-medium tracking-tight">Add assets</div>
-            <div className="text-[#606060] text-[10px] mt-0.5 hidden sm:block">Search markets and users. Add markets to your watchlist.</div>
+            <div className="text-t-fg text-[13px] font-medium tracking-tight">Add assets</div>
+            <div className="text-t-fg-muted text-[10px] mt-0.5 hidden sm:block">Search markets and users. Add markets to your watchlist.</div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-md border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] text-[#808080] transition-all duration-200"
+            className="p-2 rounded-md border border-t-stroke hover:border-t-stroke-hover hover:bg-t-card-hover text-t-fg-sub transition-all duration-200"
             aria-label="Close"
           >
             <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none">
@@ -288,10 +282,10 @@ export function AddAssetsModal({
 
         {/* Wallet requirement banner */}
         {!canAdd && (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 p-2.5 mb-3">
+          <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 p-2.5 mb-3">
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-              <span className="text-[11px] font-medium text-[#808080]">Connect your wallet to add assets to your watchlist.</span>
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+              <span className="text-[11px] font-medium text-t-fg-sub">Connect your wallet to add assets to your watchlist.</span>
             </div>
           </div>
         )}
@@ -299,9 +293,9 @@ export function AddAssetsModal({
         {/* Search input */}
         <div className="mb-2 flex-shrink-0">
           <div className="relative">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#606060]">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-t-fg-muted">
               {results.isLoading ? (
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                <div className="w-1.5 h-1.5 rounded-full bg-t-accent animate-pulse" />
               ) : (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                   <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2" />
@@ -315,12 +309,12 @@ export function AddAssetsModal({
               placeholder="Search markets and users…"
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
-              className="w-full bg-[#1A1A1A] hover:bg-[#2A2A2A] border border-[#222222] hover:border-[#333333] rounded-md transition-all duration-200 focus:outline-none focus:border-[#333333] text-white text-sm pl-10 pr-10 py-2.5 sm:py-2"
+              className="w-full bg-t-inset hover:bg-t-card-hover border border-t-stroke hover:border-t-stroke-hover rounded-md transition-all duration-200 focus:outline-none focus:border-t-stroke-hover text-t-fg text-sm pl-10 pr-10 py-2.5 sm:py-2"
             />
             {searchValue && (
               <button
                 onClick={() => setSearchValue('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-[#2A2A2A] text-[#606060] hover:text-[#808080] transition-all duration-200"
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-t-skeleton text-t-fg-muted hover:text-t-fg-sub transition-all duration-200"
                 aria-label="Clear"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
@@ -334,10 +328,10 @@ export function AddAssetsModal({
         {/* Scroll body */}
         <div className="overflow-y-auto scrollbar-none flex-1 min-h-0">
           {results.error && (
-            <div className="bg-[#0F0F0F] border border-[#222222] rounded-md p-2.5 mb-3">
+            <div className="bg-t-card border border-t-stroke rounded-md p-2.5 mb-3">
               <div className="flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-                <span className="text-[11px] font-medium text-red-400">{results.error}</span>
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-negative" />
+                <span className="text-[11px] font-medium text-t-negative">{results.error}</span>
               </div>
             </div>
           )}
@@ -346,8 +340,8 @@ export function AddAssetsModal({
           {!searchValue && recentSearches.length > 0 && (
             <div className="mb-3">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Recent</h4>
-                <button onClick={clearRecentSearches} className="text-[10px] text-green-400 hover:text-green-300 uppercase tracking-wide transition-all duration-200">
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Recent</h4>
+                <button onClick={clearRecentSearches} className="text-[10px] text-t-positive hover:opacity-80 uppercase tracking-wide transition-all duration-200">
                   Clear
                 </button>
               </div>
@@ -356,11 +350,11 @@ export function AddAssetsModal({
                   <button
                     key={`${t}-${idx}`}
                     onClick={() => handleRecentSelect(t)}
-                    className="w-full text-left group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+                    className="w-full text-left group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200"
                   >
                     <div className="flex items-center gap-2 p-2.5">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#808080]">{t}</span>
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                      <span className="text-[11px] font-medium text-t-fg-sub">{t}</span>
                     </div>
                   </button>
                 ))}
@@ -371,19 +365,19 @@ export function AddAssetsModal({
           {/* Markets */}
           <div className="mb-3">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+              <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
                 {searchValue.trim() ? 'Markets' : 'Popular markets'}
               </h4>
-              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">{visibleMarkets.length}</div>
+              <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">{visibleMarkets.length}</div>
             </div>
 
             <div className="space-y-1">
               {visibleMarkets.length === 0 ? (
-                <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+                <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
                   <div className="flex items-center justify-between p-2.5">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#808080]">No markets found</span>
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                      <span className="text-[11px] font-medium text-t-fg-sub">No markets found</span>
                     </div>
                   </div>
                 </div>
@@ -395,46 +389,46 @@ export function AddAssetsModal({
                   const status = String(m.deployment_status || '').toLowerCase();
 
                   return (
-                    <div key={id} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+                    <div key={id} className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
                       <div className="flex items-center justify-between p-2.5 gap-2">
                         <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 hidden sm:block ${status === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 hidden sm:block ${status === 'deployed' ? 'bg-t-positive' : 'bg-t-warning'}`} />
                           <div className="flex items-center gap-1.5 min-w-0 flex-1">
                             {m.icon_image_url ? (
                               <div className="w-7 h-7 sm:w-6 sm:h-6 rounded bg-cover bg-center bg-no-repeat flex-shrink-0" style={{ backgroundImage: `url(${m.icon_image_url})` }} />
                             ) : (
-                              <div className={`flex items-center justify-center rounded text-[9px] font-medium w-7 h-7 sm:w-6 sm:h-6 flex-shrink-0 ${status === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'}`}>
+                              <div className={`flex items-center justify-center rounded text-[9px] font-medium w-7 h-7 sm:w-6 sm:h-6 flex-shrink-0 ${status === 'deployed' ? 'bg-t-positive text-black' : 'bg-t-warning text-black'}`}>
                                 {(m.symbol || '?').charAt(0).toUpperCase()}
                               </div>
                             )}
                             <div className="min-w-0 flex-1">
-                              <div className="text-left text-[13px] font-medium text-white truncate">
+                              <div className="text-left text-[13px] font-medium text-t-fg truncate">
                                 {m.symbol}
-                                {m.name ? <span className="text-[#606060] font-normal text-[11px] ml-1.5 sm:ml-2">· {m.name}</span> : null}
+                                {m.name ? <span className="text-t-fg-muted font-normal text-[11px] ml-1.5 sm:ml-2">· {m.name}</span> : null}
                               </div>
-                              <div className="text-[11px] text-[#606060] truncate sm:max-w-[420px]">{m.description || ''}</div>
+                              <div className="text-[11px] text-t-fg-muted truncate sm:max-w-[420px]">{m.description || ''}</div>
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
                           <div className="text-right hidden sm:block min-w-[90px]">
-                            <div className="text-[11px] text-white font-mono">
+                            <div className="text-[11px] text-t-fg font-mono">
                               {formatUsdNumber(Number(m.initial_price || 0), Number(m.price_decimals || 4))}
                             </div>
-                            <div className="text-[10px] text-[#606060]">{m.market_identifier || ''}</div>
+                            <div className="text-[10px] text-t-fg-muted">{m.market_identifier || ''}</div>
                           </div>
-                          <div className="w-px h-6 bg-[#222222] hidden sm:block" />
+                          <div className="w-px h-6 bg-t-stroke hidden sm:block" />
                           <button
                             disabled={!canAdd || isAdded || isPending}
                             onClick={() => handleAdd(m)}
                             className={[
                               'px-3 py-2 rounded-md text-[11px] font-medium transition-all duration-200 border whitespace-nowrap',
                               isAdded
-                                ? 'bg-[#0F0F0F] border-[#222222] text-[#606060]'
+                                ? 'bg-t-card border-t-stroke text-t-fg-muted'
                                 : isPending
-                                  ? 'bg-[#0F0F0F] border-[#222222] text-[#808080] animate-pulse'
-                                  : 'bg-[#0F0F0F] border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white',
+                                  ? 'bg-t-card border-t-stroke text-t-fg-sub animate-pulse'
+                                  : 'bg-t-card border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg',
                               !canAdd ? 'opacity-50' : '',
                             ].join(' ')}
                           >
@@ -453,17 +447,17 @@ export function AddAssetsModal({
           {searchValue.trim() && (
             <div className="mb-1">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Users</h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">{results.users.length}</div>
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Users</h4>
+                <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">{results.users.length}</div>
               </div>
 
               <div className="space-y-1">
                 {results.users.length === 0 ? (
-                  <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+                  <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
                     <div className="flex items-center justify-between p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                        <span className="text-[11px] font-medium text-[#808080]">No users found</span>
+                        <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
+                        <span className="text-[11px] font-medium text-t-fg-sub">No users found</span>
                       </div>
                     </div>
                   </div>
@@ -474,7 +468,7 @@ export function AddAssetsModal({
                     return (
                       <div
                         key={u.id}
-                        className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200"
+                        className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200"
                       >
                         <div className="flex items-center justify-between p-2.5 gap-2">
                           <button
@@ -483,7 +477,7 @@ export function AddAssetsModal({
                             title="Copy wallet address"
                           >
                             <div className="flex items-center gap-2 min-w-0">
-                              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 hidden sm:block" />
+                              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-accent hidden sm:block" />
                               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                 <div
                                   className="flex items-center justify-center text-[9px] font-medium rounded-full w-7 h-7 sm:w-6 sm:h-6 flex-shrink-0"
@@ -495,8 +489,8 @@ export function AddAssetsModal({
                                 >
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                  <div className="text-[11px] sm:text-[11px] font-medium text-white truncate">{u.display_name || u.username || 'Anonymous User'}</div>
-                                  <div className="text-[10px] text-[#606060] font-mono truncate">
+                                  <div className="text-[11px] sm:text-[11px] font-medium text-t-fg truncate">{u.display_name || u.username || 'Anonymous User'}</div>
+                                  <div className="text-[10px] text-t-fg-muted font-mono truncate">
                                     {u.wallet_address.slice(0, 6)}...{u.wallet_address.slice(-4)}
                                   </div>
                                 </div>
@@ -505,8 +499,8 @@ export function AddAssetsModal({
                           </button>
 
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            <div className="text-[10px] text-[#606060] min-w-[44px] text-right hidden sm:block">
-                              {copiedUserId === u.id ? <span className="text-green-400">Copied</span> : ''}
+                            <div className="text-[10px] text-t-fg-muted min-w-[44px] text-right hidden sm:block">
+                              {copiedUserId === u.id ? <span className="text-t-positive">Copied</span> : ''}
                             </div>
                             <button
                               disabled={!canAdd || isAdded || isPending}
@@ -514,10 +508,10 @@ export function AddAssetsModal({
                               className={[
                                 'px-3 py-2 rounded-md text-[11px] font-medium transition-all duration-200 border whitespace-nowrap',
                                 isAdded
-                                  ? 'bg-[#0F0F0F] border-[#222222] text-[#606060]'
+                                  ? 'bg-t-card border-t-stroke text-t-fg-muted'
                                   : isPending
-                                    ? 'bg-[#0F0F0F] border-[#222222] text-[#808080] animate-pulse'
-                                    : 'bg-[#0F0F0F] border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white',
+                                    ? 'bg-t-card border-t-stroke text-t-fg-sub animate-pulse'
+                                    : 'bg-t-card border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg',
                                 !canAdd ? 'opacity-50' : '',
                               ].join(' ')}
                             >
@@ -537,4 +531,3 @@ export function AddAssetsModal({
     </div>
   );
 }
-

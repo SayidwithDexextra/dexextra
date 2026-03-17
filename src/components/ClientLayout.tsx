@@ -85,16 +85,16 @@ export default function ClientLayout({ children }: ClientLayoutProps) {
                         <main 
                           className="flex-1"
                           style={{ 
-                            marginLeft: isMobile ? '0px' : `${collapsedNavbarWidth}px`, // Sidebar does not reserve width on mobile
-                            marginTop: isMobile ? '56px' : '48px', // Mobile header is 56px
-                            minHeight: isMobile ? 'calc(100vh - 56px)' : 'calc(100vh - 96px)', // Desktop still accounts for footer
-                            marginBottom: isMobile ? '0px' : '48px', // Footer reserved only on desktop
-                            backgroundColor: '#1a1a1a',
+                            marginLeft: isMobile ? '0px' : `${collapsedNavbarWidth}px`,
+                            marginTop: isMobile ? '56px' : '48px',
+                            minHeight: isMobile ? 'calc(100vh - 56px)' : 'calc(100vh - 96px)',
+                            marginBottom: isMobile ? '0px' : '48px',
+                            backgroundColor: 'var(--primary-bg)',
                             minWidth: 0,
                             overflow: 'hidden',
                           }}
                         >
-                          <div style={{ backgroundColor: '#1a1a1a', width: '100%', overflow: 'hidden' }}>
+                          <div style={{ backgroundColor: 'var(--primary-bg)', width: '100%', overflow: 'hidden' }}>
                             {children}
                           </div>
                         </main>

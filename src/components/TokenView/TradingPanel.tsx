@@ -2134,7 +2134,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   }, [updateBottomFade]);
 
   return (
-    <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 flex flex-col min-h-0 h-full">
+    <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 flex flex-col min-h-0 h-full">
       {/* Status Modals */}
       <OrderFillLoadingModal
         isOpen={orderFillModal.isOpen}
@@ -2182,17 +2182,17 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
           {/* Panel */}
           <div
-            className="relative z-10 w-full max-w-md rounded-md border border-[#222222] bg-[#0F0F0F] shadow-[0_20px_60px_rgba(0,0,0,0.6)]"
+            className="relative z-10 w-full max-w-md rounded-md border border-t-stroke bg-t-card shadow-[0_20px_60px_rgba(0,0,0,0.6)]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 p-4 border-b border-[#1A1A1A]">
+            <div className="flex items-start justify-between gap-4 p-4 border-b border-t-stroke-sub">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-                  <h3 className="text-sm font-semibold text-white">Adjust Max Slippage</h3>
+                  <h3 className="text-sm font-semibold text-t-fg">Adjust Max Slippage</h3>
                 </div>
-                <p className="mt-1 text-[10px] text-[#606060] leading-relaxed">
-                  Max slippage applies to <span className="text-[#9CA3AF]">market orders</span> placed from this panel.
+                <p className="mt-1 text-[10px] text-t-fg-muted leading-relaxed">
+                  Max slippage applies to <span className="text-t-fg-label">market orders</span> placed from this panel.
                   Higher values can improve fill likelihood during volatility, but may result in worse execution.
                 </p>
               </div>
@@ -2200,7 +2200,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               <button
                 type="button"
                 onClick={closeSlippageModal}
-                className="p-1 rounded-md hover:bg-[#1A1A1A] text-[#9CA3AF] hover:text-white transition-colors duration-200"
+                className="p-1 rounded-md hover:bg-t-card-hover text-t-fg-label hover:text-t-fg transition-colors duration-200"
                 aria-label="Close"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
@@ -2212,8 +2212,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
             <div className="p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-[#808080]">Max slippage</span>
-                <span className="text-[10px] text-white font-mono">{formatSlippagePct(draftMaxSlippage)}</span>
+                <span className="text-[11px] font-medium text-t-fg-sub">Max slippage</span>
+                <span className="text-[10px] text-t-fg font-mono">{formatSlippagePct(draftMaxSlippage)}</span>
               </div>
 
               {(() => {
@@ -2238,30 +2238,30 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                 );
               })()}
 
-              <div className="flex justify-between text-[9px] text-[#606060]">
+              <div className="flex justify-between text-[9px] text-t-fg-muted">
                 <span>0.1%</span>
                 <span>Conservative</span>
                 <span>Aggressive</span>
                 <span>100%</span>
               </div>
 
-              <div className="text-[9px] text-[#606060]">
-                Tip: for most markets, <span className="text-[#9CA3AF]">0.5–2%</span> is a good starting range.
+              <div className="text-[9px] text-t-fg-muted">
+                Tip: for most markets, <span className="text-t-fg-label">0.5–2%</span> is a good starting range.
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 p-4 border-t border-[#1A1A1A] bg-[#0A0A0A]">
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-t-stroke-sub bg-t-page">
               <button
                 type="button"
                 onClick={closeSlippageModal}
-                className="px-3 py-2 rounded-md border border-[#222222] bg-[#0F0F0F] hover:bg-[#1A1A1A] hover:border-[#333333] text-[11px] font-medium text-[#9CA3AF] hover:text-white transition-all duration-200"
+                className="px-3 py-2 rounded-md border border-t-stroke bg-t-card hover:bg-t-card-hover hover:border-t-stroke-hover text-[11px] font-medium text-t-fg-label hover:text-t-fg transition-all duration-200"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={confirmSlippageModal}
-                className="px-3 py-2 rounded-md bg-[#3B82F6] hover:bg-[#2563EB] text-[11px] font-semibold text-white transition-all duration-200"
+                className="px-3 py-2 rounded-md bg-[#3B82F6] hover:bg-[#2563EB] text-[11px] font-semibold text-t-fg transition-all duration-200"
               >
                 Confirm
               </button>
@@ -2271,26 +2271,26 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         document.body
       )}
       
-      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-3 h-full flex flex-col overflow-hidden">
+      <div className="rounded-md bg-t-page border border-t-stroke-hover p-3 h-full flex flex-col overflow-hidden">
 
 
         {/* Header section */}
         <div className="mb-2">
           {/* Order Type Toggle - Full Width */}
-          <div className="bg-[#0F0F0F] rounded-md border border-[#222222] p-1 w-full">
+          <div className="bg-t-card rounded-md border border-t-stroke p-1 w-full">
             <div className="flex w-full gap-1">
               <button
                 onClick={() => setOrderType('market')}
                 className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-green-400/20 ${
                   orderType === 'market'
-                    ? 'bg-[#1A1A1A] text-white'
-                    : 'text-[#808080] hover:text-[#D1D5DB] hover:bg-[#101010]'
+                    ? 'bg-t-inset text-t-fg'
+                    : 'text-t-fg-sub hover:text-[#D1D5DB] hover:bg-[#101010]'
                 }`}
                 aria-pressed={orderType === 'market'}
               >
                 <div
                   className={`w-1.5 h-1.5 rounded-full ${
-                    orderType === 'market' ? 'bg-green-400' : 'bg-[#404040]'
+                    orderType === 'market' ? 'bg-green-400' : 'bg-t-dot'
                   }`}
                 />
                 Market
@@ -2299,14 +2299,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                 onClick={() => setOrderType('limit')}
                 className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-semibold transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-400/20 ${
                   orderType === 'limit'
-                    ? 'bg-[#1A1A1A] text-white'
-                    : 'text-[#808080] hover:text-[#D1D5DB] hover:bg-[#101010]'
+                    ? 'bg-t-inset text-t-fg'
+                    : 'text-t-fg-sub hover:text-[#D1D5DB] hover:bg-[#101010]'
                 }`}
                 aria-pressed={orderType === 'limit'}
               >
                 <div
                   className={`w-1.5 h-1.5 rounded-full ${
-                    orderType === 'limit' ? 'bg-blue-400' : 'bg-[#404040]'
+                    orderType === 'limit' ? 'bg-blue-400' : 'bg-t-dot'
                   }`}
                 />
                 Limit
@@ -2327,8 +2327,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           {/* Long/Short Option Buttons - Sophisticated Design */}
           <div className="space-y-1 mb-2">
             {/* <div className="flex items-center justify-between mb-2">
-              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Position Direction</h4>
-              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+              <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Position Direction</h4>
+              <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                 {selectedOption || 'Select'}
               </div>
             </div> */}
@@ -2336,19 +2336,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             <div className="flex gap-2">
               <button
                 onClick={() => setSelectedOption('long')}
-                className={`group flex-1 bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border transition-all duration-200 ${
+                className={`group flex-1 bg-t-card hover:bg-t-card-hover rounded-md border transition-all duration-200 ${
                   selectedOption === 'long' 
                     ? 'border-green-400 bg-green-400/10' 
-                    : 'border-[#222222] hover:border-[#333333]'
+                    : 'border-t-stroke hover:border-t-stroke-hover'
                 }`}
               >
                 <div className="flex items-center justify-center p-2">
                   <div className="flex items-center gap-2">
                     <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                      selectedOption === 'long' ? 'bg-green-400' : 'bg-[#404040]'
+                      selectedOption === 'long' ? 'bg-green-400' : 'bg-t-dot'
                     }`} />
                     <span className={`text-xs font-medium ${
-                      selectedOption === 'long' ? 'text-green-400' : 'text-[#808080]'
+                      selectedOption === 'long' ? 'text-green-400' : 'text-t-fg-sub'
                     }`}>
                       Long
                     </span>
@@ -2363,19 +2363,19 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               
               <button
                 onClick={() => setSelectedOption('short')}
-                className={`group flex-1 bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border transition-all duration-200 ${
+                className={`group flex-1 bg-t-card hover:bg-t-card-hover rounded-md border transition-all duration-200 ${
                   selectedOption === 'short' 
                     ? 'border-red-400 bg-red-400/10' 
-                    : 'border-[#222222] hover:border-[#333333]'
+                    : 'border-t-stroke hover:border-t-stroke-hover'
                 }`}
               >
                 <div className="flex items-center justify-center p-2">
                   <div className="flex items-center gap-2">
                     <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                      selectedOption === 'short' ? 'bg-red-400' : 'bg-[#404040]'
+                      selectedOption === 'short' ? 'bg-red-400' : 'bg-t-dot'
                     }`} />
                     <span className={`text-xs font-medium ${
-                      selectedOption === 'short' ? 'text-red-400' : 'text-[#808080]'
+                      selectedOption === 'short' ? 'text-red-400' : 'text-t-fg-sub'
                     }`}>
                       Short
                     </span>
@@ -2394,24 +2394,24 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           {orderType === 'limit' && (
             <div className="space-y-1 mb-2">
               {/* <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Limit Order Settings</h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Limit Order Settings</h4>
+                <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                   Advanced
                 </div>
               </div> */}
               
               {/* Trigger Price Section */}
-              <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
                 <div className="p-2">
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
-                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${triggerPrice > 0 ? 'bg-blue-400' : 'bg-[#404040]'}`} />
-                      <span className="text-[11px] font-medium text-[#808080]">Limit Price</span>
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${triggerPrice > 0 ? 'bg-blue-400' : 'bg-t-dot'}`} />
+                      <span className="text-[11px] font-medium text-t-fg-sub">Limit Price</span>
                     </div>
-                    <span className="text-[10px] text-[#606060]">USDC</span>
+                    <span className="text-[10px] text-t-fg-muted">USDC</span>
                   </div>
                   <div className="relative">
-                    <div className="absolute left-2 top-1/2 transform -translate-y-1/2 text-[#606060] text-xs pointer-events-none">$</div>
+                    <div className="absolute left-2 top-1/2 transform -translate-y-1/2 text-t-fg-muted text-xs pointer-events-none">$</div>
                     <input
                       type="text"
                       inputMode="decimal"
@@ -2455,26 +2455,26 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                         }
                       }}
                       placeholder="0.00"
-                      className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 pl-6 text-xs font-medium text-white placeholder-[#606060] focus:outline-none focus:border-blue-400 transition-colors duration-200"
+                      className="w-full bg-t-inset border border-t-stroke-hover rounded px-2 py-1 pl-6 text-xs font-medium text-t-fg placeholder-t-fg-muted focus:outline-none focus:border-blue-400 transition-colors duration-200"
                     />
                   </div>
                 </div>
               </div>
 
               {/* Order Type Section */}
-              {/* <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              {/* <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
                 <div className="p-2">
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-                      <span className="text-[11px] font-medium text-[#808080]">Order Type</span>
+                      <span className="text-[11px] font-medium text-t-fg-sub">Order Type</span>
                     </div>
-                    <span className="text-[10px] text-[#606060]">{limitOrderType}</span>
+                    <span className="text-[10px] text-t-fg-muted">{limitOrderType}</span>
                   </div>
                   <select
                     value={limitOrderType}
                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setLimitOrderType(getInputValue(e) as typeof limitOrderType)}
-                    className="w-full bg-[#1A1A1A] border border-[#333333] rounded px-2 py-1 text-xs font-medium text-white focus:outline-none focus:border-blue-400 transition-colors duration-200 cursor-pointer"
+                    className="w-full bg-t-inset border border-t-stroke-hover rounded px-2 py-1 text-xs font-medium text-t-fg focus:outline-none focus:border-blue-400 transition-colors duration-200 cursor-pointer"
                   >
                     <option value="LIMIT">Limit Order</option>
                     <option value="MARKET_IF_TOUCHED">Market If Touched</option>
@@ -2485,14 +2485,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               </div> */}
 
               {/* Order Expiry Section */}
-              {/* <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              {/* <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
                 <div className="p-2.5">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-yellow-400" />
-                      <span className="text-[11px] font-medium text-[#808080]">Order Expires</span>
+                      <span className="text-[11px] font-medium text-t-fg-sub">Order Expires</span>
                     </div>
-                    <span className="text-[10px] text-[#606060]">
+                    <span className="text-[10px] text-t-fg-muted">
                       {orderExpiry === 1 ? '1h' : orderExpiry === 6 ? '6h' : orderExpiry === 24 ? '1d' : orderExpiry === 72 ? '3d' : '1w'}
                     </span>
                   </div>
@@ -2504,7 +2504,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                         className={`flex-1 py-1.5 px-2 text-[10px] font-medium rounded transition-all duration-200 ${
                           orderExpiry === hours
                             ? 'bg-blue-400 text-black'
-                            : 'bg-[#1A1A1A] text-[#808080] hover:text-[#9CA3AF] border border-[#333333] hover:border-[#444444]'
+                            : 'bg-t-inset text-t-fg-sub hover:text-t-fg-label border border-t-stroke-hover hover:border-[#444444]'
                         }`}
                       >
                         {hours === 1 ? '1h' : hours === 6 ? '6h' : hours === 24 ? '1d' : hours === 72 ? '3d' : '1w'}
@@ -2515,14 +2515,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               </div> */}
 
               {/* Max Slippage Section */}
-              {/* <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+              {/* <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
                 <div className="p-2">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-                      <span className="text-[11px] font-medium text-[#808080]">Max Slippage</span>
+                      <span className="text-[11px] font-medium text-t-fg-sub">Max Slippage</span>
                     </div>
-                    <span className="text-[10px] text-white font-mono">
+                    <span className="text-[10px] text-t-fg font-mono">
                       {(maxSlippage / 100).toFixed(1)}%
                     </span>
                   </div>
@@ -2533,10 +2533,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                       max="500"
                       value={maxSlippage}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMaxSlippage(parseInt(getInputValue(e)))}
-                      className="flex-1 h-1 bg-[#2A2A2A] rounded-lg appearance-none cursor-pointer"
+                      className="flex-1 h-1 bg-t-skeleton rounded-lg appearance-none cursor-pointer"
                     />
                   </div>
-                  <div className="flex justify-between text-[8px] text-[#606060] mt-1">
+                  <div className="flex justify-between text-[8px] text-t-fg-muted mt-1">
                     <span>0.1%</span>
                     <span>Conservative</span>
                     <span>Aggressive</span>
@@ -2551,21 +2551,21 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
           {/* Amount Section */}
           <div>
-            <div className="flex items-center justify-between mb-2 cursor-pointer hover:bg-[#1A1A1A] px-2 py-1 rounded-md transition-all duration-200" onClick={() => setIsUsdMode(!isUsdMode)}
+            <div className="flex items-center justify-between mb-2 cursor-pointer hover:bg-t-card-hover px-2 py-1 rounded-md transition-all duration-200" onClick={() => setIsUsdMode(!isUsdMode)}
                 title="Click to switch between USD and Units">
-              <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Position Size</h4>
-              <div className="flex items-center gap-1 text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded hover:bg-[#2A2A2A] transition-all duration-200">
+              <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Position Size</h4>
+              <div className="flex items-center gap-1 text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded hover:bg-t-card-hover transition-all duration-200">
                 {isUsdMode ? 'USD' : 'Units'}
-                <svg className="w-3 h-3 text-[#9CA3AF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3 h-3 text-t-fg-label" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                 </svg>
               </div>
             </div>
             
             {/* Amount Input Container */}
-            <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 mb-3">
+            <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 mb-3">
               <div className="relative">
-                <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-[#9CA3AF] text-xl font-bold pointer-events-none">
+                <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-t-fg-label text-xl font-bold pointer-events-none">
                   {isUsdMode ? '$' : '#'}
                 </div>
                 <input
@@ -2631,8 +2631,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             {orderType === 'market' && (
               <div className="space-y-1 mb-2">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">Quick Amounts</h4>
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Quick Amounts</h4>
+                  <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
                     USD
                   </div>
                 </div>
@@ -2642,12 +2642,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                       <button
                         key={value}
                         onClick={() => handleQuickAmount(value)}
-                        className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-[#333333] transition-all duration-200 flex-1"
+                        className="group bg-t-card hover:bg-t-card-hover rounded border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 flex-1"
                       >
                       <div className="flex items-center justify-center py-1 px-1">
                           <div className="flex items-center gap-1">
-                            <div className="w-1 h-1 rounded-full bg-[#404040] group-hover:bg-blue-400" />
-                            <span className="text-[9px] font-medium text-[#808080] group-hover:text-[#9CA3AF]">
+                            <div className="w-1 h-1 rounded-full bg-t-dot group-hover:bg-blue-400" />
+                            <span className="text-[9px] font-medium text-t-fg-sub group-hover:text-t-fg-label">
                               +${value >= 1000 ? `${value/1000}K` : value}
                             </span>
                           </div>
@@ -2656,7 +2656,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                     ))}
                   <button
                     onClick={handleMaxAmount}
-                    className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded border border-[#222222] hover:border-blue-400 transition-all duration-200"
+                    className="group bg-t-card hover:bg-t-card-hover rounded border border-t-stroke hover:border-blue-400 transition-all duration-200"
                   >
                     <div className="flex items-center justify-center py-1 px-2.5">
                       <div className="flex items-center gap-1">
@@ -2674,11 +2674,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   <button
                     type="button"
                     onClick={openSlippageModal}
-                    className="group inline-flex items-center gap-1.5 rounded px-2 py-1 hover:bg-[#1A1A1A] transition-all duration-200"
+                    className="group inline-flex items-center gap-1.5 rounded px-2 py-1 hover:bg-t-card-hover transition-all duration-200"
                     title="Adjust max slippage"
                   >
                     <svg
-                      className="w-3 h-3 text-[#606060] group-hover:text-[#9CA3AF] transition-colors duration-200"
+                      className="w-3 h-3 text-t-fg-muted group-hover:text-t-fg-label transition-colors duration-200"
                       viewBox="0 0 24 24"
                       fill="none"
                     >
@@ -2686,10 +2686,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                       <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2.2 2.2 0 0 1-1.56 3.76 2.2 2.2 0 0 1-1.56-.64l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.08 1.65V22a2.2 2.2 0 0 1-4.4 0v-.07a1.8 1.8 0 0 0-1.08-1.65 1.8 1.8 0 0 0-1.98.36l-.05.05A2.2 2.2 0 1 1 2.2 17l.05-.05A1.8 1.8 0 0 0 2.6 15a1.8 1.8 0 0 0-1.65-1.08H.9a2.2 2.2 0 0 1 0-4.4h.07A1.8 1.8 0 0 0 2.7 8.44a1.8 1.8 0 0 0-.36-1.98l-.05-.05A2.2 2.2 0 1 1 5.05 2.64l.05.05a1.8 1.8 0 0 0 1.98.36A1.8 1.8 0 0 0 8.16 1.4V1.33a2.2 2.2 0 0 1 4.4 0v.07a1.8 1.8 0 0 0 1.08 1.65 1.8 1.8 0 0 0 1.98-.36l.05-.05A2.2 2.2 0 1 1 21.8 7l-.05.05A1.8 1.8 0 0 0 21.44 9a1.8 1.8 0 0 0 1.65 1.08h.07a2.2 2.2 0 0 1 0 4.4h-.07A1.8 1.8 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
 
-                    <span className="text-[10px] text-[#606060] group-hover:text-[#9CA3AF] transition-colors duration-200">
+                    <span className="text-[10px] text-t-fg-muted group-hover:text-t-fg-label transition-colors duration-200">
                       Slippage
                     </span>
-                    <span className="text-[10px] text-white font-mono whitespace-nowrap">
+                    <span className="text-[10px] text-t-fg font-mono whitespace-nowrap">
                       {formatSlippagePct(maxSlippage)}
                     </span>
                   </button>
@@ -2741,18 +2741,18 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   const isLoading = quoteState.isLoading;
 
                   return (
-                    <div className="rounded-md border border-[#1A1A1A] overflow-hidden">
+                    <div className="rounded-md border border-t-stroke-sub overflow-hidden">
                       {/* Header */}
-                      <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#0A0A0A] border-b border-[#1A1A1A]">
-                        <span className="text-[10px] font-medium text-[#808080] uppercase tracking-wider">Order Summary</span>
-                        <span className="text-[9px] font-mono text-[#606060] bg-[#141414] border border-[#222] px-1.5 py-px rounded-full">{orderType.toUpperCase()}</span>
+                      <div className="flex items-center justify-between px-2.5 py-1.5 bg-t-page border-b border-t-stroke-sub">
+                        <span className="text-[10px] font-medium text-t-fg-sub uppercase tracking-wider">Order Summary</span>
+                        <span className="text-[9px] font-mono text-t-fg-muted bg-t-elevated border border-t-stroke px-1.5 py-px rounded-full">{orderType.toUpperCase()}</span>
                       </div>
 
                       {/* Primary: Fill Price + Fill Amount */}
                       <div className="px-2.5 py-1.5 bg-[#0C0C0C] space-y-1">
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-[10px] text-[#707070]">Est. Fill Price</span>
-                          <span className="text-[12px] text-white font-mono font-medium">
+                          <span className="text-[12px] text-t-fg font-mono font-medium">
                             {isLoading ? '...' : (hasPriceEstimate ? `$${formatNumber(estPrice)}` : '—')}
                             {quoteState.partial && <span className="text-[9px] text-[#F59E0B] ml-1">partial</span>}
                           </span>
@@ -2760,11 +2760,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                         {hasPriceEstimate && estFillAmountBest > 0 && (
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="text-[10px] text-[#707070]">Est. Fill Amount</span>
-                            <span className="text-[12px] text-white font-mono font-medium">
+                            <span className="text-[12px] text-t-fg font-mono font-medium">
                               {isLoading ? '...' : (
                                 isUsdMode && orderType === 'market' && estFillAmount < estFillAmountBest
-                                  ? <>{formatNumber(estFillAmount)}<span className="text-[#505050] mx-0.5">–</span>{formatNumber(estFillAmountBest)} <span className="text-[9px] text-[#606060] font-normal">units</span></>
-                                  : <>{formatNumber(estFillAmountBest)} <span className="text-[9px] text-[#606060] font-normal">units</span></>
+                                  ? <>{formatNumber(estFillAmount)}<span className="text-t-fg-muted mx-0.5">–</span>{formatNumber(estFillAmountBest)} <span className="text-[9px] text-t-fg-muted font-normal">units</span></>
+                                  : <>{formatNumber(estFillAmountBest)} <span className="text-[9px] text-t-fg-muted font-normal">units</span></>
                               )}
                             </span>
                           </div>
@@ -2772,7 +2772,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                         {orderType === 'limit' && (
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="text-[10px] text-[#707070]">Limit Price</span>
-                            <span className="text-[12px] text-white font-mono font-medium">{triggerPrice > 0 ? `$${formatNumber(triggerPrice)}` : '—'}</span>
+                            <span className="text-[12px] text-t-fg font-mono font-medium">{triggerPrice > 0 ? `$${formatNumber(triggerPrice)}` : '—'}</span>
                           </div>
                         )}
                       </div>
@@ -2784,22 +2784,22 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                       )}
 
                       {/* Details */}
-                      <div className="px-2.5 py-1.5 bg-[#0F0F0F] space-y-1">
+                      <div className="px-2.5 py-1.5 bg-t-card space-y-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[#505050]">{orderType === 'limit' ? 'Maker Fee' : 'Taker Fee'}</span>
-                          <span className="text-[10px] text-[#9CA3AF] font-mono">${formatNumber(notional * feeRate)}<span className="text-[#505050] ml-1">({(feeRate * 100).toFixed(2)}%)</span></span>
+                          <span className="text-[10px] text-t-fg-muted">{orderType === 'limit' ? 'Maker Fee' : 'Taker Fee'}</span>
+                          <span className="text-[10px] text-t-fg-label font-mono">${formatNumber(notional * feeRate)}<span className="text-t-fg-muted ml-1">({(feeRate * 100).toFixed(2)}%)</span></span>
                         </div>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[#505050]">Order Value</span>
-                          <span className="text-[10px] text-[#9CA3AF] font-mono">{hasOrderValueEstimate ? `$${formatNumber(orderValue)}` : '—'}</span>
+                          <span className="text-[10px] text-t-fg-muted">Order Value</span>
+                          <span className="text-[10px] text-t-fg-label font-mono">{hasOrderValueEstimate ? `$${formatNumber(orderValue)}` : '—'}</span>
                         </div>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[#505050]">Margin <span className="text-[#404040]">({marginPct}%)</span></span>
-                          <span className="text-[10px] text-[#9CA3AF] font-mono">{hasMarginEstimate ? `$${formatNumber(marginRequired)}` : '—'}</span>
+                          <span className="text-[10px] text-t-fg-muted">Margin <span className="text-t-dot">({marginPct}%)</span></span>
+                          <span className="text-[10px] text-t-fg-label font-mono">{hasMarginEstimate ? `$${formatNumber(marginRequired)}` : '—'}</span>
                         </div>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-[#505050]">Liquidation</span>
-                          <span className="text-[10px] text-[#9CA3AF] font-mono">{liquidationDisplay}</span>
+                          <span className="text-[10px] text-t-fg-muted">Liquidation</span>
+                          <span className="text-[10px] text-t-fg-label font-mono">{liquidationDisplay}</span>
                         </div>
                       </div>
                     </div>
@@ -2825,7 +2825,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           {!isConnected ? (
             <button 
               onClick={() => setShowWalletModal(true)}
-              className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md bg-[#3B82F6] text-white"
+              className="flex-1 transition-all duration-150 border-none cursor-pointer rounded-md bg-[#3B82F6] text-t-fg"
               style={{
                 padding: '10px',
                 fontSize: '16px',

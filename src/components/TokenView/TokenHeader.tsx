@@ -556,8 +556,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
 
   if (shouldShowHeaderLoading) {
     return (
-      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-4 min-h-[200px] flex items-center justify-center">
-        <div className="text-white text-sm">Loading orderbook market data...</div>
+      <div className="rounded-md bg-t-page border border-t-stroke-hover p-4 min-h-[200px] flex items-center justify-center">
+        <div className="text-t-fg text-sm">Loading orderbook market data...</div>
       </div>
     );
   }
@@ -565,10 +565,10 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Error state - distinguish between market not found and actual errors
   if (marketError || !enhancedTokenData) {
     return (
-      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-4 min-h-[200px] flex items-center justify-center">
+      <div className="rounded-md bg-t-page border border-t-stroke-hover p-4 min-h-[200px] flex items-center justify-center">
         <div className="text-red-400 text-sm text-center">
           <div className="mb-2">Error loading market data:</div>
-          <div className="text-xs text-gray-400">
+          <div className="text-xs text-t-fg-muted">
             {marketError ? marketError.toString() : 'Unknown error'}
           </div>
           <button 
@@ -597,25 +597,25 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     }[enhancedTokenData.marketStatus] || 'Market Not Active';
 
     return (
-      <div className="rounded-md bg-[#0A0A0A] border border-[#333333] p-4 min-h-[200px] flex items-center justify-center">
+      <div className="rounded-md bg-t-page border border-t-stroke-hover p-4 min-h-[200px] flex items-center justify-center">
         <div className="text-yellow-400 text-sm text-center">
           <div className="mb-2">⚠️ {statusText}</div>
-          <div className="text-xs text-gray-400 mb-2">
+          <div className="text-xs text-t-fg-muted mb-2">
             Status: {enhancedTokenData.marketStatus}
           </div>
           {enhancedTokenData.marketStatus === 'PENDING' && (
-            <div className="text-xs text-gray-400">
+            <div className="text-xs text-t-fg-muted">
               This market is awaiting contract deployment. Trading is not yet available.
             </div>
           )}
           {enhancedTokenData.marketStatus === 'SETTLED' && (
-            <div className="text-xs text-gray-400">
+            <div className="text-xs text-t-fg-muted">
               This market has been settled. Final settlement date: {new Date(enhancedTokenData.settlementDate).toLocaleDateString()}
             </div>
           )}
           {enhancedTokenData.marketStatus === 'SETTLEMENT_REQUESTED' && (
-            <div className="text-xs text-gray-300 mt-1">
-              Proposed: <span className="text-white font-mono">
+            <div className="text-xs text-t-fg-label mt-1">
+              Proposed: <span className="text-t-fg font-mono">
                 ${Number((marketData as any)?.proposed_settlement_value ?? 0).toFixed(4)}
               </span>
               {(marketData as any)?.settlement_window_expires_at ? (
@@ -660,7 +660,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const isPriceLoading = !hasLoadedHeaderOnce && (!enhancedTokenData || isLoadingMarket);
 
   return (
-    <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 h-full max-h-full flex flex-col">
+    <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 h-full max-h-full flex flex-col">
       {/* Sticky Token Identity Section - Always Visible */}
       <div className="sticky top-0 z-10 flex-shrink-0">
         <div>
@@ -668,9 +668,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-2">
                 <div className={`w-1 h-1 rounded-full flex-shrink-0 ${enhancedTokenData.isDeployed ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                <span className="text-[10px] font-medium text-[#E5E7EB]">Token Information</span>
+                <span className="text-[10px] font-medium text-t-fg">Token Information</span>
               </div>
-              <span className="text-[9px] text-[#CBD5E1]">{enhancedTokenData.marketStatus}</span>
+              <span className="text-[9px] text-t-fg-label">{enhancedTokenData.marketStatus}</span>
             </div>
             
             <div className="flex items-center gap-2">
@@ -679,10 +679,10 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 alt={enhancedTokenData.name || 'Market Icon'}
                 width={34}
                 height={34}
-                className="w-7 h-7 rounded border border-[#333333] object-cover flex-shrink-0"
+                className="w-7 h-7 rounded border border-t-stroke-hover object-cover flex-shrink-0"
               />
               <div className="min-w-0 flex-1">
-                <h1 className="text-xs font-medium text-white mb-0.5 truncate">
+                <h1 className="text-xs font-medium text-t-fg mb-0.5 truncate">
                   {enhancedTokenData.name}
                 </h1>
                 <div className="flex items-center gap-1 flex-wrap">
@@ -692,8 +692,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                       onClick={() => setActiveTab(index)}
                       className={`text-[10px] ${
                         activeTab === index 
-                          ? 'text-white bg-[#2A2A2A]' 
-                          : 'text-[#CBD5E1] bg-[#1A1A1A] hover:bg-[#222222]'
+                          ? 'text-t-fg bg-t-skeleton' 
+                          : 'text-t-fg-label bg-t-inset hover:bg-t-stroke'
                       } px-2 py-0.5 rounded transition-colors duration-200`}
                     >
                       {tab.label}
@@ -715,7 +715,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             
             {/* Conditional Price Display - Shows when price section is scrolled out of view */}
             {!isPriceSectionVisible && (
-              <div className="mt-1.5 pt-1.5 border-t border-[#333333] animate-in fade-in duration-200">
+              <div className="mt-1.5 pt-1.5 border-t border-t-stroke-hover animate-in fade-in duration-200">
                 <div className="flex items-center justify-between">
                   <div className="flex items-baseline gap-2">
                     {isPriceLoading ? (
@@ -734,9 +734,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                       />
                     ) : (
                       shouldShowMarkPriceLoading ? (
-                        <span className="inline-block w-[92px] h-[14px] bg-[#1A1A1A] rounded animate-pulse" />
+                        <span className="inline-block w-[92px] h-[14px] bg-t-inset rounded animate-pulse" />
                       ) : (
-                        <span className="text-[13px] font-bold text-white">
+                        <span className="text-[13px] font-bold text-t-fg">
                           ${formatPriceWithCommas(enhancedTokenData.markPrice)}
                         </span>
                       )
@@ -756,8 +756,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 {/* Display Unrealized PNL when contracted */}
                 {isLimitTabActive && tabItems[activeTab] && (
                   <div className="mt-1 text-[10px] flex justify-between">
-                    <span className="text-[#CBD5E1]">{tabItems[activeTab].labelShort}</span>
-                    <span className={`${tabItems[activeTab].id === 'haircut' && socializedLossNum > 0 ? 'text-red-400' : 'text-white'} font-mono`}>
+                    <span className="text-t-fg-label">{tabItems[activeTab].labelShort}</span>
+                    <span className={`${tabItems[activeTab].id === 'haircut' && socializedLossNum > 0 ? 'text-red-400' : 'text-t-fg'} font-mono`}>
                       {tabItems[activeTab].value}
                     </span>
                   </div>
@@ -772,18 +772,18 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       <div ref={scrollContainerRef} className={`flex-1 overflow-y-auto token-header-scroll space-y-1.5 p-1 transition-all duration-300 ease-in-out ${isLimitTabActive ? 'max-h-0 opacity-0' : 'max-h-full opacity-100'}`}>
 
       {/* Price Section - Sophisticated Design */}
-      <div ref={priceSectionRef} className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+      <div ref={priceSectionRef} className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
         <div className="p-2">
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-1.5">
               <div className={`w-1 h-1 rounded-full flex-shrink-0 ${showLiveIndicator ? 'bg-green-400 animate-pulse' : 'bg-blue-400'}`} />
-              <span className="text-[10px] font-medium text-[#E5E7EB]">Current Price</span>
+              <span className="text-[10px] font-medium text-t-fg">Current Price</span>
             </div>
             <div className="flex items-center gap-1">
               {showLiveIndicator && (
                 <span className="text-[7px] text-green-400 bg-[#1A2A1A] px-1 py-0.5 rounded">LIVE</span>
               )}
-              <span className="text-[9px] text-[#CBD5E1]">USDC</span>
+              <span className="text-[9px] text-t-fg-label">USDC</span>
             </div>
           </div>
           
@@ -805,9 +805,9 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 />
               ) : (
                 shouldShowMarkPriceLoading ? (
-                  <span className="inline-block w-[112px] h-[18px] bg-[#1A1A1A] rounded animate-pulse" />
+                  <span className="inline-block w-[112px] h-[18px] bg-t-inset rounded animate-pulse" />
                 ) : (
-                  <span className="text-base font-bold text-white font-mono">
+                  <span className="text-base font-bold text-t-fg font-mono">
                     ${formatPriceWithCommas(enhancedTokenData.markPrice)}
                   </span>
                 )
@@ -825,7 +825,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
                 className={`w-5 h-5 flex items-center justify-center rounded transition-all duration-200 ${
                   isLoadingDirectPrice || isLoadingTrading 
                     ? 'bg-blue-400/10 text-blue-400' 
-                    : 'bg-[#1A1A1A] hover:bg-[#2A2A2A] text-[#CBD5E1] hover:text-white'
+                    : 'bg-t-inset hover:bg-t-card-hover text-t-fg-label hover:text-t-fg'
                 }`}
                 title="Refresh direct OrderBook price data"
               >
@@ -841,14 +841,14 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             <div className="mt-1 flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <div className="w-1 h-1 rounded-full bg-yellow-400" />
-                <span className="text-[10px] text-[#E5E7EB]">Settlement</span>
+                <span className="text-[10px] text-t-fg">Settlement</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-white font-mono">
+                <span className="text-[10px] text-t-fg font-mono">
                   {formatCompactMoney(proposedSettlementValue)}
                 </span>
                 {remainingText && (
-                  <span className="text-[10px] text-[#CBD5E1]">
+                  <span className="text-[10px] text-t-fg-label">
                     {remainingText} left
                   </span>
                 )}
@@ -860,11 +860,11 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
           <div className="mt-1.5 space-y-1 text-[9px]">
             <div className="flex justify-between">
               {tabItems[activeTab] && (
-                <span className="text-[#CBD5E1]">{tabItems[activeTab].labelShort}</span>
+                <span className="text-t-fg-label">{tabItems[activeTab].labelShort}</span>
               )}
               <div className="flex items-center gap-1">
                 {tabItems[activeTab] && (
-                  <span className={`font-mono ${tabItems[activeTab].id === 'haircut' && socializedLossNum > 0 ? 'text-red-400' : 'text-white'}`}>
+                  <span className={`font-mono ${tabItems[activeTab].id === 'haircut' && socializedLossNum > 0 ? 'text-red-400' : 'text-t-fg'}`}>
                     {tabItems[activeTab].value}
                   </span>
                 )}
@@ -872,13 +872,13 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             </div>
             
             {/* <div className="flex justify-between">
-              <span className="text-[#606060]">Total Trades:</span>
-              <span className="text-white font-mono">{enhancedTokenData.totalTrades}</span>
+              <span className="text-t-fg-muted">Total Trades:</span>
+              <span className="text-t-fg font-mono">{enhancedTokenData.totalTrades}</span>
             </div> */}
             
             {enhancedTokenData.isDeployed && enhancedTokenData.fundingRate !== 0 && (
               <div className="flex justify-between">
-                <span className="text-[#CBD5E1]">Funding Rate:</span>
+                <span className="text-t-fg-label">Funding Rate:</span>
                 <span className={`font-mono ${enhancedTokenData.fundingRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {enhancedTokenData.fundingRate > 0 ? '+' : ''}{(enhancedTokenData.fundingRate * 100).toFixed(4)}%
                 </span>
@@ -888,20 +888,20 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
             {/* Status Messages */}
             {!enhancedTokenData.isDeployed && (
               <div className="flex justify-between">
-                <span className="text-[#CBD5E1]">Status:</span>
+                <span className="text-t-fg-label">Status:</span>
                 <span className="text-yellow-400">Deployment Pending</span>
               </div>
             )}
 
             {directPriceError && (
               <div className="flex justify-between">
-                <span className="text-[#CBD5E1]">Error:</span>
+                <span className="text-t-fg-label">Error:</span>
                 <span className="text-red-400">OrderBook Connection</span>
               </div>
             )}
             {tradingError && (
               <div className="flex justify-between">
-                <span className="text-[#CBD5E1]">Trading Data:</span>
+                <span className="text-t-fg-label">Trading Data:</span>
                 <span className="text-red-400">Error</span>
               </div>
             )}
@@ -925,7 +925,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         }
         
         :global(.token-header-scroll::-webkit-scrollbar-thumb) {
-          background: #22C55E;
+          background: var(--t-positive);
           border-radius: 3px;
         }
         
@@ -936,7 +936,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
         /* Firefox scrollbar styles */
         :global(.token-header-scroll) {
           scrollbar-width: thin;
-          scrollbar-color: #22C55E transparent;
+          scrollbar-color: var(--t-positive) transparent;
         }
       `}</style>
       

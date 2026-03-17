@@ -41,7 +41,13 @@ export function WatchlistMetricsBar(props: WatchlistMetricsBarProps) {
   ];
 
   return (
-    <div className="w-full rounded-md border border-[#1A1A1A] bg-gradient-to-b from-[#141414] to-[#0F0F0F] overflow-hidden flex-shrink-0">
+    <div
+      className="w-full rounded-md border border-t-stroke-sub overflow-hidden flex-shrink-0"
+      style={{
+        background: `linear-gradient(to bottom, var(--t-gradient-from), var(--t-gradient-to))`,
+        boxShadow: 'var(--t-shadow)',
+      }}
+    >
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
         {metrics.map((m, idx) => (
           <div
@@ -49,13 +55,13 @@ export function WatchlistMetricsBar(props: WatchlistMetricsBarProps) {
             className={[
               'px-3 py-3 sm:px-4 sm:py-4 lg:px-5',
               'min-w-0',
-              idx === 0 ? '' : 'border-l border-[#1A1A1A]',
+              idx === 0 ? '' : 'border-l border-t-stroke-sub',
             ].join(' ')}
           >
-            <div className="text-[10px] sm:text-[11px] leading-none text-[#7A7A7A] tracking-tight">
+            <div className="text-[10px] sm:text-[11px] leading-none text-t-fg-muted tracking-tight">
               {m.label}
             </div>
-            <div className={['mt-1.5 sm:mt-2 text-[16px] sm:text-[18px] lg:text-[20px] leading-none text-white font-medium tracking-tight', m.valueClassName || ''].join(' ')}>
+            <div className={['mt-1.5 sm:mt-2 text-[16px] sm:text-[18px] lg:text-[20px] leading-none text-t-fg font-medium tracking-tight', m.valueClassName || ''].join(' ')}>
               {m.value}
             </div>
           </div>
@@ -64,4 +70,3 @@ export function WatchlistMetricsBar(props: WatchlistMetricsBarProps) {
     </div>
   );
 }
-

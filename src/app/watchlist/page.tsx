@@ -34,7 +34,6 @@ type WatchedUser = {
 export default function WatchlistPage() {
   const router = useRouter();
   const { walletData } = useWallet();
-
   const [watchlistIds, setWatchlistIds] = useState<string[]>([]);
   const [watchlistMarkets, setWatchlistMarkets] = useState<MarketOverviewRow[]>([]);
   const [watchlistUserIds, setWatchlistUserIds] = useState<string[]>([]);
@@ -48,7 +47,6 @@ export default function WatchlistPage() {
   const [isAddAssetsOpen, setIsAddAssetsOpen] = useState(false);
   const [copiedWatchedUserId, setCopiedWatchedUserId] = useState<string | null>(null);
 
-  // Fetch watchlist ids for the connected wallet (with caching)
   useEffect(() => {
     const walletAddress = walletData?.address;
     if (!walletAddress) {
@@ -63,14 +61,12 @@ export default function WatchlistPage() {
 
     const cacheKey = CACHE_KEYS.WATCHLIST(walletAddress);
 
-    // Load cached data immediately if available
     const cached = getFromCacheOrStorage<WatchlistCacheData>(cacheKey);
     if (cached) {
       setWatchlistIds(cached.market_ids);
       setWatchlistMarkets(cached.watched_markets || []);
       setWatchlistUserIds(cached.watched_user_ids);
       setWatchlistUsers(cached.watched_users);
-      // If data is fresh, don't show loading state
       if (!isDataStale(cacheKey)) {
         setWatchlistLoading(false);
       }
@@ -78,7 +74,6 @@ export default function WatchlistPage() {
 
     const ctrl = new AbortController();
     const run = async () => {
-      // Only show loading if no cached data
       if (!cached) {
         setWatchlistLoading(true);
       }
@@ -105,13 +100,11 @@ export default function WatchlistPage() {
           (u: any) => u && typeof u.id === 'string' && typeof u.wallet_address === 'string'
         );
 
-        // Update state
         setWatchlistIds(filteredIds);
         setWatchlistMarkets(filteredMarkets);
         setWatchlistUserIds(filteredUserIds);
         setWatchlistUsers(filteredUsers);
 
-        // Cache the data
         setCache<WatchlistCacheData>(cacheKey, {
           market_ids: filteredIds,
           watched_markets: filteredMarkets,
@@ -130,7 +123,6 @@ export default function WatchlistPage() {
     return () => ctrl.abort();
   }, [walletData?.address]);
 
-  // Fetch market overview
   const { data: overview, error: marketsError } = useMarketOverview({
     limit: 500,
     autoRefresh: false,
@@ -140,8 +132,6 @@ export default function WatchlistPage() {
 
   const watchlistSet = useMemo(() => new Set(watchlistIds), [watchlistIds]);
 
-  // Primary: use watchlistMarkets from the API (has all watchlisted markets).
-  // Fallback: filter from overview data (covers stale cache without watched_markets).
   const watchlistedRows = useMemo(() => {
     const overviewRows = (overview as MarketOverviewRow[]) || [];
     const overviewMap = new Map<string, MarketOverviewRow>();
@@ -166,7 +156,6 @@ export default function WatchlistPage() {
       });
     }
 
-    // Fallback: filter overview data by watchlist IDs
     if (overviewRows.length > 0 && watchlistSet.size > 0) {
       return overviewRows.filter((row) =>
         watchlistSet.has(String(row?.market_id || ''))
@@ -176,11 +165,9 @@ export default function WatchlistPage() {
     return [];
   }, [watchlistMarkets, overview, watchlistSet]);
 
-  // Apply search and sort
   const filteredAndSortedRows = useMemo(() => {
     let result = [...watchlistedRows];
     
-    // Apply search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       result = result.filter((row) => 
@@ -189,7 +176,6 @@ export default function WatchlistPage() {
       );
     }
     
-    // Apply sorting
     if (sortConfig) {
       result.sort((a, b) => {
         let aValue: any;
@@ -241,9 +227,7 @@ export default function WatchlistPage() {
       if (watchlistPending.includes(id)) return;
       if (watchlistIds.includes(id)) return;
 
-      // Optimistic add
       setWatchlistIds((prev) => [...prev, id]);
-      // Try to find the market in the overview data for an optimistic row
       const overviewRow = ((overview as MarketOverviewRow[]) || []).find(
         (r) => r.market_id === id
       );
@@ -267,7 +251,6 @@ export default function WatchlistPage() {
           throw new Error(json?.error || 'Failed to update watchlist');
         }
       } catch {
-        // Revert optimistic update
         setWatchlistIds((prev) => prev.filter((x) => x !== id));
         setWatchlistMarkets((prev) => prev.filter((m) => m.market_id !== id));
       } finally {
@@ -284,7 +267,6 @@ export default function WatchlistPage() {
       if (watchlistUserPending.includes(id)) return;
       if (watchlistUserIds.includes(id)) return;
 
-      // Optimistic add
       setWatchlistUserIds((prev) => [...prev, id]);
       setWatchlistUserPending((prev) => [...prev, id]);
 
@@ -302,7 +284,6 @@ export default function WatchlistPage() {
           throw new Error(json?.error || 'Failed to update watchlist');
         }
       } catch {
-        // Revert optimistic update
         setWatchlistUserIds((prev) => prev.filter((x) => x !== id));
       } finally {
         setWatchlistUserPending((prev) => prev.filter((x) => x !== id));
@@ -387,7 +368,6 @@ export default function WatchlistPage() {
         throw new Error(json?.error || 'Failed to update watchlist');
       }
     } catch (e) {
-      // Revert optimistic update
       setWatchlistIds((prev) => (isWatchlisted ? [...prev, marketId] : prev.filter((id) => id !== marketId)));
       if (isWatchlisted) {
         setWatchlistMarkets((prev) => [...prev, row]);
@@ -412,7 +392,6 @@ export default function WatchlistPage() {
     return `$${volume.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  // Mock change percentage (would need real data)
   const getChangePercent = useCallback((row: MarketOverviewRow) => {
     const hash = row.market_id?.split('').reduce((a, b) => a + b.charCodeAt(0), 0) || 0;
     return ((hash % 200) - 100) / 10;
@@ -424,8 +403,6 @@ export default function WatchlistPage() {
     !watchlistLoading &&
     watchlistIds.length === 0 &&
     watchlistUserIds.length === 0;
-  // Show loading when watchlist is loading OR when we have IDs but
-  // market data hasn't arrived from either source yet.
   const marketsDataPending =
     watchlistIds.length > 0 &&
     watchlistMarkets.length === 0 &&
@@ -457,13 +434,13 @@ export default function WatchlistPage() {
   }, [getChangePercent, watchlistedRows, watchlistIds.length]);
 
   return (
-    <div className="dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-transparent overflow-hidden">
+    <div className="dex-page-enter-up w-full h-[calc(100vh-96px)] flex bg-t-page overflow-hidden">
       {/* Main Watchlist Content */}
       <div className="flex-1 flex flex-col min-w-0 px-3 py-4 sm:px-4 md:px-6 md:py-6 overflow-y-auto scrollbar-none">
         {/* Header */}
         <div className="mb-3 md:mb-4 flex-shrink-0">
-          <h1 className="text-white text-lg md:text-xl font-medium tracking-tight">Watchlist</h1>
-          <p className="text-[#606060] text-[10px] md:text-[11px] mt-1">
+          <h1 className="text-t-fg text-lg md:text-xl font-medium tracking-tight">Watchlist</h1>
+          <p className="text-t-fg-muted text-[10px] md:text-[11px] mt-1">
             Stay Ahead of the Market with Your Personalized Watchlist
           </p>
         </div>
@@ -481,10 +458,10 @@ export default function WatchlistPage() {
 
         {/* Error Display */}
         {(watchlistError || marketsError) && (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-red-500/20 hover:border-red-500/30 transition-all duration-200 p-2.5 mb-3 flex-shrink-0">
+          <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-negative/20 hover:border-t-negative/30 transition-all duration-200 p-2.5 mb-3 flex-shrink-0">
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-              <span className="text-[11px] font-medium text-red-400">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-negative" />
+              <span className="text-[11px] font-medium text-t-negative">
                 {watchlistError ? `Watchlist error: ${watchlistError}` : `Markets error: ${marketsError}`}
               </span>
             </div>
@@ -493,12 +470,12 @@ export default function WatchlistPage() {
 
         {/* Not Connected State */}
         {!isWalletConnected ? (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+          <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
             <div className="flex items-center justify-between p-2.5">
               <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  <span className="text-[11px] font-medium text-[#808080]">
+                  <span className="text-[11px] font-medium text-t-fg-sub">
                     Connect your wallet to view watchlist
                   </span>
                 </div>
@@ -506,40 +483,40 @@ export default function WatchlistPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setIsAddAssetsOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] transition-all duration-200"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-t-card border border-t-stroke hover:border-t-stroke-hover hover:bg-t-card-hover rounded-md text-[11px] text-t-fg-sub transition-all duration-200"
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
                   Add Asset
                 </button>
-                <svg className="w-3 h-3 text-[#404040]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-3 h-3 text-t-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
               </div>
             </div>
             <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 max-h-20 md:max-h-0 md:group-hover:max-h-20 overflow-hidden transition-all duration-200">
-              <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+              <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
                 <div className="text-[9px] pt-1.5">
-                  <span className="text-[#606060]">Your watchlist is tied to your wallet address. Use the sidebar to connect.</span>
+                  <span className="text-t-fg-muted">Your watchlist is tied to your wallet address. Use the sidebar to connect.</span>
                 </div>
               </div>
             </div>
           </div>
         ) : showEmpty ? (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+          <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
             <div className="flex items-center justify-between p-2.5">
               <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-t-dot" />
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  <span className="text-[11px] font-medium text-[#808080]">
+                  <span className="text-[11px] font-medium text-t-fg-sub">
                     No markets in your watchlist
                   </span>
                 </div>
               </div>
               <button
                 onClick={() => setIsAddAssetsOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] transition-all duration-200"
+                className="flex items-center gap-1.5 px-3 py-2 bg-t-card border border-t-stroke hover:border-t-stroke-hover hover:bg-t-card-hover rounded-md text-[11px] text-t-fg-sub transition-all duration-200"
               >
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -548,9 +525,9 @@ export default function WatchlistPage() {
               </button>
             </div>
             <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 max-h-20 md:max-h-0 md:group-hover:max-h-20 overflow-hidden transition-all duration-200">
-              <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+              <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
                 <div className="text-[9px] pt-1.5">
-                  <span className="text-[#606060]">Add markets from the Overview page using the bookmark icon.</span>
+                  <span className="text-t-fg-muted">Add markets from the Overview page using the bookmark icon.</span>
                 </div>
               </div>
             </div>
@@ -560,7 +537,7 @@ export default function WatchlistPage() {
             {/* Search and Controls */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-3 flex-shrink-0">
               <div className="relative flex-1 w-full sm:max-w-md">
-                <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-[#606060]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-t-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <input
@@ -568,20 +545,20 @@ export default function WatchlistPage() {
                   placeholder="Search"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] focus:border-[#333333] rounded-md pl-8 pr-3 py-2 text-[11px] text-white placeholder-[#606060] focus:outline-none transition-all duration-200"
+                  className="w-full bg-t-card border border-t-stroke hover:border-t-stroke-hover focus:border-t-stroke-hover rounded-md pl-8 pr-3 py-2 text-[11px] text-t-fg placeholder-t-fg-muted focus:outline-none transition-all duration-200"
                 />
               </div>
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <button
                   onClick={() => setIsAddAssetsOpen(true)}
-                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[11px] text-[#808080] transition-all duration-200"
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 bg-t-card border border-t-stroke hover:border-t-stroke-hover hover:bg-t-card-hover rounded-md text-[11px] text-t-fg-sub transition-all duration-200"
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
                   Add Asset
                 </button>
-                <button className="p-2 bg-[#0F0F0F] border border-[#222222] hover:border-[#333333] hover:bg-[#1A1A1A] rounded-md text-[#808080] transition-all duration-200">
+                <button className="p-2 bg-t-card border border-t-stroke hover:border-t-stroke-hover hover:bg-t-card-hover rounded-md text-t-fg-sub transition-all duration-200">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
                   </svg>
@@ -590,49 +567,49 @@ export default function WatchlistPage() {
             </div>
 
             {/* Desktop table with internal scroll */}
-            <div className="hidden md:block flex-1 min-h-0 overflow-hidden rounded-md border border-[#222222]">
+            <div className="hidden md:block flex-1 min-h-0 overflow-hidden rounded-md border border-t-stroke" style={{ boxShadow: 'var(--t-shadow)' }}>
               <div className="h-full overflow-y-auto scrollbar-none">
                 <table className="w-full">
-                  <thead className="sticky top-0 z-10 bg-[#0F0F0F]">
-                    <tr className="border-b border-[#1A1A1A]">
+                  <thead className="sticky top-0 z-10 bg-t-card">
+                    <tr className="border-b border-t-stroke-sub">
                       <th className="w-10 px-2.5 py-2"></th>
                       <th 
-                        className="w-10 px-2 py-2 text-left text-[10px] font-medium text-[#606060] uppercase tracking-wide cursor-pointer hover:text-[#9CA3AF] transition-colors duration-200"
+                        className="w-10 px-2 py-2 text-left text-[10px] font-medium text-t-fg-muted uppercase tracking-wide cursor-pointer hover:text-t-fg-label transition-colors duration-200"
                         onClick={() => handleSort('rank')}
                       >
                         #
                         {sortConfig?.key === 'rank' && (
-                          <span className="ml-0.5 text-[#9CA3AF]">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                          <span className="ml-0.5 text-t-fg-label">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                         )}
                       </th>
                       <th 
-                        className="px-2.5 py-2 text-left text-[10px] font-medium text-[#606060] uppercase tracking-wide cursor-pointer hover:text-[#9CA3AF] transition-colors duration-200"
+                        className="px-2.5 py-2 text-left text-[10px] font-medium text-t-fg-muted uppercase tracking-wide cursor-pointer hover:text-t-fg-label transition-colors duration-200"
                         onClick={() => handleSort('name')}
                       >
                         Cryptocurrency
                         {sortConfig?.key === 'name' && (
-                          <span className="ml-0.5 text-[#9CA3AF]">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                          <span className="ml-0.5 text-t-fg-label">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                         )}
                       </th>
                       <th 
-                        className="px-2.5 py-2 text-left text-[10px] font-medium text-[#606060] uppercase tracking-wide cursor-pointer hover:text-[#9CA3AF] transition-colors duration-200"
+                        className="px-2.5 py-2 text-left text-[10px] font-medium text-t-fg-muted uppercase tracking-wide cursor-pointer hover:text-t-fg-label transition-colors duration-200"
                         onClick={() => handleSort('price')}
                       >
                         Price
                         {sortConfig?.key === 'price' && (
-                          <span className="ml-0.5 text-[#9CA3AF]">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                          <span className="ml-0.5 text-t-fg-label">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                         )}
                       </th>
-                      <th className="px-2.5 py-2 text-left text-[10px] font-medium text-[#606060] uppercase tracking-wide">
+                      <th className="px-2.5 py-2 text-left text-[10px] font-medium text-t-fg-muted uppercase tracking-wide">
                         Change
                       </th>
                       <th 
-                        className="px-2.5 py-2 text-left text-[10px] font-medium text-[#606060] uppercase tracking-wide cursor-pointer hover:text-[#9CA3AF] transition-colors duration-200"
+                        className="px-2.5 py-2 text-left text-[10px] font-medium text-t-fg-muted uppercase tracking-wide cursor-pointer hover:text-t-fg-label transition-colors duration-200"
                         onClick={() => handleSort('marketCap')}
                       >
                         Market Cap
                         {sortConfig?.key === 'marketCap' && (
-                          <span className="ml-0.5 text-[#9CA3AF]">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                          <span className="ml-0.5 text-t-fg-label">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                         )}
                       </th>
                       <th className="w-10 px-2.5 py-2"></th>
@@ -641,30 +618,30 @@ export default function WatchlistPage() {
                   <tbody>
                     {isLoading ? (
                       Array.from({ length: 8 }).map((_, i) => (
-                        <tr key={i} className="border-b border-[#1A1A1A] bg-[#0F0F0F]">
+                        <tr key={i} className="border-b border-t-stroke-sub bg-t-card">
                           <td className="px-2.5 py-2.5">
-                            <div className="w-4 h-4 bg-[#2A2A2A] rounded animate-pulse"></div>
+                            <div className="w-4 h-4 bg-t-skeleton rounded animate-pulse"></div>
                           </td>
                           <td className="px-2 py-2.5">
-                            <div className="w-4 h-3 bg-[#2A2A2A] rounded animate-pulse"></div>
+                            <div className="w-4 h-3 bg-t-skeleton rounded animate-pulse"></div>
                           </td>
                           <td className="px-2.5 py-2.5">
                             <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 bg-[#2A2A2A] rounded-full animate-pulse"></div>
+                              <div className="w-7 h-7 bg-t-skeleton rounded-full animate-pulse"></div>
                               <div className="space-y-1">
-                                <div className="w-20 h-3 bg-[#2A2A2A] rounded animate-pulse"></div>
-                                <div className="w-10 h-2 bg-[#2A2A2A] rounded animate-pulse"></div>
+                                <div className="w-20 h-3 bg-t-skeleton rounded animate-pulse"></div>
+                                <div className="w-10 h-2 bg-t-skeleton rounded animate-pulse"></div>
                               </div>
                             </div>
                           </td>
                           <td className="px-2.5 py-2.5">
-                            <div className="w-16 h-3 bg-[#2A2A2A] rounded animate-pulse"></div>
+                            <div className="w-16 h-3 bg-t-skeleton rounded animate-pulse"></div>
                           </td>
                           <td className="px-2.5 py-2.5">
-                            <div className="w-10 h-3 bg-[#2A2A2A] rounded animate-pulse"></div>
+                            <div className="w-10 h-3 bg-t-skeleton rounded animate-pulse"></div>
                           </td>
                           <td className="px-2.5 py-2.5">
-                            <div className="w-20 h-3 bg-[#2A2A2A] rounded animate-pulse"></div>
+                            <div className="w-20 h-3 bg-t-skeleton rounded animate-pulse"></div>
                           </td>
                           <td className="px-2.5 py-2.5"></td>
                         </tr>
@@ -673,8 +650,8 @@ export default function WatchlistPage() {
                       <tr>
                         <td colSpan={7} className="px-2.5 py-8 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
-                            <span className="text-[11px] text-[#606060]">
+                            <div className="w-1.5 h-1.5 rounded-full bg-t-dot" />
+                            <span className="text-[11px] text-t-fg-muted">
                               {searchQuery ? 'No markets match your search' : 'No markets in your watchlist'}
                             </span>
                           </div>
@@ -689,26 +666,26 @@ export default function WatchlistPage() {
                         return (
                           <tr 
                             key={row.market_id} 
-                            className="group border-b border-[#1A1A1A] bg-[#0F0F0F] hover:bg-[#1A1A1A] transition-all duration-200 cursor-pointer"
+                            className="group border-b border-t-stroke-sub bg-t-card hover:bg-t-card-hover transition-all duration-200 cursor-pointer"
                             onClick={() => handleNavigateToMarket(row)}
                           >
                             <td className="px-2.5 py-2.5" onClick={(e) => e.stopPropagation()}>
                               <button
                                 onClick={() => handleWatchlistToggle(row)}
                                 disabled={isPending}
-                                className={`text-yellow-400 hover:text-yellow-300 transition-colors duration-200 ${isPending ? 'opacity-50 animate-pulse' : ''}`}
+                                className={`text-t-warning hover:opacity-80 transition-colors duration-200 ${isPending ? 'opacity-50 animate-pulse' : ''}`}
                               >
                                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                                   <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                                 </svg>
                               </button>
                             </td>
-                            <td className="px-2 py-2.5 text-[10px] text-[#606060]">
+                            <td className="px-2 py-2.5 text-[10px] text-t-fg-muted">
                               {index + 1}
                             </td>
                             <td className="px-2.5 py-2.5">
                               <div className="flex items-center gap-2">
-                                <div className="w-7 h-7 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0">
+                                <div className="w-7 h-7 rounded-full overflow-hidden bg-t-skeleton flex-shrink-0">
                                   {row.icon_image_url ? (
                                     <Image
                                       src={row.icon_image_url}
@@ -718,34 +695,34 @@ export default function WatchlistPage() {
                                       className="w-full h-full object-cover"
                                     />
                                   ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-[9px] font-medium text-[#808080]">
+                                    <div className="w-full h-full flex items-center justify-center text-[9px] font-medium text-t-fg-sub">
                                       {(row.symbol || row.name || '?').slice(0, 2).toUpperCase()}
                                     </div>
                                   )}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="text-[11px] font-medium text-white truncate">
+                                  <div className="text-[11px] font-medium text-t-fg truncate">
                                     {row.name || row.symbol}
                                   </div>
-                                  <div className="text-[9px] text-[#606060] uppercase">
+                                  <div className="text-[9px] text-t-fg-muted uppercase">
                                     {row.symbol}
                                   </div>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-2.5 py-2.5 text-[10px] text-white font-mono">
+                            <td className="px-2.5 py-2.5 text-[10px] text-t-fg font-mono">
                               {formatPrice(row)}
                             </td>
                             <td className="px-2.5 py-2.5">
-                              <span className={`text-[10px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                              <span className={`text-[10px] font-medium ${isPositive ? 'text-t-positive' : 'text-t-negative'}`}>
                                 {isPositive ? '+' : ''}{changePercent.toFixed(1)}%
                               </span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-[10px] text-white font-mono">
+                            <td className="px-2.5 py-2.5 text-[10px] text-t-fg font-mono">
                               {formatMarketCap(row)}
                             </td>
                             <td className="px-2.5 py-2.5" onClick={(e) => e.stopPropagation()}>
-                              <button className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-1 hover:bg-[#2A2A2A] rounded text-[#606060] hover:text-[#9CA3AF] transition-all duration-200">
+                              <button className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-1 hover:bg-t-skeleton rounded text-t-fg-muted hover:text-t-fg-label transition-all duration-200">
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
                                 </svg>
@@ -763,29 +740,29 @@ export default function WatchlistPage() {
             {/* Mobile list */}
             <div className="md:hidden flex-shrink-0">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
                   Watched assets
                 </h4>
-                <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                <div className="text-[10px] text-t-fg-muted bg-t-card-hover px-1.5 py-0.5 rounded">
                   {filteredAndSortedRows.length}
                 </div>
               </div>
             </div>
-            <div className="md:hidden flex-shrink-0 rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
+            <div className="md:hidden flex-shrink-0 rounded-md border border-t-stroke overflow-hidden bg-t-card">
               {isLoading ? (
-                <div className="divide-y divide-[#1A1A1A]">
+                <div className="divide-y divide-t-stroke-sub">
                   {Array.from({ length: 6 }).map((_, i) => (
                     <div key={i} className="p-3">
                       <div className="flex items-center gap-3">
-                        <div className="w-4 h-4 bg-[#2A2A2A] rounded animate-pulse" />
-                        <div className="w-9 h-9 bg-[#2A2A2A] rounded-full animate-pulse" />
+                        <div className="w-4 h-4 bg-t-skeleton rounded animate-pulse" />
+                        <div className="w-9 h-9 bg-t-skeleton rounded-full animate-pulse" />
                         <div className="flex-1 min-w-0 space-y-1">
-                          <div className="w-24 h-3 bg-[#2A2A2A] rounded animate-pulse" />
-                          <div className="w-12 h-2 bg-[#2A2A2A] rounded animate-pulse" />
+                          <div className="w-24 h-3 bg-t-skeleton rounded animate-pulse" />
+                          <div className="w-12 h-2 bg-t-skeleton rounded animate-pulse" />
                         </div>
                         <div className="space-y-1">
-                          <div className="w-14 h-3 bg-[#2A2A2A] rounded animate-pulse" />
-                          <div className="w-10 h-2 bg-[#2A2A2A] rounded animate-pulse" />
+                          <div className="w-14 h-3 bg-t-skeleton rounded animate-pulse" />
+                          <div className="w-10 h-2 bg-t-skeleton rounded animate-pulse" />
                         </div>
                       </div>
                     </div>
@@ -794,14 +771,14 @@ export default function WatchlistPage() {
               ) : filteredAndSortedRows.length === 0 ? (
                 <div className="px-3 py-8 text-center">
                   <div className="flex items-center justify-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#404040]" />
-                    <span className="text-[11px] text-[#606060]">
+                    <div className="w-1.5 h-1.5 rounded-full bg-t-dot" />
+                    <span className="text-[11px] text-t-fg-muted">
                       {searchQuery ? 'No markets match your search' : 'No markets in your watchlist'}
                     </span>
                   </div>
                 </div>
               ) : (
-                <div className="divide-y divide-[#1A1A1A]">
+                <div className="divide-y divide-t-stroke-sub">
                   {filteredAndSortedRows.map((row, index) => {
                     const changePercent = getChangePercent(row);
                     const isPositive = changePercent >= 0;
@@ -813,14 +790,14 @@ export default function WatchlistPage() {
                         tabIndex={0}
                         onClick={() => handleNavigateToMarket(row)}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleNavigateToMarket(row); }}
-                        className="w-full text-left p-3 hover:bg-[#1A1A1A] transition-all duration-200 cursor-pointer"
+                        className="w-full text-left p-3 hover:bg-t-card-hover transition-all duration-200 cursor-pointer"
                       >
                         <div className="flex items-start gap-2.5">
                           <div onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => handleWatchlistToggle(row)}
                               disabled={isPending}
-                              className={`mt-1 text-yellow-400 hover:text-yellow-300 transition-colors duration-200 ${isPending ? 'opacity-50 animate-pulse' : ''}`}
+                              className={`mt-1 text-t-warning hover:opacity-80 transition-colors duration-200 ${isPending ? 'opacity-50 animate-pulse' : ''}`}
                             >
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -828,7 +805,7 @@ export default function WatchlistPage() {
                             </button>
                           </div>
 
-                          <div className="w-9 h-9 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0">
+                          <div className="w-9 h-9 rounded-full overflow-hidden bg-t-skeleton flex-shrink-0">
                             {row.icon_image_url ? (
                               <Image
                                 src={row.icon_image_url}
@@ -838,7 +815,7 @@ export default function WatchlistPage() {
                                 className="w-full h-full object-cover"
                               />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-[#808080]">
+                              <div className="w-full h-full flex items-center justify-center text-[10px] font-medium text-t-fg-sub">
                                 {(row.symbol || row.name || '?').slice(0, 2).toUpperCase()}
                               </div>
                             )}
@@ -847,23 +824,23 @@ export default function WatchlistPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="text-[12px] font-medium text-white truncate">
+                                <div className="text-[12px] font-medium text-t-fg truncate">
                                   {row.name || row.symbol}
                                 </div>
-                                <div className="text-[10px] text-[#606060] uppercase">
+                                <div className="text-[10px] text-t-fg-muted uppercase">
                                   #{index + 1} {row.symbol}
                                 </div>
                               </div>
                               <div className="text-right flex-shrink-0">
-                                <div className="text-[11px] text-white font-mono">{formatPrice(row)}</div>
-                                <div className={`text-[10px] font-medium ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                                <div className="text-[11px] text-t-fg font-mono">{formatPrice(row)}</div>
+                                <div className={`text-[10px] font-medium ${isPositive ? 'text-t-positive' : 'text-t-negative'}`}>
                                   {isPositive ? '+' : ''}
                                   {changePercent.toFixed(1)}%
                                 </div>
                               </div>
                             </div>
-                            <div className="mt-1 text-[10px] text-[#808080]">
-                              Market Cap <span className="text-white font-mono">{formatMarketCap(row)}</span>
+                            <div className="mt-1 text-[10px] text-t-fg-sub">
+                              Market Cap <span className="text-t-fg font-mono">{formatMarketCap(row)}</span>
                             </div>
                           </div>
                         </div>
@@ -874,27 +851,27 @@ export default function WatchlistPage() {
               )}
             </div>
 
-            {/* Watched Accounts (separate UI table) */}
+            {/* Watched Accounts */}
             {watchlistUsers.length > 0 && (
               <div className="mt-3 flex-shrink-0">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
                     Watched accounts
                   </h4>
-                  <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+                  <div className="text-[10px] text-t-fg-muted bg-t-card-hover px-1.5 py-0.5 rounded">
                     {watchlistUsers.length}
                   </div>
                 </div>
 
-                <div className="hidden md:block rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F]">
+                <div className="hidden md:block rounded-md border border-t-stroke overflow-hidden bg-t-card">
                   <div className="max-h-40 overflow-y-auto scrollbar-none">
                     <table className="w-full">
-                      <thead className="sticky top-0 z-10 bg-[#0F0F0F]">
-                        <tr className="border-b border-[#1A1A1A]">
-                          <th className="px-2.5 py-2 text-left text-[10px] font-medium text-[#606060] uppercase tracking-wide">
+                      <thead className="sticky top-0 z-10 bg-t-card">
+                        <tr className="border-b border-t-stroke-sub">
+                          <th className="px-2.5 py-2 text-left text-[10px] font-medium text-t-fg-muted uppercase tracking-wide">
                             Account
                           </th>
-                          <th className="px-2.5 py-2 text-right text-[10px] font-medium text-[#606060] uppercase tracking-wide">
+                          <th className="px-2.5 py-2 text-right text-[10px] font-medium text-t-fg-muted uppercase tracking-wide">
                             Actions
                           </th>
                         </tr>
@@ -907,13 +884,13 @@ export default function WatchlistPage() {
                           return (
                             <tr
                               key={u.id}
-                              className="group border-b border-[#1A1A1A] bg-[#0F0F0F] hover:bg-[#1A1A1A] transition-all duration-200 cursor-pointer"
+                              className="group border-b border-t-stroke-sub bg-t-card hover:bg-t-card-hover transition-all duration-200 cursor-pointer"
                               onClick={() => router.push(`/user/${encodeURIComponent(u.wallet_address)}`)}
                             >
                               <td className="px-2.5 py-2.5">
                                 <div className="flex items-center gap-2 min-w-0">
                                   <div
-                                    className="w-7 h-7 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0"
+                                    className="w-7 h-7 rounded-full overflow-hidden bg-t-skeleton flex-shrink-0"
                                     style={{
                                       backgroundImage: `url(${u.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
                                       backgroundSize: 'cover',
@@ -922,8 +899,8 @@ export default function WatchlistPage() {
                                   >
                                   </div>
                                   <div className="min-w-0">
-                                    <div className="text-[11px] font-medium text-white truncate group-hover:underline">{label}</div>
-                                    <div className="text-[10px] text-[#606060] font-mono">{shortAddr}</div>
+                                    <div className="text-[11px] font-medium text-t-fg truncate group-hover:underline">{label}</div>
+                                    <div className="text-[10px] text-t-fg-muted font-mono">{shortAddr}</div>
                                   </div>
                                 </div>
                               </td>
@@ -931,7 +908,7 @@ export default function WatchlistPage() {
                                 <div className="inline-flex items-center gap-2">
                                   <button
                                     onClick={() => handleCopyWatchedUserAddress(u)}
-                                    className="px-2.5 py-1.5 rounded-md text-[11px] border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
+                                    className="px-2.5 py-1.5 rounded-md text-[11px] border border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg transition-all duration-200"
                                   >
                                     {copiedWatchedUserId === u.id ? 'Copied' : 'Copy'}
                                   </button>
@@ -940,8 +917,8 @@ export default function WatchlistPage() {
                                     onClick={() => handleRemoveWatchedUser(u.id)}
                                     className={`px-2.5 py-1.5 rounded-md text-[11px] border transition-all duration-200 ${
                                       isPending
-                                        ? 'border-[#222222] text-[#808080] animate-pulse'
-                                        : 'border-red-500/20 text-red-400 hover:border-red-500/30 hover:bg-red-500/5'
+                                        ? 'border-t-stroke text-t-fg-sub animate-pulse'
+                                        : 'border-t-negative/20 text-t-negative hover:border-t-negative/30 hover:bg-t-negative/5'
                                     }`}
                                   >
                                     {isPending ? 'Removing…' : 'Remove'}
@@ -956,7 +933,7 @@ export default function WatchlistPage() {
                   </div>
                 </div>
 
-                <div className="md:hidden rounded-md border border-[#222222] overflow-hidden bg-[#0F0F0F] divide-y divide-[#1A1A1A]">
+                <div className="md:hidden rounded-md border border-t-stroke overflow-hidden bg-t-card divide-y divide-t-stroke-sub">
                   {watchlistUsers.map((u) => {
                     const isPending = watchlistUserPending.includes(u.id);
                     const label = u.display_name || u.username || 'Anonymous User';
@@ -964,12 +941,12 @@ export default function WatchlistPage() {
                     return (
                       <div
                         key={u.id}
-                        className="p-3 hover:bg-[#1A1A1A] transition-all duration-200 cursor-pointer"
+                        className="p-3 hover:bg-t-card-hover transition-all duration-200 cursor-pointer"
                         onClick={() => router.push(`/user/${encodeURIComponent(u.wallet_address)}`)}
                       >
                         <div className="flex items-center gap-2.5">
                           <div
-                            className="w-8 h-8 rounded-full overflow-hidden bg-[#2A2A2A] flex-shrink-0"
+                            className="w-8 h-8 rounded-full overflow-hidden bg-t-skeleton flex-shrink-0"
                             style={{
                               backgroundImage: `url(${u.profile_image_url || DEFAULT_PROFILE_IMAGE})`,
                               backgroundSize: 'cover',
@@ -979,15 +956,15 @@ export default function WatchlistPage() {
                           </div>
 
                           <div className="flex-1 min-w-0">
-                            <div className="text-[12px] font-medium text-white truncate">{label}</div>
-                            <div className="text-[10px] text-[#606060] font-mono">{shortAddr}</div>
+                            <div className="text-[12px] font-medium text-t-fg truncate">{label}</div>
+                            <div className="text-[10px] text-t-fg-muted font-mono">{shortAddr}</div>
                           </div>
                         </div>
 
                         <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => handleCopyWatchedUserAddress(u)}
-                            className="flex-1 px-2.5 py-1.5 rounded-md text-[11px] border border-[#222222] text-[#808080] hover:border-[#333333] hover:bg-[#1A1A1A] hover:text-white transition-all duration-200"
+                            className="flex-1 px-2.5 py-1.5 rounded-md text-[11px] border border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg transition-all duration-200"
                           >
                             {copiedWatchedUserId === u.id ? 'Copied' : 'Copy'}
                           </button>
@@ -996,8 +973,8 @@ export default function WatchlistPage() {
                             onClick={() => handleRemoveWatchedUser(u.id)}
                             className={`flex-1 px-2.5 py-1.5 rounded-md text-[11px] border transition-all duration-200 ${
                               isPending
-                                ? 'border-[#222222] text-[#808080] animate-pulse'
-                                : 'border-red-500/20 text-red-400 hover:border-red-500/30 hover:bg-red-500/5'
+                                ? 'border-t-stroke text-t-fg-sub animate-pulse'
+                                : 'border-t-negative/20 text-t-negative hover:border-t-negative/30 hover:bg-t-negative/5'
                             }`}
                           >
                             {isPending ? 'Removing…' : 'Remove'}

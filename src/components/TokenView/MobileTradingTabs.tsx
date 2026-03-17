@@ -26,17 +26,17 @@ export default function MobileTradingTabs({
   const [activeTab, setActiveTab] = useState<MobileTab>('chart');
 
   return (
-    <div className={`flex flex-col bg-[#0A0A0A] rounded-md border border-[#222222] overflow-hidden ${className}`}>
+    <div className={`flex flex-col bg-t-page rounded-md border border-t-stroke overflow-hidden ${className}`}>
       {/* Tab bar */}
-      <div className="flex items-center border-b border-[#222222] bg-[#0F0F0F]">
+      <div className="flex items-center border-b border-t-stroke bg-t-card">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`flex-1 py-2.5 text-[12px] font-medium text-center transition-colors duration-200 relative ${
               activeTab === tab.id
-                ? 'text-white'
-                : 'text-[#808080] hover:text-[#B0B0B0]'
+                ? 'text-t-fg'
+                : 'text-t-fg-sub hover:text-t-fg-sub'
             }`}
           >
             {tab.label}

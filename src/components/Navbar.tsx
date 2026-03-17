@@ -277,14 +277,14 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
               aria-label="Close navigation menu"
               className={`fixed inset-0 z-[9997] transition-opacity duration-300 ease-in-out ${mobileEntered ? 'opacity-100' : 'opacity-0'}`}
               style={{
-                background: 'rgba(0, 0, 0, 0.6)',
+                background: 'var(--t-overlay)',
               }}
               onClick={closeMobileMenu}
             />
             {/* Full-screen sliding panel */}
             <nav 
               className={[
-                'fixed left-0 top-0 bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333]',
+                'fixed left-0 top-0 border-r',
                 'transform-gpu transition-transform duration-300 ease-in-out will-change-transform',
                 mobileEntered ? 'translate-x-0' : '-translate-x-full',
               ].join(' ')}
@@ -297,6 +297,8 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                 overflowY: 'auto',
                 zIndex: 9999,
                 boxShadow: '4px 0 24px rgba(0, 0, 0, 0.4)',
+                background: 'linear-gradient(to bottom, var(--t-chrome), var(--t-page))',
+                borderColor: 'var(--t-chrome-border)',
               }}
             >
               <div 
@@ -309,10 +311,22 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
               >
                 {isMobile && isOpen && (
                   <div className="mb-4 flex items-center justify-between -mt-2">
-                    <span className="text-white text-base font-semibold">Menu</span>
+                    <span className="text-base font-semibold" style={{ color: 'var(--t-chrome-fg)' }}>Menu</span>
                     <button
                       onClick={closeMobileMenu}
-                      className="w-10 h-10 rounded-full flex items-center justify-center border border-[#2A2A2A] text-[#A0A0A0] hover:text-white hover:border-[#3A3A3A] transition-all duration-200"
+                      className="w-10 h-10 rounded-full flex items-center justify-center border transition-all duration-200"
+                      style={{
+                        borderColor: 'var(--t-chrome-border-sub)',
+                        color: 'var(--t-chrome-fg-sub)',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = 'var(--t-chrome-fg)'
+                        e.currentTarget.style.borderColor = 'var(--t-chrome-border)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = 'var(--t-chrome-fg-sub)'
+                        e.currentTarget.style.borderColor = 'var(--t-chrome-border-sub)'
+                      }}
                       aria-label="Close navigation menu"
                     >
                       ✕
@@ -325,14 +339,15 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                   style={{
                     padding: '14px',
                     borderRadius: '12px',
-                    backgroundColor: '#2a2a2a',
+                    backgroundColor: 'var(--t-chrome-surface)',
                   }}
                   onClick={openWalletSurface}
                 >
                   <div className="flex items-center gap-3">
                     <div 
-                      className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden text-white text-sm font-bold"
+                      className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden text-sm font-bold"
                       style={{
+                        color: 'var(--t-chrome-fg)',
                         background: walletData.isConnected 
                           ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                           : 'linear-gradient(135deg, #666 0%, #888 100%)',
@@ -344,7 +359,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                       }
                     </div>
                     <div>
-                      <div className="text-white font-medium text-base">
+                      <div className="font-medium text-base" style={{ color: 'var(--t-chrome-fg)' }}>
                         {walletData.isConnecting 
                           ? 'Connecting...'
                           : walletData.isConnected 
@@ -352,7 +367,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                             : 'Connect Wallet'
                         }
                       </div>
-                      <div style={{ color: '#a0a0a0', fontSize: '13px' }}>
+                      <div style={{ color: 'var(--t-chrome-fg-sub)', fontSize: '13px' }}>
                         {walletData.isConnected 
                           ? formatBalance(walletData.balance || '0')
                           : 'Tap to connect'
@@ -385,11 +400,11 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                           backgroundColor: isActive 
                             ? 'rgba(74, 144, 226, 0.15)' 
                             : 'transparent',
-                          color: isActive ? '#4a90e2' : '#e5e5e5',
+                          color: isActive ? '#4a90e2' : 'var(--t-chrome-fg)',
                         }}
                         onMouseEnter={(e) => {
                           if (!isActive) {
-                            e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.06)'
+                            e.currentTarget.style.backgroundColor = 'var(--t-chrome-hover)'
                           }
                         }}
                         onMouseLeave={(e) => {
@@ -431,7 +446,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
         {/* Desktop Navbar */}
         {!isMobile && (
         <nav 
-          className="fixed left-0 top-0 h-full bg-gradient-to-b from-[#1a1a1a] to-[#0f0f0f] border-r border-[#333333] transition-all duration-300 ease-in-out"
+          className="fixed left-0 top-0 h-full border-r transition-all duration-300 ease-in-out"
           data-walkthrough="navbar"
           style={{
             width: isOpen ? `${expandedWidth}px` : `${collapsedWidth}px`,
@@ -441,6 +456,8 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
             overflowY: 'auto',
             zIndex: 9999,
             boxShadow: isOpen ? '4px 0 20px rgba(0, 0, 0, 0.3)' : 'none',
+            background: 'linear-gradient(to bottom, var(--t-chrome), var(--t-page))',
+            borderColor: 'var(--t-chrome-border)',
           }}
           onMouseEnter={() => {
             if (!isMobile) onOpenChange(true)
@@ -466,14 +483,15 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
             style={{
               padding: '12px',
               borderRadius: '10px',
-              backgroundColor: '#2a2a2a',
+              backgroundColor: 'var(--t-chrome-surface)',
             }}
             onClick={openWalletSurface}
           >
             <div className="flex items-center gap-2">
               <div 
-                className="w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden text-white text-sm font-bold"
+                className="w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden text-sm font-bold"
                 style={{
+                  color: 'var(--t-chrome-fg)',
                   background: walletData.isConnected 
                     ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                     : 'linear-gradient(135deg, #666 0%, #888 100%)',
@@ -485,7 +503,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                 }
               </div>
               <div>
-                <div className="text-white font-medium text-sm">
+                <div className="font-medium text-sm" style={{ color: 'var(--t-chrome-fg)' }}>
                   {walletData.isConnecting 
                     ? 'Connecting...'
                     : walletData.isConnected 
@@ -493,7 +511,7 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                       : 'Connect Wallet'
                   }
                 </div>
-                <div style={{ color: '#a0a0a0', fontSize: '12px' }}>
+                <div style={{ color: 'var(--t-chrome-fg-sub)', fontSize: '12px' }}>
                   {walletData.isConnected 
                     ? formatBalance(walletData.balance || '0')
                     : 'Click to connect'
@@ -509,8 +527,9 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
         {!isOpen && !isMobile && (
           <div className="mb-5 flex justify-center">
             <div 
-              className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden text-white text-xs font-bold cursor-pointer"
+              className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden text-xs font-bold cursor-pointer"
               style={{
+                color: 'var(--t-chrome-fg)',
                 background: walletData.isConnected 
                   ? 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #f97316 100%)'
                   : 'linear-gradient(135deg, #666 0%, #888 100%)',
@@ -556,18 +575,18 @@ export default function Navbar({ isOpen, onOpenChange }: NavbarProps) {
                     backgroundColor: isActive 
                       ? 'rgba(74, 144, 226, 0.1)' 
                       : 'transparent',
-                    color: isActive ? '#4a90e2' : '#a0a0a0',
+                    color: isActive ? '#4a90e2' : 'var(--t-chrome-fg-sub)',
                   }}
                   onMouseEnter={(e) => {
                     if (!isActive) {
-                      e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
-                      e.currentTarget.style.color = '#ffffff'
+                      e.currentTarget.style.backgroundColor = 'var(--t-chrome-hover)'
+                      e.currentTarget.style.color = 'var(--t-chrome-fg)'
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!isActive) {
                       e.currentTarget.style.backgroundColor = 'transparent'
-                      e.currentTarget.style.color = '#a0a0a0'
+                      e.currentTarget.style.color = 'var(--t-chrome-fg-sub)'
                     }
                   }}
                   title={!isOpen ? item.label : undefined}

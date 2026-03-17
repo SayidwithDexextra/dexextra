@@ -1,12 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import styles from './MarketInfoHeader.module.css';
 import { ShareModal } from '../ShareModal';
 import { Tooltip } from '../ui/Tooltip';
 
 export interface MarketInfoHeaderTag {
   label: string;
+  href?: string;
   onClick?: () => void;
 }
 
@@ -15,6 +17,22 @@ export interface MarketInfoHeaderAction {
   icon?: React.ReactNode;
   onClick?: () => void;
   primary?: boolean;
+}
+
+export interface MarketStatsOnChain {
+  totalTrades: number;
+  totalVolume: number;
+  totalFees: number;
+  bestBid: number;
+  bestAsk: number;
+  spread: number;
+  spreadBps: number;
+  lastTradePrice: number;
+  markPrice: number;
+  high24h: number;
+  low24h: number;
+  priceChange24h: number;
+  priceChangePercent24h: number;
 }
 
 export interface MarketInfoHeaderProps {
@@ -33,6 +51,7 @@ export interface MarketInfoHeaderProps {
   tags?: MarketInfoHeaderTag[];
   moreTagsCount?: number;
   stats?: Array<{ label: string; value: string }>;
+  marketStats?: MarketStatsOnChain | null;
   actions?: MarketInfoHeaderAction[];
   websiteUrl?: string;
   twitterUrl?: string;
@@ -198,6 +217,16 @@ function formatPriceMaybe(value: number | null | undefined, prefix = '$'): strin
   })}`;
 }
 
+function formatStatValue(value: number, prefix = '$'): string {
+  if (!Number.isFinite(value) || value === 0) return '—';
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `${prefix}${(value / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${prefix}${(value / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${prefix}${(value / 1e3).toFixed(1)}K`;
+  if (abs >= 1) return `${prefix}${value.toFixed(2)}`;
+  return `${prefix}${value.toFixed(6)}`;
+}
+
 interface CountdownResult {
   isSettled: boolean;
   days: number;
@@ -286,6 +315,7 @@ export default function MarketInfoHeader({
   tags = [],
   moreTagsCount,
   stats = [],
+  marketStats,
   actions = [],
   websiteUrl,
   twitterUrl,
@@ -409,16 +439,27 @@ export default function MarketInfoHeader({
         {/* Tags */}
         {tags.length > 0 && (
           <div className={styles.tags}>
-            {tags.map((tag, i) => (
-              <span
-                key={i}
-                className={styles.tag}
-                onClick={tag.onClick}
-                style={tag.onClick ? { cursor: 'pointer' } : undefined}
-              >
-                {tag.label}
-              </span>
-            ))}
+            {tags.map((tag, i) =>
+              tag.href ? (
+                <Link
+                  key={i}
+                  href={tag.href}
+                  className={styles.tag}
+                  style={{ cursor: 'pointer' }}
+                >
+                  {tag.label}
+                </Link>
+              ) : (
+                <span
+                  key={i}
+                  className={styles.tag}
+                  onClick={tag.onClick}
+                  style={tag.onClick ? { cursor: 'pointer' } : undefined}
+                >
+                  {tag.label}
+                </span>
+              )
+            )}
             {typeof moreTagsCount === 'number' && moreTagsCount > 0 && (
               <span className={styles.tagMore}>+{moreTagsCount}</span>
             )}
@@ -541,6 +582,69 @@ export default function MarketInfoHeader({
           </button>
         </div>
       </header>
+
+      {/* On-Chain Market Stats Bar */}
+      {marketStats && (
+        <div className={styles.marketStatsBar}>
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>Mark</span>
+            <span className={styles.marketStatValue}>{formatStatValue(marketStats.markPrice)}</span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>Last</span>
+            <span className={styles.marketStatValue}>{formatStatValue(marketStats.lastTradePrice)}</span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>24h Chg</span>
+            <span className={`${styles.marketStatValue} ${marketStats.priceChange24h >= 0 ? styles.marketStatPositive : styles.marketStatNegative}`}>
+              {marketStats.priceChange24h >= 0 ? '+' : ''}{formatStatValue(marketStats.priceChange24h)}
+              {marketStats.priceChangePercent24h !== 0 && (
+                <span className={styles.marketStatMuted}> ({marketStats.priceChangePercent24h >= 0 ? '+' : ''}{marketStats.priceChangePercent24h.toFixed(2)}%)</span>
+              )}
+            </span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>24h High</span>
+            <span className={styles.marketStatValue}>{formatStatValue(marketStats.high24h)}</span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>24h Low</span>
+            <span className={styles.marketStatValue}>{formatStatValue(marketStats.low24h)}</span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>Bid</span>
+            <span className={`${styles.marketStatValue} ${styles.marketStatPositive}`}>{formatStatValue(marketStats.bestBid)}</span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>Ask</span>
+            <span className={`${styles.marketStatValue} ${styles.marketStatNegative}`}>{formatStatValue(marketStats.bestAsk)}</span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>Spread</span>
+            <span className={styles.marketStatValue}>
+              {formatStatValue(marketStats.spread)}
+              {marketStats.spreadBps > 0 && <span className={styles.marketStatMuted}> ({(marketStats.spreadBps / 100).toFixed(2)}%)</span>}
+            </span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>Volume</span>
+            <span className={styles.marketStatValue}>{formatStatValue(marketStats.totalVolume)}</span>
+          </div>
+          <span className={styles.marketStatDivider} />
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel}>Trades</span>
+            <span className={styles.marketStatValue}>{marketStats.totalTrades.toLocaleString()}</span>
+          </div>
+        </div>
+      )}
 
       {/* Share Modal */}
       <ShareModal

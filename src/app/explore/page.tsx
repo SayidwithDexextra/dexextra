@@ -1,8 +1,6 @@
-import { TrendingDemo } from "@/components/trending";
-import { MarketTickerCardDemo } from "@/components/MarketTickerCard";
-import TopPerformerDualDemo from "@/components/TopPerformer/TopPerformerDualDemo";
-import CountdownTickerDemo from "@/components/CountdownTicker/CountdownTickerDemo";
+import { Suspense } from 'react';
 import { Metadata } from 'next';
+import { MarketList } from '@/components/MarketList';
 
 export const metadata: Metadata = {
   title: 'Explore Markets | Dexetera',
@@ -11,11 +9,10 @@ export const metadata: Metadata = {
 
 export default function ExplorePage() {
   return (
-    <>
-      <TrendingDemo title="Trending Markets" />
-      <MarketTickerCardDemo />
-      <TopPerformerDualDemo />
-      <CountdownTickerDemo />
-    </>
-  )
-} 
+    <div className="py-4 px-2 sm:px-4 dex-page-enter-up">
+      <Suspense>
+        <MarketList />
+      </Suspense>
+    </div>
+  );
+}
