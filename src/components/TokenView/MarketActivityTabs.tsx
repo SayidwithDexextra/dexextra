@@ -291,6 +291,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const {
     orders: globalOnchainOrders,
     isLoading: isLoadingSitewideOrders,
+    hasHydrated: hasHydratedSitewideOrders,
     refresh: refreshGlobalOrders,
   } = useOnchainOrders();
   // Map global context orders to local Order interface
@@ -1504,7 +1505,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         return true;
       });
   }, [sitewideActiveOrders, optimisticallyRemovedOrderIds, animatingOutOrderKeys]);
-  const openOrdersIsLoading = Boolean(isLoadingSitewideOrders && activeTab === 'orders');
+  const openOrdersIsLoading = Boolean(isLoadingSitewideOrders && !hasHydratedSitewideOrders && activeTab === 'orders');
 
   // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
   // Prevents flicker/revert while backend/onchain read catches up.
@@ -1817,6 +1818,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           if (oid === 0n) throw new Error('Invalid order id');
 
           setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
+          setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
+          setTimeout(() => {
+            setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
+          }, 400);
           const r = await submitSessionTrade({
             method: 'sessionCancelOrder',
             orderBook: obAddress,
@@ -1835,9 +1840,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
               return;
             }
             failed++;
-            setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
           } else {
-            setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
             try {
               const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
               let price6 = '0';
@@ -1861,12 +1864,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           }
         } else {
           setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
+          setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
+          setTimeout(() => {
+            setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
+          }, 400);
           const ok = await cancelOrderForMarket(order.id, metric);
           if (!ok) {
             failed++;
-            setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
           } else {
-            setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
             try {
               const remaining = Math.max(0, Number(order.size || 0) - Number(order.filled || 0));
               let price6 = '0';
@@ -2213,17 +2218,30 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     return nf.format(rounded);
   };
 
+  const ActivityEmptyState = ({ message, isLoading: loading = false, dataWalkthrough }: { message: string; isLoading?: boolean; dataWalkthrough?: string }) => (
+    <div className="flex flex-col items-center justify-center p-8 pt-6 pb-10 min-h-[140px] gap-4" {...(dataWalkthrough ? { 'data-walkthrough': dataWalkthrough } : {})}>
+      <div className="flex items-center gap-2">
+        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${loading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
+        <span className="text-[11px] font-medium text-[#E5E7EB]">{message}</span>
+      </div>
+      <img
+        src="/Dexicon/LOGO-Dexetera-03.svg"
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none select-none w-10 h-10 opacity-[0.06]"
+        draggable={false}
+      />
+    </div>
+  );
+
   const renderPositionsTable = () => {
     if (displayedPositions.length === 0) {
-  return (
-                  <div className="flex items-center justify-center p-8" data-walkthrough="token-activity-empty-positions">
-                    <div className="flex items-center gap-2">
-            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${positionsIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
-                      <span className="text-[11px] font-medium text-[#E5E7EB]">
-              {positionsIsLoading ? 'Loading open positions…' : 'No open positions'}
-                      </span>
-                    </div>
-                  </div>
+      return (
+        <ActivityEmptyState
+          message={positionsIsLoading ? 'Loading open positions…' : 'No open positions'}
+          isLoading={positionsIsLoading}
+          dataWalkthrough="token-activity-empty-positions"
+        />
       );
     }
 
@@ -2502,14 +2520,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const renderOpenOrdersTable = () => {
     if (displayedOpenOrders.length === 0) {
       return (
-                  <div className="flex items-center justify-center p-8">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${openOrdersIsLoading ? 'bg-blue-400 animate-pulse' : 'bg-[#404040]'}`} />
-                      <span className="text-[11px] font-medium text-[#E5E7EB]">
-                        {openOrdersIsLoading ? 'Loading open orders…' : 'No open orders'}
-                      </span>
-                    </div>
-                  </div>
+        <ActivityEmptyState
+          message={openOrdersIsLoading ? 'Loading open orders…' : 'No open orders'}
+          isLoading={openOrdersIsLoading}
+        />
       );
     }
 
@@ -2554,10 +2568,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           <tr
                             className={`mat-slide-rtl group/row hover:bg-[#1A1A1A] transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-[#1A1A1A]' : ''} ${isAnimatingOut ? 'order-row-slide-out' : ''}`}
                             style={{ animationDelay: `${index * 50}ms` }}
-                            onAnimationEnd={() => {
-                              if (!animatingOutOrderKeys.has(removalKey)) return;
+                            onAnimationEnd={(e) => {
+                              if (e.animationName !== 'order-row-slide-out') return;
                               setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
-                              setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                             }}
                           >
                             <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
@@ -2685,6 +2698,10 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 await new Promise((r) => setTimeout(r, 400));
                                                 setOrderFillModal((cur) => ({ ...cur, status: 'canceling' }));
                                                 setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
+                                                setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
+                                                setTimeout(() => {
+                                                  setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
+                                                }, 400);
                                                 const r = await submitSessionTrade({
                                                   method: 'sessionCancelOrder',
                                                   orderBook: obAddress,
@@ -2701,8 +2718,6 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                   }
                                                   throw new Error(msg);
                                                 }
-                                                // Success: immediately mark as removed so it disappears after animation
-                                                setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                                                 finishCancelModal();
                                                 removeOrderFromSessionCache(order.id, metric);
                                                 try { await refreshGlobalOrders(); } catch {}
@@ -2732,13 +2747,15 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                                 await new Promise((r) => setTimeout(r, 400));
                                                 setOrderFillModal((cur) => ({ ...cur, status: 'canceling' }));
                                                 setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
+                                                setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
+                                                setTimeout(() => {
+                                                  setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
+                                                }, 400);
                                                 const ok = await cancelOrderForMarket(order.id, metric);
                                                 if (!ok) {
                                                   revertOrder();
                                                   showError('Failed to cancel order. Please try again.', 'Cancellation Failed');
                                                 } else {
-                                                  // Success: immediately mark as removed so it disappears after animation
-                                                  setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
                                                   finishCancelModal();
                                                   removeOrderFromSessionCache(order.id, metric);
                                                   try { await refreshGlobalOrders(); } catch {}
@@ -2943,42 +2960,15 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
   const renderTradesTable = () => {
 
     if (isLoadingTrades) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-            <span className="text-[11px] font-medium text-[#E5E7EB]">
-              Loading trade history...
-            </span>
-          </div>
-        </div>
-      );
+      return <ActivityEmptyState message="Loading trade history..." isLoading />;
     }
 
     if (!walletAddress) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-            <span className="text-[11px] font-medium text-[#E5E7EB]">
-              Connect wallet to view trade history
-            </span>
-          </div>
-        </div>
-      );
+      return <ActivityEmptyState message="Connect wallet to view trade history" />;
     }
 
     if (trades.length === 0) {
-      return (
-        <div className="flex items-center justify-center p-8">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-            <span className="text-[11px] font-medium text-[#E5E7EB]">
-              No trades yet
-            </span>
-          </div>
-        </div>
-      );
+      return <ActivityEmptyState message="No trades yet" />;
     }
 
     // Trade statistics
@@ -3287,16 +3277,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
   const renderOrderHistoryTable = () => {
     if (orderHistory.length === 0) {
-      return (
-                  <div className="flex items-center justify-center p-8">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#E5E7EB]">
-                        No order history
-                      </span>
-                    </div>
-                  </div>
-      );
+      return <ActivityEmptyState message="No order history" />;
     }
 
     return (
@@ -3487,14 +3468,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
 
       <div className="flex-1 min-h-0 overflow-auto scrollbar-hide">
         {!walletAddress ? (
-                  <div className="flex items-center justify-center p-8">
-                    <div className="flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
-                      <span className="text-[11px] font-medium text-[#E5E7EB]">
-                Connect wallet to view {activeTab}
-                      </span>
-                    </div>
-                  </div>
+          <ActivityEmptyState message={`Connect wallet to view ${activeTab}`} />
                 ) : (
           <div className="min-w-full h-full">
             {activeTab === 'positions' && renderPositionsTable()}

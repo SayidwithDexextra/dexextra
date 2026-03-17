@@ -81,6 +81,39 @@ const rrCounter = new Map<RelayerPoolName, number>()
 // Per-address in-process serialization chain
 const sendChains = new Map<string, Promise<unknown>>()
 
+// Low-balance cache: relayer address (lowercased) → timestamp when marked.
+// Relayers flagged here are deprioritized during selection so requests
+// automatically flow to funded relayers. After LOW_BALANCE_TTL_MS the
+// flag expires and the relayer is eligible again (funds may have been added).
+const lowBalanceCache = new Map<string, number>()
+const LOW_BALANCE_TTL_MS = 60_000
+
+export function isInsufficientFundsError(err: any): boolean {
+  const msg = String(err?.reason || err?.shortMessage || err?.message || err || '').toLowerCase()
+  return (
+    msg.includes('insufficient funds') ||
+    msg.includes('insufficient balance') ||
+    msg.includes("sender doesn't have enough funds") ||
+    msg.includes('not enough funds')
+  )
+}
+
+function isMarkedLowBalance(address: string): boolean {
+  const key = address.toLowerCase()
+  const ts = lowBalanceCache.get(key)
+  if (!ts) return false
+  if (Date.now() - ts > LOW_BALANCE_TTL_MS) {
+    lowBalanceCache.delete(key)
+    return false
+  }
+  return true
+}
+
+function markLowBalance(address: string): void {
+  lowBalanceCache.set(address.toLowerCase(), Date.now())
+  console.warn(`[relayer][low-balance] marked ${address} as low-balance for ${LOW_BALANCE_TTL_MS / 1000}s`)
+}
+
 // Per-address in-process nonce hint (best-effort).
 // This protects against RPC "pending nonce" lag immediately after broadcasting a tx.
 // NOTE: This does NOT protect across multiple server instances; for that, use the Supabase allocator.
@@ -148,27 +181,64 @@ export type WithRelayerOptions = {
 
 export async function withRelayer<T>(opts: Omit<WithRelayerOptions, 'action'> & { action: (wallet: ethers.Wallet, meta: { key: RelayerKey }) => Promise<T> }): Promise<T> {
   const keys = loadPool(opts.pool)
-  let key: RelayerKey | null = null
 
+  // requireAddress: hard constraint — cannot failover to a different relayer.
   if (opts.requireAddress) {
-    key = pickByAddress(keys, opts.requireAddress)
+    const key = pickByAddress(keys, opts.requireAddress)
     if (!key) {
       throw new Error(
         `Required relayer address ${opts.requireAddress} is not present in pool ${opts.pool}. ` +
           `Add it via env (RELAYER_PRIVATE_KEY_*), or recreate the session/permit for an available relayer.`
       )
     }
-  } else if (opts.stickyKey) {
-    key = pickByHash(opts.pool, keys, opts.stickyKey)
-  } else {
-    key = pickRoundRobin(opts.pool, keys)
+    const wallet = new ethers.Wallet(key.privateKey, opts.provider)
+    return await runExclusive(wallet.address, async () => {
+      return await opts.action(wallet, { key })
+    })
   }
 
-  const wallet = new ethers.Wallet(key.privateKey, opts.provider)
+  // Build ordered candidate list: primary pick first, then remaining pool members.
+  let primary: RelayerKey
+  if (opts.stickyKey) {
+    primary = pickByHash(opts.pool, keys, opts.stickyKey)
+  } else {
+    primary = pickRoundRobin(opts.pool, keys)
+  }
+  const rest = keys.filter((k) => k.id !== primary.id)
+  const allCandidates = [primary, ...rest]
 
-  return await runExclusive(wallet.address, async () => {
-    return await opts.action(wallet, { key })
-  })
+  // Deprioritize relayers recently flagged with insufficient funds.
+  // Move them to the end so healthy relayers are tried first, but keep
+  // them in the list as a last resort (funds may have been replenished).
+  const healthy = allCandidates.filter((k) => !isMarkedLowBalance(k.address))
+  const flagged = allCandidates.filter((k) => isMarkedLowBalance(k.address))
+  const candidates = healthy.length > 0 ? [...healthy, ...flagged] : allCandidates
+
+  let lastErr: any = null
+  for (const key of candidates) {
+    const wallet = new ethers.Wallet(key.privateKey, opts.provider)
+    try {
+      return await runExclusive(wallet.address, async () => {
+        return await opts.action(wallet, { key })
+      })
+    } catch (e: any) {
+      if (isInsufficientFundsError(e)) {
+        markLowBalance(key.address)
+        lastErr = e
+        console.warn(
+          `[relayer][failover] ${key.id} (${key.address}) insufficient funds, ` +
+            `trying next relayer in pool ${opts.pool} (${candidates.indexOf(key) + 1}/${candidates.length})`
+        )
+        continue
+      }
+      throw e
+    }
+  }
+
+  throw new Error(
+    `All ${candidates.length} relayer(s) in pool ${opts.pool} have insufficient funds for gas. ` +
+      `Fund at least one relayer to restore service. Last error: ${lastErr?.shortMessage || lastErr?.message || String(lastErr)}`
+  )
 }
 
 export async function sendWithNonceRetry<T extends ethers.Contract>(

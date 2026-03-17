@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ethers } from 'ethers'
-import { withRelayer, sendWithNonceRetry } from '@/lib/relayerRouter'
+import { withRelayer, sendWithNonceRetry, isInsufficientFundsError } from '@/lib/relayerRouter'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -351,6 +351,13 @@ export async function POST(request: NextRequest) {
       amount: amount,
     })
   } catch (err: any) {
+    if (isInsufficientFundsError(err) || String(err?.message || '').includes('insufficient funds for gas')) {
+      console.error('[WITHDRAW] all relayers out of funds', err?.message || err);
+      return NextResponse.json(
+        { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
+        { status: 503 }
+      );
+    }
     const msg = err?.message || String(err)
     console.error(`${tag} ERROR`, msg)
     return NextResponse.json({ error: msg }, { status: 500 })

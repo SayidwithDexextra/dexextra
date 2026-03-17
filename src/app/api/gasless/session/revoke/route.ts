@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import MetaTradeFacet from '@/lib/abis/facets/MetaTradeFacet.json';
 import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
-import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter';
+import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
 import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
 import { computeRelayerProof } from '@/lib/relayerMerkle';
 
@@ -80,6 +80,13 @@ export async function POST(req: Request) {
     console.log('[UpGas][API][session/revoke] tx mined', { blockNumber: rc?.blockNumber });
     return NextResponse.json({ txHash: tx.hash, blockNumber: rc?.blockNumber });
   } catch (e: any) {
+    if (isInsufficientFundsError(e) || String(e?.message || '').includes('insufficient funds for gas')) {
+      console.error('[SESSION_REVOKE] all relayers out of funds', e?.message || e);
+      return NextResponse.json(
+        { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
+        { status: 503 }
+      );
+    }
     console.error('[GASLESS][API][session/revoke] error', e?.message || e);
     console.error('[UpGas][API][session/revoke] error', e?.stack || e?.message || String(e));
     return NextResponse.json({ error: e?.message || 'session revoke failed' }, { status: 500 });

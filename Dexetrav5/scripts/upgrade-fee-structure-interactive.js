@@ -29,9 +29,10 @@ const readline = require("readline");
 
 // ────────────────────────── CLI flags ──────────────────────────
 
-const DRY_RUN = process.argv.includes("--dry-run");
-const DEPLOY_FRESH = process.argv.includes("--deploy");
-const SKIP_CONFIRM = process.argv.includes("--skip-confirm");
+const DRY_RUN = process.argv.includes("--dry-run") || process.env.DRY_RUN === "true";
+const DEPLOY_FRESH = process.argv.includes("--deploy") || process.env.DEPLOY_FRESH === "true";
+const SKIP_CONFIRM = process.argv.includes("--skip-confirm") || process.env.SKIP_CONFIRM === "true";
+const FORCE_ALL = process.argv.includes("--force-all") || process.env.FORCE_ALL === "true";
 
 // ────────────────────────── facet registry ──────────────────────────
 
@@ -182,6 +183,20 @@ async function scanMarket(orderBookAddress, activeFacets) {
   return { cut, details };
 }
 
+async function buildForceAllCut(activeFacets) {
+  const FacetCutAction = { Add: 0, Replace: 1, Remove: 2 };
+  const cut = [];
+  const details = [];
+  for (const { name, address } of activeFacets) {
+    const { selectors } = await selectorsFromArtifact(name);
+    if (selectors.length) {
+      cut.push({ facetAddress: address, action: FacetCutAction.Replace, functionSelectors: selectors });
+      details.push({ name, add: 0, replace: selectors.length });
+    }
+  }
+  return { cut, details };
+}
+
 // ────────────────────────── main ──────────────────────────
 
 async function main() {
@@ -298,7 +313,15 @@ async function main() {
   });
 
   // ── 4. Scan all markets ──
-  console.log(`\n🔍 Scanning ${markets.length} market(s) against ${activeFacets.length} facet(s)...\n`);
+  let forceCut, forceDetails;
+  if (FORCE_ALL) {
+    console.log(`\n⚡ --force-all: building Replace cut for ALL selectors (skipping per-market scan)...`);
+    ({ cut: forceCut, details: forceDetails } = await buildForceAllCut(activeFacets));
+    const summary = forceDetails.map((d) => `${d.name}(~${d.replace})`).join(" ");
+    console.log(`   Force-cut payload: ${summary}\n`);
+  } else {
+    console.log(`\n🔍 Scanning ${markets.length} market(s) against ${activeFacets.length} facet(s)...\n`);
+  }
 
   const scanResults = [];
 
@@ -326,19 +349,24 @@ async function main() {
       continue;
     }
 
-    try {
-      const { cut, details } = await scanMarket(orderBook, activeFacets);
-      if (cut.length === 0) {
-        console.log(`✅ up to date`);
-        scanResults.push({ label, address: orderBook, status: "CURRENT", signer: picked.w, cut, details });
-      } else {
-        const summary = details.map((d) => `${d.name}(+${d.add}/~${d.replace})`).join(" ");
-        console.log(`🔄 needs upgrade: ${summary}`);
-        scanResults.push({ label, address: orderBook, status: "NEEDS_UPGRADE", signer: picked.w, cut, details });
+    if (FORCE_ALL) {
+      console.log(`🔄 force upgrade`);
+      scanResults.push({ label, address: orderBook, status: "NEEDS_UPGRADE", signer: picked.w, cut: forceCut, details: forceDetails });
+    } else {
+      try {
+        const { cut, details } = await scanMarket(orderBook, activeFacets);
+        if (cut.length === 0) {
+          console.log(`✅ up to date`);
+          scanResults.push({ label, address: orderBook, status: "CURRENT", signer: picked.w, cut, details });
+        } else {
+          const summary = details.map((d) => `${d.name}(+${d.add}/~${d.replace})`).join(" ");
+          console.log(`🔄 needs upgrade: ${summary}`);
+          scanResults.push({ label, address: orderBook, status: "NEEDS_UPGRADE", signer: picked.w, cut, details });
+        }
+      } catch (e) {
+        console.log(`❌ scan error: ${(e?.message || String(e)).slice(0, 80)}`);
+        scanResults.push({ label, address: orderBook, status: "ERROR", reason: e?.message || String(e), cut: [], details: [] });
       }
-    } catch (e) {
-      console.log(`❌ scan error: ${(e?.message || String(e)).slice(0, 80)}`);
-      scanResults.push({ label, address: orderBook, status: "ERROR", reason: e?.message || String(e), cut: [], details: [] });
     }
   }
 

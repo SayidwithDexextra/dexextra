@@ -178,6 +178,41 @@ function isBlockGasLimitError(err: any): boolean {
   );
 }
 
+function isInsufficientFundsError(err: any): boolean {
+  const msg = String(err?.reason || err?.shortMessage || err?.message || err || "").toLowerCase();
+  return (
+    msg.includes("insufficient funds") ||
+    msg.includes("insufficient balance") ||
+    msg.includes("sender doesn't have enough funds") ||
+    msg.includes("not enough funds")
+  );
+}
+
+const lowBalanceCache = new Map<string, number>();
+const LOW_BALANCE_TTL_MS = 60_000;
+
+function isMarkedLowBalance(address: string): boolean {
+  const key = address.toLowerCase();
+  const ts = lowBalanceCache.get(key);
+  if (!ts) return false;
+  if (Date.now() - ts > LOW_BALANCE_TTL_MS) {
+    lowBalanceCache.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function markLowBalance(address: string): void {
+  lowBalanceCache.set(address.toLowerCase(), Date.now());
+}
+
+function getCandidatesForPool(pool: "small" | "big"): RelayerAccount[] {
+  const keys = pool === "big" ? getBigPool() : getSmallPool();
+  const healthy = keys.filter((k) => !isMarkedLowBalance(k.address));
+  const flagged = keys.filter((k) => isMarkedLowBalance(k.address));
+  return healthy.length > 0 ? [...healthy, ...flagged] : [...keys];
+}
+
 // ─────── Nonce ───────
 
 async function allocateNonce(
@@ -319,8 +354,10 @@ async function processJob(
     routedPool = "small";
   }
 
-  const relayer = pickRoundRobin(routedPool) || pickRoundRobin("big") || pickRoundRobin("small");
-  if (!relayer) {
+  let candidates = getCandidatesForPool(routedPool);
+  if (candidates.length === 0) candidates = getCandidatesForPool("big");
+  if (candidates.length === 0) candidates = getCandidatesForPool("small");
+  if (candidates.length === 0) {
     const r = await supabase.rpc("fail_or_requeue_liq_job", {
       p_id: job.id,
       p_error: `no_relayer:${routedPool}`,
@@ -331,93 +368,121 @@ async function processJob(
 
   const label = `retry:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}:a${job.attempts}`;
 
-  try {
-    const nonce = await allocateNonce(supabase, relayer, publicClient, label);
-    const walletClient = createWalletClient({
-      account: relayer.account,
-      transport: http(RPC_URL),
-    });
-    const tx = await walletClient.writeContract({
-      address: CORE_VAULT as `0x${string}`,
-      abi: CORE_VAULT_ABI,
-      functionName: "liquidateDirect" as const,
-      args: [marketHex, walletHex],
-      nonce: Number(nonce),
-    });
-
+  for (const relayer of candidates) {
     try {
-      const nonceMode = (Deno.env.get("LIQUIDATION_NONCE_ALLOCATOR") || "")
-        .trim()
-        .toLowerCase();
-      if (nonceMode !== "disabled" && nonceMode !== "off") {
-        await supabase.rpc("mark_relayer_tx_broadcasted", {
-          p_relayer_address: relayer.address.toLowerCase(),
-          p_chain_id: String(LIQ_QUEUE_CHAIN_ID),
-          p_nonce: nonce.toString(),
-          p_tx_hash: tx,
-        });
+      const nonce = await allocateNonce(supabase, relayer, publicClient, label);
+      const walletClient = createWalletClient({
+        account: relayer.account,
+        transport: http(RPC_URL),
+      });
+      const tx = await walletClient.writeContract({
+        address: CORE_VAULT as `0x${string}`,
+        abi: CORE_VAULT_ABI,
+        functionName: "liquidateDirect" as const,
+        args: [marketHex, walletHex],
+        nonce: Number(nonce),
+      });
+
+      try {
+        const nonceMode = (Deno.env.get("LIQUIDATION_NONCE_ALLOCATOR") || "")
+          .trim()
+          .toLowerCase();
+        if (nonceMode !== "disabled" && nonceMode !== "off") {
+          await supabase.rpc("mark_relayer_tx_broadcasted", {
+            p_relayer_address: relayer.address.toLowerCase(),
+            p_chain_id: String(LIQ_QUEUE_CHAIN_ID),
+            p_nonce: nonce.toString(),
+            p_tx_hash: tx,
+          });
+        }
+      } catch {
+        /* best-effort */
       }
-    } catch {
-      /* best-effort */
-    }
 
-    await supabase.rpc("complete_liq_job", { p_id: job.id, p_tx_hash: tx });
-    return { id: job.id, outcome: "liquidated", tx };
-  } catch (sendErr: any) {
-    const errMsg =
-      sendErr?.shortMessage || sendErr?.message || String(sendErr);
+      await supabase.rpc("complete_liq_job", { p_id: job.id, p_tx_hash: tx });
+      return { id: job.id, outcome: "liquidated", tx };
+    } catch (sendErr: any) {
+      if (isInsufficientFundsError(sendErr)) {
+        markLowBalance(relayer.address);
+        logStep(traceId, "retry_relayer_low_funds", {
+          jobId: job.id,
+          relayer: relayer.address,
+          pool: relayer.pool,
+          tried: `${candidates.indexOf(relayer) + 1}/${candidates.length}`,
+        });
+        continue;
+      }
 
-    // Retry with big pool on block gas limit errors
-    if (
-      routedPool !== "big" &&
-      getBigPool().length > 0 &&
-      isBlockGasLimitError(sendErr)
-    ) {
-      const bigRelayer = pickRoundRobin("big");
-      if (bigRelayer) {
-        try {
-          const nonce2 = await allocateNonce(
-            supabase,
-            bigRelayer,
-            publicClient,
-            `${label}:big_retry`
-          );
-          const walletClient2 = createWalletClient({
-            account: bigRelayer.account,
-            transport: http(RPC_URL),
-          });
-          const tx2 = await walletClient2.writeContract({
-            address: CORE_VAULT as `0x${string}`,
-            abi: CORE_VAULT_ABI,
-            functionName: "liquidateDirect" as const,
-            args: [marketHex, walletHex],
-            nonce: Number(nonce2),
-          });
-          await supabase.rpc("complete_liq_job", {
-            p_id: job.id,
-            p_tx_hash: tx2,
-          });
-          return { id: job.id, outcome: "liquidated_big_fallback", tx: tx2 };
-        } catch (bigErr: any) {
-          const bigMsg =
-            bigErr?.shortMessage || bigErr?.message || String(bigErr);
-          const r = await supabase.rpc("fail_or_requeue_liq_job", {
-            p_id: job.id,
-            p_error: `big_send_fail:${bigMsg.slice(0, 300)}`,
-            p_max_attempts: MAX_ATTEMPTS,
-          });
-          return { id: job.id, outcome: r.data || "requeued" };
+      const errMsg =
+        sendErr?.shortMessage || sendErr?.message || String(sendErr);
+
+      if (
+        routedPool !== "big" &&
+        getBigPool().length > 0 &&
+        isBlockGasLimitError(sendErr)
+      ) {
+        const bigCandidates = getCandidatesForPool("big");
+        for (const bigRelayer of bigCandidates) {
+          try {
+            const nonce2 = await allocateNonce(
+              supabase,
+              bigRelayer,
+              publicClient,
+              `${label}:big_retry`
+            );
+            const walletClient2 = createWalletClient({
+              account: bigRelayer.account,
+              transport: http(RPC_URL),
+            });
+            const tx2 = await walletClient2.writeContract({
+              address: CORE_VAULT as `0x${string}`,
+              abi: CORE_VAULT_ABI,
+              functionName: "liquidateDirect" as const,
+              args: [marketHex, walletHex],
+              nonce: Number(nonce2),
+            });
+            await supabase.rpc("complete_liq_job", {
+              p_id: job.id,
+              p_tx_hash: tx2,
+            });
+            return { id: job.id, outcome: "liquidated_big_fallback", tx: tx2 };
+          } catch (bigErr: any) {
+            if (isInsufficientFundsError(bigErr)) {
+              markLowBalance(bigRelayer.address);
+              logStep(traceId, "retry_big_relayer_low_funds", {
+                jobId: job.id,
+                relayer: bigRelayer.address,
+                tried: `${bigCandidates.indexOf(bigRelayer) + 1}/${bigCandidates.length}`,
+              });
+              continue;
+            }
+            const bigMsg =
+              bigErr?.shortMessage || bigErr?.message || String(bigErr);
+            const r = await supabase.rpc("fail_or_requeue_liq_job", {
+              p_id: job.id,
+              p_error: `big_send_fail:${bigMsg.slice(0, 300)}`,
+              p_max_attempts: MAX_ATTEMPTS,
+            });
+            return { id: job.id, outcome: r.data || "requeued" };
+          }
         }
       }
-    }
 
-    const r = await supabase.rpc("fail_or_requeue_liq_job", {
-      p_id: job.id,
-      p_error: `send_fail:${errMsg.slice(0, 300)}`,
-      p_max_attempts: MAX_ATTEMPTS,
-    });
-    return { id: job.id, outcome: r.data || "requeued" };
+      const r = await supabase.rpc("fail_or_requeue_liq_job", {
+        p_id: job.id,
+        p_error: `send_fail:${errMsg.slice(0, 300)}`,
+        p_max_attempts: MAX_ATTEMPTS,
+      });
+      return { id: job.id, outcome: r.data || "requeued" };
+    }
   }
+
+  const r = await supabase.rpc("fail_or_requeue_liq_job", {
+    p_id: job.id,
+    p_error: `all_relayers_insufficient_funds:${routedPool}`,
+    p_max_attempts: MAX_ATTEMPTS,
+  });
+  return { id: job.id, outcome: r.data || "requeued" };
 }
 
 // ─────── Serve ───────

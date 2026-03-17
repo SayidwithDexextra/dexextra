@@ -151,6 +151,42 @@ function isBlockGasLimitError(err: any): boolean {
   );
 }
 
+function isInsufficientFundsError(err: any): boolean {
+  const msg = String(err?.reason || err?.shortMessage || err?.message || err || "").toLowerCase();
+  return (
+    msg.includes("insufficient funds") ||
+    msg.includes("insufficient balance") ||
+    msg.includes("sender doesn't have enough funds") ||
+    msg.includes("not enough funds")
+  );
+}
+
+const lowBalanceCache = new Map<string, number>();
+const LOW_BALANCE_TTL_MS = 60_000;
+
+function isMarkedLowBalance(address: string): boolean {
+  const key = address.toLowerCase();
+  const ts = lowBalanceCache.get(key);
+  if (!ts) return false;
+  if (Date.now() - ts > LOW_BALANCE_TTL_MS) {
+    lowBalanceCache.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function markLowBalance(address: string): void {
+  lowBalanceCache.set(address.toLowerCase(), Date.now());
+  console.warn(`[liq][low-balance] marked ${address} as low-balance for ${LOW_BALANCE_TTL_MS / 1000}s`);
+}
+
+function getCandidatesForPool(pool: "small" | "big"): RelayerAccount[] {
+  const keys = pool === "big" ? getBigPool() : getSmallPool();
+  const healthy = keys.filter((k) => !isMarkedLowBalance(k.address));
+  const flagged = keys.filter((k) => isMarkedLowBalance(k.address));
+  return healthy.length > 0 ? [...healthy, ...flagged] : [...keys];
+}
+
 async function allocateNonce(
   supabase: any,
   relayer: RelayerAccount,
@@ -1030,70 +1066,109 @@ async function findCandidatesAndLiquidate(
       continue;
     }
 
-    let relayer = pickRoundRobin(routedPool);
-    if (!relayer && routedPool === "big") {
-      relayer = pickRoundRobin("small");
+    let candidates = getCandidatesForPool(routedPool);
+    if (candidates.length === 0 && routedPool === "big") {
+      candidates = getCandidatesForPool("small");
       logDebug(traceId, "big_pool_empty_using_small_relayer");
     }
-    if (!relayer) {
+    if (candidates.length === 0) {
       logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "no_relayer_available" });
       await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "no_relayer_available", traceId, priority: 10 });
       continue;
     }
 
-    logStep(traceId, "LIQ_START", { wallet: walletHex, pool: routedPool, gas: estimatedGas?.toString() ?? "unknown" });
+    logStep(traceId, "LIQ_START", { wallet: walletHex, pool: routedPool, gas: estimatedGas?.toString() ?? "unknown", candidates: candidates.length });
 
     let result: { tx: string; relayer: string; pool: string } | null = null;
     let reroutedToBig = false;
+    let allInsufficientFunds = true;
 
-    try {
-      result = await sendLiquidationTx({
-        relayer,
-        publicClient,
-        supabase,
-        marketHex: marketHexTyped,
-        traderWallet: walletHex,
-        gasLimit: gasLimitForPool(routedPool),
-        traceId,
-        label: `liq:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}`,
-      });
-    } catch (sendErr: any) {
-      const errMsg = sendErr?.shortMessage || sendErr?.message || String(sendErr);
-      const isTxReverted = errMsg.includes("tx_reverted") || errMsg.includes("receipt_check_failed");
-      const canRetryBig = bigPool.length > 0 && routedPool !== "big" && (isBlockGasLimitError(sendErr) || isTxReverted);
-      if (!canRetryBig) {
-        logStep(traceId, "LIQ_FAILED", { wallet: walletHex, pool: routedPool, reason: errMsg.slice(0, 120) });
-        await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `send_fail[${routedPool}]:${errMsg.slice(0, 200)}`, traceId, priority: 5 });
-        continue;
-      }
-
-      logStep(traceId, "REROUTE_BIG", { wallet: walletHex, reason: isTxReverted ? "tx_reverted" : "block_gas_limit" });
-
-      const bigRelayer = pickRoundRobin("big");
-      if (!bigRelayer) {
-        logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "no_big_relayer_for_retry" });
-        await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "no_big_relayer_for_block_gas_retry", traceId, priority: 10 });
-        continue;
-      }
-
+    for (const relayer of candidates) {
       try {
-        reroutedToBig = true;
         result = await sendLiquidationTx({
-          relayer: bigRelayer,
+          relayer,
           publicClient,
           supabase,
           marketHex: marketHexTyped,
           traderWallet: walletHex,
-          gasLimit: gasLimitForPool("big"),
+          gasLimit: gasLimitForPool(routedPool),
           traceId,
-          label: `liq_big:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}`,
+          label: `liq:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}`,
         });
-      } catch (bigErr: any) {
-        const bigErrMsg = bigErr?.shortMessage || bigErr?.message || String(bigErr);
-        logStep(traceId, "LIQ_FAILED", { wallet: walletHex, pool: "big", reason: bigErrMsg.slice(0, 120) });
-        await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `big_send_fail:${bigErrMsg.slice(0, 200)}`, traceId, priority: 8 });
-        continue;
+        allInsufficientFunds = false;
+        break;
+      } catch (sendErr: any) {
+        if (isInsufficientFundsError(sendErr)) {
+          markLowBalance(relayer.address);
+          logStep(traceId, "LIQ_RELAYER_LOW_FUNDS", {
+            wallet: walletHex,
+            relayer: relayer.address,
+            pool: routedPool,
+            tried: `${candidates.indexOf(relayer) + 1}/${candidates.length}`,
+          });
+          continue;
+        }
+        allInsufficientFunds = false;
+
+        const errMsg = sendErr?.shortMessage || sendErr?.message || String(sendErr);
+        const isTxReverted = errMsg.includes("tx_reverted") || errMsg.includes("receipt_check_failed");
+        const canRetryBig = bigPool.length > 0 && routedPool !== "big" && (isBlockGasLimitError(sendErr) || isTxReverted);
+        if (!canRetryBig) {
+          logStep(traceId, "LIQ_FAILED", { wallet: walletHex, pool: routedPool, reason: errMsg.slice(0, 120) });
+          await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `send_fail[${routedPool}]:${errMsg.slice(0, 200)}`, traceId, priority: 5 });
+          break;
+        }
+
+        logStep(traceId, "REROUTE_BIG", { wallet: walletHex, reason: isTxReverted ? "tx_reverted" : "block_gas_limit" });
+
+        const bigCandidates = getCandidatesForPool("big");
+        let bigSuccess = false;
+        for (const bigRelayer of bigCandidates) {
+          try {
+            reroutedToBig = true;
+            result = await sendLiquidationTx({
+              relayer: bigRelayer,
+              publicClient,
+              supabase,
+              marketHex: marketHexTyped,
+              traderWallet: walletHex,
+              gasLimit: gasLimitForPool("big"),
+              traceId,
+              label: `liq_big:${marketHex.slice(0, 10)}:${walletHex.slice(0, 10)}`,
+            });
+            bigSuccess = true;
+            break;
+          } catch (bigErr: any) {
+            if (isInsufficientFundsError(bigErr)) {
+              markLowBalance(bigRelayer.address);
+              logStep(traceId, "LIQ_BIG_RELAYER_LOW_FUNDS", {
+                wallet: walletHex,
+                relayer: bigRelayer.address,
+                tried: `${bigCandidates.indexOf(bigRelayer) + 1}/${bigCandidates.length}`,
+              });
+              continue;
+            }
+            const bigErrMsg = bigErr?.shortMessage || bigErr?.message || String(bigErr);
+            logStep(traceId, "LIQ_FAILED", { wallet: walletHex, pool: "big", reason: bigErrMsg.slice(0, 120) });
+            await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `big_send_fail:${bigErrMsg.slice(0, 200)}`, traceId, priority: 8 });
+            break;
+          }
+        }
+        if (!bigSuccess && bigCandidates.length > 0 && !result) {
+          logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "all_big_relayers_insufficient_funds" });
+          await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "all_big_relayers_insufficient_funds", traceId, priority: 10 });
+        } else if (bigCandidates.length === 0) {
+          logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "no_big_relayer_for_retry" });
+          await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: "no_big_relayer_for_block_gas_retry", traceId, priority: 10 });
+        }
+        break;
       }
+    }
+
+    if (allInsufficientFunds && !result) {
+      logStep(traceId, "LIQ_FAILED", { wallet: walletHex, reason: "all_relayers_insufficient_funds", pool: routedPool });
+      await enqueueLiqFailure({ supabase, wallet: walletHex, marketHex: marketHexTyped, error: `all_relayers_insufficient_funds[${routedPool}]`, traceId, priority: 10 });
+      continue;
     }
 
     if (result) {

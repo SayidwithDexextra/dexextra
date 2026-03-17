@@ -66,22 +66,51 @@ contract OBTradeExecutionFacet {
         require(buyer != address(0) && seller != address(0), "OB: zero party");
         require(buyerMargin == sellerMargin, "OrderBook: cannot mix margin and spot trades");
 
-        // Update positions: handle liquidation trades specially
+        // Deduct fees BEFORE margin locking so the 150% short margin
+        // requirement is enforced against post-fee collateral.
+        uint256 buyerFee = 0;
+        uint256 sellerFee = 0;
+        {
+            uint256 notional6 = Math.mulDiv(amount, price, 1e18);
+            bool useSplitFees = s.takerFeeBps > 0 || s.makerFeeBps > 0;
+            if (useSplitFees) {
+                uint256 takerBps = s.takerFeeBps;
+                uint256 makerBps = s.makerFeeBps;
+                buyerFee  = Math.mulDiv(notional6, buyerIsTaker ? takerBps : makerBps, 10000);
+                sellerFee = Math.mulDiv(notional6, buyerIsTaker ? makerBps : takerBps, 10000);
+
+                address protocolAddr = s.protocolFeeRecipient;
+                address ownerAddr    = s.feeRecipient;
+                uint256 shareBps     = s.protocolFeeShareBps;
+
+                if (buyerFee > 0 && buyer != address(this)) {
+                    _distributeFee(s, buyer, buyerFee, shareBps, protocolAddr, ownerAddr);
+                }
+                if (sellerFee > 0 && seller != address(this)) {
+                    _distributeFee(s, seller, sellerFee, shareBps, protocolAddr, ownerAddr);
+                }
+            } else if (s.tradingFee > 0) {
+                buyerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
+                sellerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
+                if (buyer != address(this))  { try s.vault.deductFees(buyer,  buyerFee,  s.feeRecipient) { } catch { } }
+                if (seller != address(this)) { try s.vault.deductFees(seller, sellerFee, s.feeRecipient) { } catch { } }
+            }
+            if (buyerFee > 0 || sellerFee > 0) {
+                emit FeesDeducted(buyer, buyerFee, seller, sellerFee);
+            }
+        }
+
+        // Update positions: margin checked against post-fee collateral
         if (buyerMargin) {
             bool isLiquidationTrade = s.liquidationMode || buyer == address(this) || seller == address(this);
             emit LiquidationTradeDetected(isLiquidationTrade, s.liquidationTarget, s.liquidationClosesShort);
             if (isLiquidationTrade) {
                 address realUser = s.liquidationTarget;
                 if (realUser != address(0)) {
-                    // Mark under liquidation (best-effort)
                     try s.vault.setUnderLiquidation(realUser, s.marketId, true) { } catch { }
-                    // Determine delta for real user based on close direction
                     int256 delta = s.liquidationClosesShort ? int256(amount) : -int256(amount);
-                    // CRITICAL: Do not ignore failures here, or the order book may consume liquidity
-                    // without actually closing the liquidated user's position, creating an imbalance.
                     s.vault.updatePositionWithLiquidation(realUser, s.marketId, delta, price, address(this));
                 }
-                // Counterparty receives units via normal margin path
                 emit MarginUpdatesStarted(true);
                 if (buyer == address(this) && seller != address(0) && seller != address(this)) {
                     (int256 sellerOld, uint256 sellerEntry, ) = _getSummary(s, seller);
@@ -89,7 +118,6 @@ contract OBTradeExecutionFacet {
                     int256 sellerNewNet = sellerOld + sellerDelta;
                     uint256 sellerBasis = _basisPriceForMargin(sellerOld, sellerDelta, sellerEntry, price);
                     uint256 mrSellerTotal = _calculateTotalRequiredMargin(s, sellerNewNet, sellerBasis);
-                    // Enforce counterparty margin update to avoid book-state / position divergence
                     s.vault.updatePositionWithMargin(seller, s.marketId, sellerDelta, price, mrSellerTotal);
                 } else if (seller == address(this) && buyer != address(0) && buyer != address(this)) {
                     (int256 buyerOld, uint256 buyerEntry, ) = _getSummary(s, buyer);
@@ -97,17 +125,14 @@ contract OBTradeExecutionFacet {
                     int256 buyerNewNet = buyerOld + buyerDelta;
                     uint256 buyerBasis = _basisPriceForMargin(buyerOld, buyerDelta, buyerEntry, price);
                     uint256 mrBuyerTotal = _calculateTotalRequiredMargin(s, buyerNewNet, buyerBasis);
-                    // Enforce counterparty margin update to avoid book-state / position divergence
                     s.vault.updatePositionWithMargin(buyer, s.marketId, buyerDelta, price, mrBuyerTotal);
                 }
                 emit MarginUpdatesCompleted();
             } else {
-                // Normal margin trade: new-net basis logic on both sides
                 (int256 buyerOld, uint256 buyerEntry, uint256 buyerLocked) = _getSummary(s, buyer);
                 (int256 sellerOld, uint256 sellerEntry, uint256 sellerLocked) = _getSummary(s, seller);
-                int256 buyerDelta = int256(amount);       // buyer adds long
-                int256 sellerDelta = -int256(amount);     // seller adds short
-                // Pre-trade solvency guards for closing legs
+                int256 buyerDelta = int256(amount);
+                int256 sellerDelta = -int256(amount);
                 _assertPreTradeSolvency(s, buyer, buyerOld, buyerEntry, buyerLocked, buyerDelta, price);
                 _assertPreTradeSolvency(s, seller, sellerOld, sellerEntry, sellerLocked, sellerDelta, price);
                 emit MarginUpdatesStarted(false);
@@ -126,42 +151,7 @@ contract OBTradeExecutionFacet {
                 emit MarginUpdatesCompleted();
             }
         } else {
-            // Spot is unsupported in this futures market, retain safety
             revert("OrderBook: spot trading disabled for futures markets - use margin orders");
-        }
-
-        // Fees: maker/taker split with protocol + market-owner revenue share
-        uint256 buyerFee = 0;
-        uint256 sellerFee = 0;
-        {
-            uint256 notional6 = Math.mulDiv(amount, price, 1e18);
-            bool useSplitFees = s.takerFeeBps > 0 || s.makerFeeBps > 0;
-            if (useSplitFees) {
-                uint256 takerBps = s.takerFeeBps;
-                uint256 makerBps = s.makerFeeBps;
-                buyerFee  = Math.mulDiv(notional6, buyerIsTaker ? takerBps : makerBps, 10000);
-                sellerFee = Math.mulDiv(notional6, buyerIsTaker ? makerBps : takerBps, 10000);
-
-                address protocolAddr = s.protocolFeeRecipient;
-                address ownerAddr    = s.feeRecipient;
-                uint256 shareBps     = s.protocolFeeShareBps; // e.g. 8000 = 80%
-
-                if (buyerFee > 0 && buyer != address(this)) {
-                    _distributeFee(s, buyer, buyerFee, shareBps, protocolAddr, ownerAddr);
-                }
-                if (sellerFee > 0 && seller != address(this)) {
-                    _distributeFee(s, seller, sellerFee, shareBps, protocolAddr, ownerAddr);
-                }
-            } else if (s.tradingFee > 0) {
-                // Legacy flat-fee fallback
-                buyerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
-                sellerFee = Math.mulDiv(notional6, s.tradingFee, 10000);
-                if (buyer != address(this))  { try s.vault.deductFees(buyer,  buyerFee,  s.feeRecipient) { } catch { } }
-                if (seller != address(this)) { try s.vault.deductFees(seller, sellerFee, s.feeRecipient) { } catch { } }
-            }
-            if (buyerFee > 0 || sellerFee > 0) {
-                emit FeesDeducted(buyer, buyerFee, seller, sellerFee);
-            }
         }
 
         // Record trade

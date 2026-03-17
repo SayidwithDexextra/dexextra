@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
-import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter';
+import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
 
 export async function POST(req: Request) {
   try {
@@ -110,6 +110,13 @@ export async function POST(req: Request) {
     console.log('[UpGas][API][session/init] broadcasted', { txHash: tx.hash, waitConfirms });
     return NextResponse.json({ sessionId, txHash: tx.hash });
   } catch (e: any) {
+    if (isInsufficientFundsError(e) || String(e?.message || '').includes('insufficient funds for gas')) {
+      console.error('[SESSION_INIT] all relayers out of funds', e?.message || e);
+      return NextResponse.json(
+        { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
+        { status: 503 }
+      );
+    }
     const errorMessage = e?.message || String(e) || 'session init failed';
     const errorCode = e?.code || 'UNKNOWN';
     

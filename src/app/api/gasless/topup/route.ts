@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import CoreVaultAbi from '@/lib/abis/CoreVault.json';
-import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter';
+import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
 
 // Prefer server RPC but fall back to client-exposed value so local dev works
 const rpcUrl =
@@ -80,6 +80,13 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ txHash: tx.hash });
   } catch (e: any) {
+    if (isInsufficientFundsError(e) || String(e?.message || '').includes('insufficient funds for gas')) {
+      console.error('[TOPUP] all relayers out of funds', e?.message || e);
+      return NextResponse.json(
+        { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
+        { status: 503 }
+      );
+    }
     console.error('[GASLESS][API][topup][POST] relay failed', e);
     return bad(e?.message || 'relay failed', 500);
   }

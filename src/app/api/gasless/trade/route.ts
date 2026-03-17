@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import MetaTradeFacet from '@/lib/abis/facets/MetaTradeFacet.json';
 import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
-import { sendWithNonceRetry, withRelayer } from '@/lib/relayerRouter';
+import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
 import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
 import { computeRelayerProof } from '@/lib/relayerMerkle';
 import { supabaseAdmin } from '@/lib/supabase-admin';
@@ -746,6 +746,7 @@ export async function POST(req: Request) {
                 orderBook,
                 [
                   'function getLeverageInfo() view returns (bool enabled,uint256 maxLev,uint256 marginReq,address controller)',
+                  'function getFeeStructure() view returns (uint256 takerFeeBps,uint256 makerFeeBps,address protocolFeeRecipient,uint256 protocolFeeShareBps,uint256 legacyTradingFee,address marketOwnerFeeRecipient)',
                   'function marketStatic() view returns (address vault,bytes32 marketId,bool useVWAP,uint256 vwapWindow)',
                   'function bestBid() view returns (uint256)',
                   'function bestAsk() view returns (uint256)',
@@ -756,6 +757,17 @@ export async function POST(req: Request) {
                 provider
               );
               const [enabled, maxLev, marginReq] = await view.getLeverageInfo();
+
+              let estimatedFeeBps = 0n;
+              try {
+                const [takerFeeBps, makerFeeBps, , , legacyTradingFee] = await view.getFeeStructure();
+                const taker = BigInt(takerFeeBps);
+                const maker = BigInt(makerFeeBps);
+                const legacy = BigInt(legacyTradingFee);
+                estimatedFeeBps = (taker > 0n || maker > 0n) ? (taker > maker ? taker : maker) : legacy;
+              } catch (_feeErr) {
+                // Fall through with 0; fee precheck is best-effort
+              }
               const [vaultAddr, marketId] = await view.marketStatic();
 
               const vault = new ethers.Contract(
@@ -960,9 +972,13 @@ export async function POST(req: Request) {
                 // Fall through with full amount if position query fails
               }
 
-              const notional6 = (effectiveAmount * price) / 1_000_000_000_000_000_000n; // / 1e18
+              const fullNotional6 = (amount * price) / 1_000_000_000_000_000_000n;
+              const estimatedFee6 = estimatedFeeBps > 0n ? (fullNotional6 * estimatedFeeBps) / 10000n : 0n;
+
+              const notional6 = (effectiveAmount * price) / 1_000_000_000_000_000_000n;
               const marginBps = isBuy ? BigInt(marginReq) : 15000n;
               const marginRequired6 = (notional6 * marginBps) / 10000n;
+              const totalRequired6 = marginRequired6 + estimatedFee6;
               const available6 = BigInt(await vault.getAvailableCollateral(params.trader));
 
               console.log('[UpGas][API][trade] margin precheck', {
@@ -974,6 +990,8 @@ export async function POST(req: Request) {
                 notional6: notional6.toString(),
                 marginBps: marginBps.toString(),
                 marginRequired6: marginRequired6.toString(),
+                estimatedFee6: estimatedFee6.toString(),
+                totalRequired6: totalRequired6.toString(),
                 available6: available6.toString(),
                 vault: vaultAddr,
                 marketId,
@@ -981,11 +999,13 @@ export async function POST(req: Request) {
                 hasOrderbookRole,
               });
 
-              if (available6 < marginRequired6) {
+              if (available6 < totalRequired6) {
                 throw new HttpError(400, {
                   error: 'insufficient_collateral',
                   available6: available6.toString(),
-                  required6: marginRequired6.toString(),
+                  required6: totalRequired6.toString(),
+                  marginRequired6: marginRequired6.toString(),
+                  estimatedFee6: estimatedFee6.toString(),
                   notional6: notional6.toString(),
                   marginBps: marginBps.toString(),
                 });
@@ -1338,6 +1358,13 @@ export async function POST(req: Request) {
   } catch (e: any) {
     if (e instanceof HttpError) {
       return NextResponse.json(e.body, { status: e.status });
+    }
+    if (isInsufficientFundsError(e) || String(e?.message || '').includes('insufficient funds for gas')) {
+      console.error('[GASLESS][API][trade] all relayers out of funds', e?.message || e);
+      return NextResponse.json(
+        { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
+        { status: 503 }
+      );
     }
     console.error('[GASLESS][API][trade] error', e?.message || e);
     console.error('[UpGas][API][trade] error', e?.stack || e?.message || String(e));
