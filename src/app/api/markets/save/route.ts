@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import path from 'path';
 import { readFileSync } from 'node:fs';
 import { archivePage } from '@/lib/archivePage';
+import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
 import {
   OBAdminFacetABI,
   OBPricingFacetABI,
@@ -475,6 +476,19 @@ export async function POST(req: Request) {
         logStep('verify_diamond_facets', 'error', { reason: 'missing_marketAddress' });
       }
     } catch {}
+
+    // Schedule QStash lifecycle triggers for the newly saved market
+    if (marketIdUuid && settlementDate && Number(settlementDate) > Math.floor(Date.now() / 1000)) {
+      try {
+        const scheduleIds = await scheduleMarketLifecycle(marketIdUuid, Number(settlementDate), {
+          marketAddress: marketAddress || undefined,
+          symbol: symbolStr || effectiveIdentifier,
+        });
+        logStep('qstash_schedule', 'success', { scheduleIds });
+      } catch (e: any) {
+        logStep('qstash_schedule', 'error', { error: e?.message || String(e) });
+      }
+    }
 
     logStep('pipeline_complete', 'success', { marketId: marketIdUuid, effectiveIdentifier });
     return NextResponse.json({ ok: true, id: marketIdUuid });

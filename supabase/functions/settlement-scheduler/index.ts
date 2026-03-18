@@ -199,6 +199,29 @@ async function verifyOnchainSettlementTime(
   }
 }
 
+async function syncLifecycleOnChain(
+  market: MarketRow,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!RPC_URL || !PRIVATE_KEY) return { ok: false, error: "rpc_or_key_not_configured" };
+  if (!market.market_address || !ethers.isAddress(market.market_address)) {
+    return { ok: false, error: "invalid_market_address" };
+  }
+  try {
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
+    const contract = new ethers.Contract(
+      market.market_address,
+      ["function syncLifecycle() external returns (uint8 previousState, uint8 newState)"],
+      wallet,
+    );
+    const tx = await contract.syncLifecycle();
+    await tx.wait();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: `sync_lifecycle_failed:${String(err)}` };
+  }
+}
+
 function nextMarketConfig(
   market: MarketRow,
   patch: Record<string, unknown>,
@@ -240,6 +263,12 @@ async function maybeStartSettlementWindow(
       settlementWindowExpiresAt: market.settlement_window_expires_at,
       reason: "window_already_active",
     };
+  }
+
+  // Progress on-chain lifecycle state before settlement actions
+  const syncResult = await syncLifecycleOnChain(market);
+  if (!syncResult.ok) {
+    console.warn(`[settlement-scheduler] syncLifecycle warning for ${market.market_identifier}: ${syncResult.error}`);
   }
 
   const chainCheck = await verifyOnchainSettlementTime(market);
@@ -370,6 +399,12 @@ async function maybeFinalizeSettlement(
       settlementWindowExpiresAt: market.settlement_window_expires_at,
       reason: "settlement_disputed",
     };
+  }
+
+  // Progress on-chain lifecycle state before finalization
+  const syncResult = await syncLifecycleOnChain(market);
+  if (!syncResult.ok) {
+    console.warn(`[settlement-scheduler] syncLifecycle warning for ${market.market_identifier}: ${syncResult.error}`);
   }
 
   const exp = safeDateMs(market.settlement_window_expires_at);

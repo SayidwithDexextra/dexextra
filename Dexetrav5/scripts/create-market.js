@@ -1613,8 +1613,8 @@ async function main() {
   // Configure maker/taker fee structure
   try {
     const protocolFeeRecipient = process.env.PROTOCOL_FEE_RECIPIENT || treasury;
-    const takerFeeBps = 45;
-    const makerFeeBps = 15;
+    const takerFeeBps = 7;
+    const makerFeeBps = 3;
     const protocolShareBps = 8000;
     console.log(`  • updateFeeStructure(taker=${takerFeeBps}, maker=${makerFeeBps}, proto=${protocolFeeRecipient}, share=${protocolShareBps})`);
     const fTx = await obAdmin.updateFeeStructure(takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolShareBps, await nonceMgr.nextOverrides());

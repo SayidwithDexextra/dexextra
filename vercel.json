@@ -62,14 +62,22 @@
     },
     "src/app/api/archives/save/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/cron/market-lifecycle/route.ts": {
+      "maxDuration": 300
     }
   },
   "env": {
     "NODE_ENV": "production"
   },
+  "crons": [
+    {
+      "path": "/api/cron/market-lifecycle",
+      "schedule": "* * * * *"
+    }
+  ],
   "regions": ["iad1"],
   "github": {
     "silent": true
   }
-  
 } 

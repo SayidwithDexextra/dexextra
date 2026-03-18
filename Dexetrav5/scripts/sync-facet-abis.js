@@ -23,6 +23,8 @@ async function main() {
     'OBViewFacet',
     'OBSettlementFacet',
     'MetaTradeFacet',
+    'MarketLifecycleFacet',
+    'OrderBookVaultAdminFacet',
   ];
 
   // Dexetrav5/scripts -> artifacts/src/diamond/facets

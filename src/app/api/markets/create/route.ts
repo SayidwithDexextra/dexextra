@@ -19,6 +19,7 @@ import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
 import { getPusherServer } from '@/lib/pusher-server';
+import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
 
 // Vercel: this endpoint can be long-running during deployment.
 export const runtime = 'nodejs';
@@ -1285,8 +1286,8 @@ export async function POST(req: Request) {
       const protocolFeeRecipient =
         process.env.PROTOCOL_FEE_RECIPIENT ||
         (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
-      const takerFeeBps = 45;   // 0.045%
-      const makerFeeBps = 15;   // 0.015%
+      const takerFeeBps = 7;    // 0.07% → 7 bps → $0.07 on $100
+      const makerFeeBps = 3;    // 0.03% → 3 bps → $0.03 on $100
       const protocolShareBps = 8000; // 80% to protocol, 20% to market owner
 
       if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
@@ -1529,14 +1530,26 @@ export async function POST(req: Request) {
           }
         } catch {}
       }
+
+      // Schedule QStash lifecycle triggers (rollover + settlement + finalize)
+      if (savedRow?.id && settlementTs > Math.floor(Date.now() / 1000)) {
+        try {
+          const scheduleIds = await scheduleMarketLifecycle(savedRow.id, settlementTs, {
+            marketAddress: orderBook,
+            symbol,
+          });
+          logS('qstash_schedule', 'success', { scheduleIds });
+        } catch (e: any) {
+          logS('qstash_schedule', 'error', { error: e?.message || String(e) });
+        }
+      }
+
       logS('save_market', 'success');
     } catch (e: any) {
       logS('save_market', 'error', { error: e?.message || String(e) });
       return NextResponse.json({
         error: 'Save market failed',
         details: e?.message || String(e),
-        // Include on-chain identifiers so a user can re-run /api/markets/save manually
-        // without redeploying if the DB write fails.
         symbol,
         orderBook,
         marketId,
