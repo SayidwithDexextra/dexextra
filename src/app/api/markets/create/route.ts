@@ -365,7 +365,7 @@ export async function POST(req: Request) {
     const tags = Array.isArray(body?.tags) ? body.tags.slice(0, 10).map((t: any) => String(t)) : [];
     const providedName = typeof body?.name === 'string' ? String(body.name).trim() : '';
     const providedDescription = typeof body?.description === 'string' ? String(body.description).trim() : '';
-    const creatorWalletAddress = (body?.creatorWalletAddress && ethers.isAddress(body.creatorWalletAddress)) ? body.creatorWalletAddress : null;
+    const creatorWalletAddress = (body?.creatorWalletAddress && ethers.isAddress(body.creatorWalletAddress)) ? String(body.creatorWalletAddress).toLowerCase() : null;
     const clientCutArg = Array.isArray(body?.cutArg) ? body.cutArg : (Array.isArray(body?.cut) ? body.cut : null);
     const iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
     const bannerImageUrl = body?.bannerImageUrl ? String(body.bannerImageUrl).trim() : null;

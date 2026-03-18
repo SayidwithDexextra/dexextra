@@ -111,8 +111,8 @@ export async function POST(request: NextRequest) {
       deployment_status: body.deployment_status || 'pending',
 
       // User Information
-      creator_wallet_address: body.user_address,
-      creator_user_id: null, // Will be populated if user has profile
+      creator_wallet_address: body.user_address ? String(body.user_address).toLowerCase() : null,
+      creator_user_id: null,
 
       // AI Metric Resolution Link (optional)
       metric_resolution_id: body.metric_resolution_id || null,
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
       last_trade_price: body.initial_order_enabled ? body.initial_order_price : null,
       market_status: body.deployment_status === 'deployed' ? 'ACTIVE' : 'PENDING',
       deployment_status: (body.deployment_status || 'PENDING').toUpperCase(),
-      creator_wallet_address: body.user_address || null,
+      creator_wallet_address: body.user_address ? String(body.user_address).toLowerCase() : null,
       creator_user_id: null,
       metric_resolution_id: body.metric_resolution_id || null,
       created_at: new Date().toISOString(),
@@ -398,7 +398,7 @@ export async function PUT(request: NextRequest) {
     if (updateData.gas_used !== undefined) finalUpdateData.deployment_gas_used = updateData.gas_used;
     if (updateData.market_status !== undefined) finalUpdateData.market_status = String(updateData.market_status).toUpperCase();
     if (updateData.deployment_status !== undefined) finalUpdateData.deployment_status = String(updateData.deployment_status).toUpperCase();
-    if (updateData.user_address !== undefined) finalUpdateData.creator_wallet_address = updateData.user_address;
+    if (updateData.user_address !== undefined) finalUpdateData.creator_wallet_address = String(updateData.user_address).toLowerCase();
 
     // If market is being deployed, set deployed_at
     if (updateData.deployment_status === 'deployed' && !updateData.deployed_at) {

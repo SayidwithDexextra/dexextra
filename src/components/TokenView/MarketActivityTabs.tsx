@@ -648,15 +648,18 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
         isUnderLiquidation: false,
       });
     }
-    // Sort by value (size * markPrice) descending so largest positions appear first
+    const pageSymbol = String(symbol || '').toUpperCase();
     next.sort((a, b) => {
+      const aMatch = String(a.symbol || '').toUpperCase() === pageSymbol ? 1 : 0;
+      const bMatch = String(b.symbol || '').toUpperCase() === pageSymbol ? 1 : 0;
+      if (aMatch !== bMatch) return bMatch - aMatch;
       const valueA = (a.size || 0) * (a.markPrice || 0);
       const valueB = (b.size || 0) * (b.markPrice || 0);
       return valueB - valueA;
     });
     return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions, posOverlayTick, md.markPrice, md.lastTradePrice, md.bestBid, md.bestAsk]);
+  }, [positions, posOverlayTick, md.markPrice, md.lastTradePrice, md.bestBid, md.bestAsk, symbol]);
 
   // Walkthrough hooks: allow the token tour to expand a position row.
   useEffect(() => {
@@ -2251,11 +2254,12 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       <tr className="border-b border-t-stroke">
                         <th className="text-left pl-1.5 sm:pl-2 pr-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Symbol</th>
                         <th className="text-left px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Side</th>
-                        <th className="hidden sm:table-cell text-right px-1.5 sm:px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
+                        <th className="text-right px-1 sm:px-1.5 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Size</th>
+                        <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Entry</th>
                         <th className="hidden md:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Mark</th>
                         <th className="text-right px-1 sm:px-2 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide">PnL</th>
                         <th className="hidden sm:table-cell text-right px-2 py-1.5 text-[10px] font-medium text-t-fg-label uppercase tracking-wide">Liq Price</th>
-                        <th className="text-right pr-1.5 sm:pr-2 pl-1 py-1.5 text-[9px] sm:text-[10px] font-medium text-t-fg-label uppercase tracking-wide"></th>
+                        <th className="w-0 pr-1 sm:pr-1.5 py-1.5"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2291,8 +2295,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               <td className="px-1 sm:px-2 py-1.5">
                                 <span className="inline-block w-[32px] sm:w-[44px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
-                              <td className="hidden sm:table-cell px-1.5 sm:px-2 py-1.5 text-right">
-                                <span className="inline-block w-[64px] h-[12px] bg-t-inset rounded animate-pulse" />
+                              <td className="px-1 sm:px-1.5 sm:px-2 py-1.5 text-right">
+                                <span className="inline-block w-[48px] sm:w-[64px] h-[12px] bg-t-inset rounded animate-pulse" />
+                              </td>
+                              <td className="hidden sm:table-cell px-2 py-1.5 text-right">
+                                <span className="inline-block w-[72px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                               <td className="hidden md:table-cell px-2 py-1.5 text-right">
                                 <span className="inline-block w-[72px] h-[12px] bg-t-inset rounded animate-pulse" />
@@ -2303,8 +2310,8 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               <td className="hidden sm:table-cell px-2 py-1.5 text-right">
                                 <span className="inline-block w-[72px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
-                              <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
-                                <span className="inline-block w-[36px] sm:w-[52px] h-[12px] bg-t-inset rounded animate-pulse" />
+                              <td className="pr-1 sm:pr-1.5 py-1.5 text-right w-0">
+                                <span className="inline-block w-[12px] h-[12px] bg-t-inset rounded animate-pulse" />
                               </td>
                             </tr>
                           );
@@ -2350,8 +2357,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                                   {position.side}
                                 </span>
                               </td>
-                          <td className="hidden sm:table-cell px-1.5 sm:px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-t-fg font-mono">{formatSize(position.size)}</span>
+                          <td className="px-1 sm:px-1.5 sm:px-2 py-1.5 text-right">
+                            <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">{formatSize(position.size)}</span>
+                          </td>
+                          <td className="hidden sm:table-cell px-2 py-1.5 text-right">
+                            <span className="text-[11px] text-t-fg-muted font-mono">${formatPrice(position.entryPrice)}</span>
                           </td>
                           <td className="hidden md:table-cell px-2 py-1.5 text-right">
                             <span className="text-[11px] text-t-fg font-mono">${formatPrice(position.markPrice)}</span>
@@ -2405,14 +2415,14 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                               )}
                             </div>
                           </td>
-                          <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
+                          <td className="pr-1 sm:pr-1.5 py-1.5 text-right w-0">
                   <button 
                     onClick={() => setExpandedPositionId(expandedPositionId === position.id ? null : position.id)}
                     data-walkthrough="token-activity-manage"
-                    className={`${forcePositionManageVisible ? 'opacity-100' : 'sm:opacity-0 sm:group-hover/row:opacity-100'} transition-opacity duration-200 px-1 sm:px-1.5 py-0.5 text-[9px] text-t-fg hover:text-t-fg hover:bg-t-card-hover rounded`}
+                    className={`${forcePositionManageVisible ? 'opacity-100' : 'sm:opacity-0 sm:group-hover/row:opacity-100'} transition-opacity duration-200 p-0.5 text-[9px] text-t-fg-muted hover:text-t-fg hover:bg-t-card-hover rounded`}
+                    title={expandedPositionId === position.id ? 'Hide' : 'Manage'}
                   >
                     {expandedPositionId === position.id ? '▾' : '▸'}
-                    <span className="hidden sm:inline ml-0.5">{expandedPositionId === position.id ? 'Hide' : 'Manage'}</span>
                             </button>
                           </td>
                         </tr>
@@ -2424,9 +2434,9 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
                             <div className="flex items-center gap-3">
                               <div className="flex flex-col gap-1 sm:hidden">
-                                <span className="text-[9px] text-t-fg-label">Size</span>
+                                <span className="text-[9px] text-t-fg-label">Entry</span>
                                 <span className="text-[10px] font-medium font-mono text-t-fg">
-                                  {formatSize(position.size)}
+                                  ${formatPrice(position.entryPrice)}
                                 </span>
                               </div>
                               <div className="flex flex-col gap-1">

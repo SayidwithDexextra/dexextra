@@ -383,7 +383,7 @@ export async function POST(req: Request) {
         metric_resolution_id: resolutionId,
         chain_id: chainId,
         network: networkStr.length > 50 ? networkStr.slice(0, 50) : networkStr,
-        creator_wallet_address: creatorWalletAddress || null,
+        creator_wallet_address: creatorWalletAddress ? String(creatorWalletAddress).toLowerCase() : null,
         banner_image_url: bannerImageUrl || null,
         icon_image_url: iconImageUrl || null,
         supporting_photo_urls: supportingPhotoUrls || [],

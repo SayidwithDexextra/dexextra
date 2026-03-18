@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import styles from './MarketInfoHeader.module.css';
 import { ShareModal } from '../ShareModal';
 import { Tooltip } from '../ui/Tooltip';
@@ -33,6 +34,16 @@ export interface MarketStatsOnChain {
   low24h: number;
   priceChange24h: number;
   priceChangePercent24h: number;
+  totalMarginLocked?: number;
+}
+
+export interface SeriesMarketItem {
+  marketId: string;
+  symbol: string;
+  isActive: boolean;
+  isPrimary: boolean;
+  role?: 'front' | 'next';
+  contractCode?: string;
 }
 
 export interface MarketInfoHeaderProps {
@@ -65,6 +76,8 @@ export interface MarketInfoHeaderProps {
   isWatchlisted?: boolean;
   isWatchlistLoading?: boolean;
   isWatchlistDisabled?: boolean;
+  seriesSlug?: string;
+  seriesMarkets?: SeriesMarketItem[];
   className?: string;
 }
 
@@ -325,8 +338,11 @@ export default function MarketInfoHeader({
   isWatchlisted = false,
   isWatchlistLoading = false,
   isWatchlistDisabled = false,
+  seriesSlug,
+  seriesMarkets,
   className,
 }: MarketInfoHeaderProps) {
+  const router = useRouter();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [copiedField, setCopiedField] = useState<'address' | 'marketId' | null>(null);
@@ -335,6 +351,7 @@ export default function MarketInfoHeader({
   const formattedSettlement = settlementDate ? formatSettlementDate(settlementDate) : null;
   const countdown = useCountdown(settlementDate);
   const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
+  const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 2;
 
   const handleWatchlistClick = () => {
     if (!isWatchlistLoading && !isWatchlistDisabled && onWatchlistToggle) {
@@ -583,6 +600,37 @@ export default function MarketInfoHeader({
         </div>
       </header>
 
+      {/* Contract Rollover Bar */}
+      {hasRollover && (
+        <div className={styles.rolloverBar}>
+          <div className={styles.rolloverInfo}>
+            <div className={styles.rolloverDot} />
+            <span className={styles.rolloverLabel}>Contract Rollover Active</span>
+            <span className={styles.rolloverSlug}>{seriesSlug}</span>
+          </div>
+          <div className={styles.rolloverMarkets}>
+            {seriesMarkets!.map((m) => (
+              <button
+                key={m.marketId}
+                className={`${styles.rolloverMarketBtn} ${m.isActive ? styles.rolloverMarketBtnActive : ''} ${m.isPrimary ? styles.rolloverMarketBtnPrimary : ''}`}
+                onClick={() => router.push(`/token/${encodeURIComponent(m.symbol)}`)}
+                title={m.isPrimary ? 'Primary' : 'Secondary'}
+              >
+                <span>{m.symbol}</span>
+                {m.contractCode && (
+                  <span className={styles.rolloverMarketCode}>{m.contractCode}</span>
+                )}
+                {m.role && (
+                  <span className={styles.rolloverMarketCode}>
+                    {m.role === 'front' ? 'Front Year' : 'Next Year'}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* On-Chain Market Stats Bar */}
       {marketStats && (
         <div className={styles.marketStatsBar}>
@@ -643,6 +691,15 @@ export default function MarketInfoHeader({
             <span className={styles.marketStatLabel}>Trades</span>
             <span className={styles.marketStatValue}>{marketStats.totalTrades.toLocaleString()}</span>
           </div>
+          {marketStats.totalMarginLocked != null && marketStats.totalMarginLocked > 0 && (
+            <>
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Total Margin</span>
+                <span className={styles.marketStatValue}>{formatStatValue(marketStats.totalMarginLocked)}</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 

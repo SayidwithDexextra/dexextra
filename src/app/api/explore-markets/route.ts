@@ -38,8 +38,7 @@ export async function GET(req: NextRequest) {
          is_active, market_status, total_volume, total_trades,
          open_interest_long, open_interest_short,
          settlement_date, trading_end_date, created_at, deployed_at,
-         creator_wallet_address,
-         user_profiles!creator_user_id(username, display_name, profile_image_url)`,
+         creator_wallet_address`,
         { count: 'exact' }
       )
       .eq('is_active', true);
@@ -75,11 +74,35 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Resolve creator profiles by wallet address (case-insensitive)
+    const creatorProfilesByWallet = new Map<string, any>();
+    const uniqueCreatorWallets = [
+      ...new Set(
+        (markets || [])
+          .map((m: any) => m.creator_wallet_address)
+          .filter(Boolean)
+          .map((addr: string) => addr.toLowerCase())
+      ),
+    ];
+    if (uniqueCreatorWallets.length > 0) {
+      const { data: profiles } = await supabaseAdmin
+        .from('user_profiles')
+        .select('wallet_address, username, display_name, profile_image_url')
+        .in('wallet_address', uniqueCreatorWallets)
+        .eq('is_active', true);
+
+      for (const p of profiles || []) {
+        creatorProfilesByWallet.set(p.wallet_address.toLowerCase(), p);
+      }
+    }
+
     const rows = (markets || []).map((m: any) => {
       const ticker = tickersByMarketId.get(m.id);
       const sym = (m.symbol || m.market_identifier || '').toUpperCase();
       const trending = trendingBySymbol.get(sym);
-      const creatorProfile = m.user_profiles;
+      const creatorProfile = m.creator_wallet_address
+        ? creatorProfilesByWallet.get(m.creator_wallet_address.toLowerCase())
+        : null;
 
       return {
         market_id: m.id,

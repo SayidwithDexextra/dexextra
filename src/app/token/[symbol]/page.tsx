@@ -27,7 +27,6 @@ import { MarketDataProvider, useMarketData } from '@/contexts/MarketDataContext'
 // Removed contractDeployment import
 // Removed useVAMMSettlement hook
 import { MetricLivePrice } from '@/components';
-import SeriesMarketToggle from '@/components/Series/SeriesMarketToggle';
 import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRouting';
 import { SettlementInterface } from '@/components/SettlementInterface';
 import { CommentSection } from '@/components/CommentSection';
@@ -179,9 +178,21 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       },
     ] as const;
 
+    const TOTAL_MARGIN_ABI = [
+      {
+        type: 'function' as const,
+        name: 'totalMarginLockedInMarket' as const,
+        stateMutability: 'view' as const,
+        inputs: [],
+        outputs: [
+          { type: 'uint256', name: '' },
+        ],
+      },
+    ] as const;
+
     const fetchStats = async () => {
       try {
-        const [priceData, tradeStats, chStats] = await Promise.all([
+        const [priceData, tradeStats, chStats, totalMarginRaw] = await Promise.all([
           publicClient.readContract({
             address: addr,
             abi: PRICING_ABI,
@@ -198,6 +209,12 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             .then(r => r.ok ? r.json() : null)
             .then(j => j?.stats ?? null)
             .catch(() => null),
+          publicClient.readContract({
+            address: addr,
+            abi: TOTAL_MARGIN_ABI,
+            functionName: 'totalMarginLockedInMarket',
+            args: [],
+          }).catch(() => null),
         ]);
 
         if (cancelled) return;
@@ -224,6 +241,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           low24h: chStats?.low24h ?? 0,
           priceChange24h: chStats?.priceChange24h ?? 0,
           priceChangePercent24h: chStats?.priceChangePercent24h ?? 0,
+          totalMarginLocked: totalMarginRaw != null ? Number(totalMarginRaw) / 1e6 : undefined,
         });
       } catch (err) {
         console.warn('[marketStats] Failed to fetch stats:', err);
@@ -1105,29 +1123,26 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             isWatchlisted={isWatchlisted}
             isWatchlistLoading={isWatchlistLoading}
             isWatchlistDisabled={!walletData?.address}
-          />
-        </div>
-      )}
-      <div className="flex-1 min-h-0 flex flex-col md:block px-1 md:pb-8 pt-1">
-        <div className="flex-1 min-h-0 flex flex-col md:block relative overflow-hidden md:overflow-y-visible">
-          <div className={`flex-1 min-h-0 flex flex-col md:block transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
-            {/* Rollover toggle (if active pair exists) */}
-            {pair && seriesMkts && seriesMkts.length >= 2 && (
-              <div className="mb-1">
-                <SeriesMarketToggle
-                  seriesSlug={pair.seriesSlug}
-                  markets={seriesMkts
+            seriesSlug={pair?.seriesSlug}
+            seriesMarkets={
+              pair && seriesMkts && seriesMkts.length >= 2
+                ? seriesMkts
                     .filter(m => m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId)
                     .map(m => ({
                       marketId: m.marketId,
                       symbol: m.symbol,
                       isActive: m.symbol === currentSymbol,
                       isPrimary: m.isPrimary,
-                      role: m.marketId === pair.fromMarketId ? 'front' : 'next'
-                    }))}
-                />
-              </div>
-            )}
+                      role: (m.marketId === pair.fromMarketId ? 'front' : 'next') as 'front' | 'next',
+                    }))
+                : undefined
+            }
+          />
+        </div>
+      )}
+      <div className="flex-1 min-h-0 flex flex-col md:block px-1 md:pb-8 pt-1">
+        <div className="flex-1 min-h-0 flex flex-col md:block relative overflow-hidden md:overflow-y-visible">
+          <div className={`flex-1 min-h-0 flex flex-col md:block transition-transform duration-500 ease-in-out ${isSettlementView ? '-translate-x-4' : 'translate-x-0'}`}>
             <div className="flex md:hidden flex-col flex-1 min-h-0">
               <MobileTradingTabs
                 className="w-full mt-0.5 flex-1 min-h-0"
@@ -1490,6 +1505,20 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   isWatchlisted={isWatchlisted}
                   isWatchlistLoading={isWatchlistLoading}
                   isWatchlistDisabled={!walletData?.address}
+                  seriesSlug={pair?.seriesSlug}
+                  seriesMarkets={
+                    pair && seriesMkts && seriesMkts.length >= 2
+                      ? seriesMkts
+                          .filter(m => m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId)
+                          .map(m => ({
+                            marketId: m.marketId,
+                            symbol: m.symbol,
+                            isActive: m.symbol === currentSymbol,
+                            isPrimary: m.isPrimary,
+                            role: (m.marketId === pair.fromMarketId ? 'front' : 'next') as 'front' | 'next',
+                          }))
+                      : undefined
+                  }
                 />
               </div>
             )}
