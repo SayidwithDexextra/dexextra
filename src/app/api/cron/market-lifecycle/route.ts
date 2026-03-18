@@ -235,8 +235,15 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
   const rolloverCreator = funderAddress || market.creator_wallet_address || '';
+
+  // Generate unique identifier for rollover child so it doesn't collide with the parent
+  const baseSymbol = market.symbol || market.market_identifier || 'UNKNOWN';
+  const childSymbol = `${baseSymbol}-R${Date.now()}`;
+
   const createPayload: Record<string, unknown> = {
-    symbol: market.symbol || market.market_identifier,
+    symbol: childSymbol,
+    name: `${baseSymbol} Futures (Rollover)`,
+    description: market.description || `Rollover market for ${baseSymbol}`,
     metricUrl: (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '',
     settlementDate: childSettlementUnix,
     startPrice: (initialOrder as any)?.startPrice || 1,

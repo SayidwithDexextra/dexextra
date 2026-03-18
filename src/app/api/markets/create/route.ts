@@ -248,20 +248,20 @@ function loadFacetAbi(contractName: string, fallbackAbi: any[]): any[] {
 async function getTxOverrides(provider: ethers.Provider) {
   try {
     const fee = await provider.getFeeData();
-    const minPriority = ethers.parseUnits('2', 'gwei');
-    const minMax = ethers.parseUnits('20', 'gwei');
+    const minPriority = ethers.parseUnits('0.1', 'gwei');
+    const minMax = ethers.parseUnits('1', 'gwei');
     if (fee.maxFeePerGas && fee.maxPriorityFeePerGas) {
       const maxPriority = fee.maxPriorityFeePerGas > minPriority ? fee.maxPriorityFeePerGas : minPriority;
       let maxFee = fee.maxFeePerGas + maxPriority;
       if (maxFee < minMax) maxFee = minMax;
       return { maxFeePerGas: maxFee, maxPriorityFeePerGas: maxPriority } as const;
     }
-    const base = fee.gasPrice || ethers.parseUnits('10', 'gwei');
+    const base = fee.gasPrice || ethers.parseUnits('0.5', 'gwei');
     const bumped = (base * 12n) / 10n; // +20%
-    const minLegacy = ethers.parseUnits('20', 'gwei');
+    const minLegacy = ethers.parseUnits('1', 'gwei');
     return { gasPrice: bumped > minLegacy ? bumped : minLegacy } as const;
   } catch {
-    return { gasPrice: ethers.parseUnits('20', 'gwei') } as const;
+    return { gasPrice: ethers.parseUnits('1', 'gwei') } as const;
   }
 }
 
@@ -371,6 +371,8 @@ export async function POST(req: Request) {
     const bannerImageUrl = body?.bannerImageUrl ? String(body.bannerImageUrl).trim() : null;
     const aiSourceLocator = body?.aiSourceLocator || null;
     const isRollover = body?.isRollover === true;
+    const parentMarketId = isRollover && typeof body?.parentMarketId === 'string' ? body.parentMarketId : null;
+    const parentMarketAddress = isRollover && typeof body?.parentMarketAddress === 'string' ? body.parentMarketAddress : null;
     // Validate settlement date is required and in the future
     if (!body?.settlementDate || typeof body.settlementDate !== 'number' || body.settlementDate <= 0) {
       return NextResponse.json({
@@ -1449,9 +1451,15 @@ export async function POST(req: Request) {
           market_config: {
             ...(aiSourceLocator ? { ai_source_locator: aiSourceLocator } : {}),
             wayback_snapshot: archivedWaybackUrl ? { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: metricUrl } : null,
+            ...(isRollover ? {
+              rollover_lineage: {
+                parent_market_id: parentMarketId,
+                parent_market_address: parentMarketAddress,
+                rolled_over_at: new Date().toISOString(),
+              },
+            } : {}),
           },
           chain_id: Number(network.chainId),
-          // DB column `network` is varchar(50); keep it safe for local chain names.
           network: networkNameRaw.length > 50 ? networkNameRaw.slice(0, 50) : networkNameRaw,
           creator_wallet_address: creatorWalletAddress,
           banner_image_url: bannerImageUrl || iconImageUrl || null,
@@ -1466,13 +1474,21 @@ export async function POST(req: Request) {
           market_status: 'ACTIVE',
           deployed_at: new Date().toISOString(),
         };
-        // Idempotent save: allow safe retries on timeouts / client refresh.
-        let { data: savedRow, error: saveErr } = await supabase
-          .from('markets')
-          .upsert([insertPayload], { onConflict: 'market_identifier' })
-          .select('id')
-          .limit(1)
-          .maybeSingle();
+        // Rollover markets MUST be inserted as new rows (unique identifier).
+        // Non-rollover markets use upsert for idempotent retries on timeouts.
+        let { data: savedRow, error: saveErr } = isRollover
+          ? await supabase
+              .from('markets')
+              .insert([insertPayload])
+              .select('id')
+              .limit(1)
+              .maybeSingle()
+          : await supabase
+              .from('markets')
+              .upsert([insertPayload], { onConflict: 'market_identifier' })
+              .select('id')
+              .limit(1)
+              .maybeSingle();
         if (saveErr) {
           const rawMsg = String(saveErr?.message || saveErr || '');
           const isSettlementPastConstraint =
@@ -1500,12 +1516,19 @@ export async function POST(req: Request) {
               updated_at: nowIso,
             };
 
-            const fallback = await supabase
-              .from('markets')
-              .upsert([fallbackPayload], { onConflict: 'market_identifier' })
-              .select('id')
-              .limit(1)
-              .maybeSingle();
+            const fallback = isRollover
+              ? await supabase
+                  .from('markets')
+                  .insert([fallbackPayload])
+                  .select('id')
+                  .limit(1)
+                  .maybeSingle()
+              : await supabase
+                  .from('markets')
+                  .upsert([fallbackPayload], { onConflict: 'market_identifier' })
+                  .select('id')
+                  .limit(1)
+                  .maybeSingle();
 
             if (fallback.error) {
               throw new Error(`primary save failed: ${rawMsg}; fallback save failed: ${String(fallback.error?.message || fallback.error)}`);

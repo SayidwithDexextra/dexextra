@@ -19,20 +19,20 @@ async function getTxOverrides() {
   try {
     const provider = new ethers.JsonRpcProvider(process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL);
     const fee = await provider.getFeeData();
-    const minPriority = ethers.parseUnits('2', 'gwei');
-    const minMax = ethers.parseUnits('20', 'gwei');
+    const minPriority = ethers.parseUnits('0.1', 'gwei');
+    const minMax = ethers.parseUnits('1', 'gwei');
     if (fee.maxFeePerGas && fee.maxPriorityFeePerGas) {
       const maxPriority = fee.maxPriorityFeePerGas > minPriority ? fee.maxPriorityFeePerGas : minPriority;
       let maxFee = fee.maxFeePerGas + maxPriority;
       if (maxFee < minMax) maxFee = minMax;
       return { maxFeePerGas: maxFee, maxPriorityFeePerGas: maxPriority } as const;
     }
-    const base = fee.gasPrice || ethers.parseUnits('10', 'gwei');
+    const base = fee.gasPrice || ethers.parseUnits('0.5', 'gwei');
     const bumped = (base * 12n) / 10n; // +20%
-    const minLegacy = ethers.parseUnits('20', 'gwei');
+    const minLegacy = ethers.parseUnits('1', 'gwei');
     return { gasPrice: bumped > minLegacy ? bumped : minLegacy } as const;
   } catch {
-    return { gasPrice: ethers.parseUnits('20', 'gwei') } as const;
+    return { gasPrice: ethers.parseUnits('1', 'gwei') } as const;
   }
 }
 

@@ -89,6 +89,7 @@ contract MarketBondManagerV2 {
     }
 
     mapping(bytes32 => BondInfo) public bondByMarket;
+    mapping(address => bool) public bondExempt;
 
     constructor(
         address _vault,
@@ -139,6 +140,11 @@ contract MarketBondManagerV2 {
         minBondAmount = _minBondAmount;
         maxBondAmount = _maxBondAmount;
         emit DefaultBondUpdated(_defaultBondAmount, _minBondAmount, _maxBondAmount);
+    }
+
+    function setBondExempt(address user, bool exempt) external onlyOwner {
+        if (user == address(0)) revert InvalidAddress();
+        bondExempt[user] = exempt;
     }
 
     function setPenaltyConfig(uint256 penaltyBps, address recipient) external onlyOwner {
@@ -206,6 +212,12 @@ contract MarketBondManagerV2 {
         if (creator == address(0)) revert InvalidAddress();
         BondInfo storage b = bondByMarket[marketId];
         if (b.creator != address(0)) revert BondAlreadyRecorded();
+
+        if (bondExempt[creator]) {
+            bondByMarket[marketId] = BondInfo({creator: creator, amount: 0, refunded: false});
+            emit BondPosted(marketId, creator, 0);
+            return;
+        }
 
         uint256 amount = defaultBondAmount; // gross bond
 
