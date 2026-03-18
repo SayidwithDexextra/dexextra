@@ -964,14 +964,8 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                     Load more trades...
                   </button>
                 ) : allTradesHook.trades.length > 0 ? (
-                  <div className="text-[9px] text-t-fg-muted text-center py-2 flex items-center justify-center gap-2">
-                    <span>All {allTradesHook.trades.length} trades loaded</span>
-                    <button
-                      onClick={allTradesHook.refresh}
-                      className="text-blue-400 hover:text-blue-300"
-                    >
-                      refresh
-                    </button>
+                  <div className="text-[9px] text-t-fg-muted text-center py-2">
+                    All {allTradesHook.trades.length} trades loaded
                   </div>
                 ) : null}
               </div>

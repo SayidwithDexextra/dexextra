@@ -123,6 +123,7 @@ export function useAllTrades(orderBookAddress: string | null | undefined) {
 
   const offsetRef = useRef(0);
   const addressRef = useRef(orderBookAddress);
+  const hasInitialLoadRef = useRef(false);
 
   // Reset when address changes
   useEffect(() => {
@@ -133,6 +134,7 @@ export function useAllTrades(orderBookAddress: string | null | undefined) {
       setHasMore(true);
       setError(null);
       offsetRef.current = 0;
+      hasInitialLoadRef.current = false;
     }
   }, [orderBookAddress]);
 
@@ -217,16 +219,18 @@ export function useAllTrades(orderBookAddress: string | null | undefined) {
     fetchPage(true);
   }, [fetchStats, fetchPage]);
 
-  // Auto-load when activated and address becomes available
+  // Auto-load once when activated and address becomes available
   useEffect(() => {
-    if (active && orderBookAddress && trades.length === 0 && !isLoading && !error) {
+    if (active && orderBookAddress && !hasInitialLoadRef.current && !isLoading) {
+      hasInitialLoadRef.current = true;
       doLoad();
     }
-  }, [active, orderBookAddress, trades.length, isLoading, error, doLoad]);
+  }, [active, orderBookAddress, isLoading, doLoad]);
 
   const loadInitial = useCallback(() => {
     setActive(true);
     if (orderBookAddress) {
+      hasInitialLoadRef.current = true;
       doLoad();
     }
   }, [orderBookAddress, doLoad]);

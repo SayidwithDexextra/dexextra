@@ -5,7 +5,6 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import searchModalDesign from '../../design/searchModal.json'
 import { getSupabaseClient } from '@/lib/supabase-browser'
-import MarketPairBadge from './Series/MarketPairBadge'
 import { metricSourceFromMarket } from '@/lib/metricSource'
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile'
 
@@ -14,7 +13,6 @@ interface SearchModalProps {
   onClose: () => void
 }
 
-// Import types for real data structures
 interface Market {
   id: string;
   market_identifier?: string;
@@ -36,6 +34,20 @@ interface Market {
   metric_source_url?: string | null;
   metric_source_host?: string | null;
   metric_source_label?: string | null;
+  series_id?: string | null;
+  series_sequence?: number | null;
+  settlement_date?: string | null;
+  trading_end_date?: string | null;
+  settlement_value?: number | null;
+  settlement_timestamp?: string | null;
+  market_status?: string;
+}
+
+interface MarketGroup {
+  primary: Market;
+  seriesId?: string;
+  seriesSlug?: string;
+  historical: Market[];
 }
 
 interface UserProfileSearchResult {
@@ -84,8 +96,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     return () => mq.removeEventListener('change', handler)
   }, [])
 
-  const [pairMap, setPairMap] = useState<Record<string, { otherId: string; seriesSlug: string }>>({})
-  const [idToMarket, setIdToMarket] = useState<Record<string, Market>>({})
+  const [marketGroups, setMarketGroups] = useState<MarketGroup[]>([])
+  const [expandedSeries, setExpandedSeries] = useState<Set<string>>(new Set())
   const [recentSearches, setRecentSearches] = useState<string[]>([])
   const [showAllUsers, setShowAllUsers] = useState(false)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
@@ -168,22 +180,33 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
     el.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' })
   }, [])
 
-  // Search function with debouncing
+  const toggleSeriesExpand = useCallback((groupKey: string) => {
+    setExpandedSeries(prev => {
+      const next = new Set(prev)
+      if (next.has(groupKey)) next.delete(groupKey)
+      else next.add(groupKey)
+      return next
+    })
+  }, [])
+
+  const formatDate = useCallback((dateStr?: string | null) => {
+    if (!dateStr) return null
+    try {
+      const d = new Date(dateStr)
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    } catch { return null }
+  }, [])
+
   const performSearch = useCallback(async (searchTerm: string) => {
     if (!searchTerm.trim()) {
-      setSearchResults({
-        markets: [],
-        users: [],
-        isLoading: false,
-        error: null
-      })
+      setSearchResults({ markets: [], users: [], isLoading: false, error: null })
+      setMarketGroups([])
       return
     }
 
     setSearchResults(prev => ({ ...prev, isLoading: true, error: null }))
 
     try {
-      // Use full-text search for markets (handles multi-word queries, partial matches)
       const [marketsResponse, usersResponse] = await Promise.all([
         fetch(`/api/markets?fts=${encodeURIComponent(searchTerm)}&limit=15`),
         fetch(`/api/profile/search?q=${encodeURIComponent(searchTerm)}&limit=10`)
@@ -195,86 +218,143 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
       let markets: Market[] = []
       let users: UserProfileSearchResult[] = []
 
-      // Build market map from FTS results (already relevance-ordered from API)
       const marketMap = new Map<string, Market>()
-      
       if (marketsData.success && marketsData.markets) {
         marketsData.markets.forEach((market: Market) => {
           marketMap.set(market.id, market)
         })
       }
-
       markets = Array.from(marketMap.values())
 
-      // Series-aware enrichment: if any of these markets are in an active rollover pair,
-      // fetch the paired market so the UI can present both choices.
-      let computedPairMap: Record<string, { otherId: string; seriesSlug: string }> = {}
+      // Collect unique series_ids from results to fetch full series history
+      const seriesIds = new Set<string>()
+      markets.forEach(m => { if (m.series_id) seriesIds.add(m.series_id) })
+
+      // Also check v_active_rollover_pairs for any markets in an active rollover
+      let seriesSlugMap: Record<string, string> = {}
       if (markets.length > 0) {
-        const supabase = getSupabaseClient();
-        const ids = markets.map(m => m.id);
-        // Find active pairs where any of these ids are either from or to
-        const [{ data: pairsFrom, error: eFrom }, { data: pairsTo, error: eTo }] = await Promise.all([
-          supabase
-            .from('v_active_rollover_pairs')
+        const supabase = getSupabaseClient()
+        const ids = markets.map(m => m.id)
+        const [{ data: pairsFrom }, { data: pairsTo }] = await Promise.all([
+          supabase.from('v_active_rollover_pairs')
             .select('series_id, series_slug, from_market_id, to_market_id')
             .in('from_market_id', ids),
-          supabase
-            .from('v_active_rollover_pairs')
+          supabase.from('v_active_rollover_pairs')
             .select('series_id, series_slug, from_market_id, to_market_id')
             .in('to_market_id', ids)
-        ]);
-        if (eFrom) console.warn('pairsFrom error', eFrom.message);
-        if (eTo) console.warn('pairsTo error', eTo.message);
-        const pairs = [...(pairsFrom || []), ...(pairsTo || [])] as any[];
-        if (pairs.length > 0) {
-          // Build set of paired market ids we might be missing
-          const pairedIds = new Set<string>();
-          pairs.forEach(p => {
-            if (!marketMap.has(p.from_market_id)) pairedIds.add(p.from_market_id);
-            if (!marketMap.has(p.to_market_id)) pairedIds.add(p.to_market_id);
-            computedPairMap[p.from_market_id] = { otherId: p.to_market_id, seriesSlug: p.series_slug };
-            computedPairMap[p.to_market_id] = { otherId: p.from_market_id, seriesSlug: p.series_slug };
-          });
-          if (pairedIds.size > 0) {
-            // Fetch minimal info for paired markets not already in results
-            const { data: extraMkts, error: eMkts } = await supabase
-              .from('markets')
-              .select('id, symbol, description, icon_image_url, deployment_status, decimals, minimum_order_size, tick_size, category, initial_order, market_config')
-              .in('id', Array.from(pairedIds));
-            if (!eMkts && extraMkts) {
-              extraMkts.forEach((m: any) => {
-                // Coerce into our SearchModal Market type shape where possible
+        ])
+        const pairs = [...(pairsFrom || []), ...(pairsTo || [])] as any[]
+        pairs.forEach(p => {
+          if (p.series_id) {
+            seriesIds.add(p.series_id)
+            seriesSlugMap[p.series_id] = p.series_slug
+          }
+        })
+
+        // Fetch all markets belonging to discovered series
+        if (seriesIds.size > 0) {
+          const { data: siblingRows } = await supabase
+            .from('markets')
+            .select('id, market_identifier, symbol, description, category, icon_image_url, deployment_status, created_at, series_id, series_sequence, settlement_date, trading_end_date, settlement_value, settlement_timestamp, market_status, market_config, decimals, initial_order')
+            .in('series_id', Array.from(seriesIds))
+            .order('series_sequence', { ascending: false })
+
+          if (siblingRows) {
+            siblingRows.forEach((m: any) => {
+              if (!marketMap.has(m.id)) {
                 marketMap.set(m.id, {
                   id: m.id,
-                  symbol: m.symbol,
+                  market_identifier: m.market_identifier,
+                  symbol: m.symbol || '',
                   description: m.description || '',
                   category: Array.isArray(m.category) ? m.category : (m.category ? [m.category] : []),
                   initial_price: 0,
                   price_decimals: Number(m.decimals || 6),
-                  banner_image_url: undefined,
                   icon_image_url: m.icon_image_url || undefined,
-                  supporting_photo_urls: [],
-                  is_active: true,
+                  is_active: (m.deployment_status || '').toLowerCase() === 'deployed',
                   market_id: m.id,
                   deployment_status: (m.deployment_status || '').toLowerCase(),
-                  created_at: '',
-                  user_address: undefined
-                } as Market);
-              });
+                  created_at: m.created_at || '',
+                  series_id: m.series_id,
+                  series_sequence: m.series_sequence,
+                  settlement_date: m.settlement_date,
+                  trading_end_date: m.trading_end_date,
+                  settlement_value: m.settlement_value,
+                  settlement_timestamp: m.settlement_timestamp,
+                  market_status: m.market_status,
+                  market_config: m.market_config,
+                  initial_order: m.initial_order,
+                } as Market)
+              }
+            })
+          }
+
+          // Fetch series slugs for any series_id we don't have a slug for yet
+          const missingSlugIds = Array.from(seriesIds).filter(id => !seriesSlugMap[id])
+          if (missingSlugIds.length > 0) {
+            const { data: seriesRows } = await supabase
+              .from('market_series')
+              .select('id, slug')
+              .in('id', missingSlugIds)
+            if (seriesRows) {
+              seriesRows.forEach((s: any) => { seriesSlugMap[s.id] = s.slug })
             }
           }
-          markets = Array.from(marketMap.values());
-          setPairMap(computedPairMap);
         }
       }
+
+      // Build grouped market list
+      const allMarkets = Array.from(marketMap.values())
+      const seriesGroupMap = new Map<string, Market[]>()
+      const standalone: Market[] = []
+
+      allMarkets.forEach(m => {
+        if (m.series_id && seriesIds.has(m.series_id)) {
+          const arr = seriesGroupMap.get(m.series_id) || []
+          arr.push(m)
+          seriesGroupMap.set(m.series_id, arr)
+        } else {
+          standalone.push(m)
+        }
+      })
+
+      const groups: MarketGroup[] = []
+
+      // Build series groups — primary is highest series_sequence (newest)
+      const matchedIds = new Set(markets.map(m => m.id))
+      seriesGroupMap.forEach((members, sid) => {
+        members.sort((a, b) => (b.series_sequence ?? 0) - (a.series_sequence ?? 0))
+        const primary = members[0]
+        const historical = members.slice(1)
+        groups.push({
+          primary,
+          seriesId: sid,
+          seriesSlug: seriesSlugMap[sid],
+          historical,
+        })
+      })
+
+      // Sort series groups: those with a search-matched market first
+      groups.sort((a, b) => {
+        const aMatched = matchedIds.has(a.primary.id) || a.historical.some(h => matchedIds.has(h.id))
+        const bMatched = matchedIds.has(b.primary.id) || b.historical.some(h => matchedIds.has(h.id))
+        if (aMatched && !bMatched) return -1
+        if (!aMatched && bMatched) return 1
+        return 0
+      })
+
+      // Standalone markets (no series)
+      const standaloneInResults = standalone.filter(m => matchedIds.has(m.id))
+      standaloneInResults.forEach(m => {
+        groups.push({ primary: m, historical: [] })
+      })
+
+      setMarketGroups(groups)
 
       if (usersData.success && usersData.data) {
         users = usersData.data
       }
 
-      const mapById: Record<string, Market> = {};
-      markets.forEach((m: Market) => { mapById[m.id] = m; });
-      setIdToMarket(mapById);
       setSearchResults({
         markets,
         users,
@@ -284,14 +364,10 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
 
     } catch (error) {
       console.error('Search error:', error)
-      setSearchResults({
-        markets: [],
-        users: [],
-        isLoading: false,
-        error: 'Search failed. Please try again.'
-      })
+      setSearchResults({ markets: [], users: [], isLoading: false, error: 'Search failed. Please try again.' })
+      setMarketGroups([])
     }
-  }, []) // Remove saveRecentSearch dependency
+  }, [])
 
   // Debounced search effect
   useEffect(() => {
@@ -563,7 +639,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           )}
 
           {/* Search Results - Markets (hidden in show-all-users mode) */}
-          {searchValue && searchResults.markets.length > 0 && (
+          {searchValue && marketGroups.length > 0 && (
             <div
               className="mb-3 transition-all duration-300"
               style={{
@@ -578,153 +654,256 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   Markets
                 </h4>
                 <div className="text-[10px] text-t-fg-muted bg-t-inset px-1.5 py-0.5 rounded">
-                  {searchResults.markets.length}
+                  {marketGroups.length}
                 </div>
               </div>
               
               <div className="relative">
-              <div className="space-y-1 overflow-y-auto markets-internal-scroll" style={{ maxHeight: '320px' }}>
-                {searchResults.markets.map((market) => (
-                  (() => {
-                    const deploymentStatus = String(market.deployment_status || '').toLowerCase();
-                    const metricSource = metricSourceFromMarket(market);
-                    const metricSourceText =
-                      metricSource.label || metricSource.host || (metricSource.url ? metricSource.url : '—');
-                    return (
-                  <div
-                    key={market.id}
-                    className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200"
-                  >
-                    <div
-                      className="flex items-center justify-between p-2.5 cursor-pointer"
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Open market ${market.symbol}`}
-                      onClick={() => handleMarketSelect(market)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault()
-                          handleMarketSelect(market)
-                        }
-                      }}
-                    >
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${deploymentStatus === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          {market.icon_image_url ? (
-                            <div 
-                              className="w-6 h-6 rounded bg-cover bg-center bg-no-repeat"
-                              style={{ backgroundImage: `url(${market.icon_image_url})` }}
-                            />
-                          ) : (
-                            <div className={`flex items-center justify-center rounded text-[9px] font-medium w-6 h-6 ${
-                              deploymentStatus === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
-                            }`}>
-                              {market.symbol.charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-left text-[13px] font-medium text-t-fg group-hover:underline">
-                              {market.symbol}
-                            </div>
-                            <div className="text-[11px] text-t-fg-muted truncate max-w-[200px]">
-                              {market.description}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-right min-w-[92px]">
-                          <div className="text-[11px] text-t-fg font-mono">
-                            {formatUsdNumber(market.initial_price, market.price_decimals ?? 4)}
-                          </div>
-                          <div className={`text-[10px] ${
-                            deploymentStatus === 'deployed' ? 'text-green-400' : 'text-yellow-400'
-                          }`}>
-                            {deploymentStatus || '—'}
-                          </div>
-                        </div>
-                        <div className="w-px h-6 bg-t-stroke" />
-                        <div className="text-right min-w-[110px] max-w-[160px]">
-                          <div
-                            className="text-[11px] text-t-fg-sub leading-none truncate"
-                            title={metricSource.url || undefined}
-                          >
-                            {metricSource.url ? (
-                              <a
-                                href={metricSource.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="hover:underline"
-                              >
-                                {metricSourceText}
-                              </a>
+              <div className="space-y-1 overflow-y-auto markets-internal-scroll" style={{ maxHeight: '420px' }}>
+                {marketGroups.map((group) => {
+                  const market = group.primary
+                  const deploymentStatus = String(market.deployment_status || '').toLowerCase()
+                  const metricSource = metricSourceFromMarket(market)
+                  const metricSourceText = metricSource.label || metricSource.host || (metricSource.url ? metricSource.url : '—')
+                  const hasHistory = group.historical.length > 0
+                  const groupKey = group.seriesId || market.id
+                  const hasUnsettledHistory = hasHistory && group.historical.some(h => {
+                    const s = String(h.market_status || '').toUpperCase()
+                    return s !== 'SETTLED' && !h.settlement_timestamp
+                  })
+                  const isExpanded = expandedSeries.has(groupKey)
+
+                  return (
+                  <div key={groupKey} className="group/card rounded-md border border-t-stroke transition-all duration-200">
+                    {/* Primary market row */}
+                    <div className="group bg-t-card hover:bg-t-card-hover rounded-t-md transition-all duration-200">
+                      <div className="flex items-center justify-between p-2.5">
+                        <div
+                          className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Open market ${market.symbol}`}
+                          onClick={() => handleMarketSelect(market)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              handleMarketSelect(market)
+                            }
+                          }}
+                        >
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${deploymentStatus === 'deployed' ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            {market.icon_image_url ? (
+                              <div 
+                                className="w-6 h-6 rounded bg-cover bg-center bg-no-repeat flex-shrink-0"
+                                style={{ backgroundImage: `url(${market.icon_image_url})` }}
+                              />
                             ) : (
-                              '—'
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    {/* Expandable Details (only expands for this row on hover) */}
-                    <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-                      <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
-                        <div className="text-[9px] pt-1.5">
-                          <div className="flex flex-wrap gap-1">
-                            {(() => {
-                              const categories = Array.isArray(market.category)
-                                ? market.category
-                                : typeof market.category === 'string'
-                                  ? market.category.split(',').map(c => c.trim())
-                                  : [];
-                              
-                              return (
-                                <>
-                                  {categories.slice(0, 3).map((cat, index) => (
-                                    <span
-                                      key={index}
-                                      className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20"
-                                    >
-                                      {cat}
-                                    </span>
-                                  ))}
-                                  {categories.length > 3 && (
-                                    <span className="text-[9px] text-t-fg-muted bg-t-inset px-1 py-0.5 rounded">
-                                      +{categories.length - 3}
-                                    </span>
-                                  )}
-                                </>
-                              );
-                            })()}
-                            {pairMap[market.id] && idToMarket[pairMap[market.id].otherId] && (
-                              <div className="flex items-center gap-2 mt-1 w-full">
-                                <MarketPairBadge text={pairMap[market.id].seriesSlug} />
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    onClick={() => handleMarketSelect(market)}
-                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-t-fg bg-t-inset border border-t-stroke-hover"
-                                  >
-                                    {market.symbol}
-                                  </button>
-                                  <button
-                                    onClick={() => handleMarketSelect(idToMarket[pairMap[market.id].otherId])}
-                                    className="text-[10px] rounded px-2 py-1 transition-all duration-200 text-t-fg-sub bg-t-card border border-t-stroke hover:text-t-fg hover:bg-t-card-hover hover:border-t-stroke-hover"
-                                  >
-                                    {idToMarket[pairMap[market.id].otherId].symbol}
-                                  </button>
-                                </div>
+                              <div className={`flex items-center justify-center rounded text-[9px] font-medium w-6 h-6 flex-shrink-0 ${
+                                deploymentStatus === 'deployed' ? 'bg-green-400 text-black' : 'bg-yellow-400 text-black'
+                              }`}>
+                                {market.symbol.charAt(0).toUpperCase()}
                               </div>
                             )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-left text-[13px] font-medium text-t-fg group-hover:underline">
+                                  {market.symbol}
+                                </span>
+                                {hasHistory && group.seriesSlug && (
+                                  <span className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20 flex-shrink-0">
+                                    {group.seriesSlug}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-t-fg-muted truncate max-w-[200px]">
+                                {market.description}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right min-w-[92px]">
+                            <div className="text-[11px] text-t-fg font-mono">
+                              {formatUsdNumber(market.initial_price, market.price_decimals ?? 4)}
+                            </div>
+                            <div className={`text-[10px] ${
+                              deploymentStatus === 'deployed' ? 'text-green-400' : 'text-yellow-400'
+                            }`}>
+                              {deploymentStatus || '—'}
+                            </div>
+                          </div>
+                          <div className="w-px h-6 bg-t-stroke" />
+                          <div className="text-right min-w-[110px] max-w-[160px]">
+                            <div
+                              className="text-[11px] text-t-fg-sub leading-none truncate"
+                              title={metricSource.url || undefined}
+                            >
+                              {metricSource.url ? (
+                                <a
+                                  href={metricSource.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="hover:underline"
+                                >
+                                  {metricSourceText}
+                                </a>
+                              ) : (
+                                '—'
+                              )}
+                            </div>
+                          </div>
+                          {hasHistory && hasUnsettledHistory && (
+                            <>
+                              <div className="w-px h-6 bg-t-stroke" />
+                              <div className="flex items-center gap-1 text-[9px] text-yellow-400 bg-yellow-400/10 px-1.5 py-0.5 rounded border border-yellow-400/20">
+                                <div className="w-1 h-1 rounded-full bg-yellow-400 animate-pulse" />
+                                <span>Rolling over</span>
+                              </div>
+                            </>
+                          )}
+                          {hasHistory && !hasUnsettledHistory && (
+                            <>
+                              <div className="w-px h-6 bg-t-stroke" />
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleSeriesExpand(groupKey) }}
+                                className="flex items-center gap-1 text-[10px] text-t-fg-muted hover:text-t-fg px-1.5 py-1 rounded hover:bg-t-skeleton transition-all duration-200"
+                                aria-label={isExpanded ? 'Collapse history' : 'Expand history'}
+                              >
+                                <span className="hidden sm:inline">{group.historical.length} prior</span>
+                                <svg
+                                  width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                  className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                                >
+                                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Hover details for primary — categories */}
+                      <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+                        <div className="px-2.5 pb-2 border-t border-t-stroke-sub">
+                          <div className="text-[9px] pt-1.5">
+                            <div className="flex flex-wrap gap-1">
+                              {(() => {
+                                const categories = Array.isArray(market.category)
+                                  ? market.category
+                                  : typeof market.category === 'string'
+                                    ? market.category.split(',').map((c: string) => c.trim())
+                                    : []
+                                return categories.slice(0, 3).map((cat: string, index: number) => (
+                                  <span key={index} className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20">
+                                    {cat}
+                                  </span>
+                                ))
+                              })()}
+                              {market.settlement_date && (
+                                <span className="text-[9px] text-t-fg-muted bg-t-inset px-1 py-0.5 rounded">
+                                  Settles {formatDate(market.settlement_date)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
+
+                    {/* Historical markets: hover-reveal when unsettled, click-expand when settled */}
+                    {hasHistory && (
+                      <div
+                        className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                          hasUnsettledHistory
+                            ? 'max-h-0 opacity-0 group-hover/card:max-h-[500px] group-hover/card:opacity-100'
+                            : ''
+                        }`}
+                        style={hasUnsettledHistory ? undefined : {
+                          maxHeight: isExpanded ? `${group.historical.length * 80}px` : '0px',
+                          opacity: isExpanded ? 1 : 0,
+                        }}
+                      >
+                        <div className="border-t border-t-stroke bg-t-inset/40">
+                          <div className="px-2.5 py-1.5">
+                            <div className="text-[9px] text-t-fg-muted uppercase tracking-wide font-medium mb-1">
+                              Previous Contracts
+                            </div>
+                          </div>
+                          {group.historical.map((hist) => {
+                            const histStatus = String(hist.deployment_status || '').toLowerCase()
+                            const mktStatus = String(hist.market_status || '').toUpperCase()
+                            const isSettled = mktStatus === 'SETTLED' || !!hist.settlement_timestamp
+                            const isExpired = mktStatus === 'EXPIRED'
+                            const statusLabel = isSettled ? 'Settled' : isExpired ? 'Expired' : histStatus
+                            const statusColor = isSettled ? 'text-blue-400' : isExpired ? 'text-red-400' : 'text-yellow-400'
+                            const dotColor = isSettled ? 'bg-blue-400' : isExpired ? 'bg-red-400' : 'bg-yellow-400'
+
+                            return (
+                              <div
+                                key={hist.id}
+                                className="group/hist flex items-center justify-between px-2.5 py-2 hover:bg-t-card-hover cursor-pointer transition-all duration-150 border-t border-t-stroke/50"
+                                onClick={() => handleMarketSelect(hist)}
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  <div className={`w-1 h-1 rounded-full flex-shrink-0 ${dotColor}`} />
+                                  {hist.icon_image_url ? (
+                                    <div
+                                      className="w-5 h-5 rounded bg-cover bg-center bg-no-repeat flex-shrink-0 opacity-60"
+                                      style={{ backgroundImage: `url(${hist.icon_image_url})` }}
+                                    />
+                                  ) : (
+                                    <div className="flex items-center justify-center rounded text-[8px] font-medium w-5 h-5 flex-shrink-0 bg-t-skeleton text-t-fg-muted">
+                                      {hist.symbol.charAt(0).toUpperCase()}
+                                    </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <div className="text-[11px] font-medium text-t-fg-sub group-hover/hist:text-t-fg group-hover/hist:underline truncate">
+                                      {hist.symbol}
+                                    </div>
+                                    <div className="text-[9px] text-t-fg-muted truncate max-w-[180px]">
+                                      {hist.description}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3 flex-shrink-0">
+                                  <div className="text-right">
+                                    {hist.settlement_value != null && (
+                                      <div className="text-[10px] text-t-fg-sub font-mono">
+                                        ${Number(hist.settlement_value).toLocaleString()}
+                                      </div>
+                                    )}
+                                    <div className={`text-[9px] ${statusColor}`}>
+                                      {statusLabel}
+                                    </div>
+                                  </div>
+                                  {(hist.settlement_date || hist.settlement_timestamp) && (
+                                    <>
+                                      <div className="w-px h-4 bg-t-stroke/50" />
+                                      <div className="text-right min-w-[70px]">
+                                        <div className="text-[9px] text-t-fg-muted">
+                                          {hist.settlement_timestamp
+                                            ? formatDate(hist.settlement_timestamp)
+                                            : formatDate(hist.settlement_date)}
+                                        </div>
+                                        <div className="text-[8px] text-t-fg-muted/60">
+                                          {hist.settlement_timestamp ? 'settled' : 'expiry'}
+                                        </div>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                    );
-                  })()
-                ))}
+                  )
+                })}
               </div>
-              {searchResults.markets.length > 6 && (
+              {marketGroups.length > 6 && (
                 <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-t-card to-transparent rounded-b-md" />
               )}
               </div>
@@ -860,7 +1039,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
           )}
 
           {/* No Results Message */}
-          {searchValue && !searchResults.isLoading && searchResults.markets.length === 0 && searchResults.users.length === 0 && !searchResults.error && (
+          {searchValue && !searchResults.isLoading && marketGroups.length === 0 && searchResults.users.length === 0 && !searchResults.error && (
             <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200">
               <div className="flex items-center justify-between p-2.5">
                 <div className="flex items-center gap-2 min-w-0 flex-1">

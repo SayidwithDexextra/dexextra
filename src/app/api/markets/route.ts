@@ -136,7 +136,9 @@ export async function GET(request: NextRequest) {
               chain_id,
               network,
               initial_order,
-              market_config
+              market_config,
+              series_id,
+              series_sequence
             `)
             .in('id', matchedIds);
 
@@ -251,7 +253,9 @@ export async function GET(request: NextRequest) {
         chain_id,
         network,
         initial_order,
-        market_config
+        market_config,
+        series_id,
+        series_sequence
       `, { count: 'exact' })
       .order('created_at', { ascending: false });
 

@@ -28,7 +28,7 @@ async function fetchMarketData() {
         is_active,
         description,
         created_at
-        `
+        `,
       )
       .eq("is_active", true);
 
