@@ -370,6 +370,7 @@ export async function POST(req: Request) {
     const iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
     const bannerImageUrl = body?.bannerImageUrl ? String(body.bannerImageUrl).trim() : null;
     const aiSourceLocator = body?.aiSourceLocator || null;
+    const isRollover = body?.isRollover === true;
     // Validate settlement date is required and in the future
     if (!body?.settlementDate || typeof body.settlementDate !== 'number' || body.settlementDate <= 0) {
       return NextResponse.json({
@@ -697,7 +698,7 @@ export async function POST(req: Request) {
 
     let tx: ethers.TransactionResponse;
     let receipt: ethers.TransactionReceipt | null;
-    if (gaslessEnabled) {
+    if (gaslessEnabled && !isRollover) {
       // Gasless via meta-create: require user signature
       const creator = creatorWalletAddress;
       if (!creator) {
@@ -1282,10 +1283,14 @@ export async function POST(req: Request) {
 
     // Configure maker/taker fee structure on the new market
     try {
-      logS('configure_fees', 'start', { orderBook });
-      const protocolFeeRecipient =
+      logS('configure_fees', 'start', { orderBook, isRollover });
+      const defaultProtocolRecipient =
         process.env.PROTOCOL_FEE_RECIPIENT ||
         (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
+      // Rollover markets: FUNDER wallet receives 100% (both protocol + owner share)
+      const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
+        ? feeRecipient
+        : defaultProtocolRecipient;
       const takerFeeBps = 7;    // 0.07% → 7 bps → $0.07 on $100
       const makerFeeBps = 3;    // 0.03% → 3 bps → $0.03 on $100
       const protocolShareBps = 8000; // 80% to protocol, 20% to market owner
@@ -1320,9 +1325,11 @@ export async function POST(req: Request) {
       logS('configure_fees', 'error', { error: e?.message || String(e) });
     }
 
-    // Set feeRecipient to the actual market creator (not the factory's global treasury)
+    // Set feeRecipient to the market creator (or FUNDER for rollover markets)
     try {
-      const creatorAddr = creatorWalletAddress || ownerAddress;
+      const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
+        ? feeRecipient
+        : (creatorWalletAddress || ownerAddress);
       logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
       const obAdmin = new ethers.Contract(
         orderBook,

@@ -203,7 +203,16 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const syncResult = await syncLifecycleOnChain(effectiveAddress);
   log('rollover_sync', syncResult.ok ? 'success' : 'error', syncResult as any);
 
-  // 2. Compute child settlement date (same duration as parent)
+  // 2. Derive CREATOR wallet for rollover markets (gets 100% of fees)
+  const funderPk = process.env.CREATOR_PRIVATE_KEY;
+  let funderAddress: string | null = null;
+  if (funderPk) {
+    try {
+      funderAddress = new ethers.Wallet(funderPk).address;
+    } catch {}
+  }
+
+  // 3. Compute child settlement date (same duration as parent)
   const parentSettlementDate = market.settlement_date ? new Date(market.settlement_date) : null;
   const parentDeployedAt = market.deployed_at ? new Date(market.deployed_at) : null;
   if (!parentSettlementDate) return { ok: false, error: 'no_parent_settlement_date' };
@@ -225,6 +234,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
+  const rolloverCreator = funderAddress || market.creator_wallet_address || '';
   const createPayload: Record<string, unknown> = {
     symbol: market.symbol || market.market_identifier,
     metricUrl: (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '',
@@ -232,7 +242,9 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     startPrice: (initialOrder as any)?.startPrice || 1,
     dataSource: (initialOrder as any)?.dataSource || 'rollover',
     tags: Array.isArray(market.category) ? market.category : ['CUSTOM'],
-    creatorWalletAddress: market.creator_wallet_address || '',
+    creatorWalletAddress: rolloverCreator,
+    feeRecipient: rolloverCreator,
+    isRollover: true,
     parentMarketAddress: effectiveAddress,
     parentMarketId: market.id,
   };
@@ -440,6 +452,24 @@ export async function POST(req: Request) {
       }
       const result = await callSettlementScheduler('run_settlement_tick');
       return json(200, result);
+    }
+
+    case 'reschedule': {
+      if (!marketId) return json(400, { ok: false, error: 'market_id_required' });
+      const settlementUnix = typeof body.settlement_date_unix === 'number' ? body.settlement_date_unix : 0;
+      if (!settlementUnix) return json(400, { ok: false, error: 'settlement_date_unix_required' });
+      const symbol = typeof body.symbol === 'string' ? body.symbol : undefined;
+      try {
+        const ids = await scheduleMarketLifecycle(marketId, settlementUnix, {
+          marketAddress: marketAddress || undefined,
+          symbol,
+        });
+        log('dispatch_reschedule', 'success', { marketId, ids });
+        return json(200, { ok: true, action: 'reschedule', marketId, ids });
+      } catch (e: any) {
+        log('dispatch_reschedule', 'error', { error: e?.message });
+        return json(500, { ok: false, error: e?.message });
+      }
     }
 
     case 'scan':
