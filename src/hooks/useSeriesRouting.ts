@@ -90,21 +90,22 @@ export function useActivePairByMarketId(marketId?: string | null) {
 
 export async function fetchSeriesMarkets(seriesId: string): Promise<SeriesMarket[]> {
   const supabase = getSupabaseClient();
-  // Join series_markets with markets to obtain symbols and descriptions
   const { data, error } = await supabase
-    .from('series_markets')
-    .select('sequence, is_primary, market_id, markets!inner(id, symbol, description, icon_image_url)')
+    .from('markets')
+    .select('id, symbol, description, icon_image_url, series_sequence')
     .eq('series_id', seriesId)
-    .order('sequence', { ascending: true });
+    .not('series_sequence', 'is', null)
+    .order('series_sequence', { ascending: true });
   if (error) throw error;
   const rows = (data || []) as any[];
-  return rows.map((r) => ({
-    marketId: r.market_id,
-    symbol: r.markets?.symbol || '',
-    description: r.markets?.description || null,
-    iconImageUrl: r.markets?.icon_image_url || null,
-    sequence: r.sequence,
-    isPrimary: !!r.is_primary
+  const maxSeq = rows.length > 0 ? Math.max(...rows.map((r: any) => r.series_sequence ?? 0)) : 0;
+  return rows.map((r: any) => ({
+    marketId: r.id,
+    symbol: r.symbol || '',
+    description: r.description || null,
+    iconImageUrl: r.icon_image_url || null,
+    sequence: r.series_sequence ?? 0,
+    isPrimary: r.series_sequence === maxSeq,
   }));
 }
 

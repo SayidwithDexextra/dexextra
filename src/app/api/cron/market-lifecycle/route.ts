@@ -212,7 +212,55 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     } catch {}
   }
 
-  // 3. Compute child settlement date (same duration as parent)
+  // 3. Ensure the parent market belongs to a series (create one if needed)
+  const baseSymbol = market.symbol || market.market_identifier || 'UNKNOWN';
+  let seriesId: string | null = market.series_id || null;
+  let parentSequence: number = market.series_sequence ?? 0;
+
+  if (!seriesId) {
+    const seriesSlug = `${baseSymbol}-SERIES`;
+    log('rollover_series', 'start', { seriesSlug });
+
+    const { data: existing } = await supabase
+      .from('market_series')
+      .select('id')
+      .eq('slug', seriesSlug)
+      .maybeSingle();
+
+    if (existing?.id) {
+      seriesId = existing.id;
+    } else {
+      const { data: created, error: createErr } = await supabase
+        .from('market_series')
+        .insert({
+          slug: seriesSlug,
+          underlying_symbol: baseSymbol,
+          base_asset: baseSymbol,
+          quote_asset: 'USD',
+          roll_frequency: 'auto',
+        })
+        .select('id')
+        .single();
+      if (createErr || !created) {
+        log('rollover_series', 'error', { error: createErr?.message || 'create_failed' });
+      } else {
+        seriesId = created.id;
+      }
+    }
+
+    if (seriesId) {
+      parentSequence = 1;
+      await supabase
+        .from('markets')
+        .update({ series_id: seriesId, series_sequence: parentSequence, updated_at: new Date().toISOString() })
+        .eq('id', marketId);
+      log('rollover_series', 'success', { seriesId, parentSequence });
+    }
+  }
+
+  const childSequence = parentSequence + 1;
+
+  // 4. Compute child settlement date (same duration as parent)
   const parentSettlementDate = market.settlement_date ? new Date(market.settlement_date) : null;
   const parentDeployedAt = market.deployed_at ? new Date(market.deployed_at) : null;
   if (!parentSettlementDate) return { ok: false, error: 'no_parent_settlement_date' };
@@ -221,14 +269,14 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   if (parentDeployedAt) {
     lifecycleDurationMs = parentSettlementDate.getTime() - parentDeployedAt.getTime();
   } else {
-    lifecycleDurationMs = 365 * 24 * 60 * 60 * 1000; // default 1 year
+    lifecycleDurationMs = 365 * 24 * 60 * 60 * 1000;
   }
   if (lifecycleDurationMs <= 0) lifecycleDurationMs = 365 * 24 * 60 * 60 * 1000;
 
   const childSettlementDate = new Date(parentSettlementDate.getTime() + lifecycleDurationMs);
   const childSettlementUnix = Math.floor(childSettlementDate.getTime() / 1000);
 
-  // 3. Create child market via internal API
+  // 5. Create child market via internal API
   const baseUrl =
     process.env.APP_URL?.replace(/\/+$/, '') ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
@@ -236,13 +284,11 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
   const rolloverCreator = funderAddress || market.creator_wallet_address || '';
 
-  // Generate unique identifier for rollover child so it doesn't collide with the parent
-  const baseSymbol = market.symbol || market.market_identifier || 'UNKNOWN';
-  const childSymbol = `${baseSymbol}-R${Date.now()}`;
+  const childSymbol = `${baseSymbol}-R${childSequence}`;
 
   const createPayload: Record<string, unknown> = {
     symbol: childSymbol,
-    name: `${baseSymbol} Futures (Rollover)`,
+    name: `${baseSymbol} Futures (Rollover #${childSequence - 1})`,
     description: market.description || `Rollover market for ${baseSymbol}`,
     metricUrl: (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '',
     settlementDate: childSettlementUnix,
@@ -276,13 +322,26 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const childOrderBook = (childResult as any)?.orderBook;
   const childMarketDbId = (childResult as any)?.marketId;
 
-  // 4. Link lineage on-chain (parent → child)
+  // 6. Link lineage on-chain (parent → child)
   if (childOrderBook && ethers.isAddress(childOrderBook)) {
     const linkResult = await linkRolloverChild(effectiveAddress, childOrderBook, childSettlementUnix);
     log('rollover_link', linkResult.ok ? 'success' : 'error', linkResult as any);
   }
 
-  // 5. Update parent market_config with rollover info
+  // 7. Assign series membership to the child market
+  if (childMarketDbId && seriesId) {
+    try {
+      await supabase
+        .from('markets')
+        .update({ series_id: seriesId, series_sequence: childSequence, updated_at: new Date().toISOString() })
+        .eq('id', childMarketDbId);
+      log('rollover_series_child', 'success', { childMarketDbId, seriesId, childSequence });
+    } catch (e: any) {
+      log('rollover_series_child', 'error', { error: e?.message });
+    }
+  }
+
+  // 8. Update parent market_config with rollover info
   try {
     await supabase
       .from('markets')
@@ -303,12 +362,12 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     log('rollover_update_parent', 'error', { error: e?.message });
   }
 
-  // 6. Schedule lifecycle triggers for the child market
+  // 9. Schedule lifecycle triggers for the child market
   if (childMarketDbId) {
     try {
       const scheduleIds = await scheduleMarketLifecycle(childMarketDbId, childSettlementUnix, {
         marketAddress: childOrderBook || undefined,
-        symbol: market.symbol || market.market_identifier,
+        symbol: baseSymbol,
       });
       log('rollover_schedule_child', 'success', { scheduleIds: scheduleIds as any });
     } catch (e: any) {
@@ -321,6 +380,8 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     childId: childMarketDbId,
     childAddress: childOrderBook,
     childSettlementDate: childSettlementDate.toISOString(),
+    seriesId,
+    childSequence,
   });
 
   return {
@@ -329,6 +390,8 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     childId: childMarketDbId,
     childAddress: childOrderBook,
     childSettlementDate: childSettlementDate.toISOString(),
+    seriesId,
+    childSequence,
   };
 }
 
