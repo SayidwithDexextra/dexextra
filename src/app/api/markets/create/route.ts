@@ -1574,6 +1574,59 @@ export async function POST(req: Request) {
         }
       }
 
+      // Rollover finalization: assign series, update parent, link on-chain
+      if (isRollover && savedRow?.id && supabase) {
+        const rolloverSeriesId = typeof body?.seriesId === 'string' ? body.seriesId : null;
+        const rolloverChildSeq = typeof body?.childSequence === 'number' ? body.childSequence : null;
+
+        if (rolloverSeriesId && rolloverChildSeq != null) {
+          try {
+            await supabase.from('markets').update({
+              series_id: rolloverSeriesId,
+              series_sequence: rolloverChildSeq,
+              updated_at: new Date().toISOString(),
+            }).eq('id', savedRow.id);
+            logS('rollover_series_child', 'success', { seriesId: rolloverSeriesId, sequence: rolloverChildSeq });
+          } catch (e: any) {
+            logS('rollover_series_child', 'error', { error: e?.message || String(e) });
+          }
+        }
+
+        if (parentMarketId) {
+          try {
+            const { data: parentRow } = await supabase.from('markets').select('market_config').eq('id', parentMarketId).maybeSingle();
+            const existingCfg = (typeof parentRow?.market_config === 'object' && parentRow?.market_config) || {};
+            await supabase.from('markets').update({
+              market_config: {
+                ...(existingCfg as any),
+                rollover: {
+                  child_market_id: savedRow.id,
+                  child_address: orderBook,
+                  child_settlement_date: new Date(settlementTs * 1000).toISOString(),
+                  rolled_over_at: new Date().toISOString(),
+                },
+              },
+              updated_at: new Date().toISOString(),
+            }).eq('id', parentMarketId);
+            logS('rollover_update_parent', 'success', { parentMarketId });
+          } catch (e: any) {
+            logS('rollover_update_parent', 'error', { error: e?.message || String(e) });
+          }
+        }
+
+        if (parentMarketAddress && orderBook) {
+          try {
+            const lifecycleAbi = ['function linkRolloverChildByAddress(address,uint256) external'];
+            const parentContract = new ethers.Contract(parentMarketAddress, lifecycleAbi, wallet);
+            const linkTx = await parentContract.linkRolloverChildByAddress(orderBook, settlementTs);
+            const linkRc = await linkTx.wait();
+            logS('rollover_link_onchain', 'success', { tx: linkRc?.hash || linkTx.hash });
+          } catch (e: any) {
+            logS('rollover_link_onchain', 'error', { error: e?.message || String(e) });
+          }
+        }
+      }
+
       logS('save_market', 'success');
     } catch (e: any) {
       logS('save_market', 'error', { error: e?.message || String(e) });
@@ -1592,7 +1645,7 @@ export async function POST(req: Request) {
       ok: true,
       symbol,
       orderBook,
-      marketId,
+      marketId: savedRow?.id || marketId,
       transactionHash: receipt?.hash || tx.hash,
       feeRecipient,
       waybackUrl: archivedWaybackUrl,

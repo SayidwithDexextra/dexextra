@@ -276,7 +276,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const childSettlementDate = new Date(parentSettlementDate.getTime() + lifecycleDurationMs);
   const childSettlementUnix = Math.floor(childSettlementDate.getTime() / 1000);
 
-  // 5. Create child market via internal API
+  // 5. Publish child market creation via QStash (async, avoids Vercel timeout)
   const baseUrl =
     process.env.APP_URL?.replace(/\/+$/, '') ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
@@ -300,98 +300,73 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     isRollover: true,
     parentMarketAddress: effectiveAddress,
     parentMarketId: market.id,
+    seriesId,
+    childSequence,
   };
 
-  let childResult: Record<string, unknown> | null = null;
-  try {
-    const createRes = await fetch(`${baseUrl}/api/markets/create`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(createPayload),
-    });
-    childResult = await createRes.json().catch(() => null);
-    if (!createRes.ok || !childResult) {
-      log('rollover_create_child', 'error', { status: createRes.status, result: childResult });
-      return { ok: false, error: 'child_market_creation_failed', details: childResult };
-    }
-  } catch (e: any) {
-    log('rollover_create_child', 'error', { error: e?.message });
-    return { ok: false, error: 'child_market_creation_exception', details: e?.message };
-  }
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const createEndpoint = `${baseUrl}/api/markets/create`;
 
-  const childOrderBook = (childResult as any)?.orderBook;
-  const childMarketDbId = (childResult as any)?.marketId;
-
-  // 6. Link lineage on-chain (parent → child)
-  if (childOrderBook && ethers.isAddress(childOrderBook)) {
-    const linkResult = await linkRolloverChild(effectiveAddress, childOrderBook, childSettlementUnix);
-    log('rollover_link', linkResult.ok ? 'success' : 'error', linkResult as any);
-  }
-
-  // 7. Assign series membership to the child market
-  if (childMarketDbId && seriesId) {
+  if (qstashToken) {
+    // Publish via QStash so the create route runs in its own function invocation
     try {
-      await supabase
-        .from('markets')
-        .update({ series_id: seriesId, series_sequence: childSequence, updated_at: new Date().toISOString() })
-        .eq('id', childMarketDbId);
-      log('rollover_series_child', 'success', { childMarketDbId, seriesId, childSequence });
-    } catch (e: any) {
-      log('rollover_series_child', 'error', { error: e?.message });
-    }
-  }
-
-  // 8. Update parent market_config with rollover info
-  try {
-    await supabase
-      .from('markets')
-      .update({
-        market_config: {
-          ...(existingConfig as any),
-          rollover: {
-            child_market_id: childMarketDbId || null,
-            child_address: childOrderBook || null,
-            child_settlement_date: childSettlementDate.toISOString(),
-            rolled_over_at: new Date().toISOString(),
-          },
+      const qstashBase = process.env.QSTASH_URL || 'https://qstash.upstash.io';
+      const publishRes = await fetch(`${qstashBase}/v2/publish/${createEndpoint}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${qstashToken}`,
+          'Content-Type': 'application/json',
+          'Upstash-Retries': '2',
         },
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', marketId);
-  } catch (e: any) {
-    log('rollover_update_parent', 'error', { error: e?.message });
-  }
-
-  // 9. Schedule lifecycle triggers for the child market
-  if (childMarketDbId) {
-    try {
-      const scheduleIds = await scheduleMarketLifecycle(childMarketDbId, childSettlementUnix, {
-        marketAddress: childOrderBook || undefined,
-        symbol: baseSymbol,
+        body: JSON.stringify(createPayload),
       });
-      log('rollover_schedule_child', 'success', { scheduleIds: scheduleIds as any });
+      const publishResult = await publishRes.json().catch(() => null);
+      if (!publishRes.ok) {
+        log('rollover_qstash_publish', 'error', { status: publishRes.status, result: publishResult });
+        return { ok: false, error: 'qstash_publish_failed', details: publishResult };
+      }
+      log('rollover_qstash_publish', 'success', { messageId: (publishResult as any)?.messageId });
     } catch (e: any) {
-      log('rollover_schedule_child', 'error', { error: e?.message });
+      log('rollover_qstash_publish', 'error', { error: e?.message });
+      return { ok: false, error: 'qstash_publish_exception', details: e?.message };
+    }
+  } else {
+    // Fallback: direct fetch (will block but works without QStash)
+    try {
+      const createRes = await fetch(createEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(createPayload),
+      });
+      const childResult = await createRes.json().catch(() => null);
+      if (!createRes.ok) {
+        log('rollover_create_child', 'error', { status: createRes.status, result: childResult });
+        return { ok: false, error: 'child_market_creation_failed', details: childResult };
+      }
+      log('rollover_create_child', 'success', childResult as any);
+    } catch (e: any) {
+      log('rollover_create_child', 'error', { error: e?.message });
+      return { ok: false, error: 'child_market_creation_exception', details: e?.message };
     }
   }
 
   log('rollover', 'success', {
     parentId: marketId,
-    childId: childMarketDbId,
-    childAddress: childOrderBook,
+    childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),
     seriesId,
     childSequence,
+    async: !!qstashToken,
   });
 
   return {
     ok: true,
     parentId: marketId,
-    childId: childMarketDbId,
-    childAddress: childOrderBook,
+    childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),
     seriesId,
     childSequence,
+    async: !!qstashToken,
   };
 }
 
