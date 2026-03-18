@@ -70,12 +70,7 @@
   "env": {
     "NODE_ENV": "production"
   },
-  "crons": [
-    {
-      "path": "/api/cron/market-lifecycle",
-      "schedule": "* * * * *"
-    }
-  ],
+  "crons": [],
   "regions": ["iad1"],
   "github": {
     "silent": true
