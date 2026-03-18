@@ -490,13 +490,16 @@ export async function POST(req: Request) {
   }
 
   const action = String(body.action || 'scan');
-  const marketId = typeof body.market_id === 'string' ? body.market_id : '';
-  const marketAddress = typeof body.market_address === 'string' ? body.market_address : null;
+  const marketId = typeof body.marketId === 'string' ? body.marketId
+    : typeof body.market_id === 'string' ? body.market_id : '';
+  const marketAddress = typeof body.marketAddress === 'string' ? body.marketAddress
+    : typeof body.market_address === 'string' ? body.market_address : null;
 
   log('dispatch', 'start', { action, marketId, source: isQStash ? 'qstash' : 'cron' });
 
   switch (action) {
-    case 'rollover': {
+    case 'rollover':
+    case 'rollover_start': {
       if (!marketId) return json(400, { ok: false, error: 'market_id_required' });
       const result = await handleRollover(marketId, marketAddress);
       log('dispatch_rollover', 'success', result);
