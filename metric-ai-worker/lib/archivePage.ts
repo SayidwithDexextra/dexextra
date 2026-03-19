@@ -1,6 +1,7 @@
 /**
- * Lightweight Wayback Machine SavePageNow helper for the metric-ai-worker.
- * Best-effort archival with a short timeout, designed to run inside after().
+ * Wayback Machine SavePageNow helper for the metric-ai-worker.
+ * Archives URLs to the Internet Archive with retry logic.
+ * Requires WAYBACK_API_ACCESS_KEY and WAYBACK_API_SECRET env vars.
  */
 
 export type ArchiveResult = {
@@ -12,7 +13,7 @@ export type ArchiveResult = {
 
 const SAVE_ENDPOINT = 'https://web.archive.org/save';
 const SAVE_STATUS = (id: string) => `https://web.archive.org/save/status/${encodeURIComponent(id)}`;
-const AVAILABLE = (url: string) => `https://web.archive.org/wayback/available?url=${encodeURIComponent(url)}`;
+const CDX_SEARCH = (url: string) => `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url)}&output=json&limit=1&sort=reverse`;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -22,20 +23,27 @@ function buildWaybackUrl(ts: string, url: string): string {
   return `https://web.archive.org/web/${ts}/${url}`;
 }
 
+function isWaybackUrl(url: string | undefined | null): boolean {
+  return typeof url === 'string' && url.includes('web.archive.org/web/');
+}
+
 function extractArchiveUrl(data: any, originalUrl: string): { waybackUrl?: string; timestamp?: string } {
   const ts: string | undefined = data?.timestamp || data?.datetime || data?.ts;
   const origin: string | undefined = data?.original_url || originalUrl;
 
-  const archived =
-    data?.archived_url || data?.wayback_url || data?.url || data?.capture_url;
-  if (archived) return { waybackUrl: archived, timestamp: ts };
+  // Only accept URLs that are actual web.archive.org archive URLs
+  for (const field of ['archived_url', 'wayback_url', 'capture_url', 'url']) {
+    const val = data?.[field];
+    if (typeof val === 'string' && isWaybackUrl(val)) {
+      return { waybackUrl: val, timestamp: ts };
+    }
+  }
 
   if (typeof data?.content_location === 'string') {
     const cl = data.content_location;
-    return {
-      waybackUrl: cl.startsWith('/web/') ? `https://web.archive.org${cl}` : cl,
-      timestamp: ts,
-    };
+    if (cl.startsWith('/web/')) {
+      return { waybackUrl: `https://web.archive.org${cl}`, timestamp: ts };
+    }
   }
 
   if (ts && origin) return { waybackUrl: buildWaybackUrl(ts, origin), timestamp: ts };
@@ -73,9 +81,34 @@ async function pollStatus(
 }
 
 /**
+ * Check the CDX API for the most recent snapshot of a URL.
+ * More reliable than /wayback/available for finding existing snapshots.
+ */
+async function findExistingSnapshot(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ waybackUrl: string; timestamp: string } | null> {
+  try {
+    const resp = await fetch(CDX_SEARCH(url), {
+      headers: { Accept: 'application/json', ...headers },
+    });
+    if (!resp.ok) return null;
+    const rows: any[] = await resp.json().catch(() => []);
+    // CDX returns [header_row, ...data_rows]; each row is [urlkey, timestamp, original, ...]
+    if (rows.length >= 2) {
+      const [, ts, original] = rows[1];
+      if (ts && original) {
+        return { waybackUrl: buildWaybackUrl(ts, original), timestamp: ts };
+      }
+    }
+  } catch { /* best-effort */ }
+  return null;
+}
+
+/**
  * Archive a URL via Internet Archive's SavePageNow API.
+ * Retries on transient errors (rate limits, host-crawling-paused).
  * Static files (images, PNGs) typically complete in under 10s.
- * JS-heavy pages may need the full 30s budget.
  */
 export async function archivePage(
   urlToArchive: string,
@@ -104,27 +137,56 @@ export async function archivePage(
   const form = new URLSearchParams();
   form.set('url', parsed.toString());
   form.set('capture_all', '1');
-  form.set('capture_screenshot', '1');
-  form.set('skip_first_archive', '1');
+  form.set('capture_screenshot', '0');
+  form.set('skip_first_archive', '0');
 
-  try {
-    const resp = await fetch(SAVE_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        Accept: 'application/json',
-        ...authHeaders,
-      },
-      body: form.toString(),
-    });
+  const maxAttempts = 3;
+  let lastError = '';
 
-    if (resp.ok) {
+  for (let attempt = 1; attempt <= maxAttempts && Date.now() < deadline; attempt++) {
+    try {
+      const resp = await fetch(SAVE_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Accept: 'application/json',
+          ...authHeaders,
+        },
+        body: form.toString(),
+      });
+
+      if (!resp.ok) {
+        lastError = `HTTP ${resp.status}: ${resp.statusText}`;
+        if (resp.status === 429 || (resp.status >= 500 && resp.status < 600)) {
+          console.warn(`[archivePage] Retrying (${attempt}/${maxAttempts}): ${lastError}`);
+          await sleep(Math.min(3000 * attempt, 10000));
+          continue;
+        }
+        const body = await resp.text().catch(() => '');
+        return { success: false, error: `${lastError}: ${body.slice(0, 200)}` };
+      }
+
       const ct = resp.headers.get('content-type') || '';
       let data: any;
       try {
-        data = ct.includes('json') ? await resp.json() : await resp.text();
+        data = ct.includes('json') ? await resp.json() : {};
       } catch {
         data = {};
+      }
+
+      // Handle API-level errors (200 OK but logical failure)
+      const apiStatus = String(data?.status || '').toLowerCase();
+      if (apiStatus === 'error') {
+        const statusExt = data?.status_ext || '';
+        lastError = data?.message || statusExt || 'API error';
+        const retriable = statusExt.includes('host-crawling-paused') || statusExt.includes('rate-limit');
+        if (retriable && attempt < maxAttempts && Date.now() < deadline) {
+          console.warn(`[archivePage] Host paused/rate-limited, retrying (${attempt}/${maxAttempts}): ${lastError}`);
+          await sleep(Math.min(5000 * attempt, 15000));
+          continue;
+        }
+        // Don't return failure yet -- fall through to check for existing snapshot
+        break;
       }
 
       const contentLocation = resp.headers.get('content-location') || resp.headers.get('location');
@@ -136,11 +198,18 @@ export async function archivePage(
           ? contentLocation.match(/\/save\/status\/([^/]+)/)?.[1]
           : undefined);
 
-      // Check for a direct wayback URL in the response
-      let waybackUrl = contentLocation && !contentLocation.includes('/save/status/')
-        ? (contentLocation.startsWith('http') ? contentLocation : `https://web.archive.org${contentLocation}`)
-        : undefined;
+      // Check for a direct wayback URL in the response headers
+      let waybackUrl: string | undefined;
       let timestamp = data?.timestamp || data?.datetime;
+
+      if (contentLocation && !contentLocation.includes('/save/status/')) {
+        const candidate = contentLocation.startsWith('http')
+          ? contentLocation
+          : `https://web.archive.org${contentLocation}`;
+        if (isWaybackUrl(candidate)) {
+          waybackUrl = candidate;
+        }
+      }
 
       if (!waybackUrl && typeof data === 'object') {
         const extracted = extractArchiveUrl(data, parsed.toString());
@@ -157,26 +226,23 @@ export async function archivePage(
       }
 
       if (waybackUrl) return { success: true, waybackUrl, timestamp };
-    }
-  } catch (err: any) {
-    console.warn(`[archivePage] SavePageNow error for ${parsed.toString()}: ${err?.message}`);
-  }
-
-  // Fallback: check if a recent snapshot already exists
-  if (Date.now() < deadline) {
-    try {
-      const resp = await fetch(AVAILABLE(parsed.toString()), {
-        headers: { Accept: 'application/json', ...authHeaders },
-      });
-      if (resp.ok) {
-        const avail: any = await resp.json().catch(() => ({}));
-        const closest = avail?.archived_snapshots?.closest;
-        if (closest?.url) {
-          return { success: true, waybackUrl: closest.url, timestamp: closest.timestamp };
-        }
+    } catch (err: any) {
+      lastError = err?.message || 'Network error';
+      console.warn(`[archivePage] Network error (${attempt}/${maxAttempts}): ${lastError}`);
+      if (attempt < maxAttempts && Date.now() < deadline) {
+        await sleep(2000 * attempt);
+        continue;
       }
-    } catch { /* best-effort */ }
+    }
   }
 
-  return { success: false, error: 'Archive not available within timeout' };
+  // Fallback: check CDX for existing snapshot (more reliable than /wayback/available)
+  if (Date.now() < deadline) {
+    const existing = await findExistingSnapshot(parsed.toString(), authHeaders);
+    if (existing) {
+      return { success: true, waybackUrl: existing.waybackUrl, timestamp: existing.timestamp };
+    }
+  }
+
+  return { success: false, error: lastError || 'Archive not available within timeout' };
 }
