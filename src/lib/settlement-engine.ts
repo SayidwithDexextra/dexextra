@@ -156,7 +156,7 @@ async function getAIPriceDetermination(
       urls,
       related_market_id: market.id,
       related_market_identifier: market.market_identifier,
-      context: 'settlement_price_determination',
+      context: 'settlement',
     }),
   });
 
