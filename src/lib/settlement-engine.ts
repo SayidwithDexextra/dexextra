@@ -1,5 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
+import { getMetricAIWorkerBaseUrl } from './metricAiWorker';
 
 // ── Types ──
 
@@ -55,11 +56,19 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
+function resolveMetricAiWorkerUrl(): string {
+  try {
+    return getMetricAIWorkerBaseUrl();
+  } catch {
+    return (process.env.METRIC_AI_WORKER_URL || process.env.NEXT_PUBLIC_METRIC_AI_WORKER_URL || '').replace(/\/+$/, '');
+  }
+}
+
 function getConfig() {
   return {
     rpcUrl: process.env.RPC_URL || process.env.JSON_RPC_URL || '',
     privateKey: process.env.ADMIN_PRIVATE_KEY || process.env.PRIVATE_KEY || '',
-    metricAiWorkerUrl: (process.env.METRIC_AI_WORKER_URL || process.env.NEXT_PUBLIC_METRIC_AI_WORKER_URL || '').replace(/\/+$/, ''),
+    metricAiWorkerUrl: resolveMetricAiWorkerUrl(),
     tickLimit: parsePositiveInt(process.env.SETTLEMENT_TICK_LIMIT, 50),
     defaultWindowSeconds: parsePositiveInt(process.env.SETTLEMENT_WINDOW_SECONDS, 24 * 60 * 60),
     onchainDriftToleranceSeconds: parsePositiveInt(process.env.SETTLEMENT_CHAIN_DRIFT_TOLERANCE_SECONDS, 5 * 60),
@@ -127,10 +136,17 @@ async function getAIPriceDetermination(
   market: MarketRow,
 ): Promise<{ price: number; jobId: string } | null> {
   const { metricAiWorkerUrl } = getConfig();
-  if (!metricAiWorkerUrl) return null;
+  if (!metricAiWorkerUrl) {
+    console.warn('[settlement-engine] metricAiWorkerUrl is empty, cannot determine AI price');
+    return null;
+  }
   const urls = metricUrlsForMarket(market);
-  if (urls.length === 0) return null;
+  if (urls.length === 0) {
+    console.warn(`[settlement-engine] no metric URLs found for ${market.market_identifier}`);
+    return null;
+  }
 
+  console.log(`[settlement-engine] requesting AI price for ${market.market_identifier}`, { metricAiWorkerUrl, urls });
   const startRes = await fetch(`${metricAiWorkerUrl}/api/metric-ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -144,10 +160,18 @@ async function getAIPriceDetermination(
     }),
   });
 
-  if (startRes.status !== 202) return null;
+  if (startRes.status !== 202) {
+    const errBody = await startRes.text().catch(() => '');
+    console.warn(`[settlement-engine] AI worker returned ${startRes.status} for ${market.market_identifier}`, errBody.slice(0, 500));
+    return null;
+  }
   const startJson = await startRes.json().catch(() => ({}));
   const jobId = typeof startJson?.jobId === 'string' ? startJson.jobId : '';
-  if (!jobId) return null;
+  if (!jobId) {
+    console.warn(`[settlement-engine] AI worker returned no jobId for ${market.market_identifier}`);
+    return null;
+  }
+  console.log(`[settlement-engine] AI job started: ${jobId} for ${market.market_identifier}`);
 
   const timeoutMs = 30_000;
   const pollEveryMs = 2_000;
