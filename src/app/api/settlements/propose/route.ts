@@ -1,6 +1,6 @@
 // This API endpoint is no longer needed - settlement is fully automated
-// The settlement-scheduler edge function handles everything automatically
-// when markets become ACTIVE with settlement_date set
+// The settlement engine (src/lib/settlement-engine.ts) handles everything
+// via the market-lifecycle cron route when markets reach their settlement date
 
 export async function POST() {
   return Response.json({

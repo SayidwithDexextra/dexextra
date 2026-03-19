@@ -200,22 +200,27 @@ function formatSettlementDate(date: string | Date): string {
   
   const now = new Date();
   const diffMs = d.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
   
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const targetStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const calendarDayDiff = Math.round(
+    (targetStart.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
   const formatted = d.toLocaleDateString('en-US', { 
     month: 'short', 
     day: 'numeric',
     year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
   });
   
-  if (diffDays < 0) {
+  if (diffMs < 0) {
     return `Settled ${formatted}`;
-  } else if (diffDays === 0) {
+  } else if (calendarDayDiff === 0) {
     return `Settles today`;
-  } else if (diffDays === 1) {
+  } else if (calendarDayDiff === 1) {
     return `Settles tomorrow`;
-  } else if (diffDays <= 7) {
-    return `Settles in ${diffDays}d`;
+  } else if (calendarDayDiff <= 7) {
+    return `Settles in ${calendarDayDiff}d`;
   } else {
     return `Settles ${formatted}`;
   }
@@ -408,50 +413,71 @@ export default function MarketInfoHeader({
         )}
 
         {/* Settlement Date Badge */}
-        {formattedSettlement && (
-          <Tooltip
-            content={
-              countdown && !countdown.isSettled ? (
+        {formattedSettlement && (() => {
+          const isImminent = countdown && !countdown.isSettled && countdown.days === 0;
+          const isUrgent = isImminent && countdown.hours === 0;
+          const badgeClass = [
+            styles.settlementBadge,
+            isUrgent ? styles.settlementBadgeUrgent : isImminent ? styles.settlementBadgeImminent : '',
+          ].filter(Boolean).join(' ');
+
+          return (
+            <Tooltip
+              content={
                 <div className={styles.countdownTooltip}>
-                  <div className={styles.countdownTooltipLabel}>Time until settlement</div>
-                  <div className={styles.countdownDisplay}>
-                    <span className={styles.countdownUnit}>
-                      <span className={styles.countdownValue}>{countdown.days}</span>
-                      <span className={styles.countdownLabel}>d</span>
-                    </span>
-                    <span className={styles.countdownSeparator}>:</span>
-                    <span className={styles.countdownUnit}>
-                      <span className={styles.countdownValue}>{String(countdown.hours).padStart(2, '0')}</span>
-                      <span className={styles.countdownLabel}>h</span>
-                    </span>
-                    <span className={styles.countdownSeparator}>:</span>
-                    <span className={styles.countdownUnit}>
-                      <span className={styles.countdownValue}>{String(countdown.minutes).padStart(2, '0')}</span>
-                      <span className={styles.countdownLabel}>m</span>
-                    </span>
-                    <span className={styles.countdownSeparator}>:</span>
-                    <span className={styles.countdownUnit}>
-                      <span className={styles.countdownValue}>{String(countdown.seconds).padStart(2, '0')}</span>
-                      <span className={styles.countdownLabel}>s</span>
-                    </span>
-                  </div>
+                  {countdown && !countdown.isSettled ? (
+                    <>
+                      <div className={styles.countdownTooltipLabel}>Time until settlement</div>
+                      <div className={styles.countdownDisplay}>
+                        <span className={styles.countdownUnit}>
+                          <span className={styles.countdownValue}>{countdown.days}</span>
+                          <span className={styles.countdownLabel}>d</span>
+                        </span>
+                        <span className={styles.countdownSeparator}>:</span>
+                        <span className={styles.countdownUnit}>
+                          <span className={styles.countdownValue}>{String(countdown.hours).padStart(2, '0')}</span>
+                          <span className={styles.countdownLabel}>h</span>
+                        </span>
+                        <span className={styles.countdownSeparator}>:</span>
+                        <span className={styles.countdownUnit}>
+                          <span className={styles.countdownValue}>{String(countdown.minutes).padStart(2, '0')}</span>
+                          <span className={styles.countdownLabel}>m</span>
+                        </span>
+                        <span className={styles.countdownSeparator}>:</span>
+                        <span className={styles.countdownUnit}>
+                          <span className={styles.countdownValue}>{String(countdown.seconds).padStart(2, '0')}</span>
+                          <span className={styles.countdownLabel}>s</span>
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className={styles.countdownTooltipLabel}>Settlement</div>
+                  )}
                   <div className={styles.countdownTooltipDate}>
                     {settlementDate ? new Date(settlementDate).toLocaleString() : ''}
                   </div>
                 </div>
-              ) : (
-                <span>{settlementDate ? new Date(settlementDate).toLocaleString() : ''}</span>
-              )
-            }
-            maxWidth={200}
-            delay={100}
-          >
-            <div className={styles.settlementBadge} data-walkthrough="token-settlement-date">
-              <CalendarIcon />
-              <span>{formattedSettlement}</span>
-            </div>
-          </Tooltip>
-        )}
+              }
+              maxWidth={200}
+              delay={100}
+            >
+              <div className={badgeClass} data-walkthrough="token-settlement-date">
+                <CalendarIcon />
+                {isImminent ? (
+                  <span className={styles.inlineCountdown}>
+                    {countdown.hours > 0 && (
+                      <>{String(countdown.hours).padStart(2, '0')}h </>
+                    )}
+                    {String(countdown.minutes).padStart(2, '0')}m{' '}
+                    {String(countdown.seconds).padStart(2, '0')}s
+                  </span>
+                ) : (
+                  <span>{formattedSettlement}</span>
+                )}
+              </div>
+            </Tooltip>
+          );
+        })()}
 
         {/* Tags */}
         {tags.length > 0 && (

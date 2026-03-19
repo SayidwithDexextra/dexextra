@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Receiver } from '@upstash/qstash';
 import { ethers } from 'ethers';
 import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { runSettlementTick, runSingleSettlementCheck } from '@/lib/settlement-engine';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -68,34 +69,6 @@ function verifyVercelCron(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
   return req.headers.get('authorization') === `Bearer ${secret}`;
-}
-
-// ---------------------------------------------------------------------------
-// Settlement – call the existing settlement-scheduler edge function
-// ---------------------------------------------------------------------------
-
-async function callSettlementScheduler(action: string, marketId?: string): Promise<Record<string, unknown>> {
-  const sbUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  if (!sbUrl || !sbKey) return { ok: false, error: 'supabase_not_configured' };
-
-  const fnUrl = `${sbUrl}/functions/v1/settlement-scheduler`;
-  const body: Record<string, string> = { action };
-  if (marketId) body.market_id = marketId;
-
-  try {
-    const res = await fetch(fnUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${sbKey}`,
-      },
-      body: JSON.stringify(body),
-    });
-    return await res.json().catch(() => ({ ok: false, status: res.status }));
-  } catch (e: any) {
-    return { ok: false, error: e?.message || String(e) };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -382,8 +355,8 @@ async function runSafetyNetScan(): Promise<Record<string, unknown>> {
   const nowIso = now.toISOString();
   const results: Record<string, unknown>[] = [];
 
-  // 1. Settlement tick – delegates to the existing edge function
-  const settlementResult = await callSettlementScheduler('run_settlement_tick');
+  // 1. Settlement tick – run inline settlement engine
+  const settlementResult = supabase ? await runSettlementTick(supabase) : { ok: false, error: 'supabase_not_configured' };
   results.push({ type: 'settlement_tick', ...settlementResult });
 
   // 2. Rollover scan – find ACTIVE markets whose rollover window has started but no child exists
@@ -482,23 +455,27 @@ export async function POST(req: Request) {
     }
 
     case 'settlement_start': {
+      const sb = getSupabase();
+      if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });
       if (marketId) {
         const syncRes = marketAddress ? await syncLifecycleOnChain(marketAddress) : null;
-        const result = await callSettlementScheduler('check_settlement_time', marketId);
+        const result = await runSingleSettlementCheck(sb, marketId);
         log('dispatch_settlement_start', 'success', { syncRes, ...result });
         return json(200, { ...result, syncLifecycle: syncRes });
       }
-      const result = await callSettlementScheduler('run_settlement_tick');
+      const result = await runSettlementTick(sb);
       return json(200, result);
     }
 
     case 'settlement_finalize': {
+      const sb = getSupabase();
+      if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });
       if (marketId) {
-        const result = await callSettlementScheduler('check_settlement_time', marketId);
+        const result = await runSingleSettlementCheck(sb, marketId);
         log('dispatch_settlement_finalize', 'success', result);
         return json(200, result);
       }
-      const result = await callSettlementScheduler('run_settlement_tick');
+      const result = await runSettlementTick(sb);
       return json(200, result);
     }
 

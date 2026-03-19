@@ -1,7 +1,14 @@
 import { Client } from '@upstash/qstash';
 
-const DEFAULT_ROLLOVER_LEAD_SECONDS = 30 * 24 * 60 * 60; // 30 days
-const DEFAULT_CHALLENGE_DURATION_SECONDS = 24 * 60 * 60; // 24 hours
+// ── Proportional lifecycle constants ──
+// Must stay aligned with MarketLifecycleFacet.sol:
+//   _rolloverLead:     duration / 12       (1/12 of lifecycle, ~30.4 days for 1 year)
+//   _challengeDuration: duration / 365     (1/365 of lifecycle, 24 h for 1 year)
+const ROLLOVER_DIVISOR = 12;  // matches Solidity: duration / 12
+const CHALLENGE_DIVISOR = 365; // matches Solidity: duration / DAYS_PER_YEAR (365)
+
+const MIN_ROLLOVER_LEAD_SEC = 5 * 60;   // 5 minutes — floor for ultra-short markets
+const MIN_CHALLENGE_DURATION_SEC = 60;   // 1 minute — matches Solidity MIN_CHALLENGE_DURATION
 
 // QStash pay-as-you-go plan supports up to 1 year delay.
 // Leave a 1-day buffer to avoid edge-case rejections.
@@ -13,6 +20,30 @@ type ScheduleIds = {
   finalize?: string;
   deferred?: string[];
 };
+
+/**
+ * Derive rollover lead and challenge duration proportionally using the
+ * same integer-division formulas as MarketLifecycleFacet.sol.
+ *
+ * Examples:
+ *   1 year  → rollover ~30.4 d, challenge 24 h
+ *   1 month → rollover 2.5 d,   challenge ~2 h
+ *   1 week  → rollover 14 h,    challenge ~28 min
+ *   24 h    → rollover 2 h,     challenge ~4 min
+ *   1 h     → rollover 5 min,   challenge 1 min (clamped)
+ */
+function proportionalDurations(marketDurationSec: number) {
+  return {
+    rolloverLead: Math.max(
+      MIN_ROLLOVER_LEAD_SEC,
+      Math.floor(marketDurationSec / ROLLOVER_DIVISOR),
+    ),
+    challengeDuration: Math.max(
+      MIN_CHALLENGE_DURATION_SEC,
+      Math.floor(marketDurationSec / CHALLENGE_DIVISOR),
+    ),
+  };
+}
 
 function getClient(): Client | null {
   const token = process.env.QSTASH_TOKEN;
@@ -79,8 +110,13 @@ async function publishOrDefer(
  *   2. Settlement start       (T0)
  *   3. Settlement finalize    (T0 + challengeDuration)
  *
- * If any trigger is more than ~7 days out, a deferred "reschedule" message
- * is published instead, which chains forward until the target is reachable.
+ * Rollover lead and challenge duration are computed **proportionally** to
+ * the market's total duration, using a 1-year contract as the reference
+ * baseline (30-day rollover lead, 24-hour challenge window). Explicit
+ * overrides via opts still take precedence.
+ *
+ * If any trigger is more than ~364 days out, a deferred "reschedule"
+ * message is published instead, which chains forward until reachable.
  *
  * Returns the QStash message IDs so they can be stored and later cancelled.
  */
@@ -92,6 +128,7 @@ export async function scheduleMarketLifecycle(
     challengeDurationSeconds?: number;
     marketAddress?: string;
     symbol?: string;
+    createdAtUnix?: number;
   },
 ): Promise<ScheduleIds> {
   const client = getClient();
@@ -102,9 +139,12 @@ export async function scheduleMarketLifecycle(
 
   const baseUrl = getBaseUrl();
   const destination = `${baseUrl}/api/cron/market-lifecycle`;
-  const rolloverLead = opts?.rolloverLeadSeconds ?? DEFAULT_ROLLOVER_LEAD_SECONDS;
-  const challengeDuration = opts?.challengeDurationSeconds ?? DEFAULT_CHALLENGE_DURATION_SECONDS;
   const nowSec = Math.floor(Date.now() / 1000);
+  const marketOrigin = opts?.createdAtUnix ?? nowSec;
+  const marketDuration = Math.max(1, settlementDateUnix - marketOrigin);
+  const proportional = proportionalDurations(marketDuration);
+  const rolloverLead = opts?.rolloverLeadSeconds ?? proportional.rolloverLead;
+  const challengeDuration = opts?.challengeDurationSeconds ?? proportional.challengeDuration;
 
   const ids: ScheduleIds = {};
   const commonBody = {
@@ -155,6 +195,9 @@ export async function scheduleMarketLifecycle(
   console.log('[qstash-scheduler] Scheduled lifecycle triggers', {
     marketId,
     settlementDateUnix,
+    marketDurationHours: Math.round(marketDuration / 3600 * 10) / 10,
+    rolloverLeadHours: Math.round(rolloverLead / 3600 * 10) / 10,
+    challengeDurationHours: Math.round(challengeDuration / 3600 * 10) / 10,
     rolloverTriggerAt: rolloverTriggerAt > nowSec ? new Date(rolloverTriggerAt * 1000).toISOString() : 'skipped (past)',
     settlementAt: settlementDateUnix > nowSec ? new Date(settlementDateUnix * 1000).toISOString() : 'skipped (past)',
     finalizeAt: finalizeTriggerAt > nowSec ? new Date(finalizeTriggerAt * 1000).toISOString() : 'skipped (past)',

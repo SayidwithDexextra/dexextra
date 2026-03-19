@@ -254,6 +254,34 @@
   opacity: 0.8;
 }
 
+.settlementBadgeImminent {
+  background: rgba(250, 204, 21, 0.14);
+  border-color: rgba(250, 204, 21, 0.35);
+  color: #facc15;
+  animation: settlePulse 2s ease-in-out infinite;
+}
+
+.settlementBadgeUrgent {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #f87171;
+  animation: settlePulse 1.2s ease-in-out infinite;
+}
+
+.settlementBadgeUrgent svg {
+  color: #f87171;
+}
+
+@keyframes settlePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+.inlineCountdown {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
 /* ── Countdown Tooltip ── */
 .countdownTooltip {
   display: flex;

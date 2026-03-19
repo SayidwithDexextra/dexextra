@@ -15,7 +15,7 @@ contract MarketLifecycleFacet {
 
     uint256 private constant DEFAULT_ROLLOVER_LEAD = 30 days;
     uint256 private constant DEFAULT_CHALLENGE_LEAD = 24 hours;
-    uint256 private constant DAYS_PER_YEAR = 365 days;
+    uint256 private constant DAYS_PER_YEAR = 365;
     uint256 private constant MIN_CHALLENGE_DURATION = 1 minutes;
 
     enum LifecycleState {
