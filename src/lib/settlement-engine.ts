@@ -136,7 +136,7 @@ function nextMarketConfig(
 
 async function getAIPriceDetermination(
   market: MarketRow,
-): Promise<{ price: number; jobId: string; waybackUrl: string | null } | null> {
+): Promise<{ price: number; jobId: string; waybackUrl: string | null; waybackPageUrl: string | null } | null> {
   const { metricAiWorkerUrl } = getConfig();
   if (!metricAiWorkerUrl) {
     console.warn('[settlement-engine] metricAiWorkerUrl is empty, cannot determine AI price');
@@ -200,9 +200,13 @@ async function getAIPriceDetermination(
       if (Number.isFinite(candidate) && candidate > 0) {
         const waybackUrl: string | null =
           pollJson.result?.settlement_wayback_url
+          || pollJson.result?.sources?.[0]?.wayback_screenshot_url
+          || null;
+        const waybackPageUrl: string | null =
+          pollJson.result?.settlement_wayback_page_url
           || pollJson.result?.sources?.[0]?.wayback_url
           || null;
-        return { price: candidate, jobId, waybackUrl };
+        return { price: candidate, jobId, waybackUrl, waybackPageUrl };
       }
       return null;
     }
@@ -371,6 +375,9 @@ async function maybeStartSettlementWindow(
   if (ai.waybackUrl) {
     updatedConfig.settlement_wayback_url = ai.waybackUrl;
   }
+  if (ai.waybackPageUrl) {
+    updatedConfig.settlement_wayback_page_url = ai.waybackPageUrl;
+  }
 
   const { error } = await supabase
     .from('markets')
@@ -401,7 +408,7 @@ async function maybeStartSettlementWindow(
     action: 'start_window', ok: true,
     settlementDate: market.settlement_date,
     settlementWindowExpiresAt: expiresAt.toISOString(),
-    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl },
+    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl },
   };
 }
 
@@ -478,6 +485,9 @@ async function maybeFinalizeSettlement(
   });
   if (ai.waybackUrl) {
     finalConfig.settlement_wayback_url = ai.waybackUrl;
+  }
+  if (ai.waybackPageUrl) {
+    finalConfig.settlement_wayback_page_url = ai.waybackPageUrl;
   }
 
   const { error } = await supabase

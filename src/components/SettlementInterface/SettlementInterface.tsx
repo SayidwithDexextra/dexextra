@@ -22,6 +22,7 @@ interface SettlementMarket {
       primary_source_url?: string;
     };
     settlement_wayback_url?: string;
+    settlement_wayback_page_url?: string;
   };
 }
 
@@ -127,6 +128,7 @@ export function SettlementInterface({
     market?.market_config?.ai_source_locator?.primary_source_url;
 
   const settlementWaybackUrl = market?.market_config?.settlement_wayback_url || null;
+  const settlementWaybackPageUrl = market?.market_config?.settlement_wayback_page_url || null;
 
   const formattedProposed = useMemo(() => {
     if (typeof market?.proposed_settlement_value === 'number') {
@@ -293,23 +295,52 @@ export function SettlementInterface({
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
+                  title="Archived screenshot on Wayback Machine"
                 >
                   <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M2 13h12M3 3h10M4 3v10M12 3v10M8 3v10M2 8h12M5.5 3v10M10.5 3v10" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
                   </svg>
-                  <span className="underline">Archive</span>
+                  <span className="underline">Snapshot</span>
+                </a>
+              )}
+              {settlementWaybackPageUrl && (
+                <a
+                  href={settlementWaybackPageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-amber-400/70 hover:text-amber-300 flex items-center gap-1"
+                  title="Archived source page on Wayback Machine"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
+                    <path d="M10 2v3h3M5 8h6M5 10.5h6" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                  </svg>
+                  <span className="underline">Page</span>
                 </a>
               )}
             </div>
           </div>
-          <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+          <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-40 overflow-hidden transition-all duration-200">
             <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-              <div className="text-[9px] pt-1.5 text-[#606060]">
-                {settlementWaybackUrl
-                  ? 'Metric source archived to the Wayback Machine at settlement time.'
-                  : sourceUrl
-                    ? 'Live metric source. No archive snapshot available.'
-                    : 'No primary source attached.'}
+              <div className="text-[9px] pt-1.5 text-[#606060] space-y-0.5">
+                {settlementWaybackUrl && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-1 h-1 rounded-full bg-emerald-400/60" />
+                    Screenshot archived to Wayback Machine at settlement time.
+                  </div>
+                )}
+                {settlementWaybackPageUrl && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-1 h-1 rounded-full bg-amber-400/60" />
+                    Original source page archived to Wayback Machine.
+                  </div>
+                )}
+                {!settlementWaybackUrl && !settlementWaybackPageUrl && sourceUrl && (
+                  <div>Live metric source. No archive available.</div>
+                )}
+                {!settlementWaybackUrl && !settlementWaybackPageUrl && !sourceUrl && (
+                  <div>No primary source attached.</div>
+                )}
               </div>
             </div>
           </div>

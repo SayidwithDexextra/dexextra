@@ -74,13 +74,14 @@ async function pollStatus(
 
 /**
  * Archive a URL via Internet Archive's SavePageNow API.
- * Designed for best-effort use with a tight time budget (~15s).
+ * Static files (images, PNGs) typically complete in under 10s.
+ * JS-heavy pages may need the full 30s budget.
  */
 export async function archivePage(
   urlToArchive: string,
   options: { timeoutMs?: number } = {},
 ): Promise<ArchiveResult> {
-  const timeoutMs = options.timeoutMs ?? 15_000;
+  const timeoutMs = options.timeoutMs ?? 30_000;
   const deadline = Date.now() + timeoutMs;
 
   let parsed: URL;
