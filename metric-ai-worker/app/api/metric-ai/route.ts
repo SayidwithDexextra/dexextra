@@ -692,12 +692,44 @@ export async function POST(req: NextRequest) {
             screenshot_url: screenshotData?.uploadResult?.publicUrl || '',
             quote: String(q.quote || '').slice(0, 800),
             match_score: typeof q.match_score === 'number' ? q.match_score : 0.5,
-            // Include vision analysis results if available
             vision_value: screenshotData?.visionResult?.numericValue || '',
             vision_confidence: screenshotData?.visionResult?.confidence || 0,
-            vision_quote: screenshotData?.visionResult?.visualQuote?.slice(0, 300) || ''
+            vision_quote: screenshotData?.visionResult?.visualQuote?.slice(0, 300) || '',
+            wayback_url: null as string | null,
+            wayback_timestamp: null as string | null,
           };
         }) : [];
+
+        // Wayback archival (settlement context only, best-effort)
+        let settlementWaybackUrl: string | null = null;
+        let settlementWaybackTimestamp: string | null = null;
+        if (input.context === 'settlement') {
+          const { archivePage } = await import('../../../lib/archivePage');
+          const archiveUrls = input.urls.slice(0, 3);
+          console.log(`[Metric-AI] 📦 Archiving ${archiveUrls.length} source URL(s) to Wayback Machine`);
+          const archiveResults = await Promise.allSettled(
+            archiveUrls.map((url) => archivePage(url, { timeoutMs: 15_000 }))
+          );
+          for (let i = 0; i < archiveResults.length; i++) {
+            const r = archiveResults[i];
+            if (r.status === 'fulfilled' && r.value.success && r.value.waybackUrl) {
+              const archivedUrl = archiveUrls[i];
+              console.log(`[Metric-AI] ✓ Archived ${archivedUrl} → ${r.value.waybackUrl}`);
+              if (i === 0) {
+                settlementWaybackUrl = r.value.waybackUrl;
+                settlementWaybackTimestamp = r.value.timestamp || null;
+              }
+              const matchingSource = sourcesWithScreenshots.find((s: any) => s.url === archivedUrl);
+              if (matchingSource) {
+                matchingSource.wayback_url = r.value.waybackUrl;
+                matchingSource.wayback_timestamp = r.value.timestamp || null;
+              }
+            } else {
+              const reason = r.status === 'rejected' ? r.reason?.message : r.value?.error;
+              console.warn(`[Metric-AI] ⚠ Wayback archive failed for ${archiveUrls[i]}: ${reason || 'unknown'}`);
+            }
+          }
+        }
 
         const resolution = {
           metric: input.metric,
@@ -715,7 +747,9 @@ export async function POST(req: NextRequest) {
           screenshots_failed: screenshotFailures.length,
           screenshot_failure_reasons: screenshotFailures.length > 0 ? screenshotFailures : undefined,
           html_sources_extracted: texts.length,
-          data_sources_summary: `HTML: ${texts.length}/${totalUrls}, Screenshots: ${successfulScreenshots}/${totalUrls}, Vision: ${Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length}/${totalUrls}`
+          data_sources_summary: `HTML: ${texts.length}/${totalUrls}, Screenshots: ${successfulScreenshots}/${totalUrls}, Vision: ${Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length}/${totalUrls}`,
+          settlement_wayback_url: settlementWaybackUrl,
+          settlement_wayback_timestamp: settlementWaybackTimestamp,
         };
 
         let resolutionId: string | null = null;

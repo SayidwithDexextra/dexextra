@@ -6,6 +6,8 @@ import { getMetricAIWorkerBaseUrl } from './metricAiWorker';
 
 export type MarketRow = {
   id: string;
+  name: string | null;
+  description: string | null;
   market_identifier: string;
   market_address: string | null;
   market_status: string;
@@ -134,7 +136,7 @@ function nextMarketConfig(
 
 async function getAIPriceDetermination(
   market: MarketRow,
-): Promise<{ price: number; jobId: string } | null> {
+): Promise<{ price: number; jobId: string; waybackUrl: string | null } | null> {
   const { metricAiWorkerUrl } = getConfig();
   if (!metricAiWorkerUrl) {
     console.warn('[settlement-engine] metricAiWorkerUrl is empty, cannot determine AI price');
@@ -146,13 +148,20 @@ async function getAIPriceDetermination(
     return null;
   }
 
-  console.log(`[settlement-engine] requesting AI price for ${market.market_identifier}`, { metricAiWorkerUrl, urls });
+  const richDescription = [
+    `Settlement price determination for "${market.name || market.market_identifier}".`,
+    market.description ? `Market description: ${market.description}.` : '',
+    `Metric source URL(s): ${urls.join(', ')}.`,
+    `Find the current numeric value of this metric from the source page(s).`,
+  ].filter(Boolean).join(' ');
+
+  console.log(`[settlement-engine] requesting AI price for ${market.market_identifier}`, { metricAiWorkerUrl, urls, richDescription });
   const startRes = await fetch(`${metricAiWorkerUrl}/api/metric-ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      metric: market.market_identifier,
-      description: `Determine settlement price for ${market.market_identifier}`,
+      metric: market.name || market.market_identifier,
+      description: richDescription,
       urls,
       related_market_id: market.id,
       related_market_identifier: market.market_identifier,
@@ -189,7 +198,11 @@ async function getAIPriceDetermination(
         pollJson.result?.asset_price_suggestion ?? pollJson.result?.value,
       );
       if (Number.isFinite(candidate) && candidate > 0) {
-        return { price: candidate, jobId };
+        const waybackUrl: string | null =
+          pollJson.result?.settlement_wayback_url
+          || pollJson.result?.sources?.[0]?.wayback_url
+          || null;
+        return { price: candidate, jobId, waybackUrl };
       }
       return null;
     }
@@ -349,6 +362,16 @@ async function maybeStartSettlementWindow(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + defaultWindowSeconds * 1000);
 
+  const updatedConfig = nextMarketConfig(market, {
+    stage: 'window_started',
+    started_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    ai_job_id: ai.jobId,
+  });
+  if (ai.waybackUrl) {
+    updatedConfig.settlement_wayback_url = ai.waybackUrl;
+  }
+
   const { error } = await supabase
     .from('markets')
     .update({
@@ -357,12 +380,7 @@ async function maybeStartSettlementWindow(
       settlement_window_expires_at: expiresAt.toISOString(),
       proposed_settlement_by: 'AI_SYSTEM',
       market_status: 'SETTLEMENT_REQUESTED',
-      market_config: nextMarketConfig(market, {
-        stage: 'window_started',
-        started_at: now.toISOString(),
-        expires_at: expiresAt.toISOString(),
-        ai_job_id: ai.jobId,
-      }),
+      market_config: updatedConfig,
       updated_at: now.toISOString(),
     })
     .eq('id', market.id)
@@ -383,7 +401,7 @@ async function maybeStartSettlementWindow(
     action: 'start_window', ok: true,
     settlementDate: market.settlement_date,
     settlementWindowExpiresAt: expiresAt.toISOString(),
-    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString() },
+    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl },
   };
 }
 
@@ -452,18 +470,23 @@ async function maybeFinalizeSettlement(
   txHash = settle.txHash || null;
 
   const now = new Date().toISOString();
+  const finalConfig = nextMarketConfig(market, {
+    stage: 'settled',
+    settled_at: now,
+    ai_job_id: ai.jobId,
+    tx_hash: txHash,
+  });
+  if (ai.waybackUrl) {
+    finalConfig.settlement_wayback_url = ai.waybackUrl;
+  }
+
   const { error } = await supabase
     .from('markets')
     .update({
       market_status: 'SETTLED',
       settlement_value: ai.price,
       settlement_timestamp: now,
-      market_config: nextMarketConfig(market, {
-        stage: 'settled',
-        settled_at: now,
-        ai_job_id: ai.jobId,
-        tx_hash: txHash,
-      }),
+      market_config: finalConfig,
       updated_at: now,
     })
     .eq('id', market.id)
@@ -492,6 +515,8 @@ async function maybeFinalizeSettlement(
 
 const MARKET_SELECT = `
   id,
+  name,
+  description,
   market_identifier,
   market_address,
   market_status,

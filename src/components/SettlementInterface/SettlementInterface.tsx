@@ -21,6 +21,7 @@ interface SettlementMarket {
       url?: string;
       primary_source_url?: string;
     };
+    settlement_wayback_url?: string;
   };
 }
 
@@ -124,6 +125,8 @@ export function SettlementInterface({
   const sourceUrl =
     market?.market_config?.ai_source_locator?.url ||
     market?.market_config?.ai_source_locator?.primary_source_url;
+
+  const settlementWaybackUrl = market?.market_config?.settlement_wayback_url || null;
 
   const formattedProposed = useMemo(() => {
     if (typeof market?.proposed_settlement_value === 'number') {
@@ -273,23 +276,40 @@ export function SettlementInterface({
                 <span className="text-[11px] font-medium text-[#808080]">Evidence Source</span>
               </div>
             </div>
-            {sourceUrl && (
-              <a
-                href={sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[10px] text-blue-400 hover:text-blue-300 underline truncate max-w-[140px]"
-              >
-                {sourceHost}
-              </a>
-            )}
+            <div className="flex items-center gap-2">
+              {sourceUrl && (
+                <a
+                  href={sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-blue-400 hover:text-blue-300 underline truncate max-w-[120px]"
+                >
+                  {sourceHost}
+                </a>
+              )}
+              {settlementWaybackUrl && (
+                <a
+                  href={settlementWaybackUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2 13h12M3 3h10M4 3v10M12 3v10M8 3v10M2 8h12M5.5 3v10M10.5 3v10" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
+                  </svg>
+                  <span className="underline">Archive</span>
+                </a>
+              )}
+            </div>
           </div>
           <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
             <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
               <div className="text-[9px] pt-1.5 text-[#606060]">
-                {sourceUrl
-                  ? 'Primary metric source archived when settlement started.'
-                  : 'No primary source attached.'}
+                {settlementWaybackUrl
+                  ? 'Metric source archived to the Wayback Machine at settlement time.'
+                  : sourceUrl
+                    ? 'Live metric source. No archive snapshot available.'
+                    : 'No primary source attached.'}
               </div>
             </div>
           </div>
