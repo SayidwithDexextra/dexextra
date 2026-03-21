@@ -4,6 +4,7 @@ import { initializeContracts } from '@/lib/contracts';
 import { formatUnits } from 'viem';
 import { ethers } from 'ethers';
 import { ensureHyperliquidWallet, getReadProvider } from '@/lib/network';
+import { getActiveEthereumProvider } from '@/lib/wallet';
 import type { Address } from 'viem';
 import { useMarket } from './useMarket';
 
@@ -111,7 +112,7 @@ export function usePositions(
         let runner: ethers.Signer | ethers.Provider | undefined = undefined;
         if (walletSigner) {
           runner = walletSigner as ethers.Signer;
-        } else if (typeof window !== 'undefined' && (window as any).ethereum) {
+        } else if (typeof window !== 'undefined' && (getActiveEthereumProvider() || (window as any).ethereum)) {
           try {
             runner = await ensureHyperliquidWallet();
           } catch (e) {

@@ -5,6 +5,7 @@ import { initializeContracts } from '@/lib/contracts';
 import { useMarket } from '@/hooks/useMarket';
 import { CONTRACT_ADDRESSES, CHAIN_CONFIG, populateMarketInfoClient } from '@/lib/contractConfig';
 import { getReadProvider, ensureHyperliquidWallet } from '@/lib/network';
+import { getActiveEthereumProvider } from '@/lib/wallet';
 import { orderService } from '@/lib/orderService';
 import { formatUnits, parseEther, parseUnits } from 'viem';
 import { ethers } from 'ethers';
@@ -328,7 +329,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
         let runner: ethers.Signer | ethers.Provider | undefined = undefined;
         if (walletSigner) {
           runner = walletSigner as ethers.Signer;
-        } else if (typeof window !== 'undefined' && (window as any).ethereum) {
+        } else if (typeof window !== 'undefined' && (getActiveEthereumProvider() || (window as any).ethereum)) {
           try {
             const injectedSigner = await ensureHyperliquidWallet();
             // Validate connected network matches configured chain; otherwise fall back to read-only provider
@@ -1094,7 +1095,7 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           signer = await (contracts.obOrderPlacement.runner as any).getSigner?.();
         } catch {}
       }
-      if (!signer && typeof window !== 'undefined' && (window as any).ethereum) {
+      if (!signer && typeof window !== 'undefined' && (getActiveEthereumProvider() || (window as any).ethereum)) {
         try {
           signer = await ensureHyperliquidWallet();
         } catch {}

@@ -1,5 +1,7 @@
 import { ethers } from 'ethers'
 import { env } from './env'
+import { getActiveEthereumProvider, type EthereumProvider } from './wallet'
+import { isMagicSelectedWallet, switchMagicChainWithRetry, getMagicProvider } from './magic'
 
 // Single source of truth for network configuration and provider/signer creation
 
@@ -110,83 +112,110 @@ export async function getRunner(): Promise<ethers.Provider | ethers.Signer> {
 }
 
 export async function ensureHyperliquidWallet(): Promise<ethers.Signer> {
-  if (typeof window === 'undefined' || !(window as any).ethereum) {
+  const isMagic = typeof window !== 'undefined' && isMagicSelectedWallet()
+  let ethereum: EthereumProvider | null = null
+
+  if (isMagic) {
+    try {
+      ethereum = getMagicProvider() as unknown as EthereumProvider
+    } catch {}
+  }
+
+  if (!ethereum) {
+    ethereum = getActiveEthereumProvider()
+  }
+
+  if (!ethereum && typeof window !== 'undefined') {
+    ethereum = (window as any).ethereum ?? null
+  }
+
+  if (!ethereum) {
     throw new Error('No wallet provider available')
   }
 
-  const ethereum = (window as any).ethereum
   const expectedChainId = getExpectedChainId()
   const expectedChainHex = `0x${expectedChainId.toString(16)}`
 
-  const readInjectedChainId = async (): Promise<number> => {
+  const readProviderChainId = async (): Promise<number> => {
     try {
-      const chainHex = await ethereum.request({ method: 'eth_chainId' })
+      const chainHex = await ethereum!.request({ method: 'eth_chainId' })
       if (typeof chainHex === 'string') {
         return parseInt(chainHex, 16)
+      }
+      if (typeof chainHex === 'number') {
+        return chainHex
       }
     } catch {
       // Fall back to ethers network lookup below
     }
-    const browserProvider = new ethers.BrowserProvider(ethereum)
+    const browserProvider = new ethers.BrowserProvider(ethereum as any)
     const net = await browserProvider.getNetwork()
     return Number(net.chainId)
   }
 
-  const trySwitch = async () => {
-    await ethereum.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: expectedChainHex }]
-    })
-  }
-
-  const tryAddAndSwitch = async () => {
-    if (!env.RPC_URL) return
-    await ethereum.request({
-      method: 'wallet_addEthereumChain',
-      params: [{
-        chainId: expectedChainHex,
-        chainName: 'Hyperliquid',
-        nativeCurrency: { name: 'Hyperliquid', symbol: 'HYPE', decimals: 18 },
-        rpcUrls: [env.RPC_URL],
-        blockExplorerUrls: env.APP_URL ? [env.APP_URL] : []
-      }]
-    })
-    await trySwitch()
-  }
-
-  let currentChainId = await readInjectedChainId()
+  let currentChainId = await readProviderChainId()
   if (currentChainId !== expectedChainId) {
-    try {
-      await trySwitch()
-    } catch (switchErr: any) {
-      const userRejected = switchErr?.code === 4001
-      const chainMissing = switchErr?.code === 4902
+    if (isMagic) {
+      try {
+        await switchMagicChainWithRetry(expectedChainId, { retries: 2 })
+      } catch (err: any) {
+        throw new Error(`Failed to switch Magic wallet to chainId ${expectedChainId}: ${err?.message || 'Unknown error'}`)
+      }
+    } else {
+      const trySwitch = async () => {
+        await ethereum!.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: expectedChainHex }]
+        })
+      }
 
-      if (chainMissing) {
-        try {
-          await tryAddAndSwitch()
-        } catch (addErr: any) {
-          const addRejected = addErr?.code === 4001
-          throw new Error(
-            addRejected
-              ? 'Please approve adding the Hyperliquid network, then retry.'
-              : `Unable to add or switch networks automatically. Open your wallet and select chainId ${expectedChainId} (hex ${expectedChainHex}).`
-          )
+      const tryAddAndSwitch = async () => {
+        if (!env.RPC_URL) return
+        await ethereum!.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: expectedChainHex,
+            chainName: 'Hyperliquid',
+            nativeCurrency: { name: 'Hyperliquid', symbol: 'HYPE', decimals: 18 },
+            rpcUrls: [env.RPC_URL],
+            blockExplorerUrls: env.APP_URL ? [env.APP_URL] : []
+          }]
+        })
+        await trySwitch()
+      }
+
+      try {
+        await trySwitch()
+      } catch (switchErr: any) {
+        const userRejected = switchErr?.code === 4001
+        const chainMissing = switchErr?.code === 4902
+
+        if (chainMissing) {
+          try {
+            await tryAddAndSwitch()
+          } catch (addErr: any) {
+            const addRejected = addErr?.code === 4001
+            throw new Error(
+              addRejected
+                ? 'Please approve adding the Hyperliquid network, then retry.'
+                : `Unable to add or switch networks automatically. Open your wallet and select chainId ${expectedChainId} (hex ${expectedChainHex}).`
+            )
+          }
+        } else if (userRejected) {
+          throw new Error(`You rejected the network switch. Please accept the prompt to use chainId ${expectedChainId}.`)
+        } else {
+          throw new Error(`We couldn't switch networks automatically. Select chainId ${expectedChainId} (hex ${expectedChainHex}) in your wallet and retry.`)
         }
-      } else if (userRejected) {
-        throw new Error(`You rejected the network switch. Please accept the prompt to use chainId ${expectedChainId}.`)
-      } else {
-        throw new Error(`We couldn't switch networks automatically. Select chainId ${expectedChainId} (hex ${expectedChainHex}) in your wallet and retry.`)
       }
     }
 
-    currentChainId = await readInjectedChainId()
+    currentChainId = await readProviderChainId()
     if (currentChainId !== expectedChainId) {
       throw new Error(`Network mismatch. Wallet shows chainId ${currentChainId}, expected ${expectedChainId}. Please switch in your wallet and retry.`)
     }
   }
 
-  const freshProvider = new ethers.BrowserProvider(ethereum)
+  const freshProvider = new ethers.BrowserProvider(ethereum as any)
   return freshProvider.getSigner()
 }
 

@@ -1,6 +1,7 @@
 import { CHAIN_CONFIG } from './contractConfig';
 import MetaTradeFacet from '@/lib/abis/facets/MetaTradeFacet.json';
 import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
+import { isMagicSelectedWallet, switchMagicChainWithRetry, getMagicProvider } from '@/lib/magic';
 
 type Hex = `0x${string}`;
 
@@ -11,6 +12,12 @@ const TARGET_CHAIN_HEX = `0x${TARGET_CHAIN_ID.toString(16)}`;
 
 function getWalletProvider(): EthereumProvider | null {
   if (typeof window === 'undefined') return null;
+  const isMagic = isMagicSelectedWallet();
+  if (isMagic) {
+    try {
+      return getMagicProvider() as unknown as EthereumProvider;
+    } catch {}
+  }
   return (getActiveEthereumProvider() ?? (window as any)?.ethereum ?? null) as any;
 }
 
@@ -45,6 +52,20 @@ async function ensureCorrectChain(ethereum: EthereumProvider): Promise<ChainChec
       error: `Switch your wallet to Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}) before enabling trading. ${afterText}`,
     };
   };
+
+  const isMagic = typeof window !== 'undefined' && isMagicSelectedWallet();
+
+  if (isMagic) {
+    try {
+      await switchMagicChainWithRetry(TARGET_CHAIN_ID, { retries: 2 });
+      return await verifyNow();
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: `Failed to switch Magic wallet to Hyperliquid Mainnet (chainId ${TARGET_CHAIN_ID}): ${err?.message || 'Unknown error'}`,
+      };
+    }
+  }
 
   const trySwitch = async (): Promise<ChainCheckResult> => {
     try {

@@ -1242,9 +1242,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
       
       // Prepare signer and contracts for on-chain reads/writes
-      if (typeof window === 'undefined' || !(window as any).ethereum) {
-        throw new Error('No wallet provider available. Please install a wallet.');
-      }
       const signer = await ensureHyperliquidWallet();
       
       // Ensure we have the market row data
@@ -1594,10 +1591,6 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       }
       
       // Prepare signer and contracts for pre-trade checks and placement
-      if (typeof window === 'undefined' || !(window as any).ethereum) {
-        throw new Error('No wallet provider available. Please install a wallet.');
-      }
-
       const signer = await ensureHyperliquidWallet();
       
       // Ensure we have the market row data

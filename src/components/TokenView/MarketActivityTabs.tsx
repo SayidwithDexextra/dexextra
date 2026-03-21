@@ -8,6 +8,7 @@ import { useWallet } from '@/hooks/useWallet';
 import { useMarketData } from '@/contexts/MarketDataContext';
 import { initializeContracts } from '@/lib/contracts';
 import { ensureHyperliquidWallet } from '@/lib/network';
+import { getActiveEthereumProvider } from '@/lib/wallet';
 import { useMarkets } from '@/hooks/useMarkets';
 import { cancelOrderForMarket } from '@/hooks/useOrderBook';
 import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext';
@@ -1275,7 +1276,7 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       } else {
         // Fallback: direct signer flow
         let signer: ethers.Signer | undefined;
-        if (typeof window !== 'undefined' && (window as any).ethereum) {
+        if (typeof window !== 'undefined' && (getActiveEthereumProvider() || (window as any).ethereum)) {
           const s = await ensureHyperliquidWallet();
           signer = s ?? undefined;
         }
