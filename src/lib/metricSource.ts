@@ -9,24 +9,24 @@ function clean(v: unknown): string | null {
   return s ? s : null;
 }
 
-export function resolveMetricSourceUrl(marketConfig: any, initialOrder: any): string | null {
+export function resolveMetricSourceUrl(marketConfig: any, initialOrder: any, aiSourceLocator?: any): string | null {
   const cfg = marketConfig ?? null;
   const initial = initialOrder ?? null;
+  const locator = aiSourceLocator ?? null;
 
-  // Keep this resolution order aligned with `src/components/metrics/MetricLivePrice.tsx`.
+  const locatorUrl = clean(locator?.url ?? locator?.primary_source_url);
+
   const marketConfigSourceUrl = clean(
     cfg?.source_url ??
       cfg?.sourceUrl ??
       cfg?.sourceURL ??
       cfg?.wayback_snapshot?.source_url ??
-      cfg?.wayback_snapshot?.sourceUrl ??
-      cfg?.ai_source_locator?.url ??
-      cfg?.ai_source_locator?.primary_source_url
+      cfg?.wayback_snapshot?.sourceUrl
   );
 
   const initialOrderMetricUrl = clean(initial?.metricUrl ?? initial?.metric_url ?? initial?.metricurl);
 
-  return marketConfigSourceUrl || initialOrderMetricUrl;
+  return locatorUrl || marketConfigSourceUrl || initialOrderMetricUrl;
 }
 
 function hostFromUrl(url: string): string | null {
@@ -86,6 +86,7 @@ function labelFromHost(host: string): string {
 export function metricSourceFromMarket(market: {
   market_config?: any;
   initial_order?: any;
+  ai_source_locator?: any;
   metric_source_url?: string | null;
   metric_source_label?: string | null;
 }): MetricSource {
@@ -98,7 +99,7 @@ export function metricSourceFromMarket(market: {
   );
   const explicitLabel = clean(market.metric_source_label) || cfgLabel;
 
-  const url = explicitUrl ?? resolveMetricSourceUrl(market.market_config, market.initial_order);
+  const url = explicitUrl ?? resolveMetricSourceUrl(market.market_config, market.initial_order, market.ai_source_locator);
   if (!url) return { url: null, host: null, label: null };
 
   const host = hostFromUrl(url);

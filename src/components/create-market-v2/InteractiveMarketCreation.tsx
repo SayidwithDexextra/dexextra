@@ -3489,7 +3489,7 @@ export function InteractiveMarketCreation({
           onStartOver={handleReset}
           onCreateMarket={handleCreateMarket}
           isCreating={isCreatingMarket}
-          showDevSettlementSelector={devToolsEnabled}
+          showDevSettlementSelector={true}
           devSettlementMode={devSettlementMode}
           onChangeDevSettlementMode={setDevSettlementMode}
         />

@@ -58,128 +58,122 @@ CONFIDENCE GUIDELINES:
 
 Return ONLY valid JSON, no markdown or explanation.`;
 
+const MAX_VISION_RETRIES = 2;
+const RETRY_BACKOFF_MS = [1000, 3000];
+
+const TRANSIENT_PATTERNS = ['rate_limit', '429', 'timeout', 'ECONNRESET', 'ETIMEDOUT', 'socket hang up', '503', '502', 'overloaded'];
+
+function isRetryable(err: string): boolean {
+  const lower = err.toLowerCase();
+  return TRANSIENT_PATTERNS.some(p => lower.includes(p.toLowerCase()));
+}
+
+async function sleepMs(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
+}
+
 /**
- * Analyze a screenshot using GPT-4o vision to extract price data
+ * Single-attempt GPT-4o vision call (used by retry wrapper and multi-model consensus)
+ */
+async function analyzeOnce(
+  base64Image: string,
+  metric: string,
+  options: VisionAnalysisOptions
+): Promise<VisionAnalysisResult> {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  const userPromptParts = [`METRIC TO FIND: ${metric}`];
+  if (options.description) userPromptParts.push(`DESCRIPTION: ${options.description}`);
+  if (options.expectedRange) {
+    const rangeHint: string[] = [];
+    if (options.expectedRange.min !== undefined) rangeHint.push(`min: ${options.expectedRange.min}`);
+    if (options.expectedRange.max !== undefined) rangeHint.push(`max: ${options.expectedRange.max}`);
+    if (rangeHint.length > 0) userPromptParts.push(`EXPECTED RANGE: ${rangeHint.join(', ')}`);
+  }
+  userPromptParts.push('', 'Analyze this screenshot and extract the current value for the specified metric.', 'Return your analysis as JSON.');
+
+  const response = await openai.chat.completions.create({
+    model: options.model || 'gpt-4o',
+    messages: [
+      { role: 'system', content: VISION_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: userPromptParts.join('\n') },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Image}`, detail: 'high' } },
+        ],
+      },
+    ],
+    max_tokens: 500,
+    response_format: { type: 'json_object' },
+  });
+
+  const content = response.choices[0]?.message?.content?.trim() || '{}';
+  const tokensUsed = response.usage?.total_tokens;
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content.replace(/```json|```/g, '').trim());
+  } catch {
+    return { success: false, error: 'Failed to parse vision analysis response', tokensUsed };
+  }
+
+  const value = typeof parsed.value === 'string' ? parsed.value : undefined;
+  const numericValue = typeof parsed.numericValue === 'string'
+    ? parsed.numericValue
+    : (typeof parsed.numeric_value === 'string' ? parsed.numeric_value : undefined);
+  const confidence = typeof parsed.confidence === 'number'
+    ? Math.min(Math.max(parsed.confidence, 0), 1)
+    : 0.5;
+  const visualQuote = typeof parsed.visualQuote === 'string'
+    ? parsed.visualQuote
+    : (typeof parsed.visual_quote === 'string' ? parsed.visual_quote : undefined);
+
+  if (!value && !numericValue) {
+    return {
+      success: false, confidence: 0.1,
+      error: 'No price/value found in screenshot',
+      visualQuote: typeof parsed.visualQuote === 'string' ? parsed.visualQuote : 'Unable to locate price data in image',
+      tokensUsed,
+    };
+  }
+
+  return { success: true, value, numericValue, confidence, visualQuote, tokensUsed };
+}
+
+/**
+ * Analyze a screenshot using GPT-4o vision with automatic retry for transient failures.
  */
 export async function analyzeScreenshotWithVision(
   base64Image: string,
   metric: string,
   options: VisionAnalysisOptions = {}
 ): Promise<VisionAnalysisResult> {
-  try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    
-    // Build the user prompt
-    const userPromptParts = [
-      `METRIC TO FIND: ${metric}`,
-    ];
-    
-    if (options.description) {
-      userPromptParts.push(`DESCRIPTION: ${options.description}`);
-    }
-    
-    if (options.expectedRange) {
-      const rangeHint = [];
-      if (options.expectedRange.min !== undefined) {
-        rangeHint.push(`min: ${options.expectedRange.min}`);
-      }
-      if (options.expectedRange.max !== undefined) {
-        rangeHint.push(`max: ${options.expectedRange.max}`);
-      }
-      if (rangeHint.length > 0) {
-        userPromptParts.push(`EXPECTED RANGE: ${rangeHint.join(', ')}`);
-      }
-    }
-    
-    userPromptParts.push(
-      '',
-      'Analyze this screenshot and extract the current value for the specified metric.',
-      'Return your analysis as JSON.'
-    );
-    
-    const userPrompt = userPromptParts.join('\n');
-    
-    // Call GPT-4o with vision
-    const response = await openai.chat.completions.create({
-      model: options.model || 'gpt-4o',
-      messages: [
-        {
-          role: 'system',
-          content: VISION_SYSTEM_PROMPT,
-        },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: userPrompt,
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/png;base64,${base64Image}`,
-                detail: 'high', // Use high detail for financial data
-              },
-            },
-          ],
-        },
-      ],
-      max_tokens: 500,
-      response_format: { type: 'json_object' },
-    });
-    
-    const content = response.choices[0]?.message?.content?.trim() || '{}';
-    const tokensUsed = response.usage?.total_tokens;
-    
-    // Parse the response
-    let parsed: Record<string, unknown>;
+  let lastError: VisionAnalysisResult | null = null;
+
+  for (let attempt = 0; attempt <= MAX_VISION_RETRIES; attempt++) {
     try {
-      parsed = JSON.parse(content.replace(/```json|```/g, '').trim());
-    } catch {
-      return {
-        success: false,
-        error: 'Failed to parse vision analysis response',
-        tokensUsed,
-      };
+      const result = await analyzeOnce(base64Image, metric, options);
+      if (result.success) {
+        if (attempt > 0) console.log(`[Vision] Succeeded on retry ${attempt} for ${metric}`);
+        return result;
+      }
+      lastError = result;
+      if (!isRetryable(result.error || '')) break;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = { success: false, error: `Vision analysis failed: ${message}` };
+      if (!isRetryable(message)) break;
     }
-    
-    // Extract and validate fields
-    const value = typeof parsed.value === 'string' ? parsed.value : undefined;
-    const numericValue = typeof parsed.numericValue === 'string' 
-      ? parsed.numericValue 
-      : (typeof parsed.numeric_value === 'string' ? parsed.numeric_value : undefined);
-    const confidence = typeof parsed.confidence === 'number' 
-      ? Math.min(Math.max(parsed.confidence, 0), 1) 
-      : 0.5;
-    const visualQuote = typeof parsed.visualQuote === 'string' 
-      ? parsed.visualQuote 
-      : (typeof parsed.visual_quote === 'string' ? parsed.visual_quote : undefined);
-    
-    if (!value && !numericValue) {
-      return {
-        success: false,
-        confidence: 0.1,
-        error: 'No price/value found in screenshot',
-        visualQuote: typeof parsed.visualQuote === 'string' ? parsed.visualQuote : 'Unable to locate price data in image',
-        tokensUsed,
-      };
+
+    if (attempt < MAX_VISION_RETRIES) {
+      const backoff = RETRY_BACKOFF_MS[attempt] || 3000;
+      console.warn(`[Vision] Attempt ${attempt + 1} failed, retrying in ${backoff}ms...`);
+      await sleepMs(backoff);
     }
-    
-    return {
-      success: true,
-      value,
-      numericValue,
-      confidence,
-      visualQuote,
-      tokensUsed,
-    };
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      success: false,
-      error: `Vision analysis failed: ${message}`,
-    };
   }
+
+  return lastError || { success: false, error: 'Vision analysis exhausted all retries' };
 }
 
 /**

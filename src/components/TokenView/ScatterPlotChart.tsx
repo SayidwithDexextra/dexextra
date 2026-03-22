@@ -126,7 +126,7 @@ export default function ScatterPlotChart({
   // periodically fetch the metric via the worker and insert a scatter point into ClickHouse.
   useEffect(() => {
     const marketId: string | undefined = (md?.market as any)?.id;
-    const aiLocator = (md?.market as any)?.market_config?.ai_source_locator || null;
+    const aiLocator = (md?.market as any)?.ai_source_locator || (md?.market as any)?.market_config?.ai_source_locator || null;
     const metricUrl: string | null =
       (aiLocator && (aiLocator.url || aiLocator.primary_source_url)) ||
       (md?.market as any)?.initial_order?.metricUrl ||

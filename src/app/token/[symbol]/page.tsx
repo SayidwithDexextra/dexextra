@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { 
   TokenHeader, 
@@ -29,6 +30,8 @@ import { MarketDataProvider, useMarketData } from '@/contexts/MarketDataContext'
 import { MetricLivePrice } from '@/components';
 import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRouting';
 import { SettlementInterface } from '@/components/SettlementInterface';
+import { SettlementTransitionOverlay } from '@/components/SettlementTransitionOverlay';
+import { useMarketSettlementRealtime } from '@/hooks/useMarketSettlementRealtime';
 import { CommentSection } from '@/components/CommentSection';
 import { CreatorCard } from '@/components/CreatorCard';
 import { SimilarMarkets } from '@/components/SimilarMarkets';
@@ -36,6 +39,7 @@ import { useComments } from '@/hooks/useComments';
 import { getMetricAIWorkerBaseUrl, runMetricAIWithPolling } from '@/lib/metricAiWorker';
 import { getSupabaseClient } from '@/lib/supabase-browser';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
+import { LifecycleDevDrawer } from '@/components/LifecycleDevDrawer';
 import useWallet from '@/hooks/useWallet';
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
 
@@ -77,7 +81,9 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const pipelineIdParam = sp.get('pipelineId') || sp.get('pipeline') || null;
   const deploymentOverlay = useDeploymentOverlay();
   const metricDebug = sp.get('metricDebug') === '1' && process.env.NODE_ENV !== 'production';
+  const lifecycleDebug = sp.get('lifecycleDebug') === '1' && process.env.NODE_ENV !== 'production';
   const [isSettlementView, setIsSettlementView] = useState(false);
+  const [showSettlementOverlay, setShowSettlementOverlay] = useState(false);
   const [mobileSheet, setMobileSheet] = useState<'trade' | 'comments' | 'activity' | 'info' | null>(null);
   const [mobileTradeAction, setMobileTradeAction] = useState<'long' | 'short'>('long');
   const [pendingPipelineId, setPendingPipelineId] = useState<string | null>(pipelineIdParam);
@@ -85,6 +91,29 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const [isWatchlistLoading, setIsWatchlistLoading] = useState(false);
   const [watchlistCount, setWatchlistCount] = useState<number | null>(null);
   const symbolUpper = String(symbol || '').toUpperCase();
+
+  useMarketSettlementRealtime({
+    marketId: (md.market as any)?.id || null,
+    currentStatus: (md.market as any)?.market_status || null,
+    onSettlementStarted: async () => {
+      if (typeof md.refetchMarket === 'function') {
+        await md.refetchMarket();
+      }
+      setShowSettlementOverlay(true);
+    },
+    onSettled: async () => {
+      if (typeof md.refetchMarket === 'function') {
+        await md.refetchMarket();
+      }
+    },
+  });
+
+  useEffect(() => {
+    const ms = (md.market as any)?.market_status;
+    if (ms === 'SETTLEMENT_REQUESTED' || ms === 'SETTLED') {
+      setIsSettlementView(true);
+    }
+  }, [(md.market as any)?.market_status]);
 
   // If we continued in background, persist a "pending deployment" hint so token pages
   // can render a "market is being built" state even if the DB row isn't created yet.
@@ -120,6 +149,17 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const priceChange24h = 0;
   const priceChangePercent24h = 0;
   const lastUpdated = md.lastUpdated || new Date().toISOString();
+
+  useEffect(() => {
+    if (!currentPrice && !markPrice) return;
+    const price = Number(markPrice || currentPrice || 0);
+    if (price <= 0) return;
+    const fmt = price >= 1
+      ? price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : price.toPrecision(4);
+    document.title = `$${fmt} | ${symbolUpper} | Dexextra`;
+    return () => { document.title = 'Dexextra'; };
+  }, [markPrice, currentPrice, symbolUpper]);
 
   // On-chain market stats assembled from Diamond facet reads + ClickHouse 24h data
   const [onChainStats, setOnChainStats] = useState<MarketStatsOnChain | null>(null);
@@ -190,9 +230,62 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       },
     ] as const;
 
+    const LIFECYCLE_STATE_ABI = [
+      {
+        type: 'function' as const,
+        name: 'getLifecycleState' as const,
+        stateMutability: 'view' as const,
+        inputs: [],
+        outputs: [{ type: 'uint8', name: '' }],
+      },
+    ] as const;
+
+    const CHALLENGE_BOND_CONFIG_ABI = [
+      {
+        type: 'function' as const,
+        name: 'getChallengeBondConfig' as const,
+        stateMutability: 'view' as const,
+        inputs: [],
+        outputs: [
+          { type: 'uint256', name: 'bondAmount' },
+          { type: 'address', name: 'slashRecipient' },
+        ],
+      },
+    ] as const;
+
+    const ACTIVE_CHALLENGE_ABI = [
+      {
+        type: 'function' as const,
+        name: 'getActiveChallengeInfo' as const,
+        stateMutability: 'view' as const,
+        inputs: [],
+        outputs: [
+          { type: 'bool', name: 'active' },
+          { type: 'address', name: 'challengerAddr' },
+          { type: 'uint256', name: 'challengedPriceVal' },
+          { type: 'uint256', name: 'bondEscrowed' },
+          { type: 'bool', name: 'resolved' },
+          { type: 'bool', name: 'won' },
+        ],
+      },
+    ] as const;
+
+    const PROPOSED_EVIDENCE_ABI = [
+      {
+        type: 'function' as const,
+        name: 'getProposedEvidence' as const,
+        stateMutability: 'view' as const,
+        inputs: [],
+        outputs: [
+          { type: 'bytes32', name: 'evidenceHash' },
+          { type: 'string', name: 'evidenceUrl' },
+        ],
+      },
+    ] as const;
+
     const fetchStats = async () => {
       try {
-        const [priceData, tradeStats, chStats, totalMarginRaw] = await Promise.all([
+        const [priceData, tradeStats, chStats, totalMarginRaw, lifecycleState, challengeBondConfig, activeChallengeInfo, proposedEvidence] = await Promise.all([
           publicClient.readContract({
             address: addr,
             abi: PRICING_ABI,
@@ -215,6 +308,30 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             functionName: 'totalMarginLockedInMarket',
             args: [],
           }).catch(() => null),
+          publicClient.readContract({
+            address: addr,
+            abi: LIFECYCLE_STATE_ABI,
+            functionName: 'getLifecycleState',
+            args: [],
+          }).catch(() => null),
+          publicClient.readContract({
+            address: addr,
+            abi: CHALLENGE_BOND_CONFIG_ABI,
+            functionName: 'getChallengeBondConfig',
+            args: [],
+          }).catch(() => null),
+          publicClient.readContract({
+            address: addr,
+            abi: ACTIVE_CHALLENGE_ABI,
+            functionName: 'getActiveChallengeInfo',
+            args: [],
+          }).catch(() => null),
+          publicClient.readContract({
+            address: addr,
+            abi: PROPOSED_EVIDENCE_ABI,
+            functionName: 'getProposedEvidence',
+            args: [],
+          }).catch(() => null),
         ]);
 
         if (cancelled) return;
@@ -226,6 +343,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           console.warn('[marketStats] All data sources failed');
           return;
         }
+
+        const lc = lifecycleState as any;
+        const bc = challengeBondConfig as any;
+        const ac = activeChallengeInfo as any;
+        const ev = proposedEvidence as any;
 
         setOnChainStats({
           markPrice: pd ? Number(pd[4] ?? pd.markPrice ?? 0n) / 1e6 : 0,
@@ -242,6 +364,14 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           priceChange24h: chStats?.priceChange24h ?? 0,
           priceChangePercent24h: chStats?.priceChangePercent24h ?? 0,
           totalMarginLocked: totalMarginRaw != null ? Number(totalMarginRaw) / 1e6 : undefined,
+          lifecycleState: lc != null ? Number(lc) : undefined,
+          challengeBondAmount: bc ? Number(bc[0] ?? 0n) / 1e6 : undefined,
+          challengeActive: ac ? Boolean(ac[0]) : undefined,
+          challenger: ac && ac[0] ? String(ac[1]) : undefined,
+          challengedPrice: ac && ac[0] ? Number(ac[2] ?? 0n) / 1e6 : undefined,
+          challengeBondEscrowed: ac && ac[0] ? Number(ac[3] ?? 0n) / 1e6 : undefined,
+          evidenceUrl: ev ? String(ev[1] || '') || undefined : undefined,
+          evidenceHash: ev ? String(ev[0] || '') || undefined : undefined,
         });
       } catch (err) {
         console.warn('[marketStats] Failed to fetch stats:', err);
@@ -369,6 +499,21 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     }, 5000);
     return () => window.clearInterval(id);
   }, [deployingHint, marketIsReady]);
+
+  const showDeployingBlocker = deployingHint && !marketIsReady;
+  useEffect(() => {
+    if (!showDeployingBlocker) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+    };
+  }, [showDeployingBlocker]);
 
   // Series / Rollover UI hooks must be called unconditionally (before any early returns)
   const currentMarketId = (md.market as any)?.id as string | undefined;
@@ -521,19 +666,19 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     const resolveMetricUrl = async (): Promise<string | null> => {
       // 1) Try from md.market (some envs may include these fields)
       try {
-        const aiLocator = (md?.market as any)?.market_config?.ai_source_locator || null;
+        const aiLocator = (md?.market as any)?.ai_source_locator || (md?.market as any)?.market_config?.ai_source_locator || null;
         const fromLocator = aiLocator && (aiLocator.url || aiLocator.primary_source_url) ? String(aiLocator.url || aiLocator.primary_source_url) : '';
         const fromInit = (md?.market as any)?.initial_order?.metricUrl ? String((md?.market as any)?.initial_order?.metricUrl) : '';
         if (fromInit) return fromInit;
         if (fromLocator) return fromLocator;
       } catch {}
 
-      // 2) Fallback: fetch from `markets` table (this is what `MetricLivePrice` does)
+      // 2) Fallback: fetch from `markets` table
       try {
         const sb = getSupabaseClient();
         const { data, error } = await sb
           .from('markets')
-          .select('market_config, initial_order')
+          .select('ai_source_locator, market_config, initial_order')
           .eq('id', marketId)
           .maybeSingle();
         if (error || !data) return null;
@@ -541,7 +686,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           (data as any)?.initial_order?.metricUrl ||
           (data as any)?.initial_order?.metric_url ||
           null;
-        const loc = (data as any)?.market_config?.ai_source_locator || null;
+        const loc = (data as any)?.ai_source_locator || (data as any)?.market_config?.ai_source_locator || null;
         const locatorUrl = loc?.url || loc?.primary_source_url || null;
         return initialOrderMetricUrl || locatorUrl || null;
       } catch {
@@ -933,9 +1078,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     }));
     const moreTagsCount = categories.length > 3 ? categories.length - 3 : undefined;
 
-    const status: 'live' | 'pending' | 'inactive' = 
+    const status: 'live' | 'pending' | 'inactive' | 'settlement' | 'settled' = 
       market.market_status === 'ACTIVE' ? 'live' :
       market.market_status === 'PENDING' || market.market_status === 'DEPLOYING' ? 'pending' :
+      market.market_status === 'SETTLEMENT_REQUESTED' ? 'settlement' :
+      market.market_status === 'SETTLED' ? 'settled' :
       'inactive';
 
     const formattedWatchlistCount = watchlistCount !== null 
@@ -950,6 +1097,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       verified: market.market_status === 'ACTIVE',
       status,
       settlementDate: market.settlement_date || undefined,
+      challengeWindowExpiresAt: market.settlement_window_expires_at || undefined,
       orderbookAddress: market.market_address || undefined,
       marketId: market.market_id_bytes32 || undefined,
       markPrice: Number(markPrice || 0),
@@ -974,63 +1122,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     );
   }
 
-  // Deploying/building state:
-  // - Avoid showing "Market Not Found" / "inactive" while the pipeline is still running.
-  // - Instead, show a clear "market is being built" message and keep polling until ready.
-  if (deployingHint && !marketIsReady) {
-    const overlayState = deploymentOverlay?.state;
-    const overlayMatches = Boolean(
-      overlayState?.isVisible &&
-      String(overlayState?.meta?.marketSymbol || '').toUpperCase() === symbolUpper
-    );
-    const pct = overlayMatches ? Math.max(0, Math.min(100, overlayState!.percentComplete)) : null;
-    const overlayMsg = (() => {
-      if (!overlayMatches) return null;
-      const msgs = Array.isArray(overlayState!.messages) ? overlayState!.messages : [];
-      const idx = Math.max(0, Math.min(overlayState!.activeIndex || 0, Math.max(msgs.length - 1, 0)));
-      return msgs[idx] || overlayState!.subtitle || overlayState!.title || null;
-    })();
-
-    return (
-      <div className="min-h-screen bg-t-page flex items-center justify-center p-4">
-        <div className="group bg-t-card hover:bg-t-card-hover rounded-md border border-t-stroke hover:border-t-stroke-hover transition-all duration-200 w-full max-w-md">
-          <div className="p-4">
-            <div className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Market is being built</div>
-            <div className="mt-1 text-[10px] text-t-fg-muted">
-              {symbolUpper} is currently being deployed and configured. Trading will become available automatically once setup is complete.
-            </div>
-
-            <div className="mt-4 flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-t-fg truncate">
-                  {overlayMsg || 'Deployment pipeline running in the background…'}
-                </div>
-                {typeof pct === 'number' ? (
-                  <div className="mt-2 w-full h-1 bg-t-skeleton rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-400 transition-all duration-300" style={{ width: `${pct}%` }} />
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            {overlayMatches ? (
-              <div className="mt-4 flex items-center justify-end">
-                <button
-                  onClick={() => deploymentOverlay.restore()}
-                  className="text-[10px] text-t-fg bg-t-inset hover:bg-t-card-hover border border-t-stroke hover:border-t-stroke-hover rounded px-2.5 py-1.5 transition-all duration-200"
-                >
-                  View pipeline
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isDeploying && (md.error || !tokenData)) {
+  if (!isDeploying && !deployingHint && (md.error || !tokenData)) {
     return (
       <div className="min-h-screen bg-t-page flex items-center justify-center p-4">
         <div className="flex flex-col items-center gap-6 text-center max-w-2xl w-full">
@@ -1137,6 +1229,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     }))
                 : undefined
             }
+            onTriggerSettlementOverlay={() => setShowSettlementOverlay(true)}
           />
         </div>
       )}
@@ -1358,7 +1451,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
               <div className="w-80 flex flex-col gap-1 h-full">
                 <div className="flex-shrink-0" data-walkthrough="token-live-price">
                   {(() => {
-                    const locator = ((md.market as any)?.market_config?.ai_source_locator) || null;
+                    const locator = ((md.market as any)?.ai_source_locator) || ((md.market as any)?.market_config?.ai_source_locator) || null;
                     const url = locator?.url || locator?.primary_source_url || null;
                     const cssSel = locator?.css_selector || null;
                     const xpath = locator?.xpath || null;
@@ -1463,7 +1556,9 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             <div className="h-full overflow-y-auto scrollbar-none px-1 pt-1">
               <div className="mx-auto max-w-5xl">
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Settlement Window</h4>
+                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
+                    {(md.market as any)?.market_status === 'SETTLED' ? 'Settlement Result' : 'Settlement Window'}
+                  </h4>
                   <button
                     onClick={() => setIsSettlementView(false)}
                     className="text-xs text-t-fg-label hover:text-t-fg border border-t-stroke hover:border-t-stroke-hover rounded px-2 py-1 transition-all duration-200"
@@ -1596,6 +1691,75 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           </MobileBottomSheet>
         </>
       )}
+
+      <SettlementTransitionOverlay
+        show={showSettlementOverlay}
+        marketSymbol={symbol}
+        onComplete={() => {
+          setShowSettlementOverlay(false);
+          setIsSettlementView(true);
+        }}
+      />
+
+      {showDeployingBlocker && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[9998] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4">
+          <div className="bg-t-card rounded-md border border-t-stroke w-full max-w-md">
+            <div className="p-5">
+              <div className="text-xs font-medium text-t-fg-label uppercase tracking-wide">Market is being built</div>
+              <div className="mt-1.5 text-[11px] text-t-fg-muted leading-relaxed">
+                {symbolUpper} is currently being deployed and configured. Trading will become available automatically once setup is complete.
+              </div>
+
+              {(() => {
+                const oState = deploymentOverlay?.state;
+                const oMatches = Boolean(
+                  oState?.isVisible &&
+                  String(oState?.meta?.marketSymbol || '').toUpperCase() === symbolUpper
+                );
+                const pct = oMatches ? Math.max(0, Math.min(100, oState!.percentComplete)) : null;
+                const oMsg = (() => {
+                  if (!oMatches) return null;
+                  const msgs = Array.isArray(oState!.messages) ? oState!.messages : [];
+                  const idx = Math.max(0, Math.min(oState!.activeIndex || 0, Math.max(msgs.length - 1, 0)));
+                  return msgs[idx] || oState!.subtitle || oState!.title || null;
+                })();
+
+                return (
+                  <>
+                    <div className="mt-5 flex items-center gap-2.5">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[11px] text-t-fg truncate">
+                          {oMsg || 'Deployment pipeline running in the background\u2026'}
+                        </div>
+                        {typeof pct === 'number' && (
+                          <div className="mt-2.5 w-full h-1 bg-t-skeleton rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-400 transition-all duration-300" style={{ width: `${pct}%` }} />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {oMatches && (
+                      <div className="mt-5 flex items-center justify-end">
+                        <button
+                          onClick={() => deploymentOverlay.restore()}
+                          className="text-[10px] text-t-fg bg-t-inset hover:bg-t-card-hover border border-t-stroke hover:border-t-stroke-hover rounded px-2.5 py-1.5 transition-all duration-200"
+                        >
+                          View pipeline
+                        </button>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {lifecycleDebug && <LifecycleDevDrawer marketId={currentMarketId ?? null} />}
     </div>
   );
 }

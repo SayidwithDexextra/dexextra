@@ -150,7 +150,7 @@ export const OBSettlementFacetABI = [
   "function adminCancelAllRestingOrders() external"
 ];
 
-// MarketLifecycleFacet - lifecycle windows, lineage, and testing controls
+// MarketLifecycleFacet - lifecycle windows, lineage, evidence, challenge bonds, and testing controls
 export const MarketLifecycleFacetABI = [
   // Actions
   "function initializeLifecycle(uint256 settlementTimestamp, address parent) external",
@@ -162,6 +162,15 @@ export const MarketLifecycleFacetABI = [
   "function linkRolloverChildByAddress(address childMarket, uint256 childSettlementTimestamp) external returns (bool)",
   "function setParent(address parentMarket) external",
   "function registerParentFromRollover(address parentMarket) external returns (bool)",
+  // Evidence commitment
+  "function commitEvidence(string calldata evidenceUrl) external",
+  "function getProposedEvidence() external view returns (bytes32 evidenceHash, string evidenceUrl)",
+  // Settlement challenge bond
+  "function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external",
+  "function challengeSettlement(uint256 alternativePrice) external",
+  "function resolveChallenge(bool challengerWins) external",
+  "function getChallengeBondConfig() external view returns (uint256 bondAmount, address slashRecipient)",
+  "function getActiveChallengeInfo() external view returns (bool active, address challengerAddr, uint256 challengedPriceVal, uint256 bondEscrowed, bool resolved, bool won)",
   // Views
   "function getSettlementTimestamp() external view returns (uint256)",
   "function getRolloverWindowStart() external view returns (uint256)",
@@ -176,7 +185,11 @@ export const MarketLifecycleFacetABI = [
   "function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external",
   "function setSettlementTimestamp(uint256 newSettlementTimestamp) external",
   "function forceStartRolloverWindow() external",
-  "function forceStartSettlementChallengeWindow() external"
+  "function forceStartSettlementChallengeWindow() external",
+  // Debug emitters
+  "function debugEmitRolloverWindowStarted(address market, uint256 rolloverWindowStart) external",
+  "function debugEmitSettlementChallengeWindowStarted(address market, uint256 challengeWindowStart) external",
+  "function debugEmitRolloverCreated(address parentMarket, address childMarket, uint256 childSettlementTimestamp) external"
 ];
 
 // OBTradeExecutionFacet - trade execution functions

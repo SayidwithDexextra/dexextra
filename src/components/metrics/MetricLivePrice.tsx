@@ -156,7 +156,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           // non-fatal; fallback to markets query below
         }
 
-        let query = supabase.from('markets').select('market_config, initial_order, market_status');
+        let query = supabase.from('markets').select('ai_source_locator, market_config, initial_order, market_status');
         query = marketId ? query.eq('id', marketId) : query.or(`market_identifier.eq.${t},symbol.eq.${t}`);
 
         const { data, error } = await query.maybeSingle();
@@ -177,23 +177,19 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           return s ? s : null;
         };
 
-        // Required resolution:
-        // 1) Prefer `market_config.source_url`
-        // 2) Fall back to `initial_order.metricUrl`
-        // In current Supabase data, `source_url` may live nested under `wayback_snapshot.source_url`
-        // (and/or `ai_source_locator.url`). We treat those as equivalent "source_url" inputs.
+        const aiLocator = (data as any)?.ai_source_locator || null;
+        const locatorUrl = clean(aiLocator?.url ?? aiLocator?.primary_source_url);
+
         const marketConfigSourceUrl = clean(
           cfg?.source_url ??
             cfg?.sourceUrl ??
             cfg?.sourceURL ??
             cfg?.wayback_snapshot?.source_url ??
-            cfg?.wayback_snapshot?.sourceUrl ??
-            cfg?.ai_source_locator?.url ??
-            cfg?.ai_source_locator?.primary_source_url
+            cfg?.wayback_snapshot?.sourceUrl
         );
         const initialOrderMetricUrl = clean(initial?.metricUrl ?? initial?.metric_url ?? initial?.metricurl);
 
-        const resolvedUrl = marketConfigSourceUrl || initialOrderMetricUrl;
+        const resolvedUrl = locatorUrl || marketConfigSourceUrl || initialOrderMetricUrl;
         if (resolvedUrl) {
           setSourceIfChanged({ kind: 'url', value: resolvedUrl, url: resolvedUrl });
           stopPollingRef.current = true;

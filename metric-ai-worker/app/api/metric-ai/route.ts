@@ -3,9 +3,14 @@ import { after } from 'next/server';
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
-import { captureScreenshot, ScreenshotResult } from '../../../lib/captureScreenshot';
+import { captureScreenshot, captureFullPageFallback, ScreenshotResult, SourceLocator, safeCloseBrowser } from '../../../lib/captureScreenshot';
+import type { Browser, Page } from 'puppeteer-core';
 import { uploadScreenshot, UploadResult } from '../../../lib/uploadScreenshot';
-import { analyzeScreenshotWithVision, VisionAnalysisResult } from '../../../lib/visionAnalysis';
+import { VisionAnalysisResult } from '../../../lib/visionAnalysis';
+import { analyzeWithConsensus, VisionConsensus } from '../../../lib/multiModelVision';
+import { getHistoricalContext, formatHistoricalContextForPrompt, HistoricalStats } from '../../../lib/historicalContext';
+import { validateExtractedValue, buildSecondOpinionPrompt } from '../../../lib/valueValidator';
+import { discoverLocators, fastExtract, AiSourceLocatorData, DiscoveredSelector } from '../../../lib/autoLocatorDiscovery';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -36,6 +41,7 @@ interface SourceScreenshotData {
   screenshotResult?: ScreenshotResult;
   uploadResult?: UploadResult;
   visionResult?: VisionAnalysisResult;
+  visionConsensus?: VisionConsensus;
 }
 
 function getSupabase() {
@@ -378,53 +384,237 @@ export async function POST(req: NextRequest) {
         const texts: string[] = [];
         const screenshotDataMap = new Map<string, SourceScreenshotData>();
 
+        // --- Phase 0: Fetch ai_source_locator (new column) + historical context in parallel ---
+        let sourceLocator: SourceLocator | undefined;
+        let storedLocatorData: AiSourceLocatorData | null = null;
+        let historicalStats: HistoricalStats = { lastValue: null, lastUpdatedAt: null, min: 0, max: 0, mean: 0, stdDev: 0, count: 0, suspiciousBelow: 0, suspiciousAbove: Infinity, source: 'none' };
+        const marketId = input.related_market_id || '';
+
+        const phase0Promises: Promise<void>[] = [];
+        if (marketId) {
+          phase0Promises.push((async () => {
+            try {
+              const { data } = await supabase
+                .from('markets')
+                .select('ai_source_locator, market_config, market_identifier')
+                .eq('id', marketId)
+                .limit(1)
+                .maybeSingle();
+
+              // Read from dedicated column first, fall back to legacy market_config nesting
+              const locatorCol = (data as any)?.ai_source_locator;
+              if (locatorCol && Array.isArray(locatorCol.selectors) && locatorCol.selectors.length > 0) {
+                storedLocatorData = locatorCol as AiSourceLocatorData;
+                const best = locatorCol.selectors[0];
+                sourceLocator = {
+                  css_selector: best.type === 'css' ? best.selector : undefined,
+                  xpath: best.type === 'xpath' ? best.xpath : undefined,
+                  js_extractor: best.type === 'js_extractor' ? best.script : undefined,
+                };
+                console.log('[Metric-AI] ✓ Loaded ai_source_locator from column', {
+                  selectorCount: locatorCol.selectors.length,
+                  bestType: best.type,
+                  successCount: locatorCol.success_count,
+                });
+              } else {
+                const loc = (data as any)?.market_config?.ai_source_locator;
+                if (loc && (loc.css_selector || loc.xpath || loc.js_extractor)) {
+                  sourceLocator = {
+                    css_selector: loc.css_selector || undefined,
+                    xpath: loc.xpath || undefined,
+                    js_extractor: loc.js_extractor || undefined,
+                  };
+                  console.log('[Metric-AI] ✓ Loaded ai_source_locator from market_config (legacy)');
+                }
+              }
+            } catch {}
+          })());
+          phase0Promises.push((async () => {
+            try {
+              const metricName = input.metric || input.related_market_identifier || '';
+              historicalStats = await getHistoricalContext(marketId, metricName);
+              console.log('[Metric-AI] ✓ Historical context loaded', {
+                source: historicalStats.source, count: historicalStats.count, lastValue: historicalStats.lastValue,
+              });
+            } catch {}
+          })());
+        }
+        if (phase0Promises.length) await Promise.all(phase0Promises);
+
+        // --- Phase 0.5: Fast path — use stored selectors to skip full pipeline ---
+        if (
+          storedLocatorData &&
+          storedLocatorData.selectors.length > 0 &&
+          storedLocatorData.url &&
+          input.context !== 'create' &&
+          storedLocatorData.failure_count < 3
+        ) {
+          console.log('[Metric-AI] ⚡ Attempting fast-path extraction', {
+            url: storedLocatorData.url,
+            selectorCount: storedLocatorData.selectors.length,
+            successCount: storedLocatorData.success_count,
+          });
+
+          const fastResult = await fastExtract(
+            storedLocatorData.url,
+            storedLocatorData.selectors as DiscoveredSelector[],
+          );
+
+          if (fastResult) {
+            const fastValidation = validateExtractedValue(fastResult.value, historicalStats);
+
+            if (fastValidation.valid || fastValidation.maxConfidence >= 0.6) {
+              const fastConfidence = Math.min(0.95, fastValidation.maxConfidence);
+              console.log('[Metric-AI] ⚡ Fast path SUCCESS', {
+                jobId, value: fastResult.value,
+                method: fastResult.method,
+                extractTimeMs: fastResult.extractTimeMs,
+                confidence: fastConfidence,
+              });
+
+              const fastResolution = {
+                metric: input.metric,
+                value: fastResult.value,
+                unit: 'unknown',
+                as_of: new Date().toISOString(),
+                confidence: fastConfidence,
+                asset_price_suggestion: fastResult.value,
+                reasoning: `Fast-path extraction via stored ${fastResult.method} selector. Validated against historical context.`,
+                sources: [{ url: storedLocatorData.url, quote: `Selector: ${fastResult.selector}`, match_score: fastConfidence }],
+                fast_path: true,
+                fast_path_method: fastResult.method,
+                fast_path_extract_time_ms: fastResult.extractTimeMs,
+                historical_context_source: historicalStats.source,
+                historical_last_value: historicalStats.lastValue,
+              };
+
+              // Persist resolution
+              let resolutionId: string | null = null;
+              try {
+                const { data: resData, error: resErr } = await supabase
+                  .from('metric_oracle_resolutions')
+                  .insert([{
+                    metric_name: input.metric,
+                    metric_description: input.description || null,
+                    source_urls: input.urls,
+                    resolution_data: fastResolution,
+                    confidence_score: fastConfidence,
+                    processing_time_ms: Date.now() - started,
+                    user_address: input.user_address || null,
+                    related_market_id: marketId || null,
+                    created_at: new Date(),
+                  }])
+                  .select('id')
+                  .single();
+                if (!resErr) resolutionId = resData?.id || null;
+              } catch {}
+
+              // Update market link + bump locator success_count
+              if (marketId) {
+                try {
+                  const updatedLocator = {
+                    ...storedLocatorData,
+                    last_successful_at: new Date().toISOString(),
+                    success_count: (storedLocatorData.success_count || 0) + 1,
+                  };
+                  const updatePayload: any = {
+                    ai_source_locator: updatedLocator,
+                    updated_at: new Date().toISOString(),
+                  };
+                  if (resolutionId) updatePayload.metric_resolution_id = resolutionId;
+                  await supabase.from('markets').update(updatePayload).eq('id', marketId);
+                } catch {}
+              }
+
+              const totalMs = Date.now() - started;
+
+              await supabase.from('metric_oracle_jobs').update({
+                status: 'completed',
+                progress: 100,
+                result: fastResolution,
+                processing_time_ms: totalMs,
+                completed_at: new Date(),
+              }).eq('job_id', jobId);
+
+              console.log('[Metric-AI] ⚡ FAST PATH COMPLETED', {
+                jobId, totalMs, value: fastResult.value, confidence: fastConfidence,
+              });
+
+              return NextResponse.json({
+                jobId, status: 'completed', result: fastResolution,
+              });
+            } else {
+              console.log('[Metric-AI] ⚡ Fast path value failed validation, falling through to full pipeline', {
+                value: fastResult.value, warnings: fastValidation.warnings,
+              });
+            }
+          } else {
+            console.log('[Metric-AI] ⚡ Fast path extraction returned null, falling through');
+            // Increment failure_count
+            if (marketId) {
+              try {
+                const updatedLocator = {
+                  ...storedLocatorData,
+                  failure_count: (storedLocatorData.failure_count || 0) + 1,
+                };
+                await supabase.from('markets').update({
+                  ai_source_locator: updatedLocator,
+                  updated_at: new Date().toISOString(),
+                }).eq('id', marketId);
+              } catch {}
+            }
+          }
+        }
+
+        const visionExpectedRange = historicalStats.source !== 'none' && historicalStats.lastValue
+          ? { min: historicalStats.suspiciousBelow, max: historicalStats.suspiciousAbove }
+          : undefined;
+
         console.log('[Metric-AI] 🌐 Phase 1: Fetching HTML and capturing screenshots', { urlCount: input.urls.length });
 
-        // Phase 1: Fetch HTML and capture screenshots in parallel for each URL
+        // Track live browser sessions from Phase 1 for reuse in Phase 5
+        const livePages = new Map<string, { page: Page; browser: Browser }>();
+        const isCreateContext = input.context === 'create';
+
+        // --- Phase 1: Fetch HTML + screenshot + DOM extraction + locator in parallel per URL ---
         const urlProcessingPromises = input.urls.map(async (url) => {
           const screenshotData: SourceScreenshotData = { url };
           
           try {
             const fetchedAt = new Date().toISOString();
             
-            // Wrap screenshot capture in its own try-catch to prevent uncaught exceptions
             const safeScreenshotCapture = async (): Promise<ScreenshotResult | null> => {
               if (!ENABLE_VISION_ANALYSIS) return null;
               try {
                 console.log(`[Metric-AI] 📸 Starting screenshot capture for ${url}`);
-                
-                // captureScreenshot now handles site-specific logic internally
-                // via getSiteConfig() - see lib/captureScreenshot.ts for site configs
                 const result = await captureScreenshot(url, {
                   width: 1280,
                   height: 900,
-                  waitForNetworkIdle: true, // Will be overridden by site config if needed
-                  additionalWaitMs: 2000,   // Extra safety margin after site-specific waits
-                  timeoutMs: 45000,         // Overall timeout including element waits
+                  waitForNetworkIdle: true,
+                  additionalWaitMs: 2000,
+                  timeoutMs: 45000,
                   retryAttempts: 1,
+                  locator: sourceLocator,
+                  keepBrowserAlive: isCreateContext && !!marketId,
                 });
                 
                 console.log(`[Metric-AI] 📸 Screenshot result for ${url}:`, {
                   success: result.success,
                   captureTimeMs: result.captureTimeMs,
-                  hasDimensions: !!result.dimensions,
+                  hasRenderedText: !!result.renderedText,
+                  locatorExtracted: result.locatorExtractedValue?.slice(0, 50) || null,
+                  locatorMethod: result.locatorMethod || null,
                   error: result.error?.slice(0, 100),
                 });
                 
                 return result;
               } catch (err) {
-                // Catch any uncaught exceptions from Puppeteer/Chromium
                 const message = err instanceof Error ? err.message : String(err);
                 console.error(`[Metric-AI] ❌ Screenshot capture exception for ${url}:`, message);
-                return {
-                  success: false,
-                  error: `Uncaught exception: ${message}`,
-                  captureTimeMs: 0,
-                };
+                return { success: false, error: `Uncaught exception: ${message}`, captureTimeMs: 0 };
               }
             };
 
-            // Fetch HTML and capture screenshot in parallel
             const [htmlResponse, screenshotResult] = await Promise.all([
               fetch(url, {
                 headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` }
@@ -432,9 +622,11 @@ export async function POST(req: NextRequest) {
               safeScreenshotCapture()
             ]);
 
-            // Store screenshot result
             if (screenshotResult) {
               screenshotData.screenshotResult = screenshotResult;
+              if (screenshotResult.livePage && screenshotResult.liveBrowser) {
+                livePages.set(url, { page: screenshotResult.livePage, browser: screenshotResult.liveBrowser });
+              }
             }
 
             const contentType = htmlResponse.headers.get('content-type') || '';
@@ -457,6 +649,24 @@ export async function POST(req: NextRequest) {
             if (contentType) digestParts.push(`CONTENT_TYPE: ${contentType}`);
             if (meta.title) digestParts.push(`TITLE: ${meta.title}`);
             if (meta.description) digestParts.push(`META_DESCRIPTION: ${meta.description}`);
+
+            // Locator-extracted value (highest trust)
+            if (screenshotResult?.locatorExtractedValue) {
+              digestParts.push(`LOCATOR_EXTRACTED_VALUE: ${screenshotResult.locatorExtractedValue} (via ${screenshotResult.locatorMethod})`);
+            }
+
+            // Rendered DOM text (JS-rendered content from Puppeteer)
+            if (screenshotResult?.renderedText) {
+              const renderedKeyLines = collectKeyLines(screenshotResult.renderedText, [
+                input.metric,
+                ...(input.description ? input.description.split(/\s+/).slice(0, 8) : [])
+              ]);
+              if (renderedKeyLines.length > 0) {
+                digestParts.push(`RENDERED_DOM_KEY_LINES (JS-rendered page content):`);
+                for (const line of renderedKeyLines.slice(0, 30)) digestParts.push(`- ${line.slice(0, 500)}`);
+              }
+            }
+
             if (jsonLd.length) {
               digestParts.push(
                 `JSON_LD_PRICE_CANDIDATES: ${jsonLd
@@ -467,15 +677,11 @@ export async function POST(req: NextRequest) {
             }
             if (candidates.length) {
               digestParts.push(`NUMERIC_CANDIDATES:`);
-              for (const c of candidates.slice(0, 18)) {
-                digestParts.push(`- ${c.label}: ${c.value} (${c.context})`);
-              }
+              for (const c of candidates.slice(0, 18)) digestParts.push(`- ${c.label}: ${c.value} (${c.context})`);
             }
             if (chart.derivedClose) {
               digestParts.push(`CHART_DERIVED_LAST_CLOSE: ${chart.derivedClose}`);
-              if (chart.derivedOhlc) {
-                digestParts.push(`CHART_DERIVED_OHLC: ${JSON.stringify(chart.derivedOhlc).slice(0, 500)}`);
-              }
+              if (chart.derivedOhlc) digestParts.push(`CHART_DERIVED_OHLC: ${JSON.stringify(chart.derivedOhlc).slice(0, 500)}`);
             }
             if (chart.snippets.length) {
               digestParts.push(`CHART_SNIPPETS:`);
@@ -494,11 +700,8 @@ export async function POST(req: NextRequest) {
         const urlResults = await Promise.all(urlProcessingPromises);
         const phase1DurationMs = Date.now() - started;
 
-        // Collect digests and screenshot data
         for (const result of urlResults) {
-          if (result.digest) {
-            texts.push(`SOURCE:\n${result.digest}`);
-          }
+          if (result.digest) texts.push(`SOURCE:\n${result.digest}`);
           screenshotDataMap.set(result.url, result.screenshotData);
         }
 
@@ -506,133 +709,190 @@ export async function POST(req: NextRequest) {
         const screenshotSuccessCount = Array.from(screenshotDataMap.values()).filter(d => d.screenshotResult?.success).length;
         
         console.log('[Metric-AI] ✓ Phase 1 complete', {
-          jobId,
-          phase1DurationMs,
+          jobId, phase1DurationMs,
           htmlSourcesExtracted: htmlSuccessCount,
           screenshotsCaptured: screenshotSuccessCount,
           totalUrls: input.urls.length,
         });
 
-        // Phase 2: Upload screenshots and run vision analysis in parallel
+        // --- Phase 2: Upload screenshots + multi-model vision consensus ---
         if (ENABLE_VISION_ANALYSIS) {
-          console.log('[Metric-AI] 🖼️ Phase 2: Processing screenshots and vision analysis', { jobId });
+          console.log('[Metric-AI] 🖼️ Phase 2: Screenshots + multi-model vision consensus', { jobId });
           
           const screenshotsToProcess = Array.from(screenshotDataMap.values())
             .filter(data => data.screenshotResult?.success && data.screenshotResult.base64);
 
-          // Upload all screenshots in parallel
           const uploadPromises = screenshotsToProcess.map(async (data) => {
             if (!data.screenshotResult?.base64) return;
             try {
-              data.uploadResult = await uploadScreenshot(
-                data.screenshotResult.base64,
-                jobId,
-                data.url
-              );
-            } catch { /* ignore upload errors */ }
+              data.uploadResult = await uploadScreenshot(data.screenshotResult.base64, jobId, data.url);
+            } catch {}
           });
           await Promise.all(uploadPromises);
 
-          const uploadsComplete = Array.from(screenshotDataMap.values()).filter(d => d.uploadResult?.publicUrl).length;
-          console.log('[Metric-AI] ✓ Screenshots uploaded', { jobId, uploadsComplete });
-
-          // Run vision analysis on all screenshots in parallel
-          console.log('[Metric-AI] 👁️ Running vision analysis', { jobId, screenshotsToAnalyze: screenshotsToProcess.length });
+          console.log('[Metric-AI] 👁️ Running multi-model vision consensus', { jobId, screenshotsToAnalyze: screenshotsToProcess.length });
           
           const visionPromises = screenshotsToProcess.map(async (data) => {
             if (!data.screenshotResult?.base64) return;
             try {
-              data.visionResult = await analyzeScreenshotWithVision(
+              const consensus = await analyzeWithConsensus(
                 data.screenshotResult.base64,
                 input.metric,
-                { description: input.description }
+                { description: input.description, expectedRange: visionExpectedRange }
               );
-            } catch { /* ignore vision errors */ }
+              data.visionConsensus = consensus;
+              console.log(`[Metric-AI] Vision consensus:`, {
+                agreement: consensus.agreement, value: consensus.value,
+                numericValue: consensus.numericValue, confidence: consensus.confidence?.toFixed(2),
+                modelsSucceeded: consensus.models.filter(m => m.success).length,
+              });
+              const bestModel = consensus.models.find(m => m.success);
+              console.log(`[Metric-AI] Best model:`, bestModel ? { model: bestModel.model, success: bestModel.success, value: bestModel.value } : 'NONE');
+              if (bestModel) {
+                data.visionResult = {
+                  success: true,
+                  value: consensus.value,
+                  numericValue: consensus.numericValue !== undefined ? String(consensus.numericValue) : bestModel.numericValue,
+                  confidence: consensus.confidence,
+                  visualQuote: bestModel.visualQuote,
+                };
+                console.log(`[Metric-AI] Set visionResult:`, { success: data.visionResult.success, value: data.visionResult.value, numericValue: data.visionResult.numericValue });
+              }
+            } catch (err: any) {
+              console.error(`[Metric-AI] Vision consensus ERROR:`, err?.message || err);
+            }
           });
           await Promise.all(visionPromises);
-          
+
+          // Hybrid fallback: if vision confidence is low, retry with full-page screenshot
+          for (const data of screenshotsToProcess) {
+            if (data.visionConsensus && data.visionConsensus.confidence < 0.4 && data.visionConsensus.agreement !== 'none') {
+              console.log(`[Metric-AI] 🔄 Low vision confidence (${data.visionConsensus.confidence.toFixed(2)}), trying full-page for ${data.url}`);
+              try {
+                const fullPageResult = await captureFullPageFallback(data.url, {
+                  width: 1280, height: 900, timeoutMs: 30000, retryAttempts: 0, locator: sourceLocator,
+                });
+                if (fullPageResult.success && fullPageResult.base64) {
+                  const retryConsensus = await analyzeWithConsensus(
+                    fullPageResult.base64, input.metric,
+                    { description: input.description, expectedRange: visionExpectedRange }
+                  );
+                  if (retryConsensus.confidence > data.visionConsensus.confidence) {
+                    console.log(`[Metric-AI] ✓ Full-page improved confidence: ${retryConsensus.confidence.toFixed(2)}`);
+                    data.visionConsensus = retryConsensus;
+                    const bestRetry = retryConsensus.models.find(m => m.success);
+                    if (bestRetry) {
+                      data.visionResult = {
+                        success: true, value: retryConsensus.value,
+                        numericValue: retryConsensus.numericValue !== undefined ? String(retryConsensus.numericValue) : bestRetry.numericValue,
+                        confidence: retryConsensus.confidence, visualQuote: bestRetry.visualQuote,
+                      };
+                    }
+                  }
+                }
+              } catch {}
+            }
+          }
+
           const visionSuccessCount = Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length;
           console.log('[Metric-AI] ✓ Vision analysis complete', { jobId, visionSuccessCount });
         }
 
-        // Build vision evidence section for the prompt
+        // --- Build evidence sections for the enhanced prompt ---
+        const locatorEvidenceParts: string[] = [];
+        const visionConsensusParts: string[] = [];
+        const renderedDomParts: string[] = [];
         const visionEvidenceParts: string[] = [];
         const screenshotFailures: string[] = [];
-        if (ENABLE_VISION_ANALYSIS) {
-          for (const [url, data] of screenshotDataMap) {
-            // Track screenshot capture failures separately
-            if (data.screenshotResult && !data.screenshotResult.success) {
-              const failReason = data.screenshotResult.error || 'Unknown error';
-              screenshotFailures.push(`${url}: ${failReason.slice(0, 150)}`);
-              console.warn(`[MetricAI] Screenshot failed for ${url}: ${failReason}`);
+
+        for (const [url, data] of screenshotDataMap) {
+          if (data.screenshotResult && !data.screenshotResult.success) {
+            screenshotFailures.push(`${url}: ${(data.screenshotResult.error || 'Unknown error').slice(0, 150)}`);
+          }
+
+          // Locator evidence
+          if (data.screenshotResult?.locatorExtractedValue) {
+            locatorEvidenceParts.push(`LOCATOR_EXTRACTED (${url}, method: ${data.screenshotResult.locatorMethod}): ${data.screenshotResult.locatorExtractedValue}`);
+          }
+
+          // Multi-model vision consensus
+          if (data.visionConsensus) {
+            visionConsensusParts.push(`VISION_CONSENSUS (${url}):`);
+            visionConsensusParts.push(`- Agreement: ${data.visionConsensus.agreement}`);
+            visionConsensusParts.push(`- Consensus Value: ${data.visionConsensus.value || 'N/A'}`);
+            visionConsensusParts.push(`- Confidence: ${data.visionConsensus.confidence.toFixed(2)}`);
+            visionConsensusParts.push(`- ${data.visionConsensus.summary}`);
+            for (const m of data.visionConsensus.models) {
+              const status = m.success ? `${m.numericValue} (conf: ${m.confidence?.toFixed(2)})` : `FAILED: ${m.error?.slice(0, 80)}`;
+              visionConsensusParts.push(`  - ${m.model}: ${status}`);
             }
-            
-            if (data.visionResult?.success) {
-              visionEvidenceParts.push(`VISION_ANALYSIS (${url}):`);
-              if (data.visionResult.value) {
-                visionEvidenceParts.push(`- Extracted Value: ${data.visionResult.value}`);
-              }
-              if (data.visionResult.numericValue) {
-                visionEvidenceParts.push(`- Numeric Value: ${data.visionResult.numericValue}`);
-              }
-              visionEvidenceParts.push(`- Confidence: ${data.visionResult.confidence?.toFixed(2) || 'N/A'}`);
-              if (data.visionResult.visualQuote) {
-                visionEvidenceParts.push(`- Visual Quote: ${data.visionResult.visualQuote.slice(0, 300)}`);
-              }
-            } else if (data.visionResult?.error) {
-              visionEvidenceParts.push(`VISION_ANALYSIS (${url}): Failed - ${data.visionResult.error.slice(0, 100)}`);
-            }
+          } else if (data.visionResult?.success) {
+            visionEvidenceParts.push(`VISION_ANALYSIS (${url}):`);
+            if (data.visionResult.value) visionEvidenceParts.push(`- Extracted Value: ${data.visionResult.value}`);
+            if (data.visionResult.numericValue) visionEvidenceParts.push(`- Numeric Value: ${data.visionResult.numericValue}`);
+            visionEvidenceParts.push(`- Confidence: ${data.visionResult.confidence?.toFixed(2) || 'N/A'}`);
+            if (data.visionResult.visualQuote) visionEvidenceParts.push(`- Visual Quote: ${data.visionResult.visualQuote.slice(0, 300)}`);
+          }
+
+          // Rendered DOM text summary
+          if (data.screenshotResult?.renderedText) {
+            const preview = data.screenshotResult.renderedText.slice(0, 500).replace(/\n+/g, ' | ');
+            renderedDomParts.push(`RENDERED_DOM (${url}): ${preview}`);
           }
         }
-        
-        // Log summary of data collection
+
         const successfulScreenshots = Array.from(screenshotDataMap.values()).filter(d => d.screenshotResult?.success).length;
         const totalUrls = input.urls.length;
-        console.log(`[MetricAI] Data collection: ${texts.length}/${totalUrls} HTML sources, ${successfulScreenshots}/${totalUrls} screenshots`);
-        if (screenshotFailures.length > 0) {
-          console.warn(`[MetricAI] Screenshot failures: ${screenshotFailures.length}/${totalUrls}`);
-        }
+
+        // --- Phase 3: Enhanced fusion prompt ---
+        const historicalPrompt = formatHistoricalContextForPrompt(historicalStats);
+
         const prompt = [
           `METRIC: ${input.metric}`,
           input.description ? `DESCRIPTION: ${input.description}` : '',
           `TASK: Determine the current numeric value and a tradable asset_price_suggestion.`,
-          `Return JSON: { "value": "...",  "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
-          `EVIDENCE PRIORITY (use the best available evidence; cite it):`,
-          `- You have TWO types of evidence: HTML-extracted data (SOURCES) and screenshot vision analysis (VISION_ANALYSIS).`,
-          `- VISION_ANALYSIS is from actual screenshots of the rendered pages - use this as PRIMARY evidence when available, especially for JS-rendered sites.`,
-          `- Prefer explicit quotes/fields that clearly refer to the metric (e.g., "last/price/close/settle") over unrelated numbers.`,
-          `- Prefer structured pricing where available: VISION_ANALYSIS > JSON_LD_PRICE_CANDIDATES > KEY_LINES > NUMERIC_CANDIDATES.`,
-          `- For chart pages, if CHART_DERIVED_LAST_CLOSE/OHLC is present, prefer the latest CLOSE as the asset_price_suggestion and cite it.`,
+          `Return JSON: { "value": "...", "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
+          ``,
+          `EVIDENCE PRIORITY (highest trust to lowest — use the best available; cite it):`,
+          `1. LOCATOR_EXTRACTED_VALUE — Pre-validated CSS/XPath/JS selector from market creation. If present and numeric, this is almost certainly correct.`,
+          `2. VISION_CONSENSUS — Multi-model agreement on screenshot analysis (GPT-4o + Claude + Gemini). Higher agreement = higher trust.`,
+          `3. RENDERED_DOM_KEY_LINES — JS-rendered page content captured by headless browser. More reliable than raw HTML for dynamic pages.`,
+          `4. JSON_LD_PRICE_CANDIDATES — Structured pricing from schema.org markup.`,
+          `5. CHART_DERIVED_LAST_CLOSE — OHLC data extracted from inline scripts.`,
+          `6. KEY_LINES / NUMERIC_CANDIDATES — Pattern-matched from raw HTML (lowest trust).`,
+          ``,
           `CROSS-VALIDATION (IMPORTANT):`,
-          `- When VISION_ANALYSIS and HTML evidence AGREE on the value, boost confidence significantly (e.g., +0.1-0.2).`,
-          `- When they DISAGREE, prefer VISION_ANALYSIS (it sees the rendered page) but reduce confidence and explain the discrepancy.`,
+          `- When multiple evidence types AGREE on the value, boost confidence significantly.`,
+          `- When they DISAGREE, prefer higher-priority evidence but reduce confidence and explain the discrepancy.`,
           `- If only one source type has data, use it but note in reasoning that cross-validation was not possible.`,
-          `DISAMBIGUATION RULES (important on busy pages):`,
+          ``,
+          `DISAMBIGUATION RULES:`,
           `- Ignore numbers that look like axis ticks, timestamps, percent changes, volumes, page counters, or unrelated KPIs.`,
-          `- If multiple plausible candidates exist, choose the one most consistent with the metric name/description and any unit hints; reduce confidence and explain.`,
-          `- If sources disagree materially, prefer the most recent (FETCHED_AT) and/or the most directly labeled quote; otherwise use a conservative median and reduce confidence.`,
+          `- If multiple plausible candidates exist, choose the one most consistent with the metric name/description and HISTORICAL CONTEXT.`,
+          ``,
           `OUTPUT RULES:`,
-          `- asset_price_suggestion must be the best tradable "quote-like" number you can defend from evidence (not an axis label).`,
-          `- value can include context or units if needed; asset_price_suggestion must be numeric only.`,
-          `- You must output ONLY the final numeric price for asset_price_suggestion.`,
+          `- asset_price_suggestion must be the best tradable "quote-like" number (not an axis label). Numeric only, no units.`,
           `- The final numeric price MUST have exactly 5 significant figures (use standard rounding).`,
-          `- You may must use decimal points, and optional thousands separators (commas).`,
-          `- Do NOT output units.`,
-          `PRICE RULES:`,
-          `- If financial quote (USD per BTC/oz/barrel/etc) use as-is; else rescale large metrics to natural human units.`,
-          `CHART RULES (IMPORTANT):`,
-          `- If a source provides CHART_DERIVED_LAST_CLOSE or OHLC (open/high/low/close), prefer the latest CLOSE as the asset_price_suggestion.`,
-          `- Candlestick charts: use CLOSE, not OPEN, unless the chart is explicitly "current/open".`,
-          `- If you use chart-derived pricing, cite the relevant CHART_DERIVED_* or CHART_SNIPPETS in source_quotes.`,
-          `MISSING / JS-RENDERED PAGES:`,
-          `- If HTML extraction failed but VISION_ANALYSIS succeeded, use the vision data with appropriate confidence.`,
-          `- If VISION_ANALYSIS failed but HTML extraction succeeded, use HTML data with appropriate confidence (reduce by ~0.1-0.2 since you cannot cross-validate).`,
-          `- IMPORTANT: You MUST still return a result even if screenshots/vision failed. Use HTML-extracted data (NUMERIC_CANDIDATES, KEY_LINES, CHART_DERIVED_*, JSON_LD) as your evidence.`,
-          `- If both fail completely (no HTML data AND no vision data), return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2, and explain what evidence was missing.`,
-          // Include screenshot failure info if any
-          screenshotFailures.length > 0 ? `\nSCREENSHOT FAILURES (${screenshotFailures.length} of ${totalUrls} URLs):\n${screenshotFailures.map(f => `- ${f}`).join('\n')}\nNote: Proceed with HTML-extracted data only for these URLs.` : '',
-          // Include vision evidence if available
+          `- If your result differs significantly from HISTORICAL CONTEXT, explain why in your reasoning.`,
+          ``,
+          `CHART RULES:`,
+          `- Prefer the latest CLOSE for OHLC/candlestick data, not OPEN.`,
+          ``,
+          `MISSING DATA:`,
+          `- You MUST still return a result even if some evidence types are missing.`,
+          `- If both HTML and vision fail completely, return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2.`,
+          ``,
+          // Historical context
+          historicalPrompt,
+          // Locator evidence (highest trust)
+          locatorEvidenceParts.length > 0 ? `\nLOCATOR EVIDENCE:\n${locatorEvidenceParts.join('\n')}` : '',
+          // Vision consensus
+          visionConsensusParts.length > 0 ? `\nVISION CONSENSUS:\n${visionConsensusParts.join('\n')}` : '',
+          // Legacy single-model vision
           visionEvidenceParts.length > 0 ? `\nVISION EVIDENCE:\n${visionEvidenceParts.join('\n')}` : '',
+          // Screenshot failures
+          screenshotFailures.length > 0 ? `\nSCREENSHOT FAILURES (${screenshotFailures.length}/${totalUrls}):\n${screenshotFailures.map(f => `- ${f}`).join('\n')}` : '',
+          // HTML sources
           `\nHTML SOURCES:`,
           texts.join('\n\n').slice(0, MAX_SOURCES_JOIN_CHARS)
         ].filter(Boolean).join('\n');
@@ -640,13 +900,11 @@ export async function POST(req: NextRequest) {
         const openaiModel = process.env.OPENAI_MODEL || 'gpt-4.1';
         const openaiStartTime = Date.now();
         
-        console.log('[Metric-AI] 🤖 Phase 3: Calling OpenAI', {
-          jobId,
-          model: openaiModel,
-          promptLength: prompt.length,
-          htmlSourcesIncluded: texts.length,
-          visionEvidenceIncluded: visionEvidenceParts.length > 0,
-          screenshotFailuresReported: screenshotFailures.length,
+        console.log('[Metric-AI] 🤖 Phase 3: Calling OpenAI fusion', {
+          jobId, model: openaiModel, promptLength: prompt.length,
+          hasLocatorEvidence: locatorEvidenceParts.length > 0,
+          hasVisionConsensus: visionConsensusParts.length > 0,
+          hasHistoricalContext: historicalStats.source !== 'none',
         });
 
         const resp = await openai.chat.completions.create({
@@ -660,27 +918,62 @@ export async function POST(req: NextRequest) {
         });
 
         const openaiDurationMs = Date.now() - openaiStartTime;
-        
         console.log('[Metric-AI] ✓ OpenAI response received', {
-          jobId,
-          openaiDurationMs,
+          jobId, openaiDurationMs,
           finishReason: resp.choices[0]?.finish_reason,
-          promptTokens: resp.usage?.prompt_tokens,
-          completionTokens: resp.usage?.completion_tokens,
           totalTokens: resp.usage?.total_tokens,
         });
 
         let content = resp.choices[0]?.message?.content?.trim() || '{}';
         try { content = content.replace(/```json|```/g, '').trim(); } catch {}
-        const json = JSON.parse(content);
+        let json = JSON.parse(content);
+
+        // --- Phase 4: Post-extraction validation ---
+        const validation = validateExtractedValue(json.asset_price_suggestion, historicalStats);
+        let validationWarning: string | undefined;
+        if (!validation.valid && validation.warnings.length > 0) {
+          console.warn('[Metric-AI] ⚠ Value flagged by validator', { jobId, warnings: validation.warnings });
+
+          // Attempt a second opinion if confidence is being capped significantly
+          if (validation.maxConfidence <= 0.3) {
+            try {
+              const secondOpinion = buildSecondOpinionPrompt(json.asset_price_suggestion, validation.warnings, historicalStats);
+              console.log('[Metric-AI] 🔄 Requesting second opinion from AI');
+              const resp2 = await openai.chat.completions.create({
+                model: openaiModel,
+                response_format: { type: 'json_object' },
+                messages: [
+                  { role: 'system', content: 'You are an expert metric analyst. Return strict JSON only.' },
+                  { role: 'user', content: prompt + '\n\n' + secondOpinion }
+                ],
+                max_tokens: 1400
+              });
+              let content2 = resp2.choices[0]?.message?.content?.trim() || '';
+              try { content2 = content2.replace(/```json|```/g, '').trim(); } catch {}
+              const json2 = JSON.parse(content2);
+              const validation2 = validateExtractedValue(json2.asset_price_suggestion, historicalStats);
+              if (validation2.maxConfidence > validation.maxConfidence) {
+                console.log('[Metric-AI] ✓ Second opinion improved validation', {
+                  original: json.asset_price_suggestion, revised: json2.asset_price_suggestion,
+                });
+                json = json2;
+              }
+            } catch {}
+          }
+
+          const finalValidation = validateExtractedValue(json.asset_price_suggestion, historicalStats);
+          if (!finalValidation.valid) {
+            validationWarning = finalValidation.warnings.join('; ');
+            json.confidence = Math.min(json.confidence || 0.5, finalValidation.maxConfidence);
+          }
+        }
         
-        console.log('[Metric-AI] 📋 Parsed AI response', {
+        console.log('[Metric-AI] 📋 Final result', {
           jobId,
           value: json.value,
           assetPriceSuggestion: json.asset_price_suggestion,
           confidence: json.confidence,
-          hasReasoning: !!json.reasoning,
-          sourceQuotesCount: json.source_quotes?.length || 0,
+          validationWarning: validationWarning || null,
         });
 
         // Build sources with screenshot URLs
@@ -779,13 +1072,20 @@ export async function POST(req: NextRequest) {
           asset_price_suggestion: json.asset_price_suggestion || json.value || '50.00',
           reasoning: json.reasoning || '',
           sources: sourcesWithScreenshots,
-          // Include aggregated vision analysis metadata
+          // Validation
+          validation_warning: validationWarning || undefined,
+          // Vision metadata
           vision_analysis_enabled: ENABLE_VISION_ANALYSIS,
           vision_sources_analyzed: Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length,
+          vision_consensus_agreement: Array.from(screenshotDataMap.values()).find(d => d.visionConsensus)?.visionConsensus?.agreement || null,
           screenshots_captured: successfulScreenshots,
           screenshots_failed: screenshotFailures.length,
           screenshot_failure_reasons: screenshotFailures.length > 0 ? screenshotFailures : undefined,
           html_sources_extracted: texts.length,
+          locator_used: !!sourceLocator,
+          locator_value: Array.from(screenshotDataMap.values()).find(d => d.screenshotResult?.locatorExtractedValue)?.screenshotResult?.locatorExtractedValue || null,
+          historical_context_source: historicalStats.source,
+          historical_last_value: historicalStats.lastValue,
           data_sources_summary: `HTML: ${texts.length}/${totalUrls}, Screenshots: ${successfulScreenshots}/${totalUrls}, Vision: ${Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length}/${totalUrls}`,
           settlement_wayback_url: settlementWaybackUrl,
           settlement_wayback_timestamp: settlementWaybackTimestamp,
@@ -825,6 +1125,65 @@ export async function POST(req: NextRequest) {
           } catch {}
         }
 
+        // --- Phase 5: Auto-discover locators on creation context for fast-path reuse ---
+        // Gate on the raw AI confidence (pre-validation) or strong vision consensus,
+        // NOT the post-validation confidence which can be crushed by stale historical data.
+        const rawAiConfidence = typeof json.confidence === 'number' ? json.confidence : 0;
+        const hasVisionAgreement = resolution.vision_consensus_agreement === 'full' || resolution.vision_consensus_agreement === 'partial';
+        const discoveryEligible = rawAiConfidence >= 0.7 || hasVisionAgreement;
+        if (
+          input.context === 'create' &&
+          marketId &&
+          discoveryEligible &&
+          resolution.asset_price_suggestion &&
+          resolution.asset_price_suggestion !== '0' &&
+          input.urls.length > 0
+        ) {
+          try {
+            const discoveryUrl = input.urls[0];
+            const primaryEvidence = resolution.vision_consensus_agreement === 'full' ? 'vision_consensus'
+              : resolution.locator_used ? 'locator'
+              : 'fusion';
+
+            const reusablePage = livePages.get(discoveryUrl)?.page;
+            console.log('[Metric-AI] 🔍 Phase 5: Auto-discovering locators', {
+              jobId, url: discoveryUrl, confirmedValue: resolution.asset_price_suggestion,
+              reusingBrowser: !!reusablePage,
+            });
+
+            const discovered = await discoverLocators(
+              discoveryUrl,
+              resolution.asset_price_suggestion,
+              primaryEvidence,
+              reusablePage,
+            );
+
+            if (discovered) {
+              await supabase.from('markets').update({
+                ai_source_locator: discovered,
+                updated_at: new Date().toISOString(),
+              }).eq('id', marketId);
+
+              console.log('[Metric-AI] ✓ Auto-discovered locators persisted', {
+                jobId,
+                selectorCount: discovered.selectors.length,
+                bestSelector: discovered.selectors[0]?.type,
+                bestConfidence: discovered.selectors[0]?.confidence,
+              });
+            } else {
+              console.log('[Metric-AI] ⚠ No locators discovered for', discoveryUrl);
+            }
+          } catch (discoveryErr) {
+            console.warn('[Metric-AI] ⚠ Locator discovery failed (non-fatal):', discoveryErr instanceof Error ? discoveryErr.message : discoveryErr);
+          }
+        }
+
+        // Close any live browser sessions kept alive for Phase 5
+        for (const [, { browser }] of livePages) {
+          await safeCloseBrowser(browser);
+        }
+        livePages.clear();
+
         const totalProcessingTimeMs = Date.now() - started;
         
         await supabase.from('metric_oracle_jobs').update({
@@ -849,6 +1208,12 @@ export async function POST(req: NextRequest) {
         console.log('[Metric-AI] ═══════════════════════════════════════════════════');
         
       } catch (err: any) {
+        // Always clean up live browsers on error
+        for (const [, { browser }] of livePages) {
+          await safeCloseBrowser(browser);
+        }
+        livePages.clear();
+
         const totalProcessingTimeMs = Date.now() - started;
         
         console.error('[Metric-AI] ═══════════════════════════════════════════════════');

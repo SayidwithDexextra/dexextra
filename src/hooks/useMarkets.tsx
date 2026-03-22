@@ -43,6 +43,7 @@ export interface Market {
   network: string;
   initial_order?: any;
   market_config?: any;
+  ai_source_locator?: Record<string, unknown> | null;
 }
 
 interface UseMarketsOptions {

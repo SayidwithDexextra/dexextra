@@ -70,6 +70,12 @@ export async function createMarketOnChain(params: {
   aiSourceLocator?: any;
   /** Optional settlement timestamp (unix seconds). Defaults to now + 1 year. */
   settlementDate?: number;
+  /** Speed-run lifecycle overrides for dev testing (rollover lead, challenge, settlement window). */
+  speedRunConfig?: {
+    rolloverLeadSeconds: number;
+    challengeDurationSeconds: number;
+    settlementWindowSeconds: number;
+  };
   feeRecipient?: string; // optional override; defaults to connected wallet
   onProgress?: (event: ProgressEvent) => void;
   pipelineId?: string; // optional: used for server push progress via Pusher
@@ -90,6 +96,7 @@ export async function createMarketOnChain(params: {
     iconImageUrl,
     aiSourceLocator,
     settlementDate,
+    speedRunConfig,
     feeRecipient,
     onProgress,
     pipelineId,
@@ -388,6 +395,7 @@ export async function createMarketOnChain(params: {
         deadline: message.deadline,
         cutArg, // pass client-side cut order to match server hashing
         pipelineId: pipelineId || null,
+        speedRunConfig: speedRunConfig || undefined,
       }),
     });
     if (!res.ok) {

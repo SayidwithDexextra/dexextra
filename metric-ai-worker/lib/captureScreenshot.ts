@@ -31,6 +31,22 @@ export interface ScreenshotResult {
   captureTimeMs?: number;
   /** Number of retry attempts made */
   retryAttempts?: number;
+  /** Rendered page text (document.body.innerText) after JS execution */
+  renderedText?: string;
+  /** Value extracted via ai_source_locator (CSS/XPath/JS) — highest-trust evidence */
+  locatorExtractedValue?: string;
+  /** Which locator method succeeded */
+  locatorMethod?: 'css' | 'xpath' | 'js_extractor';
+  /** When keepBrowserAlive is set, the live Page + Browser are returned for reuse */
+  livePage?: Page;
+  liveBrowser?: Browser;
+}
+
+/** Pre-validated extraction selectors from market creation (stored in markets.ai_source_locator) */
+export interface SourceLocator {
+  css_selector?: string;
+  xpath?: string;
+  js_extractor?: string;
 }
 
 export interface ScreenshotOptions {
@@ -48,9 +64,13 @@ export interface ScreenshotOptions {
   fullPage?: boolean;
   /** Number of retry attempts for transient errors (default: 2) */
   retryAttempts?: number;
+  /** Pre-validated selectors to extract a targeted value from the rendered DOM */
+  locator?: SourceLocator;
+  /** Keep browser + page alive after capture for downstream reuse (e.g. auto-discovery) */
+  keepBrowserAlive?: boolean;
 }
 
-const DEFAULT_OPTIONS: Required<ScreenshotOptions> = {
+const DEFAULT_OPTIONS: Required<Omit<ScreenshotOptions, 'locator' | 'keepBrowserAlive'>> & { locator?: SourceLocator; keepBrowserAlive?: boolean } = {
   width: 1280,
   height: 800,
   waitForNetworkIdle: true,
@@ -58,6 +78,8 @@ const DEFAULT_OPTIONS: Required<ScreenshotOptions> = {
   timeoutMs: 30000,
   fullPage: false,
   retryAttempts: 2,
+  locator: undefined,
+  keepBrowserAlive: false,
 };
 
 /**
@@ -103,15 +125,17 @@ const SITE_CONFIGS: Array<{ pattern: RegExp; config: SiteConfig }> = [
     // TradingView - embedded charts and full site
     pattern: /tradingview\.com/i,
     config: {
-      waitUntil: 'domcontentloaded',
+      waitUntil: 'networkidle2',
       waitForSelectors: [
+        '[class*="lastContainer"]',
+        '[class*="tv-symbol-price-quote__value"]',
+        '[data-name="legend-source-title"]',
         'canvas[class*="chart"]',
         '.chart-container canvas',
         '[class*="tv-lightweight-charts"]',
-        '.price-axis canvas',
       ],
-      selectorTimeout: 20000,
-      postSelectorWait: 3000,
+      selectorTimeout: 25000,
+      postSelectorWait: 4000,
       description: 'TradingView (chart site)',
     },
   },
@@ -259,7 +283,7 @@ async function sleep(ms: number): Promise<void> {
 /**
  * Safely close browser with timeout
  */
-async function safeCloseBrowser(browser: Browser | null): Promise<void> {
+export async function safeCloseBrowser(browser: Browser | null): Promise<void> {
   if (!browser) return;
   
   try {
@@ -288,7 +312,7 @@ async function safeCloseBrowser(browser: Browser | null): Promise<void> {
  */
 async function captureScreenshotInternal(
   url: string,
-  opts: Required<ScreenshotOptions>
+  opts: Required<Omit<ScreenshotOptions, 'locator' | 'keepBrowserAlive'>> & { locator?: SourceLocator; keepBrowserAlive?: boolean }
 ): Promise<ScreenshotResult> {
   const startTime = Date.now();
   let browser: Browser | null = null;
@@ -304,14 +328,21 @@ async function captureScreenshotInternal(
     let executablePath: string;
     let browserArgs: string[];
     
+    const antiDetectArgs = [
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--mute-audio',
+      '--no-first-run',
+    ];
+
     if (IS_SERVERLESS) {
       executablePath = await chromium.executablePath();
       browserArgs = [
         ...chromium.args,
-        '--disable-dev-shm-usage',
+        ...antiDetectArgs,
         '--disable-gpu',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
         '--disable-background-networking',
@@ -320,30 +351,22 @@ async function captureScreenshotInternal(
         '--disable-sync',
         '--disable-translate',
         '--metrics-recording-only',
-        '--mute-audio',
-        '--no-first-run',
         '--safebrowsing-disable-auto-update',
       ];
     } else {
-      // Local development - use installed Chrome
       const platform = process.platform as keyof typeof LOCAL_CHROME_PATHS;
       executablePath = process.env.CHROME_PATH || LOCAL_CHROME_PATHS[platform] || LOCAL_CHROME_PATHS.darwin;
       browserArgs = [
-        '--disable-dev-shm-usage',
+        ...antiDetectArgs,
         '--disable-gpu',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
         '--disable-background-networking',
         '--disable-default-apps',
         '--disable-extensions',
         '--disable-sync',
-        '--mute-audio',
-        '--no-first-run',
       ];
       console.log(`[Screenshot] Using local Chrome: ${executablePath}`);
     }
 
-    // Launch browser
     browser = await puppeteer.launch({
       args: browserArgs,
       defaultViewport: {
@@ -352,7 +375,6 @@ async function captureScreenshotInternal(
       },
       executablePath,
       headless: true,
-      // Prevent zombie processes
       handleSIGINT: false,
       handleSIGTERM: false,
       handleSIGHUP: false,
@@ -369,9 +391,13 @@ async function captureScreenshotInternal(
       // Ignore page JS errors - we just want the screenshot
     });
 
-    // Set user agent to avoid bot detection - use a recent Chrome version
+    // Hide automation signals before navigating
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+
     await page.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
     );
     
     // Set extra headers to appear more like a real browser
@@ -383,26 +409,29 @@ async function captureScreenshotInternal(
       'Pragma': 'no-cache',
     });
 
-    // Block unnecessary resources for faster loading
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-      const resourceType = request.resourceType();
-      const reqUrl = request.url().toLowerCase();
-      
-      // Block: videos, fonts, tracking/analytics, ads
-      const blockedPatterns = [
-        'google-analytics', 'googletagmanager', 'facebook.com/tr', 
-        'doubleclick', 'adsense', 'adservice', 'analytics',
-        'hotjar', 'mixpanel', 'segment.io', 'amplitude'
-      ];
-      const isBlocked = blockedPatterns.some(pattern => reqUrl.includes(pattern));
-      
-      if (['media', 'font'].includes(resourceType) || isBlocked) {
-        request.abort().catch(() => {});
-      } else {
-        request.continue().catch(() => {});
-      }
-    });
+    // Block unnecessary resources for faster loading.
+    // Chart-heavy sites need all their JS/CSS so skip interception entirely.
+    const isChartSite = /tradingview|finviz|barchart|investing\.com/i.test(url);
+    if (!isChartSite) {
+      await page.setRequestInterception(true);
+      page.on('request', (request) => {
+        const resourceType = request.resourceType();
+        const reqUrl = request.url().toLowerCase();
+
+        const blockedPatterns = [
+          'google-analytics.com', 'googletagmanager.com', 'facebook.com/tr',
+          'doubleclick.net', 'googlesyndication.com',
+          'hotjar.com', 'mixpanel.com', 'segment.io', 'amplitude.com'
+        ];
+        const isBlocked = blockedPatterns.some(pattern => reqUrl.includes(pattern));
+
+        if (isBlocked || resourceType === 'media' || resourceType === 'font') {
+          request.abort().catch(() => {});
+        } else {
+          request.continue().catch(() => {});
+        }
+      });
+    }
 
     // Determine site-specific configuration based on URL
     const siteConfig = getSiteConfig(url);
@@ -464,11 +493,107 @@ async function captureScreenshotInternal(
       await sleep(opts.additionalWaitMs);
     }
     
-    // Scroll to top to ensure we capture the main content
+    // --- Rendered DOM text extraction (captures JS-rendered content plain fetch() misses) ---
+    let renderedText: string | undefined;
     try {
-      await page.evaluate(() => window.scrollTo(0, 0));
+      renderedText = await page.evaluate(() => (document.body?.innerText || '').slice(0, 150_000));
     } catch {
-      // Ignore scroll errors
+      // Non-fatal — proceed without rendered text
+    }
+
+    // --- ai_source_locator targeted extraction ---
+    let locatorExtractedValue: string | undefined;
+    let locatorMethod: ScreenshotResult['locatorMethod'];
+    const locator = opts.locator;
+    if (locator) {
+      // Try CSS selector first, then XPath, then JS extractor
+      if (locator.css_selector) {
+        try {
+          const val = await page.evaluate((sel: string) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            // Scroll the element into view so it appears in the screenshot
+            el.scrollIntoView({ block: 'center', behavior: 'instant' });
+            return (el.textContent || '').trim();
+          }, locator.css_selector);
+          if (val) {
+            locatorExtractedValue = val;
+            locatorMethod = 'css';
+            console.log(`[Screenshot] Locator CSS extracted: "${val.slice(0, 80)}" for ${url}`);
+            await sleep(500); // let scroll settle
+          }
+        } catch {}
+      }
+
+      if (!locatorExtractedValue && locator.xpath) {
+        try {
+          const val = await page.evaluate((xp: string) => {
+            const result = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            const node = result.singleNodeValue;
+            if (!node) return null;
+            if (node instanceof HTMLElement) node.scrollIntoView({ block: 'center', behavior: 'instant' });
+            return (node.textContent || '').trim();
+          }, locator.xpath);
+          if (val) {
+            locatorExtractedValue = val;
+            locatorMethod = 'xpath';
+            console.log(`[Screenshot] Locator XPath extracted: "${val.slice(0, 80)}" for ${url}`);
+            await sleep(500);
+          }
+        } catch {}
+      }
+
+      if (!locatorExtractedValue && locator.js_extractor) {
+        try {
+          const val = await page.evaluate((code: string) => {
+            try {
+              const fn = new Function('document', `return (${code})`);
+              const result = fn(document);
+              return result != null ? String(result).trim() : null;
+            } catch { return null; }
+          }, locator.js_extractor);
+          if (val) {
+            locatorExtractedValue = val;
+            locatorMethod = 'js_extractor';
+            console.log(`[Screenshot] Locator JS extracted: "${val.slice(0, 80)}" for ${url}`);
+          }
+        } catch {}
+      }
+    }
+
+    // --- Scroll-aware screenshot strategy ---
+    // If a locator already scrolled to the element, we're positioned correctly.
+    // Otherwise, scan the DOM for price-like elements and scroll to one if found below the fold.
+    if (!locatorExtractedValue) {
+      try {
+        const scrolledToPrice = await page.evaluate(() => {
+          const priceSelectors = [
+            '[data-price]', '[data-test*="price"]', '[data-field*="price"]',
+            '[class*="priceValue"]', '[class*="price-value"]', '[class*="Price"]',
+            '[class*="quote"]', '[class*="last-price"]', '[class*="spot-price"]',
+            '.price', '.quote', '.last', '#last_last',
+          ];
+          for (const sel of priceSelectors) {
+            const el = document.querySelector(sel);
+            if (!el) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.top > window.innerHeight) {
+              el.scrollIntoView({ block: 'center', behavior: 'instant' });
+              return true;
+            }
+          }
+          return false;
+        });
+        if (scrolledToPrice) {
+          console.log(`[Screenshot] Scrolled to price element for ${url}`);
+          await sleep(500);
+        } else {
+          // No price element found below fold — scroll to top for standard capture
+          await page.evaluate(() => window.scrollTo(0, 0));
+        }
+      } catch {
+        try { await page.evaluate(() => window.scrollTo(0, 0)); } catch {}
+      }
     }
 
     // Capture screenshot
@@ -478,22 +603,36 @@ async function captureScreenshotInternal(
       encoding: 'binary',
     });
 
-    // Convert to base64
     const base64 = Buffer.from(screenshotBuffer).toString('base64');
-
     const captureTimeMs = Date.now() - startTime;
 
-    // Close browser before returning
+    console.log(`[Screenshot] Successfully captured ${url} (${opts.width}x${opts.height}) in ${captureTimeMs}ms`);
+
+    if (opts.keepBrowserAlive) {
+      return {
+        success: true,
+        base64,
+        dimensions: { width: opts.width, height: opts.height },
+        captureTimeMs,
+        renderedText,
+        locatorExtractedValue,
+        locatorMethod,
+        livePage: page,
+        liveBrowser: browser!,
+      };
+    }
+
     await safeCloseBrowser(browser);
     browser = null;
-
-    console.log(`[Screenshot] Successfully captured ${url} (${opts.width}x${opts.height}) in ${captureTimeMs}ms`);
 
     return {
       success: true,
       base64,
       dimensions: { width: opts.width, height: opts.height },
       captureTimeMs,
+      renderedText,
+      locatorExtractedValue,
+      locatorMethod,
     };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -508,7 +647,9 @@ async function captureScreenshotInternal(
       captureTimeMs,
     };
   } finally {
-    await safeCloseBrowser(browser);
+    if (!opts.keepBrowserAlive) {
+      await safeCloseBrowser(browser);
+    }
   }
 }
 
@@ -589,6 +730,17 @@ export async function captureScreenshots(
   }
 
   return results;
+}
+
+/**
+ * Hybrid capture: viewport screenshot first, then full-page fallback if
+ * the caller determines vision confidence was too low.
+ */
+export async function captureFullPageFallback(
+  url: string,
+  options: ScreenshotOptions = {}
+): Promise<ScreenshotResult> {
+  return captureScreenshot(url, { ...options, fullPage: true });
 }
 
 export default captureScreenshot;

@@ -8,8 +8,8 @@ import useWallet from '@/hooks/useWallet';
 import { useMarketDraft } from '@/hooks/useMarketDraft';
 import { snapshotToDraft, draftToInitialState } from '@/lib/marketDraftSerializer';
 import type { CreationStateSnapshot } from '@/lib/marketDraftSerializer';
+import type { CreationStep } from './InteractiveMarketCreation';
 import type { MarketDraftSummary } from '@/types/marketDraft';
-import { stepLabel } from '@/types/marketDraft';
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -23,99 +23,96 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function DraftCard({
-  draft,
-  onResume,
-  onDelete,
-}: {
-  draft: MarketDraftSummary;
-  onResume: () => void;
-  onDelete: () => void;
-}) {
-  const [confirmDelete, setConfirmDelete] = React.useState(false);
-
-  return (
-    <div className="group flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 transition-colors hover:bg-white/[0.06]">
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-white/90">
-          {draft.title || 'Untitled market'}
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-white/45">
-          <span>{stepLabel(draft.currentStep)}</span>
-          <span className="text-white/20">·</span>
-          <span>{relativeTime(draft.updatedAt)}</span>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1.5">
-        {confirmDelete ? (
-          <>
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="rounded-lg bg-red-500/20 px-2.5 py-1.5 text-[11px] font-medium text-red-300 hover:bg-red-500/30 transition-colors"
-            >
-              Confirm
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
-              className="rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px] font-medium text-white/60 hover:bg-white/10 transition-colors"
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
-              className="rounded-lg p-1.5 text-white/30 hover:text-red-400 hover:bg-white/5 transition-colors opacity-0 group-hover:opacity-100"
-              aria-label="Delete draft"
-            >
-              <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-              </svg>
-            </button>
-            <button
-              onClick={onResume}
-              className="inline-flex items-center gap-1 rounded-lg bg-white/8 px-3 py-1.5 text-[12px] font-medium text-white/80 hover:bg-white/12 transition-colors"
-            >
-              Continue
-              <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
-                <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
-              </svg>
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DraftList({
+function DraftResumeHint({
   drafts,
   onResume,
-  onDelete,
+  onDismiss,
 }: {
   drafts: MarketDraftSummary[];
   onResume: (id: string) => void;
-  onDelete: (id: string) => void;
+  onDismiss: () => void;
 }) {
-  if (!drafts.length) return null;
+  const [expanded, setExpanded] = React.useState(false);
+  const latest = drafts[0];
+  if (!latest) return null;
+
+  if (drafts.length === 1) {
+    return (
+      <div className="mt-6 flex items-center justify-center gap-2 text-[13px] text-white/35 animate-[fadeIn_0.4s_ease]">
+        <span className="truncate max-w-[200px]">{latest.title || 'Untitled'}</span>
+        <span className="text-white/15">·</span>
+        <span>{relativeTime(latest.updatedAt)}</span>
+        <button
+          onClick={() => onResume(latest.id)}
+          className="ml-1 text-white/55 hover:text-white/80 transition-colors underline underline-offset-2 decoration-white/20 hover:decoration-white/40"
+        >
+          Resume
+        </button>
+        <button
+          onClick={onDismiss}
+          className="ml-0.5 text-white/20 hover:text-white/50 transition-colors p-0.5"
+          aria-label="Dismiss"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+            <path d="M4.28 3.22a.75.75 0 00-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 101.06 1.06L8 9.06l3.72 3.72a.75.75 0 101.06-1.06L9.06 8l3.72-3.72a.75.75 0 00-1.06-1.06L8 6.94 4.28 3.22z" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="w-full max-w-[560px] mx-auto mb-8">
-      <div className="mb-2 text-[12px] font-medium text-white/50 uppercase tracking-wider">
-        Continue where you left off
-      </div>
-      <div className="space-y-1.5">
-        {drafts.map((d) => (
-          <DraftCard
-            key={d.id}
-            draft={d}
-            onResume={() => onResume(d.id)}
-            onDelete={() => onDelete(d.id)}
-          />
-        ))}
-      </div>
+    <div className="mt-6 flex flex-col items-center gap-1 text-[13px] text-white/35 animate-[fadeIn_0.4s_ease]">
+      {!expanded ? (
+        <div className="flex items-center gap-2">
+          <span className="truncate max-w-[200px]">{latest.title || 'Untitled'}</span>
+          <span className="text-white/15">·</span>
+          <span>{relativeTime(latest.updatedAt)}</span>
+          <button
+            onClick={() => onResume(latest.id)}
+            className="ml-1 text-white/55 hover:text-white/80 transition-colors underline underline-offset-2 decoration-white/20 hover:decoration-white/40"
+          >
+            Resume
+          </button>
+          <button
+            onClick={() => setExpanded(true)}
+            className="ml-0.5 text-white/25 hover:text-white/50 transition-colors"
+          >
+            +{drafts.length - 1} more
+          </button>
+          <button
+            onClick={onDismiss}
+            className="ml-0.5 text-white/20 hover:text-white/50 transition-colors p-0.5"
+            aria-label="Dismiss"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+              <path d="M4.28 3.22a.75.75 0 00-1.06 1.06L6.94 8l-3.72 3.72a.75.75 0 101.06 1.06L8 9.06l3.72 3.72a.75.75 0 101.06-1.06L9.06 8l3.72-3.72a.75.75 0 00-1.06-1.06L8 6.94 4.28 3.22z" />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        <>
+          {drafts.map((d) => (
+            <div key={d.id} className="flex items-center gap-2">
+              <span className="truncate max-w-[200px]">{d.title || 'Untitled'}</span>
+              <span className="text-white/15">·</span>
+              <span>{relativeTime(d.updatedAt)}</span>
+              <button
+                onClick={() => onResume(d.id)}
+                className="ml-1 text-white/55 hover:text-white/80 transition-colors underline underline-offset-2 decoration-white/20 hover:decoration-white/40"
+              >
+                Resume
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={onDismiss}
+            className="mt-1 text-white/25 hover:text-white/50 transition-colors text-[12px]"
+          >
+            Dismiss
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -141,6 +138,8 @@ export function CreateMarketV2Page() {
 
   const [loadedState, setLoadedState] = React.useState<CreationStateSnapshot | null>(null);
   const [creationKey, setCreationKey] = React.useState(0);
+  const [draftHintDismissed, setDraftHintDismissed] = React.useState(false);
+  const [currentStep, setCurrentStep] = React.useState<CreationStep>('clarify_metric');
   const searchParams = useSearchParams();
   const draftParam = searchParams?.get('draft') ?? null;
   const draftParamLoadedRef = React.useRef<string | null>(null);
@@ -213,6 +212,7 @@ export function CreateMarketV2Page() {
 
   // Auto-create a draft when user starts typing (first state change without active draft)
   const handleStateChangeWithAutoCreate = React.useCallback((snap: CreationStateSnapshot) => {
+    setCurrentStep(snap.visibleStep);
     if (!activeDraftId && snap.prompt.trim()) {
       const id = createDraft();
       const draft = snapshotToDraft(id, snap);
@@ -241,7 +241,8 @@ export function CreateMarketV2Page() {
     );
   }
 
-  const showDraftList = drafts.length > 0 && !activeDraftId;
+  const showDraftHint = drafts.length > 0 && !activeDraftId && !draftHintDismissed;
+  const isReviewStep = currentStep === 'complete';
 
   return (
     <>
@@ -249,23 +250,15 @@ export function CreateMarketV2Page() {
         <CryptoMarketTicker />
       </div>
       <div className="relative min-h-[calc(100vh-144px)] w-full bg-[#1a1a1a] text-white">
-        <div className="relative mx-auto w-full max-w-5xl px-4 pt-24 pb-8 sm:px-6 sm:pt-32 lg:px-8 lg:pt-40">
+        <div className={`relative mx-auto w-full max-w-5xl px-4 pb-8 sm:px-6 lg:px-8 transition-[padding] duration-300 ${isReviewStep ? 'pt-6 sm:pt-8 lg:pt-10' : 'pt-24 sm:pt-32 lg:pt-40'}`}>
         <div className="flex flex-col items-center text-center">
-          <h2 className="text-xl font-normal text-white text-center">
-            What do you want to create today?
-          </h2>
-
-          {showDraftList && (
-            <div className="mt-8 w-full sm:mt-10">
-              <DraftList
-                drafts={drafts}
-                onResume={handleResumeDraftFromList}
-                onDelete={handleDeleteDraft}
-              />
-            </div>
+          {!isReviewStep && (
+            <h2 className="text-xl font-normal text-white text-center">
+              What do you want to create today?
+            </h2>
           )}
 
-          <div className="mt-8 w-full sm:mt-10">
+          <div className={`w-full ${isReviewStep ? '' : 'mt-8 sm:mt-10'}`}>
             <div className="flex justify-center">
               {isDraftLoading ? (
                 <div className="flex items-center gap-2 py-12 text-white/40 text-sm">
@@ -285,6 +278,14 @@ export function CreateMarketV2Page() {
               )}
             </div>
           </div>
+
+          {showDraftHint && !isReviewStep && (
+            <DraftResumeHint
+              drafts={drafts}
+              onResume={handleResumeDraftFromList}
+              onDismiss={() => setDraftHintDismissed(true)}
+            />
+          )}
         </div>
         </div>
       </div>

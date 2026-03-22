@@ -82,7 +82,7 @@ function DeploymentDock(props: {
 
   return (
     <div
-      className="fixed left-4 right-4 sm:left-auto sm:right-4 z-50 w-auto sm:w-[360px] rounded-lg border border-[#222222] bg-[#0F0F0F] shadow-lg"
+      className="fixed left-4 right-4 sm:left-auto sm:right-4 z-[9999] w-auto sm:w-[360px] rounded-lg border border-[#222222] bg-[#0F0F0F] shadow-lg"
       style={{ bottom: dockBottom }}
     >
       <div className="flex items-start justify-between gap-3 p-3">
@@ -139,7 +139,7 @@ function DeploymentCompleteNotice(props: { marketSymbol: string; onDismiss: () =
   const { marketSymbol, onDismiss } = props;
   const router = useRouter();
   return (
-    <div className="fixed top-16 left-4 right-4 sm:left-auto sm:right-4 z-50 w-auto sm:w-[380px] rounded-lg border border-[#222222] bg-[#0F0F0F] shadow-lg">
+    <div className="fixed top-16 left-4 right-4 sm:left-auto sm:right-4 z-[9999] w-auto sm:w-[380px] rounded-lg border border-[#222222] bg-[#0F0F0F] shadow-lg">
       <div className="p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">

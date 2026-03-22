@@ -18,6 +18,7 @@ export type MarketRow = {
   settlement_disputed: boolean | null;
   market_config: Record<string, unknown> | null;
   initial_order: Record<string, unknown> | null;
+  ai_source_locator: Record<string, unknown> | null;
 };
 
 export type TickResult = {
@@ -136,7 +137,7 @@ function nextMarketConfig(
 
 async function getAIPriceDetermination(
   market: MarketRow,
-): Promise<{ price: number; jobId: string; waybackUrl: string | null; waybackPageUrl: string | null } | null> {
+): Promise<{ price: number; jobId: string; waybackUrl: string | null; waybackPageUrl: string | null; screenshotUrl: string | null } | null> {
   const { metricAiWorkerUrl } = getConfig();
   if (!metricAiWorkerUrl) {
     console.warn('[settlement-engine] metricAiWorkerUrl is empty, cannot determine AI price');
@@ -206,7 +207,10 @@ async function getAIPriceDetermination(
           pollJson.result?.settlement_wayback_page_url
           || pollJson.result?.sources?.[0]?.wayback_url
           || null;
-        return { price: candidate, jobId, waybackUrl, waybackPageUrl };
+        const screenshotUrl: string | null =
+          pollJson.result?.sources?.[0]?.screenshot_url
+          || null;
+        return { price: candidate, jobId, waybackUrl, waybackPageUrl, screenshotUrl };
       }
       return null;
     }
@@ -278,6 +282,33 @@ async function settlementSyncLifecycleOnChain(
     return { ok: true };
   } catch (err) {
     return { ok: false, error: `sync_lifecycle_failed:${String(err)}` };
+  }
+}
+
+async function commitEvidenceOnChain(
+  market: MarketRow,
+  waybackUrl: string,
+): Promise<{ ok: boolean; evidenceHash?: string; error?: string }> {
+  const cfg = getConfig();
+  if (!cfg.rpcUrl || !cfg.privateKey) return { ok: false, error: 'rpc_or_key_not_configured' };
+  if (!market.market_address || !ethers.isAddress(market.market_address)) {
+    return { ok: false, error: 'invalid_market_address' };
+  }
+  try {
+    const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes(waybackUrl));
+    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
+    const wallet = new ethers.Wallet(cfg.privateKey, provider);
+    const contract = new ethers.Contract(
+      market.market_address,
+      ['function commitEvidence(string calldata evidenceUrl) external'],
+      wallet,
+    );
+    const tx = await contract.commitEvidence(waybackUrl);
+    await tx.wait();
+    console.log(`[settlement-engine] evidence committed on-chain: ${evidenceHash} (url: ${waybackUrl})`);
+    return { ok: true, evidenceHash };
+  } catch (err) {
+    return { ok: false, error: `commit_evidence_failed:${String(err)}` };
   }
 }
 
@@ -362,9 +393,26 @@ async function maybeStartSettlementWindow(
     };
   }
 
+  // Commit evidence hash on-chain before anything else (tamper-proof commitment).
+  // Use waybackPageUrl (the archived page) as the canonical evidence source; fall back to waybackUrl.
+  const evidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
+  let evidenceHash: string | null = null;
+  if (evidenceUrl) {
+    const commitResult = await commitEvidenceOnChain(market, evidenceUrl);
+    if (commitResult.ok) {
+      evidenceHash = commitResult.evidenceHash ?? null;
+    } else {
+      console.warn(`[settlement-engine] evidence hash commit warning for ${market.market_identifier}: ${commitResult.error}`);
+    }
+  }
+
   const { defaultWindowSeconds } = getConfig();
+  const cfg = asRecord(market.market_config);
+  const perMarketWindow = typeof cfg.settlement_window_seconds === 'number' && cfg.settlement_window_seconds > 0
+    ? cfg.settlement_window_seconds
+    : defaultWindowSeconds;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + defaultWindowSeconds * 1000);
+  const expiresAt = new Date(now.getTime() + perMarketWindow * 1000);
 
   const updatedConfig = nextMarketConfig(market, {
     stage: 'window_started',
@@ -377,6 +425,12 @@ async function maybeStartSettlementWindow(
   }
   if (ai.waybackPageUrl) {
     updatedConfig.settlement_wayback_page_url = ai.waybackPageUrl;
+  }
+  if (ai.screenshotUrl) {
+    updatedConfig.settlement_screenshot_url = ai.screenshotUrl;
+  }
+  if (evidenceHash) {
+    updatedConfig.settlement_evidence_hash = evidenceHash;
   }
 
   const { error } = await supabase
@@ -408,7 +462,7 @@ async function maybeStartSettlementWindow(
     action: 'start_window', ok: true,
     settlementDate: market.settlement_date,
     settlementWindowExpiresAt: expiresAt.toISOString(),
-    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl },
+    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl, evidenceHash },
   };
 }
 
@@ -489,6 +543,9 @@ async function maybeFinalizeSettlement(
   if (ai.waybackPageUrl) {
     finalConfig.settlement_wayback_page_url = ai.waybackPageUrl;
   }
+  if (ai.screenshotUrl) {
+    finalConfig.settlement_screenshot_url = ai.screenshotUrl;
+  }
 
   const { error } = await supabase
     .from('markets')
@@ -536,7 +593,8 @@ const MARKET_SELECT = `
   settlement_window_expires_at,
   settlement_disputed,
   market_config,
-  initial_order
+  initial_order,
+  ai_source_locator
 `;
 
 /**

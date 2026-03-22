@@ -35,6 +35,15 @@ export interface MarketStatsOnChain {
   priceChange24h: number;
   priceChangePercent24h: number;
   totalMarginLocked?: number;
+  // Lifecycle + challenge bond state (on-chain)
+  lifecycleState?: number; // 0=Unsettled, 1=Rollover, 2=ChallengeWindow, 3=Settled
+  challengeBondAmount?: number; // USDC (6 decimals converted)
+  challengeActive?: boolean;
+  challenger?: string;
+  challengedPrice?: number;
+  challengeBondEscrowed?: number;
+  evidenceUrl?: string;
+  evidenceHash?: string;
 }
 
 export interface SeriesMarketItem {
@@ -52,8 +61,9 @@ export interface MarketInfoHeaderProps {
   description?: string;
   logoUrl?: string;
   verified?: boolean;
-  status?: 'live' | 'pending' | 'inactive';
+  status?: 'live' | 'pending' | 'inactive' | 'settlement' | 'settled';
   settlementDate?: string | Date;
+  challengeWindowExpiresAt?: string | Date;
   orderbookAddress?: string;
   marketId?: string;
   markPrice?: number | null;
@@ -73,6 +83,7 @@ export interface MarketInfoHeaderProps {
   };
   onShare?: () => void;
   onWatchlistToggle?: () => void;
+  onTriggerSettlementOverlay?: () => void;
   isWatchlisted?: boolean;
   isWatchlistLoading?: boolean;
   isWatchlistDisabled?: boolean;
@@ -325,6 +336,7 @@ export default function MarketInfoHeader({
   verified = false,
   status = 'live',
   settlementDate,
+  challengeWindowExpiresAt,
   orderbookAddress,
   marketId,
   markPrice,
@@ -340,6 +352,7 @@ export default function MarketInfoHeader({
   waybackSnapshot,
   onShare,
   onWatchlistToggle,
+  onTriggerSettlementOverlay,
   isWatchlisted = false,
   isWatchlistLoading = false,
   isWatchlistDisabled = false,
@@ -355,6 +368,7 @@ export default function MarketInfoHeader({
   const hasDescription = description && description.trim().length > 0;
   const formattedSettlement = settlementDate ? formatSettlementDate(settlementDate) : null;
   const countdown = useCountdown(settlementDate);
+  const challengeCountdown = useCountdown(challengeWindowExpiresAt);
   const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
   const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 2;
 
@@ -413,7 +427,70 @@ export default function MarketInfoHeader({
         )}
 
         {/* Settlement Date Badge */}
-        {formattedSettlement && (() => {
+        {status === 'settlement' && challengeCountdown ? (() => {
+          const cc = challengeCountdown;
+          const isExpired = cc.isSettled;
+          const badgeClass = [
+            styles.settlementBadge,
+            styles.settlementBadgeSettlement,
+          ].filter(Boolean).join(' ');
+
+          return (
+            <Tooltip
+              content={
+                <div className={styles.countdownTooltip}>
+                  <div className={styles.countdownTooltipLabel}>
+                    {isExpired ? 'Challenge window closed' : 'Challenge window closes in'}
+                  </div>
+                  {!isExpired && (
+                    <div className={styles.countdownDisplay}>
+                      <span className={styles.countdownUnit}>
+                        <span className={styles.countdownValue}>{cc.days}</span>
+                        <span className={styles.countdownLabel}>d</span>
+                      </span>
+                      <span className={styles.countdownSeparator}>:</span>
+                      <span className={styles.countdownUnit}>
+                        <span className={styles.countdownValue}>{String(cc.hours).padStart(2, '0')}</span>
+                        <span className={styles.countdownLabel}>h</span>
+                      </span>
+                      <span className={styles.countdownSeparator}>:</span>
+                      <span className={styles.countdownUnit}>
+                        <span className={styles.countdownValue}>{String(cc.minutes).padStart(2, '0')}</span>
+                        <span className={styles.countdownLabel}>m</span>
+                      </span>
+                      <span className={styles.countdownSeparator}>:</span>
+                      <span className={styles.countdownUnit}>
+                        <span className={styles.countdownValue}>{String(cc.seconds).padStart(2, '0')}</span>
+                        <span className={styles.countdownLabel}>s</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              }
+              maxWidth={200}
+              delay={100}
+            >
+              <div className={badgeClass} data-walkthrough="token-settlement-date">
+                <CalendarIcon />
+                {isExpired ? (
+                  <span>Window Closed</span>
+                ) : (
+                  <span className={styles.inlineCountdown}>
+                    {cc.days > 0 && <>{cc.days}d </>}
+                    {cc.hours > 0 && <>{String(cc.hours).padStart(2, '0')}h </>}
+                    {String(cc.minutes).padStart(2, '0')}m{' '}
+                    {String(cc.seconds).padStart(2, '0')}s
+                  </span>
+                )}
+              </div>
+            </Tooltip>
+          );
+        })() : status === 'settled' ? (
+          <div className={`${styles.settlementBadge} ${styles.settlementBadgeSettled}`} data-walkthrough="token-settlement-date">
+            <CalendarIcon />
+            <span>{settlementDate ? `Settled ${new Date(settlementDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'Settled'}</span>
+          </div>
+        ) : formattedSettlement && (() => {
           const isImminent = countdown && !countdown.isSettled && countdown.days === 0;
           const isUrgent = isImminent && countdown.hours === 0;
           const badgeClass = [
@@ -623,6 +700,16 @@ export default function MarketInfoHeader({
             <ShareIcon />
             Share
           </button>
+          {/* TEMP DEBUG */}
+          {onTriggerSettlementOverlay && (
+            <button
+              className={styles.shareBtn}
+              onClick={onTriggerSettlementOverlay}
+              style={{ background: 'rgba(245,158,11,0.15)', borderColor: 'rgba(245,158,11,0.3)', color: '#f59e0b' }}
+            >
+              Settlement
+            </button>
+          )}
         </div>
       </header>
 
@@ -723,6 +810,55 @@ export default function MarketInfoHeader({
               <div className={styles.marketStatItem}>
                 <span className={styles.marketStatLabel}>Total Margin</span>
                 <span className={styles.marketStatValue}>{formatStatValue(marketStats.totalMarginLocked)}</span>
+              </div>
+            </>
+          )}
+          {marketStats.lifecycleState != null && (
+            <>
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Lifecycle</span>
+                <span className={styles.marketStatValue}>
+                  {['Unsettled', 'Rollover', 'Challenge Window', 'Settled'][marketStats.lifecycleState] ?? `State ${marketStats.lifecycleState}`}
+                </span>
+              </div>
+            </>
+          )}
+          {marketStats.challengeBondAmount != null && marketStats.challengeBondAmount > 0 && (
+            <>
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Challenge Bond</span>
+                <span className={styles.marketStatValue}>{formatStatValue(marketStats.challengeBondAmount)} USDC</span>
+              </div>
+            </>
+          )}
+          {marketStats.challengeActive && (
+            <>
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Challenge</span>
+                <span className={`${styles.marketStatValue} ${styles.marketStatNegative}`}>
+                  Active — ${formatStatValue(marketStats.challengedPrice ?? 0)}
+                </span>
+              </div>
+            </>
+          )}
+          {marketStats.evidenceUrl && (
+            <>
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Evidence</span>
+                <a
+                  href={marketStats.evidenceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`${styles.marketStatValue}`}
+                  style={{ color: 'var(--color-blue-400, #60a5fa)', textDecoration: 'underline', textUnderlineOffset: '2px' }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  Wayback Archive
+                </a>
               </div>
             </>
           )}

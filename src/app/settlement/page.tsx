@@ -91,7 +91,7 @@ export default function SettlementPage() {
       let waybackTs: string | null = null;
       try {
         const metricUrl = (selectedMarket as any)?.initial_order?.metricUrl || (selectedMarket as any)?.initial_order?.metric_url || null;
-        const aiSourceUrl = (selectedMarket as any)?.market_config?.ai_source_locator?.url || null;
+        const aiSourceUrl = (selectedMarket as any)?.ai_source_locator?.url || (selectedMarket as any)?.market_config?.ai_source_locator?.url || null;
         const primaryUrl = (typeof metricUrl === 'string' && metricUrl) || (typeof aiSourceUrl === 'string' && aiSourceUrl) || null;
         if (primaryUrl) {
           const arch = await fetch('/api/archives/save', {

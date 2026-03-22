@@ -44,14 +44,14 @@ export async function GET(req: NextRequest) {
       resolvedIdentifier = mkt?.market_identifier || null;
     }
 
-    // Prefer markets.market_config.ai_source_locator first
+    // Prefer markets.ai_source_locator column first
     const { data: mktCfg, error: cfgErr } = await supabase
       .from('markets')
-      .select('market_config')
+      .select('ai_source_locator, market_config')
       .or(`id.eq.${resolvedId},market_identifier.eq.${resolvedIdentifier}`)
       .maybeSingle();
     if (cfgErr) throw cfgErr;
-    const preferred = mktCfg?.market_config?.ai_source_locator || null;
+    const preferred = (mktCfg as any)?.ai_source_locator || null;
 
     // Fallback to legacy market_source_locators table
     let fallback: any = null;

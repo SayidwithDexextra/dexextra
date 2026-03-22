@@ -32,6 +32,20 @@ library MarketLifecycleStorage {
         bool lifecycleSettled;              // Final lifecycle stage reached (UI-guidance state)
         bool lifecycleDevMode;              // When true, permissionless sync can advance stages without time gates
         bool lifecycleLinking;              // Reentrancy guard for cross-market lineage linking
+
+        // Evidence commitment (v3; append-only)
+        bytes32 proposedEvidenceHash;       // keccak256 of the Wayback URL used as evidence for the proposed price
+        string proposedEvidenceUrl;         // The full Wayback URL itself, stored for on-chain discoverability
+
+        // Settlement challenge bond (v3; append-only)
+        uint256 challengeBondAmount;        // Required bond to challenge (6 decimals, configurable by owner)
+        address challenger;                 // Address that posted the bond
+        uint256 challengedPrice;            // Alternative settlement price proposed by challenger
+        uint256 challengeBondEscrowed;      // Actual amount escrowed from challenger
+        bool challengeActive;               // True while a challenge is posted and unresolved
+        bool challengeResolved;             // True after refund or slash
+        bool challengerWon;                 // Outcome: true = refunded, false = slashed
+        address challengeSlashRecipient;    // Treasury address that receives slashed bonds
     }
 
     function state() internal pure returns (State storage s) {

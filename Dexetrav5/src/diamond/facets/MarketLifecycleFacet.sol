@@ -3,12 +3,13 @@ pragma solidity ^0.8.20;
 
 import "../libraries/LibDiamond.sol";
 import "../libraries/MarketLifecycleStorage.sol";
+import "../libraries/OrderBookStorage.sol";
 
 /**
  * @title MarketLifecycleFacet
- * @notice Adds one-year lifecycle metadata, rollover/challenge windows, and lineage pointers.
- *         All functions are additive and idempotent to minimize risk. Uses a dedicated
- *         diamond storage slot to avoid layout collisions.
+ * @notice Adds one-year lifecycle metadata, rollover/challenge windows, lineage pointers,
+ *         and settlement challenge bonds. Uses a dedicated diamond storage slot to avoid
+ *         layout collisions.
  */
 contract MarketLifecycleFacet {
     using MarketLifecycleStorage for MarketLifecycleStorage.State;
@@ -67,6 +68,10 @@ contract MarketLifecycleFacet {
         uint256 parentSettlementTimestamp,
         uint256 childSettlementTimestamp
     );
+    event EvidenceCommitted(address indexed market, bytes32 indexed evidenceHash, address indexed committer, uint256 timestamp);
+    event ChallengeBondConfigured(address indexed market, uint256 bondAmount, address slashRecipient);
+    event SettlementChallenged(address indexed market, address indexed challenger, uint256 alternativePrice, uint256 bondAmount);
+    event ChallengeResolved(address indexed market, address indexed challenger, bool challengerWon, uint256 bondAmount, address recipient);
 
     // === Modifiers ===
     modifier onlyOwner() {
@@ -526,6 +531,130 @@ contract MarketLifecycleFacet {
         require(parentMarket != address(0) && childMarket != address(0), "LC: addr=0");
         require(childSettlementTimestamp > 0, "LC: bad ts");
         emit RolloverCreated(parentMarket, childMarket, childSettlementTimestamp);
+    }
+
+    // === Evidence Commitment ===
+
+    /**
+     * @notice Commit the Wayback URL and its hash on-chain at proposal time.
+     * @dev Called once. The hash is computed on-chain from the URL so both are guaranteed consistent.
+     *      Immutable after set — reverts if evidence was already committed.
+     * @param evidenceUrl The full Wayback Machine URL used as the data source for the proposed price
+     */
+    function commitEvidence(string calldata evidenceUrl) external onlyOwner {
+        require(bytes(evidenceUrl).length > 0, "LC: empty url");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        require(s.proposedEvidenceHash == bytes32(0), "LC: evidence already committed");
+        bytes32 evidenceHash = keccak256(bytes(evidenceUrl));
+        s.proposedEvidenceHash = evidenceHash;
+        s.proposedEvidenceUrl = evidenceUrl;
+        emit EvidenceCommitted(address(this), evidenceHash, msg.sender, block.timestamp);
+    }
+
+    function getProposedEvidence() external view returns (bytes32 evidenceHash, string memory evidenceUrl) {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        return (s.proposedEvidenceHash, s.proposedEvidenceUrl);
+    }
+
+    // === Settlement Challenge Bond ===
+
+    /**
+     * @notice Configure the bond required to challenge a settlement.
+     * @param bondAmount Amount in 6-decimal USDC units (e.g. 50e6 = 50 USDC)
+     * @param slashRecipient Treasury address that receives slashed bonds
+     */
+    function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external onlyOwner {
+        require(slashRecipient != address(0), "LC: slash=0");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        s.challengeBondAmount = bondAmount;
+        s.challengeSlashRecipient = slashRecipient;
+        emit ChallengeBondConfigured(address(this), bondAmount, slashRecipient);
+    }
+
+    /**
+     * @notice Challenge the proposed settlement by posting a bond and alternative price.
+     * @dev Callable by anyone during the active challenge window. The bond is escrowed
+     *      from the caller's CoreVault collateral balance. Only one active challenge per market.
+     * @param alternativePrice The challenger's proposed settlement price (6 decimals)
+     */
+    function challengeSettlement(uint256 alternativePrice) external {
+        require(alternativePrice > 0, "LC: price=0");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+
+        require(s.challengeWindowStarted, "LC: window not started");
+        require(!s.lifecycleSettled, "LC: already settled");
+        uint256 challengeEnd = s.challengeWindowStart + _challengeDuration(s);
+        require(block.timestamp < challengeEnd, "LC: window expired");
+
+        require(!s.challengeActive, "LC: challenge exists");
+        require(s.challengeBondAmount > 0, "LC: bond not configured");
+
+        OrderBookStorage.State storage obs = OrderBookStorage.state();
+        require(address(obs.vault) != address(0), "LC: vault not set");
+        require(obs.vault.getAvailableCollateral(msg.sender) >= s.challengeBondAmount, "LC: insufficient collateral");
+
+        obs.vault.deductFees(msg.sender, s.challengeBondAmount, address(this));
+
+        s.challenger = msg.sender;
+        s.challengedPrice = alternativePrice;
+        s.challengeBondEscrowed = s.challengeBondAmount;
+        s.challengeActive = true;
+        s.challengeResolved = false;
+
+        emit SettlementChallenged(address(this), msg.sender, alternativePrice, s.challengeBondAmount);
+    }
+
+    /**
+     * @notice Resolve an active challenge: refund the bond to the challenger or slash it to treasury.
+     * @param challengerWins If true, bond is returned to challenger. If false, bond goes to slash recipient.
+     */
+    function resolveChallenge(bool challengerWins) external onlyOwner {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        require(s.challengeActive, "LC: no active challenge");
+        require(!s.challengeResolved, "LC: already resolved");
+
+        OrderBookStorage.State storage obs = OrderBookStorage.state();
+        address recipient;
+        if (challengerWins) {
+            recipient = s.challenger;
+        } else {
+            recipient = s.challengeSlashRecipient;
+            require(recipient != address(0), "LC: slash recipient=0");
+        }
+
+        obs.vault.deductFees(address(this), s.challengeBondEscrowed, recipient);
+
+        s.challengeResolved = true;
+        s.challengeActive = false;
+        s.challengerWon = challengerWins;
+
+        emit ChallengeResolved(address(this), s.challenger, challengerWins, s.challengeBondEscrowed, recipient);
+    }
+
+    // === Challenge Bond Views ===
+
+    function getChallengeBondConfig() external view returns (uint256 bondAmount, address slashRecipient) {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        return (s.challengeBondAmount, s.challengeSlashRecipient);
+    }
+
+    function getActiveChallengeInfo() external view returns (
+        bool active,
+        address challengerAddr,
+        uint256 challengedPriceVal,
+        uint256 bondEscrowed,
+        bool resolved,
+        bool won
+    ) {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        return (
+            s.challengeActive,
+            s.challenger,
+            s.challengedPrice,
+            s.challengeBondEscrowed,
+            s.challengeResolved,
+            s.challengerWon
+        );
     }
 }
 

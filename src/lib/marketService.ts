@@ -35,6 +35,9 @@ export interface Market {
   created_at: string;
   updated_at: string;
   deployed_at: string | null;
+
+  // AI source locator (auto-discovered selectors for fast metric extraction)
+  ai_source_locator?: Record<string, unknown> | null;
 }
 
 // Cache for market data to reduce database queries

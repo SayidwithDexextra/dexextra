@@ -133,6 +133,17 @@
   background: #666666;
 }
 
+.statusDot.settlement {
+  background: #F59E0B;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.statusDot.settled {
+  background: #3B82F6;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(0, 200, 81, 0.5); }
   50% { opacity: 0.7; box-shadow: 0 0 12px rgba(0, 200, 81, 0.8); }
@@ -270,6 +281,27 @@
 
 .settlementBadgeUrgent svg {
   color: #f87171;
+}
+
+.settlementBadgeSettlement {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+  animation: settlePulse 2s ease-in-out infinite;
+}
+
+.settlementBadgeSettlement svg {
+  color: #f59e0b;
+}
+
+.settlementBadgeSettled {
+  background: rgba(59, 130, 246, 0.10);
+  border-color: rgba(59, 130, 246, 0.30);
+  color: #60a5fa;
+}
+
+.settlementBadgeSettled svg {
+  color: #60a5fa;
 }
 
 @keyframes settlePulse {

@@ -53,35 +53,24 @@ export async function POST(req: NextRequest) {
       resolvedMarketIdentifier = mktById?.market_identifier || null;
     }
 
-    // Read current market_config for merge-safe update
-    const { data: existing, error: getErr } = await supabase
-      .from('markets')
-      .select('market_config')
-      .eq('id', resolvedMarketId)
-      .maybeSingle();
-    if (getErr) throw getErr;
-
-    const currentConfig = (existing?.market_config as any) || {};
     const newLocator = {
       url: primary_source_url || null,
-      css_selector: css_selector || null,
-      xpath: xpath || null,
-      html_snippet: html_snippet || null,
-      js_extractor: js_extractor || null,
-      js_extractor_b64: js_extractor_b64 || null,
-      strategy: extraction_strategy || null,
-      kit_payload: kit_payload || null,
-      updated_at: new Date().toISOString(),
+      selectors: [
+        ...(css_selector ? [{ type: 'css' as const, selector: css_selector, confidence: 0.8, sample_value: '' }] : []),
+        ...(xpath ? [{ type: 'xpath' as const, xpath, confidence: 0.75, sample_value: '' }] : []),
+        ...(js_extractor ? [{ type: 'js_extractor' as const, script: js_extractor, confidence: 0.7, sample_value: '' }] : []),
+      ],
+      discovered_at: new Date().toISOString(),
+      last_successful_at: null,
+      success_count: 0,
+      failure_count: 0,
+      version: 1,
+      legacy: { html_snippet, js_extractor_b64, extraction_strategy, kit_payload },
     };
-
-    const newConfig = {
-      ...currentConfig,
-      ai_source_locator: newLocator,
-    } as any;
 
     const { error: updErr } = await supabase
       .from('markets')
-      .update({ market_config: newConfig, updated_at: new Date().toISOString() })
+      .update({ ai_source_locator: newLocator, updated_at: new Date().toISOString() })
       .eq('id', resolvedMarketId);
     if (updErr) throw updErr;
 
