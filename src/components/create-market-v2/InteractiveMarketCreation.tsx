@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { IconSparkles } from './icons';
@@ -222,6 +223,34 @@ function randomDevCode4() {
   }
   return out;
 }
+
+type DevSettlementMode = 'standard' | 'immediate' | 'speed-run-30';
+
+type SpeedRunConfig = {
+  rolloverLeadSeconds: number;
+  challengeDurationSeconds: number;
+  settlementWindowSeconds: number;
+};
+
+const DEV_SETTLEMENT_OPTIONS: {
+  value: DevSettlementMode;
+  label: string;
+  settlementOffsetSeconds: number;
+  speedRunConfig?: SpeedRunConfig;
+}[] = [
+  { value: 'standard', label: 'Standard (1 year)', settlementOffsetSeconds: 365 * 24 * 60 * 60 },
+  { value: 'immediate', label: 'Immediate (10 min)', settlementOffsetSeconds: 10 * 60 },
+  {
+    value: 'speed-run-30',
+    label: 'Speed Run (30 min)',
+    settlementOffsetSeconds: 20 * 60,
+    speedRunConfig: {
+      rolloverLeadSeconds: 5 * 60,
+      challengeDurationSeconds: 10 * 60,
+      settlementWindowSeconds: 10 * 60,
+    },
+  },
+];
 
 function toModalResponse(ai: MetricAIResult, metric: string, processingMs: number): MetricResolutionResponse {
   const rawSources = Array.isArray(ai?.sources) ? ai.sources : [];
@@ -597,9 +626,9 @@ function MarketDetailsReview({
   onStartOver,
   onCreateMarket,
   isCreating,
-  showImmediateSettlementToggle,
-  useImmediateSettlement,
-  onToggleImmediateSettlement,
+  showDevSettlementSelector,
+  devSettlementMode,
+  onChangeDevSettlementMode,
 }: {
   marketName: string;
   marketDescription: string;
@@ -616,9 +645,9 @@ function MarketDetailsReview({
   onStartOver: () => void;
   onCreateMarket: () => void;
   isCreating: boolean;
-  showImmediateSettlementToggle?: boolean;
-  useImmediateSettlement?: boolean;
-  onToggleImmediateSettlement?: (value: boolean) => void;
+  showDevSettlementSelector?: boolean;
+  devSettlementMode?: DevSettlementMode;
+  onChangeDevSettlementMode?: (mode: DevSettlementMode) => void;
 }) {
   const [hasAnimated, setHasAnimated] = React.useState(false);
   const [bondConfig, setBondConfig] = React.useState<{
@@ -685,137 +714,116 @@ function MarketDetailsReview({
     return { amount, bps, fee, refundable, pctStr };
   }, [bondConfig.defaultBondAmount, bondConfig.penaltyBps]);
 
+  const confidencePct = selectedSource ? Math.round(selectedSource.confidence * 100) : 0;
+  const confidenceColor =
+    selectedSource && selectedSource.confidence >= 0.85
+      ? '#22c55e'
+      : selectedSource && selectedSource.confidence >= 0.7
+        ? '#eab308'
+        : '#ef4444';
+
   return (
-    <div className="mt-4 w-full max-w-[900px] px-1 sm:px-0">
-      {/* Compact single-view layout */}
+    <div className="w-full max-w-[920px] px-1 sm:px-0">
       <div
-        className="rounded-2xl border border-white/8 bg-[#0A0A0A] overflow-visible"
+        className="overflow-visible"
         style={{
           opacity: hasAnimated ? 1 : 0,
           transform: hasAnimated ? 'translateY(0)' : 'translateY(16px)',
           transition: 'opacity 0.4s ease-out, transform 0.4s ease-out',
         }}
       >
-        {/* Header bar */}
-        <div className="flex flex-col gap-3 px-4 py-3 border-b border-white/5 bg-black/40 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        {/* Top bar */}
+        <div className="flex items-center justify-between mb-4 sm:mb-5">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <svg
-                viewBox="0 0 24 24"
-                className="h-4 w-4 text-green-400"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M9 11l3 3L22 4" />
-                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-              </svg>
-              <span className="text-sm font-medium text-white/90">Market Configuration</span>
-            </div>
             <button
               type="button"
               onClick={onStartOver}
-              className="text-[11px] text-white/40 hover:text-white/60 transition-colors"
+              className="inline-flex items-center gap-1.5 text-[12px] text-white/40 hover:text-white/65 transition-colors"
             >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                <path fillRule="evenodd" d="M9.78 4.22a.75.75 0 010 1.06L7.06 8l2.72 2.72a.75.75 0 11-1.06 1.06L5.22 8.53a.75.75 0 010-1.06l3.5-3.5a.75.75 0 011.06 0z" clipRule="evenodd" />
+              </svg>
               Start over
             </button>
-          </div>
-          <div className="flex flex-col items-start gap-1 sm:items-end">
-            {showImmediateSettlementToggle ? (
-              <label className="mb-1 flex items-center gap-1.5 text-[10px] text-white/55">
-                <input
-                  type="checkbox"
-                  checked={Boolean(useImmediateSettlement)}
-                  onChange={(e) => onToggleImmediateSettlement?.(e.target.checked)}
-                  className="h-3 w-3 rounded border-white/20 bg-[#111111]"
-                />
-                Immediate settlement (dev)
-              </label>
+            {showDevSettlementSelector ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-white/35">Settlement</span>
+                <select
+                  value={devSettlementMode || 'standard'}
+                  onChange={(e) => onChangeDevSettlementMode?.(e.target.value as DevSettlementMode)}
+                  className="h-6 rounded-md border border-white/10 bg-white/[0.03] px-1.5 text-[10px] text-white/60 outline-none focus:border-purple-500/40 transition-colors"
+                >
+                  {DEV_SETTLEMENT_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             ) : null}
-            <button
-              type="button"
-              onClick={onCreateMarket}
-              disabled={isCreating}
-              className={`inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium shadow transition-all active:scale-[0.98] sm:w-auto sm:py-1.5 ${
-                isCreating
-                  ? 'bg-white/50 text-black/50 cursor-not-allowed'
-                  : 'bg-white text-black hover:bg-white/90'
-              }`}
-            >
-              {isCreating ? (
-                <>
-                  <span className="h-3 w-3 animate-spin rounded-full border border-black/20 border-t-black" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M5 12h14M12 5l7 7-7 7" />
-                  </svg>
-                  Create Market
-                </>
-              )}
-            </button>
-            <div className="text-[10px] text-white/35">
-              Market creation requires a bond.
-            </div>
           </div>
+          <button
+            type="button"
+            onClick={onCreateMarket}
+            disabled={isCreating}
+            className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-[13px] font-medium shadow-lg transition-all active:scale-[0.97] ${
+              isCreating
+                ? 'bg-white/40 text-black/40 cursor-not-allowed shadow-none'
+                : 'bg-white text-black hover:bg-white/90 hover:shadow-xl hover:shadow-white/5'
+            }`}
+          >
+            {isCreating ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-black/15 border-t-black" />
+                Creating...
+              </>
+            ) : (
+              'Create Market'
+            )}
+          </button>
         </div>
 
-        {/* Main content - 2 column grid (stacks on mobile) */}
-        <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.2fr] sm:divide-x divide-white/5">
-          {/* Left column - Identity */}
-          <div className="p-4 space-y-3">
-            {/* Icon + Name row */}
-            <div className="flex items-start gap-3">
-              {/* Icon */}
+        {/* Main card */}
+        <div className="rounded-2xl border border-white/[0.06] bg-gradient-to-b from-white/[0.03] to-transparent">
+          {/* Identity section */}
+          <div className="p-5 sm:p-6">
+            <div className="flex items-start gap-4">
               <button
                 type="button"
                 onClick={() => onEdit('icon')}
                 className="group relative shrink-0"
               >
                 {iconPreviewUrl ? (
-                  <div className="h-12 w-12 rounded-xl border border-white/8 bg-black/40 overflow-hidden shadow-lg transition-all group-hover:border-white/15">
+                  <div className="h-14 w-14 rounded-2xl border border-white/10 bg-black/50 overflow-hidden ring-1 ring-black/50 transition-all group-hover:border-white/20 group-hover:ring-white/5">
                     <Image
                       src={iconPreviewUrl}
                       alt="Market icon"
-                      width={48}
-                      height={48}
+                      width={56}
+                      height={56}
                       className="h-full w-full object-cover"
                       unoptimized
                     />
                   </div>
                 ) : (
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-dashed border-white/15 bg-black/40 transition-all group-hover:border-white/25 group-hover:bg-black/60">
-                    <svg viewBox="0 0 24 24" className="h-5 w-5 text-white/40" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/30 transition-all group-hover:border-white/25">
+                    <svg viewBox="0 0 24 24" className="h-5 w-5 text-white/30" fill="none" stroke="currentColor" strokeWidth={1.5}>
                       <path d="M12 5v14M5 12h14" strokeLinecap="round" />
                     </svg>
                   </div>
                 )}
-                <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <span className="text-[10px] text-white font-medium">Edit</span>
+                <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="text-[10px] text-white/90 font-medium">Edit</span>
                 </div>
               </button>
 
-              {/* Name + Description */}
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-0 pt-0.5">
                 <button
                   type="button"
                   onClick={() => onEdit('name')}
                   className="group w-full text-left"
                 >
-                  <div className="text-base font-medium text-white leading-tight truncate group-hover:text-white/80 transition-colors">
-                    {marketName || <span className="text-white/40 italic text-sm">Untitled market</span>}
+                  <div className="text-lg font-semibold text-white leading-snug truncate group-hover:text-white/80 transition-colors">
+                    {marketName || <span className="text-white/30 italic text-base font-normal">Untitled market</span>}
                   </div>
                 </button>
                 <button
@@ -823,185 +831,173 @@ function MarketDetailsReview({
                   onClick={() => onEdit('description')}
                   className="group w-full text-left mt-1"
                 >
-                  <div className="text-xs text-white/60 leading-relaxed line-clamp-2 group-hover:text-white/70 transition-colors">
-                    {marketDescription || <span className="text-white/40 italic">No description</span>}
+                  <div className="text-[13px] text-white/50 leading-relaxed line-clamp-2 group-hover:text-white/65 transition-colors">
+                    {marketDescription || <span className="text-white/30 italic">Add a description</span>}
                   </div>
                 </button>
               </div>
             </div>
+          </div>
 
-            {/* Data Source */}
-            <button
-              type="button"
-              onClick={() => onEdit('select_source')}
-              className="group w-full rounded-xl border border-white/5 bg-black/30 p-3 text-left transition-all hover:border-white/10 hover:bg-black/40"
-            >
-              <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider mb-2">Data Source</div>
-              {selectedSource ? (
-                <div className="flex items-center gap-2.5">
-                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white shadow ${selectedSource.iconBg}`}>
-                    {selectedSource.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-white truncate">
-                      {selectedSource.label}
+          <div className="mx-5 sm:mx-6 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
+
+          {/* Two-column content */}
+          <div className="grid grid-cols-1 sm:grid-cols-2">
+            {/* Left — Source & Confidence */}
+            <div className="p-5 sm:p-6 space-y-4">
+              <div className="text-[10px] font-medium text-white/30 uppercase tracking-[0.08em]">Data Source</div>
+              <button
+                type="button"
+                onClick={() => onEdit('select_source')}
+                className="group w-full text-left"
+              >
+                {selectedSource ? (
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-lg ${selectedSource.iconBg}`}>
+                      {selectedSource.icon}
                     </div>
-                    <div className="text-[10px] text-white/40 truncate">
-                      {selectedSource.sublabel || new URL(selectedSource.url).hostname}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-white truncate group-hover:text-white/80 transition-colors">
+                        {selectedSource.label}
+                      </div>
+                      <div className="text-[11px] text-white/35 truncate">
+                        {selectedSource.sublabel || new URL(selectedSource.url).hostname}
+                      </div>
                     </div>
+                    {selectedSource.badge && (
+                      <span className="shrink-0 rounded-full bg-blue-500/15 border border-blue-500/20 px-2 py-0.5 text-[9px] font-medium text-blue-300/90">
+                        {selectedSource.badge}
+                      </span>
+                    )}
                   </div>
-                  {selectedSource.badge && (
-                    <span className="shrink-0 rounded-full bg-blue-500/20 border border-blue-500/30 px-1.5 py-0.5 text-[9px] font-medium text-blue-300">
-                      {selectedSource.badge}
-                    </span>
+                ) : (
+                  <div className="text-xs text-white/30 italic">No source selected</div>
+                )}
+              </button>
+
+              {selectedSource && (
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[11px] text-white/35">Confidence</span>
+                    <span className="text-[13px] text-white/90 font-medium tabular-nums">{confidencePct}%</span>
+                  </div>
+                  <div className="w-full h-1 bg-white/[0.04] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-700 ease-out"
+                      style={{ width: `${confidencePct}%`, backgroundColor: confidenceColor }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-white/25">
+                    Type: {selectedSource.tooltip?.dataType || 'Web'}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Right — Metric Definition */}
+            <div className="p-5 sm:p-6 border-t border-white/[0.04] sm:border-t-0 sm:border-l sm:border-white/[0.04]">
+              <button
+                type="button"
+                onClick={() => onEdit('clarify_metric')}
+                className="group w-full text-left"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="text-[10px] font-medium text-white/30 uppercase tracking-[0.08em]">Metric Definition</div>
+                  <span className="text-[10px] text-white/25 opacity-0 group-hover:opacity-100 transition-opacity">Edit</span>
+                </div>
+              </button>
+
+              {metricDefinition?.metric_name ? (
+                <div className="space-y-3">
+                  <div className="text-[13px] font-medium text-white/90">{metricDefinition.metric_name}</div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {metricDefinition.unit && (
+                      <span className="rounded-md bg-white/[0.04] border border-white/[0.04] px-2.5 py-1 text-[11px] text-white/60">
+                        {metricDefinition.unit}
+                      </span>
+                    )}
+                    {metricDefinition.scope && (
+                      <span className="rounded-md bg-white/[0.04] border border-white/[0.04] px-2.5 py-1 text-[11px] text-white/60">
+                        {metricDefinition.scope}
+                      </span>
+                    )}
+                    {metricDefinition.time_basis && (
+                      <span className="rounded-md bg-white/[0.04] border border-white/[0.04] px-2.5 py-1 text-[11px] text-white/60">
+                        {metricDefinition.time_basis}
+                      </span>
+                    )}
+                  </div>
+
+                  {metricDefinition.measurement_method && (
+                    <p className="text-[12px] text-white/40 leading-relaxed line-clamp-3">
+                      {metricDefinition.measurement_method}
+                    </p>
                   )}
                 </div>
               ) : (
-                <div className="text-xs text-white/40 italic">No source selected</div>
+                <div className="flex items-center justify-center h-20 text-xs text-white/25 italic">
+                  No metric definition available
+                </div>
               )}
-            </button>
-
-            {/* Source confidence bar */}
-            {selectedSource && (
-              <div className="flex items-center gap-4 px-1">
-                <div className="flex-1">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] text-white/40">Confidence</span>
-                    <span className="text-[10px] text-white font-medium">{Math.round(selectedSource.confidence * 100)}%</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-black/60 rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${Math.round(selectedSource.confidence * 100)}%`,
-                        backgroundColor:
-                          selectedSource.confidence >= 0.85
-                            ? '#22c55e'
-                            : selectedSource.confidence >= 0.7
-                            ? '#eab308'
-                            : '#ef4444',
-                      }}
-                    />
-                  </div>
-                </div>
-                <div className="text-[10px]">
-                  <span className="text-white/40">Type: </span>
-                  <span className="text-white/70">{selectedSource.tooltip?.dataType || 'Web'}</span>
-                </div>
-              </div>
-            )}
+            </div>
           </div>
 
-          {/* Right column - Metric details */}
-          <div className="p-4 bg-black/20 border-t border-white/5 sm:border-t-0">
-            <button
-              type="button"
-              onClick={() => onEdit('clarify_metric')}
-              className="group w-full text-left"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Metric Definition</div>
-                <span className="text-[10px] text-white/30 opacity-0 group-hover:opacity-100 transition-opacity">Edit</span>
+          <div className="mx-5 sm:mx-6 h-px bg-gradient-to-r from-transparent via-white/[0.06] to-transparent" />
+
+          {/* Bond section — full width footer */}
+          <div className="p-5 sm:p-6">
+            <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between mb-3">
+              <div className="text-[10px] font-medium text-white/30 uppercase tracking-[0.08em]">
+                Bond &amp; Penalty
               </div>
-            </button>
-
-            {metricDefinition?.metric_name ? (
-              <div className="space-y-3">
-                {/* Metric name */}
-                <div className="text-sm font-medium text-white">{metricDefinition.metric_name}</div>
-
-                {/* Grid of metric properties */}
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
-                  {metricDefinition.unit && (
-                    <div className="rounded-lg bg-black/40 border border-white/5 px-2.5 py-2">
-                      <div className="text-[9px] text-white/40 uppercase tracking-wider mb-0.5">Unit</div>
-                      <div className="text-xs text-white truncate">{metricDefinition.unit}</div>
-                    </div>
-                  )}
-                  {metricDefinition.scope && (
-                    <div className="rounded-lg bg-black/40 border border-white/5 px-2.5 py-2">
-                      <div className="text-[9px] text-white/40 uppercase tracking-wider mb-0.5">Scope</div>
-                      <div className="text-xs text-white truncate">{metricDefinition.scope}</div>
-                    </div>
-                  )}
-                  {metricDefinition.time_basis && (
-                    <div className="rounded-lg bg-black/40 border border-white/5 px-2.5 py-2">
-                      <div className="text-[9px] text-white/40 uppercase tracking-wider mb-0.5">Time Basis</div>
-                      <div className="text-xs text-white truncate">{metricDefinition.time_basis}</div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Measurement method */}
-                {metricDefinition.measurement_method && (
-                  <div className="rounded-lg bg-black/40 border border-white/5 px-2.5 py-2">
-                    <div className="text-[9px] text-white/40 uppercase tracking-wider mb-1">Measurement Method</div>
-                    <div className="text-xs text-white/70 leading-relaxed line-clamp-3">
-                      {metricDefinition.measurement_method}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-24 text-xs text-white/30 italic">
-                No metric definition available
-              </div>
-            )}
-
-            {/* Bond + penalty notice */}
-            <div className="mt-4 rounded-xl border border-white/5 bg-black/40 p-3">
-              <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-[10px] font-medium text-white/40 uppercase tracking-wider">
-                  Bond &amp; Penalty
-                </div>
-                <div className="text-[10px] text-white/30">
-                  Charged from CoreVault available balance
-                </div>
-              </div>
-
-              <div className="mt-2 space-y-1.5 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-3">
-                  <span className="text-white/55">Bond required</span>
-                  <span className="text-white/85 font-medium tabular-nums">
-                    {bondSummary ? formatUsdc6(bondSummary.amount) : bondConfig.status === 'loading' ? 'Loading…' : 'Configured by protocol'}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-3">
-                  <span className="text-white/55">Creation penalty</span>
-                  <span className="text-white/80 font-medium tabular-nums">
-                    {bondSummary
-                      ? `${bondSummary.pctStr} (${formatUsdc6(bondSummary.fee)})`
-                      : bondConfig.status === 'loading'
-                        ? 'Loading…'
-                        : bondConfig.penaltyBps != null
-                          ? `${formatBpsPct(bondConfig.penaltyBps)} (applies on refund)`
-                          : 'Applies on refund'}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-3">
-                  <span className="text-white/55">Refund if market is unused</span>
-                  <span className="text-white/80 font-medium tabular-nums">
-                    {bondSummary ? formatUsdc6(bondSummary.refundable) : 'Net of penalty'}
-                  </span>
-                </div>
-
-                <div className="pt-2 text-[11px] text-white/40 leading-relaxed">
-                  You can deactivate an unused market and reclaim the bond only if there have been no trades, no open orders, and no active positions.
-                </div>
-
-                {bondConfig.status === 'error' ? (
-                  <div className="pt-2 text-[11px] text-red-300/80">
-                    Could not load bond config on this network. {bondConfig.error ? `(${bondConfig.error})` : null}
-                  </div>
-                ) : null}
-
-                {!bondManagerAddress ? (
-                  <div className="pt-2 text-[11px] text-white/35">
-                    Tip: set <span className="font-mono">NEXT_PUBLIC_MARKET_BOND_MANAGER_ADDRESS</span> to display exact bond values here.
-                  </div>
-                ) : null}
+              <div className="text-[10px] text-white/20">
+                Charged from CoreVault available balance
               </div>
             </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
+              <div className="rounded-xl bg-white/[0.02] border border-white/[0.04] px-3.5 py-2.5">
+                <div className="text-[10px] text-white/30 mb-1">Bond required</div>
+                <div className="text-sm text-white/90 font-medium tabular-nums">
+                  {bondSummary ? formatUsdc6(bondSummary.amount) : bondConfig.status === 'loading' ? 'Loading…' : 'Configured by protocol'}
+                </div>
+              </div>
+              <div className="rounded-xl bg-white/[0.02] border border-white/[0.04] px-3.5 py-2.5">
+                <div className="text-[10px] text-white/30 mb-1">Creation penalty</div>
+                <div className="text-sm text-white/90 font-medium tabular-nums">
+                  {bondSummary
+                    ? `${bondSummary.pctStr} (${formatUsdc6(bondSummary.fee)})`
+                    : bondConfig.status === 'loading'
+                      ? 'Loading…'
+                      : bondConfig.penaltyBps != null
+                        ? `${formatBpsPct(bondConfig.penaltyBps)} (applies on refund)`
+                        : 'Applies on refund'}
+                </div>
+              </div>
+              <div className="rounded-xl bg-white/[0.02] border border-white/[0.04] px-3.5 py-2.5">
+                <div className="text-[10px] text-white/30 mb-1">Refund if unused</div>
+                <div className="text-sm text-white/90 font-medium tabular-nums">
+                  {bondSummary ? formatUsdc6(bondSummary.refundable) : 'Net of penalty'}
+                </div>
+              </div>
+            </div>
+
+            <p className="mt-3 text-[11px] text-white/25 leading-relaxed">
+              You can deactivate an unused market and reclaim the bond only if there have been no trades, no open orders, and no active positions.
+            </p>
+
+            {bondConfig.status === 'error' ? (
+              <p className="mt-2 text-[11px] text-red-300/70">
+                Could not load bond config on this network. {bondConfig.error ? `(${bondConfig.error})` : null}
+              </p>
+            ) : null}
+
+            {!bondManagerAddress ? (
+              <p className="mt-2 text-[11px] text-white/20">
+                Tip: set <span className="font-mono text-white/30">NEXT_PUBLIC_MARKET_BOND_MANAGER_ADDRESS</span> to display exact bond values here.
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1025,7 +1021,11 @@ export function InteractiveMarketCreation({
   const devToolsEnabled =
     process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEV_TOOLS === 'true';
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
-  const [useImmediateSettlement, setUseImmediateSettlement] = React.useState(false);
+  const [devSettlementMode, setDevSettlementMode] = React.useState<DevSettlementMode>('standard');
+  const [devSpeedRunSourceUrl, setDevSpeedRunSourceUrl] = React.useState('');
+  const [devSpeedRunStartPrice, setDevSpeedRunStartPrice] = React.useState('');
+  const [devSpeedRunName, setDevSpeedRunName] = React.useState('');
+  const [devSpeedRunDescription, setDevSpeedRunDescription] = React.useState('');
 
   const DEV_REVIEW_PRESET = {
     marketName: 'AVERAGE-RETAIL-PRICE-OF-BANANAS-IN-THE-USA',
@@ -1716,7 +1716,7 @@ export function InteractiveMarketCreation({
     const code = randomDevCode4();
     setErrorMessage(null);
     setDiscoveryState('success');
-    setUseImmediateSettlement(true);
+    setDevSettlementMode('immediate');
 
     // Fill core fields with minimal test-friendly values.
     setMarketName(code);
@@ -1801,6 +1801,97 @@ export function InteractiveMarketCreation({
     });
 
     // Jump immediately to review step.
+    if (stepTimerRef.current) {
+      window.clearTimeout(stepTimerRef.current);
+      stepTimerRef.current = null;
+    }
+    setIsStepAnimating(false);
+    setVisibleStep('complete');
+
+    setDevToolsOpen(false);
+  }, []);
+
+  const devQuickFillSpeedRun = React.useCallback((opts?: { sourceUrl?: string; startPrice?: string; name?: string; description?: string }) => {
+    const code = opts?.name?.trim() || `SR-${randomDevCode4()}`;
+    const sourceUrl = opts?.sourceUrl?.trim() || 'https://example.com';
+    const price = opts?.startPrice?.trim() || '1';
+    const desc = opts?.description?.trim() || 'Speed-run test market — full lifecycle in 30 minutes (10 min trading, 5 min rollover, 15 min challenge).';
+    let hostname = 'example.com';
+    try { hostname = new URL(sourceUrl).hostname; } catch {}
+
+    setErrorMessage(null);
+    setDiscoveryState('success');
+    setDevSettlementMode('speed-run-30');
+
+    setMarketName(code);
+    setMarketDescription(desc);
+    setNameTouched(true);
+    setDescriptionTouched(true);
+    setIsNameConfirmed(true);
+    setSimilarMarketsAcknowledged(true);
+    setIsDescriptionConfirmed(true);
+
+    setIconFile(null);
+    setIconPreviewUrl(null);
+    setIconStoredUrl(null);
+    setIsIconConfirmed(true);
+
+    const devSource: MetricSourceOption = {
+      id: `dev-speedrun-${code.toLowerCase()}`,
+      icon: (
+        <div className="relative h-7 w-7">
+          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-amber-500/20 text-amber-400">
+            <span className="text-[12px] font-semibold">S</span>
+          </div>
+        </div>
+      ),
+      label: sourceUrl === 'https://example.com' ? 'Dev Source' : hostname,
+      sublabel: hostname,
+      url: sourceUrl,
+      confidence: 0.8,
+      authority: sourceUrl === 'https://example.com' ? 'Development' : hostname,
+      badge: 'Speed Run',
+      iconBg: 'bg-gradient-to-br from-amber-400 to-orange-500',
+    };
+    setSelectedSource(devSource);
+    setSourcesFetchState('success');
+    setDiscoveryResult({
+      measurable: true,
+      metric_definition: {
+        metric_name: code,
+        unit: 'USD',
+        scope: 'Development',
+        time_basis: 'Spot',
+        measurement_method: desc,
+      },
+      search_query: null,
+      sources: null,
+      rejection_reason: null,
+      search_results: [],
+      processing_time_ms: 0,
+    });
+
+    const nowIso = new Date().toISOString();
+    setValidationResult({
+      status: 'completed',
+      processingTime: '0ms',
+      cached: true,
+      data: {
+        metric: code,
+        value: price,
+        unit: 'USD',
+        as_of: nowIso,
+        confidence: 0.8,
+        asset_price_suggestion: price,
+        reasoning: 'Dev speed-run preset for full lifecycle testing.',
+        sources: [{ url: sourceUrl, screenshot_url: '', quote: price, match_score: 0.8 }],
+      },
+      performance: {
+        totalTime: 0,
+        breakdown: { cacheCheck: '0ms', scraping: '0ms', processing: '0ms', aiAnalysis: '0ms' },
+      },
+    });
+
     if (stepTimerRef.current) {
       window.clearTimeout(stepTimerRef.current);
       stepTimerRef.current = null;
@@ -2053,10 +2144,10 @@ export function InteractiveMarketCreation({
       const metricUrl = selectedSource.url;
       const dataSource = selectedSource.authority || selectedSource.label || 'User Provided';
       const tags: string[] = [];
-      // Keep a safety buffer so create tx doesn't revert if block time catches up.
-      const settlementDateTs = useImmediateSettlement
-        ? Math.floor(Date.now() / 1000) + 10 * 60
-        : Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const selectedTiming = DEV_SETTLEMENT_OPTIONS.find((o) => o.value === devSettlementMode);
+      const settlementDateTs = nowSec + (selectedTiming?.settlementOffsetSeconds ?? 365 * 24 * 60 * 60);
+      const speedRunConfig = selectedTiming?.speedRunConfig ?? undefined;
       let sourceLocator: { url: string; css_selector?: string; xpath?: string; html_snippet?: string; js_extractor?: string } | null = null;
       let startPrice = validationResult?.data?.asset_price_suggestion || validationResult?.data?.value || '1';
 
@@ -2173,6 +2264,7 @@ export function InteractiveMarketCreation({
         iconImageUrl: iconUrl || null,
         aiSourceLocator: sourceLocator,
         settlementDate: settlementDateTs,
+        speedRunConfig,
         pipelineId,
         onProgress: ({ step, status }) => {
           const idx = stepIndexMap[step];
@@ -2239,6 +2331,7 @@ export function InteractiveMarketCreation({
             aiSourceLocator: sourceLocator,
             bannerImageUrl: iconUrl || null,
             iconImageUrl: iconUrl || null,
+            speedRunConfig: speedRunConfig || undefined,
           }),
         });
         if (!saveRes.ok) {
@@ -2280,7 +2373,7 @@ export function InteractiveMarketCreation({
     iconPreviewUrl,
     iconStoredUrl,
     deploymentOverlay,
-    useImmediateSettlement,
+    devSettlementMode,
     pusher,
     router,
     pipelineMessages,
@@ -3396,9 +3489,9 @@ export function InteractiveMarketCreation({
           onStartOver={handleReset}
           onCreateMarket={handleCreateMarket}
           isCreating={isCreatingMarket}
-          showImmediateSettlementToggle={devToolsEnabled}
-          useImmediateSettlement={useImmediateSettlement}
-          onToggleImmediateSettlement={setUseImmediateSettlement}
+          showDevSettlementSelector={devToolsEnabled}
+          devSettlementMode={devSettlementMode}
+          onChangeDevSettlementMode={setDevSettlementMode}
         />
       )}
 
@@ -3456,8 +3549,8 @@ export function InteractiveMarketCreation({
         }}
       />
 
-      {/* Fixed dev tools panel */}
-      {devToolsEnabled && devToolsOpen && (
+      {/* Fixed dev tools panel — portalled to body to escape ancestor transforms / overflow clips */}
+      {devToolsEnabled && devToolsOpen && createPortal(
         <div className="fixed bottom-4 left-4 z-[9999] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-purple-500/25 bg-[#111] shadow-2xl shadow-purple-900/20 ring-1 ring-black">
           <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
             <span className="text-[11px] font-semibold tracking-wide text-purple-300 uppercase">Dev Tools</span>
@@ -3479,6 +3572,51 @@ export function InteractiveMarketCreation({
             >
               Test market (4-char + immediate)
             </button>
+            <div className="rounded-lg border border-amber-500/15 bg-amber-500/[0.03] p-2 space-y-1.5">
+              <div className="text-[11px] font-medium text-amber-300/90">Speed Run (30 min lifecycle)</div>
+              <input
+                type="text"
+                value={devSpeedRunName}
+                onChange={(e) => setDevSpeedRunName(e.target.value)}
+                placeholder="Market name (e.g. GOLD-PRICE-USD)"
+                className="w-full rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white/80 placeholder:text-white/25 outline-none focus:border-amber-500/40 transition-colors"
+              />
+              <textarea
+                value={devSpeedRunDescription}
+                onChange={(e) => setDevSpeedRunDescription(e.target.value)}
+                placeholder="Description — tells metric_ai_worker what price to find"
+                rows={2}
+                className="w-full rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white/80 placeholder:text-white/25 outline-none focus:border-amber-500/40 transition-colors resize-none"
+              />
+              <input
+                type="text"
+                value={devSpeedRunSourceUrl}
+                onChange={(e) => setDevSpeedRunSourceUrl(e.target.value)}
+                placeholder="Source URL (optional)"
+                className="w-full rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white/80 placeholder:text-white/25 outline-none focus:border-amber-500/40 transition-colors"
+              />
+              <input
+                type="text"
+                value={devSpeedRunStartPrice}
+                onChange={(e) => setDevSpeedRunStartPrice(e.target.value)}
+                placeholder="Start price (default: 1)"
+                className="w-full rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white/80 placeholder:text-white/25 outline-none focus:border-amber-500/40 transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  devQuickFillSpeedRun({
+                    sourceUrl: devSpeedRunSourceUrl || undefined,
+                    startPrice: devSpeedRunStartPrice || undefined,
+                    name: devSpeedRunName || undefined,
+                    description: devSpeedRunDescription || undefined,
+                  });
+                }}
+                className="w-full rounded-md bg-amber-500/15 px-2 py-1.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/25 transition-colors"
+              >
+                Launch Speed Run
+              </button>
+            </div>
 
             <div className="px-1.5 pt-2 pb-0.5 text-[10px] font-medium text-white/35 uppercase tracking-wider">Jump to step</div>
             <div className="flex flex-wrap gap-1 px-1">
@@ -3568,7 +3706,8 @@ export function InteractiveMarketCreation({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

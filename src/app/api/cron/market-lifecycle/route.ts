@@ -489,6 +489,12 @@ export async function POST(req: Request) {
           marketAddress: marketAddress || undefined,
           symbol,
         });
+        const sb = getSupabase();
+        if (sb) {
+          try {
+            await sb.from('markets').update({ qstash_schedule_ids: ids }).eq('id', marketId);
+          } catch {}
+        }
         log('dispatch_reschedule', 'success', { marketId, ids });
         return json(200, { ok: true, action: 'reschedule', marketId, ids });
       } catch (e: any) {

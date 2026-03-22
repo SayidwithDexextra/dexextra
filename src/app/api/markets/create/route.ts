@@ -373,6 +373,13 @@ export async function POST(req: Request) {
     const isRollover = body?.isRollover === true;
     const parentMarketId = isRollover && typeof body?.parentMarketId === 'string' ? body.parentMarketId : null;
     const parentMarketAddress = isRollover && typeof body?.parentMarketAddress === 'string' ? body.parentMarketAddress : null;
+    const speedRunConfig = (body?.speedRunConfig && typeof body.speedRunConfig === 'object')
+      ? {
+          rolloverLeadSeconds: Number(body.speedRunConfig.rolloverLeadSeconds) || 0,
+          challengeDurationSeconds: Number(body.speedRunConfig.challengeDurationSeconds) || 0,
+          settlementWindowSeconds: Number(body.speedRunConfig.settlementWindowSeconds) || 0,
+        }
+      : null;
     // Validate settlement date is required and in the future
     if (!body?.settlementDate || typeof body.settlementDate !== 'number' || body.settlementDate <= 0) {
       return NextResponse.json({
@@ -1132,6 +1139,9 @@ export async function POST(req: Request) {
   }
 
     // Allow new OrderBook on GlobalSessionRegistry and attach session registry for gasless
+    // Resync nonce before registry steps — previous txs (factory, ensure_selectors) have been
+    // awaited so the chain nonce may have advanced past the local counter.
+    try { await nonceMgr.resync(); } catch {}
     try {
       const registryAddress =
         process.env.SESSION_REGISTRY_ADDRESS ||
@@ -1155,10 +1165,27 @@ export async function POST(req: Request) {
           const registry = new ethers.Contract(registryAddress, regAbi, regWallet);
           const allowed: boolean = await registry.allowedOrderbook(orderBook);
           if (!allowed) {
-            // Some RPCs require balance sufficient for block gas limit during estimateGas.
-            // Provide a conservative gasLimit to bypass over-aggressive balance checks.
             const ovAllow = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
-            const txAllow = await registry.setAllowedOrderbook(orderBook, true, ovAllow as any);
+            let txAllow: ethers.TransactionResponse;
+            try {
+              txAllow = await registry.setAllowedOrderbook(orderBook, true, ovAllow as any);
+            } catch (err: any) {
+              const raw = String(err?.info?.error?.message || err?.shortMessage || err?.message || '').toLowerCase();
+              const isRetryable =
+                err?.code === 'NONCE_EXPIRED' ||
+                err?.code === 'REPLACEMENT_UNDERPRICED' ||
+                raw.includes('nonce too low') ||
+                raw.includes('nonce has already been used') ||
+                raw.includes('replacement transaction underpriced');
+              if (isRetryable) {
+                const fresh = await nonceMgr.resync();
+                logS('attach_session_registry', 'start', { action: 'retry_allow_orderbook', freshNonce: fresh });
+                const ovRetry = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
+                txAllow = await registry.setAllowedOrderbook(orderBook, true, ovRetry as any);
+              } else {
+                throw err;
+              }
+            }
             logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
             const rAllow = await txAllow.wait();
             {
@@ -1183,19 +1210,19 @@ export async function POST(req: Request) {
           const meta = new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, wallet);
           const current = await meta.sessionRegistry();
           if (!current || String(current).toLowerCase() !== String(registryAddress).toLowerCase()) {
-            // Also provide explicit gasLimit here to avoid estimateGas balance gating on some RPCs.
             const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
             let txSet: ethers.TransactionResponse;
             try {
               txSet = await meta.setSessionRegistry(registryAddress, ov);
             } catch (err: any) {
               const raw = String(err?.info?.error?.message || err?.shortMessage || err?.message || '').toLowerCase();
-              const isNonceIssue =
+              const isRetryable =
                 err?.code === 'NONCE_EXPIRED' ||
+                err?.code === 'REPLACEMENT_UNDERPRICED' ||
                 raw.includes('nonce too low') ||
-                raw.includes('nonce has already been used');
-              if (isNonceIssue) {
-                // Re-sync nonce and retry once
+                raw.includes('nonce has already been used') ||
+                raw.includes('replacement transaction underpriced');
+              if (isRetryable) {
                 const fresh = await nonceMgr.resync();
                 logS('attach_session_registry', 'start', { action: 'retry_resynced_nonce', freshNonce: fresh });
                 const ovRetry = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
@@ -1226,6 +1253,7 @@ export async function POST(req: Request) {
     }
 
     // Grant roles on CoreVault (ADMIN_PRIVATE_KEY signer)
+    try { await nonceMgr.resync(); } catch {}
     logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
     const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
@@ -1284,6 +1312,7 @@ export async function POST(req: Request) {
     }
 
     // Configure maker/taker fee structure on the new market
+    try { await nonceMgr.resync(); } catch {}
     try {
       logS('configure_fees', 'start', { orderBook, isRollover });
       const defaultProtocolRecipient =
@@ -1301,7 +1330,7 @@ export async function POST(req: Request) {
         const obAdmin = new ethers.Contract(
           orderBook,
           ['function updateFeeStructure(uint256,uint256,address,uint256) external'],
-          nonceMgr
+          wallet
         );
         const feeTx = await obAdmin.updateFeeStructure(
           takerFeeBps,
@@ -1328,6 +1357,7 @@ export async function POST(req: Request) {
     }
 
     // Set feeRecipient to the market creator (or FUNDER for rollover markets)
+    try { await nonceMgr.resync(); } catch {}
     try {
       const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
         ? feeRecipient
@@ -1337,7 +1367,7 @@ export async function POST(req: Request) {
         orderBook,
         ['function updateTradingParameters(uint256,uint256,address) external',
          'function getTradingParameters() view returns (uint256,uint256,address)'],
-        nonceMgr
+        wallet
       );
       const [marginBps, tradingFee] = await obAdmin.getTradingParameters();
       const recipientTx = await obAdmin.updateTradingParameters(
@@ -1355,6 +1385,41 @@ export async function POST(req: Request) {
       });
     } catch (e: any) {
       logS('set_fee_recipient', 'error', { error: e?.message || String(e) });
+    }
+
+    // Speed-run lifecycle overrides: enable testing mode + custom lead times on-chain
+    try { await nonceMgr.resync(); } catch {}
+    if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0) {
+      try {
+        logS('speed_run_testing_mode', 'start', { orderBook, speedRunConfig });
+        const lifecycleContract = new ethers.Contract(
+          orderBook,
+          [
+            'function enableTestingMode(bool enabled) external',
+            'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
+          ],
+          wallet,
+        );
+        const ov1 = await nonceMgr.nextOverrides();
+        const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
+        await txEnable.wait();
+        logS('speed_run_testing_mode', 'success', { tx: txEnable.hash, action: 'enableTestingMode' });
+
+        const ov2 = await nonceMgr.nextOverrides();
+        const txLead = await lifecycleContract.setLeadTimes(
+          speedRunConfig.rolloverLeadSeconds,
+          speedRunConfig.challengeDurationSeconds,
+          ov2,
+        );
+        await txLead.wait();
+        logS('speed_run_lead_times', 'success', {
+          tx: txLead.hash,
+          rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
+          challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
+        });
+      } catch (e: any) {
+        logS('speed_run_testing_mode', 'error', { error: e?.message || String(e) });
+      }
     }
 
     // Final verification: Inspect GASless readiness (session registry + allowlist + selectors + roles)
@@ -1449,7 +1514,6 @@ export async function POST(req: Request) {
           oracle_provider: null,
           initial_order: { metricUrl, startPrice: String(startPrice), dataSource, tags, waybackUrl: archivedWaybackUrl || null, waybackTimestamp: archivedWaybackTs || null },
           market_config: {
-            ...(aiSourceLocator ? { ai_source_locator: aiSourceLocator } : {}),
             wayback_snapshot: archivedWaybackUrl ? { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: metricUrl } : null,
             ...(isRollover ? {
               rollover_lineage: {
@@ -1458,7 +1522,16 @@ export async function POST(req: Request) {
                 rolled_over_at: new Date().toISOString(),
               },
             } : {}),
+            ...(speedRunConfig ? {
+              speed_run: true,
+              settlement_window_seconds: speedRunConfig.settlementWindowSeconds,
+              rollover_lead_seconds: speedRunConfig.rolloverLeadSeconds,
+              challenge_duration_seconds: speedRunConfig.challengeDurationSeconds,
+            } : {}),
           },
+          ai_source_locator: aiSourceLocator
+            ? { url: aiSourceLocator.url || aiSourceLocator.primary_source_url || '', selectors: [], discovered_at: new Date().toISOString(), last_successful_at: null, success_count: 0, failure_count: 0, version: 1 }
+            : null,
           chain_id: Number(network.chainId),
           network: networkNameRaw.length > 50 ? networkNameRaw.slice(0, 50) : networkNameRaw,
           creator_wallet_address: creatorWalletAddress,
@@ -1564,11 +1637,40 @@ export async function POST(req: Request) {
       // Schedule QStash lifecycle triggers (rollover + settlement + finalize)
       if (savedRow?.id && settlementTs > Math.floor(Date.now() / 1000)) {
         try {
+          const scheduledNow = Math.floor(Date.now() / 1000);
+          const marketDuration = Math.max(1, settlementTs - scheduledNow);
+          const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? Math.max(300, Math.floor(marketDuration / 12));
+          const challengeDuration = speedRunConfig?.challengeDurationSeconds ?? Math.max(60, Math.floor(marketDuration / 365));
+
           const scheduleIds = await scheduleMarketLifecycle(savedRow.id, settlementTs, {
             marketAddress: orderBook,
             symbol,
+            ...(speedRunConfig ? {
+              rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
+              challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
+            } : {}),
           });
-          logS('qstash_schedule', 'success', { scheduleIds });
+          logS('qstash_schedule', 'success', { scheduleIds, speedRun: Boolean(speedRunConfig) });
+
+          // Persist schedule IDs to dedicated column + trigger timestamps in market_config
+          try {
+            const existingCfg = insertPayload.market_config || {};
+            await supabase.from('markets').update({
+              qstash_schedule_ids: scheduleIds,
+              market_config: {
+                ...(typeof existingCfg === 'object' ? existingCfg : {}),
+                qstash_lifecycle: {
+                  schedule_ids: scheduleIds,
+                  rollover_trigger_at: settlementTs - rolloverLead,
+                  settlement_trigger_at: settlementTs,
+                  finalize_trigger_at: settlementTs + challengeDuration,
+                  scheduled_at: scheduledNow,
+                },
+              },
+            }).eq('id', savedRow.id);
+          } catch (e: any) {
+            logS('qstash_lifecycle_persist', 'error', { error: e?.message || String(e) });
+          }
         } catch (e: any) {
           logS('qstash_schedule', 'error', { error: e?.message || String(e) });
         }

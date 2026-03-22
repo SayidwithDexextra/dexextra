@@ -231,7 +231,16 @@ export async function POST(req: Request) {
       blockNumber,
       gasUsed,
       aiSourceLocator,
+      speedRunConfig: rawSpeedRunConfig,
     } = body || {};
+
+    const speedRunConfig = (rawSpeedRunConfig && typeof rawSpeedRunConfig === 'object')
+      ? {
+          rolloverLeadSeconds: Number(rawSpeedRunConfig.rolloverLeadSeconds) || 0,
+          challengeDurationSeconds: Number(rawSpeedRunConfig.challengeDurationSeconds) || 0,
+          settlementWindowSeconds: Number(rawSpeedRunConfig.settlementWindowSeconds) || 0,
+        }
+      : null;
 
     const symbolStr = String(symbol || '').trim();
     if (symbolStr && symbolStr.length > 100) {
@@ -353,7 +362,19 @@ export async function POST(req: Request) {
       logStep('link_resolution', 'error');
     }
 
-    const marketConfig = aiSourceLocator ? { ai_source_locator: aiSourceLocator } : null;
+    const marketConfig = {
+      ...(speedRunConfig ? {
+        speed_run: true,
+        settlement_window_seconds: speedRunConfig.settlementWindowSeconds,
+        rollover_lead_seconds: speedRunConfig.rolloverLeadSeconds,
+        challenge_duration_seconds: speedRunConfig.challengeDurationSeconds,
+      } : {}),
+    };
+
+    // Seed ai_source_locator in the dedicated column (auto-discovery enriches this later)
+    const aiSourceLocatorSeed = aiSourceLocator
+      ? { url: aiSourceLocator.url || aiSourceLocator.primary_source_url || '', selectors: [], discovered_at: new Date().toISOString(), last_successful_at: null, success_count: 0, failure_count: 0, version: 1 }
+      : null;
 
     if (!marketIdUuid) {
       logStep('db_insert', 'start', { effectiveIdentifier });
@@ -380,6 +401,7 @@ export async function POST(req: Request) {
           ...(marketConfig || {}),
           ...(archivedWaybackUrl ? { wayback_snapshot: { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: (initialOrder as any)?.metricUrl || null } } : {}),
         },
+        ai_source_locator: aiSourceLocatorSeed,
         metric_resolution_id: resolutionId,
         chain_id: chainId,
         network: networkStr.length > 50 ? networkStr.slice(0, 50) : networkStr,
@@ -418,7 +440,7 @@ export async function POST(req: Request) {
     } else {
       logStep('db_update', 'start', { marketId: marketIdUuid });
       const networkStr = String(networkName || '');
-      const updatePayload = {
+      const updatePayload: Record<string, any> = {
         market_address: marketAddress,
         market_id_bytes32: marketIdBytes32,
         chain_id: chainId,
@@ -435,6 +457,7 @@ export async function POST(req: Request) {
         },
         metric_resolution_id: resolutionId,
       };
+      if (aiSourceLocatorSeed) updatePayload.ai_source_locator = aiSourceLocatorSeed;
       const { error: updErr } = await supabase.from('markets').update(updatePayload).eq('id', marketIdUuid);
       if (updErr) throw updErr;
       logStep('db_update', 'success', { marketId: marketIdUuid });
@@ -480,11 +503,42 @@ export async function POST(req: Request) {
     // Schedule QStash lifecycle triggers for the newly saved market
     if (marketIdUuid && settlementDate && Number(settlementDate) > Math.floor(Date.now() / 1000)) {
       try {
-        const scheduleIds = await scheduleMarketLifecycle(marketIdUuid, Number(settlementDate), {
+        const stlDate = Number(settlementDate);
+        const scheduledNow = Math.floor(Date.now() / 1000);
+        const marketDuration = Math.max(1, stlDate - scheduledNow);
+        const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? Math.max(300, Math.floor(marketDuration / 12));
+        const challengeDuration = speedRunConfig?.challengeDurationSeconds ?? Math.max(60, Math.floor(marketDuration / 365));
+
+        const scheduleIds = await scheduleMarketLifecycle(marketIdUuid, stlDate, {
           marketAddress: marketAddress || undefined,
           symbol: symbolStr || effectiveIdentifier,
+          ...(speedRunConfig ? {
+            rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
+            challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
+          } : {}),
         });
-        logStep('qstash_schedule', 'success', { scheduleIds });
+        logStep('qstash_schedule', 'success', { scheduleIds, speedRun: Boolean(speedRunConfig) });
+
+        // Persist schedule IDs to dedicated column + trigger timestamps in market_config
+        try {
+          const { data: freshRow } = await supabase.from('markets').select('market_config').eq('id', marketIdUuid).maybeSingle();
+          const existingCfg = (typeof freshRow?.market_config === 'object' && freshRow?.market_config) || {};
+          await supabase.from('markets').update({
+            qstash_schedule_ids: scheduleIds,
+            market_config: {
+              ...(existingCfg as any),
+              qstash_lifecycle: {
+                schedule_ids: scheduleIds,
+                rollover_trigger_at: stlDate - rolloverLead,
+                settlement_trigger_at: stlDate,
+                finalize_trigger_at: stlDate + challengeDuration,
+                scheduled_at: scheduledNow,
+              },
+            },
+          }).eq('id', marketIdUuid);
+        } catch (e: any) {
+          logStep('qstash_lifecycle_persist', 'error', { error: e?.message || String(e) });
+        }
       } catch (e: any) {
         logStep('qstash_schedule', 'error', { error: e?.message || String(e) });
       }
