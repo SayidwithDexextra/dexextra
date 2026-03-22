@@ -1018,8 +1018,7 @@ export function InteractiveMarketCreation({
   onStateChange,
   onDeploySuccess,
 }: InteractiveMarketCreationProps = {}) {
-  const devToolsEnabled =
-    process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DEV_TOOLS === 'true';
+  const devToolsEnabled = true; // TEMP: forced on for production testing
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
   const [devSettlementMode, setDevSettlementMode] = React.useState<DevSettlementMode>('standard');
   const [devSpeedRunSourceUrl, setDevSpeedRunSourceUrl] = React.useState('');
