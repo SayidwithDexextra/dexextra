@@ -379,6 +379,7 @@ export async function POST(req: NextRequest) {
       const started = Date.now();
       console.log('[Metric-AI] ▶ Background worker started', { jobId, timestamp: new Date().toISOString() });
       
+      const livePages = new Map<string, { page: Page; browser: Browser }>();
       try {
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const texts: string[] = [];
@@ -440,6 +441,7 @@ export async function POST(req: NextRequest) {
           })());
         }
         if (phase0Promises.length) await Promise.all(phase0Promises);
+        storedLocatorData = storedLocatorData as AiSourceLocatorData | null;
 
         // --- Phase 0.5: Fast path — use stored selectors to skip full pipeline ---
         if (
@@ -572,8 +574,6 @@ export async function POST(req: NextRequest) {
 
         console.log('[Metric-AI] 🌐 Phase 1: Fetching HTML and capturing screenshots', { urlCount: input.urls.length });
 
-        // Track live browser sessions from Phase 1 for reuse in Phase 5
-        const livePages = new Map<string, { page: Page; browser: Browser }>();
         const isCreateContext = input.context === 'create';
 
         // --- Phase 1: Fetch HTML + screenshot + DOM extraction + locator in parallel per URL ---
