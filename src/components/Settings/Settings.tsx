@@ -635,8 +635,6 @@ export default function Settings({ className }: SettingsProps) {
         ...cur,
         [dbId]: { ...(cur[dbId] || { loaded: true }), lastTxHash: hash || null },
       }))
-      // Re-check bond + eligibility (should show refunded)
-      await loadBondEligibility(m)
       setRefundConfirmMarket(null)
       setRefundSuccess({
         isOpen: true,
@@ -644,6 +642,7 @@ export default function Settings({ className }: SettingsProps) {
         message: `Market settled${settleHash ? ` (${settleHash.slice(0, 10)}…)` : ''} and deactivated by relayer; bond refund processed on-chain.`,
         txHash: hash || null,
       })
+      loadBondEligibility(m).catch(() => {})
     } catch (e: any) {
       setBondByMarketDbId((cur) => ({
         ...cur,
