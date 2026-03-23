@@ -1496,6 +1496,10 @@ export class ClickHouseDataPipeline {
         return null;
       }
 
+      const safe = escapeSqlString(symbol);
+      const startTs = startTime.toISOString().slice(0, 19).replace('T', ' ');
+      const endTs = endTime.toISOString().slice(0, 19).replace('T', ' ');
+
       const result = await this.ensureClient().query({
         query: `
           SELECT
@@ -1504,12 +1508,13 @@ export class ClickHouseDataPipeline {
             avg((high + low) / 2) AS avgPrice,
             max(high) AS high24h,
             min(low) AS low24h,
-            first_value(open) OVER (ORDER BY ts ASC) AS openPrice,
-            last_value(close) OVER (ORDER BY ts ASC) AS closePrice
+            argMin(open, ts) AS openPrice,
+            argMax(close, ts) AS closePrice
           FROM ohlcv_1m
-          WHERE symbol = '${symbol}'
-            AND ts >= '${startTime.toISOString().slice(0, 19).replace('T', ' ')}'
-            AND ts <= '${endTime.toISOString().slice(0, 19).replace('T', ' ')}'
+          WHERE symbol = '${safe}'
+            AND ts >= '${startTs}'
+            AND ts <= '${endTs}'
+          SETTINGS max_execution_time = 5
         `,
         format: 'JSONEachRow'
       });
@@ -1519,17 +1524,19 @@ export class ClickHouseDataPipeline {
       if (data.length === 0) return null;
 
       const stats = data[0];
-      const priceChange24h = stats.closePrice - stats.openPrice;
-      const priceChangePercent24h = stats.openPrice > 0 
-        ? (priceChange24h / stats.openPrice) * 100 
+      const openPrice = Number(stats.openPrice) || 0;
+      const closePrice = Number(stats.closePrice) || 0;
+      const priceChange24h = closePrice - openPrice;
+      const priceChangePercent24h = openPrice > 0
+        ? (priceChange24h / openPrice) * 100
         : 0;
 
       return {
-        totalVolume: stats.totalVolume || 0,
-        totalTrades: stats.totalTrades || 0,
-        avgPrice: stats.avgPrice || 0,
-        high24h: stats.high24h || 0,
-        low24h: stats.low24h || 0,
+        totalVolume: Number(stats.totalVolume) || 0,
+        totalTrades: Number(stats.totalTrades) || 0,
+        avgPrice: Number(stats.avgPrice) || 0,
+        high24h: Number(stats.high24h) || 0,
+        low24h: Number(stats.low24h) || 0,
         priceChange24h,
         priceChangePercent24h,
       };

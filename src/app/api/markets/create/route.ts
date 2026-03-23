@@ -1466,6 +1466,8 @@ export async function POST(req: Request) {
         }
         // In dev, allow pipeline to continue (best-effort)
       }
+      let savedRow: any = null;
+      let savedMarketConfig: any = {};
       // Attempt to archive the metric URL via SavePageNow (server-side, authenticated if keys exist)
       if (supabase) {
         const network = await provider.getNetwork();
@@ -1549,7 +1551,7 @@ export async function POST(req: Request) {
         };
         // Rollover markets MUST be inserted as new rows (unique identifier).
         // Non-rollover markets use upsert for idempotent retries on timeouts.
-        let { data: savedRow, error: saveErr } = isRollover
+        let { data: dbRow, error: saveErr } = isRollover
           ? await supabase
               .from('markets')
               .insert([insertPayload])
@@ -1562,6 +1564,8 @@ export async function POST(req: Request) {
               .select('id')
               .limit(1)
               .maybeSingle();
+        savedRow = dbRow;
+        savedMarketConfig = insertPayload.market_config || {};
         if (saveErr) {
           const rawMsg = String(saveErr?.message || saveErr || '');
           const isSettlementPastConstraint =
@@ -1654,7 +1658,7 @@ export async function POST(req: Request) {
 
           // Persist schedule IDs to dedicated column + trigger timestamps in market_config
           try {
-            const existingCfg = insertPayload.market_config || {};
+            const existingCfg = savedMarketConfig;
             await supabase.from('markets').update({
               qstash_schedule_ids: scheduleIds,
               market_config: {

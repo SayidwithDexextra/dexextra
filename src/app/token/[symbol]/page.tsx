@@ -500,7 +500,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     return () => window.clearInterval(id);
   }, [deployingHint, marketIsReady]);
 
-  const showDeployingBlocker = deployingHint && !marketIsReady;
+  const fullOverlayVisible = Boolean(
+    overlayStateLive?.isVisible && overlayStateLive?.displayMode === 'overlay'
+  );
+  const showDeployingBlocker = deployingHint && !marketIsReady && !fullOverlayVisible;
   useEffect(() => {
     if (!showDeployingBlocker) return;
     const html = document.documentElement;
