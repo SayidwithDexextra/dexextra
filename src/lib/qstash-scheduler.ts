@@ -80,6 +80,7 @@ async function publishOrDefer(
       body,
       notBefore: triggerAtUnix,
       retries: 3,
+      label,
     });
     return res.messageId;
   }
@@ -99,6 +100,7 @@ async function publishOrDefer(
     },
     notBefore: deferAt,
     retries: 3,
+    label: `${label}:deferred`,
   });
   console.log(`[qstash-scheduler] ${label} too far out (${Math.round(delaySec / 86400)}d), deferred reschedule to ${new Date(deferAt * 1000).toISOString()}`);
   return res.messageId;
@@ -147,6 +149,7 @@ export async function scheduleMarketLifecycle(
   const challengeDuration = opts?.challengeDurationSeconds ?? proportional.challengeDuration;
 
   const ids: ScheduleIds = {};
+  const sym = opts?.symbol || marketId.slice(0, 8);
   const commonBody = {
     market_id: marketId,
     market_address: opts?.marketAddress || null,
@@ -160,7 +163,7 @@ export async function scheduleMarketLifecycle(
       ids.rollover = await publishOrDefer(
         client, destination, rolloverTriggerAt,
         { ...commonBody, action: 'rollover' },
-        'rollover',
+        `${sym}:rollover`,
       );
     } catch (e: any) {
       console.error('[qstash-scheduler] Failed to schedule rollover trigger:', e?.message || e);
@@ -172,7 +175,7 @@ export async function scheduleMarketLifecycle(
       ids.settlement = await publishOrDefer(
         client, destination, settlementDateUnix,
         { ...commonBody, action: 'settlement_start' },
-        'settlement_start',
+        `${sym}:settlement`,
       );
     } catch (e: any) {
       console.error('[qstash-scheduler] Failed to schedule settlement trigger:', e?.message || e);
@@ -185,7 +188,7 @@ export async function scheduleMarketLifecycle(
       ids.finalize = await publishOrDefer(
         client, destination, finalizeTriggerAt,
         { ...commonBody, action: 'settlement_finalize' },
-        'settlement_finalize',
+        `${sym}:finalize`,
       );
     } catch (e: any) {
       console.error('[qstash-scheduler] Failed to schedule finalize trigger:', e?.message || e);

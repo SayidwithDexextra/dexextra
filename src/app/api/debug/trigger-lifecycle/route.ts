@@ -5,12 +5,17 @@ export const runtime = 'nodejs';
 const VALID_ACTIONS = ['rollover', 'settlement_start', 'settlement_finalize'] as const;
 
 export async function POST(req: NextRequest) {
+  const nodeEnv = process.env.NODE_ENV;
+  const devTools = process.env.NEXT_PUBLIC_DEV_TOOLS;
+  const debugPages = process.env.NEXT_PUBLIC_ENABLE_DEBUG_PAGES;
+
   const isDev =
-    process.env.NODE_ENV !== 'production' ||
-    process.env.NEXT_PUBLIC_DEV_TOOLS === 'true' ||
-    String(process.env.NEXT_PUBLIC_ENABLE_DEBUG_PAGES || '').toLowerCase() === 'true';
+    nodeEnv !== 'production' ||
+    devTools === 'true' ||
+    String(debugPages || '').toLowerCase() === 'true';
 
   if (!isDev) {
+    console.warn('[trigger-lifecycle] Blocked: NODE_ENV=%s, DEV_TOOLS=%s, DEBUG_PAGES=%s', nodeEnv, devTools, debugPages);
     return NextResponse.json({ error: 'Debug endpoints are disabled in production' }, { status: 403 });
   }
 

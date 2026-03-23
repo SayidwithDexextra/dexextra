@@ -242,6 +242,8 @@ export async function POST(req: Request) {
         }
       : null;
 
+    const skipSettlementDateValidation = body?.skipSettlementDateValidation === true;
+
     const symbolStr = String(symbol || '').trim();
     if (symbolStr && symbolStr.length > 100) {
       return NextResponse.json(
@@ -250,18 +252,20 @@ export async function POST(req: Request) {
       );
     }
 
-    // Validate settlement date is required and in the future
+    // Validate settlement date is required and in the future (skippable for rollovers)
     if (!settlementDate || typeof settlementDate !== 'number' || settlementDate <= 0) {
       return NextResponse.json({
         error: 'settlementDate is required and must be a valid future Unix timestamp'
       }, { status: 400 });
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    if (settlementDate <= now) {
-      return NextResponse.json({
-        error: 'settlementDate must be in the future'
-      }, { status: 400 });
+    if (!skipSettlementDateValidation) {
+      const now = Math.floor(Date.now() / 1000);
+      if (settlementDate <= now) {
+        return NextResponse.json({
+          error: 'settlementDate must be in the future'
+        }, { status: 400 });
+      }
     }
 
     // Attempt to create or resolve a Wayback snapshot for the metric URL (server-side, robust)

@@ -4,6 +4,7 @@ import { Receiver } from '@upstash/qstash';
 import { ethers } from 'ethers';
 import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
 import { runSettlementTick, runSingleSettlementCheck } from '@/lib/settlement-engine';
+import { deployMarket } from '@/lib/deploy-market';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -249,97 +250,153 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const childSettlementDate = new Date(parentSettlementDate.getTime() + lifecycleDurationMs);
   const childSettlementUnix = Math.floor(childSettlementDate.getTime() / 1000);
 
-  // 5. Publish child market creation via QStash (async, avoids Vercel timeout)
+  const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
+  const rolloverCreator = funderAddress || market.creator_wallet_address || '';
+  const childSymbol = `${baseSymbol}-R${childSequence}`;
+  const metricUrl = (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '';
+  const startPrice = String((initialOrder as any)?.startPrice || '1');
+  const dataSource = (initialOrder as any)?.dataSource || 'rollover';
+  const tags = Array.isArray(market.category) ? market.category : ['CUSTOM'];
+
+  // 5. Deploy child market on-chain (inline — mirrors new-market page pattern)
+  let deployResult;
+  try {
+    log('rollover_deploy', 'start', { childSymbol, childSettlementUnix });
+    deployResult = await deployMarket(
+      {
+        symbol: childSymbol,
+        metricUrl,
+        settlementTs: childSettlementUnix,
+        startPrice6: ethers.parseUnits(startPrice, 6),
+        dataSource,
+        tags,
+        creatorWalletAddress: rolloverCreator || null,
+        feeRecipient: rolloverCreator || null,
+        isRollover: true,
+      },
+      (step, status, data) => log(`rollover_deploy_${step}`, status, data),
+    );
+    log('rollover_deploy', 'success', {
+      orderBook: deployResult.orderBook,
+      txHash: deployResult.transactionHash,
+    });
+  } catch (e: any) {
+    log('rollover_deploy', 'error', { error: e?.message || String(e) });
+    return { ok: false, error: 'child_market_deploy_failed', details: e?.message || String(e) };
+  }
+
+  // 6. Save to DB via /api/markets/save (lightweight — same as new-market page)
   const baseUrl =
     process.env.APP_URL?.replace(/\/+$/, '') ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
-  const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
-  const rolloverCreator = funderAddress || market.creator_wallet_address || '';
-
-  const childSymbol = `${baseSymbol}-R${childSequence}`;
-
-  const createPayload: Record<string, unknown> = {
-    symbol: childSymbol,
-    name: `${baseSymbol} Futures (Rollover #${childSequence - 1})`,
-    description: market.description || `Rollover market for ${baseSymbol}`,
-    metricUrl: (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '',
-    settlementDate: childSettlementUnix,
-    startPrice: (initialOrder as any)?.startPrice || 1,
-    dataSource: (initialOrder as any)?.dataSource || 'rollover',
-    tags: Array.isArray(market.category) ? market.category : ['CUSTOM'],
-    creatorWalletAddress: rolloverCreator,
-    feeRecipient: rolloverCreator,
-    isRollover: true,
-    parentMarketAddress: effectiveAddress,
-    parentMarketId: market.id,
-    seriesId,
-    childSequence,
-  };
-
-  const qstashToken = process.env.QSTASH_TOKEN;
-  const createEndpoint = `${baseUrl}/api/markets/create`;
-
-  if (qstashToken) {
-    // Publish via QStash so the create route runs in its own function invocation
-    try {
-      const qstashBase = process.env.QSTASH_URL || 'https://qstash.upstash.io';
-      const publishRes = await fetch(`${qstashBase}/v2/publish/${createEndpoint}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${qstashToken}`,
-          'Content-Type': 'application/json',
-          'Upstash-Retries': '2',
-        },
-        body: JSON.stringify(createPayload),
-      });
-      const publishResult = await publishRes.json().catch(() => null);
-      if (!publishRes.ok) {
-        log('rollover_qstash_publish', 'error', { status: publishRes.status, result: publishResult });
-        return { ok: false, error: 'qstash_publish_failed', details: publishResult };
-      }
-      log('rollover_qstash_publish', 'success', { messageId: (publishResult as any)?.messageId });
-    } catch (e: any) {
-      log('rollover_qstash_publish', 'error', { error: e?.message });
-      return { ok: false, error: 'qstash_publish_exception', details: e?.message };
+  let savedMarketId: string | null = null;
+  try {
+    log('rollover_save', 'start');
+    const saveRes = await fetch(`${baseUrl}/api/markets/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        marketIdentifier: childSymbol,
+        symbol: childSymbol,
+        name: `${baseSymbol} Futures (Rollover #${childSequence - 1})`,
+        description: market.description || `Rollover market for ${baseSymbol}`,
+        category: tags,
+        settlementDate: childSettlementUnix,
+        initialOrder: { metricUrl, startPrice, dataSource, tags },
+        marketAddress: deployResult.orderBook,
+        marketIdBytes32: deployResult.marketIdBytes32,
+        transactionHash: deployResult.transactionHash,
+        blockNumber: deployResult.blockNumber,
+        gasUsed: deployResult.gasUsed,
+        chainId: deployResult.chainId,
+        networkName: deployResult.network,
+        creatorWalletAddress: rolloverCreator,
+        skipSettlementDateValidation: true,
+      }),
+    });
+    const saveData = await saveRes.json().catch(() => ({}));
+    if (!saveRes.ok) {
+      log('rollover_save', 'error', { status: saveRes.status, data: saveData });
+      return { ok: false, error: 'child_market_save_failed', details: saveData };
     }
-  } else {
-    // Fallback: direct fetch (will block but works without QStash)
+    savedMarketId = (saveData as any)?.id || null;
+    log('rollover_save', 'success', { childMarketId: savedMarketId });
+  } catch (e: any) {
+    log('rollover_save', 'error', { error: e?.message || String(e) });
+    return { ok: false, error: 'child_market_save_exception', details: e?.message };
+  }
+
+  // 7. Rollover-specific: assign series, update parent, link on-chain
+  if (savedMarketId && seriesId) {
     try {
-      const createRes = await fetch(createEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createPayload),
-      });
-      const childResult = await createRes.json().catch(() => null);
-      if (!createRes.ok) {
-        log('rollover_create_child', 'error', { status: createRes.status, result: childResult });
-        return { ok: false, error: 'child_market_creation_failed', details: childResult };
-      }
-      log('rollover_create_child', 'success', childResult as any);
+      await supabase.from('markets').update({
+        series_id: seriesId,
+        series_sequence: childSequence,
+        updated_at: new Date().toISOString(),
+      }).eq('id', savedMarketId);
+      log('rollover_series_child', 'success', { seriesId, sequence: childSequence });
     } catch (e: any) {
-      log('rollover_create_child', 'error', { error: e?.message });
-      return { ok: false, error: 'child_market_creation_exception', details: e?.message };
+      log('rollover_series_child', 'error', { error: e?.message || String(e) });
+    }
+  }
+
+  if (savedMarketId) {
+    try {
+      const parentCfg = (typeof market.market_config === 'object' && market.market_config) || {};
+      await supabase.from('markets').update({
+        market_config: {
+          ...(parentCfg as any),
+          rollover: {
+            child_market_id: savedMarketId,
+            child_address: deployResult.orderBook,
+            child_settlement_date: childSettlementDate.toISOString(),
+            rolled_over_at: new Date().toISOString(),
+          },
+        },
+        updated_at: new Date().toISOString(),
+      }).eq('id', marketId);
+      log('rollover_update_parent', 'success', { parentMarketId: marketId });
+    } catch (e: any) {
+      log('rollover_update_parent', 'error', { error: e?.message || String(e) });
+    }
+  }
+
+  if (effectiveAddress && deployResult.orderBook) {
+    try {
+      const provider = getRpcProvider();
+      const adminWallet = provider ? getAdminWallet(provider) : null;
+      if (adminWallet) {
+        const lifecycleAbi = ['function linkRolloverChildByAddress(address,uint256) external'];
+        const parentContract = new ethers.Contract(effectiveAddress, lifecycleAbi, adminWallet);
+        const linkTx = await parentContract.linkRolloverChildByAddress(deployResult.orderBook, childSettlementUnix);
+        const linkRc = await linkTx.wait();
+        log('rollover_link_onchain', 'success', { tx: linkRc?.hash || linkTx.hash });
+      }
+    } catch (e: any) {
+      log('rollover_link_onchain', 'error', { error: e?.message || String(e) });
     }
   }
 
   log('rollover', 'success', {
     parentId: marketId,
+    childMarketId: savedMarketId,
     childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),
+    orderBook: deployResult.orderBook,
     seriesId,
     childSequence,
-    async: !!qstashToken,
   });
 
   return {
     ok: true,
     parentId: marketId,
+    childMarketId: savedMarketId,
     childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),
+    orderBook: deployResult.orderBook,
     seriesId,
     childSequence,
-    async: !!qstashToken,
   };
 }
 
