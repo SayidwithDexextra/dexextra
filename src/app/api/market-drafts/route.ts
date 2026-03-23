@@ -27,9 +27,9 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await sb
     .from('market_drafts')
-    .select('id, title, current_step, created_at, updated_at')
+    .select('id, title, current_step, pipeline_stage, orderbook_address, market_id_bytes32, created_at, updated_at')
     .eq('creator_wallet', wallet)
-    .eq('status', 'active')
+    .in('status', ['active', 'deploying'])
     .order('updated_at', { ascending: false })
     .limit(20);
 
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       .select('*')
       .eq('id', id)
       .eq('creator_wallet', wallet)
-      .eq('status', 'active')
+      .in('status', ['active', 'deploying'])
       .single();
 
     if (error || !data) {
@@ -80,6 +80,48 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ draft: data });
+  }
+
+  // Checkpoint action: update pipeline state from deploy/configure/finalize stages
+  if (body.action === 'checkpoint') {
+    const { id, pipeline_stage, pipeline_state, orderbook_address, market_id_bytes32, transaction_hash, chain_id, block_number } = body;
+    if (!id || typeof id !== 'string') {
+      return NextResponse.json({ error: 'Missing draft id' }, { status: 400 });
+    }
+
+    const updates: Record<string, any> = {};
+    if (typeof pipeline_stage === 'string') updates.pipeline_stage = pipeline_stage;
+    if (pipeline_state && typeof pipeline_state === 'object') {
+      // Merge with existing pipeline_state
+      const { data: existing } = await sb
+        .from('market_drafts')
+        .select('pipeline_state')
+        .eq('id', id)
+        .maybeSingle();
+      updates.pipeline_state = { ...(existing?.pipeline_state || {}), ...pipeline_state };
+    }
+    if (typeof orderbook_address === 'string') updates.orderbook_address = orderbook_address;
+    if (typeof market_id_bytes32 === 'string') updates.market_id_bytes32 = market_id_bytes32;
+    if (typeof transaction_hash === 'string') updates.transaction_hash = transaction_hash;
+    if (typeof chain_id === 'number') updates.chain_id = chain_id;
+    if (typeof block_number === 'number') updates.block_number = block_number;
+
+    // Transition status to 'deploying' if pipeline is active
+    if (pipeline_stage && pipeline_stage !== 'draft') {
+      updates.status = 'deploying';
+    }
+
+    const { error } = await sb
+      .from('market_drafts')
+      .update(updates)
+      .eq('id', id)
+      .eq('creator_wallet', wallet);
+
+    if (error) {
+      console.error('[market-drafts] checkpoint error:', error);
+      return NextResponse.json({ error: 'Failed to checkpoint draft' }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, id });
   }
 
   // Complete action: mark draft as completed with a link to the deployed market

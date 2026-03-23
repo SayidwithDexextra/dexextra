@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MarketDraftState, MarketDraftSummary, CreationStep } from '@/types/marketDraft';
+import type { MarketDraftState, MarketDraftSummary, CreationStep, PipelineStage } from '@/types/marketDraft';
 import { DRAFT_SCHEMA_VERSION } from '@/types/marketDraft';
+import type { PipelineResumeState } from '@/lib/createMarketOnChain';
 
 const LS_ACTIVE_KEY = 'dexextra:market-draft:active';
 const LS_PREFIX = 'dexextra:market-draft:';
@@ -62,6 +63,9 @@ async function fetchDraftList(wallet: string): Promise<MarketDraftSummary[]> {
       id: d.id,
       title: d.title,
       currentStep: d.current_step as CreationStep,
+      pipelineStage: (d.pipeline_stage || 'draft') as PipelineStage,
+      orderbookAddress: d.orderbook_address || null,
+      marketIdBytes32: d.market_id_bytes32 || null,
       updatedAt: d.updated_at,
       createdAt: d.created_at,
     }));
@@ -356,6 +360,35 @@ export function useMarketDraft(walletAddress: string | null) {
     setDrafts(list);
   }, []);
 
+  const getResumeState = useCallback(async (id: string): Promise<PipelineResumeState | null> => {
+    const w = walletRef.current;
+    if (!w) return null;
+    try {
+      const res = await fetch('/api/market-drafts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'load', id, wallet: w }),
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      const row = json.draft;
+      if (!row) return null;
+      const stage = row.pipeline_stage as PipelineStage;
+      if (stage === 'draft' || stage === 'finalized') return null;
+      return {
+        draftId: row.id,
+        pipelineStage: stage,
+        orderbookAddress: row.orderbook_address || null,
+        marketIdBytes32: row.market_id_bytes32 || null,
+        transactionHash: row.transaction_hash || null,
+        blockNumber: row.block_number ?? null,
+        chainId: row.chain_id ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
   return {
     drafts,
     isLoading,
@@ -370,5 +403,6 @@ export function useMarketDraft(walletAddress: string | null) {
     markCompleted,
     flushToServer,
     refreshDrafts,
+    getResumeState,
   };
 }

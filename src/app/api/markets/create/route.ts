@@ -142,25 +142,6 @@ function getNativeTokenSymbol(): string {
   );
 }
 
-async function computeTxSpend(provider: any, payer: string, receipt: any): Promise<Record<string, any>> {
-  try {
-    const bnRaw = (receipt && (receipt.blockNumber as any)) ?? 0;
-    const bn = typeof bnRaw === 'bigint' ? Number(bnRaw) : Number(bnRaw || 0);
-    const before = await provider.getBalance(payer, bn > 0 ? bn - 1 : bn);
-    const after = await provider.getBalance(payer, bn);
-    const spent = (typeof before === 'bigint' && typeof after === 'bigint' && before > after) ? (before - after) : 0n;
-    return {
-      payer,
-      nativeSymbol: getNativeTokenSymbol(),
-      balanceBefore: ethers.formatEther(before),
-      balanceAfter: ethers.formatEther(after),
-      spent: ethers.formatEther(spent),
-    };
-  } catch {
-    return { payer, nativeSymbol: getNativeTokenSymbol() };
-  }
-}
-
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
     const ts = new Date().toISOString();
@@ -1002,15 +983,10 @@ export async function POST(req: Request) {
       logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash, nonce: (tx as any)?.nonce });
       logS('factory_confirm_meta', 'start');
       receipt = await tx.wait();
-      {
-        const payer = (tx as any)?.from || (await (wallet as any).getAddress?.());
-        const spend = await computeTxSpend(provider, payer, receipt);
-        logS('factory_confirm_meta_mined', 'success', {
+      logS('factory_confirm_meta_mined', 'success', {
         hash: receipt?.hash || tx.hash,
         block: receipt?.blockNumber,
-          ...spend,
-        });
-      }
+      });
     } else {
       // Legacy direct create (relayer submits and pays gas)
       // Static call for revert reasons
@@ -1058,15 +1034,10 @@ export async function POST(req: Request) {
       // Confirm
       logS('factory_confirm', 'start');
       receipt = await tx.wait();
-      {
-        const payer = (tx as any)?.from || (await (wallet as any).getAddress?.());
-        const spend = await computeTxSpend(provider, payer, receipt);
-        logS('factory_confirm_mined', 'success', {
+      logS('factory_confirm_mined', 'success', {
         hash: receipt?.hash || tx.hash,
         block: receipt?.blockNumber,
-          ...spend,
-        });
-      }
+      });
     }
 
     // Confirm
@@ -1106,17 +1077,15 @@ export async function POST(req: Request) {
       'cancelOrder(uint256)',
     ];
     const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
-    const missing: string[] = [];
-    for (const sel of requiredSelectors) {
-      try {
-        const addr: string = await loupe.facetAddress(sel);
-        if (!addr || addr.toLowerCase() === '0x0000000000000000000000000000000000000000') {
-          missing.push(sel);
-        }
-      } catch {
-        missing.push(sel);
-      }
-    }
+    const selectorResults = await Promise.all(
+      requiredSelectors.map(async (sel) => {
+        try {
+          const addr: string = await loupe.facetAddress(sel);
+          return (!addr || addr.toLowerCase() === '0x0000000000000000000000000000000000000000') ? sel : null;
+        } catch { return sel; }
+      })
+    );
+    const missing = selectorResults.filter((s): s is string => s !== null);
     if (missing.length > 0) {
       logS('ensure_selectors_missing', 'start', { missingCount: missing.length });
       const cut = [{ facetAddress: placementFacet, action: 0, functionSelectors: missing }];
@@ -1124,13 +1093,7 @@ export async function POST(req: Request) {
       const txCut = await diamondCut.diamondCut(cut as any, ethers.ZeroAddress, '0x', ov as any);
       logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
       const rc = await txCut.wait();
-      {
-        const payer = (txCut as any)?.from || (await (wallet as any).getAddress?.());
-        const spend = await computeTxSpend(provider, payer, rc);
-        logS('ensure_selectors_diamondCut_mined', 'success', {
-          ...spend,
-        });
-      }
+      logS('ensure_selectors_diamondCut_mined', 'success', { tx: rc?.hash || txCut.hash });
     } else {
       logS('ensure_selectors', 'success', { message: 'All placement selectors present' });
     }
@@ -1188,14 +1151,7 @@ export async function POST(req: Request) {
             }
             logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
             const rAllow = await txAllow.wait();
-            {
-              const payer = (txAllow as any)?.from || (await (regWallet as any).getAddress?.());
-              const spend = await computeTxSpend(provider, payer, rAllow);
-              logS('attach_session_registry_mined', 'success', {
-                action: 'allow_orderbook',
-                ...spend,
-              });
-            }
+            logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook', tx: rAllow?.hash || txAllow.hash });
           } else {
             logS('attach_session_registry', 'success', { message: 'OrderBook already allowed', action: 'allow_orderbook' });
           }
@@ -1233,14 +1189,7 @@ export async function POST(req: Request) {
             }
             logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry' });
             const rSet = await txSet.wait();
-            {
-              const payer = (txSet as any)?.from || (await (wallet as any).getAddress?.());
-              const spend = await computeTxSpend(provider, payer, rSet);
-              logS('attach_session_registry_mined', 'success', {
-                action: 'set_session_registry',
-                ...spend,
-              });
-            }
+            logS('attach_session_registry_mined', 'success', { action: 'set_session_registry', tx: rSet?.hash || txSet.hash });
           } else {
             logS('attach_session_registry', 'success', { message: 'Session registry already set', action: 'set_session_registry' });
           }
@@ -1252,143 +1201,90 @@ export async function POST(req: Request) {
       logS('attach_session_registry', 'error', { error: e?.message || String(e) });
     }
 
-    // Grant roles on CoreVault (ADMIN_PRIVATE_KEY signer)
-    try { await nonceMgr.resync(); } catch {}
+    // Grant roles on CoreVault (ADMIN_PRIVATE_KEY signer) — parallelized
     logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
     const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
     try {
-      const bal = await provider.getBalance(await wallet.getAddress());
-      const feeData = await provider.getFeeData();
-      // eslint-disable-next-line no-console
-      console.log('[grant_roles][balance]', {
-        wallet: await wallet.getAddress(),
-        balanceWei: bal.toString(),
-        balanceEth: ethers.formatEther(bal),
-        maxFeePerGas: feeData.maxFeePerGas?.toString?.(),
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString?.(),
-        gasPrice: feeData.gasPrice?.toString?.(),
-      });
       const ov1 = await nonceMgr.nextOverrides();
-      let tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
-      logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash, nonce: (tx1 as any)?.nonce });
-      let r1 = await tx1.wait();
-      {
-        const payer1 = (tx1 as any)?.from || (await (wallet as any).getAddress?.());
-        const spend1 = await computeTxSpend(provider, payer1, r1);
-        logS('grant_ORDERBOOK_ROLE_mined', 'success', {
-          tx: r1?.hash || tx1.hash,
-          blockNumber: r1?.blockNumber,
-          ...spend1,
-        });
-      }
       const ov2 = await nonceMgr.nextOverrides();
-      let tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
-      logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash, nonce: (tx2 as any)?.nonce });
-      let r2 = await tx2.wait();
-      {
-        const payer2 = (tx2 as any)?.from || (await (wallet as any).getAddress?.());
-        const spend2 = await computeTxSpend(provider, payer2, r2);
-        logS('grant_SETTLEMENT_ROLE_mined', 'success', {
-          tx: r2?.hash || tx2.hash,
-          blockNumber: r2?.blockNumber,
-          ...spend2,
-        });
-      }
+      const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
+      logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash });
+      const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
+      logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash });
+      const [r1, r2] = await Promise.all([tx1.wait(), tx2.wait()]);
+      logS('grant_ORDERBOOK_ROLE_mined', 'success', { tx: r1?.hash || tx1.hash, blockNumber: r1?.blockNumber });
+      logS('grant_SETTLEMENT_ROLE_mined', 'success', { tx: r2?.hash || tx2.hash, blockNumber: r2?.blockNumber });
       logS('grant_roles', 'success');
     } catch (e: any) {
-      try {
-        const bal = await provider.getBalance(await wallet.getAddress());
-        // eslint-disable-next-line no-console
-        console.log('[grant_roles][error][balance]', {
-          wallet: await wallet.getAddress(),
-          balanceWei: bal.toString(),
-          balanceEth: ethers.formatEther(bal),
-        });
-      } catch {}
       logS('grant_roles', 'error', { error: extractError(e) });
       return NextResponse.json({ error: 'Admin role grant failed', details: extractError(e) }, { status: 500 });
     }
 
-    // Configure maker/taker fee structure on the new market
-    try { await nonceMgr.resync(); } catch {}
-    try {
-      logS('configure_fees', 'start', { orderBook, isRollover });
+    // Configure fees + set fee recipient — parallelized to save time
+    {
       const defaultProtocolRecipient =
         process.env.PROTOCOL_FEE_RECIPIENT ||
         (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
-      // Rollover markets: FUNDER wallet receives 100% (both protocol + owner share)
       const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
         ? feeRecipient
         : defaultProtocolRecipient;
-      const takerFeeBps = 7;    // 0.07% → 7 bps → $0.07 on $100
-      const makerFeeBps = 3;    // 0.03% → 3 bps → $0.03 on $100
-      const protocolShareBps = 8000; // 80% to protocol, 20% to market owner
-
-      if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
-        const obAdmin = new ethers.Contract(
-          orderBook,
-          ['function updateFeeStructure(uint256,uint256,address,uint256) external'],
-          wallet
-        );
-        const feeTx = await obAdmin.updateFeeStructure(
-          takerFeeBps,
-          makerFeeBps,
-          protocolFeeRecipient,
-          protocolShareBps,
-          await nonceMgr.nextOverrides()
-        );
-        logS('configure_fees_sent', 'success', { tx: feeTx.hash });
-        const feeRc = await feeTx.wait();
-        logS('configure_fees_mined', 'success', {
-          tx: feeRc?.hash || feeTx.hash,
-          blockNumber: feeRc?.blockNumber,
-          takerFeeBps,
-          makerFeeBps,
-          protocolShareBps,
-          protocolFeeRecipient,
-        });
-      } else {
-        logS('configure_fees', 'success', { skipped: true, reason: 'PROTOCOL_FEE_RECIPIENT not set' });
-      }
-    } catch (e: any) {
-      logS('configure_fees', 'error', { error: e?.message || String(e) });
-    }
-
-    // Set feeRecipient to the market creator (or FUNDER for rollover markets)
-    try { await nonceMgr.resync(); } catch {}
-    try {
+      const takerFeeBps = 7;
+      const makerFeeBps = 3;
+      const protocolShareBps = 8000;
       const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
         ? feeRecipient
         : (creatorWalletAddress || ownerAddress);
+
+      const feeTxPromises: Promise<any>[] = [];
+
+      // 1) updateFeeStructure
+      if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
+        logS('configure_fees', 'start', { orderBook, isRollover });
+        const feeJob = (async () => {
+          const obFee = new ethers.Contract(
+            orderBook,
+            ['function updateFeeStructure(uint256,uint256,address,uint256) external'],
+            wallet
+          );
+          const feeTx = await obFee.updateFeeStructure(
+            takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolShareBps,
+            await nonceMgr.nextOverrides()
+          );
+          logS('configure_fees_sent', 'success', { tx: feeTx.hash });
+          const feeRc = await feeTx.wait();
+          logS('configure_fees_mined', 'success', { tx: feeRc?.hash || feeTx.hash, blockNumber: feeRc?.blockNumber });
+        })().catch((e: any) => logS('configure_fees', 'error', { error: e?.message || String(e) }));
+        feeTxPromises.push(feeJob);
+      } else {
+        logS('configure_fees', 'success', { skipped: true, reason: 'PROTOCOL_FEE_RECIPIENT not set' });
+      }
+
+      // 2) updateTradingParameters (set fee recipient)
       logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
-      const obAdmin = new ethers.Contract(
-        orderBook,
-        ['function updateTradingParameters(uint256,uint256,address) external',
-         'function getTradingParameters() view returns (uint256,uint256,address)'],
-        wallet
-      );
-      const [marginBps, tradingFee] = await obAdmin.getTradingParameters();
-      const recipientTx = await obAdmin.updateTradingParameters(
-        marginBps,
-        tradingFee,
-        creatorAddr,
-        await nonceMgr.nextOverrides()
-      );
-      logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash });
-      const recipientRc = await recipientTx.wait();
-      logS('set_fee_recipient_mined', 'success', {
-        tx: recipientRc?.hash || recipientTx.hash,
-        blockNumber: recipientRc?.blockNumber,
-        feeRecipient: creatorAddr,
-      });
-    } catch (e: any) {
-      logS('set_fee_recipient', 'error', { error: e?.message || String(e) });
+      const recipientJob = (async () => {
+        const obTrade = new ethers.Contract(
+          orderBook,
+          ['function updateTradingParameters(uint256,uint256,address) external',
+           'function getTradingParameters() view returns (uint256,uint256,address)'],
+          wallet
+        );
+        const [marginBps, tradingFee] = await obTrade.getTradingParameters();
+        const recipientTx = await obTrade.updateTradingParameters(
+          marginBps, tradingFee, creatorAddr,
+          await nonceMgr.nextOverrides()
+        );
+        logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash });
+        const recipientRc = await recipientTx.wait();
+        logS('set_fee_recipient_mined', 'success', { tx: recipientRc?.hash || recipientTx.hash, feeRecipient: creatorAddr });
+      })().catch((e: any) => logS('set_fee_recipient', 'error', { error: e?.message || String(e) }));
+      feeTxPromises.push(recipientJob);
+
+      await Promise.all(feeTxPromises);
     }
 
     // Speed-run lifecycle overrides: enable testing mode + custom lead times on-chain
-    try { await nonceMgr.resync(); } catch {}
     if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0) {
       try {
         logS('speed_run_testing_mode', 'start', { orderBook, speedRunConfig });
@@ -1422,36 +1318,26 @@ export async function POST(req: Request) {
       }
     }
 
-    // Final verification: Inspect GASless readiness (session registry + allowlist + selectors + roles)
-    // Non-blocking per user requirement: continue save, but record status in Supabase
-    let inspectReport: any | null = null;
-    try {
-      logS('inspect_gasless', 'start', { orderBook });
-      const baseUrl = process.env.APP_URL || 'http://localhost:3000';
-      const resp = await fetch(`${baseUrl}/api/markets/inspect-gasless`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderBook, pipelineId }),
-        cache: 'no-store',
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        logS('inspect_gasless', 'error', { status: resp.status, error: err?.error || 'inspect failed' });
-      } else {
-        const report = await resp.json();
-        inspectReport = report;
-        const pass = Number(report?.summary?.pass || 0);
-        const total = Number(report?.summary?.total || 0);
-        const failed = Array.isArray(report?.checks) ? report.checks.filter((c: any) => !c?.pass).map((c: any) => c?.name) : [];
-        if (pass !== total) {
-          logS('inspect_gasless', 'error', { pass, total, failed });
-        } else {
-          logS('inspect_gasless', 'success', { pass, total });
+    // Fire-and-forget inspect (non-blocking — don't let it delay the save/response)
+    const inspectPromise = (async () => {
+      try {
+        const baseUrl = process.env.APP_URL || 'http://localhost:3000';
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 8000);
+        const resp = await fetch(`${baseUrl}/api/markets/inspect-gasless`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderBook, pipelineId }),
+          cache: 'no-store',
+          signal: ctrl.signal,
+        });
+        clearTimeout(timeout);
+        if (resp.ok) {
+          const report = await resp.json();
+          logS('inspect_gasless', 'success', { pass: report?.summary?.pass, total: report?.summary?.total });
         }
-      }
-    } catch (e: any) {
-      logS('inspect_gasless', 'error', { error: e?.message || String(e) });
-    }
+      } catch {}
+    })();
 
     // Save to Supabase
     let archivedWaybackUrl: string | null = null;

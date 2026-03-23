@@ -150,16 +150,8 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const priceChangePercent24h = 0;
   const lastUpdated = md.lastUpdated || new Date().toISOString();
 
-  useEffect(() => {
-    if (!currentPrice && !markPrice) return;
-    const price = Number(markPrice || currentPrice || 0);
-    if (price <= 0) return;
-    const fmt = price >= 1
-      ? price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : price.toPrecision(4);
-    document.title = `$${fmt} | ${symbolUpper} | Dexextra`;
-    return () => { document.title = 'Dexextra'; };
-  }, [markPrice, currentPrice, symbolUpper]);
+  // Document title is set by TokenHeader using its effectiveMarkPrice
+  // (which applies the OB vs CoreVault fallback logic) to stay in sync.
 
   // On-chain market stats assembled from Diamond facet reads + ClickHouse 24h data
   const [onChainStats, setOnChainStats] = useState<MarketStatsOnChain | null>(null);

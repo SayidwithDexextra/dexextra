@@ -504,6 +504,17 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
     });
   }, [enhancedTokenData?.symbol, enhancedTokenData?.markPrice, enhancedTokenData?.marketStatus]);
 
+  // Keep browser tab title in sync with the same effectiveMarkPrice shown in the header
+  const symbolUpper = String(symbol || '').toUpperCase();
+  useEffect(() => {
+    if (effectiveMarkPrice <= 0) return;
+    const fmt = effectiveMarkPrice >= 1
+      ? effectiveMarkPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : effectiveMarkPrice.toPrecision(4);
+    document.title = `$${fmt} | ${symbolUpper} | Dexextra`;
+    return () => { document.title = 'Dexextra'; };
+  }, [effectiveMarkPrice, symbolUpper]);
+
   // Scroll detection effect using Intersection Observer for better performance
   useEffect(() => {
     const priceSection = priceSectionRef.current;
