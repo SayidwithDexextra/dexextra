@@ -678,3 +678,35 @@ export async function runSingleSettlementCheck(
 
   return { ok: true, mode: 'single_check', result };
 }
+
+/**
+ * Explicitly start the settlement window for a market, bypassing the
+ * "settlement_not_due" date guard. Used when QStash fires settlement_start
+ * before the settlement date (challenge window should be open BEFORE T0
+ * so it expires right when the market finalises).
+ */
+export async function forceStartSettlementWindow(
+  supabase: SupabaseClient,
+  marketId: string,
+): Promise<TickResponse> {
+  const { data, error } = await supabase
+    .from('markets')
+    .select(MARKET_SELECT)
+    .eq('id', marketId)
+    .maybeSingle();
+
+  if (error) return { ok: false, mode: 'settlement_start', error: `market_fetch_failed:${error.message}` };
+  if (!data) return { ok: false, mode: 'settlement_start', error: 'market_not_found' };
+
+  const market = data as MarketRow;
+
+  if (market.market_status !== 'ACTIVE') {
+    return {
+      ok: true, mode: 'settlement_start',
+      skipped: true, reason: `status_is_${market.market_status}`,
+    };
+  }
+
+  const result = await maybeStartSettlementWindow(supabase, market);
+  return { ok: true, mode: 'settlement_start', result };
+}

@@ -109,8 +109,12 @@ async function publishOrDefer(
 /**
  * Schedule the three lifecycle triggers for a market:
  *   1. Rollover window start  (T0 - rolloverLead)
- *   2. Settlement start       (T0)
- *   3. Settlement finalize    (T0 + challengeDuration)
+ *   2. Settlement start       (T0 - challengeDuration)  — propose price, open challenge window
+ *   3. Settlement finalize    (T0)                       — finalize on-chain if undisputed
+ *
+ * T0 = settlementDateUnix (the date the market is fully settled).
+ * The settlement START fires early so the challenge window expires right
+ * at T0, which is the countdown users see in the market header.
  *
  * Rollover lead and challenge duration are computed **proportionally** to
  * the market's total duration, using a 1-year contract as the reference
@@ -170,10 +174,11 @@ export async function scheduleMarketLifecycle(
     }
   }
 
-  if (settlementDateUnix > nowSec) {
+  const settlementStartAt = settlementDateUnix - challengeDuration;
+  if (settlementStartAt > nowSec) {
     try {
       ids.settlement = await publishOrDefer(
-        client, destination, settlementDateUnix,
+        client, destination, settlementStartAt,
         { ...commonBody, action: 'settlement_start' },
         `${sym}:settlement`,
       );
@@ -182,11 +187,10 @@ export async function scheduleMarketLifecycle(
     }
   }
 
-  const finalizeTriggerAt = settlementDateUnix + challengeDuration;
-  if (finalizeTriggerAt > nowSec) {
+  if (settlementDateUnix > nowSec) {
     try {
       ids.finalize = await publishOrDefer(
-        client, destination, finalizeTriggerAt,
+        client, destination, settlementDateUnix,
         { ...commonBody, action: 'settlement_finalize' },
         `${sym}:finalize`,
       );
@@ -202,8 +206,8 @@ export async function scheduleMarketLifecycle(
     rolloverLeadHours: Math.round(rolloverLead / 3600 * 10) / 10,
     challengeDurationHours: Math.round(challengeDuration / 3600 * 10) / 10,
     rolloverTriggerAt: rolloverTriggerAt > nowSec ? new Date(rolloverTriggerAt * 1000).toISOString() : 'skipped (past)',
-    settlementAt: settlementDateUnix > nowSec ? new Date(settlementDateUnix * 1000).toISOString() : 'skipped (past)',
-    finalizeAt: finalizeTriggerAt > nowSec ? new Date(finalizeTriggerAt * 1000).toISOString() : 'skipped (past)',
+    settlementStartAt: settlementStartAt > nowSec ? new Date(settlementStartAt * 1000).toISOString() : 'skipped (past)',
+    finalizeAt: settlementDateUnix > nowSec ? new Date(settlementDateUnix * 1000).toISOString() : 'skipped (past)',
     ids,
   });
 

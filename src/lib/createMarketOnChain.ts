@@ -569,6 +569,7 @@ export async function createMarketOnChain(params: {
           creatorWalletAddress: signerAddress,
           feeRecipient: feeRecipient || signerAddress,
           speedRunConfig: speedRunConfig || undefined,
+          settlementTs,
         }),
       });
       if (!configRes.ok) {
@@ -707,6 +708,7 @@ export async function createMarketOnChain(params: {
         creatorWalletAddress: signerAddress,
         feeRecipient: feeRecipient || signerAddress,
         speedRunConfig: speedRunConfig || undefined,
+        settlementTs,
       }),
     });
     if (!configRes.ok) {

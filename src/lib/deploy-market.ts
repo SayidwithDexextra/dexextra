@@ -601,7 +601,26 @@ export async function deployMarket(
 
     await Promise.all(feePromises);
 
-    // 5. Speed-run lifecycle overrides
+    // 5. Initialize lifecycle controller
+    try {
+      const isDevMode = !!speedRunConfig;
+      laneLog('A', 'Initialize lifecycle', 'start', `settlement=${settlementTs} devMode=${isDevMode}`);
+      log('initialize_lifecycle', 'start', { settlementTs, isDevMode });
+      const lcContract = new ethers.Contract(orderBook!, [
+        'function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external',
+      ], wallet);
+      const ov = await nonceMgr.nextOverrides();
+      const txInit = await lcContract.initializeLifecycleWithMode(settlementTs, ethers.ZeroAddress, isDevMode, ov);
+      laneLog('A', 'Initialize lifecycle', 'start', `tx sent ${shortTx(txInit.hash)}`);
+      await txInit.wait();
+      laneLog('A', 'Initialize lifecycle', 'success', 'mined');
+      log('initialize_lifecycle', 'success', { tx: txInit.hash });
+    } catch (e: any) {
+      laneLog('A', 'Initialize lifecycle', 'error', e?.shortMessage || e?.message || String(e));
+      log('initialize_lifecycle', 'error', { error: e?.message || String(e) });
+    }
+
+    // 6. Speed-run lifecycle overrides
     if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0) {
       try {
         laneLog('A', 'Speed-run overrides', 'start', `rollover=${speedRunConfig.rolloverLeadSeconds}s challenge=${speedRunConfig.challengeDurationSeconds}s`);

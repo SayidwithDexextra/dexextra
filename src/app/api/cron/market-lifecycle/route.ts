@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Receiver } from '@upstash/qstash';
 import { ethers } from 'ethers';
 import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
-import { runSettlementTick, runSingleSettlementCheck } from '@/lib/settlement-engine';
+import { runSettlementTick, runSingleSettlementCheck, forceStartSettlementWindow } from '@/lib/settlement-engine';
 import { deployMarket } from '@/lib/deploy-market';
 import {
   shortAddr, phaseHeader, phaseDivider, phaseFooter,
@@ -566,7 +566,7 @@ export async function POST(req: Request) {
       if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });
       if (marketId) {
         const syncRes = marketAddress ? await syncLifecycleOnChain(marketAddress) : null;
-        const result = await runSingleSettlementCheck(sb, marketId);
+        const result = await forceStartSettlementWindow(sb, marketId);
         log('dispatch_settlement_start', 'success', { syncRes, ...result });
         return json(200, { ...result, syncLifecycle: syncRes });
       }

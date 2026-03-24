@@ -121,6 +121,7 @@ export async function POST(req: Request) {
           settlementWindowSeconds: Number(body.speedRunConfig.settlementWindowSeconds) || 0,
         }
       : null;
+    const settlementTs = typeof body?.settlementTs === 'number' ? body.settlementTs : 0;
 
     if (!orderBook || !ethers.isAddress(orderBook)) {
       return NextResponse.json({ error: 'Valid orderBook address is required' }, { status: 400 });
@@ -411,7 +412,30 @@ export async function POST(req: Request) {
         await checkpointConfigure(supabase, draftId, configState);
       }
 
-      // 5. Speed-run lifecycle overrides
+      // 5. Initialize lifecycle controller
+      if (settlementTs > 0 && !configState.lifecycle_initialized) {
+        try {
+          const isDevMode = !!speedRunConfig;
+          laneLog('A', 'Initialize lifecycle', 'start', `settlement=${settlementTs} devMode=${isDevMode}`);
+          logS('initialize_lifecycle', 'start', { settlementTs, isDevMode });
+          const lcContract = new ethers.Contract(orderBook, [
+            'function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external',
+          ], wallet);
+          const ov = await nonceMgr.nextOverrides();
+          const txInit = await lcContract.initializeLifecycleWithMode(settlementTs, ethers.ZeroAddress, isDevMode, ov);
+          laneLog('A', 'Initialize lifecycle', 'start', `tx sent ${shortTx(txInit.hash)}`);
+          await txInit.wait();
+          laneLog('A', 'Initialize lifecycle', 'success', 'mined');
+          logS('initialize_lifecycle', 'success', { tx: txInit.hash });
+          configState.lifecycle_initialized = true;
+          await checkpointConfigure(supabase, draftId, configState);
+        } catch (e: any) {
+          laneLog('A', 'Initialize lifecycle', 'error', e?.shortMessage || e?.message || String(e));
+          logS('initialize_lifecycle', 'error', { error: e?.message || String(e) });
+        }
+      }
+
+      // 6. Speed-run lifecycle overrides
       if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0 && !configState.speed_run_set) {
         try {
           laneLog('A', 'Speed-run overrides', 'start', `rollover=${speedRunConfig.rolloverLeadSeconds}s challenge=${speedRunConfig.challengeDurationSeconds}s`);

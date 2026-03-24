@@ -86,6 +86,7 @@ export interface PipelineConfigureState {
   };
   fees_configured?: { tx: string };
   fee_recipient_set?: { tx: string };
+  lifecycle_initialized?: boolean;
   speed_run_set?: boolean;
   completed_at?: string;
 }
