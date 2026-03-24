@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './MetricResolutionModal.module.css';
 import type { 
@@ -9,39 +9,11 @@ import type {
   MetricResolutionModalProps 
 } from './types';
 
-// Re-export types for convenience
 export type { 
   MetricResolution, 
   MetricResolutionResponse, 
   MetricResolutionModalProps 
 } from './types';
-
-// Back Arrow Icon Component
-const BackArrowIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M19 12H5M12 19L5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
-
-// Close Icon Component
-const CloseIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
-
-// Loading Spinner Component
-const LoadingSpinner = () => (
-  <div className={styles.loadingContainer}>
-    <div className={styles.loadingSpinner} />
-    <div className={styles.loadingText}>
-      Validating metric source
-      <span className={styles.loadingSubtext}>
-        AI is analyzing the data to confirm accuracy
-      </span>
-    </div>
-  </div>
-);
 
 const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({ 
   isOpen, 
@@ -56,15 +28,24 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
   fullscreenImageUrl = 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=1400&h=900&fit=crop&auto=format'
 }) => {
   const [mounted, setMounted] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isImageExpanded, setIsImageExpanded] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Typewriter effect for AI response
+  useEffect(() => {
+    if (!isOpen) {
+      setIsAnimating(false);
+      return;
+    }
+    requestAnimationFrame(() => setIsAnimating(true));
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen || !mounted || !response?.data?.reasoning) return;
     
@@ -86,91 +67,78 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
         setIsTyping(false);
         clearInterval(timer);
       }
-    }, 100); // 100ms delay between words
+    }, 100);
     
     return () => clearInterval(timer);
   }, [isOpen, mounted, response?.data?.reasoning]);
 
-  // Handle escape key for fullscreen image
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isImageExpanded) {
-        setIsImageExpanded(false);
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isImageExpanded) {
+          setIsImageExpanded(false);
+        } else {
+          onClose();
+        }
       }
     };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose, isImageExpanded]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (!modalRef.current) return;
+      if (!modalRef.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
     if (isImageExpanded) {
-      document.addEventListener('keydown', handleEscape);
       document.body.style.overflow = 'hidden';
     }
-
     return () => {
-      document.removeEventListener('keydown', handleEscape);
       document.body.style.overflow = 'unset';
     };
   }, [isImageExpanded]);
 
   if (!mounted || !isOpen) return null;
 
-  // Check if we're in loading state (modal open but no response data yet)
   const hasError = Boolean(error && String(error).trim());
   const isLoading = (!response || !response.data) && !hasError;
-  
-  // Only destructure if we have response data
   const data = response?.data;
-  const status = response?.status;
   const processingTime = response?.processingTime;
-  const cached = response?.cached;
-  const performance = response?.performance;
 
-  // Get confidence level styling
   const getConfidenceLevel = (confidence: number) => {
     if (confidence >= 0.8) return 'high';
     if (confidence >= 0.6) return 'medium'; 
     return 'low';
   };
 
-  const formatTimestamp = (timestamp: string) => {
-    try {
-      return new Date(timestamp).toLocaleString();
-    } catch {
-      return timestamp;
-    }
+  const confidenceColors: Record<string, { dot: string; text: string; badge: string }> = {
+    high: { dot: 'bg-t-positive', text: 'text-t-positive', badge: 'bg-t-positive/10 text-t-positive' },
+    medium: { dot: 'bg-t-warning', text: 'text-t-warning', badge: 'bg-t-warning/10 text-t-warning' },
+    low: { dot: 'bg-t-negative', text: 'text-t-negative', badge: 'bg-t-negative/10 text-t-negative' },
   };
 
-  const formatConfidence = (confidence: number) => {
-    return `${Math.round(confidence * 100)}%`;
-  };
+  const formatConfidence = (confidence: number) => `${Math.round(confidence * 100)}%`;
 
   const formatValue = (value: string | undefined) => {
     if (!value) return '';
-    
-    // Check if the value is a number (with optional decimal places)
     const numericValue = parseFloat(value.replace(/,/g, ''));
-    
     if (!isNaN(numericValue)) {
-      // Format number with commas and allow up to 4 decimal places (avoid default 3-cap)
-      return new Intl.NumberFormat('en-US', {
-        maximumFractionDigits: 4
-      }).format(numericValue);
+      return new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 }).format(numericValue);
     }
-    
-    // If not a number, return as-is
     return value;
   };
 
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
-      onClose();
-    }
-  };
-
   const handleAccept = () => {
-    if (onAccept) {
-      onAccept();
-    } else {
-      onClose();
-    }
+    if (onAccept) onAccept();
+    else onClose();
   };
 
   const hasSuggestedAssetPrice = (() => {
@@ -178,25 +146,13 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
     if (!raw) return false;
     const numeric = raw.replace(/[^0-9.]/g, '');
     if (!numeric) return false;
-    const n = parseFloat(numeric);
-    return !Number.isNaN(n);
+    return !Number.isNaN(parseFloat(numeric));
   })();
 
   const handleDeny = () => {
     try {
-      // If there's a suggested asset price, also call that callback
-      if (hasSuggestedAssetPrice) {
-        onDenySuggestedAssetPrice?.();
-      }
+      if (hasSuggestedAssetPrice) onDenySuggestedAssetPrice?.();
       onDeny?.();
-    } finally {
-      onClose();
-    }
-  };
-
-  const handleDenySuggestedAssetPrice = () => {
-    try {
-      onDenySuggestedAssetPrice?.();
     } finally {
       onClose();
     }
@@ -210,153 +166,218 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
     }
   };
 
-  return createPortal(
-    <div className={styles.overlay} onClick={handleBackdropClick}>
-      <div className={styles.modal}>
-        {/* Top Header Bar */}
-        <div className={styles.topHeader}>
-          <button className={styles.backButton} onClick={onClose} aria-label="Close">
-            <BackArrowIcon />
-          </button>
-          <h1 className={styles.topTitle}>Source Validation</h1>
-        </div>
+  const toneMeta = (() => {
+    if (hasError) return { dot: 'bg-t-negative', badge: 'bg-t-negative/10 text-t-negative', label: 'ERROR' };
+    if (isLoading) return { dot: 'bg-t-accent', badge: 'bg-t-accent/10 text-t-accent', label: 'VALIDATING' };
+    const level = getConfidenceLevel(data?.confidence || 0);
+    if (level === 'high') return { dot: 'bg-t-positive', badge: 'bg-t-positive/10 text-t-positive', label: 'VERIFIED' };
+    if (level === 'medium') return { dot: 'bg-t-warning', badge: 'bg-t-warning/10 text-t-warning', label: 'REVIEW' };
+    return { dot: 'bg-t-negative', badge: 'bg-t-negative/10 text-t-negative', label: 'LOW CONF.' };
+  })();
 
-        {/* Header - Metric Info */}
-        <div className={styles.header}>
-          <div className={styles.approveContainer}>
-            <h2 className={styles.title}>{isLoading ? 'Analyzing...' : 'Confirm Metric'}</h2>
-            <p className={styles.subtitle}>
-              {isLoading ? 'Validating data source accuracy' : data?.metric || 'Loading...'}
-            </p>
+  const confLevel = getConfidenceLevel(data?.confidence || 0);
+  const confMeta = confidenceColors[confLevel];
+
+  return createPortal(
+    <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}>
+      <div className="absolute inset-0 backdrop-blur-sm" style={{ background: 'var(--t-overlay)' }} onClick={onClose} />
+
+      <div
+        ref={modalRef}
+        className={`relative z-10 w-full bg-t-card rounded-md border border-t-stroke transition-all duration-200 flex flex-col ${styles.modalEntrance}`}
+        style={{ maxWidth: '480px', maxHeight: '85vh', boxShadow: 'var(--t-shadow-lg)' }}
+      >
+        {/* Header */}
+        <div className="p-4 border-b border-t-stroke-sub flex-shrink-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${toneMeta.dot} ${isLoading ? 'animate-pulse' : ''}`} />
+                <div className="text-t-fg text-[13px] font-medium tracking-tight truncate">Source Validation</div>
+                <div className={`text-[10px] px-1.5 py-0.5 rounded ${toneMeta.badge}`}>{toneMeta.label}</div>
+              </div>
+              {!isLoading && !hasError && data?.metric ? (
+                <div className="mt-1 ml-[14px] text-[10px] text-t-fg-muted leading-relaxed truncate">
+                  {data.metric}
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              onClick={onClose}
+              className="p-2 rounded-md border border-t-stroke hover:border-t-stroke-hover hover:bg-t-card-hover text-t-fg-sub transition-all duration-200"
+              aria-label="Close"
+            >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
           </div>
         </div>
 
-        {/* Main Content */}
-        <div className={styles.content}>
+        {/* Content */}
+        <div className={`p-4 flex-1 overflow-y-auto ${styles.hideScrollbar}`}>
           {isLoading ? (
-            <LoadingSpinner />
+            /* Loading State */
+            <div className="flex flex-col items-center justify-center py-10 gap-3">
+              <div className={`w-5 h-5 border-2 border-t-stroke rounded-full ${styles.spinner}`} style={{ borderTopColor: 'var(--t-accent)' }} />
+              <div className="text-center">
+                <div className="text-t-fg text-[11px] font-medium">Validating metric source</div>
+                <div className="text-t-fg-muted text-[10px] mt-1">Analyzing data accuracy</div>
+              </div>
+            </div>
           ) : hasError ? (
-            <div className={styles.summarySection}>
-              <h3 className={styles.summaryTitle}>Couldn’t validate this URL</h3>
-              <div className={styles.summaryText}>
-                {String(error || '').trim() || 'We couldn’t extract a numeric metric value from that URL.'}
+            /* Error State */
+            <div className="space-y-3">
+              <div className="rounded-md border border-t-negative/20 bg-t-negative/5 p-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-t-negative flex-shrink-0" />
+                  <div className="text-[11px] font-medium text-t-negative">Validation Failed</div>
+                </div>
+                <div className="text-[10px] text-t-fg-muted leading-relaxed">
+                  {String(error || '').trim() || 'Couldn\'t extract a numeric metric value from that URL.'}
+                </div>
               </div>
-              <div style={{ marginTop: 12, fontSize: 12, color: 'rgba(255,255,255,0.55)', lineHeight: 1.4 }}>
-                Pick another suggested source, or use <strong>Custom URL</strong> to paste a different public endpoint.
-              </div>
-              <div style={{ marginTop: 16, display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                <button
-                  className={styles.denyButton}
-                  onClick={handlePickAnotherSource}
-                  type="button"
-                >
-                  Pick another source
-                </button>
-                <button
-                  className={styles.acceptButton}
-                  onClick={handlePickAnotherSource}
-                  type="button"
-                >
-                  Enter custom URL
-                </button>
+
+              <div className="text-[10px] text-t-fg-muted leading-relaxed">
+                Pick another suggested source, or use <span className="text-t-fg font-medium">Custom URL</span> to paste a different public endpoint.
               </div>
             </div>
           ) : (
-            <>
-              {/* Value Display */}
-              <div className={styles.valueDisplay}>
-                <div className={styles.tokenIcon}>
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                    <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                    <path d="M2 17l10 5 10-5" />
-                    <path d="M2 12l10 5 10-5" />
-                  </svg>
-                </div>
-                <div className={styles.valueSection}>
-                  <div className={styles.mainValue}>
-                    <span className={styles.value}>{formatValue(data?.value)}</span>
-                    <span className={styles.unit}>{data?.unit}</span>
+            /* Success / Data State */
+            <div className="space-y-3">
+              {/* Value + Confidence */}
+              <div className="rounded-md border border-t-stroke bg-t-card-hover p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[9px] text-t-fg-muted uppercase tracking-wider mb-1">Extracted Value</div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-t-fg text-sm font-semibold tracking-tight tabular-nums">{formatValue(data?.value)}</span>
+                      {data?.unit ? <span className="text-[10px] text-t-fg-muted">{data.unit}</span> : null}
+                    </div>
                   </div>
-                  <div className={`${styles.confidence} ${styles[getConfidenceLevel(data?.confidence || 0)]}`}>
-                    <span className={styles.confidenceLabel}>Confidence</span>
-                    <span className={styles.confidenceValue}>
-                      {formatConfidence(data?.confidence || 0)}
-                    </span>
+                  <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                    <div className="text-[9px] text-t-fg-muted uppercase tracking-wider">Confidence</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${confMeta.dot}`} />
+                      <span className={`text-[11px] font-semibold tabular-nums ${confMeta.text}`}>
+                        {formatConfidence(data?.confidence || 0)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Asset Price - Similar to approval amount */}
-              <div className={styles.assetPrice}>
-                <span className={styles.assetPriceLabel}>Suggested Asset Price</span>
-                <span className={styles.assetPriceValue}>
+              {/* Suggested Asset Price */}
+              <div className="rounded-md border border-t-stroke bg-t-card-hover p-3 flex items-center justify-between">
+                <span className="text-[11px] text-t-fg-sub">Suggested Asset Price</span>
+                <span className={`text-[11px] font-semibold tabular-nums ${hasSuggestedAssetPrice ? 'text-t-positive' : 'text-t-fg-muted'}`}>
                   {hasSuggestedAssetPrice ? `$${formatValue(data?.asset_price_suggestion)}` : '—'}
                 </span>
               </div>
 
-              {/* Summary Section */}
-              <div className={styles.summarySection}>
-                <h3 className={styles.summaryTitle}>Summary</h3>
-                <div className={styles.summaryText}>
+              {/* Summary */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-[9px] text-t-fg-muted uppercase tracking-wider font-medium">Summary</div>
+                </div>
+                <div className={`rounded-md border border-t-stroke bg-t-card-hover p-3 text-[11px] text-t-fg-label leading-relaxed ${styles.summaryScroll}`} style={{ maxHeight: '100px' }}>
                   {displayedText}
                   {isTyping && <span className={styles.cursor}>|</span>}
                 </div>
               </div>
 
-              {/* Screenshot/Image Section */}
-              <div className={styles.imageSection}>
+              {/* Screenshot */}
+              <div>
+                <div className="text-[9px] text-t-fg-muted uppercase tracking-wider font-medium mb-1.5">Preview</div>
                 <img 
                   src={imageUrl} 
                   alt="Analysis visualization" 
-                  className={styles.analysisImage}
+                  className="w-full h-[80px] object-cover rounded-md border border-t-stroke hover:border-t-stroke-hover cursor-pointer transition-all duration-200"
                   onClick={() => setIsImageExpanded(true)}
                 />
               </div>
 
-              {/* Network Fee equivalent - Processing Time */}
-              <div className={styles.networkFee}>
-                <span className={styles.feeLabel}>Processing Time</span>
-                <span className={styles.feeValue}>{processingTime || 'Calculating...'}</span>
-              </div>
-            </>
+              {/* Processing Time */}
+              {processingTime ? (
+                <div className="flex items-center justify-between px-3 py-2 rounded-md border border-t-stroke bg-t-card-hover">
+                  <span className="text-[10px] text-t-fg-muted">Processing time</span>
+                  <span className="text-[10px] text-t-fg-label tabular-nums">{processingTime}</span>
+                </div>
+              ) : null}
+            </div>
           )}
         </div>
 
-        {/* Action Buttons */}
-        <div className={styles.actions}>
-          <button 
-            className={styles.denyButton} 
-            onClick={handleDeny} 
-            type="button"
-            disabled={isLoading || hasError}
-          >
-            Deny
-          </button>
-          <button 
-            className={styles.acceptButton} 
-            onClick={handleAccept} 
-            type="button"
-            disabled={isLoading || hasError}
-          >
-            Accept
-          </button>
+        {/* Footer Actions */}
+        <div className="p-4 border-t border-t-stroke-sub flex-shrink-0">
+          <div className="flex items-center justify-end gap-2">
+            {hasError ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePickAnotherSource}
+                  className="px-3 py-2 rounded-md text-[11px] border border-t-stroke text-t-fg-sub hover:border-t-stroke-hover hover:bg-t-card-hover hover:text-t-fg transition-all duration-200"
+                >
+                  Pick another source
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePickAnotherSource}
+                  className="px-3 py-2 rounded-md text-[11px] border border-t-accent/30 text-t-accent hover:border-t-accent/40 hover:bg-t-accent/5 transition-all duration-200"
+                >
+                  Enter custom URL
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleDeny}
+                  disabled={isLoading}
+                  className={`px-3 py-2 rounded-md text-[11px] border transition-all duration-200 ${
+                    isLoading
+                      ? 'border-t-stroke text-t-fg-muted cursor-not-allowed'
+                      : 'border-t-negative/20 text-t-negative hover:border-t-negative/30 hover:bg-t-negative/5'
+                  }`}
+                >
+                  Deny
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAccept}
+                  disabled={isLoading}
+                  className={`px-3 py-2 rounded-md text-[11px] border transition-all duration-200 ${
+                    isLoading
+                      ? 'border-t-stroke text-t-fg-muted cursor-not-allowed'
+                      : 'border-t-positive/30 text-t-positive hover:border-t-positive/40 hover:bg-t-positive/5'
+                  }`}
+                >
+                  Accept
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Fullscreen Image Overlay */}
       {isImageExpanded && (
-        <div className={styles.imageOverlay} onClick={() => setIsImageExpanded(false)}>
-          <div className={styles.imageOverlayContent}>
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/95 animate-in fade-in" onClick={() => setIsImageExpanded(false)}>
+          <div className="relative max-w-[90vw] max-h-[90vh] flex items-center justify-center">
             <button 
-              className={styles.imageCloseButton}
+              className="absolute -top-10 right-0 w-8 h-8 rounded-md border border-t-stroke-hover bg-t-card-hover text-t-fg flex items-center justify-center hover:bg-t-card transition-all duration-200"
               onClick={() => setIsImageExpanded(false)}
             >
-              <CloseIcon />
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
             <img 
               src={fullscreenImageUrl} 
               alt="Analysis visualization - Full size" 
-              className={styles.fullscreenImage}
+              className="max-w-full max-h-full object-contain rounded-md"
+              style={{ boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8)' }}
               onClick={(e) => e.stopPropagation()}
             />
           </div>
@@ -367,4 +388,4 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
   );
 };
 
-export default MetricResolutionModal; 
+export default MetricResolutionModal;

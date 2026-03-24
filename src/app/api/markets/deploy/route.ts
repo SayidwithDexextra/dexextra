@@ -165,6 +165,19 @@ async function checkpointDraft(
 ) {
   if (!supabase || !draftId) return;
   try {
+    // Merge pipeline_state with existing rather than overwrite
+    if (updates.pipeline_state) {
+      const { data: existing } = await supabase
+        .from('market_drafts')
+        .select('pipeline_state')
+        .eq('id', draftId)
+        .maybeSingle();
+      const merged = { ...(existing?.pipeline_state || {}) };
+      for (const [key, val] of Object.entries(updates.pipeline_state)) {
+        merged[key] = { ...(merged[key] || {}), ...(val as any) };
+      }
+      updates.pipeline_state = merged;
+    }
     await supabase
       .from('market_drafts')
       .update(updates)
@@ -463,9 +476,19 @@ export async function POST(req: Request) {
         cutArg, initFacet, creator, nonce, deadline, signature, overrides as any
       );
       logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash });
+      // Progressive checkpoint: tx hash available
+      await checkpointDraft(supabase, draftId, {
+        transaction_hash: tx.hash,
+        pipeline_state: { deploy: { tx_hash: tx.hash, sent_at: new Date().toISOString() } },
+      });
       logS('factory_confirm_meta', 'start');
       receipt = await tx.wait();
       logS('factory_confirm_meta_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
+      // Progressive checkpoint: block number available
+      await checkpointDraft(supabase, draftId, {
+        block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null,
+        pipeline_state: { deploy: { block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null, mined_at: new Date().toISOString() } },
+      });
     } else {
       // ---- LEGACY DIRECT CREATE ----
       logS('factory_static_call', 'start');
@@ -489,9 +512,19 @@ export async function POST(req: Request) {
         ownerAddress, cutArg, initFacet, '0x', overrides as any
       );
       logS('factory_send_tx_sent', 'success', { hash: tx.hash });
+      // Progressive checkpoint: tx hash available
+      await checkpointDraft(supabase, draftId, {
+        transaction_hash: tx.hash,
+        pipeline_state: { deploy: { tx_hash: tx.hash, sent_at: new Date().toISOString() } },
+      });
       logS('factory_confirm', 'start');
       receipt = await tx.wait();
       logS('factory_confirm_mined', 'success', { hash: receipt?.hash || tx.hash, block: receipt?.blockNumber });
+      // Progressive checkpoint: block number available
+      await checkpointDraft(supabase, draftId, {
+        block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null,
+        pipeline_state: { deploy: { block_number: receipt?.blockNumber != null ? Number(receipt.blockNumber) : null, mined_at: new Date().toISOString() } },
+      });
     }
 
     // Parse FuturesMarketCreated event
@@ -510,7 +543,14 @@ export async function POST(req: Request) {
     }
     if (!orderBook || !marketId) return NextResponse.json({ error: 'Could not parse FuturesMarketCreated event' }, { status: 500 });
 
-    // Checkpoint: deployed
+    // Progressive checkpoint: orderBook + marketId parsed
+    await checkpointDraft(supabase, draftId, {
+      orderbook_address: orderBook,
+      market_id_bytes32: marketId,
+      pipeline_state: { deploy: { orderbook_address: orderBook, market_id_bytes32: marketId } },
+    });
+
+    // Final deploy checkpoint
     const network = await provider.getNetwork();
     if (draftId && supabase) {
       await checkpointDraft(supabase, draftId, {

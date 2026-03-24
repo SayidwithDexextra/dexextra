@@ -251,13 +251,12 @@ async function createNonceManager(signer: ethers.Wallet) {
   let next = await signer.provider!.getTransactionCount(address, 'pending');
   return {
     async nextOverrides() {
-      const fee = await getTxOverrides(signer.provider!);
-      const ov: any = { ...fee, nonce: next };
+      const nonce = next;
       next += 1;
-      return ov;
+      const fee = await getTxOverrides(signer.provider!);
+      return { ...fee, nonce } as any;
     },
     async resync() {
-      // Resynchronize local nonce with provider pending nonce to recover from NONCE_EXPIRED
       next = await signer.provider!.getTransactionCount(address, 'pending');
       return next;
     },
@@ -265,6 +264,11 @@ async function createNonceManager(signer: ethers.Wallet) {
       return next;
     }
   } as const;
+}
+
+function normalizePk(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`;
 }
 
 function extractError(e: any) {
@@ -1058,265 +1062,225 @@ export async function POST(req: Request) {
     }
     if (!orderBook || !marketId) return NextResponse.json({ error: 'Could not parse created market' }, { status: 500 });
 
-  // Ensure required placement selectors exist on the Diamond (defensive)
-  try {
-    logS('ensure_selectors', 'start', { orderBook });
-    const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
-    const CutABI = [
-      'function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)',
-    ];
-    const loupe = new ethers.Contract(orderBook, LoupeABI, wallet);
-    const diamondCut = new ethers.Contract(orderBook, CutABI, wallet);
-    const placementSigs = [
-      'placeLimitOrder(uint256,uint256,bool)',
-      'placeMarginLimitOrder(uint256,uint256,bool)',
-      'placeMarketOrder(uint256,bool)',
-      'placeMarginMarketOrder(uint256,bool)',
-      'placeMarketOrderWithSlippage(uint256,bool,uint256)',
-      'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
-      'cancelOrder(uint256)',
-    ];
-    const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
-    const selectorResults = await Promise.all(
-      requiredSelectors.map(async (sel) => {
-        try {
-          const addr: string = await loupe.facetAddress(sel);
-          return (!addr || addr.toLowerCase() === '0x0000000000000000000000000000000000000000') ? sel : null;
-        } catch { return sel; }
-      })
-    );
-    const missing = selectorResults.filter((s): s is string => s !== null);
-    if (missing.length > 0) {
-      logS('ensure_selectors_missing', 'start', { missingCount: missing.length });
-      const cut = [{ facetAddress: placementFacet, action: 0, functionSelectors: missing }];
-      const ov = await nonceMgr.nextOverrides();
-      const txCut = await diamondCut.diamondCut(cut as any, ethers.ZeroAddress, '0x', ov as any);
-      logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
-      const rc = await txCut.wait();
-      logS('ensure_selectors_diamondCut_mined', 'success', { tx: rc?.hash || txCut.hash });
+  // =========================================================================
+  // POST-FACTORY PARALLEL CONFIGURATION
+  //
+  // Two independent lanes run concurrently:
+  //   Lane A (diamond owner / ADMIN_PRIVATE_KEY):
+  //     ensure selectors, setSessionRegistry, fees, speed-run
+  //   Lane B (vault admin / secondary signer):
+  //     setAllowedOrderbook, grantRole(ORDERBOOK), grantRole(SETTLEMENT)
+  // =========================================================================
+
+  // Setup secondary signer for vault/registry ops
+  const secondaryPk =
+    process.env.ROLE_GRANTER_PRIVATE_KEY ||
+    process.env.RELAYER_PRIVATE_KEY;
+  const normalizedSecondaryPk = secondaryPk ? normalizePk(secondaryPk) : null;
+  const normalizedPrimaryPk = normalizePk(pk);
+  const useParallelSigners =
+    normalizedSecondaryPk &&
+    /^0x[a-fA-F0-9]{64}$/.test(normalizedSecondaryPk) &&
+    normalizedSecondaryPk.toLowerCase() !== normalizedPrimaryPk.toLowerCase();
+
+  let vaultWallet: ethers.Wallet;
+  let vaultNonceMgr: Awaited<ReturnType<typeof createNonceManager>>;
+  if (useParallelSigners) {
+    vaultWallet = new ethers.Wallet(normalizedSecondaryPk, provider);
+    vaultNonceMgr = await createNonceManager(vaultWallet);
+    logS('parallel_signers', 'success', {
+      diamondOwner: ownerAddress,
+      vaultAdmin: await vaultWallet.getAddress(),
+    });
+  } else {
+    vaultWallet = wallet;
+    vaultNonceMgr = nonceMgr;
+  }
+
+  // Resync nonces after factory tx
+  await nonceMgr.resync();
+  if (useParallelSigners) await vaultNonceMgr.resync();
+
+  const registryAddress =
+    process.env.SESSION_REGISTRY_ADDRESS ||
+    (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS || '';
+  const hasRegistry = registryAddress && ethers.isAddress(registryAddress);
+
+  // ── Phase 1: Parallel reads ──
+  const LoupeABI = ['function facetAddress(bytes4) view returns (address)'];
+  const loupeContract = new ethers.Contract(orderBook, LoupeABI, provider);
+  const placementSigs = [
+    'placeLimitOrder(uint256,uint256,bool)',
+    'placeMarginLimitOrder(uint256,uint256,bool)',
+    'placeMarketOrder(uint256,bool)',
+    'placeMarginMarketOrder(uint256,bool)',
+    'placeMarketOrderWithSlippage(uint256,bool,uint256)',
+    'placeMarginMarketOrderWithSlippage(uint256,bool,uint256)',
+    'cancelOrder(uint256)',
+  ];
+  const requiredSelectors = placementSigs.map((sig) => ethers.id(sig).slice(0, 10));
+  const regAbi = [
+    'function allowedOrderbook(address) view returns (bool)',
+    'function setAllowedOrderbook(address,bool) external',
+  ];
+
+  const [selectorResults, registryAllowed, currentRegistry, tradingParams] = await Promise.all([
+    Promise.all(requiredSelectors.map(async (sel) => {
+      try {
+        const addr: string = await loupeContract.facetAddress(sel);
+        return (!addr || addr.toLowerCase() === ethers.ZeroAddress.toLowerCase()) ? sel : null;
+      } catch { return sel; }
+    })),
+    hasRegistry
+      ? new ethers.Contract(registryAddress, regAbi, provider).allowedOrderbook(orderBook).catch(() => false)
+      : Promise.resolve(true),
+    hasRegistry
+      ? new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, provider).sessionRegistry().catch(() => ethers.ZeroAddress)
+      : Promise.resolve(registryAddress),
+    new ethers.Contract(orderBook, ['function getTradingParameters() view returns (uint256,uint256,address)'], provider)
+      .getTradingParameters().catch(() => [0n, 0n, ethers.ZeroAddress]),
+  ]);
+
+  const missingSelectors = selectorResults.filter((s): s is string => s !== null);
+  const needRegistryAllow = hasRegistry && !registryAllowed;
+  const needRegistryAttach = hasRegistry && (!currentRegistry || String(currentRegistry).toLowerCase() !== String(registryAddress).toLowerCase());
+
+  logS('parallel_reads', 'success', { missingSelectors: missingSelectors.length, needRegistryAllow, needRegistryAttach });
+
+  // ── Phase 2: Parallel writes across two signers ──
+
+  // Lane A: diamond owner ops
+  const laneA = async () => {
+    // 1. Ensure selectors
+    if (missingSelectors.length > 0) {
+      try {
+        logS('ensure_selectors_missing', 'start', { missingCount: missingSelectors.length });
+        const CutABI = ['function diamondCut((address facetAddress,uint8 action,bytes4[] functionSelectors)[] _diamondCut,address _init,bytes _calldata)'];
+        const diamondCutContract = new ethers.Contract(orderBook!, CutABI, wallet);
+        const patchCut = [{ facetAddress: placementFacet, action: 0, functionSelectors: missingSelectors }];
+        const ov = await nonceMgr.nextOverrides();
+        const txCut = await diamondCutContract.diamondCut(patchCut as any, ethers.ZeroAddress, '0x', ov as any);
+        logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
+        const rc = await txCut.wait();
+        logS('ensure_selectors_diamondCut_mined', 'success', { tx: rc?.hash || txCut.hash });
+      } catch (e: any) {
+        logS('ensure_selectors', 'error', { error: e?.message || String(e) });
+      }
     } else {
       logS('ensure_selectors', 'success', { message: 'All placement selectors present' });
     }
-  } catch (e: any) {
-    logS('ensure_selectors', 'error', { error: e?.message || String(e) });
-  }
 
-    // Allow new OrderBook on GlobalSessionRegistry and attach session registry for gasless
-    // Resync nonce before registry steps — previous txs (factory, ensure_selectors) have been
-    // awaited so the chain nonce may have advanced past the local counter.
-    try { await nonceMgr.resync(); } catch {}
-    try {
-      const registryAddress =
-        process.env.SESSION_REGISTRY_ADDRESS ||
-        (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS ||
-        '';
-      if (!registryAddress || !ethers.isAddress(registryAddress)) {
-        logS('attach_session_registry', 'error', { error: 'Missing SESSION_REGISTRY_ADDRESS' });
-      } else {
-        // Use ADMIN_PRIVATE_KEY for session-registry operations (explicit user requirement).
-        const registryPk = process.env.ADMIN_PRIVATE_KEY || null;
-        // Since we require ADMIN_PRIVATE_KEY here, always use the route wallet/nonceMgr.
-        const regWallet = wallet;
-        try { logS('attach_session_registry', 'start', { registrySigner: await (regWallet as any).getAddress?.() }); } catch {}
-
-        // 1) Ensure this OrderBook is allowed in the registry
-        try {
-          const regAbi = [
-            'function allowedOrderbook(address) view returns (bool)',
-            'function setAllowedOrderbook(address,bool) external',
-          ];
-          const registry = new ethers.Contract(registryAddress, regAbi, regWallet);
-          const allowed: boolean = await registry.allowedOrderbook(orderBook);
-          if (!allowed) {
-            const ovAllow = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
-            let txAllow: ethers.TransactionResponse;
-            try {
-              txAllow = await registry.setAllowedOrderbook(orderBook, true, ovAllow as any);
-            } catch (err: any) {
-              const raw = String(err?.info?.error?.message || err?.shortMessage || err?.message || '').toLowerCase();
-              const isRetryable =
-                err?.code === 'NONCE_EXPIRED' ||
-                err?.code === 'REPLACEMENT_UNDERPRICED' ||
-                raw.includes('nonce too low') ||
-                raw.includes('nonce has already been used') ||
-                raw.includes('replacement transaction underpriced');
-              if (isRetryable) {
-                const fresh = await nonceMgr.resync();
-                logS('attach_session_registry', 'start', { action: 'retry_allow_orderbook', freshNonce: fresh });
-                const ovRetry = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
-                txAllow = await registry.setAllowedOrderbook(orderBook, true, ovRetry as any);
-              } else {
-                throw err;
-              }
-            }
-            logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
-            const rAllow = await txAllow.wait();
-            logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook', tx: rAllow?.hash || txAllow.hash });
-          } else {
-            logS('attach_session_registry', 'success', { message: 'OrderBook already allowed', action: 'allow_orderbook' });
-          }
-        } catch (e: any) {
-          logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'allow_orderbook' });
-        }
-
-        // 2) Attach session registry on MetaTradeFacet (if not set)
-        try {
-          logS('attach_session_registry', 'start', { orderBook, registry: registryAddress });
-          // Use ADMIN_PRIVATE_KEY for setSessionRegistry() (explicit user requirement).
-          const meta = new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, wallet);
-          const current = await meta.sessionRegistry();
-          if (!current || String(current).toLowerCase() !== String(registryAddress).toLowerCase()) {
-            const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
-            let txSet: ethers.TransactionResponse;
-            try {
-              txSet = await meta.setSessionRegistry(registryAddress, ov);
-            } catch (err: any) {
-              const raw = String(err?.info?.error?.message || err?.shortMessage || err?.message || '').toLowerCase();
-              const isRetryable =
-                err?.code === 'NONCE_EXPIRED' ||
-                err?.code === 'REPLACEMENT_UNDERPRICED' ||
-                raw.includes('nonce too low') ||
-                raw.includes('nonce has already been used') ||
-                raw.includes('replacement transaction underpriced');
-              if (isRetryable) {
-                const fresh = await nonceMgr.resync();
-                logS('attach_session_registry', 'start', { action: 'retry_resynced_nonce', freshNonce: fresh });
-                const ovRetry = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
-                txSet = await meta.setSessionRegistry(registryAddress, ovRetry);
-              } else {
-                throw err;
-              }
-            }
-            logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry' });
-            const rSet = await txSet.wait();
-            logS('attach_session_registry_mined', 'success', { action: 'set_session_registry', tx: rSet?.hash || txSet.hash });
-          } else {
-            logS('attach_session_registry', 'success', { message: 'Session registry already set', action: 'set_session_registry' });
-          }
-        } catch (e: any) {
-          logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'set_session_registry' });
-        }
+    // 2. Attach session registry (diamond owner only)
+    if (needRegistryAttach) {
+      try {
+        logS('attach_session_registry', 'start', { orderBook, registry: registryAddress });
+        const meta = new ethers.Contract(orderBook!, (MetaTradeFacetArtifact as any).abi, wallet);
+        const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
+        const txSet = await meta.setSessionRegistry(registryAddress, ov);
+        logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry' });
+        await txSet.wait();
+        logS('attach_session_registry_mined', 'success', { action: 'set_session_registry', tx: txSet.hash });
+      } catch (e: any) {
+        logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'set_session_registry' });
       }
-    } catch (e: any) {
-      logS('attach_session_registry', 'error', { error: e?.message || String(e) });
     }
 
-    // Grant roles on CoreVault (ADMIN_PRIVATE_KEY signer) — parallelized
-    logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
-    const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
-    const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
-    const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
-    try {
-      const ov1 = await nonceMgr.nextOverrides();
-      const ov2 = await nonceMgr.nextOverrides();
-      const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
-      logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash });
-      const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
-      logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash });
-      const [r1, r2] = await Promise.all([tx1.wait(), tx2.wait()]);
-      logS('grant_ORDERBOOK_ROLE_mined', 'success', { tx: r1?.hash || tx1.hash, blockNumber: r1?.blockNumber });
-      logS('grant_SETTLEMENT_ROLE_mined', 'success', { tx: r2?.hash || tx2.hash, blockNumber: r2?.blockNumber });
-      logS('grant_roles', 'success');
-    } catch (e: any) {
-      logS('grant_roles', 'error', { error: extractError(e) });
-      return NextResponse.json({ error: 'Admin role grant failed', details: extractError(e) }, { status: 500 });
+    // 3. Configure fees (fire with pre-allocated nonces)
+    const defaultProtocolRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
+    const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
+      ? feeRecipient : defaultProtocolRecipient;
+    const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
+      ? feeRecipient : (creatorWalletAddress || ownerAddress);
+
+    const feePromises: Promise<any>[] = [];
+    if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
+      logS('configure_fees', 'start', { orderBook, isRollover });
+      feePromises.push((async () => {
+        const obFee = new ethers.Contract(orderBook!, ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
+        const feeTx = await obFee.updateFeeStructure(7, 3, protocolFeeRecipient, 8000, await nonceMgr.nextOverrides());
+        logS('configure_fees_sent', 'success', { tx: feeTx.hash });
+        const feeRc = await feeTx.wait();
+        logS('configure_fees_mined', 'success', { tx: feeRc?.hash || feeTx.hash });
+      })().catch((e: any) => logS('configure_fees', 'error', { error: e?.message || String(e) })));
     }
 
-    // Configure fees + set fee recipient — parallelized to save time
-    {
-      const defaultProtocolRecipient =
-        process.env.PROTOCOL_FEE_RECIPIENT ||
-        (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
-      const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
-        ? feeRecipient
-        : defaultProtocolRecipient;
-      const takerFeeBps = 7;
-      const makerFeeBps = 3;
-      const protocolShareBps = 8000;
-      const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
-        ? feeRecipient
-        : (creatorWalletAddress || ownerAddress);
+    logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
+    feePromises.push((async () => {
+      const obTrade = new ethers.Contract(orderBook!, ['function updateTradingParameters(uint256,uint256,address) external'], wallet);
+      const [marginBps, tradingFee] = tradingParams;
+      const recipientTx = await obTrade.updateTradingParameters(marginBps, tradingFee, creatorAddr, await nonceMgr.nextOverrides());
+      logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash });
+      const recipientRc = await recipientTx.wait();
+      logS('set_fee_recipient_mined', 'success', { tx: recipientRc?.hash || recipientTx.hash, feeRecipient: creatorAddr });
+    })().catch((e: any) => logS('set_fee_recipient', 'error', { error: e?.message || String(e) })));
 
-      const feeTxPromises: Promise<any>[] = [];
+    await Promise.all(feePromises);
 
-      // 1) updateFeeStructure
-      if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
-        logS('configure_fees', 'start', { orderBook, isRollover });
-        const feeJob = (async () => {
-          const obFee = new ethers.Contract(
-            orderBook,
-            ['function updateFeeStructure(uint256,uint256,address,uint256) external'],
-            wallet
-          );
-          const feeTx = await obFee.updateFeeStructure(
-            takerFeeBps, makerFeeBps, protocolFeeRecipient, protocolShareBps,
-            await nonceMgr.nextOverrides()
-          );
-          logS('configure_fees_sent', 'success', { tx: feeTx.hash });
-          const feeRc = await feeTx.wait();
-          logS('configure_fees_mined', 'success', { tx: feeRc?.hash || feeTx.hash, blockNumber: feeRc?.blockNumber });
-        })().catch((e: any) => logS('configure_fees', 'error', { error: e?.message || String(e) }));
-        feeTxPromises.push(feeJob);
-      } else {
-        logS('configure_fees', 'success', { skipped: true, reason: 'PROTOCOL_FEE_RECIPIENT not set' });
-      }
-
-      // 2) updateTradingParameters (set fee recipient)
-      logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
-      const recipientJob = (async () => {
-        const obTrade = new ethers.Contract(
-          orderBook,
-          ['function updateTradingParameters(uint256,uint256,address) external',
-           'function getTradingParameters() view returns (uint256,uint256,address)'],
-          wallet
-        );
-        const [marginBps, tradingFee] = await obTrade.getTradingParameters();
-        const recipientTx = await obTrade.updateTradingParameters(
-          marginBps, tradingFee, creatorAddr,
-          await nonceMgr.nextOverrides()
-        );
-        logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash });
-        const recipientRc = await recipientTx.wait();
-        logS('set_fee_recipient_mined', 'success', { tx: recipientRc?.hash || recipientTx.hash, feeRecipient: creatorAddr });
-      })().catch((e: any) => logS('set_fee_recipient', 'error', { error: e?.message || String(e) }));
-      feeTxPromises.push(recipientJob);
-
-      await Promise.all(feeTxPromises);
-    }
-
-    // Speed-run lifecycle overrides: enable testing mode + custom lead times on-chain
+    // 4. Speed-run lifecycle overrides
     if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0) {
       try {
         logS('speed_run_testing_mode', 'start', { orderBook, speedRunConfig });
-        const lifecycleContract = new ethers.Contract(
-          orderBook,
-          [
-            'function enableTestingMode(bool enabled) external',
-            'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
-          ],
-          wallet,
-        );
+        const lifecycleContract = new ethers.Contract(orderBook!, [
+          'function enableTestingMode(bool enabled) external',
+          'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
+        ], wallet);
         const ov1 = await nonceMgr.nextOverrides();
-        const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
-        await txEnable.wait();
-        logS('speed_run_testing_mode', 'success', { tx: txEnable.hash, action: 'enableTestingMode' });
-
         const ov2 = await nonceMgr.nextOverrides();
-        const txLead = await lifecycleContract.setLeadTimes(
-          speedRunConfig.rolloverLeadSeconds,
-          speedRunConfig.challengeDurationSeconds,
-          ov2,
-        );
-        await txLead.wait();
-        logS('speed_run_lead_times', 'success', {
-          tx: txLead.hash,
-          rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
-          challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
-        });
+        const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
+        const txLead = await lifecycleContract.setLeadTimes(speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeDurationSeconds, ov2);
+        await Promise.all([txEnable.wait(), txLead.wait()]);
+        logS('speed_run_testing_mode', 'success');
       } catch (e: any) {
         logS('speed_run_testing_mode', 'error', { error: e?.message || String(e) });
       }
     }
+  };
+
+  // Lane B: vault admin + registry owner ops
+  const laneBCreate = async () => {
+    const txWaits: Promise<any>[] = [];
+
+    // 1. Allow orderbook on registry
+    if (needRegistryAllow) {
+      try {
+        const registry = new ethers.Contract(registryAddress, regAbi, vaultWallet);
+        const ov = { ...(await vaultNonceMgr.nextOverrides()), gasLimit: 300000n };
+        const txAllow = await registry.setAllowedOrderbook(orderBook!, true, ov as any);
+        logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
+        txWaits.push(txAllow.wait().then(() =>
+          logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook' })
+        ));
+      } catch (e: any) {
+        logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'allow_orderbook' });
+      }
+    }
+
+    // 2. Grant CoreVault roles
+    logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
+    const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, vaultWallet);
+    const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
+    const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
+
+    const ov1 = await vaultNonceMgr.nextOverrides();
+    const ov2 = await vaultNonceMgr.nextOverrides();
+    const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook!, ov1);
+    logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash });
+    const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook!, ov2);
+    logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash });
+
+    const [r1, r2] = await Promise.all([...txWaits, tx1.wait(), tx2.wait()]);
+    logS('grant_ORDERBOOK_ROLE_mined', 'success', { tx: r1?.hash || tx1.hash, blockNumber: r1?.blockNumber });
+    logS('grant_SETTLEMENT_ROLE_mined', 'success', { tx: r2?.hash || tx2.hash, blockNumber: r2?.blockNumber });
+    logS('grant_roles', 'success');
+  };
+
+  // Run both lanes in parallel
+  const [laneAResult, laneBCreateResult] = await Promise.allSettled([laneA(), laneBCreate()]);
+
+  if (laneBCreateResult.status === 'rejected') {
+    logS('grant_roles', 'error', { error: extractError(laneBCreateResult.reason) });
+    return NextResponse.json({ error: 'Admin role grant failed', details: extractError(laneBCreateResult.reason) }, { status: 500 });
+  }
 
     // Fire-and-forget inspect (non-blocking — don't let it delay the save/response)
     const inspectPromise = (async () => {

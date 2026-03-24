@@ -27,6 +27,28 @@ function getSupabase() {
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
+async function checkpointFinalize(
+  supabase: any,
+  draftId: string,
+  partialFinalize: Record<string, any>,
+) {
+  if (!supabase || !draftId) return;
+  try {
+    const { data: draft } = await supabase
+      .from('market_drafts')
+      .select('pipeline_state')
+      .eq('id', draftId)
+      .maybeSingle();
+    const existing = draft?.pipeline_state || {};
+    const merged = { ...(existing.finalize || {}), ...partialFinalize };
+    await supabase.from('market_drafts').update({
+      pipeline_state: { ...existing, finalize: merged },
+    }).eq('id', draftId);
+  } catch (e: any) {
+    console.warn('[finalize] progressive checkpoint failed', e?.message || String(e));
+  }
+}
+
 async function archiveWithTimeout(
   url: string,
   opts: Parameters<typeof archivePage>[1],
@@ -136,6 +158,11 @@ export async function POST(req: Request) {
     } catch (e: any) {
       console.warn('[finalize] Wayback archive error', e?.message || String(e));
     }
+
+    await checkpointFinalize(supabase, draftId, {
+      wayback_url: archivedWaybackUrl,
+      wayback_ts: archivedWaybackTs,
+    });
 
     const derivedName = `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`;
     const networkNameRaw = String(process.env.NEXT_PUBLIC_NETWORK_NAME || process.env.NETWORK_NAME || '');
@@ -248,6 +275,12 @@ export async function POST(req: Request) {
       }
     }
 
+    await checkpointFinalize(supabase, draftId, {
+      market_uuid: savedRow?.id || null,
+      market_saved: true,
+      market_saved_at: new Date().toISOString(),
+    });
+
     // Upsert ticker row
     const markPriceScaled = (() => {
       const n = Number(startPrice);
@@ -262,6 +295,8 @@ export async function POST(req: Request) {
         );
       }
     } catch {}
+
+    await checkpointFinalize(supabase, draftId, { ticker_created: true });
 
     // Schedule QStash lifecycle triggers
     let qstashIds: Record<string, string | undefined> = {};
@@ -303,6 +338,11 @@ export async function POST(req: Request) {
         logS('qstash_schedule', 'error', { error: e?.message || String(e) });
       }
     }
+
+    await checkpointFinalize(supabase, draftId, {
+      qstash_ids: qstashIds,
+      qstash_scheduled: Object.keys(qstashIds).length > 0,
+    });
 
     // Rollover finalization
     if (isRollover && savedRow?.id) {

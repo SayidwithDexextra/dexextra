@@ -13,7 +13,7 @@ import { MetricResolutionModal } from '@/components/MetricResolutionModal';
 import type { MetricResolutionResponse } from '@/components/MetricResolutionModal/types';
 import { runMetricAIWithPolling, getMetricAIWorkerBaseUrl, type MetricAIResult } from '@/lib/metricAiWorker';
 import type { CreateMarketAssistantResponse } from '@/types/createMarketAssistant';
-import { createMarketOnChain } from '@/lib/createMarketOnChain';
+import { createMarketOnChain, prefetchCutData, type PrefetchedCutData } from '@/lib/createMarketOnChain';
 import { uploadImageToSupabase } from '@/lib/imageUpload';
 import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { usePusher } from '@/lib/pusher-client';
@@ -243,7 +243,7 @@ const DEV_SETTLEMENT_OPTIONS: {
   {
     value: 'speed-run-30',
     label: 'Speed Run (30 min)',
-    settlementOffsetSeconds: 20 * 60,
+    settlementOffsetSeconds: 40 * 60,
     speedRunConfig: {
       rolloverLeadSeconds: 5 * 60,
       challengeDurationSeconds: 10 * 60,
@@ -1302,6 +1302,7 @@ export function InteractiveMarketCreation({
   const [visibleStep, setVisibleStep] = React.useState<CreationStep>(initialState?.visibleStep ?? 'clarify_metric');
   const [isStepAnimating, setIsStepAnimating] = React.useState(false);
   const stepTimerRef = React.useRef<number | null>(null);
+  const cutPrefetchRef = React.useRef<Promise<PrefetchedCutData> | null>(null);
 
   const metricName = discoveryResult?.metric_definition?.metric_name;
 
@@ -2059,81 +2060,146 @@ export function InteractiveMarketCreation({
 
   const pipelineMessages: string[] = gaslessEnabled
     ? [
-        'Fetch facet cut configuration',
-        'Build initializer and selectors',
-        'Prepare meta-create',
-        'Sign meta request',
-        'Submit to relayer',
-        'Wait for confirmation',
-        'Parse FuturesMarketCreated event',
-        'Verify required selectors',
-        'Patch missing selectors if needed',
-        'Attach session registry',
-        'Grant admin roles on CoreVault',
-        'Saving market metadata',
-        'Finalize deployment',
+        'Fetch facet cut configuration',        // 0
+        'Build initializer and selectors',      // 1
+        'Prepare meta-create',                  // 2
+        'Sign meta request',                    // 3
+        'Submit deploy transaction',            // 4
+        'Awaiting on-chain confirmation',       // 5
+        'Verify market selectors',              // 6
+        'Configure market',                     // 7 (registry + roles + fees — parallel)
+        'Saving market metadata',               // 8
+        'Finalize deployment',                  // 9
       ]
     : [
-        'Fetch facet cut configuration',
-        'Build initializer and selectors',
-        'Preflight validation (static call)',
-        'Submit create transaction',
-        'Wait for confirmation',
-        'Parse FuturesMarketCreated event',
-        'Verify required selectors',
-        'Patch missing selectors if needed',
-        'Grant admin roles on CoreVault',
-        'Saving market metadata',
-        'Finalize deployment',
+        'Fetch facet cut configuration',        // 0
+        'Build initializer and selectors',      // 1
+        'Preflight validation (static call)',   // 2
+        'Submit create transaction',            // 3
+        'Wait for confirmation',                // 4
+        'Verify market selectors',              // 5
+        'Configure market',                     // 6 (registry + roles + fees)
+        'Saving market metadata',               // 7
+        'Finalize deployment',                  // 8
       ];
 
-  const stepIndexMap: Record<string, number> = {
-    cut_fetch: 0,
-    cut_build: 1,
-    static_call: 2,
-    send_tx: 3,
-    confirm: gaslessEnabled ? 5 : 4,
-    parse_event: gaslessEnabled ? 6 : 5,
-    verify_selectors: gaslessEnabled ? 7 : 6,
-    diamond_cut: gaslessEnabled ? 8 : 7,
-    meta_prepare: 2,
-    meta_signature: 3,
-    relayer_submit: 4,
-    facet_cut_built: 1,
-    factory_static_call_meta: 2,
-    factory_static_call: 2,
-    factory_send_tx_meta: 4,
-    factory_send_tx: 3,
-    factory_send_tx_meta_sent: 4,
-    factory_send_tx_sent: 3,
-    factory_confirm_meta: 5,
-    factory_confirm_meta_mined: 5,
-    factory_confirm: gaslessEnabled ? 5 : 4,
-    factory_confirm_mined: gaslessEnabled ? 5 : 4,
-    ensure_selectors: 7,
-    ensure_selectors_missing: 8,
-    ensure_selectors_diamondCut_sent: 8,
-    ensure_selectors_diamondCut_mined: 8,
-    attach_session_registry: 9,
-    attach_session_registry_sent: 9,
-    attach_session_registry_mined: 9,
-    grant_roles: 10,
-    grant_ORDERBOOK_ROLE_sent: 10,
-    grant_ORDERBOOK_ROLE_mined: 10,
-    grant_SETTLEMENT_ROLE_sent: 10,
-    grant_SETTLEMENT_ROLE_mined: 10,
-    save_market: 11,
-  };
+  const stepIndexMap: Record<string, number> = gaslessEnabled
+    ? {
+        // Client-side events (createMarketOnChain onProgress)
+        cut_fetch: 0,
+        cut_build: 1,
+        meta_prepare: 2,
+        meta_signature: 3,
+        relayer_deploy: 4,
+        deploy_resumed: 5,
+        relayer_configure: 7,
+        configure_resumed: 7,
+        relayer_finalize: 9,
 
+        // Server deploy events (Pusher)
+        facet_cut_built: 1,
+        factory_static_call_meta: 4,
+        factory_send_tx_meta: 4,
+        factory_send_tx_meta_sent: 4,
+        factory_confirm_meta: 5,
+        factory_confirm_meta_mined: 5,
+        deploy_complete: 5,
+
+        // Server configure events (Pusher)
+        parallel_signers: 6,
+        parallel_reads: 6,
+        ensure_selectors: 6,
+        ensure_selectors_missing: 6,
+        ensure_selectors_diamondCut_sent: 6,
+        ensure_selectors_diamondCut_mined: 6,
+        attach_session_registry: 7,
+        attach_session_registry_sent: 7,
+        attach_session_registry_mined: 7,
+        grant_roles: 7,
+        grant_ORDERBOOK_ROLE_sent: 7,
+        grant_ORDERBOOK_ROLE_mined: 7,
+        grant_SETTLEMENT_ROLE_sent: 7,
+        grant_SETTLEMENT_ROLE_mined: 7,
+        configure_fees: 7,
+        configure_fees_sent: 7,
+        configure_fees_mined: 7,
+        set_fee_recipient: 7,
+        set_fee_recipient_sent: 7,
+        set_fee_recipient_mined: 7,
+        speed_run_testing_mode: 7,
+        recalculate_settlement: 7,
+        reschedule_qstash: 7,
+        configure_complete: 7,
+
+        // Server finalize events (Pusher)
+        save_market: 8,
+        qstash_schedule: 8,
+      }
+    : {
+        // Client-side events
+        cut_fetch: 0,
+        cut_build: 1,
+        static_call: 2,
+        send_tx: 3,
+        confirm: 4,
+        parse_event: 4,
+        relayer_configure: 6,
+        configure_resumed: 6,
+        relayer_finalize: 8,
+
+        // Server deploy events (Pusher)
+        facet_cut_built: 1,
+        factory_static_call: 2,
+        factory_send_tx: 3,
+        factory_send_tx_sent: 3,
+        factory_confirm: 4,
+        factory_confirm_mined: 4,
+        deploy_complete: 4,
+
+        // Server configure events (Pusher)
+        verify_selectors: 5,
+        diamond_cut: 5,
+        ensure_selectors: 5,
+        ensure_selectors_missing: 5,
+        ensure_selectors_diamondCut_sent: 5,
+        ensure_selectors_diamondCut_mined: 5,
+        attach_session_registry: 6,
+        attach_session_registry_sent: 6,
+        attach_session_registry_mined: 6,
+        grant_roles: 6,
+        grant_ORDERBOOK_ROLE_sent: 6,
+        grant_ORDERBOOK_ROLE_mined: 6,
+        grant_SETTLEMENT_ROLE_sent: 6,
+        grant_SETTLEMENT_ROLE_mined: 6,
+        configure_fees: 6,
+        configure_fees_sent: 6,
+        configure_fees_mined: 6,
+        set_fee_recipient: 6,
+        set_fee_recipient_sent: 6,
+        set_fee_recipient_mined: 6,
+        speed_run_testing_mode: 6,
+        recalculate_settlement: 6,
+        reschedule_qstash: 6,
+        configure_complete: 6,
+
+        // Server finalize events (Pusher)
+        save_market: 7,
+        qstash_schedule: 7,
+      };
+
+  const maxOverlayIndexRef = React.useRef(0);
   const updateOverlayIndex = React.useCallback((idx: number) => {
-    const clamped = Math.max(0, Math.min(idx, pipelineMessages.length - 1));
-    const percent = Math.min(100, Math.round(((clamped + 1) / Math.max(pipelineMessages.length, 1)) * 100));
+    const next = Math.max(idx, maxOverlayIndexRef.current);
+    maxOverlayIndexRef.current = next;
+    const clamped = Math.min(next, pipelineMessages.length - 1);
+    const percent = Math.min(100, Math.round(((clamped + 1) / pipelineMessages.length) * 100));
     deploymentOverlay.update({ activeIndex: clamped, percentComplete: percent });
   }, [deploymentOverlay, pipelineMessages.length]);
 
   const handleCreateMarket = React.useCallback(async () => {
     if (!selectedSource || !marketName.trim()) return;
 
+    maxOverlayIndexRef.current = 0;
     setIsCreatingMarket(true);
     let unsubscribePusher: (() => void) | null = null;
 
@@ -2250,6 +2316,12 @@ export function InteractiveMarketCreation({
         (iconPreviewUrl && !iconPreviewUrl.startsWith('blob:') ? iconPreviewUrl : null) ||
         (await ensureIconStored());
 
+      // Resolve pre-fetched cut data (non-blocking — falls back inside createMarketOnChain)
+      let resolvedPrefetch: PrefetchedCutData | undefined;
+      try {
+        if (cutPrefetchRef.current) resolvedPrefetch = await cutPrefetchRef.current;
+      } catch {}
+
       // Create market on chain
       const { orderBook, marketId, chainId, transactionHash } = await createMarketOnChain({
         symbol,
@@ -2265,6 +2337,7 @@ export function InteractiveMarketCreation({
         settlementDate: settlementDateTs,
         speedRunConfig,
         pipelineId,
+        prefetchedCut: resolvedPrefetch,
         onProgress: ({ step, status }) => {
           const idx = stepIndexMap[step];
           if (typeof idx === 'number') updateOverlayIndex(idx);
@@ -2280,7 +2353,7 @@ export function InteractiveMarketCreation({
 
       if (!gaslessEnabled) {
         // Legacy: grant roles via server endpoint
-        updateOverlayIndex(8);
+        updateOverlayIndex(6);
         const grant = await fetch('/api/markets/grant-roles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2290,7 +2363,7 @@ export function InteractiveMarketCreation({
           const gErr = await grant.json().catch(() => ({} as any));
           throw new Error(gErr?.error || 'Role grant failed');
         }
-        updateOverlayIndex(9);
+        updateOverlayIndex(7);
 
         // Save market metadata
         const networkName =
@@ -2337,7 +2410,7 @@ export function InteractiveMarketCreation({
           const sErr = await saveRes.json().catch(() => ({} as any));
           throw new Error(sErr?.error || 'Save failed');
         }
-        updateOverlayIndex(10);
+        updateOverlayIndex(8);
       }
 
       // Trigger post-deploy inspection
@@ -2623,6 +2696,18 @@ export function InteractiveMarketCreation({
     console.log('[DesiredStep]', step, { isNameConfirmed, similarMarketsCount: similarMarkets.length, similarMarketsAcknowledged, similarMarketsLoading, isDescriptionConfirmed });
     return step;
   }, [discoveryResult, discoveryState, isDescriptionConfirmed, isIconConfirmed, isNameConfirmed, selectedSource, similarMarkets.length, similarMarketsAcknowledged]);
+
+  // Pre-fetch diamond cut data as soon as the user passes step 1
+  React.useEffect(() => {
+    if (desiredStep !== 'clarify_metric' && !cutPrefetchRef.current) {
+      cutPrefetchRef.current = prefetchCutData();
+      cutPrefetchRef.current.catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('[CutPrefetch] failed (will retry at create time):', err?.message || err);
+        cutPrefetchRef.current = null;
+      });
+    }
+  }, [desiredStep]);
 
   React.useEffect(() => {
     if ((discoveryState !== 'success' && discoveryState !== 'clarify') || !discoveryResult) {

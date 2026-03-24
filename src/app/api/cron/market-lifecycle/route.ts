@@ -5,6 +5,10 @@ import { ethers } from 'ethers';
 import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
 import { runSettlementTick, runSingleSettlementCheck } from '@/lib/settlement-engine';
 import { deployMarket } from '@/lib/deploy-market';
+import {
+  shortAddr, phaseHeader, phaseDivider, phaseFooter,
+  stepLog as vStep,
+} from '@/lib/console-logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -148,10 +152,17 @@ async function linkRolloverChild(
 
 async function handleRollover(marketId: string, marketAddress?: string | null): Promise<Record<string, unknown>> {
   log('rollover', 'start', { marketId, marketAddress });
+  const rolloverStart = Date.now();
+
+  phaseHeader('ROLLOVER', `market ${marketId.slice(0, 8)}...`);
 
   const supabase = getSupabase();
-  if (!supabase) return { ok: false, error: 'supabase_not_configured' };
+  if (!supabase) {
+    vStep('[1/7] Fetch parent market', 'error', 'supabase not configured');
+    return { ok: false, error: 'supabase_not_configured' };
+  }
 
+  vStep('[1/7] Fetch parent market', 'start');
   const { data: market, error: fetchErr } = await supabase
     .from('markets')
     .select('*')
@@ -159,25 +170,35 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     .maybeSingle();
 
   if (fetchErr || !market) {
+    vStep('[1/7] Fetch parent market', 'error', fetchErr?.message || 'not found');
     log('rollover', 'error', { error: fetchErr?.message || 'market_not_found' });
     return { ok: false, error: fetchErr?.message || 'market_not_found' };
   }
+  vStep('[1/7] Fetch parent market', 'success', market.symbol || market.market_identifier || marketId.slice(0, 8));
 
   const effectiveAddress = marketAddress || market.market_address;
-  if (!effectiveAddress) return { ok: false, error: 'no_market_address' };
+  if (!effectiveAddress) {
+    vStep('[1/7] Fetch parent market', 'error', 'no market address');
+    return { ok: false, error: 'no_market_address' };
+  }
 
   const existingConfig = (typeof market.market_config === 'object' && market.market_config) || {};
   const rolloverConfig = (existingConfig as any)?.rollover || {};
   if (rolloverConfig.child_market_id) {
+    vStep('[1/7] Fetch parent market', 'success', 'child already exists, skipping');
     log('rollover', 'success', { reason: 'child_already_exists', childId: rolloverConfig.child_market_id });
+    phaseFooter('Rollover skipped', Date.now() - rolloverStart, true);
     return { ok: true, skipped: true, reason: 'child_already_exists', childId: rolloverConfig.child_market_id };
   }
 
   // 1. Sync lifecycle on-chain
+  vStep('[2/7] Sync lifecycle on-chain', 'start', shortAddr(effectiveAddress));
   const syncResult = await syncLifecycleOnChain(effectiveAddress);
+  vStep('[2/7] Sync lifecycle on-chain', syncResult.ok ? 'success' : 'error', syncResult.ok ? `state ${syncResult.previousState} -> ${syncResult.newState}` : (syncResult.error || 'failed'));
   log('rollover_sync', syncResult.ok ? 'success' : 'error', syncResult as any);
 
   // 2. Derive CREATOR wallet for rollover markets (gets 100% of fees)
+  vStep('[3/7] Derive creator wallet', 'start');
   const funderPk = process.env.CREATOR_PRIVATE_KEY;
   let funderAddress: string | null = null;
   if (funderPk) {
@@ -185,8 +206,10 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
       funderAddress = new ethers.Wallet(funderPk).address;
     } catch {}
   }
+  vStep('[3/7] Derive creator wallet', 'success', funderAddress ? shortAddr(funderAddress) : 'none (will use parent creator)');
 
   // 3. Ensure the parent market belongs to a series (create one if needed)
+  vStep('[4/7] Resolve market series', 'start');
   const baseSymbol = market.symbol || market.market_identifier || 'UNKNOWN';
   let seriesId: string | null = market.series_id || null;
   let parentSequence: number = market.series_sequence ?? 0;
@@ -231,13 +254,18 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
       log('rollover_series', 'success', { seriesId, parentSequence });
     }
   }
+  vStep('[4/7] Resolve market series', 'success', seriesId ? `series ${seriesId.slice(0, 8)}... seq=${parentSequence}` : 'no series');
 
   const childSequence = parentSequence + 1;
 
   // 4. Compute child settlement date (same duration as parent)
+  vStep('[4/7] Compute settlement date', 'start');
   const parentSettlementDate = market.settlement_date ? new Date(market.settlement_date) : null;
   const parentDeployedAt = market.deployed_at ? new Date(market.deployed_at) : null;
-  if (!parentSettlementDate) return { ok: false, error: 'no_parent_settlement_date' };
+  if (!parentSettlementDate) {
+    vStep('[4/7] Compute settlement date', 'error', 'no parent settlement date');
+    return { ok: false, error: 'no_parent_settlement_date' };
+  }
 
   let lifecycleDurationMs: number;
   if (parentDeployedAt) {
@@ -249,6 +277,8 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   const childSettlementDate = new Date(parentSettlementDate.getTime() + lifecycleDurationMs);
   const childSettlementUnix = Math.floor(childSettlementDate.getTime() / 1000);
+  vStep('[4/7] Compute settlement date', 'success', childSettlementDate.toISOString());
+  phaseDivider();
 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
   const rolloverCreator = funderAddress || market.creator_wallet_address || '';
@@ -261,6 +291,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   // 5. Deploy child market on-chain (inline — mirrors new-market page pattern)
   let deployResult;
   try {
+    vStep('[5/7] Deploy child market', 'start', `${childSymbol} settlement=${childSettlementDate.toISOString()}`);
     log('rollover_deploy', 'start', { childSymbol, childSettlementUnix });
     deployResult = await deployMarket(
       {
@@ -276,16 +307,20 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
       },
       (step, status, data) => log(`rollover_deploy_${step}`, status, data),
     );
+    vStep('[5/7] Deploy child market', 'success', `orderBook=${shortAddr(deployResult.orderBook)}`);
     log('rollover_deploy', 'success', {
       orderBook: deployResult.orderBook,
       txHash: deployResult.transactionHash,
     });
   } catch (e: any) {
+    vStep('[5/7] Deploy child market', 'error', e?.message || String(e));
     log('rollover_deploy', 'error', { error: e?.message || String(e) });
+    phaseFooter('Rollover failed (deploy)', Date.now() - rolloverStart, false);
     return { ok: false, error: 'child_market_deploy_failed', details: e?.message || String(e) };
   }
 
   // 6. Save to DB via /api/markets/save (lightweight — same as new-market page)
+  vStep('[6/7] Save child to DB', 'start');
   const baseUrl =
     process.env.APP_URL?.replace(/\/+$/, '') ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
@@ -317,17 +352,23 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     });
     const saveData = await saveRes.json().catch(() => ({}));
     if (!saveRes.ok) {
+      vStep('[6/7] Save child to DB', 'error', `status ${saveRes.status}`);
       log('rollover_save', 'error', { status: saveRes.status, data: saveData });
+      phaseFooter('Rollover failed (save)', Date.now() - rolloverStart, false);
       return { ok: false, error: 'child_market_save_failed', details: saveData };
     }
     savedMarketId = (saveData as any)?.id || null;
+    vStep('[6/7] Save child to DB', 'success', `id=${savedMarketId?.slice(0, 8)}...`);
     log('rollover_save', 'success', { childMarketId: savedMarketId });
   } catch (e: any) {
+    vStep('[6/7] Save child to DB', 'error', e?.message || String(e));
     log('rollover_save', 'error', { error: e?.message || String(e) });
+    phaseFooter('Rollover failed (save)', Date.now() - rolloverStart, false);
     return { ok: false, error: 'child_market_save_exception', details: e?.message };
   }
 
   // 7. Rollover-specific: assign series, update parent, link on-chain
+  vStep('[7/7] Finalize lineage', 'start');
   if (savedMarketId && seriesId) {
     try {
       await supabase.from('markets').update({
@@ -335,8 +376,10 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
         series_sequence: childSequence,
         updated_at: new Date().toISOString(),
       }).eq('id', savedMarketId);
+      vStep('[7/7] Assign child to series', 'success', `seq=${childSequence}`);
       log('rollover_series_child', 'success', { seriesId, sequence: childSequence });
     } catch (e: any) {
+      vStep('[7/7] Assign child to series', 'error', e?.message || String(e));
       log('rollover_series_child', 'error', { error: e?.message || String(e) });
     }
   }
@@ -356,14 +399,17 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
         },
         updated_at: new Date().toISOString(),
       }).eq('id', marketId);
+      vStep('[7/7] Update parent config', 'success', `child=${savedMarketId.slice(0, 8)}...`);
       log('rollover_update_parent', 'success', { parentMarketId: marketId });
     } catch (e: any) {
+      vStep('[7/7] Update parent config', 'error', e?.message || String(e));
       log('rollover_update_parent', 'error', { error: e?.message || String(e) });
     }
   }
 
   if (effectiveAddress && deployResult.orderBook) {
     try {
+      vStep('[7/7] Link on-chain', 'start', `${shortAddr(effectiveAddress)} -> ${shortAddr(deployResult.orderBook)}`);
       const provider = getRpcProvider();
       const adminWallet = provider ? getAdminWallet(provider) : null;
       if (adminWallet) {
@@ -371,9 +417,11 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
         const parentContract = new ethers.Contract(effectiveAddress, lifecycleAbi, adminWallet);
         const linkTx = await parentContract.linkRolloverChildByAddress(deployResult.orderBook, childSettlementUnix);
         const linkRc = await linkTx.wait();
+        vStep('[7/7] Link on-chain', 'success', `tx ${linkRc?.hash?.slice(0, 10) || linkTx.hash.slice(0, 10)}...`);
         log('rollover_link_onchain', 'success', { tx: linkRc?.hash || linkTx.hash });
       }
     } catch (e: any) {
+      vStep('[7/7] Link on-chain', 'error', e?.shortMessage || e?.message || String(e));
       log('rollover_link_onchain', 'error', { error: e?.message || String(e) });
     }
   }
@@ -387,6 +435,8 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     seriesId,
     childSequence,
   });
+
+  phaseFooter(`Rollover ${childSymbol}`, Date.now() - rolloverStart, true);
 
   return {
     ok: true,

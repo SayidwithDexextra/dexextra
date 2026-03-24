@@ -62,6 +62,113 @@ export type PipelineResumeState = {
   chainId: number | null;
 };
 
+export type PrefetchedCutData = {
+  cutArg: Array<[string, number, string[]]>;
+  initFacet: string;
+  cutHash?: string;
+  emptyTagsHash?: string;
+  eip712Domain?: {
+    name: string;
+    version: string;
+    chainId: number;
+    verifyingContract: string;
+  };
+};
+
+const HELPER_ABI = [
+  'function computeTagsHash(string[] tags) view returns (bytes32)',
+  'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)',
+  'function metaCreateNonce(address) view returns (uint256)',
+  'function eip712DomainInfo() view returns (string name,string version,uint256 chainId,address verifyingContract,bytes32 domainSeparator)',
+];
+
+/**
+ * Pre-fetches diamond cut configuration and computes hashes via read-only RPC.
+ * Call early (e.g. when user passes wizard step 1) so this data is ready
+ * before the user clicks "Create".
+ */
+export async function prefetchCutData(): Promise<PrefetchedCutData> {
+  const res = await fetch('/api/orderbook/cut', { method: 'GET' });
+  if (!res.ok) throw new Error(`cut API ${res.status}`);
+  const data = await res.json();
+  const cut = Array.isArray(data?.cut) ? data.cut : [];
+  const initFacet: string = data?.initFacet || '';
+  const cutArg: Array<[string, number, string[]]> = cut.map((c: any) => [c.facetAddress, 0, c.functionSelectors]);
+
+  if (!initFacet || !ethers.isAddress(initFacet)) {
+    throw new Error('initFacet not available from /api/orderbook/cut');
+  }
+
+  let cutHash: string | undefined;
+  let emptyTagsHash: string | undefined;
+  let eip712Domain: PrefetchedCutData['eip712Domain'] | undefined;
+
+  const rpcUrl = String(
+    (process.env as any).NEXT_PUBLIC_RPC_URL || ''
+  ).trim();
+  const factoryAddress = String(
+    (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS ||
+    (globalThis as any).process?.env?.NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS || ''
+  ).trim();
+
+  if (rpcUrl && factoryAddress && ethers.isAddress(factoryAddress)) {
+    try {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const factory = new ethers.Contract(factoryAddress, HELPER_ABI, provider);
+      const helperCut = cutArg.map((c) => ({ facetAddress: c[0], action: c[1], functionSelectors: c[2] }));
+
+      const [cutHashResult, tagsResult, domainResult] = await Promise.allSettled([
+        factory.computeCutHash(helperCut as any),
+        factory.computeTagsHash([]),
+        factory.eip712DomainInfo(),
+      ]);
+
+      if (cutHashResult.status === 'fulfilled') cutHash = cutHashResult.value as string;
+      if (tagsResult.status === 'fulfilled') emptyTagsHash = tagsResult.value as string;
+      if (domainResult.status === 'fulfilled') {
+        const info = domainResult.value;
+        if (info?.name && info?.version) {
+          eip712Domain = {
+            name: info.name,
+            version: info.version,
+            chainId: Number(info.chainId),
+            verifyingContract: info.verifyingContract,
+          };
+        }
+      }
+    } catch {}
+  }
+
+  // Local fallbacks for hashes if RPC calls failed
+  if (!cutHash) {
+    try {
+      const perCutHashes: string[] = [];
+      for (const entry of cutArg) {
+        const sels = entry?.[2] || [];
+        const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array(sels.length).fill('bytes4'), sels));
+        const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [entry?.[0], entry?.[1], selectorsHash]);
+        perCutHashes.push(ethers.keccak256(enc));
+      }
+      cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+    } catch {}
+  }
+
+  if (!emptyTagsHash) {
+    try {
+      emptyTagsHash = ethers.keccak256(ethers.solidityPacked([], []));
+    } catch {}
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(
+    '%c⚡ Cut data pre-fetched',
+    'color:#22c55e; font-weight:700;',
+    { facets: cutArg.length, cutHash: cutHash ? `${cutHash.slice(0, 10)}…` : '(none)', eip712Domain: !!eip712Domain }
+  );
+
+  return { cutArg, initFacet, cutHash, emptyTagsHash, eip712Domain };
+}
+
 export async function createMarketOnChain(params: {
   symbol: string;
   metricUrl: string;
@@ -84,6 +191,7 @@ export async function createMarketOnChain(params: {
   pipelineId?: string;
   draftId?: string;
   resumeState?: PipelineResumeState;
+  prefetchedCut?: PrefetchedCutData;
 }) {
   if (typeof window === 'undefined' || !(window as any).ethereum) {
     throw new Error('No injected wallet found. Please install MetaMask or a compatible wallet.');
@@ -107,6 +215,7 @@ export async function createMarketOnChain(params: {
     pipelineId,
     draftId: paramDraftId,
     resumeState,
+    prefetchedCut,
   } = params;
 
   const draftId = resumeState?.draftId || paramDraftId || '';
@@ -119,65 +228,73 @@ export async function createMarketOnChain(params: {
     throw new Error(`Symbol too long (${symbolNormalized.length}/100). Shorten the market name / symbol.`);
   }
 
-  // Build cutArg and initFacet from server (source of truth, compiled artifacts)
+  // Build cutArg and initFacet — use prefetched data if available, otherwise fetch live
   let initFacet: string | null = null;
   let cutArg: Array<[string, number, string[]]> = [];
-  try {
-    onProgress?.({ step: 'cut_fetch', status: 'start' });
-    const res = await fetch('/api/orderbook/cut', { method: 'GET' });
-    if (!res.ok) throw new Error(`cut API ${res.status}`);
-    const data = await res.json();
-    const cut = Array.isArray(data?.cut) ? data.cut : [];
-    initFacet = data?.initFacet || null;
-    cutArg = cut.map((c: any) => [c.facetAddress, 0, c.functionSelectors]);
+  if (prefetchedCut && prefetchedCut.cutArg.length > 0 && prefetchedCut.initFacet) {
+    cutArg = prefetchedCut.cutArg;
+    initFacet = prefetchedCut.initFacet;
     // eslint-disable-next-line no-console
-    console.log('%c🧬 Using server-provided cutArg from compiled artifacts', 'color:#22c55e; font-weight:700;', {
-      initFacet, facets: cut.map((c: any) => ({ facet: c.facetAddress, selectors: (c.functionSelectors || []).length })),
-    });
-    onProgress?.({ step: 'cut_fetch', status: 'success', data: { facets: cutArg.length } });
-    // Nudge UI to next step consistently even when server provides the cut
-    onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
-  } catch (e: any) {
-    // Fallback: compute from local ABIs + env addresses if API unavailable
-    // eslint-disable-next-line no-console
-    console.warn('[createMarketOnChain] cut API unavailable; falling back to local ABIs + env addresses:', e?.message || e);
-    onProgress?.({ step: 'cut_fetch', status: 'error', data: { fallback: true, error: e?.message || String(e) } });
-    const adminAddr = (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET;
-    const pricingAddr = (process.env as any).NEXT_PUBLIC_OB_PRICING_FACET;
-    const placementAddr = (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
-    const execAddr = (process.env as any).NEXT_PUBLIC_OB_TRADE_EXECUTION_FACET;
-    const liqAddr = (process.env as any).NEXT_PUBLIC_OB_LIQUIDATION_FACET;
-    const viewAddr = (process.env as any).NEXT_PUBLIC_OB_VIEW_FACET;
-    const settleAddr = (process.env as any).NEXT_PUBLIC_OB_SETTLEMENT_FACET;
-    const metaAddr = (process.env as any).NEXT_PUBLIC_META_TRADE_FACET;
-    const vaultAddr =
-      (process.env as any).NEXT_PUBLIC_ORDERBOOK_VALUT_FACET ||
-      (process.env as any).NEXT_PUBLIC_ORDERBOOK_VAULT_FACET;
-    initFacet = (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET || null;
-    const adminSelectors = selectorsFromAbi(OBAdminFacetABI as any[]);
-    const pricingSelectors = selectorsFromAbi(OBPricingFacetABI as any[]);
-    const placementSelectors = selectorsFromAbi(OBOrderPlacementFacetABI as any[]);
-    const execSelectors = selectorsFromAbi(OBTradeExecutionFacetABI as any[]);
-    const liqSelectors = selectorsFromAbi(OBLiquidationFacetABI as any[]);
-    const viewSelectors = selectorsFromAbi(OBViewFacetABI as any[]);
-    const settleSelectors = selectorsFromAbi(OBSettlementFacetABI as any[]);
-    const vaultSelectors = selectorsFromAbi(((OrderBookVaultAdminFacetArtifact as any)?.abi || []) as any[]);
-    const lifecycleAddr = (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
-    const lifecycleSelectors = selectorsFromAbi(MarketLifecycleFacetABI as any[]);
-    const metaSelectors = selectorsFromAbi(((MetaTradeFacetArtifact as any)?.abi || []) as any[]);
-    cutArg = [
-      [adminAddr, 0, adminSelectors],
-      [pricingAddr, 0, pricingSelectors],
-      [placementAddr, 0, placementSelectors],
-      [execAddr, 0, execSelectors],
-      [liqAddr, 0, liqSelectors],
-      [viewAddr, 0, viewSelectors],
-      [settleAddr, 0, settleSelectors],
-      [vaultAddr, 0, vaultSelectors],
-      [lifecycleAddr, 0, lifecycleSelectors],
-      [metaAddr, 0, metaSelectors],
-    ].filter(([addr]) => typeof addr === 'string' && ethers.isAddress(String(addr))) as any;
-    onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
+    console.log('%c⚡ Using pre-fetched cut data (skipped /api/orderbook/cut)', 'color:#22c55e; font-weight:700;', { facets: cutArg.length });
+    onProgress?.({ step: 'cut_fetch', status: 'success', data: { facets: cutArg.length, prefetched: true } });
+    onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length, prefetched: true } });
+  } else {
+    try {
+      onProgress?.({ step: 'cut_fetch', status: 'start' });
+      const res = await fetch('/api/orderbook/cut', { method: 'GET' });
+      if (!res.ok) throw new Error(`cut API ${res.status}`);
+      const data = await res.json();
+      const cut = Array.isArray(data?.cut) ? data.cut : [];
+      initFacet = data?.initFacet || null;
+      cutArg = cut.map((c: any) => [c.facetAddress, 0, c.functionSelectors]);
+      // eslint-disable-next-line no-console
+      console.log('%c🧬 Using server-provided cutArg from compiled artifacts', 'color:#22c55e; font-weight:700;', {
+        initFacet, facets: cut.map((c: any) => ({ facet: c.facetAddress, selectors: (c.functionSelectors || []).length })),
+      });
+      onProgress?.({ step: 'cut_fetch', status: 'success', data: { facets: cutArg.length } });
+      onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
+    } catch (e: any) {
+      // Fallback: compute from local ABIs + env addresses if API unavailable
+      // eslint-disable-next-line no-console
+      console.warn('[createMarketOnChain] cut API unavailable; falling back to local ABIs + env addresses:', e?.message || e);
+      onProgress?.({ step: 'cut_fetch', status: 'error', data: { fallback: true, error: e?.message || String(e) } });
+      const adminAddr = (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET;
+      const pricingAddr = (process.env as any).NEXT_PUBLIC_OB_PRICING_FACET;
+      const placementAddr = (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
+      const execAddr = (process.env as any).NEXT_PUBLIC_OB_TRADE_EXECUTION_FACET;
+      const liqAddr = (process.env as any).NEXT_PUBLIC_OB_LIQUIDATION_FACET;
+      const viewAddr = (process.env as any).NEXT_PUBLIC_OB_VIEW_FACET;
+      const settleAddr = (process.env as any).NEXT_PUBLIC_OB_SETTLEMENT_FACET;
+      const metaAddr = (process.env as any).NEXT_PUBLIC_META_TRADE_FACET;
+      const vaultAddr =
+        (process.env as any).NEXT_PUBLIC_ORDERBOOK_VALUT_FACET ||
+        (process.env as any).NEXT_PUBLIC_ORDERBOOK_VAULT_FACET;
+      initFacet = (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET || null;
+      const adminSelectors = selectorsFromAbi(OBAdminFacetABI as any[]);
+      const pricingSelectors = selectorsFromAbi(OBPricingFacetABI as any[]);
+      const placementSelectors = selectorsFromAbi(OBOrderPlacementFacetABI as any[]);
+      const execSelectors = selectorsFromAbi(OBTradeExecutionFacetABI as any[]);
+      const liqSelectors = selectorsFromAbi(OBLiquidationFacetABI as any[]);
+      const viewSelectors = selectorsFromAbi(OBViewFacetABI as any[]);
+      const settleSelectors = selectorsFromAbi(OBSettlementFacetABI as any[]);
+      const vaultSelectors = selectorsFromAbi(((OrderBookVaultAdminFacetArtifact as any)?.abi || []) as any[]);
+      const lifecycleAddr = (process.env as any).NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
+      const lifecycleSelectors = selectorsFromAbi(MarketLifecycleFacetABI as any[]);
+      const metaSelectors = selectorsFromAbi(((MetaTradeFacetArtifact as any)?.abi || []) as any[]);
+      cutArg = [
+        [adminAddr, 0, adminSelectors],
+        [pricingAddr, 0, pricingSelectors],
+        [placementAddr, 0, placementSelectors],
+        [execAddr, 0, execSelectors],
+        [liqAddr, 0, liqSelectors],
+        [viewAddr, 0, viewSelectors],
+        [settleAddr, 0, settleSelectors],
+        [vaultAddr, 0, vaultSelectors],
+        [lifecycleAddr, 0, lifecycleSelectors],
+        [metaAddr, 0, metaSelectors],
+      ].filter(([addr]) => typeof addr === 'string' && ethers.isAddress(String(addr))) as any;
+      onProgress?.({ step: 'cut_build', status: 'success', data: { facets: cutArg.length } });
+    }
   }
   // 🔎 High-visibility diagnostics for cutArg (full + summary)
   try {
@@ -232,15 +349,8 @@ export async function createMarketOnChain(params: {
   const factoryAbi =
     (FuturesMarketFactoryGenerated as any)?.abi ||
     (FuturesMarketFactoryGenerated as any);
-  // Helper ABI to mirror on-chain hashing/domain (added in FuturesMarketFactory)
-  const helperAbi = [
-    'function computeTagsHash(string[] tags) view returns (bytes32)',
-    'function computeCutHash((address facetAddress,uint8 action,bytes4[] functionSelectors)[] cut) view returns (bytes32)',
-    'function metaCreateNonce(address) view returns (uint256)',
-    'function eip712DomainInfo() view returns (string name,string version,uint256 chainId,address verifyingContract,bytes32 domainSeparator)',
-  ];
   const gaslessEnabled = String((process.env as any).NEXT_PUBLIC_GASLESS_CREATE_ENABLED || '').toLowerCase() === 'true';
-  const mergedAbi = Array.isArray(factoryAbi) ? [...factoryAbi, ...(gaslessEnabled ? helperAbi : [])] : (gaslessEnabled ? helperAbi : factoryAbi);
+  const mergedAbi = Array.isArray(factoryAbi) ? [...factoryAbi, ...(gaslessEnabled ? HELPER_ABI : [])] : (gaslessEnabled ? HELPER_ABI : factoryAbi);
   const factory = new ethers.Contract(factoryAddress, mergedAbi, signer);
 
   // Params
@@ -260,44 +370,64 @@ export async function createMarketOnChain(params: {
   if (gaslessEnabled) {
     // Gasless path: sign typed data and submit via backend relayer
     onProgress?.({ step: 'meta_prepare', status: 'start' });
-    // helpers to hash arrays consistent with contract (prefer on-chain helper)
+
+    // Use pre-fetched hashes when available, otherwise compute live
     let tagsHash: string;
     let cutHash: string;
-    try {
-      tagsHash = await factory.computeTagsHash(tags);
-    } catch {
-      tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
-    }
-    try {
-      const helperCut = cutArg.map((c) => ({ facetAddress: c[0], action: c[1], functionSelectors: c[2] }));
-      cutHash = await factory.computeCutHash(helperCut as any);
-    } catch {
-      const perCutHashes: string[] = [];
-      for (const entry of cutArg) {
-        const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((entry?.[2] || []).length).fill('bytes4'), entry?.[2] || []));
-        const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [entry?.[0], entry?.[1], selectorsHash]);
-        perCutHashes.push(ethers.keccak256(enc));
+
+    if (prefetchedCut?.emptyTagsHash && tags.length === 0) {
+      tagsHash = prefetchedCut.emptyTagsHash;
+    } else {
+      try {
+        tagsHash = await factory.computeTagsHash(tags);
+      } catch {
+        tagsHash = ethers.keccak256(ethers.solidityPacked(new Array(tags.length).fill('string'), tags));
       }
-      cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
     }
-    // fetch meta nonce
+
+    if (prefetchedCut?.cutHash) {
+      cutHash = prefetchedCut.cutHash;
+    } else {
+      try {
+        const helperCut = cutArg.map((c) => ({ facetAddress: c[0], action: c[1], functionSelectors: c[2] }));
+        cutHash = await factory.computeCutHash(helperCut as any);
+      } catch {
+        const perCutHashes: string[] = [];
+        for (const entry of cutArg) {
+          const selectorsHash = ethers.keccak256(ethers.solidityPacked(new Array((entry?.[2] || []).length).fill('bytes4'), entry?.[2] || []));
+          const enc = ethers.AbiCoder.defaultAbiCoder().encode(['address','uint8','bytes32'], [entry?.[0], entry?.[1], selectorsHash]);
+          perCutHashes.push(ethers.keccak256(enc));
+        }
+        cutHash = ethers.keccak256(ethers.solidityPacked(new Array(perCutHashes.length).fill('bytes32'), perCutHashes));
+      }
+    }
+
+    // fetch meta nonce (always live — depends on signer address)
     let nonceBn: bigint = 0n;
     try {
       nonceBn = await factory.metaCreateNonce(signerAddress);
     } catch {}
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 15 * 60); // 15 minutes
-    // Domain: prefer on-chain helper to avoid env drift
+
+    // Domain: use pre-fetched if available, otherwise fetch live
     let domainName = String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_NAME || 'DexeteraFactory');
     let domainVersion = String((process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_VERSION || '1');
     let domainChainId = Number(network.chainId);
     let domainVerifying = factoryAddress;
-    try {
-      const info = await factory.eip712DomainInfo();
-      if (info?.name) domainName = info.name;
-      if (info?.version) domainVersion = info.version;
-      if (info?.chainId) domainChainId = Number(info.chainId);
-      if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
-    } catch {}
+    if (prefetchedCut?.eip712Domain) {
+      domainName = prefetchedCut.eip712Domain.name;
+      domainVersion = prefetchedCut.eip712Domain.version;
+      domainChainId = prefetchedCut.eip712Domain.chainId;
+      domainVerifying = prefetchedCut.eip712Domain.verifyingContract;
+    } else {
+      try {
+        const info = await factory.eip712DomainInfo();
+        if (info?.name) domainName = info.name;
+        if (info?.version) domainVersion = info.version;
+        if (info?.chainId) domainChainId = Number(info.chainId);
+        if (info?.verifyingContract && ethers.isAddress(info.verifyingContract)) domainVerifying = info.verifyingContract;
+      } catch {}
+    }
     const domain = {
       name: domainName,
       version: domainVersion,

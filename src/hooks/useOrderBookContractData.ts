@@ -537,6 +537,19 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
             if (mid && mid.startsWith('0x')) params.set('marketIdBytes32', mid);
             params.set('levels', String(requestedLevels));
             const resp = await fetch(`/api/orderbook/live?${params.toString()}`, { method: 'GET' });
+
+            if (resp.status === 404) {
+              if (!cancelled) {
+                setError(`Market not found: ${normalizedSymbol}`);
+                setIsLoading(false);
+              }
+              try { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; } } catch {}
+              try { if (fastPollTimerRef.current) { clearInterval(fastPollTimerRef.current); fastPollTimerRef.current = null; } } catch {}
+              try { if (addressRetryTimerRef.current) { clearTimeout(addressRetryTimerRef.current); addressRetryTimerRef.current = null; } } catch {}
+              fetchInProgressRef.current = false;
+              return;
+            }
+
             if (resp.ok) {
               const json = await resp.json();
               const ob = (json as any)?.data || null;
@@ -596,15 +609,25 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
         }
 
         const address = await resolveOrderBookAddress();
-        console.log('The fetchData function', address);
         if (!address) {
-          // Schedule a jittered retry instead of throwing
           const attempt = ++resolveAttemptsRef.current;
+          const MAX_RESOLVE_ATTEMPTS = 3;
+          if (attempt >= MAX_RESOLVE_ATTEMPTS) {
+            console.warn(`[OrderBook] Address resolution failed after ${attempt} attempts for ${symbol}. Giving up.`);
+            if (!cancelled) {
+              setError(`Market not found: ${symbol}`);
+              setIsLoading(false);
+            }
+            try { if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; } } catch {}
+            try { if (fastPollTimerRef.current) { clearInterval(fastPollTimerRef.current); fastPollTimerRef.current = null; } } catch {}
+            try { if (addressRetryTimerRef.current) { clearTimeout(addressRetryTimerRef.current); addressRetryTimerRef.current = null; } } catch {}
+            fetchInProgressRef.current = false;
+            return;
+          }
           const baseDelay = Math.min(1500 * attempt, 8000);
           const jitter = Math.floor(Math.random() * 400);
           const delay = baseDelay + jitter;
-          console.warn(`[OrderBook] Address not resolved yet for ${symbol}. Retrying in ${delay}ms (attempt ${attempt})`);
-          // Immediately allow subsequent fetch attempts (e.g., when options change)
+          console.warn(`[OrderBook] Address not resolved yet for ${symbol}. Retrying in ${delay}ms (attempt ${attempt}/${MAX_RESOLVE_ATTEMPTS})`);
           fetchInProgressRef.current = false;
           try { if (addressRetryTimerRef.current) { clearTimeout(addressRetryTimerRef.current); } } catch {}
           addressRetryTimerRef.current = setTimeout(() => {
