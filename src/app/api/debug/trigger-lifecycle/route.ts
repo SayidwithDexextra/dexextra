@@ -1,43 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
+export const maxDuration = 300;
 
 const VALID_ACTIONS = ['rollover', 'settlement_start', 'settlement_finalize'] as const;
 
 export async function POST(req: NextRequest) {
-  const nodeEnv = process.env.NODE_ENV;
-  const devTools = process.env.NEXT_PUBLIC_DEV_TOOLS;
-  const debugPages = process.env.NEXT_PUBLIC_ENABLE_DEBUG_PAGES;
-
-  const isDev =
-    nodeEnv !== 'production' ||
-    devTools === 'true' ||
-    String(debugPages || '').toLowerCase() === 'true';
-
-  if (!isDev) {
-    console.warn('[trigger-lifecycle] Blocked: NODE_ENV=%s, DEV_TOOLS=%s, DEBUG_PAGES=%s', nodeEnv, devTools, debugPages);
-    return NextResponse.json({ error: 'Debug endpoints are disabled in production' }, { status: 403 });
-  }
-
   const body = await req.json().catch(() => null);
   if (!body) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { action, market_id, price } = body;
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return NextResponse.json({ error: 'CRON_SECRET not configured on the server' }, { status: 500 });
+  }
+
+  const clientSecret =
+    req.headers.get('x-admin-secret') ||
+    (typeof body.admin_secret === 'string' ? body.admin_secret : '');
+
+  if (!clientSecret || clientSecret !== cronSecret) {
+    return NextResponse.json({ error: 'Unauthorized – invalid admin secret' }, { status: 403 });
+  }
+
+  const { action, market_id, market_address, price } = body;
 
   if (!market_id || typeof market_id !== 'string') {
     return NextResponse.json({ error: 'market_id is required' }, { status: 400 });
   }
 
+  const baseUrl =
+    process.env.APP_URL?.replace(/\/+$/, '') ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${process.env.PORT || 3000}`);
+
   if (action === 'challenge') {
     if (!price || typeof price !== 'number' || price <= 0) {
       return NextResponse.json({ error: 'A positive price is required for challenge' }, { status: 400 });
     }
-
-    const baseUrl =
-      process.env.APP_URL?.replace(/\/+$/, '') ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${process.env.PORT || 3000}`);
 
     const res = await fetch(`${baseUrl}/api/settlements/challenge`, {
       method: 'POST',
@@ -56,14 +56,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    return NextResponse.json({ error: 'CRON_SECRET not configured on the server' }, { status: 500 });
+  const lifecycleBody: Record<string, unknown> = { action, market_id };
+  if (typeof market_address === 'string' && market_address) {
+    lifecycleBody.marketAddress = market_address;
   }
-
-  const baseUrl =
-    process.env.APP_URL?.replace(/\/+$/, '') ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${process.env.PORT || 3000}`);
 
   const res = await fetch(`${baseUrl}/api/cron/market-lifecycle`, {
     method: 'POST',
@@ -71,7 +67,7 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${cronSecret}`,
     },
-    body: JSON.stringify({ action, market_id }),
+    body: JSON.stringify(lifecycleBody),
   });
 
   const data = await res.json().catch(() => ({}));

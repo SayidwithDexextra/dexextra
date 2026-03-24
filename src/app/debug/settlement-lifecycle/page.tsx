@@ -100,6 +100,20 @@ function timeUntil(d: string | null) {
   return `${hours}h ${mins}m`;
 }
 
+const ADMIN_SECRET_KEY = 'dexetera_admin_secret';
+
+function useAdminSecret() {
+  const [secret, setSecretState] = useState<string>('');
+  useEffect(() => {
+    try { setSecretState(localStorage.getItem(ADMIN_SECRET_KEY) || ''); } catch {}
+  }, []);
+  const setSecret = useCallback((v: string) => {
+    setSecretState(v);
+    try { localStorage.setItem(ADMIN_SECRET_KEY, v); } catch {}
+  }, []);
+  return [secret, setSecret] as const;
+}
+
 export default function SettlementLifecyclePage() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +124,8 @@ export default function SettlementLifecyclePage() {
   const [actionResults, setActionResults] = useState<ActionResult[]>([]);
   const [inflight, setInflight] = useState<Set<string>>(new Set());
   const [challengePrice, setChallengePrice] = useState<string>('');
+  const [adminSecret, setAdminSecret] = useAdminSecret();
+  const [showSecret, setShowSecret] = useState(false);
 
   const fetchMarkets = useCallback(async () => {
     setLoading(true);
@@ -133,29 +149,33 @@ export default function SettlementLifecyclePage() {
   }, [fetchMarkets]);
 
   const triggerAction = useCallback(
-    async (marketId: string, action: Action) => {
-      const key = `${marketId}:${action}`;
+    async (market: Market, action: Action) => {
+      const key = `${market.id}:${action}`;
       setInflight((prev) => new Set(prev).add(key));
 
-      const body: Record<string, unknown> = { action, market_id: marketId };
+      if (!adminSecret) {
+        setActionResults((prev) => [
+          { marketId: market.id, action, status: 'error', error: 'Admin secret is required — enter it in the header bar', timestamp: new Date().toISOString() },
+          ...prev,
+        ]);
+        setInflight((prev) => { const next = new Set(prev); next.delete(key); return next; });
+        return;
+      }
+
+      const body: Record<string, unknown> = {
+        action,
+        market_id: market.id,
+        market_address: market.market_address || undefined,
+      };
+
       if (action === 'challenge') {
         const price = parseFloat(challengePrice);
         if (!price || price <= 0) {
           setActionResults((prev) => [
-            {
-              marketId,
-              action,
-              status: 'error',
-              error: 'Enter a valid positive price for challenge',
-              timestamp: new Date().toISOString(),
-            },
+            { marketId: market.id, action, status: 'error', error: 'Enter a valid positive price for challenge', timestamp: new Date().toISOString() },
             ...prev,
           ]);
-          setInflight((prev) => {
-            const next = new Set(prev);
-            next.delete(key);
-            return next;
-          });
+          setInflight((prev) => { const next = new Set(prev); next.delete(key); return next; });
           return;
         }
         body.price = price;
@@ -164,13 +184,16 @@ export default function SettlementLifecyclePage() {
       try {
         const res = await fetch('/api/debug/trigger-lifecycle', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-secret': adminSecret,
+          },
           body: JSON.stringify(body),
         });
         const data = await res.json().catch(() => ({}));
         setActionResults((prev) => [
           {
-            marketId,
+            marketId: market.id,
             action,
             status: res.ok ? 'success' : 'error',
             data: res.ok ? data : undefined,
@@ -179,10 +202,11 @@ export default function SettlementLifecyclePage() {
           },
           ...prev,
         ]);
+        if (res.ok) fetchMarkets();
       } catch (e: unknown) {
         setActionResults((prev) => [
           {
-            marketId,
+            marketId: market.id,
             action,
             status: 'error',
             error: e instanceof Error ? e.message : String(e),
@@ -191,14 +215,10 @@ export default function SettlementLifecyclePage() {
           ...prev,
         ]);
       } finally {
-        setInflight((prev) => {
-          const next = new Set(prev);
-          next.delete(key);
-          return next;
-        });
+        setInflight((prev) => { const next = new Set(prev); next.delete(key); return next; });
       }
     },
-    [challengePrice],
+    [adminSecret, challengePrice, fetchMarkets],
   );
 
   const uniqueStatuses = Array.from(new Set(markets.map((m) => m.market_status))).sort();
@@ -221,7 +241,7 @@ export default function SettlementLifecyclePage() {
     <div className="min-h-screen bg-[#0A0A0A] p-4 text-white">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
-        <div className="mb-4 flex items-center gap-3">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           <a
             href="/debug"
             className="rounded border border-[#333] bg-[#141414] px-3 py-1.5 text-[11px] text-[#9CA3AF] hover:bg-[#1A1A1A] hover:text-white"
@@ -229,13 +249,34 @@ export default function SettlementLifecyclePage() {
             &larr; Debug
           </a>
           <h1 className="text-lg font-semibold tracking-tight">Settlement Lifecycle</h1>
-          <button
-            onClick={fetchMarkets}
-            disabled={loading}
-            className="ml-auto rounded border border-[#333] bg-[#141414] px-3 py-1.5 text-[11px] text-[#9CA3AF] hover:bg-[#1A1A1A] hover:text-white disabled:opacity-40"
-          >
-            {loading ? 'Loading…' : 'Refresh'}
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative flex items-center">
+              <input
+                className="w-[220px] rounded border border-[#333] bg-[#0A0A0A] px-3 py-1.5 pr-8 text-[11px] text-white placeholder-[#555] focus:border-amber-600/50 focus:outline-none font-mono"
+                type={showSecret ? 'text' : 'password'}
+                placeholder="Admin secret (CRON_SECRET)"
+                value={adminSecret}
+                onChange={(e) => setAdminSecret(e.target.value)}
+              />
+              <button
+                onClick={() => setShowSecret(!showSecret)}
+                className="absolute right-2 text-[10px] text-[#666] hover:text-white"
+                title={showSecret ? 'Hide' : 'Show'}
+              >
+                {showSecret ? '◉' : '○'}
+              </button>
+            </div>
+            {adminSecret && (
+              <span className="text-[10px] text-emerald-500">●</span>
+            )}
+            <button
+              onClick={fetchMarkets}
+              disabled={loading}
+              className="rounded border border-[#333] bg-[#141414] px-3 py-1.5 text-[11px] text-[#9CA3AF] hover:bg-[#1A1A1A] hover:text-white disabled:opacity-40"
+            >
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -406,8 +447,8 @@ export default function SettlementLifecyclePage() {
                               </div>
                             )}
                             <button
-                              onClick={() => triggerAction(selected.id, action)}
-                              disabled={isLoading}
+                              onClick={() => triggerAction(selected, action)}
+                              disabled={isLoading || !adminSecret}
                               className={`w-full rounded px-4 py-2.5 text-left transition-colors disabled:opacity-50 ${meta.color} ${meta.hoverColor}`}
                             >
                               <div className="flex items-center justify-between">
