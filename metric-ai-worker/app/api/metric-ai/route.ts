@@ -22,7 +22,10 @@ const InputSchema = z.object({
   related_market_id: z.string().optional(),
   related_market_identifier: z.string().optional(),
   user_address: z.string().optional(),
-  context: z.enum(['create', 'settlement']).optional()
+  context: z.enum(['create', 'settlement']).optional(),
+  callbackUrl: z.string().url().optional(),
+  callbackSecret: z.string().optional(),
+  callbackMeta: z.record(z.unknown()).optional(),
 });
 
 const MAX_RAW_HTML_CHARS = Number(process.env.METRIC_AI_MAX_RAW_HTML_CHARS || 250_000);
@@ -307,6 +310,30 @@ function extractChartSignals(rawHtml: string) {
   };
 }
 
+async function deliverCallback(
+  callbackUrl: string | undefined,
+  callbackSecret: string | undefined,
+  callbackMeta: Record<string, unknown> | undefined,
+  jobId: string,
+  status: 'completed' | 'failed',
+  result: Record<string, unknown> | null,
+  error?: string,
+) {
+  if (!callbackUrl) return;
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (callbackSecret) headers['x-callback-secret'] = callbackSecret;
+    const res = await fetch(callbackUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ jobId, status, result, error: error || null, meta: callbackMeta || {} }),
+    });
+    console.log(`[Metric-AI] 📡 Callback delivered to ${callbackUrl}`, { status: res.status, jobId });
+  } catch (err: any) {
+    console.error(`[Metric-AI] ❌ Callback delivery failed`, { callbackUrl, jobId, error: err?.message });
+  }
+}
+
 function corsHeaders(origin?: string) {
   const allowRaw = process.env.ALLOW_ORIGIN || '*';
   // Always vary on Origin so CDNs/CDN cache correctly
@@ -541,6 +568,8 @@ export async function POST(req: NextRequest) {
               console.log('[Metric-AI] ⚡ FAST PATH COMPLETED', {
                 jobId, totalMs, value: fastResult.value, confidence: fastConfidence,
               });
+
+              await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', fastResolution);
 
               return NextResponse.json({
                 jobId, status: 'completed', result: fastResolution,
@@ -1206,6 +1235,8 @@ export async function POST(req: NextRequest) {
           resolutionId,
         });
         console.log('[Metric-AI] ═══════════════════════════════════════════════════');
+
+        await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', resolution);
         
       } catch (err: any) {
         // Always clean up live browsers on error
@@ -1231,6 +1262,8 @@ export async function POST(req: NextRequest) {
           error: err?.message || 'unknown',
           completed_at: new Date()
         }).eq('job_id', jobId);
+
+        await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'failed', null, err?.message || 'unknown');
       }
     });
 

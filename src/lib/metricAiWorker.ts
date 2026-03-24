@@ -1,5 +1,7 @@
 function normalizeBaseUrl(url: string) {
-  return String(url || '').trim().replace(/\/+$/, '');
+  let u = String(url || '').trim().replace(/\/+$/, '');
+  if (u && !/^https?:\/\//i.test(u)) u = `https://${u}`;
+  return u;
 }
 
 function isLocalhostHost(host: string) {

@@ -684,6 +684,9 @@ export async function runSingleSettlementCheck(
  * "settlement_not_due" date guard. Used when QStash fires settlement_start
  * before the settlement date (challenge window should be open BEFORE T0
  * so it expires right when the market finalises).
+ *
+ * Instead of polling the AI worker, this fires the job with a callbackUrl
+ * so the AI worker POSTs the result back when done.
  */
 export async function forceStartSettlementWindow(
   supabase: SupabaseClient,
@@ -707,6 +710,191 @@ export async function forceStartSettlementWindow(
     };
   }
 
-  const result = await maybeStartSettlementWindow(supabase, market);
-  return { ok: true, mode: 'settlement_start', result };
+  const syncResult = await settlementSyncLifecycleOnChain(market);
+  if (!syncResult.ok) {
+    console.warn(`[settlement-engine] syncLifecycle warning for ${market.market_identifier}: ${syncResult.error}`);
+  }
+
+  const chainCheck = await verifyOnchainSettlementTime(market);
+  if (!chainCheck.ok) {
+    return {
+      ok: false, mode: 'settlement_start',
+      error: chainCheck.reason || 'chain_check_failed',
+    };
+  }
+
+  const jobResult = await fireSettlementAIJob(market);
+  if (!jobResult.ok) {
+    return { ok: false, mode: 'settlement_start', error: jobResult.error };
+  }
+
+  return {
+    ok: true, mode: 'settlement_start',
+    result: {
+      marketId: market.id,
+      marketIdentifier: market.market_identifier,
+      action: 'ai_job_fired',
+      ok: true,
+      details: { jobId: jobResult.jobId, callbackMode: true },
+    },
+  };
+}
+
+// ── Webhook-based AI job (fire-and-forget) ──
+
+async function fireSettlementAIJob(
+  market: MarketRow,
+): Promise<{ ok: boolean; jobId?: string; error?: string }> {
+  const { metricAiWorkerUrl } = getConfig();
+  if (!metricAiWorkerUrl) return { ok: false, error: 'metric_ai_worker_url_not_configured' };
+
+  const urls = metricUrlsForMarket(market);
+  if (urls.length === 0) return { ok: false, error: 'no_metric_urls' };
+
+  const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
+  if (!appUrl) return { ok: false, error: 'APP_URL_not_configured' };
+
+  const callbackUrl = `${appUrl}/api/settlement/ai-callback`;
+  const callbackSecret = process.env.CRON_SECRET || '';
+
+  const richDescription = [
+    `Settlement price determination for "${market.name || market.market_identifier}".`,
+    market.description ? `Market description: ${market.description}.` : '',
+    `Metric source URL(s): ${urls.join(', ')}.`,
+    `Find the current numeric value of this metric from the source page(s).`,
+  ].filter(Boolean).join(' ');
+
+  console.log(`[settlement-engine] firing AI job (webhook) for ${market.market_identifier}`, {
+    metricAiWorkerUrl, urls, callbackUrl,
+  });
+
+  try {
+    const res = await fetch(`${metricAiWorkerUrl}/api/metric-ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metric: market.name || market.market_identifier,
+        description: richDescription,
+        urls,
+        related_market_id: market.id,
+        related_market_identifier: market.market_identifier,
+        context: 'settlement',
+        callbackUrl,
+        callbackSecret,
+        callbackMeta: {
+          marketId: market.id,
+          marketIdentifier: market.market_identifier,
+          marketAddress: market.market_address,
+        },
+      }),
+    });
+
+    if (res.status !== 202) {
+      const errBody = await res.text().catch(() => '');
+      return { ok: false, error: `ai_worker_returned_${res.status}: ${errBody.slice(0, 300)}` };
+    }
+
+    const json = await res.json().catch(() => ({}));
+    const jobId = typeof json?.jobId === 'string' ? json.jobId : '';
+    if (!jobId) return { ok: false, error: 'ai_worker_returned_no_jobId' };
+
+    console.log(`[settlement-engine] AI job fired (webhook): ${jobId} for ${market.market_identifier}`);
+    return { ok: true, jobId };
+  } catch (err) {
+    return { ok: false, error: `ai_job_fetch_failed: ${String(err)}` };
+  }
+}
+
+/**
+ * Called by the /api/settlement/ai-callback webhook when the AI worker
+ * finishes processing. Commits evidence on-chain and updates Supabase
+ * to SETTLEMENT_REQUESTED.
+ */
+export async function completeSettlementFromAIResult(
+  marketId: string,
+  ai: { price: number; jobId: string; waybackUrl: string | null; waybackPageUrl: string | null; screenshotUrl: string | null },
+): Promise<{ ok: boolean; reason?: string; details?: Record<string, unknown> }> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !key) return { ok: false, reason: 'supabase_not_configured' };
+
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabase = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+
+  const { data, error: fetchErr } = await supabase
+    .from('markets')
+    .select(MARKET_SELECT)
+    .eq('id', marketId)
+    .maybeSingle();
+
+  if (fetchErr || !data) return { ok: false, reason: `market_fetch_failed` };
+  const market = data as MarketRow;
+
+  if (market.market_status !== 'ACTIVE') {
+    return { ok: false, reason: `market_status_is_${market.market_status}` };
+  }
+
+  const evidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
+  let evidenceHash: string | null = null;
+  if (evidenceUrl) {
+    const commitResult = await commitEvidenceOnChain(market, evidenceUrl);
+    if (commitResult.ok) {
+      evidenceHash = commitResult.evidenceHash ?? null;
+    } else {
+      console.warn(`[settlement-engine] evidence commit warning for ${market.market_identifier}: ${commitResult.error}`);
+    }
+  }
+
+  const { defaultWindowSeconds } = getConfig();
+  const cfg = asRecord(market.market_config);
+  const perMarketWindow = typeof cfg.settlement_window_seconds === 'number' && cfg.settlement_window_seconds > 0
+    ? cfg.settlement_window_seconds
+    : defaultWindowSeconds;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + perMarketWindow * 1000);
+
+  const updatedConfig = nextMarketConfig(market, {
+    stage: 'window_started',
+    started_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
+    ai_job_id: ai.jobId,
+  });
+  if (ai.waybackUrl) updatedConfig.settlement_wayback_url = ai.waybackUrl;
+  if (ai.waybackPageUrl) updatedConfig.settlement_wayback_page_url = ai.waybackPageUrl;
+  if (ai.screenshotUrl) updatedConfig.settlement_screenshot_url = ai.screenshotUrl;
+  if (evidenceHash) updatedConfig.settlement_evidence_hash = evidenceHash;
+
+  const { error: updateErr } = await supabase
+    .from('markets')
+    .update({
+      proposed_settlement_value: ai.price,
+      proposed_settlement_at: now.toISOString(),
+      settlement_window_expires_at: expiresAt.toISOString(),
+      proposed_settlement_by: 'AI_SYSTEM',
+      market_status: 'SETTLEMENT_REQUESTED',
+      market_config: updatedConfig,
+      updated_at: now.toISOString(),
+    })
+    .eq('id', market.id)
+    .eq('market_status', 'ACTIVE');
+
+  if (updateErr) {
+    return { ok: false, reason: `db_update_failed: ${updateErr.message}` };
+  }
+
+  console.log(`[settlement-engine] settlement started via webhook callback for ${market.market_identifier}`, {
+    price: ai.price, jobId: ai.jobId, evidenceHash, expiresAt: expiresAt.toISOString(),
+  });
+
+  return {
+    ok: true,
+    details: {
+      price: ai.price,
+      jobId: ai.jobId,
+      evidenceHash,
+      expiresAt: expiresAt.toISOString(),
+      waybackUrl: ai.waybackUrl,
+      waybackPageUrl: ai.waybackPageUrl,
+    },
+  };
 }
