@@ -38,6 +38,13 @@ const MAX_NUMERIC_CANDIDATES = Number(process.env.METRIC_AI_MAX_NUMERIC_CANDIDAT
 // Screenshot and vision analysis feature flag
 const ENABLE_VISION_ANALYSIS = process.env.ENABLE_VISION_ANALYSIS !== 'false';
 
+// Tiered OpenAI models for Phase 3 fusion
+const OPENAI_MODEL_FULL = process.env.OPENAI_MODEL || 'gpt-4.1';
+const OPENAI_MODEL_FAST = process.env.OPENAI_MODEL_FAST || 'gpt-4.1-mini';
+
+// Vision short-circuit threshold: skip OpenAI when consensus is this strong
+const VISION_SHORTCIRCUIT_CONFIDENCE = Number(process.env.VISION_SHORTCIRCUIT_CONFIDENCE || 0.7);
+
 // Type for tracking screenshot and vision data per URL
 interface SourceScreenshotData {
   url: string;
@@ -873,89 +880,202 @@ export async function POST(req: NextRequest) {
         const successfulScreenshots = Array.from(screenshotDataMap.values()).filter(d => d.screenshotResult?.success).length;
         const totalUrls = input.urls.length;
 
-        // --- Phase 3: Enhanced fusion prompt ---
+        // --- Phase 3: Three-tier fusion ---
+        //
+        // Tier 1 — Vision short-circuit: full consensus agreement at high
+        //          confidence → use the vision value directly, skip OpenAI.
+        // Tier 2 — Lightweight fusion: partial vision/locator evidence →
+        //          trimmed prompt + gpt-4.1-mini.
+        // Tier 3 — Full fusion: no vision data → full prompt + gpt-4.1.
+
         const historicalPrompt = formatHistoricalContextForPrompt(historicalStats);
 
-        const prompt = [
-          `METRIC: ${input.metric}`,
-          input.description ? `DESCRIPTION: ${input.description}` : '',
-          `TASK: Determine the current numeric value and a tradable asset_price_suggestion.`,
-          `Return JSON: { "value": "...", "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
-          ``,
-          `EVIDENCE PRIORITY (highest trust to lowest — use the best available; cite it):`,
-          `1. LOCATOR_EXTRACTED_VALUE — Pre-validated CSS/XPath/JS selector from market creation. If present and numeric, this is almost certainly correct.`,
-          `2. VISION_CONSENSUS — Multi-model agreement on screenshot analysis (GPT-4o + Claude + Gemini). Higher agreement = higher trust.`,
-          `3. RENDERED_DOM_KEY_LINES — JS-rendered page content captured by headless browser. More reliable than raw HTML for dynamic pages.`,
-          `4. JSON_LD_PRICE_CANDIDATES — Structured pricing from schema.org markup.`,
-          `5. CHART_DERIVED_LAST_CLOSE — OHLC data extracted from inline scripts.`,
-          `6. KEY_LINES / NUMERIC_CANDIDATES — Pattern-matched from raw HTML (lowest trust).`,
-          ``,
-          `CROSS-VALIDATION (IMPORTANT):`,
-          `- When multiple evidence types AGREE on the value, boost confidence significantly.`,
-          `- When they DISAGREE, prefer higher-priority evidence but reduce confidence and explain the discrepancy.`,
-          `- If only one source type has data, use it but note in reasoning that cross-validation was not possible.`,
-          ``,
-          `DISAMBIGUATION RULES:`,
-          `- Ignore numbers that look like axis ticks, timestamps, percent changes, volumes, page counters, or unrelated KPIs.`,
-          `- If multiple plausible candidates exist, choose the one most consistent with the metric name/description and HISTORICAL CONTEXT.`,
-          ``,
-          `OUTPUT RULES:`,
-          `- asset_price_suggestion must be the best tradable "quote-like" number (not an axis label). Numeric only, no units.`,
-          `- The final numeric price MUST have exactly 5 significant figures (use standard rounding).`,
-          `- If your result differs significantly from HISTORICAL CONTEXT, explain why in your reasoning.`,
-          ``,
-          `CHART RULES:`,
-          `- Prefer the latest CLOSE for OHLC/candlestick data, not OPEN.`,
-          ``,
-          `MISSING DATA:`,
-          `- You MUST still return a result even if some evidence types are missing.`,
-          `- If both HTML and vision fail completely, return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2.`,
-          ``,
-          // Historical context
-          historicalPrompt,
-          // Locator evidence (highest trust)
-          locatorEvidenceParts.length > 0 ? `\nLOCATOR EVIDENCE:\n${locatorEvidenceParts.join('\n')}` : '',
-          // Vision consensus
-          visionConsensusParts.length > 0 ? `\nVISION CONSENSUS:\n${visionConsensusParts.join('\n')}` : '',
-          // Legacy single-model vision
-          visionEvidenceParts.length > 0 ? `\nVISION EVIDENCE:\n${visionEvidenceParts.join('\n')}` : '',
-          // Screenshot failures
-          screenshotFailures.length > 0 ? `\nSCREENSHOT FAILURES (${screenshotFailures.length}/${totalUrls}):\n${screenshotFailures.map(f => `- ${f}`).join('\n')}` : '',
-          // HTML sources
-          `\nHTML SOURCES:`,
-          texts.join('\n\n').slice(0, MAX_SOURCES_JOIN_CHARS)
-        ].filter(Boolean).join('\n');
+        let json: any;
+        let fusionTier: 'vision_shortcircuit' | 'lightweight' | 'full';
+        let fusionPrompt: string | null = null;
+        let fusionModel: string | null = null;
 
-        const openaiModel = process.env.OPENAI_MODEL || 'gpt-4.1';
-        const openaiStartTime = Date.now();
-        
-        console.log('[Metric-AI] 🤖 Phase 3: Calling OpenAI fusion', {
-          jobId, model: openaiModel, promptLength: prompt.length,
-          hasLocatorEvidence: locatorEvidenceParts.length > 0,
-          hasVisionConsensus: visionConsensusParts.length > 0,
-          hasHistoricalContext: historicalStats.source !== 'none',
-        });
+        // Collect the strongest vision consensus across all URLs
+        const allConsensus = Array.from(screenshotDataMap.values())
+          .map(d => d.visionConsensus)
+          .filter((c): c is VisionConsensus => !!c);
+        const bestConsensus = allConsensus
+          .filter(c => c.agreement === 'full' && c.numericValue !== undefined)
+          .sort((a, b) => b.confidence - a.confidence)[0] || null;
 
-        const resp = await openai.chat.completions.create({
-          model: openaiModel,
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: 'You are an expert metric analyst. Return strict JSON only.' },
-            { role: 'user', content: prompt }
-          ],
-          max_tokens: 1400
-        });
+        const hasAnyVisionOrLocator = visionConsensusParts.length > 0 ||
+          visionEvidenceParts.length > 0 ||
+          locatorEvidenceParts.length > 0;
 
-        const openaiDurationMs = Date.now() - openaiStartTime;
-        console.log('[Metric-AI] ✓ OpenAI response received', {
-          jobId, openaiDurationMs,
-          finishReason: resp.choices[0]?.finish_reason,
-          totalTokens: resp.usage?.total_tokens,
-        });
+        // ── Tier 1: Vision short-circuit ────────────────────────────────
+        if (bestConsensus && bestConsensus.confidence >= VISION_SHORTCIRCUIT_CONFIDENCE) {
+          fusionTier = 'vision_shortcircuit';
+          const numVal = bestConsensus.numericValue!;
+          const strVal = String(numVal);
 
-        let content = resp.choices[0]?.message?.content?.trim() || '{}';
-        try { content = content.replace(/```json|```/g, '').trim(); } catch {}
-        let json = JSON.parse(content);
+          const visionSources = Array.from(screenshotDataMap.entries())
+            .filter(([, d]) => d.visionConsensus || d.visionResult?.success)
+            .map(([url, d]) => ({
+              url,
+              quote: d.visionResult?.visualQuote?.slice(0, 300) || bestConsensus.summary.slice(0, 300),
+              match_score: bestConsensus.confidence,
+            }));
+
+          json = {
+            value: strVal,
+            unit: 'unknown',
+            confidence: bestConsensus.confidence,
+            asset_price_suggestion: strVal,
+            reasoning: `Vision short-circuit: ${bestConsensus.summary}`,
+            source_quotes: visionSources,
+          };
+
+          console.log('[Metric-AI] ⚡ Phase 3 TIER 1: Vision short-circuit (OpenAI skipped)', {
+            jobId,
+            value: strVal,
+            confidence: bestConsensus.confidence.toFixed(2),
+            agreement: bestConsensus.agreement,
+            modelsUsed: bestConsensus.models.filter(m => m.success).map(m => m.model).join(', '),
+          });
+
+        // ── Tier 2: Lightweight fusion ──────────────────────────────────
+        } else if (hasAnyVisionOrLocator) {
+          fusionTier = 'lightweight';
+          fusionModel = OPENAI_MODEL_FAST;
+
+          // Trimmed prompt: only vision + locator + top key lines + historical
+          const topKeyLines = texts
+            .join('\n')
+            .split('\n')
+            .filter(l => /KEY_LINES:|^- /.test(l))
+            .slice(0, 15);
+
+          fusionPrompt = [
+            `METRIC: ${input.metric}`,
+            input.description ? `DESCRIPTION: ${input.description}` : '',
+            `TASK: Determine the current numeric value and a tradable asset_price_suggestion.`,
+            `Return JSON: { "value": "...", "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
+            ``,
+            `EVIDENCE (use the best available; cite it):`,
+            `- LOCATOR_EXTRACTED_VALUE: highest trust (pre-validated selector).`,
+            `- VISION_CONSENSUS: multi-model screenshot analysis.`,
+            `- KEY_LINES: pattern-matched from HTML.`,
+            ``,
+            `OUTPUT RULES:`,
+            `- asset_price_suggestion: numeric only, no units, 5 significant figures.`,
+            `- If your result differs from HISTORICAL CONTEXT, explain why.`,
+            ``,
+            historicalPrompt,
+            locatorEvidenceParts.length > 0 ? `\nLOCATOR EVIDENCE:\n${locatorEvidenceParts.join('\n')}` : '',
+            visionConsensusParts.length > 0 ? `\nVISION CONSENSUS:\n${visionConsensusParts.join('\n')}` : '',
+            visionEvidenceParts.length > 0 ? `\nVISION EVIDENCE:\n${visionEvidenceParts.join('\n')}` : '',
+            topKeyLines.length > 0 ? `\nKEY LINES:\n${topKeyLines.join('\n')}` : '',
+          ].filter(Boolean).join('\n');
+
+          const openaiStartTime = Date.now();
+          console.log('[Metric-AI] 🤖 Phase 3 TIER 2: Lightweight fusion', {
+            jobId, model: fusionModel, promptLength: fusionPrompt.length,
+          });
+
+          const resp = await openai.chat.completions.create({
+            model: fusionModel,
+            response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: 'You are an expert metric analyst. Return strict JSON only.' },
+              { role: 'user', content: fusionPrompt },
+            ],
+            max_tokens: 1400,
+          });
+
+          const openaiDurationMs = Date.now() - openaiStartTime;
+          console.log('[Metric-AI] ✓ Tier 2 response received', {
+            jobId, openaiDurationMs,
+            finishReason: resp.choices[0]?.finish_reason,
+            totalTokens: resp.usage?.total_tokens,
+          });
+
+          let raw = resp.choices[0]?.message?.content?.trim() || '{}';
+          try { raw = raw.replace(/```json|```/g, '').trim(); } catch {}
+          json = JSON.parse(raw);
+
+        // ── Tier 3: Full fusion (existing behavior) ─────────────────────
+        } else {
+          fusionTier = 'full';
+          fusionModel = OPENAI_MODEL_FULL;
+
+          fusionPrompt = [
+            `METRIC: ${input.metric}`,
+            input.description ? `DESCRIPTION: ${input.description}` : '',
+            `TASK: Determine the current numeric value and a tradable asset_price_suggestion.`,
+            `Return JSON: { "value": "...", "confidence": 0.0-1.0, "asset_price_suggestion": "123.45", "reasoning": "...", "source_quotes": [{ "url": "...", "quote": "...", "match_score": 0.0-1.0 }] }`,
+            ``,
+            `EVIDENCE PRIORITY (highest trust to lowest — use the best available; cite it):`,
+            `1. LOCATOR_EXTRACTED_VALUE — Pre-validated CSS/XPath/JS selector from market creation. If present and numeric, this is almost certainly correct.`,
+            `2. VISION_CONSENSUS — Multi-model agreement on screenshot analysis (GPT-4o + Claude + Gemini). Higher agreement = higher trust.`,
+            `3. RENDERED_DOM_KEY_LINES — JS-rendered page content captured by headless browser. More reliable than raw HTML for dynamic pages.`,
+            `4. JSON_LD_PRICE_CANDIDATES — Structured pricing from schema.org markup.`,
+            `5. CHART_DERIVED_LAST_CLOSE — OHLC data extracted from inline scripts.`,
+            `6. KEY_LINES / NUMERIC_CANDIDATES — Pattern-matched from raw HTML (lowest trust).`,
+            ``,
+            `CROSS-VALIDATION (IMPORTANT):`,
+            `- When multiple evidence types AGREE on the value, boost confidence significantly.`,
+            `- When they DISAGREE, prefer higher-priority evidence but reduce confidence and explain the discrepancy.`,
+            `- If only one source type has data, use it but note in reasoning that cross-validation was not possible.`,
+            ``,
+            `DISAMBIGUATION RULES:`,
+            `- Ignore numbers that look like axis ticks, timestamps, percent changes, volumes, page counters, or unrelated KPIs.`,
+            `- If multiple plausible candidates exist, choose the one most consistent with the metric name/description and HISTORICAL CONTEXT.`,
+            ``,
+            `OUTPUT RULES:`,
+            `- asset_price_suggestion must be the best tradable "quote-like" number (not an axis label). Numeric only, no units.`,
+            `- The final numeric price MUST have exactly 5 significant figures (use standard rounding).`,
+            `- If your result differs significantly from HISTORICAL CONTEXT, explain why in your reasoning.`,
+            ``,
+            `CHART RULES:`,
+            `- Prefer the latest CLOSE for OHLC/candlestick data, not OPEN.`,
+            ``,
+            `MISSING DATA:`,
+            `- You MUST still return a result even if some evidence types are missing.`,
+            `- If both HTML and vision fail completely, return value: "N/A", asset_price_suggestion: "0", confidence <= 0.2.`,
+            ``,
+            historicalPrompt,
+            locatorEvidenceParts.length > 0 ? `\nLOCATOR EVIDENCE:\n${locatorEvidenceParts.join('\n')}` : '',
+            visionConsensusParts.length > 0 ? `\nVISION CONSENSUS:\n${visionConsensusParts.join('\n')}` : '',
+            visionEvidenceParts.length > 0 ? `\nVISION EVIDENCE:\n${visionEvidenceParts.join('\n')}` : '',
+            screenshotFailures.length > 0 ? `\nSCREENSHOT FAILURES (${screenshotFailures.length}/${totalUrls}):\n${screenshotFailures.map(f => `- ${f}`).join('\n')}` : '',
+            `\nHTML SOURCES:`,
+            texts.join('\n\n').slice(0, MAX_SOURCES_JOIN_CHARS),
+          ].filter(Boolean).join('\n');
+
+          const openaiStartTime = Date.now();
+          console.log('[Metric-AI] 🤖 Phase 3 TIER 3: Full fusion', {
+            jobId, model: fusionModel, promptLength: fusionPrompt.length,
+            hasLocatorEvidence: locatorEvidenceParts.length > 0,
+            hasVisionConsensus: visionConsensusParts.length > 0,
+            hasHistoricalContext: historicalStats.source !== 'none',
+          });
+
+          const resp = await openai.chat.completions.create({
+            model: fusionModel,
+            response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: 'You are an expert metric analyst. Return strict JSON only.' },
+              { role: 'user', content: fusionPrompt },
+            ],
+            max_tokens: 1400,
+          });
+
+          const openaiDurationMs = Date.now() - openaiStartTime;
+          console.log('[Metric-AI] ✓ Tier 3 response received', {
+            jobId, openaiDurationMs,
+            finishReason: resp.choices[0]?.finish_reason,
+            totalTokens: resp.usage?.total_tokens,
+          });
+
+          let raw = resp.choices[0]?.message?.content?.trim() || '{}';
+          try { raw = raw.replace(/```json|```/g, '').trim(); } catch {}
+          json = JSON.parse(raw);
+        }
 
         // --- Phase 4: Post-extraction validation ---
         const validation = validateExtractedValue(json.asset_price_suggestion, historicalStats);
@@ -963,17 +1083,18 @@ export async function POST(req: NextRequest) {
         if (!validation.valid && validation.warnings.length > 0) {
           console.warn('[Metric-AI] ⚠ Value flagged by validator', { jobId, warnings: validation.warnings });
 
-          // Attempt a second opinion if confidence is being capped significantly
-          if (validation.maxConfidence <= 0.3) {
+          // Second opinion only when an OpenAI call was made (skip for vision short-circuit)
+          if (validation.maxConfidence <= 0.3 && fusionTier !== 'vision_shortcircuit' && fusionPrompt) {
             try {
+              const secondOpinionModel = fusionModel || OPENAI_MODEL_FULL;
               const secondOpinion = buildSecondOpinionPrompt(json.asset_price_suggestion, validation.warnings, historicalStats);
-              console.log('[Metric-AI] 🔄 Requesting second opinion from AI');
+              console.log('[Metric-AI] 🔄 Requesting second opinion from AI', { model: secondOpinionModel });
               const resp2 = await openai.chat.completions.create({
-                model: openaiModel,
+                model: secondOpinionModel,
                 response_format: { type: 'json_object' },
                 messages: [
                   { role: 'system', content: 'You are an expert metric analyst. Return strict JSON only.' },
-                  { role: 'user', content: prompt + '\n\n' + secondOpinion }
+                  { role: 'user', content: fusionPrompt + '\n\n' + secondOpinion }
                 ],
                 max_tokens: 1400
               });
@@ -999,6 +1120,7 @@ export async function POST(req: NextRequest) {
         
         console.log('[Metric-AI] 📋 Final result', {
           jobId,
+          fusionTier,
           value: json.value,
           assetPriceSuggestion: json.asset_price_suggestion,
           confidence: json.confidence,
@@ -1103,6 +1225,9 @@ export async function POST(req: NextRequest) {
           sources: sourcesWithScreenshots,
           // Validation
           validation_warning: validationWarning || undefined,
+          // Fusion tier metadata
+          fusion_tier: fusionTier,
+          fusion_model: fusionModel,
           // Vision metadata
           vision_analysis_enabled: ENABLE_VISION_ANALYSIS,
           vision_sources_analyzed: Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length,

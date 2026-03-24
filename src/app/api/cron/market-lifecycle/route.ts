@@ -565,10 +565,9 @@ export async function POST(req: Request) {
       const sb = getSupabase();
       if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });
       if (marketId) {
-        const syncRes = marketAddress ? await syncLifecycleOnChain(marketAddress) : null;
         const result = await forceStartSettlementWindow(sb, marketId);
-        log('dispatch_settlement_start', 'success', { syncRes, ...result });
-        return json(200, { ...result, syncLifecycle: syncRes });
+        log('dispatch_settlement_start', 'success', result);
+        return json(200, result);
       }
       const result = await runSettlementTick(sb);
       return json(200, result);

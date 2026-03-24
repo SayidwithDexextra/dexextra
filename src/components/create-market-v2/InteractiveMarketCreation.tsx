@@ -1939,7 +1939,7 @@ export function InteractiveMarketCreation({
     setDevToolsOpen(false);
   }, [ensureDevDiscovery]);
 
-  const runDefineOnlyDiscovery = async (description: string) => {
+  const runDefineOnlyDiscovery = async (description: string, clarificationAttempt = 0) => {
     setDiscoveryState('discovering');
     setErrorMessage(null);
     setSourcesFetchState('idle');
@@ -1953,7 +1953,7 @@ export function InteractiveMarketCreation({
       const response = await fetch('/api/metric-discovery', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description, mode: 'define_only' }),
+        body: JSON.stringify({ description, mode: 'define_only', clarification_attempt: clarificationAttempt }),
       });
 
       const data = await response.json();
@@ -1965,7 +1965,6 @@ export function InteractiveMarketCreation({
         setMetricClarification('');
         setDiscoveryState('success');
       } else {
-        // Enter clarification loop rather than hard reject.
         setDiscoveryState('clarify');
       }
     } catch (error) {
@@ -2887,7 +2886,7 @@ export function InteractiveMarketCreation({
       {/* Left bubble: 40px from content edge (navbar 60px + 40px = 100px from screen edge) */}
       {/* Right bubble: 100px from screen edge */}
       {/* Hide when at 'complete' step - we show the MarketDetailsReview instead */}
-      {(discoveryState === 'success' || discoveryState === 'clarify') && discoveryResult && visibleStep !== 'complete' ? (
+      {(discoveryState === 'success' || discoveryState === 'clarify' || (discoveryState === 'discovering' && discoveryResult)) && discoveryResult && visibleStep !== 'complete' ? (
         <div className="mt-6 w-full px-1 sm:px-0 lg:w-[calc(100vw-60px)] lg:ml-[calc(50%-50vw+60px)] lg:pl-[40px] lg:pr-[100px]">
           <StepPanel
                 step={visibleStep}
@@ -2902,11 +2901,19 @@ export function InteractiveMarketCreation({
                 onSubmitMetricClarification={async () => {
                   const reply = metricClarification.trim();
                   if (!reply) return;
-                  setAssistantHistory((prev) => [...prev, { role: 'user' as const, content: reply }].slice(-24));
+                  const updatedHistory = [...assistantHistory, { role: 'user' as const, content: reply }].slice(-24);
+                  setAssistantHistory(updatedHistory);
                   setMetricClarification('');
-                  // Re-try metric definition using the original prompt + latest clarification.
-                  const combined = `${promptRef.current}\n\nClarification: ${reply}`.trim();
-                  await runDefineOnlyDiscovery(combined);
+
+                  const clarificationExchanges = updatedHistory
+                    .slice(1)
+                    .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+                    .join('\n');
+                  const clarificationCount = updatedHistory.filter(m => m.role === 'user').length - 1;
+                  const combined = clarificationExchanges
+                    ? `${promptRef.current}\n\nClarification conversation:\n${clarificationExchanges}`
+                    : `${promptRef.current}\n\nClarification: ${reply}`;
+                  await runDefineOnlyDiscovery(combined.trim(), clarificationCount);
                 }}
                 marketName={marketName}
                 onChangeName={(v) => {
@@ -2955,7 +2962,7 @@ export function InteractiveMarketCreation({
       ) : null}
 
       {/* Prompt composer (removed after discovery/clarification to transition to chat) */}
-      {discoveryState !== 'success' && discoveryState !== 'clarify' && (
+      {discoveryState !== 'success' && discoveryState !== 'clarify' && !(discoveryState === 'discovering' && discoveryResult) && (
         <div
           className={`relative space-y-1 rounded-3xl border-[0.5px] bg-[#0F0F0F] p-3 pt-1.5 shadow-lg transition-shadow duration-200 ease-out ${
             isFocused

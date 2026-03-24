@@ -365,23 +365,6 @@ async function maybeStartSettlementWindow(
     };
   }
 
-  const syncResult = await settlementSyncLifecycleOnChain(market);
-  if (!syncResult.ok) {
-    console.warn(`[settlement-engine] syncLifecycle warning for ${market.market_identifier}: ${syncResult.error}`);
-  }
-
-  const chainCheck = await verifyOnchainSettlementTime(market);
-  if (!chainCheck.ok) {
-    return {
-      marketId: market.id, marketIdentifier: market.market_identifier,
-      action: 'start_window', ok: false,
-      settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
-      reason: chainCheck.reason || 'chain_check_failed',
-      details: { chainTs: chainCheck.chainTs ?? null },
-    };
-  }
-
   const ai = await getAIPriceDetermination(market);
   if (!ai) {
     return {
@@ -707,19 +690,6 @@ export async function forceStartSettlementWindow(
     return {
       ok: true, mode: 'settlement_start',
       skipped: true, reason: `status_is_${market.market_status}`,
-    };
-  }
-
-  const syncResult = await settlementSyncLifecycleOnChain(market);
-  if (!syncResult.ok) {
-    console.warn(`[settlement-engine] syncLifecycle warning for ${market.market_identifier}: ${syncResult.error}`);
-  }
-
-  const chainCheck = await verifyOnchainSettlementTime(market);
-  if (!chainCheck.ok) {
-    return {
-      ok: false, mode: 'settlement_start',
-      error: chainCheck.reason || 'chain_check_failed',
     };
   }
 

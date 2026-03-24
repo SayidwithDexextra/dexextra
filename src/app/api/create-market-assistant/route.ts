@@ -517,17 +517,27 @@ export async function POST(req: NextRequest) {
 
     // Default mode (for now): step guidance only, no Market Summary Block.
     if (!shouldGenerateSummary) {
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+        { role: 'system', content: STEP_ASSISTANT_SYSTEM_PROMPT },
+      ];
+
+      if (input.history && input.history.length > 0) {
+        for (const h of input.history) {
+          if (h.role === 'system') continue;
+          messages.push({ role: h.role as 'user' | 'assistant', content: h.content });
+        }
+      }
+
+      messages.push({
+        role: 'user',
+        content: `CURRENT UI STEP: ${input.step}\n\nCONTEXT (JSON):\n${JSON.stringify(ctx, null, 2)}\n`,
+      });
+
       const completion = await openai.chat.completions.create({
         model,
         temperature: 0.2,
         response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: STEP_ASSISTANT_SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `CURRENT UI STEP: ${input.step}\n\nCONTEXT (JSON):\n${JSON.stringify(ctx, null, 2)}\n`,
-          },
-        ],
+        messages,
         max_tokens: 300,
       });
 

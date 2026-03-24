@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const InputSchema = z.object({
-  description: z.string().min(3).max(1000),
+  description: z.string().min(3).max(2000),
   context: z.string().optional(),
   user_address: z.string().optional(),
   mode: z.enum(['full', 'define_only']).optional(),
@@ -18,6 +18,8 @@ const InputSchema = z.object({
   searchVariation: z.number().int().min(0).max(10).optional(),
   /** URLs to exclude from search results (e.g., previously denied sources) */
   excludeUrls: z.array(z.string().url()).optional(),
+  /** Number of clarification attempts the user has made (0 = first attempt) */
+  clarification_attempt: z.number().int().min(0).max(10).optional(),
 });
 
 const METRIC_DEFINE_ONLY_SYSTEM_PROMPT = `You are a Metric Definition Agent.
@@ -223,12 +225,20 @@ export async function POST(req: NextRequest) {
 
     // Mode: define only (no SERP)
     if (mode === 'define_only') {
+      const clarificationAttempt = input.clarification_attempt ?? 0;
+      let systemPrompt = METRIC_DEFINE_ONLY_SYSTEM_PROMPT;
+      if (clarificationAttempt >= 2) {
+        systemPrompt += `\n\nIMPORTANT: The user has provided ${clarificationAttempt} clarification(s) to refine this metric. Be more lenient in your measurability assessment. If the user has specified a concrete data source, proxy metric, or measurement approach in their clarifications, set measurable=true and define the metric accordingly. Only set measurable=false if the metric is truly impossible to measure with any public data even after the user's clarifications.`;
+      } else if (clarificationAttempt >= 1) {
+        systemPrompt += `\n\nNote: The user has provided a clarification to refine this metric. Consider their clarification carefully and try to find a measurable interpretation if one exists.`;
+      }
+
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
       const response = await openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: METRIC_DEFINE_ONLY_SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: buildDefineOnlyUserMessage(input.description) },
         ],
         temperature: 0.1,

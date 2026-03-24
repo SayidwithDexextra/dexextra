@@ -396,6 +396,9 @@ export default function DebugSearchPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 text-[11px]">
+            <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/metric-ai-worker">
+              Metric AI Worker
+            </a>
             <a className="rounded border border-[#333333] bg-[#141414] px-3 py-2 text-white hover:bg-[#1A1A1A]" href="/debug/js-extractor">
               JS Extractor
             </a>

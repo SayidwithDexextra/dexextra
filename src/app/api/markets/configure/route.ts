@@ -614,6 +614,23 @@ export async function POST(req: Request) {
       }).then(() => clearTimeout(timeout)).catch(() => clearTimeout(timeout));
     } catch {}
 
+    // Fire-and-forget: configure challenge bond (non-blocking, not essential for trading)
+    const CHALLENGE_BOND_USDC = 50_000_000; // 50 USDC (6 decimals)
+    const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
+    (async () => {
+      try {
+        const freshNonce = await wallet.getNonce('pending');
+        const bondContract = new ethers.Contract(orderBook, [
+          'function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external',
+        ], wallet);
+        const tx = await bondContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, { nonce: freshNonce });
+        await tx.wait();
+        logS('challenge_bond_config', 'success', { bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT, tx: tx.hash });
+      } catch (e: any) {
+        logS('challenge_bond_config', 'error', { error: e?.message || String(e) });
+      }
+    })();
+
     logS('configure_complete', 'success', { orderBook, draftId });
 
     return NextResponse.json({
