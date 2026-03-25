@@ -352,12 +352,22 @@ export async function POST(req: Request) {
     const providedDescription = typeof body?.description === 'string' ? String(body.description).trim() : '';
     const creatorWalletAddress = (body?.creatorWalletAddress && ethers.isAddress(body.creatorWalletAddress)) ? String(body.creatorWalletAddress).toLowerCase() : null;
     const clientCutArg = Array.isArray(body?.cutArg) ? body.cutArg : (Array.isArray(body?.cut) ? body.cut : null);
-    const iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
-    const bannerImageUrl = body?.bannerImageUrl ? String(body.bannerImageUrl).trim() : null;
+    let iconImageUrl = body?.iconImageUrl ? String(body.iconImageUrl).trim() : null;
+    let bannerImageUrl = body?.bannerImageUrl ? String(body.bannerImageUrl).trim() : null;
     const aiSourceLocator = body?.aiSourceLocator || null;
     const isRollover = body?.isRollover === true;
     const parentMarketId = isRollover && typeof body?.parentMarketId === 'string' ? body.parentMarketId : null;
     const parentMarketAddress = isRollover && typeof body?.parentMarketAddress === 'string' ? body.parentMarketAddress : null;
+
+    if (isRollover && parentMarketId && (!iconImageUrl || !bannerImageUrl)) {
+      try {
+        const { data: parentRow } = await supabase.from('markets').select('icon_image_url, banner_image_url').eq('id', parentMarketId).maybeSingle();
+        if (parentRow) {
+          if (!iconImageUrl) iconImageUrl = parentRow.icon_image_url || null;
+          if (!bannerImageUrl) bannerImageUrl = parentRow.banner_image_url || null;
+        }
+      } catch {}
+    }
     const speedRunConfig = (body?.speedRunConfig && typeof body.speedRunConfig === 'object')
       ? {
           rolloverLeadSeconds: Number(body.speedRunConfig.rolloverLeadSeconds) || 0,

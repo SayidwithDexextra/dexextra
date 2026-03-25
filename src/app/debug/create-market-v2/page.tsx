@@ -33,7 +33,7 @@ export default function DebugCreateMarketV2Page() {
             <div className="text-[12px] font-medium text-white">Debug: Create Market V2 components</div>
             <div className="mt-1 text-[11px] text-[#9CA3AF]">
               This page mounts the real UI components so you can verify search flows work end-to-end.
-              The icon search uses <span className="font-mono text-white/80">/api/icon-search</span> (SerpAPI required).
+              The icon search uses <span className="font-mono text-white/80">/api/icon-search</span> (Jina API required).
             </div>
           </div>
           <div className="flex flex-wrap gap-2 text-[11px]">

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import OpenAI from 'openai';
-import { searchMetricSourcesCached } from '@/lib/serpApi';
+import { searchMetricSourcesCached } from '@/lib/jinaSearch';
 import { MetricDiscoveryResponse, SearchResult } from '@/types/metricDiscovery';
 
 export const runtime = 'nodejs';
@@ -12,7 +12,7 @@ const InputSchema = z.object({
   context: z.string().optional(),
   user_address: z.string().optional(),
   mode: z.enum(['full', 'define_only']).optional(),
-  /** AI-generated search query from define_only step, used as the SERPAPI query in full mode */
+  /** AI-generated search query from define_only step, used as the search query in full mode */
   search_query: z.string().max(500).optional(),
   /** Search variation index (0-5) for finding different sources on retry */
   searchVariation: z.number().int().min(0).max(10).optional(),
@@ -268,7 +268,7 @@ export async function POST(req: NextRequest) {
     const serpQuery = input.search_query || input.description;
     
     // Step 1: Search for candidate data sources using AI-generated query when available
-    console.log('[MetricDiscovery] SerpApi search starting:', {
+    console.log('[MetricDiscovery] Jina Search starting:', {
       query_source: input.search_query ? 'ai_generated' : 'raw_description',
       query_preview: serpQuery.slice(0, 200),
       max_results: 10,
@@ -294,13 +294,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log('[MetricDiscovery] SerpApi search complete:', {
+    console.log('[MetricDiscovery] Jina Search complete:', {
       result_count: searchResults.length,
       sample: searchResults.slice(0, 3).map((r) => ({
         title: (r.title || '').slice(0, 120),
         url: r.url,
         domain: r.domain,
-        source: r.source,
       })),
     });
 

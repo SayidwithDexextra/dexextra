@@ -13,14 +13,21 @@ export interface IconSearchResult {
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
-interface SerpApiImageResult {
-  images_results?: Array<{
-    title?: string;
-    original?: string;
-    thumbnail?: string;
-    source?: string;
-    link?: string;
-  }>;
+interface JinaImageResult {
+  title?: string;
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  sourceUrl?: string;
+  url?: string;
+  source?: string;
+  width?: number;
+  height?: number;
+}
+
+interface JinaImageSearchResponse {
+  code?: number;
+  results?: JinaImageResult[];
+  data?: JinaImageResult[];
 }
 
 const BodySchema = z.object({
@@ -34,7 +41,7 @@ type ImageKind = 'photo' | 'logo' | 'icon' | 'illustration';
 
 /**
  * POST /api/icon-search
- * Search for market images using SerpApi Google Images.
+ * Search for market images using Jina Image Search.
  *
  * We infer user intent (short concept keywords) with AI.
  * For photo-like intent, we suffix with "unsplash" to bias toward Unsplash images.
@@ -59,17 +66,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.SERPAPI_KEY;
+    const apiKey = process.env.JINA_API_KEY;
     if (!apiKey) {
-      console.error('[icon-search] SERPAPI_KEY not configured');
+      console.error('[icon-search] JINA_API_KEY not configured');
       return NextResponse.json(
         { error: 'Image search not configured' },
         { status: 500 }
       );
     }
 
-    // Infer a concise intent + preferred image kind.
-    // "photo" -> bias toward Unsplash; "logo/icon" -> bias toward logo/icon assets.
     const plan = await inferImageSearchPlan({ name: query, description });
     const intent = plan.intent || query;
     const kind: ImageKind = plan.kind || 'photo';
@@ -79,74 +84,79 @@ export async function POST(request: NextRequest) {
     let usedQuery = primaryQuery;
     let primaryResultCount = 0;
     let fallbackAttempted = false;
-    let backupAttempted = false;
     let fallbackQuery: string | null = null;
     let fallbackResultCount = 0;
-    let backupQuery: string | null = null;
-    let backupResultCount = 0;
 
-    const fetchSerp = async (q: string, engine: string) => {
-      const url = new URL('https://serpapi.com/search');
-      url.searchParams.set('engine', engine);
-      url.searchParams.set('q', q);
-      url.searchParams.set('api_key', apiKey);
-      url.searchParams.set('num', String(Math.min(maxResults, 20)));
-      url.searchParams.set('safe', 'active');
-      // Prefer medium-ish images; we crop client-side.
-      url.searchParams.set('tbs', 'isz:m');
-
-      // Log request (without API key)
-      const sanitizedUrl = new URL(url.toString());
-      sanitizedUrl.searchParams.delete('api_key');
-      console.log('[icon-search] Request:', {
-        url: sanitizedUrl.toString(),
+    const fetchJinaImages = async (q: string) => {
+      console.log('[icon-search] Jina Request:', {
         input_preview: query.slice(0, 120),
         kind,
         intent,
         query_preview: q.slice(0, 160),
       });
 
-      const response = await fetch(url.toString(), {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 25_000);
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error('[icon-search] SerpApi error:', response.status, errorText);
-        return { ok: false as const, status: response.status, data: null as any };
+      try {
+        const response = await fetch('https://svip.jina.ai/', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ q, type: 'images' }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => 'Unknown error');
+          console.error('[icon-search] Jina error:', response.status, errorText);
+          return { ok: false as const, data: null as any };
+        }
+
+        const data: JinaImageSearchResponse = await response.json();
+        return { ok: true as const, data };
+      } catch (err: any) {
+        clearTimeout(timer);
+        console.error('[icon-search] Jina fetch error:', err?.message || err);
+        return { ok: false as const, data: null as any };
       }
-
-      const data: SerpApiImageResult = await response.json();
-      return { ok: true as const, status: 200, data };
     };
 
-    const parse = (data: SerpApiImageResult): IconSearchResult[] =>
-      (data.images_results || [])
-      .slice(0, maxResults)
-      .map((img) => ({
-        title: img.title || '',
-        url: img.original || '',
-        thumbnail: img.thumbnail || img.original || '',
-        source: img.source || '',
-        domain: extractDomain(img.link || img.original || ''),
-      }))
-      .filter((r) => r.url && r.thumbnail);
+    const parse = (data: JinaImageSearchResponse): IconSearchResult[] => {
+      const items = data.results || data.data || [];
+      return items
+        .slice(0, maxResults)
+        .map((img) => {
+          const imageUrl = img.imageUrl || img.url || '';
+          const pageUrl = img.sourceUrl || img.url || '';
+          return {
+            title: img.title || '',
+            url: imageUrl,
+            thumbnail: img.thumbnailUrl || imageUrl,
+            source: img.source || '',
+            domain: extractDomain(pageUrl || imageUrl),
+          };
+        })
+        .filter((r) => r.url && r.thumbnail);
+    };
 
     let results: IconSearchResult[] = [];
     let usedFallback = false;
-    let usedEngine = 'google_images';
-    let usedQueryLabel: 'primary' | 'fallback' | 'backup_engine' = 'primary';
+    let usedQueryLabel: 'primary' | 'fallback' = 'primary';
 
-    // Attempt 1: primary query on Google Images.
-    const primary = await fetchSerp(primaryQuery, 'google_images');
+    // Attempt 1: primary query.
+    const primary = await fetchJinaImages(primaryQuery);
     if (!primary.ok) {
       return NextResponse.json({ error: 'Image search failed' }, { status: 502 });
     }
     results = parse(primary.data);
     primaryResultCount = results.length;
 
-    // Attempt 2: fallback query on Google Images (switch intent style).
+    // Attempt 2: fallback query (switch intent style).
     if (results.length === 0) {
       fallbackAttempted = true;
       const fq =
@@ -154,7 +164,7 @@ export async function POST(request: NextRequest) {
           ? buildGenericPhotoSearchQuery(intent)
           : buildGenericSearchQuery(intent);
       fallbackQuery = fq;
-      const fallback = await fetchSerp(fq, 'google_images');
+      const fallback = await fetchJinaImages(fq);
       if (fallback.ok) {
         const fallbackResults = parse(fallback.data);
         fallbackResultCount = fallbackResults.length;
@@ -167,33 +177,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Attempt 3: backup SerpApi engine if Google Images yields nothing.
-    // This covers cases where Google is sparse or blocked for certain terms.
-    if (results.length === 0) {
-      backupAttempted = true;
-      const bq =
-        kind === 'photo'
-          ? buildGenericPhotoSearchQuery(intent)
-          : buildGenericSearchQuery(intent);
-      backupQuery = bq;
-      const backup = await fetchSerp(bq, 'bing_images');
-      if (backup.ok) {
-        const backupResults = parse(backup.data);
-        backupResultCount = backupResults.length;
-        if (backupResults.length > 0) {
-          results = backupResults;
-          usedFallback = true;
-          usedEngine = 'bing_images';
-          usedQueryLabel = 'backup_engine';
-          usedQuery = bq;
-        }
-      }
-    }
-
     console.log('[icon-search] Response:', {
       result_count: results.length,
       used_fallback: usedFallback,
-      used_engine: usedEngine,
       used_query_label: usedQueryLabel,
       sample: results.slice(0, 3).map((r) => ({
         title: r.title.slice(0, 60),
@@ -210,16 +196,12 @@ export async function POST(request: NextRequest) {
               intent,
               primaryQuery,
               usedQuery,
-              usedEngine,
               usedQueryLabel,
               resultCount: results.length,
               primaryResultCount,
               fallbackAttempted,
               fallbackQuery,
               fallbackResultCount,
-              backupAttempted,
-              backupQuery,
-              backupResultCount,
             },
           }
         : null),

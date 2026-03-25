@@ -1,29 +1,17 @@
 /**
- * Auto-discovery of CSS/XPath/JS selectors for fast metric extraction.
+ * Auto-discovery of CSS selectors for fast metric extraction.
  *
- * After a successful full-pipeline extraction (high confidence, validated),
- * this module launches a lightweight Puppeteer session, finds DOM nodes
- * containing the confirmed value, and builds ranked selectors that can
- * be re-used on subsequent fetches to skip the expensive vision pipeline.
+ * Uses Jina Reader (X-Return-Format: html) to fetch the rendered HTML,
+ * then cheerio to parse and probe the DOM server-side. No Puppeteer needed.
  */
 
-import puppeteer, { Browser, Page } from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
-
-const IS_SERVERLESS = !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
-                      !!process.env.VERCEL ||
-                      process.env.NODE_ENV === 'production';
-
-const LOCAL_CHROME_PATHS = {
-  darwin: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  linux: '/usr/bin/google-chrome',
-  win32: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-};
+import * as cheerio from 'cheerio';
+import { fetchHtmlWithJina } from './jinaReader';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
 export interface DiscoveredSelector {
-  type: 'css' | 'xpath' | 'js_extractor';
+  type: 'css';
   selector?: string;
   xpath?: string;
   script?: string;
@@ -43,168 +31,132 @@ export interface AiSourceLocatorData {
   version: number;
 }
 
-// ─── Browser helpers ───────────────────────────────────────────────
+// ─── Selector builder ──────────────────────────────────────────────
 
-async function launchBrowser(): Promise<Browser> {
-  const antiDetectArgs = [
-    '--disable-blink-features=AutomationControlled',
-    '--disable-dev-shm-usage',
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--mute-audio',
-    '--no-first-run',
-  ];
+type CheerioSelection = ReturnType<cheerio.CheerioAPI>;
 
-  let executablePath: string;
-  let browserArgs: string[];
+function buildCssSelector($: cheerio.CheerioAPI, el: CheerioSelection): string {
+  const parts: string[] = [];
+  let cur = el;
 
-  if (IS_SERVERLESS) {
-    executablePath = await chromium.executablePath();
-    browserArgs = [
-      ...chromium.args, ...antiDetectArgs,
-      '--disable-gpu', '--disable-web-security',
-      '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-background-networking', '--disable-default-apps',
-      '--disable-extensions', '--disable-sync', '--disable-translate',
-      '--metrics-recording-only', '--safebrowsing-disable-auto-update',
-    ];
-  } else {
-    const platform = process.platform as keyof typeof LOCAL_CHROME_PATHS;
-    executablePath = process.env.CHROME_PATH || LOCAL_CHROME_PATHS[platform] || LOCAL_CHROME_PATHS.darwin;
-    browserArgs = [
-      ...antiDetectArgs,
-      '--disable-gpu', '--disable-background-networking',
-      '--disable-default-apps', '--disable-extensions', '--disable-sync',
-    ];
+  for (let depth = 0; depth < 8; depth++) {
+    const node = cur.get(0);
+    if (!node || node.type !== 'tag') break;
+
+    const tagName = node.tagName.toLowerCase();
+    if (tagName === 'body' || tagName === 'html') break;
+
+    const id = cur.attr('id');
+    if (id) {
+      parts.unshift(`#${CSS.escape(id)}`);
+      break;
+    }
+
+    const testAttr = cur.attr('data-test') || cur.attr('data-testid');
+    if (testAttr) {
+      parts.unshift(`${tagName}[data-test="${testAttr}"]`);
+      break;
+    }
+
+    let part = tagName;
+
+    const classAttr = cur.attr('class') || '';
+    const stableClasses = classAttr
+      .split(/\s+/)
+      .filter(c => c && c.length < 40 && !/^[a-z]{1,3}[A-Z0-9]/.test(c) && !/^css-/.test(c))
+      .slice(0, 2);
+    if (stableClasses.length) {
+      part += '.' + stableClasses.map(c => CSS.escape(c)).join('.');
+    }
+
+    const parent = cur.parent();
+    if (parent.length) {
+      const siblings = parent.children(tagName);
+      if (siblings.length > 1) {
+        const idx = siblings.index(cur) + 1;
+        part += `:nth-child(${idx})`;
+      }
+    }
+
+    parts.unshift(part);
+    cur = cur.parent() as CheerioSelection;
   }
 
-  return puppeteer.launch({
-    args: browserArgs,
-    defaultViewport: { width: 1280, height: 800 },
-    executablePath,
-    headless: true,
-    handleSIGINT: false,
-    handleSIGTERM: false,
-    handleSIGHUP: false,
-  });
+  return parts.join(' > ');
 }
 
-async function safeClose(browser: Browser | null): Promise<void> {
-  if (!browser) return;
-  try {
-    await Promise.race([
-      browser.close(),
-      new Promise<void>((resolve) => setTimeout(() => {
-        try { browser.process()?.kill('SIGKILL'); } catch {}
-        resolve();
-      }, 5000)),
-    ]);
-  } catch {}
+// ─── CSS.escape polyfill (Node doesn't have it natively) ───────────
+
+if (typeof CSS === 'undefined' || !CSS.escape) {
+  (globalThis as any).CSS = {
+    escape(value: string): string {
+      return value.replace(/([^\w-])/g, '\\$1');
+    },
+  };
 }
 
-// ─── Core discovery logic (runs inside page.evaluate) ──────────────
+// ─── Core discovery ────────────────────────────────────────────────
 
 interface RawCandidate {
   css: string;
-  xpath: string;
   text: string;
   specificity: number;
   context: string;
 }
 
-/**
- * Build a reasonably unique CSS selector for a given element.
- * Prefers IDs and data attributes, falls back to class+nth-child.
- */
-function buildCssSelectorScript(): string {
-  return `
-    (function buildCssSelector(el) {
-      if (!el || el === document.body || el === document.documentElement) return 'body';
-      const parts = [];
-      let cur = el;
-      for (let depth = 0; depth < 8 && cur && cur !== document.body; depth++) {
-        if (cur.id) {
-          parts.unshift('#' + CSS.escape(cur.id));
-          break;
-        }
-        let part = cur.tagName.toLowerCase();
-        // Prefer data-test / data-testid attributes
-        const testAttr = cur.getAttribute('data-test') || cur.getAttribute('data-testid');
-        if (testAttr) {
-          part = cur.tagName.toLowerCase() + '[data-test="' + testAttr + '"]';
-          parts.unshift(part);
-          break;
-        }
-        // Use stable classes (skip dynamic hashes)
-        const stableClasses = Array.from(cur.classList)
-          .filter(c => c.length < 40 && !/^[a-z]{1,3}[A-Z0-9]/.test(c) && !/^css-/.test(c))
-          .slice(0, 2);
-        if (stableClasses.length) {
-          part += '.' + stableClasses.map(c => CSS.escape(c)).join('.');
-        }
-        // nth-child disambiguation
-        const parent = cur.parentElement;
-        if (parent) {
-          const siblings = Array.from(parent.children).filter(s => s.tagName === cur.tagName);
-          if (siblings.length > 1) {
-            const idx = siblings.indexOf(cur) + 1;
-            part += ':nth-child(' + idx + ')';
-          }
-        }
-        parts.unshift(part);
-        cur = cur.parentElement;
-      }
-      return parts.join(' > ');
-    })
-  `;
-}
+function findCandidates(
+  $: cheerio.CheerioAPI,
+  numericStr: string,
+): RawCandidate[] {
+  const found: RawCandidate[] = [];
 
-function buildXpathScript(): string {
-  return `
-    (function buildXPath(el) {
-      if (!el) return '';
-      const parts = [];
-      let cur = el;
-      for (let depth = 0; depth < 8 && cur && cur.nodeType === 1; depth++) {
-        if (cur.id) {
-          parts.unshift('//*[@id="' + cur.id + '"]');
-          break;
-        }
-        let tag = cur.tagName.toLowerCase();
-        const parent = cur.parentNode;
-        if (parent) {
-          const siblings = Array.from(parent.children).filter(s => s.tagName === cur.tagName);
-          if (siblings.length > 1) {
-            const idx = siblings.indexOf(cur) + 1;
-            tag += '[' + idx + ']';
-          }
-        }
-        parts.unshift(tag);
-        cur = cur.parentElement;
-      }
-      const prefix = parts[0]?.startsWith('//*') ? '' : '//';
-      return prefix + parts.join('/');
-    })
-  `;
+  $('body *').each((_, elem) => {
+    const el = $(elem);
+
+    // Only look at leaf-ish elements (no deep nesting of children with text)
+    const directText = el.contents()
+      .filter((_, n) => n.type === 'text')
+      .text()
+      .trim();
+    if (!directText) return;
+
+    const cleaned = directText.replace(/[$€£¥,\s]/g, '');
+    if (!cleaned.includes(numericStr)) return;
+
+    const css = buildCssSelector($, el);
+    if (!css) return;
+
+    let specificity = 0;
+    if (css.includes('#')) specificity += 3;
+    if (css.includes('[data-test')) specificity += 2;
+    if (css.includes('.')) specificity += 1;
+
+    const priceClasses = ['price', 'Price', 'value', 'Value', 'quote', 'Quote', 'last', 'Last'];
+    const classAttr = el.attr('class') || '';
+    if (priceClasses.some(pc => classAttr.includes(pc))) specificity += 2;
+    if (el.closest('[class*="price"], [class*="Price"], [class*="value"], [class*="Value"]').length) specificity += 1;
+
+    const parentText = (el.parent().text() || '').trim().slice(0, 120);
+
+    found.push({ css, text: directText.slice(0, 80), specificity, context: parentText });
+  });
+
+  found.sort((a, b) => b.specificity - a.specificity);
+  return found.slice(0, 6);
 }
 
 // ─── Public API ────────────────────────────────────────────────────
 
 /**
- * Discover DOM selectors that resolve to `confirmedValue`.
- *
- * When `existingPage` is provided (from Phase 1 screenshot capture), the
- * browser launch and navigation are skipped entirely — only the DOM probing
- * runs. This saves ~15-20s per create-context request.
+ * Discover CSS selectors that resolve to `confirmedValue`.
+ * Fetches rendered HTML via Jina, parses with cheerio.
  */
 export async function discoverLocators(
   url: string,
   confirmedValue: string,
   primaryEvidenceType: string = 'vision',
-  existingPage?: Page,
 ): Promise<AiSourceLocatorData | null> {
   const started = Date.now();
-  let browser: Browser | null = null;
 
   try {
     const numericStr = String(confirmedValue).replace(/[^0-9.\-]/g, '');
@@ -213,122 +165,38 @@ export async function discoverLocators(
       return null;
     }
 
-    let page: Page;
-    if (existingPage) {
-      page = existingPage;
-      console.log(`[AutoLocator] Reusing existing page (skipping browser launch + navigation)`);
-    } else {
-      browser = await launchBrowser();
-      page = await browser.newPage();
-
-      await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      });
-      await page.setUserAgent(
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-      );
-
-      const isChartSite = /tradingview|finviz|barchart|investing\.com/i.test(url);
-      if (!isChartSite) {
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-          const rt = req.resourceType();
-          if (rt === 'media' || rt === 'font') req.abort().catch(() => {});
-          else req.continue().catch(() => {});
-        });
-      }
-
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
-      await new Promise(r => setTimeout(r, 3000));
+    console.log(`[AutoLocator] Fetching rendered HTML via Jina for ${url}`);
+    const htmlResult = await fetchHtmlWithJina(url, { timeoutMs: 30_000 });
+    if (!htmlResult.success || !htmlResult.html) {
+      console.log(`[AutoLocator] Failed to fetch HTML: ${htmlResult.error}`);
+      return null;
     }
 
-    const candidates: RawCandidate[] = await page.evaluate(
-      (valueStr: string, cssScript: string, xpathScript: string) => {
-        const found: RawCandidate[] = [];
-        const normalizedTarget = valueStr.replace(/,/g, '');
-
-        const treeWalker = document.createTreeWalker(
-          document.body,
-          NodeFilter.SHOW_TEXT,
-          null,
-        );
-
-        let node: Node | null;
-        while ((node = treeWalker.nextNode())) {
-          const text = (node.textContent || '').trim();
-          if (!text) continue;
-
-          const cleaned = text.replace(/[$€£¥,\s]/g, '');
-          if (!cleaned.includes(normalizedTarget)) continue;
-
-          const el = node.parentElement;
-          if (!el) continue;
-
-          const rect = el.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) continue;
-
-          const buildCss = new Function('el', `return (${cssScript.trim()})(el)`);
-          const buildXp = new Function('el', `return (${xpathScript.trim()})(el)`);
-
-          const css = buildCss(el) as string;
-          const xpath = buildXp(el) as string;
-          if (!css) continue;
-
-          let specificity = 0;
-          if (css.includes('#')) specificity += 3;
-          if (css.includes('[data-test')) specificity += 2;
-          if (css.includes('.')) specificity += 1;
-          if (rect.top < 600) specificity += 1;
-          if (el.closest('[class*="price"], [class*="Price"], [class*="value"], [class*="Value"]')) specificity += 2;
-
-          const parentText = (el.parentElement?.textContent || '').trim().slice(0, 120);
-
-          found.push({ css, xpath, text: text.slice(0, 80), specificity, context: parentText });
-        }
-
-        found.sort((a, b) => b.specificity - a.specificity);
-        return found.slice(0, 6);
-      },
-      numericStr,
-      buildCssSelectorScript(),
-      buildXpathScript(),
-    );
+    const $ = cheerio.load(htmlResult.html);
+    const candidates = findCandidates($, numericStr);
 
     if (candidates.length === 0) {
       console.log(`[AutoLocator] No DOM matches for "${numericStr}" on ${url} (${Date.now() - started}ms)`);
-      if (!existingPage) await safeClose(browser);
       return null;
     }
 
     // Verify each candidate re-resolves to the value
     const verified: DiscoveredSelector[] = [];
     for (const c of candidates) {
-      const resolvedCSS = await page.evaluate((sel: string) => {
-        try {
-          const el = document.querySelector(sel);
-          return (el?.textContent || '').trim();
-        } catch { return ''; }
-      }, c.css);
+      try {
+        const resolvedText = $(c.css).first().text().trim();
+        const resolvedClean = resolvedText.replace(/[$€£¥,\s]/g, '');
+        if (!resolvedClean.includes(numericStr)) continue;
 
-      const resolvedClean = (resolvedCSS || '').replace(/[$€£¥,\s]/g, '');
-      const matches = resolvedClean.includes(numericStr);
-
-      if (matches) {
         const conf = Math.min(0.95, 0.5 + c.specificity * 0.1);
         verified.push({ type: 'css', selector: c.css, confidence: conf, sample_value: numericStr });
-
-        if (c.xpath) {
-          verified.push({ type: 'xpath', xpath: c.xpath, confidence: conf - 0.05, sample_value: numericStr });
-        }
-
-        const jsScript = `document.querySelector('${c.css.replace(/'/g, "\\'")}')?.textContent?.trim()`;
-        verified.push({ type: 'js_extractor', script: jsScript, confidence: conf - 0.1, sample_value: numericStr });
+      } catch {
+        continue;
       }
     }
 
     if (verified.length === 0) {
       console.log(`[AutoLocator] Candidates found but none re-verified on ${url}`);
-      if (!existingPage) await safeClose(browser);
       return null;
     }
 
@@ -339,9 +207,9 @@ export async function discoverLocators(
     let textPattern: string | null = null;
     const bestCtx = candidates[0]?.context || '';
     if (bestCtx && numericStr) {
-      const escaped = numericStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const idx = bestCtx.replace(/[$€£¥,\s]/g, '').indexOf(numericStr);
       if (idx >= 0) {
+        const escaped = numericStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         textPattern = `[\\$€£¥]?\\s*${escaped.replace(/\d/g, '\\d')}`;
       }
     }
@@ -356,83 +224,47 @@ export async function discoverLocators(
       last_successful_at: now,
       success_count: 1,
       failure_count: 0,
-      version: 1,
+      version: 2,
     };
 
-    console.log(`[AutoLocator] Discovered ${topSelectors.length} selectors for ${url} in ${Date.now() - started}ms`);
-    if (!existingPage) await safeClose(browser);
+    console.log(`[AutoLocator] Discovered ${topSelectors.length} selectors for ${url} in ${Date.now() - started}ms (via Jina + cheerio)`);
     return result;
 
   } catch (err) {
     console.error('[AutoLocator] Discovery failed:', err instanceof Error ? err.message : err);
-    if (!existingPage) await safeClose(browser);
     return null;
   }
 }
 
 /**
- * Use stored selectors to extract a value without the full vision pipeline.
- * Launches a minimal Puppeteer session, tries each selector in order, and
- * returns the first numeric match or null.
+ * Use stored CSS selectors to extract a value without the full vision pipeline.
+ * Fetches rendered HTML via Jina, evaluates selectors with cheerio.
  */
 export async function fastExtract(
   url: string,
   selectors: DiscoveredSelector[],
 ): Promise<{ value: string; method: string; selector: string; extractTimeMs: number } | null> {
   const started = Date.now();
-  let browser: Browser | null = null;
 
   try {
-    browser = await launchBrowser();
-    const page: Page = await browser.newPage();
-
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    });
-    await page.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-    );
-
-    const isChartSite = /tradingview|finviz|barchart|investing\.com/i.test(url);
-    if (!isChartSite) {
-      await page.setRequestInterception(true);
-      page.on('request', (req) => {
-        const rt = req.resourceType();
-        if (rt === 'media' || rt === 'font' || rt === 'image') req.abort().catch(() => {});
-        else req.continue().catch(() => {});
-      });
+    console.log(`[FastExtract] Fetching rendered HTML via Jina for ${url}`);
+    const htmlResult = await fetchHtmlWithJina(url, { timeoutMs: 25_000 });
+    if (!htmlResult.success || !htmlResult.html) {
+      console.log(`[FastExtract] Failed to fetch HTML: ${htmlResult.error}`);
+      return null;
     }
 
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 2000));
-
+    const $ = cheerio.load(htmlResult.html);
     const sorted = [...selectors].sort((a, b) => b.confidence - a.confidence);
 
     for (const sel of sorted) {
       try {
-        let rawText: string | null = null;
+        if (sel.type !== 'css' || !sel.selector) continue;
 
-        if (sel.type === 'css' && sel.selector) {
-          rawText = await page.evaluate((s: string) => {
-            const el = document.querySelector(s);
-            return el ? (el.textContent || '').trim() : null;
-          }, sel.selector);
-        } else if (sel.type === 'xpath' && sel.xpath) {
-          rawText = await page.evaluate((xp: string) => {
-            const result = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            const node = result.singleNodeValue;
-            return node ? (node.textContent || '').trim() : null;
-          }, sel.xpath);
-        } else if (sel.type === 'js_extractor' && sel.script) {
-          rawText = await page.evaluate((code: string) => {
-            try {
-              const fn = new Function('document', `return (${code})`);
-              const result = fn(document);
-              return result != null ? String(result).trim() : null;
-            } catch { return null; }
-          }, sel.script);
-        }
+        const el = $(sel.selector).first();
+        if (!el.length) continue;
 
+        const rawText = el.text().trim();
         if (!rawText) continue;
 
         const cleaned = rawText.replace(/[$€£¥,\s]/g, '');
@@ -442,13 +274,11 @@ export async function fastExtract(
         const num = Number(numMatch[0]);
         if (!Number.isFinite(num) || num <= 0) continue;
 
-        await safeClose(browser);
-        browser = null;
-
+        console.log(`[FastExtract] ✓ Extracted "${numMatch[0]}" via ${sel.selector} in ${Date.now() - started}ms`);
         return {
           value: numMatch[0],
           method: sel.type,
-          selector: sel.selector || sel.xpath || sel.script || '',
+          selector: sel.selector,
           extractTimeMs: Date.now() - started,
         };
       } catch {
@@ -456,11 +286,10 @@ export async function fastExtract(
       }
     }
 
-    await safeClose(browser);
+    console.log(`[FastExtract] No selectors matched on ${url}`);
     return null;
   } catch (err) {
     console.error('[FastExtract] Failed:', err instanceof Error ? err.message : err);
-    await safeClose(browser);
     return null;
   }
 }

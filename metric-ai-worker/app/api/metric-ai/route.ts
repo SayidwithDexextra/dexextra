@@ -3,14 +3,13 @@ import { after } from 'next/server';
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
-import { captureScreenshot, captureFullPageFallback, ScreenshotResult, SourceLocator, safeCloseBrowser } from '../../../lib/captureScreenshot';
-import type { Browser, Page } from 'puppeteer-core';
 import { uploadScreenshot, UploadResult } from '../../../lib/uploadScreenshot';
 import { VisionAnalysisResult } from '../../../lib/visionAnalysis';
 import { analyzeWithConsensus, VisionConsensus } from '../../../lib/multiModelVision';
 import { getHistoricalContext, formatHistoricalContextForPrompt, HistoricalStats } from '../../../lib/historicalContext';
 import { validateExtractedValue, buildSecondOpinionPrompt } from '../../../lib/valueValidator';
 import { discoverLocators, fastExtract, AiSourceLocatorData, DiscoveredSelector } from '../../../lib/autoLocatorDiscovery';
+import { fetchWithJina, screenshotWithJina } from '../../../lib/jinaReader';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -46,6 +45,16 @@ const OPENAI_MODEL_FAST = process.env.OPENAI_MODEL_FAST || 'gpt-4.1-mini';
 const VISION_SHORTCIRCUIT_CONFIDENCE = Number(process.env.VISION_SHORTCIRCUIT_CONFIDENCE || 0.7);
 
 // Type for tracking screenshot and vision data per URL
+interface ScreenshotResult {
+  success: boolean;
+  base64?: string;
+  error?: string;
+  captureTimeMs?: number;
+  renderedText?: string;
+  locatorExtractedValue?: string;
+  locatorMethod?: string;
+}
+
 interface SourceScreenshotData {
   url: string;
   screenshotResult?: ScreenshotResult;
@@ -385,6 +394,7 @@ export async function POST(req: NextRequest) {
       urls: input.urls,
       urlCount: input.urls.length,
       context: input.context,
+      mode: 'jina-reader',
       relatedMarketId: input.related_market_id,
       timestamp: new Date().toISOString(),
     });
@@ -413,14 +423,12 @@ export async function POST(req: NextRequest) {
       const started = Date.now();
       console.log('[Metric-AI] ▶ Background worker started', { jobId, timestamp: new Date().toISOString() });
       
-      const livePages = new Map<string, { page: Page; browser: Browser }>();
       try {
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const texts: string[] = [];
         const screenshotDataMap = new Map<string, SourceScreenshotData>();
 
-        // --- Phase 0: Fetch ai_source_locator (new column) + historical context in parallel ---
-        let sourceLocator: SourceLocator | undefined;
+        // --- Phase 0: Fetch ai_source_locator + historical context in parallel ---
         let storedLocatorData: AiSourceLocatorData | null = null;
         let historicalStats: HistoricalStats = { lastValue: null, lastUpdatedAt: null, min: 0, max: 0, mean: 0, stdDev: 0, count: 0, suspiciousBelow: 0, suspiciousAbove: Infinity, source: 'none' };
         const marketId = input.related_market_id || '';
@@ -436,31 +444,14 @@ export async function POST(req: NextRequest) {
                 .limit(1)
                 .maybeSingle();
 
-              // Read from dedicated column first, fall back to legacy market_config nesting
               const locatorCol = (data as any)?.ai_source_locator;
               if (locatorCol && Array.isArray(locatorCol.selectors) && locatorCol.selectors.length > 0) {
                 storedLocatorData = locatorCol as AiSourceLocatorData;
-                const best = locatorCol.selectors[0];
-                sourceLocator = {
-                  css_selector: best.type === 'css' ? best.selector : undefined,
-                  xpath: best.type === 'xpath' ? best.xpath : undefined,
-                  js_extractor: best.type === 'js_extractor' ? best.script : undefined,
-                };
-                console.log('[Metric-AI] ✓ Loaded ai_source_locator from column', {
+                console.log('[Metric-AI] ✓ Loaded ai_source_locator', {
                   selectorCount: locatorCol.selectors.length,
-                  bestType: best.type,
+                  bestType: locatorCol.selectors[0]?.type,
                   successCount: locatorCol.success_count,
                 });
-              } else {
-                const loc = (data as any)?.market_config?.ai_source_locator;
-                if (loc && (loc.css_selector || loc.xpath || loc.js_extractor)) {
-                  sourceLocator = {
-                    css_selector: loc.css_selector || undefined,
-                    xpath: loc.xpath || undefined,
-                    js_extractor: loc.js_extractor || undefined,
-                  };
-                  console.log('[Metric-AI] ✓ Loaded ai_source_locator from market_config (legacy)');
-                }
               }
             } catch {}
           })());
@@ -477,7 +468,7 @@ export async function POST(req: NextRequest) {
         if (phase0Promises.length) await Promise.all(phase0Promises);
         storedLocatorData = storedLocatorData as AiSourceLocatorData | null;
 
-        // --- Phase 0.5: Fast path — use stored selectors to skip full pipeline ---
+        // --- Phase 0.5: Fast path — use stored CSS selectors via Jina HTML + cheerio ---
         if (
           storedLocatorData &&
           storedLocatorData.selectors.length > 0 &&
@@ -608,126 +599,217 @@ export async function POST(req: NextRequest) {
           ? { min: historicalStats.suspiciousBelow, max: historicalStats.suspiciousAbove }
           : undefined;
 
-        console.log('[Metric-AI] 🌐 Phase 1: Fetching HTML and capturing screenshots', { urlCount: input.urls.length });
+        console.log('[Metric-AI] 🌐 Phase 1: Fetching content and capturing screenshots via Jina', {
+          urlCount: input.urls.length,
+        });
 
-        const isCreateContext = input.context === 'create';
-
-        // --- Phase 1: Fetch HTML + screenshot + DOM extraction + locator in parallel per URL ---
+        // --- Phase 1: Fetch content + screenshots in parallel per URL ---
+        // Uses Jina Reader for text extraction and Jina screenshots for vision.
         const urlProcessingPromises = input.urls.map(async (url) => {
           const screenshotData: SourceScreenshotData = { url };
           
           try {
             const fetchedAt = new Date().toISOString();
-            
-            const safeScreenshotCapture = async (): Promise<ScreenshotResult | null> => {
-              if (!ENABLE_VISION_ANALYSIS) return null;
-              try {
-                console.log(`[Metric-AI] 📸 Starting screenshot capture for ${url}`);
-                const result = await captureScreenshot(url, {
-                  width: 1280,
-                  height: 900,
-                  waitForNetworkIdle: true,
-                  additionalWaitMs: 2000,
-                  timeoutMs: 45000,
-                  retryAttempts: 1,
-                  locator: sourceLocator,
-                  keepBrowserAlive: isCreateContext && !!marketId,
-                });
-                
-                console.log(`[Metric-AI] 📸 Screenshot result for ${url}:`, {
-                  success: result.success,
-                  captureTimeMs: result.captureTimeMs,
-                  hasRenderedText: !!result.renderedText,
-                  locatorExtracted: result.locatorExtractedValue?.slice(0, 50) || null,
-                  locatorMethod: result.locatorMethod || null,
-                  error: result.error?.slice(0, 100),
-                });
-                
-                return result;
-              } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                console.error(`[Metric-AI] ❌ Screenshot capture exception for ${url}:`, message);
-                return { success: false, error: `Uncaught exception: ${message}`, captureTimeMs: 0 };
-              }
-            };
 
-            const [htmlResponse, screenshotResult] = await Promise.all([
-              fetch(url, {
-                headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` }
-              }),
-              safeScreenshotCapture()
-            ]);
+              // ── Pass 1: Speed-first — all three via "direct" engine in parallel ──
+              console.log(`[Metric-AI] 🔗 Pass 1 (direct): Starting speed-first parallel fetch for ${url}`);
+              const pass1Start = Date.now();
 
-            if (screenshotResult) {
-              screenshotData.screenshotResult = screenshotResult;
-              if (screenshotResult.livePage && screenshotResult.liveBrowser) {
-                livePages.set(url, { page: screenshotResult.livePage, browser: screenshotResult.liveBrowser });
-              }
-            }
-
-            const contentType = htmlResponse.headers.get('content-type') || '';
-            const htmlRaw = (await htmlResponse.text()).slice(0, MAX_RAW_HTML_CHARS);
-
-            const meta = extractMetaTags(htmlRaw);
-            const textLines = stripTagsToLines(htmlRaw);
-            const keyLines = collectKeyLines(textLines, [
-              input.metric,
-              ...(input.description ? input.description.split(/\s+/).slice(0, 8) : [])
-            ]);
-            const jsonLd = extractJsonLdPrices(htmlRaw);
-            const chart = extractChartSignals(htmlRaw);
-            const candidates = extractNumericCandidates(htmlRaw);
-
-            const digestParts: string[] = [];
-            digestParts.push(`URL: ${url}`);
-            digestParts.push(`FETCHED_AT: ${fetchedAt}`);
-            digestParts.push(`HTTP_STATUS: ${htmlResponse.status}`);
-            if (contentType) digestParts.push(`CONTENT_TYPE: ${contentType}`);
-            if (meta.title) digestParts.push(`TITLE: ${meta.title}`);
-            if (meta.description) digestParts.push(`META_DESCRIPTION: ${meta.description}`);
-
-            // Locator-extracted value (highest trust)
-            if (screenshotResult?.locatorExtractedValue) {
-              digestParts.push(`LOCATOR_EXTRACTED_VALUE: ${screenshotResult.locatorExtractedValue} (via ${screenshotResult.locatorMethod})`);
-            }
-
-            // Rendered DOM text (JS-rendered content from Puppeteer)
-            if (screenshotResult?.renderedText) {
-              const renderedKeyLines = collectKeyLines(screenshotResult.renderedText, [
-                input.metric,
-                ...(input.description ? input.description.split(/\s+/).slice(0, 8) : [])
+              const [jinaResultDirect, screenshotDirect, htmlResponse] = await Promise.all([
+                fetchWithJina(url, { timeoutMs: 15_000, engine: 'direct' }).catch(err => ({
+                  success: false as const, error: String(err?.message || err), durationMs: 0,
+                  title: undefined, description: undefined, content: undefined, engine: undefined,
+                })),
+                ENABLE_VISION_ANALYSIS
+                  ? screenshotWithJina(url, { timeoutMs: 15_000, engine: 'direct' })
+                      .catch(() => ({ success: false as const, error: 'exception', captureTimeMs: 0, base64: undefined, engine: undefined }))
+                  : Promise.resolve(null),
+                fetch(url, {
+                  headers: { 'User-Agent': `Dexextra/1.0 (+${process.env.APP_URL || 'https://dexextra.com'})` },
+                  signal: AbortSignal.timeout(15_000),
+                }).catch(() => null),
               ]);
-              if (renderedKeyLines.length > 0) {
-                digestParts.push(`RENDERED_DOM_KEY_LINES (JS-rendered page content):`);
-                for (const line of renderedKeyLines.slice(0, 30)) digestParts.push(`- ${line.slice(0, 500)}`);
+
+              const pass1Ms = Date.now() - pass1Start;
+              console.log(`[Metric-AI] ⏱️ Pass 1 (direct) completed in ${pass1Ms}ms for ${url}`, {
+                text: jinaResultDirect.success ? 'ok' : 'fail',
+                screenshot: screenshotDirect?.success ? 'ok' : screenshotDirect ? 'fail' : 'skip',
+                rawHtml: htmlResponse?.ok ? 'ok' : 'fail',
+              });
+
+              // Screenshot is ready from direct — lock it in immediately
+              let extScreenshot = screenshotDirect;
+
+              // ── Pass 2: Retry only the pieces that failed, with fallback engines ──
+              // Screenshot already succeeded via direct? Great — don't wait for it again.
+              // Text or raw HTML failed? Retry them (they don't block the screenshot).
+              const needsTextRetry = !jinaResultDirect.success || !jinaResultDirect.content || jinaResultDirect.content.length < 50;
+              const needsScreenshotRetry = ENABLE_VISION_ANALYSIS && (!screenshotDirect || !screenshotDirect.success);
+
+              let jinaResult = jinaResultDirect;
+
+              if (needsTextRetry || needsScreenshotRetry) {
+                console.log(`[Metric-AI] 🔄 Pass 2 (fallback): Retrying failed fetches for ${url}`, {
+                  retryText: needsTextRetry,
+                  retryScreenshot: needsScreenshotRetry,
+                });
+                const pass2Start = Date.now();
+
+                const retryPromises: Promise<void>[] = [];
+
+                if (needsTextRetry) {
+                  retryPromises.push((async () => {
+                    const retried = await fetchWithJina(url, { timeoutMs: 30_000 }).catch(err => ({
+                      success: false as const, error: String(err?.message || err), durationMs: 0,
+                      title: undefined, description: undefined, content: undefined, engine: undefined,
+                    }));
+                    if (retried.success) jinaResult = retried;
+                  })());
+                }
+
+                if (needsScreenshotRetry) {
+                  retryPromises.push((async () => {
+                    const retried = await screenshotWithJina(url, { timeoutMs: 45_000 })
+                      .catch(() => ({ success: false as const, error: 'exception', captureTimeMs: 0, base64: undefined, engine: undefined }));
+                    if (retried.success) extScreenshot = retried;
+                  })());
+                }
+
+                await Promise.all(retryPromises);
+                console.log(`[Metric-AI] ⏱️ Pass 2 (fallback) completed in ${Date.now() - pass2Start}ms for ${url}`);
               }
-            }
 
-            if (jsonLd.length) {
-              digestParts.push(
-                `JSON_LD_PRICE_CANDIDATES: ${jsonLd
-                  .slice(0, 6)
-                  .map(x => `${x.price}${x.currency ? ' ' + x.currency : ''}${x.context ? ' (' + x.context + ')' : ''}`)
-                  .join(' | ')}`
-              );
-            }
-            if (candidates.length) {
-              digestParts.push(`NUMERIC_CANDIDATES:`);
-              for (const c of candidates.slice(0, 18)) digestParts.push(`- ${c.label}: ${c.value} (${c.context})`);
-            }
-            if (chart.derivedClose) {
-              digestParts.push(`CHART_DERIVED_LAST_CLOSE: ${chart.derivedClose}`);
-              if (chart.derivedOhlc) digestParts.push(`CHART_DERIVED_OHLC: ${JSON.stringify(chart.derivedOhlc).slice(0, 500)}`);
-            }
-            if (chart.snippets.length) {
-              digestParts.push(`CHART_SNIPPETS:`);
-              for (const snip of chart.snippets) digestParts.push(`- ${snip.slice(0, 900)}`);
-            }
-            digestParts.push(`KEY_LINES:`);
-            for (const line of keyLines) digestParts.push(`- ${line.slice(0, 500)}`);
+              // Log final results
+              if (jinaResult.success) {
+                console.log(`[Metric-AI] 📝 Jina text result for ${url}:`, {
+                  engine: (jinaResult as any).engine || 'direct',
+                  contentLength: jinaResult.content?.length || 0,
+                  title: jinaResult.title?.slice(0, 80) || null,
+                  durationMs: jinaResult.durationMs,
+                });
+              } else {
+                console.log(`[Metric-AI] ❌ Jina text extraction FAILED for ${url}:`, {
+                  error: jinaResult.error?.slice(0, 200),
+                });
+              }
 
-            const digest = digestParts.join('\n').slice(0, MAX_SOURCE_DIGEST_CHARS);
-            return { url, digest, screenshotData };
+              if (extScreenshot) {
+                if (extScreenshot.success) {
+                  const imgSizeKB = extScreenshot.base64 ? Math.round(extScreenshot.base64.length * 0.75 / 1024) : 0;
+                  console.log(`[Metric-AI] 📸 Jina screenshot result for ${url}:`, {
+                    engine: (extScreenshot as any).engine || 'direct',
+                    imageSizeKB: imgSizeKB,
+                    captureTimeMs: extScreenshot.captureTimeMs,
+                  });
+                } else {
+                  console.log(`[Metric-AI] ❌ Jina screenshot FAILED for ${url}:`, {
+                    error: extScreenshot.error?.slice(0, 200),
+                  });
+                }
+              }
+
+              // Screenshot → ScreenshotResult shape
+              if (extScreenshot && extScreenshot.success) {
+                screenshotData.screenshotResult = {
+                  success: true,
+                  base64: extScreenshot.base64,
+                  captureTimeMs: extScreenshot.captureTimeMs,
+                };
+              } else if (extScreenshot) {
+                screenshotData.screenshotResult = {
+                  success: false,
+                  error: extScreenshot.error,
+                  captureTimeMs: extScreenshot.captureTimeMs,
+                };
+              }
+
+              // Build digest from Jina content + raw HTML supplements
+              const digestParts: string[] = [];
+              digestParts.push(`URL: ${url}`);
+              digestParts.push(`FETCHED_AT: ${fetchedAt}`);
+
+              if (jinaResult.title) digestParts.push(`TITLE: ${jinaResult.title}`);
+              if (jinaResult.description) digestParts.push(`META_DESCRIPTION: ${jinaResult.description}`);
+
+              if (jinaResult.success && jinaResult.content) {
+                const jinaKeyLines = collectKeyLines(jinaResult.content, [
+                  input.metric,
+                  ...(input.description ? input.description.split(/\s+/).slice(0, 8) : []),
+                ]);
+                console.log(`[Metric-AI] 🔑 Jina key lines extracted for ${url}:`, {
+                  keyLinesFound: jinaKeyLines.length,
+                  totalContentChars: jinaResult.content.length,
+                  sample: jinaKeyLines[0]?.slice(0, 120) || null,
+                });
+                if (jinaKeyLines.length > 0) {
+                  digestParts.push(`RENDERED_CONTENT_KEY_LINES (JS-rendered via Jina Reader):`);
+                  for (const line of jinaKeyLines.slice(0, 30)) digestParts.push(`- ${line.slice(0, 500)}`);
+                }
+              } else if (jinaResult.error) {
+                digestParts.push(`JINA_READER_ERROR: ${jinaResult.error.slice(0, 200)}`);
+              }
+
+              // Supplement with raw HTML for structured data extraction
+              if (htmlResponse?.ok) {
+                const htmlRaw = (await htmlResponse.text()).slice(0, MAX_RAW_HTML_CHARS);
+                const jsonLd = extractJsonLdPrices(htmlRaw);
+                const chart = extractChartSignals(htmlRaw);
+                const candidates = extractNumericCandidates(htmlRaw);
+
+                console.log(`[Metric-AI] 📊 Raw HTML structured data for ${url}:`, {
+                  jsonLdPrices: jsonLd.length,
+                  numericCandidates: candidates.length,
+                  chartDerivedClose: chart.derivedClose || null,
+                  chartSnippets: chart.snippets.length,
+                  usingRawHtmlAsFallback: !jinaResult.success,
+                });
+
+                if (!jinaResult.success) {
+                  console.log(`[Metric-AI] ⚠️ Jina failed — falling back to raw HTML text extraction for ${url}`);
+                  const meta = extractMetaTags(htmlRaw);
+                  if (meta.title) digestParts.push(`TITLE: ${meta.title}`);
+                  if (meta.description) digestParts.push(`META_DESCRIPTION: ${meta.description}`);
+                  const textLines = stripTagsToLines(htmlRaw);
+                  const keyLines = collectKeyLines(textLines, [
+                    input.metric,
+                    ...(input.description ? input.description.split(/\s+/).slice(0, 8) : []),
+                  ]);
+                  if (keyLines.length > 0) {
+                    digestParts.push(`KEY_LINES (raw HTML fallback):`);
+                    for (const line of keyLines) digestParts.push(`- ${line.slice(0, 500)}`);
+                  }
+                }
+
+                if (jsonLd.length) {
+                  digestParts.push(
+                    `JSON_LD_PRICE_CANDIDATES: ${jsonLd.slice(0, 6)
+                      .map(x => `${x.price}${x.currency ? ' ' + x.currency : ''}${x.context ? ' (' + x.context + ')' : ''}`)
+                      .join(' | ')}`
+                  );
+                }
+                if (candidates.length) {
+                  digestParts.push(`NUMERIC_CANDIDATES:`);
+                  for (const c of candidates.slice(0, 18)) digestParts.push(`- ${c.label}: ${c.value} (${c.context})`);
+                }
+                if (chart.derivedClose) {
+                  digestParts.push(`CHART_DERIVED_LAST_CLOSE: ${chart.derivedClose}`);
+                  if (chart.derivedOhlc) digestParts.push(`CHART_DERIVED_OHLC: ${JSON.stringify(chart.derivedOhlc).slice(0, 500)}`);
+                }
+              } else if (!htmlResponse?.ok) {
+                console.log(`[Metric-AI] ⚠️ Raw HTML fetch failed for ${url} — structured data extraction skipped`);
+              }
+
+              const digest = digestParts.join('\n').slice(0, MAX_SOURCE_DIGEST_CHARS);
+              console.log(`[Metric-AI] 📋 Digest built for ${url}:`, {
+                digestLength: digest.length,
+                maxAllowed: MAX_SOURCE_DIGEST_CHARS,
+                sources: [
+                  jinaResult.success ? 'jina-text' : null,
+                  extScreenshot?.success ? 'jina-screenshot' : null,
+                  htmlResponse?.ok ? 'raw-html' : null,
+                ].filter(Boolean).join(', '),
+              });
+              return { url, digest, screenshotData };
           } catch {
             return { url, digest: null, screenshotData };
           }
@@ -746,6 +828,7 @@ export async function POST(req: NextRequest) {
         
         console.log('[Metric-AI] ✓ Phase 1 complete', {
           jobId, phase1DurationMs,
+          mode: 'jina-reader',
           htmlSourcesExtracted: htmlSuccessCount,
           screenshotsCaptured: screenshotSuccessCount,
           totalUrls: input.urls.length,
@@ -758,13 +841,16 @@ export async function POST(req: NextRequest) {
           const screenshotsToProcess = Array.from(screenshotDataMap.values())
             .filter(data => data.screenshotResult?.success && data.screenshotResult.base64);
 
-          const uploadPromises = screenshotsToProcess.map(async (data) => {
-            if (!data.screenshotResult?.base64) return;
-            try {
-              data.uploadResult = await uploadScreenshot(data.screenshotResult.base64, jobId, data.url);
-            } catch {}
-          });
-          await Promise.all(uploadPromises);
+          if (input.context === 'settlement') {
+            console.log('[Metric-AI] 📤 Uploading screenshots to Supabase (settlement run)');
+            const uploadPromises = screenshotsToProcess.map(async (data) => {
+              if (!data.screenshotResult?.base64) return;
+              try {
+                data.uploadResult = await uploadScreenshot(data.screenshotResult.base64, jobId, data.url);
+              } catch {}
+            });
+            await Promise.all(uploadPromises);
+          }
 
           console.log('[Metric-AI] 👁️ Running multi-model vision consensus', { jobId, screenshotsToAnalyze: screenshotsToProcess.length });
           
@@ -800,35 +886,7 @@ export async function POST(req: NextRequest) {
           });
           await Promise.all(visionPromises);
 
-          // Hybrid fallback: if vision confidence is low, retry with full-page screenshot
-          for (const data of screenshotsToProcess) {
-            if (data.visionConsensus && data.visionConsensus.confidence < 0.4 && data.visionConsensus.agreement !== 'none') {
-              console.log(`[Metric-AI] 🔄 Low vision confidence (${data.visionConsensus.confidence.toFixed(2)}), trying full-page for ${data.url}`);
-              try {
-                const fullPageResult = await captureFullPageFallback(data.url, {
-                  width: 1280, height: 900, timeoutMs: 30000, retryAttempts: 0, locator: sourceLocator,
-                });
-                if (fullPageResult.success && fullPageResult.base64) {
-                  const retryConsensus = await analyzeWithConsensus(
-                    fullPageResult.base64, input.metric,
-                    { description: input.description, expectedRange: visionExpectedRange }
-                  );
-                  if (retryConsensus.confidence > data.visionConsensus.confidence) {
-                    console.log(`[Metric-AI] ✓ Full-page improved confidence: ${retryConsensus.confidence.toFixed(2)}`);
-                    data.visionConsensus = retryConsensus;
-                    const bestRetry = retryConsensus.models.find(m => m.success);
-                    if (bestRetry) {
-                      data.visionResult = {
-                        success: true, value: retryConsensus.value,
-                        numericValue: retryConsensus.numericValue !== undefined ? String(retryConsensus.numericValue) : bestRetry.numericValue,
-                        confidence: retryConsensus.confidence, visualQuote: bestRetry.visualQuote,
-                      };
-                    }
-                  }
-                }
-              } catch {}
-            }
-          }
+          // Jina screenshots used — no separate full-page fallback needed.
 
           const visionSuccessCount = Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length;
           console.log('[Metric-AI] ✓ Vision analysis complete', { jobId, visionSuccessCount });
@@ -1236,8 +1294,8 @@ export async function POST(req: NextRequest) {
           screenshots_failed: screenshotFailures.length,
           screenshot_failure_reasons: screenshotFailures.length > 0 ? screenshotFailures : undefined,
           html_sources_extracted: texts.length,
-          locator_used: !!sourceLocator,
-          locator_value: Array.from(screenshotDataMap.values()).find(d => d.screenshotResult?.locatorExtractedValue)?.screenshotResult?.locatorExtractedValue || null,
+          locator_used: !!storedLocatorData,
+          locator_value: null,
           historical_context_source: historicalStats.source,
           historical_last_value: historicalStats.lastValue,
           data_sources_summary: `HTML: ${texts.length}/${totalUrls}, Screenshots: ${successfulScreenshots}/${totalUrls}, Vision: ${Array.from(screenshotDataMap.values()).filter(d => d.visionResult?.success).length}/${totalUrls}`,
@@ -1299,17 +1357,14 @@ export async function POST(req: NextRequest) {
               : resolution.locator_used ? 'locator'
               : 'fusion';
 
-            const reusablePage = livePages.get(discoveryUrl)?.page;
-            console.log('[Metric-AI] 🔍 Phase 5: Auto-discovering locators', {
+            console.log('[Metric-AI] 🔍 Phase 5: Auto-discovering locators via Jina + cheerio', {
               jobId, url: discoveryUrl, confirmedValue: resolution.asset_price_suggestion,
-              reusingBrowser: !!reusablePage,
             });
 
             const discovered = await discoverLocators(
               discoveryUrl,
               resolution.asset_price_suggestion,
               primaryEvidence,
-              reusablePage,
             );
 
             if (discovered) {
@@ -1332,12 +1387,6 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Close any live browser sessions kept alive for Phase 5
-        for (const [, { browser }] of livePages) {
-          await safeCloseBrowser(browser);
-        }
-        livePages.clear();
-
         const totalProcessingTimeMs = Date.now() - started;
         
         await supabase.from('metric_oracle_jobs').update({
@@ -1352,10 +1401,12 @@ export async function POST(req: NextRequest) {
         console.log('[Metric-AI] ✅ JOB COMPLETED SUCCESSFULLY', {
           jobId,
           totalProcessingTimeMs,
+          mode: 'jina-reader',
           metric: input.metric,
           value: resolution.value,
           assetPriceSuggestion: resolution.asset_price_suggestion,
           confidence: resolution.confidence,
+          fusionTier: resolution.fusion_tier,
           dataSources: resolution.data_sources_summary,
           resolutionId,
         });
@@ -1364,12 +1415,6 @@ export async function POST(req: NextRequest) {
         await deliverCallback(input.callbackUrl, input.callbackSecret, input.callbackMeta, jobId, 'completed', resolution);
         
       } catch (err: any) {
-        // Always clean up live browsers on error
-        for (const [, { browser }] of livePages) {
-          await safeCloseBrowser(browser);
-        }
-        livePages.clear();
-
         const totalProcessingTimeMs = Date.now() - started;
         
         console.error('[Metric-AI] ═══════════════════════════════════════════════════');

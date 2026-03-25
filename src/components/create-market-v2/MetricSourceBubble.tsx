@@ -21,7 +21,7 @@ interface MetricSourceBubbleProps {
   primarySource: MetricSource | null;
   secondarySources: MetricSource[];
   metricName?: string;
-  /** Optional SerpApi results; used to populate icon + tooltip snippet. */
+  /** Optional search results; used to populate icon + tooltip snippet. */
   searchResults?: SearchResult[];
   onSelectSource?: (source: MetricSourceOption) => void;
   /** Fetch status for Step 3 source discovery. */
@@ -767,7 +767,7 @@ export function MetricSourceBubble({
               <div>
                 <div className="text-white/85 font-medium">Couldn’t fetch data sources</div>
                 <div className="mt-1 text-white/55 text-[13px]">
-                  Please retry. If this keeps happening, check server logs and `SERPAPI_KEY`.
+                  Please retry. If this keeps happening, check server logs and `JINA_API_KEY`.
                 </div>
               </div>
               {onRetry ? (

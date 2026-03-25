@@ -596,45 +596,92 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   // Handle case where market exists but contracts aren't deployed yet.
   // Allow normal header rendering during settlement window (SETTLEMENT_REQUESTED).
   if (!enhancedTokenData.isDeployed || (enhancedTokenData.marketStatus !== 'ACTIVE' && enhancedTokenData.marketStatus !== 'SETTLEMENT_REQUESTED')) {
-    const statusText = {
-      'PENDING': 'Market Creation Pending',
-      'DEPLOYING': 'Contracts Deploying',
-      'TRADING_ENDED': 'Trading Has Ended',
-      'SETTLEMENT_REQUESTED': 'Settlement In Progress',
-      'SETTLED': 'Market Settled',
-      'EXPIRED': 'Market Expired',
-      'PAUSED': 'Market Paused',
-      'ERROR': 'Deployment Error'
-    }[enhancedTokenData.marketStatus] || 'Market Not Active';
+    const statusLabel: Record<string, string> = {
+      'PENDING': 'Pending',
+      'DEPLOYING': 'Deploying',
+      'TRADING_ENDED': 'Trading Ended',
+      'SETTLED': 'Settled',
+      'EXPIRED': 'Expired',
+      'PAUSED': 'Paused',
+      'ERROR': 'Error',
+    };
+    const label = statusLabel[enhancedTokenData.marketStatus] || 'Inactive';
+    const isSettled = enhancedTokenData.marketStatus === 'SETTLED';
+    const settlementPrice = Number((marketData as any)?.proposed_settlement_value ?? 0);
+    const settlementDateObj = enhancedTokenData.settlementDate ? new Date(enhancedTokenData.settlementDate) : null;
+    const totalVolume = Number((marketData as any)?.total_volume ?? 0);
+    const totalTrades = enhancedTokenData.totalTrades;
 
     return (
-      <div className="rounded-md bg-t-page border border-t-stroke-hover p-4 min-h-[200px] flex items-center justify-center">
-        <div className="text-yellow-400 text-sm text-center">
-          <div className="mb-2">⚠️ {statusText}</div>
-          <div className="text-xs text-t-fg-muted mb-2">
-            Status: {enhancedTokenData.marketStatus}
+      <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 h-full max-h-full flex flex-col">
+        {/* Token identity */}
+        <div className="flex items-center justify-between p-2.5">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-[#404040]" />
+            <Image
+              src={enhancedTokenData.logo || 'https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExaW4xdGtpeWFtaHpqdXpwN25udnNpNmRpaHp4ZjQ3Z2h1YzdmdnQzbSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/l41YbRMqR9jrrCodq/giphy.gif'}
+              alt={enhancedTokenData.name || 'Market Icon'}
+              width={24}
+              height={24}
+              className="w-6 h-6 rounded border border-[#222222] object-cover flex-shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <span className="text-[11px] font-medium text-white truncate block">{enhancedTokenData.name}</span>
+              <span className="text-[10px] text-[#606060]">{enhancedTokenData.symbol}</span>
+            </div>
           </div>
-          {enhancedTokenData.marketStatus === 'PENDING' && (
-            <div className="text-xs text-t-fg-muted">
-              This market is awaiting contract deployment. Trading is not yet available.
+          <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
+            {label}
+          </div>
+        </div>
+
+        {/* Settlement price + details */}
+        {isSettled && (
+          <div className="px-2.5 pb-2.5">
+            {settlementPrice > 0 && (
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] text-[#808080]">Settlement Price</span>
+                <span className="text-[11px] text-white font-mono font-medium">${formatPriceWithCommas(settlementPrice)}</span>
+              </div>
+            )}
+            <div className="space-y-1 text-[10px]">
+              {settlementDateObj && !isNaN(settlementDateObj.getTime()) && (
+                <div className="flex justify-between">
+                  <span className="text-[#808080]">Settled</span>
+                  <span className="text-white font-mono">{settlementDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                </div>
+              )}
+              {totalVolume > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-[#808080]">Total Volume</span>
+                  <span className="text-white font-mono">{formatLargeNumber(totalVolume)}</span>
+                </div>
+              )}
+              {totalTrades > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-[#808080]">Total Trades</span>
+                  <span className="text-white font-mono">{totalTrades.toLocaleString()}</span>
+                </div>
+              )}
             </div>
-          )}
-          {enhancedTokenData.marketStatus === 'SETTLED' && (
-            <div className="text-xs text-t-fg-muted">
-              This market has been settled. Final settlement date: {new Date(enhancedTokenData.settlementDate).toLocaleDateString()}
+          </div>
+        )}
+
+        {/* Hover-expandable note */}
+        <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
+          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+            <div className="text-[9px] pt-1.5">
+              {isSettled ? (
+                <span className="text-[#606060]">Trading is closed. Positions settled at the final price.</span>
+              ) : enhancedTokenData.marketStatus === 'PENDING' ? (
+                <span className="text-[#606060]">Awaiting contract deployment. Trading not yet available.</span>
+              ) : enhancedTokenData.marketStatus === 'TRADING_ENDED' ? (
+                <span className="text-[#606060]">Trading concluded. Settlement will begin shortly.</span>
+              ) : (
+                <span className="text-[#606060]">This market is currently inactive.</span>
+              )}
             </div>
-          )}
-          {enhancedTokenData.marketStatus === 'SETTLEMENT_REQUESTED' && (
-            <div className="text-xs text-t-fg-label mt-1">
-              Proposed: <span className="text-t-fg font-mono">
-                ${Number((marketData as any)?.proposed_settlement_value ?? 0).toFixed(4)}
-              </span>
-              {(marketData as any)?.settlement_window_expires_at ? (
-                <> • Expires {new Date(String((marketData as any).settlement_window_expires_at)).toLocaleString()}</>
-              ) : null}
-              
-            </div>
-          )}
+          </div>
         </div>
       </div>
     );

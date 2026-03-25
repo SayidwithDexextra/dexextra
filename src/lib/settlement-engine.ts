@@ -489,19 +489,19 @@ async function maybeFinalizeSettlement(
     };
   }
 
-  const ai = await getAIPriceDetermination(market);
-  if (!ai) {
+  const proposedPrice = market.proposed_settlement_value;
+  if (proposedPrice === null || proposedPrice === undefined || !Number.isFinite(proposedPrice) || proposedPrice <= 0) {
     return {
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
       settlementDate: market.settlement_date,
       settlementWindowExpiresAt: market.settlement_window_expires_at,
-      reason: 'ai_final_price_failed',
+      reason: 'no_proposed_settlement_value',
     };
   }
 
   let txHash: string | null = null;
-  const settle = await finalizeOnChain(market, ai.price);
+  const settle = await finalizeOnChain(market, proposedPrice);
   if (!settle.ok) {
     return {
       marketId: market.id, marketIdentifier: market.market_identifier,
@@ -517,24 +517,14 @@ async function maybeFinalizeSettlement(
   const finalConfig = nextMarketConfig(market, {
     stage: 'settled',
     settled_at: now,
-    ai_job_id: ai.jobId,
     tx_hash: txHash,
   });
-  if (ai.waybackUrl) {
-    finalConfig.settlement_wayback_url = ai.waybackUrl;
-  }
-  if (ai.waybackPageUrl) {
-    finalConfig.settlement_wayback_page_url = ai.waybackPageUrl;
-  }
-  if (ai.screenshotUrl) {
-    finalConfig.settlement_screenshot_url = ai.screenshotUrl;
-  }
 
   const { error } = await supabase
     .from('markets')
     .update({
       market_status: 'SETTLED',
-      settlement_value: ai.price,
+      settlement_value: proposedPrice,
       settlement_timestamp: now,
       market_config: finalConfig,
       updated_at: now,
@@ -557,7 +547,7 @@ async function maybeFinalizeSettlement(
     action: 'finalize', ok: true,
     settlementDate: market.settlement_date,
     settlementWindowExpiresAt: market.settlement_window_expires_at,
-    details: { aiPrice: ai.price, aiJobId: ai.jobId, txHash },
+    details: { settledPrice: proposedPrice, txHash },
   };
 }
 

@@ -224,7 +224,7 @@ function randomDevCode4() {
   return out;
 }
 
-type DevSettlementMode = 'standard' | 'immediate' | 'speed-run-30';
+type DevSettlementMode = 'standard' | 'immediate' | 'speed-run-30' | 'speed-run-15';
 
 type SpeedRunConfig = {
   rolloverLeadSeconds: number;
@@ -243,11 +243,21 @@ const DEV_SETTLEMENT_OPTIONS: {
   {
     value: 'speed-run-30',
     label: 'Speed Run (30 min)',
-    settlementOffsetSeconds: 40 * 60,
+    settlementOffsetSeconds: 30 * 60,
     speedRunConfig: {
-      rolloverLeadSeconds: 5 * 60,
+      rolloverLeadSeconds: 15 * 60,
       challengeDurationSeconds: 10 * 60,
       settlementWindowSeconds: 10 * 60,
+    },
+  },
+  {
+    value: 'speed-run-15',
+    label: 'Speed Run (15 min)',
+    settlementOffsetSeconds: 15 * 60,
+    speedRunConfig: {
+      rolloverLeadSeconds: 7.5 * 60,
+      challengeDurationSeconds: 5 * 60,
+      settlementWindowSeconds: 5 * 60,
     },
   },
 ];

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import OpenAI from 'openai';
-import { searchMetricSourcesCached } from '@/lib/serpApi';
+import { searchMetricSourcesCached } from '@/lib/jinaSearch';
 import type { SearchResult } from '@/types/metricDiscovery';
 
 export const runtime = 'nodejs';

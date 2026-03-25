@@ -392,7 +392,7 @@ export default function DebugSearchPage() {
           <div>
             <div className="text-[12px] font-medium text-white">Debug: Search + Image Intent</div>
             <div className="mt-1 text-[11px] text-[#9CA3AF]">
-              Test SerpAPI fallback behavior and the Unsplash/logo intent normalization.
+              Test search fallback behavior and the Unsplash/logo intent normalization.
             </div>
           </div>
           <div className="flex flex-wrap gap-2 text-[11px]">
@@ -479,7 +479,7 @@ export default function DebugSearchPage() {
 
       {/* Icon search */}
       <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
-        <div className="text-[12px] font-medium text-white">Icon Search (SerpAPI Images)</div>
+        <div className="text-[12px] font-medium text-white">Icon Search (Jina Images)</div>
         <div className="mt-1 text-[11px] text-[#9CA3AF]">
           Calls <span className="font-mono text-white/80">/api/icon-search</span>. If results are empty, it will retry with a different query and a backup engine.
         </div>
@@ -670,7 +670,7 @@ export default function DebugSearchPage() {
 
       {/* Metric discovery */}
       <div className="mt-4 rounded-md border border-[#222222] bg-[#0F0F0F] p-4">
-        <div className="text-[12px] font-medium text-white">Metric Discovery (SerpAPI Web)</div>
+        <div className="text-[12px] font-medium text-white">Metric Discovery (Jina Search)</div>
         <div className="mt-1 text-[11px] text-[#9CA3AF]">
           Calls <span className="font-mono text-white/80">/api/metric-discovery</span>. In full mode, it returns
           <span className="font-mono text-white/80"> search_results</span> that should no longer be empty just because the first query was too strict.

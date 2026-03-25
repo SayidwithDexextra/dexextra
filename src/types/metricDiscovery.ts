@@ -7,11 +7,8 @@ export interface SearchResult {
   url: string;
   snippet: string;
   domain: string;
-  /** Optional favicon URL from SerpApi (if provided). */
   favicon?: string;
-  /** Optional source/brand name from SerpApi (if provided). */
   source?: string;
-  /** Optional displayed_link from SerpApi (if provided). */
   displayed_link?: string;
 }
 
@@ -38,7 +35,6 @@ export interface MetricDiscoveryInput {
 export interface MetricDiscoveryResult {
   measurable: boolean;
   metric_definition: MetricDefinition | null;
-  /** AI-generated search query optimized for finding authoritative data sources via SERPAPI. */
   search_query: string | null;
   sources: {
     primary_source: MetricSource;

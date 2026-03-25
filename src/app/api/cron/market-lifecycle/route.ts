@@ -347,6 +347,8 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
         chainId: deployResult.chainId,
         networkName: deployResult.network,
         creatorWalletAddress: rolloverCreator,
+        iconImageUrl: market.icon_image_url || null,
+        bannerImageUrl: market.banner_image_url || null,
         skipSettlementDateValidation: true,
       }),
     });

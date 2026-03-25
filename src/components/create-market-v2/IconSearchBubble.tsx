@@ -228,7 +228,7 @@ export function IconSearchBubble({
               <button
                 key={icon.id}
                 type="button"
-                // Prefer the SerpApi thumbnail for selection:
+                // Prefer the thumbnail for selection:
                 // many "original" URLs block hotlinking (403/CORS), causing the preview to stay blank.
                 onClick={() => onSelectIcon(icon.thumbnail || icon.url)}
                 className={`group relative flex items-center justify-center rounded-xl p-2 transition-all duration-200 ${
