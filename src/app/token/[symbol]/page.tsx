@@ -28,7 +28,7 @@ import { MarketDataProvider, useMarketData } from '@/contexts/MarketDataContext'
 // Removed contractDeployment import
 // Removed useVAMMSettlement hook
 import { MetricLivePrice } from '@/components';
-import { useActivePairByMarketId, useSeriesMarkets } from '@/hooks/useSeriesRouting';
+import { useActivePairByMarketId, useSeriesMarkets, useSeriesSlug } from '@/hooks/useSeriesRouting';
 import { SettlementInterface } from '@/components/SettlementInterface';
 import { SettlementTransitionOverlay } from '@/components/SettlementTransitionOverlay';
 import { useMarketSettlementRealtime } from '@/hooks/useMarketSettlementRealtime';
@@ -232,19 +232,6 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       },
     ] as const;
 
-    const CHALLENGE_BOND_CONFIG_ABI = [
-      {
-        type: 'function' as const,
-        name: 'getChallengeBondConfig' as const,
-        stateMutability: 'view' as const,
-        inputs: [],
-        outputs: [
-          { type: 'uint256', name: 'bondAmount' },
-          { type: 'address', name: 'slashRecipient' },
-        ],
-      },
-    ] as const;
-
     const ACTIVE_CHALLENGE_ABI = [
       {
         type: 'function' as const,
@@ -277,7 +264,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
     const fetchStats = async () => {
       try {
-        const [priceData, tradeStats, chStats, totalMarginRaw, lifecycleState, challengeBondConfig, activeChallengeInfo, proposedEvidence] = await Promise.all([
+        const [priceData, tradeStats, chStats, totalMarginRaw, lifecycleState, activeChallengeInfo, proposedEvidence] = await Promise.all([
           publicClient.readContract({
             address: addr,
             abi: PRICING_ABI,
@@ -308,12 +295,6 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           }).catch(() => null),
           publicClient.readContract({
             address: addr,
-            abi: CHALLENGE_BOND_CONFIG_ABI,
-            functionName: 'getChallengeBondConfig',
-            args: [],
-          }).catch(() => null),
-          publicClient.readContract({
-            address: addr,
             abi: ACTIVE_CHALLENGE_ABI,
             functionName: 'getActiveChallengeInfo',
             args: [],
@@ -337,7 +318,6 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         }
 
         const lc = lifecycleState as any;
-        const bc = challengeBondConfig as any;
         const ac = activeChallengeInfo as any;
         const ev = proposedEvidence as any;
 
@@ -357,7 +337,6 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           priceChangePercent24h: chStats?.priceChangePercent24h ?? 0,
           totalMarginLocked: totalMarginRaw != null ? Number(totalMarginRaw) / 1e6 : undefined,
           lifecycleState: lc != null ? Number(lc) : undefined,
-          challengeBondAmount: bc ? Number(bc[0] ?? 0n) / 1e6 : undefined,
           challengeActive: ac ? Boolean(ac[0]) : undefined,
           challenger: ac && ac[0] ? String(ac[1]) : undefined,
           challengedPrice: ac && ac[0] ? Number(ac[2] ?? 0n) / 1e6 : undefined,
@@ -514,7 +493,54 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const currentMarketId = (md.market as any)?.id as string | undefined;
   const currentSymbol = symbol;
   const { pair } = useActivePairByMarketId(currentMarketId);
-  const { markets: seriesMkts } = useSeriesMarkets(pair?.seriesId);
+  const marketSeriesId = (md.market as any)?.series_id as string | undefined;
+  const effectiveSeriesId = pair?.seriesId || marketSeriesId || null;
+  const { markets: seriesMkts } = useSeriesMarkets(effectiveSeriesId);
+  const fallbackSeriesSlug = useSeriesSlug(!pair ? effectiveSeriesId : null);
+
+  // When no active pair from the view, derive the immediate prev/next neighbors in the series.
+  const seriesNeighbors = useMemo(() => {
+    if (pair || !seriesMkts || seriesMkts.length < 2 || !currentMarketId) return undefined;
+    const idx = seriesMkts.findIndex(m => m.marketId === currentMarketId);
+    if (idx === -1) return undefined;
+    const currentSeq = seriesMkts[idx].sequence;
+    const prev = idx > 0 ? seriesMkts[idx - 1] : null;
+    const next = idx < seriesMkts.length - 1 ? seriesMkts[idx + 1] : null;
+    const neighbors = [prev, next].filter(Boolean) as typeof seriesMkts;
+    if (neighbors.length === 0) return undefined;
+    return neighbors.map(m => ({
+      marketId: m.marketId,
+      symbol: m.symbol,
+      isActive: false,
+      isPrimary: m.isPrimary,
+      role: (m.sequence < currentSeq ? 'front' : 'next') as 'front' | 'next',
+    }));
+  }, [pair, seriesMkts, currentMarketId]);
+
+  const childMarket = useMemo(() => {
+    const market = md.market as any;
+    if (!market) return null;
+
+    // 1) From active rollover pair: current market is `from` (parent), child is `to`
+    if (pair && seriesMkts && currentMarketId === pair.fromMarketId) {
+      const child = seriesMkts.find(m => m.marketId === pair.toMarketId);
+      if (child) return { symbol: child.symbol, marketId: child.marketId };
+    }
+
+    // 2) From series neighbors: find the next-sequence market
+    if (seriesNeighbors) {
+      const next = seriesNeighbors.find(m => m.role === 'next');
+      if (next) return { symbol: next.symbol, marketId: next.marketId };
+    }
+
+    // 3) Fallback: market_config.rollover.child_market_id (no symbol available, but gives an id)
+    const rolloverCfg = market.market_config?.rollover;
+    if (rolloverCfg?.child_market_id) {
+      return { symbol: null, marketId: rolloverCfg.child_market_id as string };
+    }
+
+    return null;
+  }, [md.market, pair, seriesMkts, seriesNeighbors, currentMarketId]);
 
   // Only mount a single TradingViewChart instance at a time.
   // Rendering both the mobile + desktop charts and hiding one via CSS still mounts both React trees,
@@ -1210,19 +1236,27 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             isWatchlisted={isWatchlisted}
             isWatchlistLoading={isWatchlistLoading}
             isWatchlistDisabled={!walletData?.address}
-            seriesSlug={pair?.seriesSlug}
+            seriesSlug={pair?.seriesSlug || fallbackSeriesSlug || undefined}
             seriesMarkets={
               pair && seriesMkts && seriesMkts.length >= 2
-                ? seriesMkts
-                    .filter(m => m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId)
-                    .map(m => ({
-                      marketId: m.marketId,
-                      symbol: m.symbol,
-                      isActive: m.symbol === currentSymbol,
-                      isPrimary: m.isPrimary,
-                      role: (m.marketId === pair.fromMarketId ? 'front' : 'next') as 'front' | 'next',
-                    }))
-                : undefined
+                ? (() => {
+                    const isSettledParent =
+                      currentMarketId === pair.fromMarketId &&
+                      ((md.market as any)?.market_status === 'SETTLED' || (md.market as any)?.market_status === 'SETTLEMENT_REQUESTED');
+                    return seriesMkts
+                      .filter(m => {
+                        if (isSettledParent) return m.marketId === pair.toMarketId;
+                        return m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId;
+                      })
+                      .map(m => ({
+                        marketId: m.marketId,
+                        symbol: m.symbol,
+                        isActive: m.symbol === currentSymbol,
+                        isPrimary: m.isPrimary,
+                        role: (m.marketId === pair.fromMarketId ? 'front' : 'next') as 'front' | 'next',
+                      }));
+                  })()
+                : seriesNeighbors
             }
             onTriggerSettlementOverlay={() => setShowSettlementOverlay(true)}
           />
@@ -1465,8 +1499,8 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                         jsExtractor={jsx || undefined}
                         htmlSnippet={htmlSnippet || undefined}
                         pollIntervalMs={10000}
+                        marketStatus={(md.market as any)?.market_status || undefined}
                         onOpenSettlement={() => setIsSettlementView(true)}
-                        // This card is primarily to show the source URL; live worker is optional.
                         enableLiveMetric={false}
                       />
                     );
@@ -1548,31 +1582,27 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           <div
             className={`token-page absolute inset-0 z-20 bg-black/95 backdrop-blur transition-transform duration-500 ease-in-out ${isSettlementView ? 'translate-x-0' : 'translate-x-full'}`}
           >
-            <div className="h-full overflow-y-auto scrollbar-none px-1 pt-1">
-              <div className="mx-auto max-w-5xl">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-medium text-t-fg-label uppercase tracking-wide">
-                    {(md.market as any)?.market_status === 'SETTLED' ? 'Settlement Result' : 'Settlement Window'}
-                  </h4>
-                  <button
-                    onClick={() => setIsSettlementView(false)}
-                    className="text-xs text-t-fg-label hover:text-t-fg border border-t-stroke hover:border-t-stroke-hover rounded px-2 py-1 transition-all duration-200"
-                    title="Back to trading"
-                  >
-                    Back
-                  </button>
-                </div>
-                <div className="space-y-1 pb-4">
-                  <SettlementInterface
-                    market={md.market as any}
-                    onChallengeSaved={async () => {
-                      if (typeof md.refetchMarket === 'function') {
-                        await md.refetchMarket();
-                      }
-                    }}
-                  />
-                </div>
+            <div className="h-full overflow-y-auto scrollbar-none px-2 pt-2 pb-4 md:px-4 md:pt-3 md:pb-6">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
+                  {(md.market as any)?.market_status === 'SETTLED' ? 'Settlement Result' : 'Settlement Window'}
+                </h4>
+                <button
+                  onClick={() => setIsSettlementView(false)}
+                  className="text-xs text-[#808080] hover:text-white border border-[#222222] hover:border-[#333333] rounded-md px-2 py-1 bg-[#0F0F0F] hover:bg-[#1A1A1A] transition-all duration-200"
+                  title="Back to trading"
+                >
+                  Back
+                </button>
               </div>
+              <SettlementInterface
+                market={md.market as any}
+                onChallengeSaved={async () => {
+                  if (typeof md.refetchMarket === 'function') {
+                    await md.refetchMarket();
+                  }
+                }}
+              />
             </div>
           </div>
         </div>
@@ -1595,19 +1625,27 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   isWatchlisted={isWatchlisted}
                   isWatchlistLoading={isWatchlistLoading}
                   isWatchlistDisabled={!walletData?.address}
-                  seriesSlug={pair?.seriesSlug}
+                  seriesSlug={pair?.seriesSlug || fallbackSeriesSlug || undefined}
                   seriesMarkets={
                     pair && seriesMkts && seriesMkts.length >= 2
-                      ? seriesMkts
-                          .filter(m => m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId)
-                          .map(m => ({
-                            marketId: m.marketId,
-                            symbol: m.symbol,
-                            isActive: m.symbol === currentSymbol,
-                            isPrimary: m.isPrimary,
-                            role: (m.marketId === pair.fromMarketId ? 'front' : 'next') as 'front' | 'next',
-                          }))
-                      : undefined
+                      ? (() => {
+                          const isSettledParent =
+                            currentMarketId === pair.fromMarketId &&
+                            ((md.market as any)?.market_status === 'SETTLED' || (md.market as any)?.market_status === 'SETTLEMENT_REQUESTED');
+                          return seriesMkts
+                            .filter(m => {
+                              if (isSettledParent) return m.marketId === pair.toMarketId;
+                              return m.marketId === pair.fromMarketId || m.marketId === pair.toMarketId;
+                            })
+                            .map(m => ({
+                              marketId: m.marketId,
+                              symbol: m.symbol,
+                              isActive: m.symbol === currentSymbol,
+                              isPrimary: m.isPrimary,
+                              role: (m.marketId === pair.fromMarketId ? 'front' : 'next') as 'front' | 'next',
+                            }));
+                        })()
+                      : seriesNeighbors
                   }
                 />
               </div>

@@ -14,7 +14,7 @@ export interface MetricLivePriceProps {
   isLive?: boolean;
   compact?: boolean;
   value?: number | string;
-  isSettlementWindow?: boolean;
+  marketStatus?: string;
   onOpenSettlement?: () => void;
   url?: string;
   cssSelector?: string;
@@ -48,7 +48,16 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     url: url || null,
   }));
 
-  const [settlementActive, setSettlementActive] = React.useState(false);
+  const [dbSettlementStatus, setDbSettlementStatus] = React.useState<'none' | 'requested' | 'settled'>('none');
+
+  const settlementStatus: 'none' | 'requested' | 'settled' = React.useMemo(() => {
+    const ms = props.marketStatus;
+    if (ms === 'SETTLEMENT_REQUESTED') return 'requested';
+    if (ms === 'SETTLED') return 'settled';
+    return dbSettlementStatus;
+  }, [props.marketStatus, dbSettlementStatus]);
+
+  const settlementActive = settlementStatus !== 'none';
 
   const stopPollingRef = React.useRef<boolean>(false);
 
@@ -93,7 +102,8 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
         q = marketId ? q.eq('id', marketId) : q.or(`market_identifier.eq.${t},symbol.eq.${t}`);
         const { data } = await q.maybeSingle();
         if (!cancelled && data) {
-          setSettlementActive(String((data as any)?.market_status ?? '') === 'SETTLEMENT_REQUESTED');
+          const ms = String((data as any)?.market_status ?? '');
+          setDbSettlementStatus(ms === 'SETTLEMENT_REQUESTED' ? 'requested' : ms === 'SETTLED' ? 'settled' : 'none');
         }
       } catch { /* non-fatal */ }
     })();
@@ -120,7 +130,8 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           statusQ = marketId ? statusQ.eq('id', marketId) : statusQ.or(`market_identifier.eq.${t},symbol.eq.${t}`);
           const { data: statusRow } = await statusQ.maybeSingle();
           if (!cancelled && statusRow) {
-            setSettlementActive(String((statusRow as any)?.market_status ?? '') === 'SETTLEMENT_REQUESTED');
+            const ms = String((statusRow as any)?.market_status ?? '');
+            setDbSettlementStatus(ms === 'SETTLEMENT_REQUESTED' ? 'requested' : ms === 'SETTLED' ? 'settled' : 'none');
           }
         } catch { /* non-fatal */ }
 
@@ -167,7 +178,7 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
         }
 
         const status = String((data as any)?.market_status ?? '');
-        if (!cancelled) setSettlementActive(status === 'SETTLEMENT_REQUESTED');
+        if (!cancelled) setDbSettlementStatus(status === 'SETTLEMENT_REQUESTED' ? 'requested' : status === 'SETTLED' ? 'settled' : 'none');
 
         const cfg = (data as any)?.market_config || null;
         const initial = (data as any)?.initial_order || null;
@@ -241,7 +252,9 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
     <div
       className={`relative rounded-md border transition-all duration-300 overflow-hidden ${
         settlementActive
-          ? 'border-yellow-500/40 bg-[#0F0F0F]'
+          ? settlementStatus === 'settled'
+            ? 'border-emerald-500/40 bg-[#0F0F0F]'
+            : 'border-yellow-500/40 bg-[#0F0F0F]'
           : hasSource
             ? 'border-red-500/25 bg-gradient-to-r from-[#0F0F0F] to-[#130B0B] hover:border-red-500/40 hover:shadow-[0_0_12px_rgba(239,68,68,0.08)]'
             : 'border-[#222222] bg-[#0F0F0F] hover:border-[#333333]'
@@ -305,36 +318,47 @@ export function MetricLivePrice(props: MetricLivePriceProps) {
           )}
         </span>
       </div>
-      {settlementActive && onOpenSettlement && (
-        <button
-          onClick={onOpenSettlement}
-          className="w-full flex items-center justify-between px-2 py-1.5 border-t border-yellow-500/20 bg-yellow-500/5 hover:bg-yellow-500/10 transition-colors duration-200 group"
-        >
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
-            <span className="text-[10px] font-medium text-yellow-300/90">Settlement Requested</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[9px] text-yellow-400/60 group-hover:text-yellow-400/90 transition-colors">
-              Open
-            </span>
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              className="h-3 w-3 text-yellow-400/50 group-hover:text-yellow-400/80 transition-colors"
-              fill="none"
-            >
-              <path
-                d="M9 5l7 7-7 7"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-        </button>
-      )}
+      {settlementActive && onOpenSettlement && (() => {
+        const isSettled = settlementStatus === 'settled';
+        const accentBorder = isSettled ? 'border-emerald-500/20' : 'border-yellow-500/20';
+        const accentBg = isSettled ? 'bg-emerald-500/5 hover:bg-emerald-500/10' : 'bg-yellow-500/5 hover:bg-yellow-500/10';
+        const dotColor = isSettled ? 'bg-emerald-400' : 'bg-yellow-400 animate-pulse';
+        const labelColor = isSettled ? 'text-emerald-300/90' : 'text-yellow-300/90';
+        const ctaColor = isSettled ? 'text-emerald-400/60 group-hover:text-emerald-400/90' : 'text-yellow-400/60 group-hover:text-yellow-400/90';
+        const chevronColor = isSettled ? 'text-emerald-400/50 group-hover:text-emerald-400/80' : 'text-yellow-400/50 group-hover:text-yellow-400/80';
+        return (
+          <button
+            onClick={onOpenSettlement}
+            className={`w-full flex items-center justify-between px-2 py-1.5 border-t ${accentBorder} ${accentBg} transition-colors duration-200 group`}
+          >
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+              <span className={`text-[10px] font-medium ${labelColor}`}>
+                {isSettled ? 'Settled' : 'Settlement Requested'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className={`text-[9px] ${ctaColor} transition-colors`}>
+                {isSettled ? 'View' : 'Open'}
+              </span>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                className={`h-3 w-3 ${chevronColor} transition-colors`}
+                fill="none"
+              >
+                <path
+                  d="M9 5l7 7-7 7"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+          </button>
+        );
+      })()}
     </div>
   );
 }

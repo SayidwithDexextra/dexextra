@@ -138,4 +138,33 @@ export function useSeriesMarkets(seriesId?: string | null) {
   return { markets, loading, error };
 }
 
+/**
+ * Fetches the series slug from market_series by id.
+ * Used as a fallback when the active-pair view doesn't cover the current market.
+ */
+export function useSeriesSlug(seriesId?: string | null) {
+  const [slug, setSlug] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!seriesId) { setSlug(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = getSupabaseClient();
+        const { data } = await supabase
+          .from('market_series')
+          .select('slug')
+          .eq('id', seriesId)
+          .maybeSingle();
+        if (!cancelled) setSlug(data?.slug || null);
+      } catch {
+        if (!cancelled) setSlug(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [seriesId]);
+
+  return slug;
+}
+
 

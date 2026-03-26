@@ -52,6 +52,13 @@ const LIFECYCLE_LABELS: Record<number, string> = {
   3: 'Settled',
 };
 
+const LIFECYCLE_DOT_COLOR: Record<number, string> = {
+  0: 'bg-[#404040]',
+  1: 'bg-yellow-400',
+  2: 'bg-yellow-400',
+  3: 'bg-blue-400',
+};
+
 const LIFECYCLE_STATE_ABI = [{ type: 'function' as const, name: 'getLifecycleState' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'uint8', name: '' }] }] as const;
 const CHALLENGE_BOND_CONFIG_ABI = [{ type: 'function' as const, name: 'getChallengeBondConfig' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'uint256', name: 'bondAmount' }, { type: 'address', name: 'slashRecipient' }] }] as const;
 const ACTIVE_CHALLENGE_ABI = [{ type: 'function' as const, name: 'getActiveChallengeInfo' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'bool', name: 'active' }, { type: 'address', name: 'challengerAddr' }, { type: 'uint256', name: 'challengedPriceVal' }, { type: 'uint256', name: 'bondEscrowed' }, { type: 'bool', name: 'resolved' }, { type: 'bool', name: 'won' }] }] as const;
@@ -83,6 +90,7 @@ export function SettlementInterface({
   const [onChain, setOnChain] = useState<OnChainSettlementState | null>(null);
   const [onChainError, setOnChainError] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [screenshotExpanded, setScreenshotExpanded] = useState(true);
 
   const fetchOnChainState = useCallback(async (addr: `0x${string}`) => {
     try {
@@ -125,19 +133,13 @@ export function SettlementInterface({
   useEffect(() => {
     const addr = market?.market_address;
     if (!addr || typeof addr !== 'string' || !addr.startsWith('0x') || addr.length !== 42) return;
-
     let cancelled = false;
     const poll = async () => {
       await fetchOnChainState(addr as `0x${string}`);
-      if (!cancelled) {
-        pollRef.current = setTimeout(poll, 15_000);
-      }
+      if (!cancelled) pollRef.current = setTimeout(poll, 15_000);
     };
     void poll();
-    return () => {
-      cancelled = true;
-      if (pollRef.current) clearTimeout(pollRef.current);
-    };
+    return () => { cancelled = true; if (pollRef.current) clearTimeout(pollRef.current); };
   }, [market?.market_address, fetchOnChainState]);
 
   useEffect(() => {
@@ -145,10 +147,7 @@ export function SettlementInterface({
     const updateTimer = () => {
       const expires = new Date(market.settlement_window_expires_at).getTime();
       const diff = expires - Date.now();
-      if (diff <= 0) {
-        setTimeRemaining('Expired');
-        return;
-      }
+      if (diff <= 0) { setTimeRemaining('Expired'); return; }
       const hours = Math.floor(diff / (1000 * 60 * 60));
       const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
       const seconds = Math.floor((diff % (1000 * 60)) / 1000);
@@ -162,125 +161,84 @@ export function SettlementInterface({
   const handleChallenge = async () => {
     if (!challengePrice) return;
     const price = Number(challengePrice);
-    if (price <= 0 || !Number.isFinite(price)) {
-      setChallengeNotice({ type: 'error', text: 'Enter a valid positive price.' });
-      return;
-    }
-    if (!walletData?.address) {
-      setChallengeNotice({ type: 'error', text: 'Connect a wallet to submit a challenge.' });
-      return;
-    }
-    if (!market?.id) {
-      setChallengeNotice({ type: 'error', text: 'Market unavailable.' });
-      return;
-    }
-    if (isExpired) {
-      setChallengeNotice({ type: 'error', text: 'Settlement window already expired.' });
-      return;
-    }
-
+    if (price <= 0 || !Number.isFinite(price)) { setChallengeNotice({ type: 'error', text: 'Enter a valid positive price.' }); return; }
+    if (!walletData?.address) { setChallengeNotice({ type: 'error', text: 'Connect a wallet to submit a challenge.' }); return; }
+    if (!market?.id) { setChallengeNotice({ type: 'error', text: 'Market unavailable.' }); return; }
+    if (isExpired) { setChallengeNotice({ type: 'error', text: 'Settlement window already expired.' }); return; }
     try {
       setIsSubmitting(true);
       setChallengeNotice(null);
       const nowIso = new Date().toISOString();
-      const updateData = {
-        alternative_settlement_value: price,
-        alternative_settlement_at: nowIso,
-        alternative_settlement_by: walletData.address,
-        settlement_disputed: true,
-        updated_at: nowIso,
-      };
       const { error } = await supabase
         .from('markets')
-        .update(updateData)
-        .eq('id', market.id)
-        .select('id')
-        .single();
-      if (error) {
-        setChallengeNotice({ type: 'error', text: error.message || 'Failed to save challenge.' });
-        return;
-      }
+        .update({ alternative_settlement_value: price, alternative_settlement_at: nowIso, alternative_settlement_by: walletData.address, settlement_disputed: true, updated_at: nowIso })
+        .eq('id', market.id).select('id').single();
+      if (error) { setChallengeNotice({ type: 'error', text: error.message || 'Failed to save challenge.' }); return; }
       setChallengePrice('');
       setChallengeNotice({ type: 'success', text: 'Alternative price saved to Supabase.' });
       onChallengeSaved?.();
-    } finally {
-      setIsSubmitting(false);
-    }
+    } finally { setIsSubmitting(false); }
   };
 
-  const isExpired = Boolean(
-    market?.settlement_window_expires_at &&
-      new Date(market.settlement_window_expires_at).getTime() <= Date.now(),
-  );
-
-  const sourceUrl =
-    market?.ai_source_locator?.url ||
-    market?.ai_source_locator?.primary_source_url;
-
+  const isExpired = Boolean(market?.settlement_window_expires_at && new Date(market.settlement_window_expires_at).getTime() <= Date.now());
+  const sourceUrl = market?.ai_source_locator?.url || market?.ai_source_locator?.primary_source_url;
   const settlementWaybackUrl = market?.market_config?.settlement_wayback_url || null;
   const settlementWaybackPageUrl = market?.market_config?.settlement_wayback_page_url || null;
   const settlementScreenshotUrl = market?.market_config?.settlement_screenshot_url || null;
-  const [screenshotExpanded, setScreenshotExpanded] = useState(false);
 
   const formattedProposed = useMemo(() => {
-    if (typeof market?.proposed_settlement_value === 'number') {
-      return market.proposed_settlement_value.toFixed(4);
-    }
-    if (market?.proposed_settlement_value == null) {
-      return '0.0000';
-    }
-    const value = Number(market.proposed_settlement_value);
-    return Number.isFinite(value) ? value.toFixed(4) : '0.0000';
+    if (typeof market?.proposed_settlement_value === 'number') return market.proposed_settlement_value.toFixed(4);
+    if (market?.proposed_settlement_value == null) return '0.0000';
+    const v = Number(market.proposed_settlement_value);
+    return Number.isFinite(v) ? v.toFixed(4) : '0.0000';
   }, [market?.proposed_settlement_value]);
 
   const formattedChallenge = useMemo(() => {
-    if (typeof market?.alternative_settlement_value === 'number') {
-      return market.alternative_settlement_value.toFixed(4);
-    }
-    if (market?.alternative_settlement_value == null) {
-      return null;
-    }
-    const value = Number(market.alternative_settlement_value);
-    return Number.isFinite(value) ? value.toFixed(4) : null;
+    if (typeof market?.alternative_settlement_value === 'number') return market.alternative_settlement_value.toFixed(4);
+    if (market?.alternative_settlement_value == null) return null;
+    const v = Number(market.alternative_settlement_value);
+    return Number.isFinite(v) ? v.toFixed(4) : null;
   }, [market?.alternative_settlement_value]);
 
   const baseChallengeHelper = !walletData?.address
     ? 'Connect a wallet to post a challenge with UMA collateral.'
-    : isSubmitting
-      ? 'Submitting challenge...'
-      : 'Submit an alternative USDC price (6 decimals) before the window closes.';
-
+    : isSubmitting ? 'Submitting challenge...' : 'Submit an alternative USDC price (6 decimals) before the window closes.';
   const helperText = challengeNotice?.text ?? baseChallengeHelper;
-  const helperColor =
-    challengeNotice?.type === 'error'
-      ? 'text-red-400'
-      : challengeNotice?.type === 'success'
-        ? 'text-[#9CA3AF]'
-        : 'text-[#606060]';
+  const helperColor = challengeNotice?.type === 'error' ? 'text-red-400' : challengeNotice?.type === 'success' ? 'text-green-400' : 'text-[#606060]';
 
   const sourceHost = useMemo(() => {
     if (!sourceUrl) return null;
-    try {
-      const url = new URL(sourceUrl);
-      return url.hostname;
-    } catch {
-      return sourceUrl.replace(/^https?:\/\//, '');
-    }
+    try { return new URL(sourceUrl).hostname; } catch { return sourceUrl.replace(/^https?:\/\//, ''); }
   }, [sourceUrl]);
+
+  const windowProgress = useMemo(() => {
+    if (!market?.proposed_settlement_at || !market?.settlement_window_expires_at) return 0;
+    const start = new Date(market.proposed_settlement_at).getTime();
+    const end = new Date(market.settlement_window_expires_at).getTime();
+    const now = Date.now();
+    if (now >= end) return 100;
+    if (now <= start) return 0;
+    return Math.round(((now - start) / (end - start)) * 100);
+  }, [market?.proposed_settlement_at, market?.settlement_window_expires_at]);
+
+  /* ──────────────────────── Loading state ──────────────────────── */
 
   if (!market) {
     return (
       <div className={`min-h-[60vh] flex items-center justify-center ${className}`}>
-        <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0A0A0A] p-5">
-          <div className="flex items-center gap-3">
-            <div className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
-            <div className="text-[11px] font-medium uppercase tracking-[0.3em] text-[#7E7E7E]">
-              Loading settlement data
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+          <div className="flex items-center justify-between p-2.5">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
+              <span className="text-[11px] font-medium text-[#808080]">Loading settlement data</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+                <div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
+              </div>
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
             </div>
           </div>
-          <p className="mt-3 text-sm text-[#9CA3AF]">
-            Fetching current settlement window, proposals, and archived sources.
-          </p>
         </div>
       </div>
     );
@@ -288,22 +246,30 @@ export function SettlementInterface({
 
   const isSettled = market?.market_status === 'SETTLED';
 
-  const statusDotClass = isSettled
-    ? 'bg-blue-400'
-    : isExpired
-      ? 'bg-red-400'
-      : market?.settlement_disputed
-        ? 'bg-yellow-400'
-        : 'bg-green-400';
+  const statusDotClass = isSettled ? 'bg-blue-400'
+    : isExpired ? 'bg-red-400'
+    : market?.settlement_disputed ? 'bg-yellow-400'
+    : 'bg-green-400';
+
+  const statusAccent = isSettled ? 'from-blue-500 to-indigo-500'
+    : isExpired ? 'from-red-500 to-rose-500'
+    : market?.settlement_disputed ? 'from-yellow-400 to-amber-500'
+    : 'from-green-400 to-emerald-500';
+
+  const statusLabel = isSettled ? 'Finalized' : isExpired ? 'Expired' : market?.settlement_disputed ? 'Disputed' : 'Active';
 
   return (
     <div className={`space-y-1 ${className}`}>
-      <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-        <div className="flex items-center justify-between p-2.5">
+
+      {/* ═══════ HERO HEADER ═══════ */}
+      <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+        <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${statusAccent}`} />
+
+        <div className="flex items-start justify-between p-2.5 pt-3">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass}`} />
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <span className="text-[11px] font-medium text-[#9CA3AF] uppercase tracking-wide">
+              <span className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                 {isSettled ? 'Settlement Result' : 'Settlement Window'}
               </span>
               <span className="text-[10px] text-[#606060]">•</span>
@@ -311,35 +277,115 @@ export function SettlementInterface({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`text-[10px] bg-[#1A1A1A] px-1.5 py-0.5 rounded ${isSettled ? 'text-blue-400' : 'text-[#606060]'}`}>
-              {isSettled ? 'Finalized' : isExpired ? 'Expired' : timeRemaining || '—'}
+            <div className={`text-[10px] font-medium px-1.5 py-0.5 rounded bg-gradient-to-r ${statusAccent} text-white`}>
+              {statusLabel}
             </div>
             <div className={`w-1.5 h-1.5 rounded-full ${statusDotClass}`} />
           </div>
         </div>
-        <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-            <div className="text-[9px] pt-1.5 text-[#606060]">
-              Market ID: <span className="text-white font-mono">{market.market_identifier}</span>
+
+        {/* Price + Timer row */}
+        <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
+          <div className="flex items-end justify-between pt-2">
+            <div>
+              <div className="text-[9px] uppercase tracking-wider text-[#606060] mb-0.5">
+                {isSettled ? 'Final Price' : 'Proposed Price'}
+              </div>
+              <div className="text-lg font-mono font-semibold text-white tracking-tight">
+                ${formattedProposed}
+              </div>
+            </div>
+            <div className="text-right">
+              {!isSettled && timeRemaining && (
+                <div className="flex items-center gap-1.5">
+                  <svg className="w-3 h-3 text-[#606060]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <span className={`text-[10px] font-mono ${isExpired ? 'text-red-400' : 'text-white'}`}>{timeRemaining}</span>
+                </div>
+              )}
+              <div className="text-[9px] text-[#606060] font-mono mt-0.5 truncate max-w-[200px]">{market.market_identifier}</div>
             </div>
           </div>
+
+          {/* Progress bar */}
+          {!isSettled && (
+            <div className="mt-2">
+              <div className="flex items-center justify-between text-[9px] text-[#606060] mb-1">
+                <span>Window Progress</span>
+                <span className="font-mono text-[#808080]">{windowProgress}%</span>
+              </div>
+              <div className="h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
+                <div className={`h-full rounded-full bg-gradient-to-r ${statusAccent} transition-all duration-1000 ease-out`} style={{ width: `${windowProgress}%` }} />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* ═══════ SCREENSHOT / EVIDENCE IMAGE ═══════ */}
+      {settlementScreenshotUrl && (
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-blue-400 to-purple-500" />
+
+          <div className="flex items-center justify-between p-2.5">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                <span className="text-[11px] font-medium text-[#808080]">Evidence Screenshot</span>
+                <span className="text-[9px] text-[#606060]">AI-captured at settlement time</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setScreenshotExpanded(!screenshotExpanded)}
+              className="text-[10px] text-[#808080] hover:text-white flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1A1A1A] hover:bg-[#2A2A2A] transition-all duration-200"
+            >
+              {screenshotExpanded ? 'Collapse' : 'Expand'}
+              <svg className={`w-3 h-3 transition-transform duration-200 ${screenshotExpanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
+
+          <div className={`transition-all duration-300 ease-in-out ${screenshotExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
+            <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
+              <a
+                href={settlementScreenshotUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group/img block relative rounded-md overflow-hidden border border-[#222222] hover:border-[#333333] transition-all duration-200 mt-2"
+              >
+                <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover/img:opacity-100 transition-opacity z-10" />
+                <div className="absolute bottom-2 left-2 right-2 z-20 opacity-0 group-hover/img:opacity-100 transition-opacity">
+                  <span className="text-[9px] text-white/80">Click to open full resolution</span>
+                </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={settlementScreenshotUrl}
+                  alt="Settlement metric source screenshot"
+                  className="w-full h-auto max-h-[500px] object-contain bg-black/20 group-hover/img:scale-[1.005] transition-transform duration-500"
+                  loading="lazy"
+                />
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════ PRICE & SOURCE CARDS ═══════ */}
       <div className="grid gap-1 md:grid-cols-2">
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+
+        {/* Proposed Settlement Card */}
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-green-400/50 to-emerald-500/50" />
           <div className="flex items-center justify-between p-2.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Price' : 'Proposed Settlement'}</span>
-              </div>
+              <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Price' : 'Proposed Settlement'}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-white font-mono">${formattedProposed}</span>
-              <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">
-                Primary
-              </div>
+              <span className="text-sm text-white font-mono font-semibold">${formattedProposed}</span>
+              <div className="text-[10px] text-green-400 bg-[#1A1A1A] px-1.5 py-0.5 rounded">Primary</div>
             </div>
           </div>
           <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
@@ -347,155 +393,82 @@ export function SettlementInterface({
               <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
                 <div className="flex justify-between">
                   <span>Submitted</span>
-                  <span className="text-white font-mono">
-                    {market.proposed_settlement_at
-                      ? new Date(market.proposed_settlement_at).toLocaleString()
-                      : '—'}
-                  </span>
+                  <span className="text-white font-mono">{market.proposed_settlement_at ? new Date(market.proposed_settlement_at).toLocaleString() : '—'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Window Expires</span>
-                  <span className="text-white font-mono">
-                    {market.settlement_window_expires_at
-                      ? new Date(market.settlement_window_expires_at).toLocaleString()
-                      : 'Awaiting activation'}
-                  </span>
+                  <span className="text-white font-mono">{market.settlement_window_expires_at ? new Date(market.settlement_window_expires_at).toLocaleString() : 'Awaiting activation'}</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+        {/* Evidence Source Card */}
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-blue-400/50 to-indigo-500/50" />
           <div className="flex items-center justify-between p-2.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span className="text-[11px] font-medium text-[#808080]">Evidence Source</span>
-              </div>
+              <span className="text-[11px] font-medium text-[#808080]">Evidence Source</span>
             </div>
             <div className="flex items-center gap-2">
               {sourceUrl && (
-                <a
-                  href={sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-blue-400 hover:text-blue-300 underline truncate max-w-[120px]"
-                >
-                  {sourceHost}
-                </a>
+                <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-400 hover:text-blue-300 underline truncate max-w-[140px]">{sourceHost}</a>
               )}
               {settlementWaybackUrl && (
-                <a
-                  href={settlementWaybackUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-emerald-400/80 hover:text-emerald-300 flex items-center gap-1"
-                  title="Archived screenshot on Wayback Machine"
-                >
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M2 13h12M3 3h10M4 3v10M12 3v10M8 3v10M2 8h12M5.5 3v10M10.5 3v10" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                  </svg>
+                <a href={settlementWaybackUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none"><path d="M2 13h12M3 3h10M4 3v10M12 3v10M8 3v10M2 8h12M5.5 3v10M10.5 3v10" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
                   <span className="underline">Snapshot</span>
                 </a>
               )}
               {settlementWaybackPageUrl && (
-                <a
-                  href={settlementWaybackPageUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-amber-400/70 hover:text-amber-300 flex items-center gap-1"
-                  title="Archived source page on Wayback Machine"
-                >
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
-                    <path d="M10 2v3h3M5 8h6M5 10.5h6" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/>
-                  </svg>
+                <a href={settlementWaybackPageUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1">
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none"><path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/><path d="M10 2v3h3M5 8h6M5 10.5h6" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
                   <span className="underline">Page</span>
                 </a>
               )}
               {settlementScreenshotUrl && (
-                <button
-                  onClick={() => setScreenshotExpanded(!screenshotExpanded)}
-                  className="text-[10px] text-[#9CA3AF] hover:text-white flex items-center gap-1 transition-colors"
-                >
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" strokeWidth="1"/>
-                    <circle cx="5.5" cy="6.5" r="1" stroke="currentColor" strokeWidth="0.75"/>
-                    <path d="M2 11l3-3 2 2 3-4 4 5" stroke="currentColor" strokeWidth="0.75" strokeLinejoin="round"/>
-                  </svg>
+                <button onClick={() => setScreenshotExpanded(!screenshotExpanded)} className="text-[10px] text-[#9CA3AF] hover:text-white flex items-center gap-1 transition-colors">
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" strokeWidth="1"/><circle cx="5.5" cy="6.5" r="1" stroke="currentColor" strokeWidth="0.75"/><path d="M2 11l3-3 2 2 3-4 4 5" stroke="currentColor" strokeWidth="0.75" strokeLinejoin="round"/></svg>
                   <span>{screenshotExpanded ? 'Hide' : 'View'}</span>
                 </button>
               )}
             </div>
           </div>
-
-          {settlementScreenshotUrl && screenshotExpanded && (
-            <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
-              <a
-                href={settlementScreenshotUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block mt-2 rounded overflow-hidden border border-[#222222] hover:border-[#444444] transition-colors"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={settlementScreenshotUrl}
-                  alt="Settlement metric source screenshot"
-                  className="w-full h-auto"
-                  loading="lazy"
-                />
-              </a>
-              <div className="text-[9px] text-[#606060] mt-1.5">
-                Screenshot captured by AI at settlement time. Click to open full size.
-              </div>
+          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+            <div className="text-[9px] pt-1.5 text-[#606060] space-y-0.5">
+              {settlementWaybackUrl && (
+                <div className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-emerald-400/60" />Screenshot archived to Wayback Machine at settlement time.</div>
+              )}
+              {settlementWaybackPageUrl && (
+                <div className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-amber-400/60" />Original source page archived to Wayback Machine.</div>
+              )}
+              {settlementScreenshotUrl && !settlementWaybackUrl && !settlementWaybackPageUrl && (
+                <div className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-blue-400/60" />AI screenshot available. Click View to inspect.</div>
+              )}
+              {!settlementWaybackUrl && !settlementWaybackPageUrl && !settlementScreenshotUrl && sourceUrl && (
+                <div>Live metric source. No archive available.</div>
+              )}
+              {!settlementWaybackUrl && !settlementWaybackPageUrl && !settlementScreenshotUrl && !sourceUrl && (
+                <div>No primary source attached.</div>
+              )}
             </div>
-          )}
-
-          {!screenshotExpanded && (
-            <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-              <div className="text-[9px] pt-1.5 text-[#606060] space-y-0.5">
-                {settlementWaybackUrl && (
-                  <div className="flex items-center gap-1">
-                    <div className="w-1 h-1 rounded-full bg-emerald-400/60" />
-                    Screenshot archived to Wayback Machine at settlement time.
-                  </div>
-                )}
-                {settlementWaybackPageUrl && (
-                  <div className="flex items-center gap-1">
-                    <div className="w-1 h-1 rounded-full bg-amber-400/60" />
-                    Original source page archived to Wayback Machine.
-                  </div>
-                )}
-                {settlementScreenshotUrl && !settlementWaybackUrl && !settlementWaybackPageUrl && (
-                  <div className="flex items-center gap-1">
-                    <div className="w-1 h-1 rounded-full bg-blue-400/60" />
-                    AI screenshot available. Click View to inspect.
-                  </div>
-                )}
-                {!settlementWaybackUrl && !settlementWaybackPageUrl && !settlementScreenshotUrl && sourceUrl && (
-                  <div>Live metric source. No archive available.</div>
-                )}
-                {!settlementWaybackUrl && !settlementWaybackPageUrl && !settlementScreenshotUrl && !sourceUrl && (
-                  <div>No primary source attached.</div>
-                )}
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       </div>
 
+      {/* ═══════ CHALLENGE PROPOSAL (if disputed) ═══════ */}
       {formattedChallenge && (
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-red-500/20 hover:border-red-500/30 transition-all duration-200 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-red-500 to-rose-500" />
           <div className="flex items-center justify-between p-2.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span className="text-[11px] font-medium text-[#808080]">Challenge Proposal</span>
-              </div>
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400 animate-pulse" />
+              <span className="text-[11px] font-medium text-[#808080]">Challenge Proposal</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-white font-mono">${formattedChallenge}</span>
+              <span className="text-sm text-white font-mono font-semibold">${formattedChallenge}</span>
               <div className="text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded">Disputed</div>
             </div>
           </div>
@@ -508,11 +481,7 @@ export function SettlementInterface({
                 </div>
                 <div className="flex justify-between">
                   <span>Timestamp</span>
-                  <span className="text-white font-mono">
-                    {market.alternative_settlement_at
-                      ? new Date(market.alternative_settlement_at).toLocaleString()
-                      : '—'}
-                  </span>
+                  <span className="text-white font-mono">{market.alternative_settlement_at ? new Date(market.alternative_settlement_at).toLocaleString() : '—'}</span>
                 </div>
               </div>
             </div>
@@ -520,20 +489,20 @@ export function SettlementInterface({
         </div>
       )}
 
-      {/* On-Chain Verification State */}
+      {/* ═══════ ON-CHAIN VERIFICATION ═══════ */}
       {onChain && !onChainError && (
         <div className="grid gap-1 md:grid-cols-2">
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+          {/* On-Chain Lifecycle */}
+          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-purple-400/40 to-violet-500/40" />
             <div className="flex items-center justify-between p-2.5">
               <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${onChain.lifecycleState === 3 ? 'bg-blue-400' : onChain.lifecycleState === 2 ? 'bg-yellow-400' : 'bg-green-400'}`} />
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${LIFECYCLE_DOT_COLOR[onChain.lifecycleState] || 'bg-green-400'}`} />
                 <span className="text-[11px] font-medium text-[#808080]">On-Chain Lifecycle</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-white font-mono">
-                  {LIFECYCLE_LABELS[onChain.lifecycleState] ?? `State ${onChain.lifecycleState}`}
-                </span>
-                <div className="text-[10px] text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">On-Chain</div>
+                <span className="text-[10px] text-white font-mono">{LIFECYCLE_LABELS[onChain.lifecycleState] ?? `State ${onChain.lifecycleState}`}</span>
+                <div className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">On-Chain</div>
               </div>
             </div>
             <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
@@ -554,13 +523,15 @@ export function SettlementInterface({
             </div>
           </div>
 
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+          {/* Evidence Commitment */}
+          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-cyan-400/40 to-blue-500/40" />
             <div className="flex items-center justify-between p-2.5">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${onChain.evidenceHash && onChain.evidenceHash !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? 'bg-emerald-400' : 'bg-[#404040]'}`} />
                 <span className="text-[11px] font-medium text-[#808080]">Evidence Commitment</span>
               </div>
-              <div className="text-[10px] text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">On-Chain</div>
+              <div className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">On-Chain</div>
             </div>
             <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
               <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
@@ -575,12 +546,7 @@ export function SettlementInterface({
                     {onChain.evidenceUrl && (
                       <div className="flex justify-between items-center">
                         <span>Archived Source</span>
-                        <a
-                          href={onChain.evidenceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-400 hover:text-blue-300 underline underline-offset-2 truncate max-w-[180px]"
-                        >
+                        <a href={onChain.evidenceUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline underline-offset-2 truncate max-w-[180px]">
                           Wayback Archive
                         </a>
                       </div>
@@ -595,19 +561,22 @@ export function SettlementInterface({
         </div>
       )}
 
-      {/* On-Chain Active Challenge */}
+      {/* ═══════ ON-CHAIN ACTIVE CHALLENGE ═══════ */}
       {onChain && onChain.challengeActive && (
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-red-500/30 hover:border-red-500/50 transition-all duration-200">
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-red-500/30 hover:border-red-500/50 transition-all duration-200 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-pulse" />
           <div className="flex items-center justify-between p-2.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400 animate-pulse" />
               <span className="text-[11px] font-medium text-[#808080]">On-Chain Challenge</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-red-400 font-mono">
-                ${onChain.challengedPrice.toLocaleString(undefined, { minimumFractionDigits: 4 })}
-              </span>
-              <div className="text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded">
+              <span className="text-[10px] text-red-400 font-mono">${onChain.challengedPrice.toLocaleString(undefined, { minimumFractionDigits: 4 })}</span>
+              <div className={`text-[10px] px-1.5 py-0.5 rounded ${
+                onChain.challengeResolved
+                  ? onChain.challengerWon ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'
+                  : 'text-red-400 bg-red-500/10'
+              }`}>
                 {onChain.challengeResolved ? (onChain.challengerWon ? 'Won' : 'Slashed') : 'Active'}
               </div>
             </div>
@@ -635,31 +604,27 @@ export function SettlementInterface({
         </div>
       )}
 
+      {/* ═══════ CHALLENGE FORM & SETTLEMENT STATUS ═══════ */}
       <div className={`grid gap-1 ${isSettled ? 'md:grid-cols-1' : 'md:grid-cols-2'}`}>
         {!isSettled && (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-red-400/40 to-orange-500/40" />
             <div className="flex items-center justify-between p-2.5">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-                <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                  <span className="text-[11px] font-medium text-[#808080]">Challenge Settlement</span>
-                </div>
+                <span className="text-[11px] font-medium text-[#808080]">Challenge Settlement</span>
               </div>
               {onChain && onChain.challengeBondAmount > 0 && (
-                <div className="text-[10px] text-yellow-400/80 bg-yellow-500/10 px-1.5 py-0.5 rounded">
+                <div className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">
                   Bond: ${onChain.challengeBondAmount.toLocaleString()} USDC
                 </div>
               )}
             </div>
-            <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+            <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
               <div className="pt-2 space-y-2">
-                <label className="text-[10px] uppercase tracking-wide text-[#606060]">
-                  Alternative price (USDC)
-                </label>
+                <label className="text-[10px] uppercase tracking-wide text-[#606060]">Alternative price (USDC)</label>
                 <div className="relative">
-                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-[#606060]">
-                    $
-                  </span>
+                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-[#606060]">$</span>
                   <input
                     type="text"
                     inputMode="decimal"
@@ -667,27 +632,24 @@ export function SettlementInterface({
                     value={challengePrice}
                     onChange={(e) => setChallengePrice(e.target.value)}
                     disabled={isSubmitting || isExpired}
-                    className="w-full bg-[#0F0F0F] text-white text-[10px] border border-[#222222] rounded px-4 py-1.5 outline-none focus:border-[#333333] font-mono placeholder-[#404040] disabled:opacity-50"
+                    className="w-full bg-[#0F0F0F] text-white text-[10px] border border-[#222222] rounded px-4 py-1.5 outline-none focus:border-[#333333] font-mono placeholder-[#404040] disabled:opacity-50 transition-all duration-200"
                   />
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleChallenge}
                     disabled={!challengePrice || isSubmitting || !walletData?.address || isExpired}
-                    className="text-xs text-red-400 hover:text-red-300 disabled:text-[#404040]"
+                    className="text-xs text-red-400 hover:text-red-300 disabled:text-[#404040] transition-colors"
                   >
-                    {isSubmitting ? 'Submitting…' : 'Submit challenge'}
+                    {isSubmitting ? 'Submitting...' : 'Submit challenge'}
                   </button>
-                  <span className={`text-[9px] ${helperColor} flex-1`}>
-                    {helperText}
-                  </span>
+                  <span className={`text-[9px] ${helperColor} flex-1`}>{helperText}</span>
                 </div>
                 {onChain && onChain.challengeBondAmount > 0 && (
                   <div className="text-[9px] text-yellow-400/60 flex items-center gap-1">
                     <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                      <line x1="12" y1="9" x2="12" y2="13" />
-                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                      <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
                     </svg>
                     Challenging requires a ${onChain.challengeBondAmount.toLocaleString()} USDC on-chain bond. The bond is slashed if your challenge is rejected.
                   </div>
@@ -697,13 +659,12 @@ export function SettlementInterface({
           </div>
         )}
 
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+          <div className={`absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r ${isSettled ? 'from-blue-400/40 to-indigo-500/40' : 'from-green-400/40 to-emerald-500/40'}`} />
           <div className="flex items-center justify-between p-2.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSettled ? 'bg-blue-400' : 'bg-green-400'}`} />
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Settlement' : 'Settlement Status'}</span>
-              </div>
+              <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Settlement' : 'Settlement Status'}</span>
             </div>
             <span className="text-[10px] text-white font-mono">${formattedProposed}</span>
           </div>
@@ -723,13 +684,13 @@ export function SettlementInterface({
         </div>
       </div>
 
-      <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
+      {/* ═══════ SETTLEMENT PROCESS INFO ═══════ */}
+      <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-indigo-400/30 to-violet-500/30" />
         <div className="flex items-center justify-between p-2.5">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <span className="text-[11px] font-medium text-[#808080]">Settlement Process</span>
-            </div>
+            <span className="text-[11px] font-medium text-[#808080]">Settlement Process</span>
           </div>
           <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Info</div>
         </div>
@@ -737,35 +698,20 @@ export function SettlementInterface({
           <div className="text-[9px] pt-1.5 space-y-1 text-[#606060]">
             {isSettled ? (
               <>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full bg-blue-400" />
-                  Settlement finalized. Positions have been resolved at the final price.
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full bg-blue-400" />
-                  Archived evidence and screenshots are preserved for the record.
-                </div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-blue-400" />Settlement finalized. Positions have been resolved at the final price.</div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-blue-400" />Archived evidence and screenshots are preserved for the record.</div>
               </>
             ) : (
               <>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full bg-green-400" />
-                  Challenge window active after primary submission.
-                </div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-green-400" />Challenge window active after primary submission.</div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full bg-blue-400" />
                   {onChain && onChain.challengeBondAmount > 0
                     ? `On-chain bond of $${onChain.challengeBondAmount.toLocaleString()} USDC required to challenge. Bond is slashed if incorrect.`
                     : 'On-chain bond and archived evidence secure the process.'}
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full bg-purple-400" />
-                  Evidence hash committed on-chain at proposal time for tamper-proof verification.
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full bg-yellow-400" />
-                  Window expiry or acceptance finalizes the market.
-                </div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-purple-400" />Evidence hash committed on-chain at proposal time for tamper-proof verification.</div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-yellow-400" />Window expiry or acceptance finalizes the market.</div>
               </>
             )}
           </div>

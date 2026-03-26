@@ -35,9 +35,8 @@ export interface MarketStatsOnChain {
   priceChange24h: number;
   priceChangePercent24h: number;
   totalMarginLocked?: number;
-  // Lifecycle + challenge bond state (on-chain)
-  lifecycleState?: number; // 0=Unsettled, 1=Rollover, 2=ChallengeWindow, 3=Settled
-  challengeBondAmount?: number; // USDC (6 decimals converted)
+  // Lifecycle state (on-chain)
+  lifecycleState?: number; // 1=Rollover, 2=ChallengeWindow, 3=Settled
   challengeActive?: boolean;
   challenger?: string;
   challengedPrice?: number;
@@ -370,7 +369,7 @@ export default function MarketInfoHeader({
   const countdown = useCountdown(settlementDate);
   const challengeCountdown = useCountdown(challengeWindowExpiresAt);
   const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
-  const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 2;
+  const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 1;
 
   const handleWatchlistClick = () => {
     if (!isWatchlistLoading && !isWatchlistDisabled && onWatchlistToggle) {
@@ -700,16 +699,6 @@ export default function MarketInfoHeader({
             <ShareIcon />
             Share
           </button>
-          {/* TEMP DEBUG */}
-          {onTriggerSettlementOverlay && (
-            <button
-              className={styles.shareBtn}
-              onClick={onTriggerSettlementOverlay}
-              style={{ background: 'rgba(245,158,11,0.15)', borderColor: 'rgba(245,158,11,0.3)', color: '#f59e0b' }}
-            >
-              Settlement
-            </button>
-          )}
         </div>
       </header>
 
@@ -813,7 +802,7 @@ export default function MarketInfoHeader({
               </div>
             </>
           )}
-          {marketStats.lifecycleState != null && (
+          {marketStats.lifecycleState != null && marketStats.lifecycleState > 0 && (
             <>
               <span className={styles.marketStatDivider} />
               <div className={styles.marketStatItem}>
@@ -821,15 +810,6 @@ export default function MarketInfoHeader({
                 <span className={styles.marketStatValue}>
                   {['Unsettled', 'Rollover', 'Challenge Window', 'Settled'][marketStats.lifecycleState] ?? `State ${marketStats.lifecycleState}`}
                 </span>
-              </div>
-            </>
-          )}
-          {marketStats.challengeBondAmount != null && marketStats.challengeBondAmount > 0 && (
-            <>
-              <span className={styles.marketStatDivider} />
-              <div className={styles.marketStatItem}>
-                <span className={styles.marketStatLabel}>Challenge Bond</span>
-                <span className={styles.marketStatValue}>{formatStatValue(marketStats.challengeBondAmount)} USDC</span>
               </div>
             </>
           )}

@@ -1105,6 +1105,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
   };
 
   const getTradeButtonText = () => {
+    if ((marketRow as any)?.market_status === 'SETTLED') return 'Settled';
+    if ((marketRow as any)?.market_status === 'SETTLEMENT_REQUESTED') return 'Settlement Pending';
     if (!isConnected) return 'Connect Wallet';
     if (orderBookLoading) return 'Loading...';
     if (isSubmittingOrder) return 'Submitting Order...';

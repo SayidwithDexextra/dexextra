@@ -617,7 +617,6 @@ function StepPanel({
               >
                 Start over
               </button>
-              {devTools ? <div className="relative">{devTools}</div> : null}
             </div>
           </div>
         </div>
@@ -2969,17 +2968,6 @@ export function InteractiveMarketCreation({
                   }
                 }}
                 onStartOver={handleReset}
-            devTools={
-              devToolsEnabled ? (
-                <button
-                  type="button"
-                  onClick={() => setDevToolsOpen((v) => !v)}
-                  className="rounded-md border border-dashed border-purple-500/40 bg-purple-500/10 px-2 py-1 text-[11px] font-medium text-purple-300 hover:bg-purple-500/20"
-                >
-                  Dev
-                </button>
-              ) : null
-            }
           />
         </div>
       ) : null}
@@ -3025,19 +3013,7 @@ export function InteractiveMarketCreation({
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 py-1.5 sm:gap-3">
             <div className="flex items-center gap-2 text-xs text-white/70 sm:gap-3">
               {discoveryState === 'idle' && (
-                <>
-                  {/* Dev-only toggle */}
-                  {devToolsEnabled ? (
-                    <button
-                      type="button"
-                      onClick={() => setDevToolsOpen((v) => !v)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-purple-500/40 bg-purple-500/10 px-2 py-1 text-purple-300 hover:bg-purple-500/20 transition-colors"
-                      aria-label="Dev tools"
-                    >
-                      <span className="text-xs">Dev</span>
-                    </button>
-                  ) : null}
-                </>
+                <></>
               )}
               {discoveryState === 'discovering' && (
                 <div className="flex items-center gap-1.5" aria-live="polite" aria-label="Loading">
