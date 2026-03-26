@@ -286,8 +286,25 @@ export async function POST(req: Request) {
     // =========================================================================
 
     // Lane A: diamond owner operations
+    //
+    // All config transactions are sent with pre-allocated nonces without
+    // waiting for intermediate confirmations.  On chains with slow block
+    // times (e.g. Hyperliquid ~60s big blocks) this collapses 4-5
+    // sequential blocks into 1-2, cutting ~4 min down to ~1-2 min.
     const laneA = async () => {
       laneLog('A', 'Starting lane', 'start', `signer=${shortAddr(ownerAddress)}`);
+      const laneAStart = Date.now();
+
+      type PendingTx = {
+        label: string;
+        logKey: string;
+        tx: ethers.TransactionResponse;
+        sentAt: number;
+        successDetail?: string;
+        extra?: Record<string, any>;
+        onMined?: () => void;
+      };
+      const pending: PendingTx[] = [];
 
       // 1. Ensure selectors
       if (!configState.selectors_verified) {
@@ -300,11 +317,14 @@ export async function POST(req: Request) {
             const cutData = [{ facetAddress: placementFacet, action: 0, functionSelectors: missingSelectors }];
             const ov = await nonceMgr.nextOverrides();
             const txCut = await diamondCut.diamondCut(cutData as any, ethers.ZeroAddress, '0x', ov as any);
-            laneLog('A', 'Ensure selectors', 'start', `tx sent ${shortTx(txCut.hash)}`);
-            logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
-            await txCut.wait();
-            laneLog('A', 'Ensure selectors', 'success', 'mined');
-            logS('ensure_selectors_diamondCut_mined', 'success', { tx: txCut.hash });
+            const sentAt = Date.now();
+            laneLog('A', 'Ensure selectors', 'start', `tx sent ${shortTx(txCut.hash)} +${sentAt - laneAStart}ms`);
+            logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash, elapsedMs: sentAt - laneAStart });
+            pending.push({
+              label: 'Ensure selectors', logKey: 'ensure_selectors_diamondCut', tx: txCut, sentAt,
+              extra: { patched: missingSelectors.length },
+              onMined: () => { configState.selectors_verified = true; },
+            });
           } catch (e: any) {
             laneLog('A', 'Ensure selectors', 'error', e?.shortMessage || e?.message || String(e));
             logS('ensure_selectors', 'error', { error: e?.message || String(e) });
@@ -312,9 +332,8 @@ export async function POST(req: Request) {
         } else {
           laneLog('A', 'Ensure selectors', 'success', 'all present');
           logS('ensure_selectors', 'success', { message: 'All placement selectors present' });
+          configState.selectors_verified = true;
         }
-        configState.selectors_verified = true;
-        await checkpointConfigure(supabase, draftId, configState);
       }
 
       // 2. Allow orderbook on registry (requires diamond owner / ADMIN_PRIVATE_KEY)
@@ -324,11 +343,13 @@ export async function POST(req: Request) {
           const registry = new ethers.Contract(registryAddress, regAbi, wallet);
           const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
           const txAllow = await registry.setAllowedOrderbook(orderBook, true, ov as any);
-          laneLog('A', 'Allow orderbook on registry', 'start', `tx sent ${shortTx(txAllow.hash)}`);
-          logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
-          const rcAllow = await txAllow.wait();
-          laneLog('A', 'Allow orderbook on registry', 'success', 'mined');
-          logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook', tx: rcAllow?.hash || txAllow.hash });
+          const sentAt = Date.now();
+          laneLog('A', 'Allow orderbook on registry', 'start', `tx sent ${shortTx(txAllow.hash)} +${sentAt - laneAStart}ms`);
+          logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook', elapsedMs: sentAt - laneAStart });
+          pending.push({
+            label: 'Allow orderbook on registry', logKey: 'session_registry_allow', tx: txAllow, sentAt,
+            onMined: () => { configState.session_registry_attached = true; },
+          });
         } catch (e: any) {
           laneLog('A', 'Allow orderbook on registry', 'error', e?.shortMessage || e?.message || String(e));
           logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'allow_orderbook' });
@@ -343,22 +364,20 @@ export async function POST(req: Request) {
           const meta = new ethers.Contract(orderBook, (MetaTradeFacetArtifact as any).abi, wallet);
           const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
           const txSet = await meta.setSessionRegistry(registryAddress, ov);
-          laneLog('A', 'Attach session registry', 'start', `tx sent ${shortTx(txSet.hash)}`);
-          logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry' });
-          await txSet.wait();
-          laneLog('A', 'Attach session registry', 'success', 'mined');
-          logS('attach_session_registry_mined', 'success', { action: 'set_session_registry' });
+          const sentAt = Date.now();
+          laneLog('A', 'Attach session registry', 'start', `tx sent ${shortTx(txSet.hash)} +${sentAt - laneAStart}ms`);
+          logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry', elapsedMs: sentAt - laneAStart });
+          pending.push({
+            label: 'Attach session registry', logKey: 'session_registry_attach', tx: txSet, sentAt,
+            onMined: () => { configState.session_registry_attached = true; },
+          });
         } catch (e: any) {
           laneLog('A', 'Attach session registry', 'error', e?.shortMessage || e?.message || String(e));
           logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'set_session_registry' });
         }
       }
-      if (needRegistryAllow || needRegistryAttach) {
-        configState.session_registry_attached = true;
-        await checkpointConfigure(supabase, draftId, configState);
-      }
 
-      // 4. Configure fees (fire both with pre-allocated nonces)
+      // 4. Configure fees (fire both with pre-allocated nonces, no intermediate waits)
       if (needFees) {
         const defaultProtocolRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
         const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
@@ -366,50 +385,49 @@ export async function POST(req: Request) {
         const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
           ? feeRecipient : (creatorWalletAddress || ownerAddress);
 
-        const feePromises: Promise<any>[] = [];
-
         if (!configState.fees_configured && protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
-          laneLog('A', 'Configure fee structure', 'start');
-          logS('configure_fees', 'start', { orderBook });
-          feePromises.push((async () => {
+          try {
+            laneLog('A', 'Configure fee structure', 'start');
+            logS('configure_fees', 'start', { orderBook });
             const obFee = new ethers.Contract(orderBook,
               ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
             const feeTx = await obFee.updateFeeStructure(7, 3, protocolFeeRecipient, 8000, await nonceMgr.nextOverrides());
-            laneLog('A', 'Configure fee structure', 'start', `tx sent ${shortTx(feeTx.hash)}`);
-            logS('configure_fees_sent', 'success', { tx: feeTx.hash });
-            const feeRc = await feeTx.wait();
-            configState.fees_configured = { tx: feeRc?.hash || feeTx.hash };
-            laneLog('A', 'Configure fee structure', 'success', 'mined');
-            logS('configure_fees_mined', 'success', { tx: feeRc?.hash || feeTx.hash });
-          })().catch((e: any) => {
+            const sentAt = Date.now();
+            laneLog('A', 'Configure fee structure', 'start', `tx sent ${shortTx(feeTx.hash)} +${sentAt - laneAStart}ms`);
+            logS('configure_fees_sent', 'success', { tx: feeTx.hash, elapsedMs: sentAt - laneAStart });
+            pending.push({
+              label: 'Configure fee structure', logKey: 'configure_fees', tx: feeTx, sentAt,
+              onMined: () => { configState.fees_configured = { tx: feeTx.hash }; },
+            });
+          } catch (e: any) {
             laneLog('A', 'Configure fee structure', 'error', e?.message || String(e));
             logS('configure_fees', 'error', { error: e?.message || String(e) });
-          }));
+          }
         }
 
         if (!configState.fee_recipient_set) {
-          laneLog('A', 'Set fee recipient', 'start', shortAddr(creatorAddr));
-          logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
-          feePromises.push((async () => {
+          try {
+            laneLog('A', 'Set fee recipient', 'start', shortAddr(creatorAddr));
+            logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
             const obTrade = new ethers.Contract(orderBook, [
               'function updateTradingParameters(uint256,uint256,address) external',
             ], wallet);
             const [marginBps, tradingFee] = tradingParams;
             const recipientTx = await obTrade.updateTradingParameters(marginBps, tradingFee, creatorAddr, await nonceMgr.nextOverrides());
-            laneLog('A', 'Set fee recipient', 'start', `tx sent ${shortTx(recipientTx.hash)}`);
-            logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash });
-            const recipientRc = await recipientTx.wait();
-            configState.fee_recipient_set = { tx: recipientRc?.hash || recipientTx.hash };
-            laneLog('A', 'Set fee recipient', 'success', `mined -> ${shortAddr(creatorAddr)}`);
-            logS('set_fee_recipient_mined', 'success', { tx: recipientRc?.hash || recipientTx.hash, feeRecipient: creatorAddr });
-          })().catch((e: any) => {
+            const sentAt = Date.now();
+            laneLog('A', 'Set fee recipient', 'start', `tx sent ${shortTx(recipientTx.hash)} +${sentAt - laneAStart}ms`);
+            logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash, elapsedMs: sentAt - laneAStart });
+            pending.push({
+              label: 'Set fee recipient', logKey: 'set_fee_recipient', tx: recipientTx, sentAt,
+              successDetail: `mined -> ${shortAddr(creatorAddr)}`,
+              extra: { feeRecipient: creatorAddr },
+              onMined: () => { configState.fee_recipient_set = { tx: recipientTx.hash }; },
+            });
+          } catch (e: any) {
             laneLog('A', 'Set fee recipient', 'error', e?.message || String(e));
             logS('set_fee_recipient', 'error', { error: e?.message || String(e) });
-          }));
+          }
         }
-
-        await Promise.all(feePromises);
-        await checkpointConfigure(supabase, draftId, configState);
       }
 
       // 5. Initialize lifecycle controller
@@ -423,12 +441,13 @@ export async function POST(req: Request) {
           ], wallet);
           const ov = await nonceMgr.nextOverrides();
           const txInit = await lcContract.initializeLifecycleWithMode(settlementTs, ethers.ZeroAddress, isDevMode, ov);
-          laneLog('A', 'Initialize lifecycle', 'start', `tx sent ${shortTx(txInit.hash)}`);
-          await txInit.wait();
-          laneLog('A', 'Initialize lifecycle', 'success', 'mined');
-          logS('initialize_lifecycle', 'success', { tx: txInit.hash });
-          configState.lifecycle_initialized = true;
-          await checkpointConfigure(supabase, draftId, configState);
+          const sentAt = Date.now();
+          laneLog('A', 'Initialize lifecycle', 'start', `tx sent ${shortTx(txInit.hash)} +${sentAt - laneAStart}ms`);
+          logS('initialize_lifecycle_sent', 'success', { tx: txInit.hash, elapsedMs: sentAt - laneAStart });
+          pending.push({
+            label: 'Initialize lifecycle', logKey: 'initialize_lifecycle', tx: txInit, sentAt,
+            onMined: () => { configState.lifecycle_initialized = true; },
+          });
         } catch (e: any) {
           laneLog('A', 'Initialize lifecycle', 'error', e?.shortMessage || e?.message || String(e));
           logS('initialize_lifecycle', 'error', { error: e?.message || String(e) });
@@ -447,21 +466,58 @@ export async function POST(req: Request) {
           const ov1 = await nonceMgr.nextOverrides();
           const ov2 = await nonceMgr.nextOverrides();
           const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
+          const sentAt1 = Date.now();
+          laneLog('A', 'Speed-run enable', 'start', `tx sent ${shortTx(txEnable.hash)} +${sentAt1 - laneAStart}ms`);
+          pending.push({ label: 'Speed-run enable', logKey: 'speed_run_enable', tx: txEnable, sentAt: sentAt1 });
           const txLead = await lifecycleContract.setLeadTimes(
             speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeDurationSeconds, ov2,
           );
-          await Promise.all([txEnable.wait(), txLead.wait()]);
-          laneLog('A', 'Speed-run overrides', 'success', 'testing mode enabled');
-          logS('speed_run_testing_mode', 'success');
-          configState.speed_run_set = true;
-          await checkpointConfigure(supabase, draftId, configState);
+          const sentAt2 = Date.now();
+          laneLog('A', 'Speed-run lead times', 'start', `tx sent ${shortTx(txLead.hash)} +${sentAt2 - laneAStart}ms`);
+          pending.push({
+            label: 'Speed-run lead times', logKey: 'speed_run_lead', tx: txLead, sentAt: sentAt2,
+            onMined: () => { configState.speed_run_set = true; },
+          });
         } catch (e: any) {
           laneLog('A', 'Speed-run overrides', 'error', e?.shortMessage || e?.message || String(e));
           logS('speed_run_testing_mode', 'error', { error: e?.message || String(e) });
         }
       }
 
-      laneLog('A', 'Lane complete', 'success');
+      // ── All txs sent — log summary before waiting for confirmations ──
+      const allSentAt = Date.now();
+      const sentSummary = pending.map((p) => ({ label: p.label, tx: shortTx(p.tx.hash), sentAt: `+${p.sentAt - laneAStart}ms` }));
+      console.log(`\n[LANE A] ✅ ALL ${pending.length} TXS SENT in ${allSentAt - laneAStart}ms — waiting for confirmations`);
+      console.table(sentSummary);
+      logS('lane_a_all_txs_sent', 'success', { count: pending.length, sendDurationMs: allSentAt - laneAStart, txs: sentSummary });
+
+      // Wait for ALL transactions to mine in parallel
+      if (pending.length > 0) {
+        laneLog('A', 'Awaiting confirmations', 'start', `${pending.length} pending txs`);
+        const results = await Promise.allSettled(
+          pending.map(({ label, logKey, tx, sentAt, successDetail, extra, onMined }) =>
+            tx.wait()
+              .then((receipt: any) => {
+                const minedAt = Date.now();
+                laneLog('A', label, 'success', `${successDetail || 'mined'} +${minedAt - laneAStart}ms (wait: ${minedAt - sentAt}ms)`);
+                logS(`${logKey}_mined`, 'success', { tx: receipt?.hash || tx.hash, elapsedMs: minedAt - laneAStart, waitMs: minedAt - sentAt, ...(extra || {}) });
+                onMined?.();
+              })
+              .catch((e: any) => {
+                laneLog('A', label, 'error', e?.message || String(e));
+                logS(logKey, 'error', { error: e?.message || String(e) });
+              })
+          ),
+        );
+        const confirmDone = Date.now();
+        const fulfilled = results.filter((r) => r.status === 'fulfilled').length;
+        const rejected = results.filter((r) => r.status === 'rejected').length;
+        console.log(`[LANE A] Confirmations done: ${fulfilled}/${pending.length} ok, ${rejected} failed, total lane time: ${confirmDone - laneAStart}ms`);
+        logS('lane_a_confirmations_done', 'success', { fulfilled, rejected, total: pending.length, totalLaneMs: confirmDone - laneAStart });
+      }
+
+      await checkpointConfigure(supabase, draftId, configState);
+      laneLog('A', 'Lane complete', 'success', `total: ${Date.now() - laneAStart}ms`);
     };
 
     // Lane B: vault admin operations (CoreVault role grants)

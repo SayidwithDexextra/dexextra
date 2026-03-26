@@ -1230,6 +1230,7 @@ export function InteractiveMarketCreation({
   const [validationResult, setValidationResult] = React.useState<MetricResolutionResponse | null>(initialState?.validationResult ?? null);
   const [showValidationModal, setShowValidationModal] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | null>(null);
+  const [isValidationAccepted, setIsValidationAccepted] = React.useState(false);
 
   // Cache the most recently validated source so accidental navigation back to Step 3
   // doesn't force a re-fetch + re-run of the AI metric tool.
@@ -1578,6 +1579,7 @@ export function InteractiveMarketCreation({
         setIsDescriptionConfirmed(true);
         devEnsureSelectedSource();
         setIsIconConfirmed(true);
+        setIsValidationAccepted(true);
       }
     },
     [
@@ -1609,6 +1611,7 @@ export function InteractiveMarketCreation({
     setIconFile(null);
     setIconPreviewUrl(DEV_REVIEW_PRESET.iconUrl);
     setIsIconConfirmed(true);
+    setIsValidationAccepted(true);
 
     // Preselect a source immediately
     const devSource: MetricSourceOption = {
@@ -1741,6 +1744,7 @@ export function InteractiveMarketCreation({
     setIconPreviewUrl(null);
     setIconStoredUrl(null);
     setIsIconConfirmed(true);
+    setIsValidationAccepted(true);
 
     const devSource: MetricSourceOption = {
       id: `dev-quick-${code.toLowerCase()}`,
@@ -1845,6 +1849,7 @@ export function InteractiveMarketCreation({
     setIconPreviewUrl(null);
     setIconStoredUrl(null);
     setIsIconConfirmed(true);
+    setIsValidationAccepted(true);
 
     const devSource: MetricSourceOption = {
       id: `dev-speedrun-${code.toLowerCase()}`,
@@ -2037,6 +2042,7 @@ export function InteractiveMarketCreation({
     setValidationResult(null);
     setShowValidationModal(false);
     setValidationError(null);
+    setIsValidationAccepted(false);
     setCachedValidatedSelection(null);
     // Reset source denial/re-search state
     setDeniedSourceUrls([]);
@@ -2840,6 +2846,13 @@ export function InteractiveMarketCreation({
     };
   }, []);
 
+  // Show validation modal when reaching the final step if not yet accepted
+  React.useEffect(() => {
+    if (visibleStep === 'complete' && !isValidationAccepted && selectedSource) {
+      setShowValidationModal(true);
+    }
+  }, [visibleStep, isValidationAccepted, selectedSource]);
+
   const fallbackAssistantResponseText = React.useMemo(() => {
     if ((discoveryState !== 'success' && discoveryState !== 'clarify') || !discoveryResult) return '';
 
@@ -3406,7 +3419,8 @@ export function InteractiveMarketCreation({
             setSelectedSource(source);
             // Changing the source invalidates downstream confirmation (icon + validation).
             setIsIconConfirmed(false);
-            
+            setIsValidationAccepted(false);
+
             // Optionally enrich defaults with source if user hasn't edited.
             if (!nameTouched) {
               setMarketName(
@@ -3426,10 +3440,9 @@ export function InteractiveMarketCreation({
               );
             }
 
-            // Trigger AI validation with the selected source
+            // Trigger AI validation in background (modal shown at final step)
             setIsValidating(true);
             setValidationError(null);
-            setShowValidationModal(true);
             setValidationResult(null);
 
             try {
@@ -3468,8 +3481,6 @@ export function InteractiveMarketCreation({
               console.error('Validation Error:', error);
               setValidationError(error instanceof Error ? error.message : 'Validation failed');
               setIsValidating(false);
-              // Keep the user on source selection so they can choose another source / custom URL.
-              setSelectedSource(null);
             }
           }}
         />
@@ -3526,6 +3537,36 @@ export function InteractiveMarketCreation({
         </div>
       )}
 
+      {/* Background validation indicator (visible during icon step) */}
+      {visibleStep === 'icon' && (
+        <div className="mt-3 flex items-center gap-2 px-1">
+          {isValidating && (
+            <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+              <div className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+              <span className="text-[11px] text-white/50">Scanning metric source…</span>
+            </div>
+          )}
+          {!isValidating && validationResult && !validationError && (
+            <div className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-1.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+              <svg className="h-3 w-3 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              <span className="text-[11px] text-emerald-400/80">Metric source verified</span>
+            </div>
+          )}
+          {!isValidating && validationError && (
+            <div className="flex items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/[0.06] px-3 py-1.5 animate-in fade-in slide-in-from-bottom-1 duration-300">
+              <svg className="h-3 w-3 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span className="text-[11px] text-amber-400/80">Validation issue — review at final step</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Icon Selection Tiles (Step: Icon) */}
       {discoveryState === 'success' &&
         discoveryResult &&
@@ -3549,6 +3590,7 @@ export function InteractiveMarketCreation({
           isVisible={true}
           onBack={() => {
             setSelectedSource(null);
+            setIsValidationAccepted(false);
           }}
         />
       )}
@@ -3615,10 +3657,12 @@ export function InteractiveMarketCreation({
         </div>
       )}
 
-      {/* AI Validation Modal */}
+      {/* AI Validation Modal — shown at final step for accept/deny */}
       <MetricResolutionModal
         isOpen={showValidationModal}
         onClose={() => {
+          // At the final step, the modal can only be dismissed via Accept or Deny
+          if (visibleStep === 'complete' && !isValidationAccepted) return;
           setShowValidationModal(false);
           setValidationResult(null);
           setValidationError(null);
@@ -3626,10 +3670,13 @@ export function InteractiveMarketCreation({
         response={validationResult}
         error={validationError}
         onAccept={() => {
+          setIsValidationAccepted(true);
           setShowValidationModal(false);
         }}
         onPickAnotherSource={() => {
           setSelectedSource(null);
+          setIsIconConfirmed(false);
+          setIsValidationAccepted(false);
           setShowValidationModal(false);
           setValidationResult(null);
           setValidationError(null);
@@ -3640,6 +3687,8 @@ export function InteractiveMarketCreation({
             setDeniedSourceUrls((prev) => [...prev, selectedSource.url]);
           }
           setSelectedSource(null);
+          setIsIconConfirmed(false);
+          setIsValidationAccepted(false);
           setSearchVariation((prev) => prev + 1);
           setSourcesFetchState('idle');
           setSourcesFetchNonce((n) => n + 1);
