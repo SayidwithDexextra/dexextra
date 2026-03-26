@@ -370,63 +370,75 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   }
 
   // 7. Rollover-specific: assign series, update parent, link on-chain
+  //    Run DB writes and on-chain link in parallel to save a big-block wait.
   vStep('[7/7] Finalize lineage', 'start');
+
+  const lineageTasks: Promise<void>[] = [];
+
   if (savedMarketId && seriesId) {
-    try {
-      await supabase.from('markets').update({
-        series_id: seriesId,
-        series_sequence: childSequence,
-        updated_at: new Date().toISOString(),
-      }).eq('id', savedMarketId);
-      vStep('[7/7] Assign child to series', 'success', `seq=${childSequence}`);
-      log('rollover_series_child', 'success', { seriesId, sequence: childSequence });
-    } catch (e: any) {
-      vStep('[7/7] Assign child to series', 'error', e?.message || String(e));
-      log('rollover_series_child', 'error', { error: e?.message || String(e) });
-    }
+    lineageTasks.push((async () => {
+      try {
+        await supabase.from('markets').update({
+          series_id: seriesId,
+          series_sequence: childSequence,
+          updated_at: new Date().toISOString(),
+        }).eq('id', savedMarketId);
+        vStep('[7/7] Assign child to series', 'success', `seq=${childSequence}`);
+        log('rollover_series_child', 'success', { seriesId, sequence: childSequence });
+      } catch (e: any) {
+        vStep('[7/7] Assign child to series', 'error', e?.message || String(e));
+        log('rollover_series_child', 'error', { error: e?.message || String(e) });
+      }
+    })());
   }
 
   if (savedMarketId) {
-    try {
-      const parentCfg = (typeof market.market_config === 'object' && market.market_config) || {};
-      await supabase.from('markets').update({
-        market_config: {
-          ...(parentCfg as any),
-          rollover: {
-            child_market_id: savedMarketId,
-            child_address: deployResult.orderBook,
-            child_settlement_date: childSettlementDate.toISOString(),
-            rolled_over_at: new Date().toISOString(),
+    lineageTasks.push((async () => {
+      try {
+        const parentCfg = (typeof market.market_config === 'object' && market.market_config) || {};
+        await supabase.from('markets').update({
+          market_config: {
+            ...(parentCfg as any),
+            rollover: {
+              child_market_id: savedMarketId,
+              child_address: deployResult.orderBook,
+              child_settlement_date: childSettlementDate.toISOString(),
+              rolled_over_at: new Date().toISOString(),
+            },
           },
-        },
-        updated_at: new Date().toISOString(),
-      }).eq('id', marketId);
-      vStep('[7/7] Update parent config', 'success', `child=${savedMarketId.slice(0, 8)}...`);
-      log('rollover_update_parent', 'success', { parentMarketId: marketId });
-    } catch (e: any) {
-      vStep('[7/7] Update parent config', 'error', e?.message || String(e));
-      log('rollover_update_parent', 'error', { error: e?.message || String(e) });
-    }
+          updated_at: new Date().toISOString(),
+        }).eq('id', marketId);
+        vStep('[7/7] Update parent config', 'success', `child=${savedMarketId.slice(0, 8)}...`);
+        log('rollover_update_parent', 'success', { parentMarketId: marketId });
+      } catch (e: any) {
+        vStep('[7/7] Update parent config', 'error', e?.message || String(e));
+        log('rollover_update_parent', 'error', { error: e?.message || String(e) });
+      }
+    })());
   }
 
   if (effectiveAddress && deployResult.orderBook) {
-    try {
-      vStep('[7/7] Link on-chain', 'start', `${shortAddr(effectiveAddress)} -> ${shortAddr(deployResult.orderBook)}`);
-      const provider = getRpcProvider();
-      const adminWallet = provider ? getAdminWallet(provider) : null;
-      if (adminWallet) {
-        const lifecycleAbi = ['function linkRolloverChildByAddress(address,uint256) external'];
-        const parentContract = new ethers.Contract(effectiveAddress, lifecycleAbi, adminWallet);
-        const linkTx = await parentContract.linkRolloverChildByAddress(deployResult.orderBook, childSettlementUnix);
-        const linkRc = await linkTx.wait();
-        vStep('[7/7] Link on-chain', 'success', `tx ${linkRc?.hash?.slice(0, 10) || linkTx.hash.slice(0, 10)}...`);
-        log('rollover_link_onchain', 'success', { tx: linkRc?.hash || linkTx.hash });
+    lineageTasks.push((async () => {
+      try {
+        vStep('[7/7] Link on-chain', 'start', `${shortAddr(effectiveAddress)} -> ${shortAddr(deployResult.orderBook)}`);
+        const provider = getRpcProvider();
+        const adminWallet = provider ? getAdminWallet(provider) : null;
+        if (adminWallet) {
+          const lifecycleAbi = ['function linkRolloverChildByAddress(address,uint256) external'];
+          const parentContract = new ethers.Contract(effectiveAddress, lifecycleAbi, adminWallet);
+          const linkTx = await parentContract.linkRolloverChildByAddress(deployResult.orderBook, childSettlementUnix);
+          const linkRc = await linkTx.wait();
+          vStep('[7/7] Link on-chain', 'success', `tx ${linkRc?.hash?.slice(0, 10) || linkTx.hash.slice(0, 10)}...`);
+          log('rollover_link_onchain', 'success', { tx: linkRc?.hash || linkTx.hash });
+        }
+      } catch (e: any) {
+        vStep('[7/7] Link on-chain', 'error', e?.shortMessage || e?.message || String(e));
+        log('rollover_link_onchain', 'error', { error: e?.message || String(e) });
       }
-    } catch (e: any) {
-      vStep('[7/7] Link on-chain', 'error', e?.shortMessage || e?.message || String(e));
-      log('rollover_link_onchain', 'error', { error: e?.message || String(e) });
-    }
+    })());
   }
+
+  await Promise.allSettled(lineageTasks);
 
   log('rollover', 'success', {
     parentId: marketId,

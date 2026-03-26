@@ -493,8 +493,22 @@ export async function deployMarket(
   // ── Phase 2: Parallel writes across two signers ──
 
   // Lane A: diamond owner operations
+  //
+  // All config transactions are sent with pre-allocated nonces without
+  // waiting for intermediate confirmations.  On chains with slow block
+  // times (e.g. Hyperliquid ~60s big blocks) this collapses 4-5
+  // sequential blocks into 1-2, cutting ~4 min down to ~1-2 min.
   const laneA = async () => {
     laneLog('A', 'Starting lane', 'start', `signer=${shortAddr(ownerAddress)}`);
+
+    type PendingTx = {
+      label: string;
+      logKey: string;
+      tx: ethers.TransactionResponse;
+      successDetail?: string;
+      extra?: Record<string, any>;
+    };
+    const pending: PendingTx[] = [];
 
     // 1. Ensure selectors
     if (missingSelectors.length > 0) {
@@ -507,9 +521,7 @@ export async function deployMarket(
         const ov = await nonceMgr.nextOverrides();
         const txCut = await diamondCut.diamondCut(patchCut as any, ethers.ZeroAddress, '0x', ov as any);
         laneLog('A', 'Ensure selectors', 'start', `tx sent ${shortTx(txCut.hash)}`);
-        await txCut.wait();
-        laneLog('A', 'Ensure selectors', 'success', 'mined');
-        log('ensure_selectors', 'success', { patched: missingSelectors.length });
+        pending.push({ label: 'Ensure selectors', logKey: 'ensure_selectors', tx: txCut, extra: { patched: missingSelectors.length } });
       } catch (e: any) {
         laneLog('A', 'Ensure selectors', 'error', e?.shortMessage || e?.message || String(e));
         log('ensure_selectors', 'error', { error: e?.message || String(e) });
@@ -527,9 +539,7 @@ export async function deployMarket(
         const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
         const txAllow = await registry.setAllowedOrderbook(orderBook!, true, ov as any);
         laneLog('A', 'Allow orderbook on registry', 'start', `tx sent ${shortTx(txAllow.hash)}`);
-        const rcAllow = await txAllow.wait();
-        laneLog('A', 'Allow orderbook on registry', 'success', 'mined');
-        log('session_registry_allow', 'success', { tx: rcAllow?.hash || txAllow.hash });
+        pending.push({ label: 'Allow orderbook on registry', logKey: 'session_registry_allow', tx: txAllow });
       } catch (e: any) {
         laneLog('A', 'Allow orderbook on registry', 'error', e?.shortMessage || e?.message || String(e));
         log('session_registry_allow', 'error', { error: e?.message || String(e) });
@@ -544,18 +554,14 @@ export async function deployMarket(
         const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
         const txSet = await meta.setSessionRegistry(registryAddress, ov);
         laneLog('A', 'Attach session registry', 'start', `tx sent ${shortTx(txSet.hash)}`);
-        await txSet.wait();
-        laneLog('A', 'Attach session registry', 'success', 'mined');
-        log('session_registry_attach', 'success', { tx: txSet.hash });
+        pending.push({ label: 'Attach session registry', logKey: 'session_registry_attach', tx: txSet });
       } catch (e: any) {
         laneLog('A', 'Attach session registry', 'error', e?.shortMessage || e?.message || String(e));
         log('session_registry_attach', 'error', { error: e?.message || String(e) });
       }
     }
 
-    // 4. Configure fees (fire both with pre-allocated nonces)
-    const feePromises: Promise<any>[] = [];
-
+    // 4. Configure fees (fire both with pre-allocated nonces, no intermediate waits)
     const defaultProtocolRecipient =
       process.env.PROTOCOL_FEE_RECIPIENT ||
       (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
@@ -569,37 +575,31 @@ export async function deployMarket(
         : (creatorWalletAddress || ownerAddress);
 
     if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
-      laneLog('A', 'Configure fee structure', 'start');
-      feePromises.push((async () => {
+      try {
+        laneLog('A', 'Configure fee structure', 'start');
         const obFee = new ethers.Contract(orderBook!, ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
         const feeTx = await obFee.updateFeeStructure(7, 3, protocolFeeRecipient, 8000, await nonceMgr.nextOverrides());
         laneLog('A', 'Configure fee structure', 'start', `tx sent ${shortTx(feeTx.hash)}`);
-        await feeTx.wait();
-        laneLog('A', 'Configure fee structure', 'success', 'mined');
-        log('configure_fees', 'success', { tx: feeTx.hash });
-      })().catch((e: any) => {
+        pending.push({ label: 'Configure fee structure', logKey: 'configure_fees', tx: feeTx });
+      } catch (e: any) {
         laneLog('A', 'Configure fee structure', 'error', e?.message || String(e));
         log('configure_fees', 'error', { error: e?.message || String(e) });
-      }));
+      }
     }
 
-    laneLog('A', 'Set fee recipient', 'start', shortAddr(creatorAddr));
-    feePromises.push((async () => {
+    try {
+      laneLog('A', 'Set fee recipient', 'start', shortAddr(creatorAddr));
       const obTrade = new ethers.Contract(orderBook!, [
         'function updateTradingParameters(uint256,uint256,address) external',
       ], wallet);
       const [marginBps, tradingFee] = tradingParams;
       const recipientTx = await obTrade.updateTradingParameters(marginBps, tradingFee, creatorAddr, await nonceMgr.nextOverrides());
       laneLog('A', 'Set fee recipient', 'start', `tx sent ${shortTx(recipientTx.hash)}`);
-      await recipientTx.wait();
-      laneLog('A', 'Set fee recipient', 'success', `mined -> ${shortAddr(creatorAddr)}`);
-      log('set_fee_recipient', 'success', { tx: recipientTx.hash, feeRecipient: creatorAddr });
-    })().catch((e: any) => {
+      pending.push({ label: 'Set fee recipient', logKey: 'set_fee_recipient', tx: recipientTx, successDetail: `mined -> ${shortAddr(creatorAddr)}`, extra: { feeRecipient: creatorAddr } });
+    } catch (e: any) {
       laneLog('A', 'Set fee recipient', 'error', e?.message || String(e));
       log('set_fee_recipient', 'error', { error: e?.message || String(e) });
-    }));
-
-    await Promise.all(feePromises);
+    }
 
     // 5. Initialize lifecycle controller
     try {
@@ -612,9 +612,7 @@ export async function deployMarket(
       const ov = await nonceMgr.nextOverrides();
       const txInit = await lcContract.initializeLifecycleWithMode(settlementTs, ethers.ZeroAddress, isDevMode, ov);
       laneLog('A', 'Initialize lifecycle', 'start', `tx sent ${shortTx(txInit.hash)}`);
-      await txInit.wait();
-      laneLog('A', 'Initialize lifecycle', 'success', 'mined');
-      log('initialize_lifecycle', 'success', { tx: txInit.hash });
+      pending.push({ label: 'Initialize lifecycle', logKey: 'initialize_lifecycle', tx: txInit });
     } catch (e: any) {
       laneLog('A', 'Initialize lifecycle', 'error', e?.shortMessage || e?.message || String(e));
       log('initialize_lifecycle', 'error', { error: e?.message || String(e) });
@@ -631,16 +629,35 @@ export async function deployMarket(
         const ov1 = await nonceMgr.nextOverrides();
         const ov2 = await nonceMgr.nextOverrides();
         const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
+        laneLog('A', 'Speed-run enable', 'start', `tx sent ${shortTx(txEnable.hash)}`);
+        pending.push({ label: 'Speed-run enable', logKey: 'speed_run_enable', tx: txEnable });
         const txLead = await lifecycleContract.setLeadTimes(
           speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeDurationSeconds, ov2,
         );
-        await Promise.all([txEnable.wait(), txLead.wait()]);
-        laneLog('A', 'Speed-run overrides', 'success', 'testing mode enabled');
-        log('speed_run', 'success');
+        laneLog('A', 'Speed-run lead times', 'start', `tx sent ${shortTx(txLead.hash)}`);
+        pending.push({ label: 'Speed-run lead times', logKey: 'speed_run_lead', tx: txLead });
       } catch (e: any) {
         laneLog('A', 'Speed-run overrides', 'error', e?.shortMessage || e?.message || String(e));
         log('speed_run', 'error', { error: e?.message || String(e) });
       }
+    }
+
+    // Wait for ALL transactions to mine in parallel
+    if (pending.length > 0) {
+      laneLog('A', 'Awaiting confirmations', 'start', `${pending.length} pending txs`);
+      await Promise.allSettled(
+        pending.map(({ label, logKey, tx, successDetail, extra }) =>
+          tx.wait()
+            .then((receipt: any) => {
+              laneLog('A', label, 'success', successDetail || 'mined');
+              log(logKey, 'success', { tx: receipt?.hash || tx.hash, ...(extra || {}) });
+            })
+            .catch((e: any) => {
+              laneLog('A', label, 'error', e?.message || String(e));
+              log(logKey, 'error', { error: e?.message || String(e) });
+            })
+        ),
+      );
     }
 
     laneLog('A', 'Lane complete', 'success');

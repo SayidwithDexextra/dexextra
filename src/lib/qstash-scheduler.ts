@@ -100,7 +100,7 @@ async function publishOrDefer(
     },
     notBefore: deferAt,
     retries: 3,
-    label: `${label}:deferred`,
+    label: `${label}.deferred`,
   });
   console.log(`[qstash-scheduler] ${label} too far out (${Math.round(delaySec / 86400)}d), deferred reschedule to ${new Date(deferAt * 1000).toISOString()}`);
   return res.messageId;
@@ -153,7 +153,7 @@ export async function scheduleMarketLifecycle(
   const challengeDuration = opts?.challengeDurationSeconds ?? proportional.challengeDuration;
 
   const ids: ScheduleIds = {};
-  const sym = opts?.symbol || marketId.slice(0, 8);
+  const sym = (opts?.symbol || marketId.slice(0, 8)).replace(/[^a-zA-Z0-9._-]/g, '_');
   const commonBody = {
     market_id: marketId,
     market_address: opts?.marketAddress || null,
@@ -167,7 +167,7 @@ export async function scheduleMarketLifecycle(
       ids.rollover = await publishOrDefer(
         client, destination, rolloverTriggerAt,
         { ...commonBody, action: 'rollover' },
-        `${sym}:rollover`,
+        `${sym}.rollover`,
       );
     } catch (e: any) {
       console.error('[qstash-scheduler] Failed to schedule rollover trigger:', e?.message || e);
@@ -180,7 +180,7 @@ export async function scheduleMarketLifecycle(
       ids.settlement = await publishOrDefer(
         client, destination, settlementStartAt,
         { ...commonBody, action: 'settlement_start' },
-        `${sym}:settlement`,
+        `${sym}.settlement`,
       );
     } catch (e: any) {
       console.error('[qstash-scheduler] Failed to schedule settlement trigger:', e?.message || e);
@@ -192,7 +192,7 @@ export async function scheduleMarketLifecycle(
       ids.finalize = await publishOrDefer(
         client, destination, settlementDateUnix,
         { ...commonBody, action: 'settlement_finalize' },
-        `${sym}:finalize`,
+        `${sym}.finalize`,
       );
     } catch (e: any) {
       console.error('[qstash-scheduler] Failed to schedule finalize trigger:', e?.message || e);

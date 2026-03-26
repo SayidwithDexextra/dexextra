@@ -1160,7 +1160,20 @@ export async function POST(req: Request) {
   // ── Phase 2: Parallel writes across two signers ──
 
   // Lane A: diamond owner ops
+  //
+  // All config transactions are sent with pre-allocated nonces without
+  // waiting for intermediate confirmations.  On chains with slow block
+  // times (e.g. Hyperliquid ~60s big blocks) this collapses 4+ sequential
+  // blocks into 1-2, cutting ~4 min down to ~1-2 min.
   const laneA = async () => {
+    type PendingTx = {
+      stepSent: string;
+      stepMined: string;
+      tx: ethers.TransactionResponse;
+      extra?: Record<string, any>;
+    };
+    const pending: PendingTx[] = [];
+
     // 1. Ensure selectors
     if (missingSelectors.length > 0) {
       try {
@@ -1171,8 +1184,7 @@ export async function POST(req: Request) {
         const ov = await nonceMgr.nextOverrides();
         const txCut = await diamondCutContract.diamondCut(patchCut as any, ethers.ZeroAddress, '0x', ov as any);
         logS('ensure_selectors_diamondCut_sent', 'success', { tx: txCut.hash });
-        const rc = await txCut.wait();
-        logS('ensure_selectors_diamondCut_mined', 'success', { tx: rc?.hash || txCut.hash });
+        pending.push({ stepSent: 'ensure_selectors_diamondCut_sent', stepMined: 'ensure_selectors_diamondCut_mined', tx: txCut });
       } catch (e: any) {
         logS('ensure_selectors', 'error', { error: e?.message || String(e) });
       }
@@ -1188,43 +1200,41 @@ export async function POST(req: Request) {
         const ov = { ...(await nonceMgr.nextOverrides()), gasLimit: 300000n };
         const txSet = await meta.setSessionRegistry(registryAddress, ov);
         logS('attach_session_registry_sent', 'success', { tx: txSet.hash, action: 'set_session_registry' });
-        await txSet.wait();
-        logS('attach_session_registry_mined', 'success', { action: 'set_session_registry', tx: txSet.hash });
+        pending.push({ stepSent: 'attach_session_registry_sent', stepMined: 'attach_session_registry_mined', tx: txSet, extra: { action: 'set_session_registry' } });
       } catch (e: any) {
         logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'set_session_registry' });
       }
     }
 
-    // 3. Configure fees (fire with pre-allocated nonces)
+    // 3. Configure fees (fire with pre-allocated nonces, no intermediate waits)
     const defaultProtocolRecipient = process.env.PROTOCOL_FEE_RECIPIENT || (process.env as any).NEXT_PUBLIC_PROTOCOL_FEE_RECIPIENT || '';
     const protocolFeeRecipient = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
       ? feeRecipient : defaultProtocolRecipient;
     const creatorAddr = isRollover && feeRecipient && ethers.isAddress(feeRecipient)
       ? feeRecipient : (creatorWalletAddress || ownerAddress);
 
-    const feePromises: Promise<any>[] = [];
     if (protocolFeeRecipient && ethers.isAddress(protocolFeeRecipient)) {
-      logS('configure_fees', 'start', { orderBook, isRollover });
-      feePromises.push((async () => {
+      try {
+        logS('configure_fees', 'start', { orderBook, isRollover });
         const obFee = new ethers.Contract(orderBook!, ['function updateFeeStructure(uint256,uint256,address,uint256) external'], wallet);
         const feeTx = await obFee.updateFeeStructure(7, 3, protocolFeeRecipient, 8000, await nonceMgr.nextOverrides());
         logS('configure_fees_sent', 'success', { tx: feeTx.hash });
-        const feeRc = await feeTx.wait();
-        logS('configure_fees_mined', 'success', { tx: feeRc?.hash || feeTx.hash });
-      })().catch((e: any) => logS('configure_fees', 'error', { error: e?.message || String(e) })));
+        pending.push({ stepSent: 'configure_fees_sent', stepMined: 'configure_fees_mined', tx: feeTx });
+      } catch (e: any) {
+        logS('configure_fees', 'error', { error: e?.message || String(e) });
+      }
     }
 
-    logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
-    feePromises.push((async () => {
+    try {
+      logS('set_fee_recipient', 'start', { orderBook, creator: creatorAddr });
       const obTrade = new ethers.Contract(orderBook!, ['function updateTradingParameters(uint256,uint256,address) external'], wallet);
       const [marginBps, tradingFee] = tradingParams;
       const recipientTx = await obTrade.updateTradingParameters(marginBps, tradingFee, creatorAddr, await nonceMgr.nextOverrides());
       logS('set_fee_recipient_sent', 'success', { tx: recipientTx.hash });
-      const recipientRc = await recipientTx.wait();
-      logS('set_fee_recipient_mined', 'success', { tx: recipientRc?.hash || recipientTx.hash, feeRecipient: creatorAddr });
-    })().catch((e: any) => logS('set_fee_recipient', 'error', { error: e?.message || String(e) })));
-
-    await Promise.all(feePromises);
+      pending.push({ stepSent: 'set_fee_recipient_sent', stepMined: 'set_fee_recipient_mined', tx: recipientTx, extra: { feeRecipient: creatorAddr } });
+    } catch (e: any) {
+      logS('set_fee_recipient', 'error', { error: e?.message || String(e) });
+    }
 
     // 4. Speed-run lifecycle overrides
     if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0) {
@@ -1237,12 +1247,30 @@ export async function POST(req: Request) {
         const ov1 = await nonceMgr.nextOverrides();
         const ov2 = await nonceMgr.nextOverrides();
         const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
+        logS('speed_run_enable_sent', 'success', { tx: txEnable.hash });
+        pending.push({ stepSent: 'speed_run_enable_sent', stepMined: 'speed_run_enable_mined', tx: txEnable });
         const txLead = await lifecycleContract.setLeadTimes(speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeDurationSeconds, ov2);
-        await Promise.all([txEnable.wait(), txLead.wait()]);
-        logS('speed_run_testing_mode', 'success');
+        logS('speed_run_lead_sent', 'success', { tx: txLead.hash });
+        pending.push({ stepSent: 'speed_run_lead_sent', stepMined: 'speed_run_lead_mined', tx: txLead });
       } catch (e: any) {
         logS('speed_run_testing_mode', 'error', { error: e?.message || String(e) });
       }
+    }
+
+    // Wait for ALL transactions to mine in parallel
+    if (pending.length > 0) {
+      logS('lane_a_await_confirmations', 'start', { pendingCount: pending.length });
+      await Promise.allSettled(
+        pending.map(({ stepMined, tx, extra }) =>
+          tx.wait()
+            .then((receipt: any) => {
+              logS(stepMined, 'success', { tx: receipt?.hash || tx.hash, ...(extra || {}) });
+            })
+            .catch((e: any) => {
+              logS(stepMined, 'error', { error: e?.message || String(e) });
+            })
+        ),
+      );
     }
   };
 
