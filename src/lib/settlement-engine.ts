@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
 import { getMetricAIWorkerBaseUrl } from './metricAiWorker';
+import { loadRelayerPoolFromEnv } from './relayerKeys';
 
 // ── Types ──
 
@@ -263,23 +264,54 @@ async function verifyOnchainSettlementTime(
 
 async function settlementSyncLifecycleOnChain(
   market: MarketRow,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; previousState?: number; newState?: number; error?: string }> {
   const cfg = getConfig();
-  if (!cfg.rpcUrl || !cfg.privateKey) return { ok: false, error: 'rpc_or_key_not_configured' };
+  if (!cfg.rpcUrl) return { ok: false, error: 'rpc_not_configured' };
   if (!market.market_address || !ethers.isAddress(market.market_address)) {
     return { ok: false, error: 'invalid_market_address' };
   }
+
+  const relayers = loadRelayerPoolFromEnv({
+    pool: 'lifecycle_sync',
+    globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+    allowFallbackSingleKey: true,
+  });
+  if (relayers.length === 0) {
+    return { ok: false, error: 'no_relayer_keys_configured' };
+  }
+
+  const relayer = relayers[Math.floor(Math.random() * relayers.length)];
+
   try {
     const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
-    const wallet = new ethers.Wallet(cfg.privateKey, provider);
+    const wallet = new ethers.Wallet(relayer.privateKey, provider);
     const contract = new ethers.Contract(
       market.market_address,
       ['function syncLifecycle() external returns (uint8 previousState, uint8 newState)'],
       wallet,
     );
     const tx = await contract.syncLifecycle();
-    await tx.wait();
-    return { ok: true };
+    const receipt = await tx.wait();
+
+    let previousState: number | undefined;
+    let newState: number | undefined;
+    const iface = new ethers.Interface([
+      'event LifecycleSync(address indexed market, address indexed caller, uint8 previousState, uint8 newState, bool progressed, bool devMode, bool settledOnChain, uint256 rolloverWindowStart, uint256 challengeWindowStart, uint256 challengeWindowEnd, uint256 timestamp)',
+    ]);
+    for (const log of receipt?.logs ?? []) {
+      try {
+        const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+        if (parsed?.name === 'LifecycleSync') {
+          previousState = Number(parsed.args.previousState);
+          newState = Number(parsed.args.newState);
+        }
+      } catch {}
+    }
+
+    console.log(`[settlement-engine] syncLifecycle via relayer ${relayer.address} for ${market.market_identifier}`, {
+      previousState, newState, txHash: receipt?.hash,
+    });
+    return { ok: true, previousState, newState };
   } catch (err) {
     return { ok: false, error: `sync_lifecycle_failed:${String(err)}` };
   }
@@ -440,12 +472,17 @@ async function maybeStartSettlementWindow(
     };
   }
 
+  const syncResult = await settlementSyncLifecycleOnChain(market);
+  if (!syncResult.ok) {
+    console.warn(`[settlement-engine] syncLifecycle at window start warning for ${market.market_identifier}: ${syncResult.error}`);
+  }
+
   return {
     marketId: market.id, marketIdentifier: market.market_identifier,
     action: 'start_window', ok: true,
     settlementDate: market.settlement_date,
     settlementWindowExpiresAt: expiresAt.toISOString(),
-    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl, evidenceHash },
+    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl, evidenceHash, lifecycleSync: syncResult },
   };
 }
 
@@ -842,8 +879,14 @@ export async function completeSettlementFromAIResult(
     return { ok: false, reason: `db_update_failed: ${updateErr.message}` };
   }
 
+  const syncResult = await settlementSyncLifecycleOnChain(market);
+  if (!syncResult.ok) {
+    console.warn(`[settlement-engine] syncLifecycle at AI callback warning for ${market.market_identifier}: ${syncResult.error}`);
+  }
+
   console.log(`[settlement-engine] settlement started via webhook callback for ${market.market_identifier}`, {
     price: ai.price, jobId: ai.jobId, evidenceHash, expiresAt: expiresAt.toISOString(),
+    lifecycleSync: syncResult,
   });
 
   return {
@@ -855,6 +898,7 @@ export async function completeSettlementFromAIResult(
       expiresAt: expiresAt.toISOString(),
       waybackUrl: ai.waybackUrl,
       waybackPageUrl: ai.waybackPageUrl,
+      lifecycleSync: syncResult,
     },
   };
 }

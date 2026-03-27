@@ -143,6 +143,30 @@ export function SettlementInterface({
   }, [market?.market_address, fetchOnChainState]);
 
   useEffect(() => {
+    const addr = market?.market_address;
+    const sym = market?.symbol;
+    if (!addr || typeof window === 'undefined') return;
+
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+      const eventSymbol = String(detail.symbol || '').toUpperCase();
+      const ourSymbol = String(sym || '').toUpperCase();
+      if (eventSymbol && ourSymbol && eventSymbol !== ourSymbol) return;
+
+      if (pollRef.current) clearTimeout(pollRef.current);
+      void fetchOnChainState(addr as `0x${string}`).then(() => {
+        pollRef.current = setTimeout(() => {
+          void fetchOnChainState(addr as `0x${string}`);
+        }, 15_000);
+      });
+    };
+
+    window.addEventListener('settlementUpdated', handler);
+    return () => window.removeEventListener('settlementUpdated', handler);
+  }, [market?.market_address, market?.symbol, fetchOnChainState]);
+
+  useEffect(() => {
     if (!market?.settlement_window_expires_at) return;
     const updateTimer = () => {
       const expires = new Date(market.settlement_window_expires_at).getTime();

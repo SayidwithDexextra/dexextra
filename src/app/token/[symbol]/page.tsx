@@ -33,6 +33,7 @@ import { useActivePairByMarketId, useSeriesMarkets, useSeriesSlug } from '@/hook
 import { SettlementInterface } from '@/components/SettlementInterface';
 import { SettlementTransitionOverlay } from '@/components/SettlementTransitionOverlay';
 import { useMarketSettlementRealtime } from '@/hooks/useMarketSettlementRealtime';
+import { useSettlementContractEvents } from '@/hooks/useSettlementContractEvents';
 import { CommentSection } from '@/components/CommentSection';
 import { CreatorCard } from '@/components/CreatorCard';
 import { SimilarMarkets } from '@/components/SimilarMarkets';
@@ -110,6 +111,41 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     },
   });
 
+  const settlementRefetchMarket = useCallback(async () => {
+    if (typeof md.refetchMarket === 'function') {
+      await md.refetchMarket();
+    }
+  }, [md.refetchMarket]);
+
+  useSettlementContractEvents({
+    symbol,
+    orderBookAddress: (md as any)?.orderBookAddress || (md.market as any)?.market_address || null,
+    enabled: Boolean((md.market as any)?.market_address),
+    onMarketSettled: async () => {
+      await settlementRefetchMarket();
+      setIsSettlementView(true);
+    },
+    onLifecycleStateChanged: async (_oldState, newState) => {
+      await settlementRefetchMarket();
+      if (newState >= 2) {
+        setIsSettlementView(true);
+      }
+    },
+    onChallengeWindowStarted: async () => {
+      await settlementRefetchMarket();
+      setIsSettlementView(true);
+    },
+    onChallengeSubmitted: async () => {
+      await settlementRefetchMarket();
+    },
+    onChallengeResolved: async () => {
+      await settlementRefetchMarket();
+    },
+    onEvidenceCommitted: async () => {
+      await settlementRefetchMarket();
+    },
+  });
+
   useEffect(() => {
     const ms = (md.market as any)?.market_status;
     if (ms === 'SETTLEMENT_REQUESTED' || ms === 'SETTLED') {
@@ -158,6 +194,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   // On-chain market stats assembled from Diamond facet reads + ClickHouse 24h data
   const [onChainStats, setOnChainStats] = useState<MarketStatsOnChain | null>(null);
   const marketStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchStatsRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,6 +210,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       !obAddr.startsWith('0x') ||
       obAddr.length !== 42
     ) {
+      fetchStatsRef.current = null;
       return;
     }
 
@@ -355,10 +393,12 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       }
     };
 
+    fetchStatsRef.current = fetchStats;
     void fetchStats();
 
     return () => {
       cancelled = true;
+      fetchStatsRef.current = null;
       if (marketStatsTimerRef.current) clearTimeout(marketStatsTimerRef.current);
     };
   }, [
@@ -367,6 +407,18 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     (md.market as any)?.market_identifier,
     symbol,
   ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handler = () => {
+      if (marketStatsTimerRef.current) clearTimeout(marketStatsTimerRef.current);
+      void fetchStatsRef.current?.();
+    };
+
+    window.addEventListener('settlementUpdated', handler);
+    return () => window.removeEventListener('settlementUpdated', handler);
+  }, []);
 
   const isNetworkError = !!(md.error && typeof (md.error as any) === 'string' && (
     (md.error as any).includes('Please switch your wallet to Polygon') ||

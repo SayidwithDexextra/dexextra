@@ -68,13 +68,18 @@ const MarketDataContext = createContext<MarketDataContextValue | undefined>(unde
 interface ProviderProps {
   symbol: string;
   children: React.ReactNode;
-  /** Disable ticker polling (useful during deployment/bootstrapping). Default: true */
+  /** Disable ticker realtime subscription (useful during deployment/bootstrapping). Default: true */
   tickerEnabled?: boolean;
 }
 
 export function MarketDataProvider({ symbol, children, tickerEnabled = true }: ProviderProps) {
   const { market, isLoading: isLoadingMarket, error: marketError, refetch } = useMarket(symbol);
-  const { data: dbTicker } = useMarketTicker({ identifier: symbol, refreshInterval: 10000, enabled: tickerEnabled });
+  const { data: dbTicker } = useMarketTicker({
+    marketId: (market as any)?.id || undefined,
+    identifier: symbol,
+    refreshInterval: 60_000,
+    enabled: tickerEnabled,
+  });
 
   // Shared OrderBook read-only live data (one instance)
   const { data: obLive, isLoading: obLoading, error: obError } = useOrderBookContractData(symbol, {

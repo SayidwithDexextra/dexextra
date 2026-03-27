@@ -6,7 +6,7 @@ import { createWsClient } from '@/lib/viemClient';
 import { usePusher } from '@/lib/pusher-client';
 import { CHAIN_CONFIG } from '@/lib/contractConfig';
 
-type MarketEventType = 'order-placed' | 'trade-executed';
+type MarketEventType = 'order-placed' | 'trade-executed' | 'settlement-update';
 type MarketEventSource = 'onchain' | 'pusher';
 
 export type MarketEvent = {
@@ -24,6 +24,8 @@ type Subscriber = {
   onOrdersChanged?: () => void;
   /** Called on trade execution events (we currently map TradeExecutionCompleted + pusher trading-event) */
   onTradesChanged?: () => void;
+  /** Called on settlement lifecycle events (LifecycleStateChanged, SettlementChallenged, etc.) */
+  onSettlementChanged?: () => void;
   /** If true, dispatches DOM events used elsewhere in the app */
   dispatchDomEvents?: boolean;
 };
@@ -85,6 +87,98 @@ const ORDERBOOK_EVENTS_ABI = [
       { indexed: false, name: 'price', type: 'uint256' },
       { indexed: false, name: 'quantity', type: 'uint256' },
       { indexed: false, name: 'timestamp', type: 'uint256' },
+    ],
+  },
+] as const;
+
+const SETTLEMENT_EVENTS_ABI = [
+  {
+    type: 'event',
+    name: 'LifecycleStateChanged',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: false, name: 'oldState', type: 'uint8' },
+      { indexed: false, name: 'newState', type: 'uint8' },
+      { indexed: false, name: 'timestamp', type: 'uint256' },
+      { indexed: true, name: 'caller', type: 'address' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'LifecycleSettled',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: true, name: 'caller', type: 'address' },
+      { indexed: false, name: 'settledOnChain', type: 'bool' },
+      { indexed: false, name: 'timestamp', type: 'uint256' },
+      { indexed: false, name: 'challengeWindowStart', type: 'uint256' },
+      { indexed: false, name: 'challengeWindowEnd', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'LifecycleSync',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: true, name: 'caller', type: 'address' },
+      { indexed: false, name: 'previousState', type: 'uint8' },
+      { indexed: false, name: 'newState', type: 'uint8' },
+      { indexed: false, name: 'progressed', type: 'bool' },
+      { indexed: false, name: 'devMode', type: 'bool' },
+      { indexed: false, name: 'settledOnChain', type: 'bool' },
+      { indexed: false, name: 'rolloverWindowStart', type: 'uint256' },
+      { indexed: false, name: 'challengeWindowStart', type: 'uint256' },
+      { indexed: false, name: 'challengeWindowEnd', type: 'uint256' },
+      { indexed: false, name: 'timestamp', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'SettlementChallengeWindowStarted',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: false, name: 'challengeWindowStart', type: 'uint256' },
+      { indexed: false, name: 'challengeWindowEnd', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'SettlementChallenged',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: true, name: 'challenger', type: 'address' },
+      { indexed: false, name: 'alternativePrice', type: 'uint256' },
+      { indexed: false, name: 'bondAmount', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'ChallengeResolved',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: true, name: 'challenger', type: 'address' },
+      { indexed: false, name: 'challengerWon', type: 'bool' },
+      { indexed: false, name: 'bondAmount', type: 'uint256' },
+      { indexed: false, name: 'recipient', type: 'address' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'EvidenceCommitted',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: true, name: 'evidenceHash', type: 'bytes32' },
+      { indexed: true, name: 'committer', type: 'address' },
+      { indexed: false, name: 'timestamp', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'RolloverWindowStarted',
+    inputs: [
+      { indexed: true, name: 'market', type: 'address' },
+      { indexed: false, name: 'rolloverWindowStart', type: 'uint256' },
+      { indexed: false, name: 'rolloverWindowEnd', type: 'uint256' },
     ],
   },
 ] as const;
@@ -190,6 +284,7 @@ function emit(u: Underlying, evt: MarketEvent) {
     try {
       if (evt.type === 'order-placed') sub.onOrdersChanged?.();
       if (evt.type === 'trade-executed') sub.onTradesChanged?.();
+      if (evt.type === 'settlement-update') sub.onSettlementChanged?.();
     } catch {}
     // Optional bridge for legacy consumers
     if (sub.dispatchDomEvents && typeof window !== 'undefined') {
@@ -253,7 +348,6 @@ function emit(u: Underlying, evt: MarketEvent) {
         }
         if (evt.type === 'trade-executed') {
           const args: any = (evt.payload as any)?.args || {};
-          // Normalize trade details across event names
           let buyer: string | undefined = undefined;
           let seller: string | undefined = undefined;
           let price: string | undefined = undefined;
@@ -290,11 +384,43 @@ function emit(u: Underlying, evt: MarketEvent) {
               txHash: (evt.payload as any)?.transactionHash,
               blockNumber: (evt.payload as any)?.blockNumber,
               timestamp: evt.timestamp,
-              // Trade details for immediate UI patching
               buyer,
               seller,
               price,
               amount,
+            }
+          }));
+        }
+        if (evt.type === 'settlement-update') {
+          const args: any = (evt.payload as any)?.args || {};
+          const eventName = String((evt.payload as any)?.eventName || '');
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} dispatch:settlementUpdated`, {
+            traceId,
+            symbol: String(evt.symbol || '').toUpperCase(),
+            source: evt.source,
+            eventName,
+            txHash: (evt.payload as any)?.transactionHash,
+            blockNumber: (evt.payload as any)?.blockNumber,
+          });
+          window.dispatchEvent(new CustomEvent('settlementUpdated', {
+            detail: {
+              traceId,
+              symbol: evt.symbol,
+              source: evt.source,
+              txHash: (evt.payload as any)?.transactionHash,
+              blockNumber: (evt.payload as any)?.blockNumber,
+              timestamp: evt.timestamp,
+              eventName,
+              oldState: args?.oldState !== undefined ? Number(args.oldState) : undefined,
+              newState: args?.newState !== undefined ? Number(args.newState) : undefined,
+              previousState: args?.previousState !== undefined ? Number(args.previousState) : undefined,
+              settledOnChain: args?.settledOnChain !== undefined ? Boolean(args.settledOnChain) : undefined,
+              challenger: args?.challenger ? String(args.challenger) : undefined,
+              alternativePrice: args?.alternativePrice !== undefined ? String(args.alternativePrice) : undefined,
+              challengerWon: args?.challengerWon !== undefined ? Boolean(args.challengerWon) : undefined,
+              challengeWindowStart: args?.challengeWindowStart !== undefined ? String(args.challengeWindowStart) : undefined,
+              challengeWindowEnd: args?.challengeWindowEnd !== undefined ? String(args.challengeWindowEnd) : undefined,
             }
           }));
         }
@@ -415,6 +541,46 @@ function ensureUnderlying(symbol: string, address: Address): Underlying {
         } catch {}
       });
     } catch {}
+
+    // Settlement / lifecycle event watchers
+    const settlementEventNames = [
+      'LifecycleStateChanged',
+      'LifecycleSettled',
+      'LifecycleSync',
+      'SettlementChallengeWindowStarted',
+      'SettlementChallenged',
+      'ChallengeResolved',
+      'EvidenceCommitted',
+      'RolloverWindowStarted',
+    ] as const;
+    for (const eventName of settlementEventNames) {
+      try {
+        const unwatch = wsClient.watchContractEvent({
+          address,
+          abi: SETTLEMENT_EVENTS_ABI as any,
+          eventName,
+          onLogs: (logs: any[]) => {
+            logs?.forEach((log) =>
+              emit(u, {
+                type: 'settlement-update',
+                source: 'onchain',
+                symbol,
+                address,
+                timestamp: nowMs(),
+                payload: { ...log, eventName },
+              })
+            );
+          },
+          onError: (err: any) => {
+            // eslint-disable-next-line no-console
+            console.error(`[MarketEventHub] ${eventName} watcher error`, err);
+          },
+        });
+        u.unsubs.push(() => {
+          try { unwatch?.(); } catch {}
+        });
+      } catch {}
+    }
   } catch (e) {
     // WS not available or failed to init; ignore (polling covers data correctness)
     logOnce(u, 'didLogOnchainSkipped', 'subscribe:onchain:skipped', {
