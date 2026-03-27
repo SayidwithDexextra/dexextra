@@ -212,7 +212,7 @@ function suggestMarketDescription(params: {
   const body = method
     ? `A market tracking ${name}${source}. Measurement: ${method}.`
     : `A market tracking ${name}${source}.`;
-  return clampText(body, 160);
+  return clampText(body, 280);
 }
 
 function randomDevCode4() {
