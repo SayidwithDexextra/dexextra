@@ -91,6 +91,22 @@ interface ClosedPosition {
   totalFees: number;
   entryTime: number;
   exitTime: number;
+  settledViaSettlement?: boolean;
+}
+
+export interface SettlementPnLSummary {
+  settlementPrice: number;
+  totalPnl: number;
+  totalMarginUsed: number;
+  returnOnMargin: number;
+  totalFees: number;
+  longCount: number;
+  shortCount: number;
+  longPnl: number;
+  shortPnl: number;
+  settledPositions: ClosedPosition[];
+  openLotsPnl: number;
+  closedPnl: number;
 }
 
 type TabType = 'positions' | 'orders' | 'trades' | 'history';
@@ -98,9 +114,10 @@ type TabType = 'positions' | 'orders' | 'trades' | 'history';
 interface MarketActivityTabsProps {
   symbol: string;
   className?: string;
+  onSettlementPnl?: (pnl: SettlementPnLSummary | null) => void;
 }
 
-export default function MarketActivityTabs({ symbol, className = '' }: MarketActivityTabsProps) {
+export default function MarketActivityTabs({ symbol, className = '', onSettlementPnl }: MarketActivityTabsProps) {
   const walkthrough = useWalkthrough();
   const walkthroughStepId = walkthrough.currentStep?.id || null;
   const forcePositionManageVisible =
@@ -386,6 +403,20 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     }
     return map;
   }, [markets]);
+
+  const currentMarket = useMemo(() => {
+    if (!markets || markets.length === 0) return null;
+    const needle = String(symbol || '').toUpperCase();
+    return (markets as any[]).find((m: any) => {
+      const sym = String(m?.symbol || '').toUpperCase();
+      const ident = String(m?.market_identifier || '').toUpperCase();
+      return sym === needle || ident === needle;
+    }) || null;
+  }, [markets, symbol]);
+
+  const isMarketSettled = currentMarket?.market_status === 'SETTLED';
+  const settlementPrice = isMarketSettled ? Number(currentMarket?.settlement_value ?? 0) : 0;
+
   const {
     sessionId: globalSessionId,
     sessionActive: globalSessionActive,
@@ -2901,8 +2932,11 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
     };
   }, [walletAddress, tradeOffset, tradeLimit, orderBookActions.getUserTradeHistory]);
 
-  const closedPositions = useMemo((): ClosedPosition[] => {
-    if (!walletAddress || trades.length === 0) return [];
+  const { closedPositions, settlementPnL } = useMemo((): {
+    closedPositions: ClosedPosition[];
+    settlementPnL: SettlementPnLSummary | null;
+  } => {
+    if (!walletAddress || trades.length === 0) return { closedPositions: [], settlementPnL: null };
 
     const sorted = [...trades].sort((a, b) => a.timestamp - b.timestamp);
     const openLots: Array<{
@@ -2965,8 +2999,123 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
       }
     }
 
-    return results.sort((a, b) => b.exitTime - a.exitTime);
-  }, [trades, walletAddress]);
+    // For settled markets: close remaining open lots against the settlement price
+    let summaryData: SettlementPnLSummary | null = null;
+    if (isMarketSettled && settlementPrice > 0 && openLots.length > 0) {
+      const settledPositions: ClosedPosition[] = [];
+      const settlementTs = currentMarket?.settlement_timestamp
+        ? new Date(currentMarket.settlement_timestamp).getTime()
+        : Date.now();
+
+      for (const lot of openLots) {
+        if (lot.remaining <= 0) continue;
+        const isLong = lot.side === 'BUY';
+        const entryPrice = lot.price;
+        const exitPrice = settlementPrice;
+        const size = lot.remaining;
+        const entryValue = entryPrice * size;
+        const exitValue = exitPrice * size;
+        const rawPnl = isLong
+          ? (exitPrice - entryPrice) * size
+          : (entryPrice - exitPrice) * size;
+        const totalFees = lot.feePerUnit * size;
+        const pnl = rawPnl - totalFees;
+
+        // Margin: longs = 100% of entry value, shorts = 150% of entry value
+        const marginMultiplier = isLong ? 1.0 : 1.5;
+        const marginUsed = entryValue * marginMultiplier;
+        const pnlPercent = marginUsed > 0 ? (pnl / marginUsed) * 100 : 0;
+
+        const pos: ClosedPosition = {
+          direction: isLong ? 'LONG' : 'SHORT',
+          entryPrice,
+          exitPrice,
+          size,
+          entryValue,
+          exitValue,
+          pnl,
+          pnlPercent,
+          totalFees,
+          entryTime: lot.timestamp,
+          exitTime: settlementTs,
+          settledViaSettlement: true,
+        };
+        settledPositions.push(pos);
+        results.push(pos);
+      }
+
+      // Build aggregate summary
+      const closedPnl = results.filter(r => !r.settledViaSettlement).reduce((s, r) => s + r.pnl, 0);
+      const openLotsPnl = settledPositions.reduce((s, r) => s + r.pnl, 0);
+      const totalPnl = closedPnl + openLotsPnl;
+      const totalFees = results.reduce((s, r) => s + r.totalFees, 0);
+
+      let totalMarginUsed = 0;
+      let longCount = 0;
+      let shortCount = 0;
+      let longPnl = 0;
+      let shortPnl = 0;
+      for (const p of results) {
+        const marginMult = p.direction === 'LONG' ? 1.0 : 1.5;
+        totalMarginUsed += p.entryValue * marginMult;
+        if (p.direction === 'LONG') { longCount++; longPnl += p.pnl; }
+        else { shortCount++; shortPnl += p.pnl; }
+      }
+
+      summaryData = {
+        settlementPrice,
+        totalPnl,
+        totalMarginUsed,
+        returnOnMargin: totalMarginUsed > 0 ? (totalPnl / totalMarginUsed) * 100 : 0,
+        totalFees,
+        longCount,
+        shortCount,
+        longPnl,
+        shortPnl,
+        settledPositions,
+        openLotsPnl,
+        closedPnl,
+      };
+    } else if (isMarketSettled && settlementPrice > 0 && openLots.length === 0 && results.length > 0) {
+      // All positions were closed before settlement — still show summary with settlement context
+      const totalPnl = results.reduce((s, r) => s + r.pnl, 0);
+      const totalFees = results.reduce((s, r) => s + r.totalFees, 0);
+      let totalMarginUsed = 0;
+      let longCount = 0;
+      let shortCount = 0;
+      let longPnl = 0;
+      let shortPnl = 0;
+      for (const p of results) {
+        const marginMult = p.direction === 'LONG' ? 1.0 : 1.5;
+        totalMarginUsed += p.entryValue * marginMult;
+        if (p.direction === 'LONG') { longCount++; longPnl += p.pnl; }
+        else { shortCount++; shortPnl += p.pnl; }
+      }
+      summaryData = {
+        settlementPrice,
+        totalPnl,
+        totalMarginUsed,
+        returnOnMargin: totalMarginUsed > 0 ? (totalPnl / totalMarginUsed) * 100 : 0,
+        totalFees,
+        longCount,
+        shortCount,
+        longPnl,
+        shortPnl,
+        settledPositions: [],
+        openLotsPnl: 0,
+        closedPnl: totalPnl,
+      };
+    }
+
+    return {
+      closedPositions: results.sort((a, b) => b.exitTime - a.exitTime),
+      settlementPnL: summaryData,
+    };
+  }, [trades, walletAddress, isMarketSettled, settlementPrice, currentMarket?.settlement_timestamp]);
+
+  useEffect(() => {
+    onSettlementPnl?.(settlementPnL);
+  }, [settlementPnL, onSettlementPnl]);
 
   const renderTradesTable = () => {
 
@@ -3102,6 +3251,87 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
           </div>
         </div>
 
+        {/* Settlement P&L Summary */}
+        {settlementPnL && (
+          <div className="bg-t-card rounded-md border border-t-stroke overflow-hidden">
+            <div className="px-3 py-2.5 border-b border-t-stroke bg-t-inset/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  <h4 className="text-[10px] font-semibold text-t-fg uppercase tracking-wider">Settlement P&L</h4>
+                </div>
+                <span className="text-[10px] text-t-fg-label font-mono">
+                  @ ${formatPrice(settlementPnL.settlementPrice)}
+                </span>
+              </div>
+            </div>
+            <div className="px-3 py-2.5 space-y-2.5">
+              {/* Main P&L figure */}
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-t-fg-label">Total P&L</span>
+                <span className={`text-sm font-bold font-mono ${settlementPnL.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {settlementPnL.totalPnl >= 0 ? '+' : ''}${formatPrice(settlementPnL.totalPnl)}
+                </span>
+              </div>
+
+              {/* Return on margin */}
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-t-fg-label">Return on Margin</span>
+                <span className={`text-[11px] font-semibold font-mono ${settlementPnL.returnOnMargin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {settlementPnL.returnOnMargin >= 0 ? '+' : ''}{formatPrice(settlementPnL.returnOnMargin)}%
+                </span>
+              </div>
+
+              {/* Breakdown grid */}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-1 border-t border-t-stroke-sub">
+                <div className="flex justify-between">
+                  <span className="text-[9px] text-t-fg-label">Margin Used</span>
+                  <span className="text-[10px] font-mono text-t-fg">${formatPrice(settlementPnL.totalMarginUsed)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[9px] text-t-fg-label">Total Fees</span>
+                  <span className="text-[10px] font-mono text-t-fg">${formatPrice(settlementPnL.totalFees)}</span>
+                </div>
+                {settlementPnL.longCount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-[9px] text-green-400/70">Longs ({settlementPnL.longCount})</span>
+                    <span className={`text-[10px] font-mono ${settlementPnL.longPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {settlementPnL.longPnl >= 0 ? '+' : ''}${formatPrice(settlementPnL.longPnl)}
+                    </span>
+                  </div>
+                )}
+                {settlementPnL.shortCount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-[9px] text-red-400/70">Shorts ({settlementPnL.shortCount})</span>
+                    <span className={`text-[10px] font-mono ${settlementPnL.shortPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {settlementPnL.shortPnl >= 0 ? '+' : ''}${formatPrice(settlementPnL.shortPnl)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Closed vs settled breakdown */}
+              {settlementPnL.settledPositions.length > 0 && (
+                <div className="flex items-center gap-3 pt-1.5 border-t border-t-stroke-sub">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] text-t-fg-label">Closed before settlement:</span>
+                    <span className={`text-[10px] font-mono ${settlementPnL.closedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {settlementPnL.closedPnl >= 0 ? '+' : ''}${formatPrice(settlementPnL.closedPnl)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] text-t-fg-label">Settled at price:</span>
+                    <span className={`text-[10px] font-mono ${settlementPnL.openLotsPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {settlementPnL.openLotsPnl >= 0 ? '+' : ''}${formatPrice(settlementPnL.openLotsPnl)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        )}
+
         {/* Closed Position Summary */}
         {closedPositions.length > 0 && (
           <div className="bg-t-card rounded-md border border-t-stroke">
@@ -3159,9 +3389,16 @@ export default function MarketActivityTabs({ symbol, className = '' }: MarketAct
                       return (
                         <tr key={`cp-${i}`} className={`hover:bg-t-card-hover transition-colors duration-200 ${i !== closedPositions.length - 1 ? 'border-b border-t-stroke-sub' : ''}`}>
                           <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2">
-                            <span className={`text-[10px] sm:text-[11px] font-medium ${pos.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
-                              {pos.direction}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className={`text-[10px] sm:text-[11px] font-medium ${pos.direction === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>
+                                {pos.direction}
+                              </span>
+                              {pos.settledViaSettlement && (
+                                <span className="text-[7px] sm:text-[8px] font-medium text-amber-400 bg-amber-400/10 px-1 py-px rounded">
+                                  SETTLED
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-1.5 sm:px-2.5 py-1.5 sm:py-2 text-right">
                             <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">{pos.size.toFixed(4)}</span>

@@ -14,7 +14,8 @@ import {
   MobileBottomSheet
 } from '@/components/TokenView';
 import { MarketInfoHeader } from '@/components/MarketInfoHeader';
-import type { MarketStatsOnChain } from '@/components/MarketInfoHeader/MarketInfoHeader';
+import type { MarketStatsOnChain, SettlementPnLData } from '@/components/MarketInfoHeader/MarketInfoHeader';
+import type { SettlementPnLSummary } from '@/components/TokenView/MarketActivityTabs';
 import headerStyles from '@/components/MarketInfoHeader/MarketInfoHeader.module.css';
 import { publicClient } from '@/lib/viemClient';
 import { TradingViewChart } from '@/components/TradingView';
@@ -90,6 +91,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const [isWatchlisted, setIsWatchlisted] = useState(false);
   const [isWatchlistLoading, setIsWatchlistLoading] = useState(false);
   const [watchlistCount, setWatchlistCount] = useState<number | null>(null);
+  const [settlementPnlData, setSettlementPnlData] = useState<SettlementPnLSummary | null>(null);
   const symbolUpper = String(symbol || '').toUpperCase();
 
   useMarketSettlementRealtime({
@@ -1082,6 +1084,23 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     }
   }, [currentMarketId, walletData?.address, isWatchlisted, isWatchlistLoading]);
 
+  const handleSettlementPnl = useCallback((pnl: SettlementPnLSummary | null) => {
+    setSettlementPnlData(pnl);
+  }, []);
+
+  const headerSettlementPnl: SettlementPnLData | null = useMemo(() => {
+    if (!settlementPnlData) return null;
+    return {
+      totalPnl: settlementPnlData.totalPnl,
+      returnOnMargin: settlementPnlData.returnOnMargin,
+      totalMarginUsed: settlementPnlData.totalMarginUsed,
+      longPnl: settlementPnlData.longPnl,
+      shortPnl: settlementPnlData.shortPnl,
+      longCount: settlementPnlData.longCount,
+      shortCount: settlementPnlData.shortCount,
+    };
+  }, [settlementPnlData]);
+
   // Compute MarketInfoHeader props from market data (must be before early returns)
   const marketInfoHeaderProps = useMemo(() => {
     const market = md.market as any;
@@ -1118,6 +1137,8 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       verified: market.market_status === 'ACTIVE',
       status,
       settlementDate: market.settlement_date || undefined,
+      settlementValue: market.settlement_value != null ? Number(market.settlement_value) : undefined,
+      settlementPnl: headerSettlementPnl,
       challengeWindowExpiresAt: market.settlement_window_expires_at || undefined,
       orderbookAddress: market.market_address || undefined,
       marketId: market.market_id_bytes32 || undefined,
@@ -1132,7 +1153,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       twitterUrl: market.market_config?.twitter_url || undefined,
       waybackSnapshot: market.market_config?.wayback_snapshot || undefined,
     };
-  }, [md.market, watchlistCount, symbol, markPrice, onChainStats]);
+  }, [md.market, watchlistCount, symbol, markPrice, onChainStats, headerSettlementPnl]);
 
   if (shouldShowLoading) {
     return (
@@ -1466,7 +1487,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   )}
                 </div>
                 <div className="min-h-[240px] h-[320px] max-h-[40%] overflow-hidden" data-walkthrough="token-activity">
-                  <MarketActivityTabs symbol={symbol} className="h-full" />
+                  <MarketActivityTabs symbol={symbol} className="h-full" onSettlementPnl={handleSettlementPnl} />
                 </div>
               </div>
               <div className="w-[280px] h-full shrink-0" data-walkthrough="token-orderbook">
@@ -1688,7 +1709,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             title="Activity"
             height="tall"
           >
-            <MarketActivityTabs symbol={symbol} className="h-full" />
+            <MarketActivityTabs symbol={symbol} className="h-full" onSettlementPnl={handleSettlementPnl} />
           </MobileBottomSheet>
 
           <MobileBottomSheet

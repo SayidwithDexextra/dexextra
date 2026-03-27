@@ -54,6 +54,16 @@ export interface SeriesMarketItem {
   contractCode?: string;
 }
 
+export interface SettlementPnLData {
+  totalPnl: number;
+  returnOnMargin: number;
+  totalMarginUsed: number;
+  longPnl: number;
+  shortPnl: number;
+  longCount: number;
+  shortCount: number;
+}
+
 export interface MarketInfoHeaderProps {
   name: string;
   symbol?: string;
@@ -62,6 +72,8 @@ export interface MarketInfoHeaderProps {
   verified?: boolean;
   status?: 'live' | 'pending' | 'inactive' | 'settlement' | 'settled';
   settlementDate?: string | Date;
+  settlementValue?: number | null;
+  settlementPnl?: SettlementPnLData | null;
   challengeWindowExpiresAt?: string | Date;
   orderbookAddress?: string;
   marketId?: string;
@@ -335,6 +347,8 @@ export default function MarketInfoHeader({
   verified = false,
   status = 'live',
   settlementDate,
+  settlementValue,
+  settlementPnl,
   challengeWindowExpiresAt,
   orderbookAddress,
   marketId,
@@ -839,6 +853,61 @@ export default function MarketInfoHeader({
                 >
                   Wayback Archive
                 </a>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Settlement P&L Bar */}
+      {status === 'settled' && settlementValue != null && settlementValue > 0 && settlementPnl && (
+        <div className={styles.marketStatsBar} style={{ borderTop: '1px solid rgba(251, 191, 36, 0.15)', background: 'rgba(251, 191, 36, 0.03)' }}>
+          <div className={styles.marketStatItem}>
+            <span className={styles.marketStatLabel} style={{ color: '#fbbf24' }}>Settlement Price</span>
+            <span className={styles.marketStatValue}>{formatStatValue(settlementValue)}</span>
+          </div>
+          {settlementPnl && (
+            <>
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Your P&L</span>
+                <span className={`${styles.marketStatValue} ${settlementPnl.totalPnl >= 0 ? styles.marketStatPositive : styles.marketStatNegative}`}>
+                  {settlementPnl.totalPnl >= 0 ? '+' : ''}{formatStatValue(settlementPnl.totalPnl)}
+                </span>
+              </div>
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>RoM</span>
+                <span className={`${styles.marketStatValue} ${settlementPnl.returnOnMargin >= 0 ? styles.marketStatPositive : styles.marketStatNegative}`}>
+                  {settlementPnl.returnOnMargin >= 0 ? '+' : ''}{settlementPnl.returnOnMargin.toFixed(2)}%
+                </span>
+              </div>
+              {settlementPnl.longCount > 0 && (
+                <>
+                  <span className={styles.marketStatDivider} />
+                  <div className={styles.marketStatItem}>
+                    <span className={styles.marketStatLabel}>Longs ({settlementPnl.longCount})</span>
+                    <span className={`${styles.marketStatValue} ${settlementPnl.longPnl >= 0 ? styles.marketStatPositive : styles.marketStatNegative}`}>
+                      {settlementPnl.longPnl >= 0 ? '+' : ''}{formatStatValue(settlementPnl.longPnl)}
+                    </span>
+                  </div>
+                </>
+              )}
+              {settlementPnl.shortCount > 0 && (
+                <>
+                  <span className={styles.marketStatDivider} />
+                  <div className={styles.marketStatItem}>
+                    <span className={styles.marketStatLabel}>Shorts ({settlementPnl.shortCount})</span>
+                    <span className={`${styles.marketStatValue} ${settlementPnl.shortPnl >= 0 ? styles.marketStatPositive : styles.marketStatNegative}`}>
+                      {settlementPnl.shortPnl >= 0 ? '+' : ''}{formatStatValue(settlementPnl.shortPnl)}
+                    </span>
+                  </div>
+                </>
+              )}
+              <span className={styles.marketStatDivider} />
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Margin Used</span>
+                <span className={styles.marketStatValue}>{formatStatValue(settlementPnl.totalMarginUsed)}</span>
               </div>
             </>
           )}
