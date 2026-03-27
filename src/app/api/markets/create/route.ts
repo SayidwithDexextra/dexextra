@@ -1258,7 +1258,7 @@ export async function POST(req: Request) {
           'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
         ], wallet);
         const ov1 = await nonceMgr.nextOverrides();
-        const ov2 = await nonceMgr.nextOverrides();
+        const ov2 = { ...(await nonceMgr.nextOverrides()), gasLimit: 200_000n };
         const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
         logS('speed_run_enable_sent', 'success', { tx: txEnable.hash });
         pending.push({ stepSent: 'speed_run_enable_sent', stepMined: 'speed_run_enable_mined', tx: txEnable });

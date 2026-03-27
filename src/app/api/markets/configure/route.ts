@@ -464,7 +464,7 @@ export async function POST(req: Request) {
             'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
           ], wallet);
           const ov1 = await nonceMgr.nextOverrides();
-          const ov2 = await nonceMgr.nextOverrides();
+          const ov2 = { ...(await nonceMgr.nextOverrides()), gasLimit: 200_000n };
           const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
           const sentAt1 = Date.now();
           laneLog('A', 'Speed-run enable', 'start', `tx sent ${shortTx(txEnable.hash)} +${sentAt1 - laneAStart}ms`);
@@ -531,14 +531,35 @@ export async function POST(req: Request) {
         const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
         const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
 
-        const ov1 = await vaultNonceMgr.nextOverrides();
-        const ov2 = await vaultNonceMgr.nextOverrides();
-        const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook, ov1);
-        laneLog('B', 'ORDERBOOK_ROLE', 'start', `tx sent ${shortTx(tx1.hash)}`);
-        logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash });
-        const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook, ov2);
-        laneLog('B', 'SETTLEMENT_ROLE', 'start', `tx sent ${shortTx(tx2.hash)}`);
-        logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash });
+        const sendRoleWithRetry = async (
+          roleName: string, roleHash: string, maxRetries = 3,
+        ): Promise<ethers.TransactionResponse> => {
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+              if (attempt > 1) await vaultNonceMgr.resync();
+              const ov = await vaultNonceMgr.nextOverrides();
+              const tx = await coreVault.grantRole(roleHash, orderBook, ov);
+              laneLog('B', roleName, 'start', `tx sent ${shortTx(tx.hash)}${attempt > 1 ? ` (retry ${attempt})` : ''}`);
+              logS(`grant_${roleName}_sent`, 'success', { tx: tx.hash, attempt });
+              return tx;
+            } catch (e: any) {
+              const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
+              const code = e?.error?.code ?? e?.code;
+              const isTransient =
+                code === -32100 ||
+                code === 'UNKNOWN_ERROR' ||
+                /unexpected error|timeout|ECONNRESET|ENOTFOUND|socket hang up|rate.?limit|ETIMEDOUT/i.test(msg);
+              if (!isTransient || attempt === maxRetries) throw e;
+              laneLog('B', roleName, 'error', `send failed (attempt ${attempt}/${maxRetries}): ${msg}`);
+              logS(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg });
+              await new Promise((r) => setTimeout(r, 1000 * attempt));
+            }
+          }
+          throw new Error(`${roleName} grant failed after ${maxRetries} retries`);
+        };
+
+        const tx1 = await sendRoleWithRetry('ORDERBOOK_ROLE', ORDERBOOK_ROLE);
+        const tx2 = await sendRoleWithRetry('SETTLEMENT_ROLE', SETTLEMENT_ROLE);
 
         const [r1, r2] = await Promise.all([tx1.wait(), tx2.wait()]);
         laneLog('B', 'ORDERBOOK_ROLE', 'success', `mined block ${r1?.blockNumber}`);
