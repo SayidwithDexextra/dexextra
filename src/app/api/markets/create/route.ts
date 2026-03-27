@@ -341,11 +341,7 @@ export async function POST(req: Request) {
     const rawSymbol = String(body?.symbol || '').trim();
     const symbol = rawSymbol.toUpperCase();
     const metricUrl = String(body?.metricUrl || '').trim();
-    const startPrice = String(body?.startPrice || '1');
-    const startPrice6Input = body?.startPrice6;
-    const startPrice6 = (startPrice6Input !== undefined && startPrice6Input !== null)
-      ? BigInt(String(startPrice6Input))
-      : ethers.parseUnits(startPrice, 6);
+    let startPrice = String(body?.startPrice || '1');
     const dataSource = String(body?.dataSource || 'User Provided');
     const tags = Array.isArray(body?.tags) ? body.tags.slice(0, 10).map((t: any) => String(t)) : [];
     const providedName = typeof body?.name === 'string' ? String(body.name).trim() : '';
@@ -359,15 +355,32 @@ export async function POST(req: Request) {
     const parentMarketId = isRollover && typeof body?.parentMarketId === 'string' ? body.parentMarketId : null;
     const parentMarketAddress = isRollover && typeof body?.parentMarketAddress === 'string' ? body.parentMarketAddress : null;
 
-    if (isRollover && parentMarketId && (!iconImageUrl || !bannerImageUrl)) {
+    if (isRollover && parentMarketId) {
       try {
-        const { data: parentRow } = await supabase.from('markets').select('icon_image_url, banner_image_url').eq('id', parentMarketId).maybeSingle();
-        if (parentRow) {
-          if (!iconImageUrl) iconImageUrl = parentRow.icon_image_url || null;
-          if (!bannerImageUrl) bannerImageUrl = parentRow.banner_image_url || null;
+        const earlySupabase = getSupabase();
+        if (earlySupabase) {
+          if (!iconImageUrl || !bannerImageUrl) {
+            const { data: parentRow } = await earlySupabase.from('markets').select('icon_image_url, banner_image_url').eq('id', parentMarketId).maybeSingle();
+            if (parentRow) {
+              if (!iconImageUrl) iconImageUrl = parentRow.icon_image_url || null;
+              if (!bannerImageUrl) bannerImageUrl = parentRow.banner_image_url || null;
+            }
+          }
+          const { data: parentTicker } = await earlySupabase
+            .from('market_tickers')
+            .select('mark_price')
+            .eq('market_id', parentMarketId)
+            .maybeSingle();
+          if (parentTicker?.mark_price && parentTicker.mark_price > 0) {
+            startPrice = String(parentTicker.mark_price / 1_000_000);
+          }
         }
       } catch {}
     }
+    const startPrice6Input = body?.startPrice6;
+    const startPrice6 = (startPrice6Input !== undefined && startPrice6Input !== null)
+      ? BigInt(String(startPrice6Input))
+      : ethers.parseUnits(startPrice, 6);
     const speedRunConfig = (body?.speedRunConfig && typeof body.speedRunConfig === 'object')
       ? {
           rolloverLeadSeconds: Number(body.speedRunConfig.rolloverLeadSeconds) || 0,
@@ -1512,8 +1525,9 @@ export async function POST(req: Request) {
 
         // Ensure a ticker row exists immediately to prevent frontend 404 spam.
         const markPriceScaled = (() => {
-          const n = Number(startPrice);
-          if (!Number.isFinite(n) || Number.isNaN(n) || n <= 0) return 0;
+          const cleaned = String(startPrice).trim().replace(/,/g, '').replace(/[^0-9.\-]/g, '');
+          const n = Number(cleaned);
+          if (!Number.isFinite(n) || n <= 0) return 0;
           return Math.round(n * 1_000_000);
         })();
         try {

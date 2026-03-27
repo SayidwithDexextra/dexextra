@@ -76,7 +76,7 @@ export async function POST(req: Request) {
 
     const symbol = String(body?.symbol || '').trim().toUpperCase();
     const metricUrl = String(body?.metricUrl || '').trim();
-    const startPrice = String(body?.startPrice || '1');
+    let startPrice = String(body?.startPrice || '1');
     const dataSource = String(body?.dataSource || 'User Provided');
     const tags = Array.isArray(body?.tags) ? body.tags.slice(0, 10).map((t: any) => String(t)) : [];
     const providedName = typeof body?.name === 'string' ? String(body.name).trim() : '';
@@ -89,12 +89,25 @@ export async function POST(req: Request) {
     const parentMarketId = isRollover && typeof body?.parentMarketId === 'string' ? body.parentMarketId : null;
     const parentMarketAddress = isRollover && typeof body?.parentMarketAddress === 'string' ? body.parentMarketAddress : null;
 
-    if (isRollover && parentMarketId && (!iconImageUrl || !bannerImageUrl)) {
+    if (isRollover && parentMarketId) {
       try {
-        const { data: parentRow } = await supabase.from('markets').select('icon_image_url, banner_image_url').eq('id', parentMarketId).maybeSingle();
-        if (parentRow) {
-          if (!iconImageUrl) iconImageUrl = parentRow.icon_image_url || null;
-          if (!bannerImageUrl) bannerImageUrl = parentRow.banner_image_url || null;
+        const earlySupabase = getSupabase();
+        if (earlySupabase) {
+          if (!iconImageUrl || !bannerImageUrl) {
+            const { data: parentRow } = await earlySupabase.from('markets').select('icon_image_url, banner_image_url').eq('id', parentMarketId).maybeSingle();
+            if (parentRow) {
+              if (!iconImageUrl) iconImageUrl = parentRow.icon_image_url || null;
+              if (!bannerImageUrl) bannerImageUrl = parentRow.banner_image_url || null;
+            }
+          }
+          const { data: parentTicker } = await earlySupabase
+            .from('market_tickers')
+            .select('mark_price')
+            .eq('market_id', parentMarketId)
+            .maybeSingle();
+          if (parentTicker?.mark_price && parentTicker.mark_price > 0) {
+            startPrice = String(parentTicker.mark_price / 1_000_000);
+          }
         }
       } catch {}
     }
@@ -291,10 +304,11 @@ export async function POST(req: Request) {
       market_saved_at: new Date().toISOString(),
     });
 
-    // Upsert ticker row
+    // Upsert ticker row — sanitize startPrice (strip currency symbols, commas, whitespace)
     const markPriceScaled = (() => {
-      const n = Number(startPrice);
-      if (!Number.isFinite(n) || Number.isNaN(n) || n <= 0) return 0;
+      const cleaned = String(startPrice).trim().replace(/,/g, '').replace(/[^0-9.\-]/g, '');
+      const n = Number(cleaned);
+      if (!Number.isFinite(n) || n <= 0) return 0;
       return Math.round(n * 1_000_000);
     })();
     try {

@@ -542,15 +542,22 @@ export async function POST(request: NextRequest) {
       market_address: insertedMarket.market_address
     });
 
-    // Ensure a default ticker row exists for this market
+    // Ensure a ticker row exists with mark_price derived from initial_order.startPrice
     try {
+      const startPriceRaw = body?.initial_order?.startPrice ?? body?.startPrice;
+      let markPrice = 0;
+      if (startPriceRaw != null) {
+        const cleaned = String(startPriceRaw).trim().replace(/,/g, '').replace(/[^0-9.\-]/g, '');
+        const n = Number(cleaned);
+        if (Number.isFinite(n) && n > 0) markPrice = Math.round(n * 1_000_000);
+      }
       const { error: tickerErr } = await supabase
         .from('market_tickers')
         .upsert(
           [
             {
               market_id: insertedMarket.id,
-              mark_price: 0,
+              mark_price: markPrice,
               last_update: new Date().toISOString(),
               is_stale: true,
             },

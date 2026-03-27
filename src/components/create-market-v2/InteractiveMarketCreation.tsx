@@ -2228,18 +2228,20 @@ export function InteractiveMarketCreation({
       const settlementDateTs = nowSec + (selectedTiming?.settlementOffsetSeconds ?? 365 * 24 * 60 * 60);
       const speedRunConfig = selectedTiming?.speedRunConfig ?? undefined;
       let sourceLocator: { url: string; css_selector?: string; xpath?: string; html_snippet?: string; js_extractor?: string } | null = null;
-      let startPrice = validationResult?.data?.asset_price_suggestion || validationResult?.data?.value || '1';
+      const cleanNumeric = (v: unknown): string => {
+        const s = String(v ?? '').trim().replace(/,/g, '').replace(/[^0-9.\-]/g, '');
+        const n = Number(s);
+        return (s && Number.isFinite(n) && n > 0) ? s : '';
+      };
 
-      // Try to get start price from AI worker if not already available
+      let startPrice =
+        cleanNumeric(validationResult?.data?.asset_price_suggestion) ||
+        cleanNumeric(validationResult?.data?.value) ||
+        '1';
+
       const workerUrl = getMetricAIWorkerBaseUrl();
-      const hasValidatedPrice = (() => {
-        const raw = String(validationResult?.data?.asset_price_suggestion || validationResult?.data?.value || '').trim();
-        if (!raw) return false;
-        const n = Number(raw.replace(/,/g, '').replace(/[^0-9.]/g, ''));
-        return Number.isFinite(n) && n > 0;
-      })();
+      const hasValidatedPrice = startPrice !== '1';
 
-      // If we already have a validated price (normal flow) or a dev preset value, don't override it.
       if (!hasValidatedPrice && workerUrl && metricUrl) {
         try {
           const ai = await runMetricAIWithPolling(
@@ -2249,12 +2251,12 @@ export function InteractiveMarketCreation({
               related_market_identifier: symbol,
               context: 'create',
             },
-            { intervalMs: 2000, timeoutMs: 60000 } // Increased for screenshot + vision analysis
+            { intervalMs: 2000, timeoutMs: 60000 }
           );
           if (ai) {
-            const suggested = ai.asset_price_suggestion || ai.value;
-            if (suggested && !Number.isNaN(Number(suggested))) {
-              startPrice = String(suggested);
+            const suggested = cleanNumeric(ai.asset_price_suggestion) || cleanNumeric(ai.value);
+            if (suggested) {
+              startPrice = suggested;
             }
             if (!sourceLocator && Array.isArray(ai.sources) && ai.sources.length > 0) {
               const primary = ai.sources[0];

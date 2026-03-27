@@ -284,9 +284,24 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const rolloverCreator = funderAddress || market.creator_wallet_address || '';
   const childSymbol = `${baseSymbol}-R${childSequence}`;
   const metricUrl = (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '';
-  const startPrice = String((initialOrder as any)?.startPrice || '1');
   const dataSource = (initialOrder as any)?.dataSource || 'rollover';
   const tags = Array.isArray(market.category) ? market.category : ['CUSTOM'];
+
+  // Inherit the parent's current mark price so the child market starts where the parent left off
+  let startPrice: string;
+  const { data: parentTicker } = await supabase
+    .from('market_tickers')
+    .select('mark_price')
+    .eq('market_id', marketId)
+    .maybeSingle();
+
+  if (parentTicker?.mark_price && parentTicker.mark_price > 0) {
+    startPrice = String(parentTicker.mark_price / 1_000_000);
+    log('rollover_start_price', 'success', { source: 'parent_mark_price', startPrice, rawMark: parentTicker.mark_price });
+  } else {
+    startPrice = String((initialOrder as any)?.startPrice || '1');
+    log('rollover_start_price', 'success', { source: 'initial_order_fallback', startPrice });
+  }
 
   // 5. Deploy child market on-chain (inline — mirrors new-market page pattern)
   let deployResult;

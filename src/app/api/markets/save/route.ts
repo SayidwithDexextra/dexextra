@@ -473,8 +473,9 @@ export async function POST(req: Request) {
       const startPriceRaw = (initialOrder && (initialOrder as any).startPrice) ?? (body as any)?.startPrice;
       let markPriceScaled = 0;
       if (startPriceRaw != null) {
-        const numeric = Number(startPriceRaw);
-        if (!Number.isNaN(numeric) && Number.isFinite(numeric)) {
+        const cleaned = String(startPriceRaw).trim().replace(/,/g, '').replace(/[^0-9.\-]/g, '');
+        const numeric = Number(cleaned);
+        if (Number.isFinite(numeric) && numeric > 0) {
           markPriceScaled = Math.round(numeric * 1_000_000);
         }
       }
