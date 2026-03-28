@@ -383,10 +383,21 @@ export async function deployMarket(
   vStepLog('Factory tx', 'start', `signer=${shortAddr(ownerAddress)}`);
   log('factory_send_tx', 'start');
   const overrides = await nonceMgr.nextOverrides();
-  const tx = await factory.getFunction('createFuturesMarketDiamond')(
-    symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-    ownerAddress, cutArg, initFacet, '0x', overrides as any,
-  );
+  const factoryGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '12000000');
+  let tx: ethers.TransactionResponse;
+  try {
+    tx = await factory.getFunction('createFuturesMarketDiamond')(
+      symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
+      ownerAddress, cutArg, initFacet, '0x',
+      { ...overrides, gasLimit: factoryGasLimit } as any,
+    );
+  } catch (e: any) {
+    const decoded = (() => { try { return factoryIface.parseError(e?.data || e?.error?.data || ''); } catch { return null; } })();
+    const msg = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
+    vStepLog('Factory tx', 'error', decoded?.name || msg);
+    log('factory_send_tx', 'error', { error: msg, customError: decoded?.name });
+    throw new Error(`Factory send tx failed: ${msg}`);
+  }
   vStepLog('Factory tx', 'success', `sent ${shortTx(tx.hash)}`);
   log('factory_send_tx', 'success', { hash: tx.hash });
 

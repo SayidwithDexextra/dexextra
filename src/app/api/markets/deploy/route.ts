@@ -470,11 +470,23 @@ export async function POST(req: Request) {
       // Send tx
       logS('factory_send_tx_meta', 'start');
       const overrides = await nonceMgr.nextOverrides();
-      tx = await factory.getFunction('metaCreateFuturesMarketDiamond')(
-        message.marketSymbol, message.metricUrl, Number(message.settlementDate),
-        BigInt(message.startPrice), dataSource, tags, ownerAddress,
-        cutArg, initFacet, creator, nonce, deadline, signature, overrides as any
-      );
+      const factoryGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '12000000');
+      try {
+        tx = await factory.getFunction('metaCreateFuturesMarketDiamond')(
+          message.marketSymbol, message.metricUrl, Number(message.settlementDate),
+          BigInt(message.startPrice), dataSource, tags, ownerAddress,
+          cutArg, initFacet, creator, nonce, deadline, signature,
+          { ...overrides, gasLimit: factoryGasLimit } as any
+        );
+      } catch (e: any) {
+        const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
+        const decoded = decodeRevert(factoryIface, e);
+        const rawData = (typeof e?.data === 'string' && e.data) || decoded?.data || null;
+        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
+        const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
+        logS('factory_send_tx_meta', 'error', { error: raw, customError });
+        return NextResponse.json({ error: raw, customError, rawData }, { status: 500 });
+      }
       logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash });
       // Progressive checkpoint: tx hash available
       await checkpointDraft(supabase, draftId, {
@@ -507,10 +519,19 @@ export async function POST(req: Request) {
 
       logS('factory_send_tx', 'start');
       const overrides = await nonceMgr.nextOverrides();
-      tx = await factory.getFunction('createFuturesMarketDiamond')(
-        symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-        ownerAddress, cutArg, initFacet, '0x', overrides as any
-      );
+      const factoryGasLimitLegacy = BigInt(process.env.FACTORY_GAS_LIMIT || '12000000');
+      try {
+        tx = await factory.getFunction('createFuturesMarketDiamond')(
+          symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
+          ownerAddress, cutArg, initFacet, '0x',
+          { ...overrides, gasLimit: factoryGasLimitLegacy } as any
+        );
+      } catch (e: any) {
+        const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
+        const decoded = decodeRevert(factoryIface, e);
+        logS('factory_send_tx', 'error', { error: raw, customError: decoded?.name });
+        return NextResponse.json({ error: raw, customError: decoded?.name || null, rawData: decoded?.data || null }, { status: 500 });
+      }
       logS('factory_send_tx_sent', 'success', { hash: tx.hash });
       // Progressive checkpoint: tx hash available
       await checkpointDraft(supabase, draftId, {
