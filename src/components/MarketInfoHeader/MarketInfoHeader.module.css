@@ -294,6 +294,37 @@
   color: #f59e0b;
 }
 
+.settlementBadgeSettling {
+  background: rgba(168, 85, 247, 0.10);
+  border-color: rgba(168, 85, 247, 0.30);
+  color: #c084fc;
+}
+
+.settlementBadgeSettling svg {
+  color: #c084fc;
+}
+
+.settlingSpinner {
+  width: 10px;
+  height: 10px;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+.settlingDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #c084fc;
+  animation: settlingPulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes settlingPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
+
 .settlementBadgeSettled {
   background: rgba(59, 130, 246, 0.10);
   border-color: rgba(59, 130, 246, 0.30);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { completeSettlementFromAIResult, retrySettlementAIJobForMarket } from '@/lib/settlement-engine';
+import { scheduleSettlementFinalize } from '@/lib/qstash-scheduler';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -61,5 +62,19 @@ export async function POST(req: NextRequest) {
 
   const outcome = await completeSettlementFromAIResult(marketId, aiData);
   console.log('[ai-callback] settlement completion result', { jobId, marketId, ...outcome });
+
+  if (outcome.ok && outcome.details?.expiresAt) {
+    const expiresAtUnix = Math.floor(new Date(outcome.details.expiresAt as string).getTime() / 1000);
+    try {
+      const finalizeMsgId = await scheduleSettlementFinalize(marketId, expiresAtUnix, {
+        marketAddress: (meta?.marketAddress as string) || undefined,
+        symbol: (meta?.marketIdentifier as string) || undefined,
+      });
+      console.log('[ai-callback] scheduled precise finalize trigger', { marketId, expiresAt: outcome.details.expiresAt, finalizeMsgId });
+    } catch (e: any) {
+      console.warn('[ai-callback] failed to schedule precise finalize (safety-net cron will cover)', { marketId, error: e?.message });
+    }
+  }
+
   return NextResponse.json(outcome);
 }

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Receiver } from '@upstash/qstash';
 import { ethers } from 'ethers';
-import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { scheduleMarketLifecycle, scheduleSettlementFinalize } from '@/lib/qstash-scheduler';
 import { runSettlementTick, runSingleSettlementCheck, forceStartSettlementWindow } from '@/lib/settlement-engine';
 import { deployMarket } from '@/lib/deploy-market';
 import {
@@ -635,6 +635,26 @@ export async function POST(req: Request) {
       if (marketId) {
         const result = await runSingleSettlementCheck(sb, marketId);
         log('dispatch_settlement_finalize', 'success', result);
+
+        const singleResult = result.result;
+        if (singleResult && !singleResult.ok && singleResult.reason === 'window_not_expired' && singleResult.settlementWindowExpiresAt) {
+          const retryAtUnix = Math.floor(new Date(singleResult.settlementWindowExpiresAt).getTime() / 1000);
+          if (retryAtUnix > Math.floor(Date.now() / 1000)) {
+            try {
+              const retryId = await scheduleSettlementFinalize(marketId, retryAtUnix, {
+                marketAddress: marketAddress || undefined,
+                symbol: typeof body.symbol === 'string' ? body.symbol : undefined,
+                settlementDateUnix: typeof body.settlement_date_unix === 'number' ? body.settlement_date_unix : undefined,
+              });
+              log('dispatch_settlement_finalize_retry', 'success', {
+                marketId, retryAt: singleResult.settlementWindowExpiresAt, retryId,
+              });
+            } catch (e: any) {
+              log('dispatch_settlement_finalize_retry', 'error', { error: e?.message });
+            }
+          }
+        }
+
         return json(200, result);
       }
       const result = await runSettlementTick(sb);

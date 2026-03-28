@@ -383,13 +383,36 @@ export async function deployMarket(
   vStepLog('Factory tx', 'start', `signer=${shortAddr(ownerAddress)}`);
   log('factory_send_tx', 'start');
   const overrides = await nonceMgr.nextOverrides();
-  const factoryGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '12000000');
+  const fallbackGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
+  const factoryArgs = [
+    symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
+    ownerAddress, cutArg, initFacet, '0x',
+  ];
+  let gasLimit: bigint;
+  try {
+    const estimated = await factory.getFunction('createFuturesMarketDiamond').estimateGas(...factoryArgs);
+    gasLimit = (estimated * 130n) / 100n;
+    log('factory_estimate_gas', 'success', { estimated: String(estimated), gasLimit: String(gasLimit) });
+  } catch {
+    gasLimit = fallbackGasLimit;
+    log('factory_estimate_gas', 'error', { fallback: String(gasLimit) });
+  }
+
+  const balance = await provider.getBalance(ownerAddress);
+  const gasPrice = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
+  const requiredBalance = gasLimit * BigInt(gasPrice);
+  if (balance < requiredBalance) {
+    const balEth = ethers.formatEther(balance);
+    const reqEth = ethers.formatEther(requiredBalance);
+    log('factory_send_tx', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress });
+    throw new Error(`Relayer wallet has insufficient native token for gas. Balance: ${balEth}, required: ~${reqEth}. Fund wallet ${ownerAddress}.`);
+  }
+
   let tx: ethers.TransactionResponse;
   try {
     tx = await factory.getFunction('createFuturesMarketDiamond')(
-      symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-      ownerAddress, cutArg, initFacet, '0x',
-      { ...overrides, gasLimit: factoryGasLimit } as any,
+      ...factoryArgs,
+      { ...overrides, gasLimit } as any,
     );
   } catch (e: any) {
     const decoded = (() => { try { return factoryIface.parseError(e?.data || e?.error?.data || ''); } catch { return null; } })();

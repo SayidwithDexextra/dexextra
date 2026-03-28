@@ -454,7 +454,7 @@ export default function MarketInfoHeader({
           const isExpired = cc.isSettled;
           const badgeClass = [
             styles.settlementBadge,
-            styles.settlementBadgeSettlement,
+            isExpired ? styles.settlementBadgeSettling : styles.settlementBadgeSettlement,
           ].filter(Boolean).join(' ');
 
           return (
@@ -462,7 +462,7 @@ export default function MarketInfoHeader({
               content={
                 <div className={styles.countdownTooltip}>
                   <div className={styles.countdownTooltipLabel}>
-                    {isExpired ? 'Challenge window closed' : 'Challenge window closes in'}
+                    {isExpired ? 'Awaiting on-chain settlement' : 'Challenge window closes in'}
                   </div>
                   {!isExpired && (
                     <div className={styles.countdownDisplay}>
@@ -493,16 +493,21 @@ export default function MarketInfoHeader({
               delay={100}
             >
               <div className={badgeClass} data-walkthrough="token-settlement-date">
-                <CalendarIcon />
                 {isExpired ? (
-                  <span>Window Closed</span>
+                  <>
+                    <div className={styles.settlingDot} />
+                    <span>Market Settling</span>
+                  </>
                 ) : (
-                  <span className={styles.inlineCountdown}>
-                    {cc.days > 0 && <>{cc.days}d </>}
-                    {cc.hours > 0 && <>{String(cc.hours).padStart(2, '0')}h </>}
-                    {String(cc.minutes).padStart(2, '0')}m{' '}
-                    {String(cc.seconds).padStart(2, '0')}s
-                  </span>
+                  <>
+                    <CalendarIcon />
+                    <span className={styles.inlineCountdown}>
+                      {cc.days > 0 && <>{cc.days}d </>}
+                      {cc.hours > 0 && <>{String(cc.hours).padStart(2, '0')}h </>}
+                      {String(cc.minutes).padStart(2, '0')}m{' '}
+                      {String(cc.seconds).padStart(2, '0')}s
+                    </span>
+                  </>
                 )}
               </div>
             </Tooltip>

@@ -467,16 +467,43 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: raw, customError, rawData }, { status: 400 });
       }
 
-      // Send tx
+      // Send tx — estimate gas with fallback for chains where estimateGas is unreliable
       logS('factory_send_tx_meta', 'start');
       const overrides = await nonceMgr.nextOverrides();
-      const factoryGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '12000000');
+      const fallbackGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
+      const metaArgs = [
+        message.marketSymbol, message.metricUrl, Number(message.settlementDate),
+        BigInt(message.startPrice), dataSource, tags, ownerAddress,
+        cutArg, initFacet, creator, nonce, deadline, signature,
+      ];
+      let gasLimit: bigint;
+      try {
+        const estimated = await factory.getFunction('metaCreateFuturesMarketDiamond').estimateGas(...metaArgs);
+        gasLimit = (estimated * 130n) / 100n; // 30% buffer
+        logS('factory_estimate_gas_meta', 'success', { estimated: String(estimated), gasLimit: String(gasLimit) });
+      } catch {
+        gasLimit = fallbackGasLimit;
+        logS('factory_estimate_gas_meta', 'error', { fallback: String(gasLimit) });
+      }
+
+      // Pre-send balance check
+      const gasPrice = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
+      const requiredBalance = gasLimit * BigInt(gasPrice);
+      const balance = await provider.getBalance(ownerAddress);
+      if (balance < requiredBalance) {
+        const balEth = ethers.formatEther(balance);
+        const reqEth = ethers.formatEther(requiredBalance);
+        logS('factory_send_tx_meta', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress });
+        return NextResponse.json({
+          error: `Relayer wallet has insufficient native token for gas. Balance: ${balEth}, required: ~${reqEth}. Fund wallet ${ownerAddress}.`,
+          wallet: ownerAddress, balance: balEth, required: reqEth,
+        }, { status: 503 });
+      }
+
       try {
         tx = await factory.getFunction('metaCreateFuturesMarketDiamond')(
-          message.marketSymbol, message.metricUrl, Number(message.settlementDate),
-          BigInt(message.startPrice), dataSource, tags, ownerAddress,
-          cutArg, initFacet, creator, nonce, deadline, signature,
-          { ...overrides, gasLimit: factoryGasLimit } as any
+          ...metaArgs,
+          { ...overrides, gasLimit } as any
         );
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
@@ -519,12 +546,38 @@ export async function POST(req: Request) {
 
       logS('factory_send_tx', 'start');
       const overrides = await nonceMgr.nextOverrides();
-      const factoryGasLimitLegacy = BigInt(process.env.FACTORY_GAS_LIMIT || '12000000');
+      const fallbackGasLimitLegacy = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
+      const legacyArgs = [
+        symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
+        ownerAddress, cutArg, initFacet, '0x',
+      ];
+      let gasLimitLegacy: bigint;
+      try {
+        const estimated = await factory.getFunction('createFuturesMarketDiamond').estimateGas(...legacyArgs);
+        gasLimitLegacy = (estimated * 130n) / 100n;
+        logS('factory_estimate_gas', 'success', { estimated: String(estimated), gasLimit: String(gasLimitLegacy) });
+      } catch {
+        gasLimitLegacy = fallbackGasLimitLegacy;
+        logS('factory_estimate_gas', 'error', { fallback: String(gasLimitLegacy) });
+      }
+
+      const gasPriceLegacy = overrides.maxFeePerGas ?? overrides.gasPrice ?? 0n;
+      const requiredBalanceLegacy = gasLimitLegacy * BigInt(gasPriceLegacy);
+      const balanceLegacy = await provider.getBalance(ownerAddress);
+      if (balanceLegacy < requiredBalanceLegacy) {
+        const balEth = ethers.formatEther(balanceLegacy);
+        const reqEth = ethers.formatEther(requiredBalanceLegacy);
+        logS('factory_send_tx', 'error', { error: 'insufficient_funds', balance: balEth, required: reqEth, wallet: ownerAddress });
+        return NextResponse.json({
+          error: `Relayer wallet has insufficient native token for gas. Balance: ${balEth}, required: ~${reqEth}. Fund wallet ${ownerAddress}.`,
+          wallet: ownerAddress, balance: balEth, required: reqEth,
+        }, { status: 503 });
+      }
+
       try {
         tx = await factory.getFunction('createFuturesMarketDiamond')(
-          symbol, metricUrl, settlementTs, startPrice6, dataSource, tags,
-          ownerAddress, cutArg, initFacet, '0x',
-          { ...overrides, gasLimit: factoryGasLimitLegacy } as any
+          ...legacyArgs,
+          { ...overrides, gasLimit: gasLimitLegacy } as any
         );
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
