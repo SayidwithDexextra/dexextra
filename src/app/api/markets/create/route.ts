@@ -20,6 +20,7 @@ import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
 import { getPusherServer } from '@/lib/pusher-server';
 import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { suggestCategories } from '@/lib/suggestCategories';
 
 // Vercel: this endpoint can be long-running during deployment.
 export const runtime = 'nodejs';
@@ -1400,12 +1401,27 @@ export async function POST(req: Request) {
           (providedName ? providedName : derivedName).slice(0, 100);
         const safeDescription =
           (providedDescription ? providedDescription : `OrderBook market for ${symbol}`).slice(0, 280);
+
+        let resolvedCategory: string[];
+        if (Array.isArray(tags) && tags.length) {
+          resolvedCategory = tags;
+        } else {
+          try {
+            logS('ai_category_suggest', 'start');
+            resolvedCategory = await suggestCategories(safeName, safeDescription, { timeoutMs: 5000 });
+            logS('ai_category_suggest', 'success', { categories: resolvedCategory });
+          } catch (e: any) {
+            logS('ai_category_suggest', 'error', { error: e?.message || String(e) });
+            resolvedCategory = ['Custom'];
+          }
+        }
+
         const insertPayload: any = {
           market_identifier: symbol,
           symbol,
           name: safeName,
           description: safeDescription,
-          category: Array.isArray(tags) && tags.length ? tags : ['CUSTOM'],
+          category: resolvedCategory,
           decimals: 6,
           minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
           tick_size: Number(process.env.DEFAULT_TICK_SIZE || 0.01),

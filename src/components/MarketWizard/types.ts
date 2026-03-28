@@ -170,18 +170,47 @@ export interface DeploymentResult {
   error?: string;
 }
 
-// Market categories for orderbook-dex
+// Market categories for orderbook-dex (synced with VALID_CATEGORIES in suggestCategories.ts)
 export const MARKET_CATEGORIES = [
+  { value: 'Agriculture', label: 'Agriculture' },
+  { value: 'Automotive', label: 'Automotive' },
+  { value: 'Commodities', label: 'Commodities' },
+  { value: 'Consumer Goods', label: 'Consumer Goods' },
+  { value: 'Cryptocurrency', label: 'Cryptocurrency' },
   { value: 'Demographics', label: 'Demographics & Population' },
+  { value: 'Development', label: 'Development' },
+  { value: 'Digital Assets', label: 'Digital Assets' },
   { value: 'Economics', label: 'Economic Indicators' },
+  { value: 'Education', label: 'Education' },
+  { value: 'Energy', label: 'Energy' },
+  { value: 'Entertainment', label: 'Entertainment' },
   { value: 'Environment', label: 'Environmental Metrics' },
-  { value: 'Technology', label: 'Technology Adoption' },
-  { value: 'Health', label: 'Health & Medical Data' },
-  { value: 'Social', label: 'Social Metrics' },
+  { value: 'Equities', label: 'Equities' },
   { value: 'Financial', label: 'Financial Markets' },
+  { value: 'Food & Beverages', label: 'Food & Beverages' },
+  { value: 'Forex', label: 'Forex & Currency' },
+  { value: 'Futures', label: 'Futures' },
+  { value: 'Gaming', label: 'Gaming' },
+  { value: 'Governance', label: 'Governance' },
+  { value: 'Health', label: 'Health & Medical Data' },
+  { value: 'Indices', label: 'Indices' },
+  { value: 'Industrial Metals', label: 'Industrial Metals' },
+  { value: 'Infrastructure', label: 'Infrastructure' },
+  { value: 'Labor & Employment', label: 'Labor & Employment' },
+  { value: 'Natural Gas', label: 'Natural Gas' },
+  { value: 'Politics', label: 'Politics' },
+  { value: 'Precious Metals', label: 'Precious Metals' },
+  { value: 'Real Estate', label: 'Real Estate' },
+  { value: 'Science', label: 'Science' },
+  { value: 'Social', label: 'Social Metrics' },
+  { value: 'Soft Commodities', label: 'Soft Commodities' },
   { value: 'Sports', label: 'Sports & Events' },
+  { value: 'Stocks', label: 'Stocks' },
+  { value: 'Technology', label: 'Technology' },
+  { value: 'Top Picks', label: 'Top Picks' },
+  { value: 'Transportation', label: 'Transportation' },
   { value: 'Weather', label: 'Weather & Climate' },
-  { value: 'Custom', label: 'Custom Metrics' }
+  { value: 'Custom', label: 'Custom Metrics' },
 ] as const;
 
 // Common oracle providers (will be populated from orderbook-dex deployment)

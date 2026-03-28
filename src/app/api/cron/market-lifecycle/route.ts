@@ -258,6 +258,9 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   const childSequence = parentSequence + 1;
 
+  // Strip any old -RN suffix to derive the true base symbol
+  const trueBaseSymbol = baseSymbol.replace(/-R\d+$/, '');
+
   // 4. Compute child settlement date (same duration as parent)
   vStep('[4/7] Compute settlement date', 'start');
   const parentSettlementDate = market.settlement_date ? new Date(market.settlement_date) : null;
@@ -282,7 +285,11 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
   const rolloverCreator = funderAddress || market.creator_wallet_address || '';
-  const childSymbol = `${baseSymbol}-R${childSequence}`;
+  const childSymbol = trueBaseSymbol;
+  const legacySymbol = `${trueBaseSymbol}-legacy${parentSequence}`;
+  const parentDisplayName = market.name || `${trueBaseSymbol} Futures`;
+  const childName = parentDisplayName.replace(/\s*\((?:Rollover #\d+|Legacy \d+)\)\s*$/, '');
+  const legacyName = `${childName} (Legacy ${parentSequence})`;
   const metricUrl = (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '';
   const dataSource = (initialOrder as any)?.dataSource || 'rollover';
   const tags = Array.isArray(market.category) ? market.category : ['CUSTOM'];
@@ -334,6 +341,24 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     return { ok: false, error: 'child_market_deploy_failed', details: e?.message || String(e) };
   }
 
+  // 5b. Rename parent market to legacy so the child can take the original identifier
+  vStep('[5b] Rename parent to legacy', 'start', legacySymbol);
+  try {
+    await supabase.from('markets').update({
+      market_identifier: legacySymbol.toUpperCase(),
+      symbol: legacySymbol,
+      name: legacyName,
+      updated_at: new Date().toISOString(),
+    }).eq('id', marketId);
+    vStep('[5b] Rename parent to legacy', 'success', `${baseSymbol} -> ${legacySymbol}`);
+    log('rollover_rename_parent', 'success', { legacySymbol, legacyName });
+  } catch (e: any) {
+    vStep('[5b] Rename parent to legacy', 'error', e?.message || String(e));
+    log('rollover_rename_parent', 'error', { error: e?.message || String(e) });
+    phaseFooter('Rollover failed (rename parent)', Date.now() - rolloverStart, false);
+    return { ok: false, error: 'parent_rename_failed', details: e?.message || String(e) };
+  }
+
   // 6. Save to DB via /api/markets/save (lightweight — same as new-market page)
   vStep('[6/7] Save child to DB', 'start');
   const baseUrl =
@@ -349,8 +374,8 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
       body: JSON.stringify({
         marketIdentifier: childSymbol,
         symbol: childSymbol,
-        name: `${baseSymbol} Futures (Rollover #${childSequence - 1})`,
-        description: market.description || `Rollover market for ${baseSymbol}`,
+        name: childName,
+        description: market.description || `Futures market for ${trueBaseSymbol}`,
         category: tags,
         settlementDate: childSettlementUnix,
         initialOrder: { metricUrl, startPrice, dataSource, tags },
@@ -457,6 +482,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   log('rollover', 'success', {
     parentId: marketId,
+    parentRenamedTo: legacySymbol,
     childMarketId: savedMarketId,
     childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),
@@ -465,11 +491,12 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     childSequence,
   });
 
-  phaseFooter(`Rollover ${childSymbol}`, Date.now() - rolloverStart, true);
+  phaseFooter(`Rollover ${childSymbol} (parent → ${legacySymbol})`, Date.now() - rolloverStart, true);
 
   return {
     ok: true,
     parentId: marketId,
+    parentRenamedTo: legacySymbol,
     childMarketId: savedMarketId,
     childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),

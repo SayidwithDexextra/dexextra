@@ -5,6 +5,7 @@ import path from 'path';
 import { readFileSync } from 'node:fs';
 import { archivePage } from '@/lib/archivePage';
 import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { suggestCategories } from '@/lib/suggestCategories';
 import {
   OBAdminFacetABI,
   OBPricingFacetABI,
@@ -383,12 +384,35 @@ export async function POST(req: Request) {
     if (!marketIdUuid) {
       logStep('db_insert', 'start', { effectiveIdentifier });
       const networkStr = String(networkName || '');
+
+      const saveName = String(name || symbolStr || effectiveIdentifier).slice(0, 100);
+      const saveDescription = description || `OrderBook market for ${symbolStr || effectiveIdentifier}`;
+
+      let resolvedCategory: string[];
+      if (Array.isArray(category) && category.length) {
+        resolvedCategory = category;
+      } else {
+        const explicitTag = category || (Array.isArray(initialOrder?.tags) && initialOrder.tags[0]);
+        if (explicitTag && String(explicitTag).toUpperCase() !== 'CUSTOM') {
+          resolvedCategory = [String(explicitTag).slice(0, 50)];
+        } else {
+          try {
+            logStep('ai_category_suggest', 'start');
+            resolvedCategory = await suggestCategories(saveName, saveDescription, { timeoutMs: 5000 });
+            logStep('ai_category_suggest', 'success', { categories: resolvedCategory });
+          } catch (e: any) {
+            logStep('ai_category_suggest', 'error', { error: e?.message || String(e) });
+            resolvedCategory = ['Custom'];
+          }
+        }
+      }
+
       const insertPayload = {
         market_identifier: effectiveIdentifier,
         symbol: symbolStr || effectiveIdentifier,
-        name: String(name || symbolStr || effectiveIdentifier).slice(0, 100),
-        description: description || `OrderBook market for ${symbolStr || effectiveIdentifier}`,
-        category: Array.isArray(category) ? category : [String(category || (Array.isArray(initialOrder?.tags) && initialOrder.tags[0]) || 'CUSTOM').slice(0, 50)],
+        name: saveName,
+        description: saveDescription,
+        category: resolvedCategory,
         decimals: 6,
         minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
         tick_size: 0.01,

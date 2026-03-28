@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { archivePage } from '@/lib/archivePage';
 import { getPusherServer } from '@/lib/pusher-server';
 import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { suggestCategories } from '@/lib/suggestCategories';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -195,12 +196,26 @@ export async function POST(req: Request) {
       ? new ethers.Wallet(process.env.ADMIN_PRIVATE_KEY).address
       : null;
 
+    let resolvedCategory: string[];
+    if (Array.isArray(tags) && tags.length) {
+      resolvedCategory = tags;
+    } else {
+      try {
+        logS('ai_category_suggest', 'start');
+        resolvedCategory = await suggestCategories(safeName, safeDescription, { timeoutMs: 5000 });
+        logS('ai_category_suggest', 'success', { categories: resolvedCategory });
+      } catch (e: any) {
+        logS('ai_category_suggest', 'error', { error: e?.message || String(e) });
+        resolvedCategory = ['Custom'];
+      }
+    }
+
     const insertPayload: any = {
       market_identifier: symbol,
       symbol,
       name: safeName,
       description: safeDescription,
-      category: Array.isArray(tags) && tags.length ? tags : ['CUSTOM'],
+      category: resolvedCategory,
       decimals: 6,
       minimum_order_size: Number(process.env.DEFAULT_MINIMUM_ORDER_SIZE || 0.1),
       tick_size: Number(process.env.DEFAULT_TICK_SIZE || 0.01),
