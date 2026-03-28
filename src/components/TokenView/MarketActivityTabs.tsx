@@ -417,6 +417,19 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   const isMarketSettled = currentMarket?.market_status === 'SETTLED';
   const settlementPrice = isMarketSettled ? Number(currentMarket?.settlement_value ?? 0) : 0;
 
+  const settledMarketSymbols = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of markets || []) {
+      if ((m as any)?.market_status === 'SETTLED') {
+        const sym = String((m as any)?.symbol || '').toUpperCase();
+        if (sym) set.add(sym);
+        const ident = String((m as any)?.market_identifier || '').toUpperCase();
+        if (ident) set.add(ident);
+      }
+    }
+    return set;
+  }, [markets]);
+
   const {
     sessionId: globalSessionId,
     sessionActive: globalSessionActive,
@@ -628,6 +641,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     const next: Position[] = [];
     for (const p of base) {
       const sym = String(p.symbol || '').toUpperCase();
+      if (settledMarketSymbols.has(sym) && !settlingSymbols.has(sym)) continue;
       const o = overlay.get(sym);
       if (!o || (o.hardExpiresAt || 0) <= now || !Number.isFinite(o.delta) || o.delta === 0) {
         next.push(p);
@@ -692,7 +706,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     });
     return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions, posOverlayTick, md.markPrice, md.lastTradePrice, md.bestBid, md.bestAsk, symbol]);
+  }, [positions, posOverlayTick, md.markPrice, md.lastTradePrice, md.bestBid, md.bestAsk, symbol, settledMarketSymbols, settlingSymbols]);
 
   // Walkthrough hooks: allow the token tour to expand a position row.
   useEffect(() => {
@@ -973,9 +987,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     return () => window.removeEventListener('orderHistoryRefreshRequested', onHistoryRefresh as EventListener);
   }, [walletAddress, activeTab, fetchOrderHistory]);
 
-  // On settlement: animate settled positions out, then refresh data so they disappear.
+  // On settlement: animate settled positions out, then refresh markets data
+  // so `settledMarketSymbols` picks up the SETTLED status and filters them.
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
 
     const onSettlement = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
@@ -987,9 +1003,14 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       refetchMarkets();
       refreshPositions();
 
-      // After the slide-out animation completes, clear the settling flag
-      // and do a final refresh to remove stale rows.
-      setTimeout(() => {
+      // Stagger refetches — the DB may lag behind the on-chain event by a few seconds.
+      for (const delay of [2000, 5000, 10000]) {
+        timers.push(setTimeout(() => refetchMarkets(), delay));
+      }
+
+      // After the slide-out animation, clear settling flag.
+      // Positions from SETTLED markets will be filtered by settledMarketSymbols.
+      timers.push(setTimeout(() => {
         if (sym) {
           setSettlingSymbols((prev) => {
             const next = new Set(prev);
@@ -998,11 +1019,14 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
           });
         }
         refreshPositions();
-      }, 600);
+      }, 600));
     };
 
     window.addEventListener('settlementUpdated', onSettlement as EventListener);
-    return () => window.removeEventListener('settlementUpdated', onSettlement as EventListener);
+    return () => {
+      window.removeEventListener('settlementUpdated', onSettlement as EventListener);
+      timers.forEach(clearTimeout);
+    };
   }, [refetchMarkets, refreshPositions]);
 
   // Immediate UI patch for positions on trade events (no waiting on contract reads).

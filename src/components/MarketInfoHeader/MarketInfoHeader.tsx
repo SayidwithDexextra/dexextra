@@ -385,6 +385,15 @@ export default function MarketInfoHeader({
   const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
   const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 1;
 
+  // Only show "settled" when the on-chain lifecycle confirms it (lifecycleState === 3).
+  // If on-chain data is available but lifecycle isn't Settled, downgrade to "settlement".
+  const effectiveStatus = useMemo(() => {
+    if (status === 'settled' && marketStats?.lifecycleState != null && marketStats.lifecycleState !== 3) {
+      return 'settlement' as const;
+    }
+    return status;
+  }, [status, marketStats?.lifecycleState]);
+
   const handleWatchlistClick = () => {
     if (!isWatchlistLoading && !isWatchlistDisabled && onWatchlistToggle) {
       onWatchlistToggle();
@@ -416,7 +425,7 @@ export default function MarketInfoHeader({
           <div className={styles.logoWrapper}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={resolvedLogo} alt={name} className={styles.logo} />
-            <div className={`${styles.statusDot} ${styles[status]}`} />
+            <div className={`${styles.statusDot} ${styles[effectiveStatus]}`} />
           </div>
           <div className={styles.nameBlock}>
             <div className={styles.nameRow}>
@@ -440,7 +449,7 @@ export default function MarketInfoHeader({
         )}
 
         {/* Settlement Date Badge */}
-        {status === 'settlement' && challengeCountdown ? (() => {
+        {effectiveStatus === 'settlement' && challengeCountdown ? (() => {
           const cc = challengeCountdown;
           const isExpired = cc.isSettled;
           const badgeClass = [
@@ -498,7 +507,7 @@ export default function MarketInfoHeader({
               </div>
             </Tooltip>
           );
-        })() : status === 'settled' ? (
+        })() : effectiveStatus === 'settled' ? (
           <div className={`${styles.settlementBadge} ${styles.settlementBadgeSettled}`} data-walkthrough="token-settlement-date">
             <CalendarIcon />
             <span>{settlementDate ? `Settled ${new Date(settlementDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : 'Settled'}</span>
@@ -860,7 +869,7 @@ export default function MarketInfoHeader({
       )}
 
       {/* Settlement P&L Bar */}
-      {status === 'settled' && settlementValue != null && settlementValue > 0 && settlementPnl && (
+      {effectiveStatus === 'settled' && settlementValue != null && settlementValue > 0 && settlementPnl && (
         <div className={styles.marketStatsBar} style={{ borderTop: '1px solid rgba(251, 191, 36, 0.15)', background: 'rgba(251, 191, 36, 0.03)' }}>
           <div className={styles.marketStatItem}>
             <span className={styles.marketStatLabel} style={{ color: '#fbbf24' }}>Settlement Price</span>
