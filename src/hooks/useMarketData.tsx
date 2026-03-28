@@ -122,7 +122,7 @@ export function useMarketData(marketKey: string = 'ALUMINUM') {
       // Calculate mid price and spread
       const midPrice = (Number(bestBidFormatted) + Number(bestAskFormatted)) / 2;
       const spread = Number(bestAskFormatted) - Number(bestBidFormatted);
-      const spreadPercentage = (spread / Number(bestBidFormatted)) * 100;
+      const spreadPercentage = (spread / midPrice) * 100;
 
       setMarketPrice({
         bestBid: bestBidFormatted,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { completeSettlementFromAIResult } from '@/lib/settlement-engine';
+import { completeSettlementFromAIResult, retrySettlementAIJobForMarket } from '@/lib/settlement-engine';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -32,8 +32,23 @@ export async function POST(req: NextRequest) {
 
   const price = Number(result.asset_price_suggestion ?? result.value);
   if (!Number.isFinite(price) || price <= 0) {
-    console.warn('[ai-callback] invalid price from AI result', { jobId, marketId, raw: result.asset_price_suggestion });
-    return NextResponse.json({ ok: false, reason: 'invalid_ai_price' });
+    const retryCount = Number(meta?.retryCount) || 0;
+    const maxRetries = Number(process.env.SETTLEMENT_AI_MAX_RETRIES) || 3;
+
+    if (retryCount < maxRetries) {
+      console.warn(`[ai-callback] zero/invalid price, retrying (attempt ${retryCount + 1}/${maxRetries})`, { jobId, marketId, raw: result.asset_price_suggestion });
+      const retryResult = await retrySettlementAIJobForMarket(marketId, retryCount + 1);
+      return NextResponse.json({
+        ok: retryResult.ok,
+        reason: 'retrying_zero_price',
+        attempt: retryCount + 1,
+        retryJobId: retryResult.jobId,
+        retryError: retryResult.error,
+      });
+    }
+
+    console.warn('[ai-callback] invalid price from AI result, max retries exhausted', { jobId, marketId, raw: result.asset_price_suggestion, retryCount });
+    return NextResponse.json({ ok: false, reason: 'invalid_ai_price_max_retries_exhausted' });
   }
 
   const aiData = {

@@ -150,73 +150,94 @@ async function getAIPriceDetermination(
     return null;
   }
 
-  const richDescription = [
-    `Settlement price determination for "${market.name || market.market_identifier}".`,
-    market.description ? `Market description: ${market.description}.` : '',
-    `Metric source URL(s): ${urls.join(', ')}.`,
-    `Find the current numeric value of this metric from the source page(s).`,
-  ].filter(Boolean).join(' ');
+  const maxRetries = parsePositiveInt(process.env.SETTLEMENT_AI_MAX_RETRIES, 3);
 
-  console.log(`[settlement-engine] requesting AI price for ${market.market_identifier}`, { metricAiWorkerUrl, urls, richDescription });
-  const startRes = await fetch(`${metricAiWorkerUrl}/api/metric-ai`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      metric: market.name || market.market_identifier,
-      description: richDescription,
-      urls,
-      related_market_id: market.id,
-      related_market_identifier: market.market_identifier,
-      context: 'settlement',
-    }),
-  });
-
-  if (startRes.status !== 202) {
-    const errBody = await startRes.text().catch(() => '');
-    console.warn(`[settlement-engine] AI worker returned ${startRes.status} for ${market.market_identifier}`, errBody.slice(0, 500));
-    return null;
-  }
-  const startJson = await startRes.json().catch(() => ({}));
-  const jobId = typeof startJson?.jobId === 'string' ? startJson.jobId : '';
-  if (!jobId) {
-    console.warn(`[settlement-engine] AI worker returned no jobId for ${market.market_identifier}`);
-    return null;
-  }
-  console.log(`[settlement-engine] AI job started: ${jobId} for ${market.market_identifier}`);
-
-  const timeoutMs = 30_000;
-  const pollEveryMs = 2_000;
-  const startTs = Date.now();
-
-  while (Date.now() - startTs < timeoutMs) {
-    await new Promise((r) => setTimeout(r, pollEveryMs));
-    const pollRes = await fetch(
-      `${metricAiWorkerUrl}/api/metric-ai?jobId=${encodeURIComponent(jobId)}`,
-      { cache: 'no-store' },
-    );
-    const pollJson = await pollRes.json().catch(() => ({}));
-    if (pollJson?.status === 'completed' && pollJson?.result) {
-      const candidate = Number(
-        pollJson.result?.asset_price_suggestion ?? pollJson.result?.value,
-      );
-      if (Number.isFinite(candidate) && candidate > 0) {
-        const waybackUrl: string | null =
-          pollJson.result?.settlement_wayback_url
-          || pollJson.result?.sources?.[0]?.wayback_screenshot_url
-          || null;
-        const waybackPageUrl: string | null =
-          pollJson.result?.settlement_wayback_page_url
-          || pollJson.result?.sources?.[0]?.wayback_url
-          || null;
-        const screenshotUrl: string | null =
-          pollJson.result?.sources?.[0]?.screenshot_url
-          || null;
-        return { price: candidate, jobId, waybackUrl, waybackPageUrl, screenshotUrl };
-      }
-      return null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (attempt > 1) {
+      console.log(`[settlement-engine] retrying AI price for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`);
     }
-    if (pollJson?.status === 'failed') return null;
+
+    const richDescription = [
+      `Settlement price determination for "${market.name || market.market_identifier}".`,
+      market.description ? `Market description: ${market.description}.` : '',
+      `Metric source URL(s): ${urls.join(', ')}.`,
+      `Find the current numeric value of this metric from the source page(s).`,
+    ].filter(Boolean).join(' ');
+
+    console.log(`[settlement-engine] requesting AI price for ${market.market_identifier}`, { metricAiWorkerUrl, urls, attempt });
+    const startRes = await fetch(`${metricAiWorkerUrl}/api/metric-ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metric: market.name || market.market_identifier,
+        description: richDescription,
+        urls,
+        related_market_id: market.id,
+        related_market_identifier: market.market_identifier,
+        context: 'settlement',
+      }),
+    });
+
+    if (startRes.status !== 202) {
+      const errBody = await startRes.text().catch(() => '');
+      console.warn(`[settlement-engine] AI worker returned ${startRes.status} for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`, errBody.slice(0, 500));
+      continue;
+    }
+    const startJson = await startRes.json().catch(() => ({}));
+    const jobId = typeof startJson?.jobId === 'string' ? startJson.jobId : '';
+    if (!jobId) {
+      console.warn(`[settlement-engine] AI worker returned no jobId for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`);
+      continue;
+    }
+    console.log(`[settlement-engine] AI job started: ${jobId} for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`);
+
+    const timeoutMs = 30_000;
+    const pollEveryMs = 2_000;
+    const startTs = Date.now();
+    let shouldRetry = false;
+
+    while (Date.now() - startTs < timeoutMs) {
+      await new Promise((r) => setTimeout(r, pollEveryMs));
+      const pollRes = await fetch(
+        `${metricAiWorkerUrl}/api/metric-ai?jobId=${encodeURIComponent(jobId)}`,
+        { cache: 'no-store' },
+      );
+      const pollJson = await pollRes.json().catch(() => ({}));
+      if (pollJson?.status === 'completed' && pollJson?.result) {
+        const candidate = Number(
+          pollJson.result?.asset_price_suggestion ?? pollJson.result?.value,
+        );
+        if (Number.isFinite(candidate) && candidate > 0) {
+          const waybackUrl: string | null =
+            pollJson.result?.settlement_wayback_url
+            || pollJson.result?.sources?.[0]?.wayback_screenshot_url
+            || null;
+          const waybackPageUrl: string | null =
+            pollJson.result?.settlement_wayback_page_url
+            || pollJson.result?.sources?.[0]?.wayback_url
+            || null;
+          const screenshotUrl: string | null =
+            pollJson.result?.sources?.[0]?.screenshot_url
+            || null;
+          return { price: candidate, jobId, waybackUrl, waybackPageUrl, screenshotUrl };
+        }
+        console.warn(`[settlement-engine] AI returned zero/invalid price for ${market.market_identifier} (attempt ${attempt}/${maxRetries}): ${candidate}`);
+        shouldRetry = true;
+        break;
+      }
+      if (pollJson?.status === 'failed') {
+        console.warn(`[settlement-engine] AI job failed for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`);
+        shouldRetry = true;
+        break;
+      }
+    }
+
+    if (!shouldRetry) {
+      console.warn(`[settlement-engine] AI job timed out for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`);
+    }
   }
+
+  console.error(`[settlement-engine] all ${maxRetries} AI price attempts exhausted for ${market.market_identifier}, not proposing settlement`);
   return null;
 }
 
@@ -526,8 +547,66 @@ async function maybeFinalizeSettlement(
     };
   }
 
-  const proposedPrice = market.proposed_settlement_value;
+  let proposedPrice = market.proposed_settlement_value;
   if (proposedPrice === null || proposedPrice === undefined || !Number.isFinite(proposedPrice) || proposedPrice <= 0) {
+    console.warn(`[settlement-engine] no proposed_settlement_value for ${market.market_identifier}, attempting inline AI price fetch`);
+    const ai = await getAIPriceDetermination(market);
+    if (ai && Number.isFinite(ai.price) && ai.price > 0) {
+      proposedPrice = ai.price;
+
+      const { defaultWindowSeconds } = getConfig();
+      const cfg = asRecord(market.market_config);
+      const perMarketWindow = typeof cfg.settlement_window_seconds === 'number' && cfg.settlement_window_seconds > 0
+        ? cfg.settlement_window_seconds
+        : defaultWindowSeconds;
+      const healNow = new Date();
+      const healExpires = new Date(healNow.getTime() + perMarketWindow * 1000);
+
+      const healConfig = nextMarketConfig(market, {
+        stage: 'window_started',
+        started_at: healNow.toISOString(),
+        expires_at: healExpires.toISOString(),
+        ai_job_id: ai.jobId,
+        healed: true,
+      });
+
+      const { error: healErr } = await supabase
+        .from('markets')
+        .update({
+          proposed_settlement_value: ai.price,
+          proposed_settlement_at: healNow.toISOString(),
+          settlement_window_expires_at: healExpires.toISOString(),
+          proposed_settlement_by: 'AI_SYSTEM_HEALED',
+          market_config: healConfig,
+          updated_at: healNow.toISOString(),
+        })
+        .eq('id', market.id);
+
+      if (healErr) {
+        console.error(`[settlement-engine] self-heal DB update failed for ${market.market_identifier}: ${healErr.message}`);
+        return {
+          marketId: market.id, marketIdentifier: market.market_identifier,
+          action: 'finalize', ok: false,
+          settlementDate: market.settlement_date,
+          settlementWindowExpiresAt: market.settlement_window_expires_at,
+          reason: 'self_heal_db_update_failed',
+        };
+      }
+
+      console.log(`[settlement-engine] self-healed proposed_settlement_value for ${market.market_identifier}`, {
+        price: ai.price, jobId: ai.jobId, expiresAt: healExpires.toISOString(),
+      });
+
+      return {
+        marketId: market.id, marketIdentifier: market.market_identifier,
+        action: 'finalize', ok: false,
+        settlementDate: market.settlement_date,
+        settlementWindowExpiresAt: healExpires.toISOString(),
+        reason: 'self_healed_reopened_window',
+        details: { aiPrice: ai.price, aiJobId: ai.jobId, newExpiresAt: healExpires.toISOString() },
+      };
+    }
+
     return {
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
@@ -741,6 +820,7 @@ export async function forceStartSettlementWindow(
 
 async function fireSettlementAIJob(
   market: MarketRow,
+  retryCount: number = 0,
 ): Promise<{ ok: boolean; jobId?: string; error?: string }> {
   const { metricAiWorkerUrl } = getConfig();
   if (!metricAiWorkerUrl) return { ok: false, error: 'metric_ai_worker_url_not_configured' };
@@ -751,8 +831,15 @@ async function fireSettlementAIJob(
   const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
   if (!appUrl) return { ok: false, error: 'APP_URL_not_configured' };
 
+  if (appUrl.includes('localhost') || appUrl.includes('127.0.0.1')) {
+    console.error(`[settlement-engine] APP_URL points to localhost (${appUrl}) — AI callback will be unreachable in production`);
+  }
+
   const callbackUrl = `${appUrl}/api/settlement/ai-callback`;
   const callbackSecret = process.env.CRON_SECRET || '';
+  if (!callbackSecret) {
+    console.warn(`[settlement-engine] CRON_SECRET is empty — AI worker callback auth will fail`);
+  }
 
   const richDescription = [
     `Settlement price determination for "${market.name || market.market_identifier}".`,
@@ -782,6 +869,7 @@ async function fireSettlementAIJob(
           marketId: market.id,
           marketIdentifier: market.market_identifier,
           marketAddress: market.market_address,
+          retryCount,
         },
       }),
     });
@@ -829,6 +917,10 @@ export async function completeSettlementFromAIResult(
 
   if (market.market_status !== 'ACTIVE') {
     return { ok: false, reason: `market_status_is_${market.market_status}` };
+  }
+
+  if (!Number.isFinite(ai.price) || ai.price <= 0) {
+    return { ok: false, reason: 'zero_or_invalid_price_rejected' };
   }
 
   const evidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
@@ -901,4 +993,35 @@ export async function completeSettlementFromAIResult(
       lifecycleSync: syncResult,
     },
   };
+}
+
+/**
+ * Re-fire the settlement AI job for a market after a zero/invalid price.
+ * Used by the ai-callback webhook to retry without accepting the bad price.
+ */
+export async function retrySettlementAIJobForMarket(
+  marketId: string,
+  retryCount: number,
+): Promise<{ ok: boolean; jobId?: string; error?: string }> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !key) return { ok: false, error: 'supabase_not_configured' };
+
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabase = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+
+  const { data, error } = await supabase
+    .from('markets')
+    .select(MARKET_SELECT)
+    .eq('id', marketId)
+    .maybeSingle();
+
+  if (error || !data) return { ok: false, error: 'market_fetch_failed' };
+  const market = data as MarketRow;
+
+  if (market.market_status !== 'ACTIVE') {
+    return { ok: false, error: `market_status_is_${market.market_status}` };
+  }
+
+  return fireSettlementAIJob(market, retryCount);
 }

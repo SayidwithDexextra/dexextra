@@ -824,7 +824,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
                       ${((bestAskPrice - bestBidPrice)).toFixed(4)}
                     </span>
                     <span className="text-[11px] text-t-fg-muted">
-                      ({((((bestAskPrice - bestBidPrice) / (bestBidPrice || 1)) * 100).toFixed(2))}%)
+                      ({((((bestAskPrice - bestBidPrice) / ((bestBidPrice + bestAskPrice) / 2)) * 100).toFixed(2))}%)
                     </span>
                   </>
                 ) : (
