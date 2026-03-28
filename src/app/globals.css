@@ -46,6 +46,32 @@
   pointer-events: none;
 }
 
+/* Settled position row slide-out (MarketActivityTabs settlement) */
+@keyframes position-row-slide-out {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+    max-height: 60px;
+  }
+  60% {
+    transform: translateX(40px);
+    opacity: 0;
+    max-height: 60px;
+  }
+  100% {
+    transform: translateX(40px);
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+.position-row-slide-out {
+  animation: position-row-slide-out 0.5s ease-in-out forwards;
+  pointer-events: none;
+  overflow: hidden;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

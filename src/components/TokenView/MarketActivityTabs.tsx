@@ -377,8 +377,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   // Reuse portfolio logic: fetch ALL positions and markets map
   // Event-driven only (no polling). Positions refresh via 'positionsRefreshRequested' / 'ordersUpdated'.
   // Disable autoRefresh polling; markets are fetched once on mount.
-  const { markets } = useMarkets({ limit: 500, autoRefresh: false });
-  const { positions: allPositions, positionsIsLoading } = usePortfolioSnapshot();
+  const { markets, refetch: refetchMarkets } = useMarkets({ limit: 500, autoRefresh: false });
+  const { positions: allPositions, positionsIsLoading, refresh: refreshPositions } = usePortfolioSnapshot();
   const marketIdMap = useMemo(() => {
     const map = new Map<string, { symbol: string; name: string }>();
     for (const m of markets || []) {
@@ -453,6 +453,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   >(new Map());
   const appliedTraceRef = useRef<Map<string, number>>(new Map());
   const [posOverlayTick, setPosOverlayTick] = useState(0); // re-render trigger
+  const [settlingSymbols, setSettlingSymbols] = useState<Set<string>>(new Set());
   const posOverlayPruneIntervalRef = useRef<number | null>(null);
 
   // Canonicalize event keys (symbol vs market_identifier) so overlays apply to the same keys as positions.
@@ -971,6 +972,38 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     window.addEventListener('orderHistoryRefreshRequested', onHistoryRefresh as EventListener);
     return () => window.removeEventListener('orderHistoryRefreshRequested', onHistoryRefresh as EventListener);
   }, [walletAddress, activeTab, fetchOrderHistory]);
+
+  // On settlement: animate settled positions out, then refresh data so they disappear.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const onSettlement = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const sym = String(detail?.symbol || '').toUpperCase();
+      if (sym) {
+        setSettlingSymbols((prev) => new Set(prev).add(sym));
+      }
+
+      refetchMarkets();
+      refreshPositions();
+
+      // After the slide-out animation completes, clear the settling flag
+      // and do a final refresh to remove stale rows.
+      setTimeout(() => {
+        if (sym) {
+          setSettlingSymbols((prev) => {
+            const next = new Set(prev);
+            next.delete(sym);
+            return next;
+          });
+        }
+        refreshPositions();
+      }, 600);
+    };
+
+    window.addEventListener('settlementUpdated', onSettlement as EventListener);
+    return () => window.removeEventListener('settlementUpdated', onSettlement as EventListener);
+  }, [refetchMarkets, refreshPositions]);
 
   // Immediate UI patch for positions on trade events (no waiting on contract reads).
   useEffect(() => {
@@ -2302,7 +2335,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                           String(position.symbol || '').toUpperCase() === 'UNKNOWN' &&
                           (positionsIsLoading || (markets || []).length === 0);
 
-                        const rowClass = `mat-slide-rtl group/row transition-colors duration-200 ${
+                        const isSettling = settlingSymbols.has(String(position.symbol || '').toUpperCase());
+                        const rowClass = `${isSettling ? 'position-row-slide-out' : 'mat-slide-rtl'} group/row transition-colors duration-200 ${
                           position.isUnderLiquidation
                             ? 'bg-yellow-400/5 hover:bg-yellow-400/10 border-yellow-400/20'
                             : 'hover:bg-t-card-hover'
