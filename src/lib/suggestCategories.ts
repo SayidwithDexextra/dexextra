@@ -51,13 +51,14 @@ export const VALID_CATEGORIES = [
 
 type ValidCategory = typeof VALID_CATEGORIES[number];
 
-const SYSTEM_PROMPT = `You are a market categorization engine. Given a market's name and description, select the 1–3 most relevant categories from this list:
+const SYSTEM_PROMPT = `You are a market categorization engine. Given a market's name and description, select the 4–6 most relevant categories from this list:
 
 ${VALID_CATEGORIES.map((c) => `- ${c}`).join('\n')}
 
 Rules:
-- Return a JSON array of strings, e.g. ["Financial", "Economics"]
-- Pick 1 to 3 categories that best describe the market
+- Return a JSON array of strings, e.g. ["Financial", "Economics", "Equities", "Stocks"]
+- Pick 4 to 6 categories that best describe the market — cast a wide net for discoverability
+- Start with the most specific match, then add broader related categories
 - Only use values from the list above — no synonyms, no new categories
 - If nothing fits well, return ["Custom"]
 - Do NOT include any explanation, just the JSON array`;
@@ -97,7 +98,7 @@ export async function suggestCategories(
       client.chat.completions.create({
         model,
         temperature: 0,
-        max_tokens: 100,
+        max_tokens: 150,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: `Market name: ${name}\nMarket description: ${description}` },
@@ -117,7 +118,11 @@ export async function suggestCategories(
       .map((v: unknown) => String(v))
       .filter((v: string) => (VALID_CATEGORIES as readonly string[]).includes(v));
 
-    return validated.length > 0 ? validated : fallback;
+    if (validated.length === 0) return fallback;
+    if (validated.length < 4) {
+      console.warn(`[suggestCategories] AI returned only ${validated.length} categories, expected ≥4`);
+    }
+    return validated;
   } catch (e: any) {
     console.warn('[suggestCategories] failed, using fallback', e?.message || String(e));
     return fallback;
