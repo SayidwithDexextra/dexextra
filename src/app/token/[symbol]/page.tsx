@@ -146,6 +146,21 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     },
   });
 
+  // Reset settlement-related UI state when the underlying market changes
+  // (e.g. during rollover: parent renamed to legacy, child takes the symbol).
+  const prevMarketIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const newId = (md.market as any)?.id as string | undefined;
+    if (prevMarketIdRef.current && newId && prevMarketIdRef.current !== newId) {
+      const ms = (md.market as any)?.market_status;
+      if (ms !== 'SETTLEMENT_REQUESTED' && ms !== 'SETTLED') {
+        setIsSettlementView(false);
+        setShowSettlementOverlay(false);
+      }
+    }
+    prevMarketIdRef.current = newId;
+  }, [(md.market as any)?.id]);
+
   useEffect(() => {
     const ms = (md.market as any)?.market_status;
     if (ms === 'SETTLEMENT_REQUESTED' || ms === 'SETTLED') {
