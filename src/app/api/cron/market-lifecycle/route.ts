@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Receiver } from '@upstash/qstash';
 import { ethers } from 'ethers';
-import { scheduleMarketLifecycle, scheduleSettlementFinalize } from '@/lib/qstash-scheduler';
+import { scheduleMarketLifecycle, scheduleSettlementFinalize, proportionalDurations } from '@/lib/qstash-scheduler';
 import { runSettlementTick, runSingleSettlementCheck, forceStartSettlementWindow } from '@/lib/settlement-engine';
 import { deployMarket } from '@/lib/deploy-market';
 import {
@@ -542,12 +542,12 @@ async function runSafetyNetScan(): Promise<Record<string, unknown>> {
         const cfg = (typeof m.market_config === 'object' && m.market_config) || {};
         if ((cfg as any)?.rollover?.child_market_id) continue; // already rolled over
 
-        // Check if rollover window is actually open
+        // Check if rollover window is actually open (using same math as qstash-scheduler)
         const settlementMs = new Date(m.settlement_date).getTime();
         const deployedMs = m.deployed_at ? new Date(m.deployed_at).getTime() : 0;
-        const lifecycleDuration = deployedMs > 0 ? (settlementMs - deployedMs) : 365 * 24 * 60 * 60 * 1000;
-        const rolloverLead = Math.floor(lifecycleDuration / 12);
-        const rolloverWindowStart = settlementMs - rolloverLead;
+        const lifecycleDurationMs = deployedMs > 0 ? (settlementMs - deployedMs) : 365 * 24 * 60 * 60 * 1000;
+        const { rolloverLead } = proportionalDurations(Math.floor(lifecycleDurationMs / 1000));
+        const rolloverWindowStart = settlementMs - rolloverLead * 1000;
 
         if (now.getTime() < rolloverWindowStart) continue;
 

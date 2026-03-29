@@ -43,6 +43,7 @@ export interface MarketStatsOnChain {
   challengeBondEscrowed?: number;
   evidenceUrl?: string;
   evidenceHash?: string;
+  settlementPrice?: number;
 }
 
 export interface SeriesMarketItem {

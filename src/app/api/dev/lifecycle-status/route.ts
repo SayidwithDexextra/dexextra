@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Client } from '@upstash/qstash';
+import { proportionalDurations, AI_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 
 export const runtime = 'nodejs';
 
@@ -94,11 +95,10 @@ export async function GET(req: Request) {
   } else if (market.settlement_date) {
     const stlUnix = Math.floor(new Date(market.settlement_date).getTime() / 1000);
     const duration = Math.max(1, stlUnix - (lifecycle?.scheduled_at ?? nowSec));
-    const rolloverLead = Math.max(300, Math.floor(duration / 12));
-    const challengeDuration = Math.max(60, Math.floor(duration / 365));
+    const { rolloverLead, challengeDuration } = proportionalDurations(duration);
     rolloverTriggerAt = stlUnix - rolloverLead;
-    settlementTriggerAt = stlUnix;
-    finalizeTriggerAt = stlUnix + challengeDuration;
+    settlementTriggerAt = stlUnix - challengeDuration;
+    finalizeTriggerAt = stlUnix + AI_SETTLE_BUFFER_SEC;
   }
 
   // Created-at timestamp: use scheduled_at from lifecycle, or approximate from rollover - market duration

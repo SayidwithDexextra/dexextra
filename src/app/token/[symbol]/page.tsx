@@ -361,8 +361,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         const ac = activeChallengeInfo as any;
         const ev = proposedEvidence as any;
 
+        const parsedMarkPrice = pd ? Number(pd[4] ?? pd.markPrice ?? 0n) / 1e6 : 0;
+        const parsedLifecycleState = lc != null ? Number(lc) : undefined;
+
         setOnChainStats({
-          markPrice: pd ? Number(pd[4] ?? pd.markPrice ?? 0n) / 1e6 : 0,
+          markPrice: parsedMarkPrice,
           lastTradePrice: pd ? Number(pd[3] ?? pd.lastTradePriceReturn ?? 0n) / 1e6 : 0,
           bestBid: pd ? Number(pd[1] ?? pd.bestBidPrice ?? 0n) / 1e6 : 0,
           bestAsk: pd ? Number(pd[2] ?? pd.bestAskPrice ?? 0n) / 1e6 : 0,
@@ -376,13 +379,14 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           priceChange24h: chStats?.priceChange24h ?? 0,
           priceChangePercent24h: chStats?.priceChangePercent24h ?? 0,
           totalMarginLocked: totalMarginRaw != null ? Number(totalMarginRaw) / 1e6 : undefined,
-          lifecycleState: lc != null ? Number(lc) : undefined,
+          lifecycleState: parsedLifecycleState,
           challengeActive: ac ? Boolean(ac[0]) : undefined,
           challenger: ac && ac[0] ? String(ac[1]) : undefined,
           challengedPrice: ac && ac[0] ? Number(ac[2] ?? 0n) / 1e6 : undefined,
           challengeBondEscrowed: ac && ac[0] ? Number(ac[3] ?? 0n) / 1e6 : undefined,
           evidenceUrl: ev ? String(ev[1] || '') || undefined : undefined,
           evidenceHash: ev ? String(ev[0] || '') || undefined : undefined,
+          settlementPrice: parsedLifecycleState === 3 && parsedMarkPrice > 0 ? parsedMarkPrice : undefined,
         });
       } catch (err) {
         console.warn('[marketStats] Failed to fetch stats:', err);
@@ -1170,7 +1174,9 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     }));
     const moreTagsCount = categories.length > 3 ? categories.length - 3 : undefined;
 
+    const onChainSettled = onChainStats?.lifecycleState === 3;
     const status: 'live' | 'pending' | 'inactive' | 'settlement' | 'settled' = 
+      onChainSettled ? 'settled' :
       market.market_status === 'ACTIVE' ? 'live' :
       market.market_status === 'PENDING' || market.market_status === 'DEPLOYING' ? 'pending' :
       market.market_status === 'SETTLEMENT_REQUESTED' ? 'settlement' :
@@ -1189,7 +1195,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       verified: market.market_status === 'ACTIVE',
       status,
       settlementDate: market.settlement_date || undefined,
-      settlementValue: market.settlement_value != null ? Number(market.settlement_value) : undefined,
+      settlementValue: market.settlement_value != null ? Number(market.settlement_value) : (onChainStats?.settlementPrice ?? undefined),
       settlementPnl: headerSettlementPnl,
       challengeWindowExpiresAt: market.settlement_window_expires_at || undefined,
       orderbookAddress: market.market_address || undefined,
@@ -1539,7 +1545,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   )}
                 </div>
                 <div className="min-h-[240px] h-[320px] max-h-[40%] overflow-hidden" data-walkthrough="token-activity">
-                  <MarketActivityTabs symbol={symbol} className="h-full" onSettlementPnl={handleSettlementPnl} />
+                  <MarketActivityTabs symbol={symbol} className="h-full" onSettlementPnl={handleSettlementPnl} onChainSettlementPrice={onChainStats?.settlementPrice} />
                 </div>
               </div>
               <div className="w-[280px] h-full shrink-0" data-walkthrough="token-orderbook">
@@ -1761,7 +1767,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             title="Activity"
             height="tall"
           >
-            <MarketActivityTabs symbol={symbol} className="h-full" onSettlementPnl={handleSettlementPnl} />
+            <MarketActivityTabs symbol={symbol} className="h-full" onSettlementPnl={handleSettlementPnl} onChainSettlementPrice={onChainStats?.settlementPrice} />
           </MobileBottomSheet>
 
           <MobileBottomSheet

@@ -22,7 +22,7 @@ const MIN_CHALLENGE_DURATION_SEC = 60 + AI_PRICE_DISCOVERY_SEC;  // 2.5 min floo
 // settlement_finalize must arrive AFTER the challenge window expires AND
 // leave room for the on-chain settleMarket tx. Buffer = AI round-trip
 // headroom (120s) + on-chain settlement execution (~60s).
-const AI_SETTLE_BUFFER_SEC = 120 + ONCHAIN_SETTLEMENT_SEC;  // 180s total
+export const AI_SETTLE_BUFFER_SEC = 120 + ONCHAIN_SETTLEMENT_SEC;  // 180s total
 
 // QStash pay-as-you-go plan supports up to 1 year delay.
 // Leave a 1-day buffer to avoid edge-case rejections.
@@ -52,7 +52,7 @@ type ScheduleIds = {
  *   24 h    → rollover 2 h    + 2.5 m,  challenge ~4 m  + 1.5 m
  *   1 h     → rollover 7.5 min (clamped), challenge 2.5 min (clamped)
  */
-function proportionalDurations(marketDurationSec: number) {
+export function proportionalDurations(marketDurationSec: number) {
   return {
     rolloverLead: Math.max(
       MIN_ROLLOVER_LEAD_SEC,

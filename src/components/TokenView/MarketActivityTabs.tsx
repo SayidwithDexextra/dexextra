@@ -115,9 +115,10 @@ interface MarketActivityTabsProps {
   symbol: string;
   className?: string;
   onSettlementPnl?: (pnl: SettlementPnLSummary | null) => void;
+  onChainSettlementPrice?: number;
 }
 
-export default function MarketActivityTabs({ symbol, className = '', onSettlementPnl }: MarketActivityTabsProps) {
+export default function MarketActivityTabs({ symbol, className = '', onSettlementPnl, onChainSettlementPrice }: MarketActivityTabsProps) {
   const walkthrough = useWalkthrough();
   const walkthroughStepId = walkthrough.currentStep?.id || null;
   const forcePositionManageVisible =
@@ -414,8 +415,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     }) || null;
   }, [markets, symbol]);
 
-  const isMarketSettled = currentMarket?.market_status === 'SETTLED';
-  const settlementPrice = isMarketSettled ? Number(currentMarket?.settlement_value ?? 0) : 0;
+  const isMarketSettled = currentMarket?.market_status === 'SETTLED' || (onChainSettlementPrice != null && onChainSettlementPrice > 0);
+  const settlementPrice = isMarketSettled
+    ? (Number(currentMarket?.settlement_value ?? 0) || onChainSettlementPrice || 0)
+    : 0;
 
   const settledMarketSymbols = useMemo(() => {
     const set = new Set<string>();
@@ -2369,7 +2372,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                         if (showSkeleton) {
                           return (
                             <tr
-                              key={`${position.id}-${index}`}
+                              key={position.id}
                               className={rowClass}
                               style={{ animationDelay: `${index * 50}ms` }}
                             >
@@ -2408,7 +2411,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                         }
 
                         return (
-                          <React.Fragment key={`${position.id}-${index}`}>
+                          <React.Fragment key={position.id}>
                             <tr className={rowClass} style={{ animationDelay: `${index * 50}ms` }}>
                               <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
                                 <div className="flex items-center gap-1 min-w-0">
