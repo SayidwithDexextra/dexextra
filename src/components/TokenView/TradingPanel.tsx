@@ -1320,8 +1320,27 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         throw new Error('Order size too small for current price; increase amount.');
       }
       const quantity = Number(ethers.formatUnits(sizeWei, 18));
-      console.log('Market Order sizeWei', sizeWei.toString(), 'quantity', quantity);
-      // Validate order parameters
+      const refPriceNum = Number(ethers.formatUnits(referencePrice, 6));
+      const notionalEstimate = quantity * refPriceNum;
+      console.log('Market Order', {
+        mode: isUsdMode ? 'USD' : 'UNITS',
+        inputAmount: amount,
+        sizeWei: sizeWei.toString(),
+        quantity,
+        refPrice: refPriceNum,
+        notionalEstimate,
+      });
+
+      // Sanity check: if in token mode and the notional is much larger than the input,
+      // the user may have intended USD mode
+      if (!isUsdMode && notionalEstimate > amount * 10 && notionalEstimate > 10000) {
+        throw new Error(
+          `You are in Units mode — entering ${amount} tokens at ~$${refPriceNum.toLocaleString('en-US', { maximumFractionDigits: 2 })} each ` +
+          `= ~$${notionalEstimate.toLocaleString('en-US', { maximumFractionDigits: 0 })} notional. ` +
+          `If you meant $${amount.toLocaleString('en-US')} USDC, click the "Units/USD" toggle above the amount field to switch to USD mode.`
+        );
+      }
+
       if (quantity <= 0) {
         throw new Error('Invalid order quantity. Please enter a valid amount.');
       }
@@ -1353,7 +1372,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         });
 
         if (available < requiredMargin6) {
-          throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(requiredMargin6, 6)}, available $${ethers.formatUnits(available, 6)}.`);
+          const notionalUsd = Number(ethers.formatUnits(notional6, 6));
+          const modeHint = !isUsdMode && notionalUsd > amount * 5
+            ? ` You are in Units mode — your ${amount} tokens have a notional value of ~$${notionalUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}. Switch to USD mode if you intended $${amount.toLocaleString('en-US')}.`
+            : '';
+          throw new Error(
+            `Insufficient available collateral. Need $${Number(ethers.formatUnits(requiredMargin6, 6)).toLocaleString('en-US', { maximumFractionDigits: 2 })}, ` +
+            `available $${Number(ethers.formatUnits(available, 6)).toLocaleString('en-US', { maximumFractionDigits: 2 })}.${modeHint}`
+          );
         }
       } catch (e: any) {
         if (!(e?.message || '').toLowerCase().includes('insufficient')) {
@@ -1398,36 +1424,88 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         console.warn('⚠️ [RPC] Vault config check non-fatal:', configErr?.message || configErr);
       }
 
-      // Preflight static call to surface revert reasons early
+      // Position-aware closing-loss check (mirrors gasless route)
+      const mktIdHex = (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32;
       try {
-        console.log(`📡 [RPC] Running preflight static call for market order`);
+        if (mktIdHex && (contracts.vault as any)?.getPositionSummary) {
+          const posSummary = await (contracts.vault as any).getPositionSummary(address, mktIdHex);
+          const currentNet = BigInt(posSummary?.[0] ?? 0n);
+          const entryPrice = BigInt(posSummary?.[1] ?? 0n);
+          const isClosing = (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
+          if (isClosing && entryPrice > 0n) {
+            const posAbs = currentNet >= 0n ? currentNet : -currentNet;
+            const closeAbs = sizeWei > posAbs ? posAbs : sizeWei;
+            const execPrice = isBuy ? bestAsk : bestBid;
+            if (closeAbs > 0n && execPrice > 0n) {
+              let loss6 = 0n;
+              if (currentNet > 0n && execPrice < entryPrice) {
+                loss6 = (closeAbs * (entryPrice - execPrice)) / 10n ** 18n;
+              } else if (currentNet < 0n && execPrice > entryPrice) {
+                loss6 = (closeAbs * (execPrice - entryPrice)) / 10n ** 18n;
+              }
+              if (loss6 > 0n) {
+                const marginBpsClose = currentNet > 0n ? BigInt(marketParams.marginReqBps || 10000) : 15000n;
+                const notionalEntry6 = (closeAbs * entryPrice) / 10n ** 18n;
+                const released6 = (notionalEntry6 * marginBpsClose) / 10000n;
+                console.log('[DIAG][market-order] closing-loss precheck', {
+                  currentNet: currentNet.toString(), entryPrice: entryPrice.toString(),
+                  execPrice: execPrice.toString(), loss6: loss6.toString(), released6: released6.toString(),
+                });
+                if (loss6 > released6) {
+                  throw new Error(
+                    'Closing this position at the current price would realize more loss than the locked margin. ' +
+                    'Reduce the close size or add collateral, then try again.'
+                  );
+                }
+              }
+            }
+          }
+        }
+      } catch (posErr: any) {
+        if (posErr?.message?.includes('Closing this position')) throw posErr;
+        console.warn('⚠️ [RPC] Position closing-loss check non-fatal:', posErr?.message || posErr);
+      }
+
+      // Preflight static call to surface revert reasons early
+      const signerAddr = await signer.getAddress();
+      try {
+        console.log(`📡 [RPC] Running preflight static call for market order (from: ${signerAddr.slice(0, 6)}...)`);
         let startTimePreflight = Date.now();
         await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.staticCall(
           sizeWei,
           isBuy,
-          slippageBps
+          slippageBps,
+          { from: signerAddr }
         );
         const durationPreflight = Date.now() - startTimePreflight;
         console.log(`✅ [RPC] Preflight check passed in ${durationPreflight}ms`);
       } catch (preflightErr: any) {
         // Diagnostic logging for market order preflight failures
         let diagAvailable: bigint | null = null;
+        let diagPosition: { size: string; entry: string } | null = null;
         try {
           const obAddr = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
             ? await (contracts.obOrderPlacement as any).getAddress()
             : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
-          const fromAddr = await signer.getAddress();
-          diagAvailable = await contracts.vault.getAvailableCollateral(fromAddr);
+          diagAvailable = await contracts.vault.getAvailableCollateral(signerAddr);
+          if (mktIdHex && (contracts.vault as any)?.getPositionSummary) {
+            const ps = await (contracts.vault as any).getPositionSummary(signerAddr, mktIdHex);
+            diagPosition = { size: BigInt(ps?.[0] ?? 0).toString(), entry: BigInt(ps?.[1] ?? 0).toString() };
+          }
           console.error('[DIAG][market-preflight] diagnostics', {
             orderBookAddress: obAddr,
-            signerAddress: fromAddr,
+            signerAddress: signerAddr,
             uiAddress: address,
-            addressMatch: fromAddr.toLowerCase() === (address || '').toLowerCase(),
+            addressMatch: signerAddr.toLowerCase() === (address || '').toLowerCase(),
             availableCollateral: diagAvailable.toString(),
             availableUSD: ethers.formatUnits(diagAvailable, 6),
+            existingPosition: diagPosition,
             sizeWei: sizeWei.toString(),
             isBuy,
             slippageBps,
+            bestBid: bestBid.toString(),
+            bestAsk: bestAsk.toString(),
+            marketIdBytes32: mktIdHex || 'unknown',
             revertReason: preflightErr?.reason || preflightErr?.shortMessage || preflightErr?.message,
           });
         } catch (diagErr) {
@@ -1436,19 +1514,22 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
         const reason = preflightErr?.reason || preflightErr?.message || '';
         if (reason.includes('!balance')) {
-          // If user has ample collateral, the revert is likely from the counterparty side
           const notional6 = (sizeWei * referencePrice) / 10n ** 18n;
           const marginNeeded6 = (notional6 * 15000n) / 10000n;
           if (diagAvailable !== null && diagAvailable > marginNeeded6 * 2n) {
-            throw new Error(
-              'Order failed due to a balance issue on the counterparty side of the book. ' +
-              'The resting orders may belong to traders with insufficient margin. ' +
-              'Try a smaller size or place a limit order instead.'
+            // User has ample collateral — the !balance is from the book/counterparty side.
+            // The preflight uses a direct staticCall, but the actual execution goes through
+            // the gasless session path which may handle this differently. Continue instead of blocking.
+            console.warn(
+              `⚠️ [RPC] Preflight !balance but user has ample collateral ($${ethers.formatUnits(diagAvailable, 6)} >> $${ethers.formatUnits(marginNeeded6, 6)} needed). ` +
+              `Skipping preflight block — will attempt gasless execution.`
             );
+          } else {
+            throw new Error('Insufficient available collateral. Please deposit more USDC using the "Deposit" button in the header.');
           }
-          throw new Error('Insufficient available collateral. Please deposit more USDC using the "Deposit" button in the header.');
+        } else {
+          throw preflightErr;
         }
-        throw preflightErr;
       }
 
       // Execute market order with slippage protection using default provider estimation

@@ -285,6 +285,24 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   vStep('[4/7] Compute settlement date', 'success', childSettlementDate.toISOString());
   phaseDivider();
 
+  // Inherit the parent's speed-run / settlement timing config so child
+  // markets use the same settlement window, rollover lead, and challenge
+  // duration as the parent instead of falling back to proportional defaults.
+  const parentSpeedRunConfig = (() => {
+    const cfg = existingConfig as any;
+    if (cfg?.speed_run && (cfg.rollover_lead_seconds || cfg.challenge_duration_seconds || cfg.settlement_window_seconds)) {
+      return {
+        rolloverLeadSeconds: Number(cfg.rollover_lead_seconds) || 0,
+        challengeDurationSeconds: Number(cfg.challenge_duration_seconds) || 0,
+        settlementWindowSeconds: Number(cfg.settlement_window_seconds) || 0,
+      };
+    }
+    return null;
+  })();
+  if (parentSpeedRunConfig) {
+    log('rollover_speed_run_inherit', 'success', parentSpeedRunConfig);
+  }
+
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
   const rolloverCreator = funderAddress || market.creator_wallet_address || '';
   const childSymbol = trueBaseSymbol;
@@ -328,6 +346,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
         creatorWalletAddress: rolloverCreator || null,
         feeRecipient: rolloverCreator || null,
         isRollover: true,
+        speedRunConfig: parentSpeedRunConfig,
       },
       (step, status, data) => log(`rollover_deploy_${step}`, status, data),
     );
@@ -392,6 +411,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
         iconImageUrl: market.icon_image_url || null,
         bannerImageUrl: market.banner_image_url || null,
         skipSettlementDateValidation: true,
+        speedRunConfig: parentSpeedRunConfig,
       }),
     });
     const saveData = await saveRes.json().catch(() => ({}));
