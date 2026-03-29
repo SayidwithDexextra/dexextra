@@ -13,7 +13,6 @@ interface Market {
   settlement_value: number | null;
   proposed_settlement_value: number | null;
   proposed_settlement_at: string | null;
-  settlement_window_expires_at: string | null;
   settlement_disputed: boolean | null;
   alternative_settlement_value: number | null;
   created_at: string;
@@ -401,7 +400,7 @@ export default function SettlementLifecyclePage() {
                         </div>
                         <div>
                           <div className="text-[#555]">Window Expires</div>
-                          <div className="text-[#aaa]">{formatDate(selected.settlement_window_expires_at)}</div>
+                          <div className="text-[#aaa]">{selected.settlement_date ? formatDate(new Date(new Date(selected.settlement_date).getTime() - 90_000).toISOString()) : '—'}</div>
                         </div>
                       </>
                     )}

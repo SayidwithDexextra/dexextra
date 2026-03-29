@@ -13,8 +13,8 @@ interface SettlementMarket {
   market_address?: string;
   proposed_settlement_value: number;
   proposed_settlement_at: string;
-  settlement_window_expires_at: string;
   proposed_settlement_by: string;
+  settlement_date?: string;
   alternative_settlement_value?: number;
   alternative_settlement_at?: string;
   alternative_settlement_by?: string;
@@ -166,11 +166,14 @@ export function SettlementInterface({
     return () => window.removeEventListener('settlementUpdated', handler);
   }, [market?.market_address, market?.symbol, fetchOnChainState]);
 
+  const windowExpiresMs = market?.settlement_date
+    ? new Date(market.settlement_date).getTime() - 90_000
+    : 0;
+
   useEffect(() => {
-    if (!market?.settlement_window_expires_at) return;
+    if (!windowExpiresMs) return;
     const updateTimer = () => {
-      const expires = new Date(market.settlement_window_expires_at).getTime();
-      const diff = expires - Date.now();
+      const diff = windowExpiresMs - Date.now();
       if (diff <= 0) { setTimeRemaining('Expired'); return; }
       const hours = Math.floor(diff / (1000 * 60 * 60));
       const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -180,7 +183,7 @@ export function SettlementInterface({
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
-  }, [market?.settlement_window_expires_at]);
+  }, [windowExpiresMs]);
 
   const handleChallenge = async () => {
     if (!challengePrice) return;
@@ -204,7 +207,7 @@ export function SettlementInterface({
     } finally { setIsSubmitting(false); }
   };
 
-  const isExpired = Boolean(market?.settlement_window_expires_at && new Date(market.settlement_window_expires_at).getTime() <= Date.now());
+  const isExpired = Boolean(windowExpiresMs && windowExpiresMs <= Date.now());
   const sourceUrl = market?.ai_source_locator?.url || market?.ai_source_locator?.primary_source_url;
   const settlementWaybackUrl = market?.market_config?.settlement_wayback_url || null;
   const settlementWaybackPageUrl = market?.market_config?.settlement_wayback_page_url || null;
@@ -236,14 +239,13 @@ export function SettlementInterface({
   }, [sourceUrl]);
 
   const windowProgress = useMemo(() => {
-    if (!market?.proposed_settlement_at || !market?.settlement_window_expires_at) return 0;
+    if (!market?.proposed_settlement_at || !windowExpiresMs) return 0;
     const start = new Date(market.proposed_settlement_at).getTime();
-    const end = new Date(market.settlement_window_expires_at).getTime();
     const now = Date.now();
-    if (now >= end) return 100;
+    if (now >= windowExpiresMs) return 100;
     if (now <= start) return 0;
-    return Math.round(((now - start) / (end - start)) * 100);
-  }, [market?.proposed_settlement_at, market?.settlement_window_expires_at]);
+    return Math.round(((now - start) / (windowExpiresMs - start)) * 100);
+  }, [market?.proposed_settlement_at, windowExpiresMs]);
 
   /* ──────────────────────── Loading state ──────────────────────── */
 
@@ -421,7 +423,7 @@ export function SettlementInterface({
                 </div>
                 <div className="flex justify-between">
                   <span>Window Expires</span>
-                  <span className="text-white font-mono">{market.settlement_window_expires_at ? new Date(market.settlement_window_expires_at).toLocaleString() : 'Awaiting activation'}</span>
+                  <span className="text-white font-mono">{windowExpiresMs ? new Date(windowExpiresMs).toLocaleString() : 'Awaiting activation'}</span>
                 </div>
               </div>
             </div>

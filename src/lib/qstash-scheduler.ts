@@ -11,18 +11,17 @@ const CHALLENGE_DIVISOR = 365; // matches Solidity: duration / DAYS_PER_YEAR (36
 // Each lifecycle step takes wall-clock time to complete. Triggers must
 // fire early enough that the step finishes before its logical deadline.
 const ROLLOVER_EXECUTION_SEC = 150;      // ~2.5 min: deploy child, sync lifecycle, link lineage
-const AI_PRICE_DISCOVERY_SEC = 90;       // ~1 min (p95 ~90s): AI worker finds yield price
-const ONCHAIN_SETTLEMENT_SEC = 60;       // ~1 min: settleMarket tx confirmation
+const AI_PRICE_DISCOVERY_SEC = 90;       // ~1.5 min (p95 ~90s): AI worker finds yield price
+
+// On-chain settleMarket tx buffer. Finalize fires at T0 - this value,
+// giving enough time for the tx to confirm before the countdown reaches zero.
+export const ONCHAIN_SETTLE_BUFFER_SEC = 90;
 
 // Minimum lead times incorporate execution overhead so the step completes
 // before T0 even on ultra-short markets.
 const MIN_ROLLOVER_LEAD_SEC = 5 * 60 + ROLLOVER_EXECUTION_SEC;  // 7.5 min floor
-const MIN_CHALLENGE_DURATION_SEC = 60 + AI_PRICE_DISCOVERY_SEC;  // 2.5 min floor
-
-// settlement_finalize must arrive AFTER the challenge window expires AND
-// leave room for the on-chain settleMarket tx. Buffer = AI round-trip
-// headroom (120s) + on-chain settlement execution (~60s).
-export const AI_SETTLE_BUFFER_SEC = 120 + ONCHAIN_SETTLEMENT_SEC;  // 180s total
+// Challenge lead = on-chain buffer + AI processing + minimum 60s challenge window.
+const MIN_CHALLENGE_DURATION_SEC = ONCHAIN_SETTLE_BUFFER_SEC + AI_PRICE_DISCOVERY_SEC + 60;  // 4 min floor
 
 // QStash pay-as-you-go plan supports up to 1 year delay.
 // Leave a 1-day buffer to avoid edge-case rejections.
@@ -36,31 +35,37 @@ type ScheduleIds = {
 };
 
 /**
- * Derive rollover lead and challenge duration proportionally using the
- * same integer-division formulas as MarketLifecycleFacet.sol, then add
- * the observed on-chain execution time so each step *completes* before
- * its logical deadline rather than merely *starting* before it.
+ * All deadlines derive from a single clock: settlement_date (T0).
  *
- * Effective trigger offsets from T0:
- *   rollover      fires at  T0 - (duration/12  + ROLLOVER_EXECUTION_SEC)
- *   settlement    fires at  T0 - (duration/365 + AI_PRICE_DISCOVERY_SEC)
+ * Working backwards from T0:
+ *   T0               = market settled (countdown reaches zero)
+ *   T0 - 90s         = finalize trigger fires (on-chain tx completes ~T0-30s)
+ *   T0 - 90s         = challenge window closes (same moment)
+ *   T0 - 90s - window = challenge window opens (after AI completes)
+ *   T0 - totalLead   = settlement_start trigger fires (AI needs ~90s)
+ *   T0 - rolloverLead = rollover trigger fires (deploy needs ~150s)
  *
- * Examples (trigger lead before T0):
- *   1 year  → rollover ~30.4 d + 2.5 m, challenge 24 h  + 1.5 m
- *   1 month → rollover 2.5 d  + 2.5 m,  challenge ~2 h  + 1.5 m
- *   1 week  → rollover 14 h   + 2.5 m,  challenge ~28 m + 1.5 m
- *   24 h    → rollover 2 h    + 2.5 m,  challenge ~4 m  + 1.5 m
- *   1 h     → rollover 7.5 min (clamped), challenge 2.5 min (clamped)
+ * challengeWindow  = duration/365 (proportional, matches Solidity)
+ * challengeDuration = challengeWindow + AI_PRICE_DISCOVERY + ONCHAIN_SETTLE_BUFFER
+ *                     (total lead before T0 for the settlement_start trigger)
+ *
+ * Examples (1-year market):
+ *   rollover:  fires T0 - 30.4d,  completes ~T0 - 30.4d + 2.5m
+ *   settlement_start: fires T0 - 24h 3m
+ *   challenge window: ~24h (open from T0 - 24h 1.5m to T0 - 90s)
+ *   finalize:  fires T0 - 90s,    settled ~T0 - 30s
  */
 export function proportionalDurations(marketDurationSec: number) {
+  const challengeWindow = Math.max(60, Math.floor(marketDurationSec / CHALLENGE_DIVISOR));
   return {
     rolloverLead: Math.max(
       MIN_ROLLOVER_LEAD_SEC,
       Math.floor(marketDurationSec / ROLLOVER_DIVISOR) + ROLLOVER_EXECUTION_SEC,
     ),
+    challengeWindow,
     challengeDuration: Math.max(
       MIN_CHALLENGE_DURATION_SEC,
-      Math.floor(marketDurationSec / CHALLENGE_DIVISOR) + AI_PRICE_DISCOVERY_SEC,
+      challengeWindow + AI_PRICE_DISCOVERY_SEC + ONCHAIN_SETTLE_BUFFER_SEC,
     ),
   };
 }
@@ -127,32 +132,16 @@ async function publishOrDefer(
 }
 
 /**
- * Schedule the three lifecycle triggers for a market:
- *   1. Rollover window start  (T0 - rolloverLead)
- *      Includes ROLLOVER_EXECUTION_SEC (~2.5 min) so the child market is
- *      fully deployed and linked before the rollover deadline.
- *   2. Settlement start       (T0 - challengeDuration)
- *      Includes AI_PRICE_DISCOVERY_SEC (~1.5 min) so the AI job completes
- *      and the challenge window opens early enough to expire right at T0.
- *   3. Settlement finalize    (T0 + AI_SETTLE_BUFFER_SEC)
- *      Fires after T0 with enough buffer for both AI latency and the
- *      on-chain settleMarket tx (~1 min) to confirm.
+ * Schedule the three lifecycle triggers for a market, all derived from
+ * a single clock: T0 = settlementDateUnix.
  *
- * T0 = settlementDateUnix (the date the market is fully settled).
- * The settlement START fires early so the challenge window expires right
- * at T0, which is the countdown users see in the market header.
+ *   1. Rollover         fires at T0 - rolloverLead
+ *   2. Settlement start fires at T0 - challengeDuration
+ *   3. Finalize         fires at T0 - ONCHAIN_SETTLE_BUFFER_SEC (= T0 - 90s)
  *
- * Rollover lead and challenge duration are computed **proportionally** to
- * the market's total duration, using a 1-year contract as the reference
- * baseline (30-day rollover lead, 24-hour challenge window). On-chain
- * execution overheads are added on top so triggers fire early enough for
- * each step to *complete* before its deadline. Explicit overrides via
- * opts still take precedence (but callers should include execution time).
- *
- * If any trigger is more than ~364 days out, a deferred "reschedule"
- * message is published instead, which chains forward until reachable.
- *
- * Returns the QStash message IDs so they can be stored and later cancelled.
+ * Every process is given enough lead time to *complete* before its
+ * deadline. The UI shows one countdown to T0 at all times, and the
+ * market is on-chain settled before that countdown reaches zero.
  */
 export async function scheduleMarketLifecycle(
   marketId: string,
@@ -215,7 +204,7 @@ export async function scheduleMarketLifecycle(
     }
   }
 
-  const finalizeAt = settlementDateUnix + AI_SETTLE_BUFFER_SEC;
+  const finalizeAt = settlementDateUnix - ONCHAIN_SETTLE_BUFFER_SEC;
   if (finalizeAt > nowSec) {
     try {
       ids.finalize = await publishOrDefer(
@@ -237,8 +226,7 @@ export async function scheduleMarketLifecycle(
     executionBuffers: {
       rolloverExecSec: ROLLOVER_EXECUTION_SEC,
       aiPriceDiscoverySec: AI_PRICE_DISCOVERY_SEC,
-      onchainSettlementSec: ONCHAIN_SETTLEMENT_SEC,
-      totalFinalizeBufferSec: AI_SETTLE_BUFFER_SEC,
+      onchainSettleBufferSec: ONCHAIN_SETTLE_BUFFER_SEC,
     },
     rolloverTriggerAt: rolloverTriggerAt > nowSec ? new Date(rolloverTriggerAt * 1000).toISOString() : 'skipped (past)',
     settlementStartAt: settlementStartAt > nowSec ? new Date(settlementStartAt * 1000).toISOString() : 'skipped (past)',

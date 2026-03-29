@@ -288,7 +288,6 @@ export async function POST(req: Request) {
           ...insertPayload,
           market_status: 'SETTLEMENT_REQUESTED',
           proposed_settlement_at: nowIso,
-          settlement_window_expires_at: nowIso,
           proposed_settlement_by: 'SYSTEM_BACKFILL',
           market_config: {
             ...(insertPayload.market_config || {}),

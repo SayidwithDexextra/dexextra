@@ -64,13 +64,13 @@ export async function POST(req: NextRequest) {
   console.log('[ai-callback] settlement completion result', { jobId, marketId, ...outcome });
 
   if (outcome.ok && outcome.details?.expiresAt) {
-    const expiresAtUnix = Math.floor(new Date(outcome.details.expiresAt as string).getTime() / 1000);
+    const expiresAtUnix = Math.ceil(new Date(outcome.details.expiresAt as string).getTime() / 1000) + 5;
     try {
       const finalizeMsgId = await scheduleSettlementFinalize(marketId, expiresAtUnix, {
         marketAddress: (meta?.marketAddress as string) || undefined,
         symbol: (meta?.marketIdentifier as string) || undefined,
       });
-      console.log('[ai-callback] scheduled precise finalize trigger', { marketId, expiresAt: outcome.details.expiresAt, finalizeMsgId });
+      console.log('[ai-callback] scheduled precise finalize trigger', { marketId, expiresAt: outcome.details.expiresAt, triggerAt: new Date(expiresAtUnix * 1000).toISOString(), finalizeMsgId });
     } catch (e: any) {
       console.warn('[ai-callback] failed to schedule precise finalize (safety-net cron will cover)', { marketId, error: e?.message });
     }

@@ -15,7 +15,6 @@ export type MarketRow = {
   settlement_date: string | null;
   proposed_settlement_value: number | null;
   proposed_settlement_at: string | null;
-  settlement_window_expires_at: string | null;
   settlement_disputed: boolean | null;
   market_config: Record<string, unknown> | null;
   initial_order: Record<string, unknown> | null;
@@ -28,7 +27,6 @@ export type TickResult = {
   action: string;
   ok: boolean;
   settlementDate?: string | null;
-  settlementWindowExpiresAt?: string | null;
   reason?: string;
   details?: Record<string, unknown>;
 };
@@ -93,8 +91,17 @@ function safeDateMs(input: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+// Challenge window expires at settlement_date - this buffer.
+// Matches ONCHAIN_SETTLE_BUFFER_SEC in qstash-scheduler.ts (90s).
+const ONCHAIN_SETTLE_BUFFER_MS = 90_000;
+
+function windowExpiryMs(market: MarketRow): number | null {
+  const stl = safeDateMs(market.settlement_date);
+  return stl !== null ? stl - ONCHAIN_SETTLE_BUFFER_MS : null;
+}
+
 function isWindowActive(market: MarketRow): boolean {
-  const exp = safeDateMs(market.settlement_window_expires_at);
+  const exp = windowExpiryMs(market);
   return exp !== null && exp > Date.now();
 }
 
@@ -403,7 +410,7 @@ async function maybeStartSettlementWindow(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'start_window', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: 'status_not_active',
     };
   }
@@ -413,7 +420,7 @@ async function maybeStartSettlementWindow(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'start_window', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: 'window_already_active',
     };
   }
@@ -424,7 +431,7 @@ async function maybeStartSettlementWindow(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'start_window', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: 'ai_price_failed',
     };
   }
@@ -442,13 +449,11 @@ async function maybeStartSettlementWindow(
     }
   }
 
-  const { defaultWindowSeconds } = getConfig();
-  const cfg = asRecord(market.market_config);
-  const perMarketWindow = typeof cfg.settlement_window_seconds === 'number' && cfg.settlement_window_seconds > 0
-    ? cfg.settlement_window_seconds
-    : defaultWindowSeconds;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + perMarketWindow * 1000);
+  const settlementMs = safeDateMs(market.settlement_date);
+  const expiresAt = settlementMs
+    ? new Date(Math.max(settlementMs - ONCHAIN_SETTLE_BUFFER_MS, now.getTime() + 60_000))
+    : new Date(now.getTime() + getConfig().defaultWindowSeconds * 1000);
 
   const updatedConfig = nextMarketConfig(market, {
     stage: 'window_started',
@@ -474,7 +479,7 @@ async function maybeStartSettlementWindow(
     .update({
       proposed_settlement_value: ai.price,
       proposed_settlement_at: now.toISOString(),
-      settlement_window_expires_at: expiresAt.toISOString(),
+
       proposed_settlement_by: 'AI_SYSTEM',
       market_status: 'SETTLEMENT_REQUESTED',
       market_config: updatedConfig,
@@ -488,7 +493,7 @@ async function maybeStartSettlementWindow(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'start_window', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: `db_update_failed:${error.message}`,
     };
   }
@@ -502,7 +507,6 @@ async function maybeStartSettlementWindow(
     marketId: market.id, marketIdentifier: market.market_identifier,
     action: 'start_window', ok: true,
     settlementDate: market.settlement_date,
-    settlementWindowExpiresAt: expiresAt.toISOString(),
     details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl, evidenceHash, lifecycleSync: syncResult },
   };
 }
@@ -516,7 +520,7 @@ async function maybeFinalizeSettlement(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: 'status_not_settlement_requested',
     };
   }
@@ -526,7 +530,7 @@ async function maybeFinalizeSettlement(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: 'settlement_disputed',
     };
   }
@@ -536,13 +540,13 @@ async function maybeFinalizeSettlement(
     console.warn(`[settlement-engine] syncLifecycle warning for ${market.market_identifier}: ${syncResult.error}`);
   }
 
-  const exp = safeDateMs(market.settlement_window_expires_at);
+  const exp = windowExpiryMs(market);
   if (exp === null || exp > Date.now()) {
     return {
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: 'window_not_expired',
     };
   }
@@ -554,13 +558,11 @@ async function maybeFinalizeSettlement(
     if (ai && Number.isFinite(ai.price) && ai.price > 0) {
       proposedPrice = ai.price;
 
-      const { defaultWindowSeconds } = getConfig();
-      const cfg = asRecord(market.market_config);
-      const perMarketWindow = typeof cfg.settlement_window_seconds === 'number' && cfg.settlement_window_seconds > 0
-        ? cfg.settlement_window_seconds
-        : defaultWindowSeconds;
       const healNow = new Date();
-      const healExpires = new Date(healNow.getTime() + perMarketWindow * 1000);
+      const healSettlementMs = safeDateMs(market.settlement_date);
+      const healExpires = healSettlementMs
+        ? new Date(Math.max(healSettlementMs - ONCHAIN_SETTLE_BUFFER_MS, healNow.getTime() + 60_000))
+        : new Date(healNow.getTime() + getConfig().defaultWindowSeconds * 1000);
 
       const healConfig = nextMarketConfig(market, {
         stage: 'window_started',
@@ -575,7 +577,7 @@ async function maybeFinalizeSettlement(
         .update({
           proposed_settlement_value: ai.price,
           proposed_settlement_at: healNow.toISOString(),
-          settlement_window_expires_at: healExpires.toISOString(),
+
           proposed_settlement_by: 'AI_SYSTEM_HEALED',
           market_config: healConfig,
           updated_at: healNow.toISOString(),
@@ -588,7 +590,7 @@ async function maybeFinalizeSettlement(
           marketId: market.id, marketIdentifier: market.market_identifier,
           action: 'finalize', ok: false,
           settlementDate: market.settlement_date,
-          settlementWindowExpiresAt: market.settlement_window_expires_at,
+    
           reason: 'self_heal_db_update_failed',
         };
       }
@@ -601,7 +603,6 @@ async function maybeFinalizeSettlement(
         marketId: market.id, marketIdentifier: market.market_identifier,
         action: 'finalize', ok: false,
         settlementDate: market.settlement_date,
-        settlementWindowExpiresAt: healExpires.toISOString(),
         reason: 'self_healed_reopened_window',
         details: { aiPrice: ai.price, aiJobId: ai.jobId, newExpiresAt: healExpires.toISOString() },
       };
@@ -611,7 +612,7 @@ async function maybeFinalizeSettlement(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: 'no_proposed_settlement_value',
     };
   }
@@ -623,7 +624,7 @@ async function maybeFinalizeSettlement(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: settle.reason || 'onchain_finalize_failed',
     };
   }
@@ -653,7 +654,7 @@ async function maybeFinalizeSettlement(
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
       settlementDate: market.settlement_date,
-      settlementWindowExpiresAt: market.settlement_window_expires_at,
+
       reason: `db_finalize_failed:${error.message}`,
     };
   }
@@ -662,7 +663,6 @@ async function maybeFinalizeSettlement(
     marketId: market.id, marketIdentifier: market.market_identifier,
     action: 'finalize', ok: true,
     settlementDate: market.settlement_date,
-    settlementWindowExpiresAt: market.settlement_window_expires_at,
     details: { settledPrice: proposedPrice, txHash },
   };
 }
@@ -679,7 +679,6 @@ const MARKET_SELECT = `
   settlement_date,
   proposed_settlement_value,
   proposed_settlement_at,
-  settlement_window_expires_at,
   settlement_disputed,
   market_config,
   initial_order,
@@ -742,7 +741,10 @@ export async function runSingleSettlementCheck(
     return { ok: false, mode: 'single_check', error: 'invalid_settlement_date' };
   }
 
-  if (settlementMs > Date.now()) {
+  // SETTLEMENT_REQUESTED markets bypass the settlement_not_due guard because
+  // their challenge window expires at T0 - ONCHAIN_SETTLE_BUFFER (before T0).
+  // maybeFinalizeSettlement has its own window-expiry check.
+  if (settlementMs > Date.now() && market.market_status !== 'SETTLEMENT_REQUESTED') {
     return {
       ok: true, mode: 'single_check',
       skipped: true, reason: 'settlement_not_due',
@@ -934,13 +936,11 @@ export async function completeSettlementFromAIResult(
     }
   }
 
-  const { defaultWindowSeconds } = getConfig();
-  const cfg = asRecord(market.market_config);
-  const perMarketWindow = typeof cfg.settlement_window_seconds === 'number' && cfg.settlement_window_seconds > 0
-    ? cfg.settlement_window_seconds
-    : defaultWindowSeconds;
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + perMarketWindow * 1000);
+  const settlementMs = safeDateMs(market.settlement_date);
+  const expiresAt = settlementMs
+    ? new Date(Math.max(settlementMs - ONCHAIN_SETTLE_BUFFER_MS, now.getTime() + 60_000))
+    : new Date(now.getTime() + getConfig().defaultWindowSeconds * 1000);
 
   const updatedConfig = nextMarketConfig(market, {
     stage: 'window_started',
@@ -958,7 +958,7 @@ export async function completeSettlementFromAIResult(
     .update({
       proposed_settlement_value: ai.price,
       proposed_settlement_at: now.toISOString(),
-      settlement_window_expires_at: expiresAt.toISOString(),
+
       proposed_settlement_by: 'AI_SYSTEM',
       market_status: 'SETTLEMENT_REQUESTED',
       market_config: updatedConfig,

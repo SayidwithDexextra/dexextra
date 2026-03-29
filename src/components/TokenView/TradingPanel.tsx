@@ -1279,6 +1279,32 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         throw new Error('No liquidity available for market order');
       }
 
+      // Spot/margin liquidity cross-check: margin market orders cannot fill against spot limit orders
+      try {
+        if (!isBuy && bestBid > 0n) {
+          const lvl: any = await contracts.obView.buyLevels(bestBid);
+          const firstId = BigInt(lvl?.firstOrderId ?? 0);
+          if (firstId > 0n) {
+            const top: any = await contracts.obView.getOrder(firstId);
+            if (!top?.isMarginOrder) {
+              throw new Error('Cannot mix margin and spot trades. The top buy order is a spot order — cancel any spot orders on this market or use a limit order that does not immediately cross.');
+            }
+          }
+        } else if (isBuy && bestAsk > 0n) {
+          const lvl: any = await contracts.obView.sellLevels(bestAsk);
+          const firstId = BigInt(lvl?.firstOrderId ?? 0);
+          if (firstId > 0n) {
+            const top: any = await contracts.obView.getOrder(firstId);
+            if (!top?.isMarginOrder) {
+              throw new Error('Cannot mix margin and spot trades. The top sell order is a spot order — cancel any spot orders on this market or use a limit order that does not immediately cross.');
+            }
+          }
+        }
+      } catch (spotCheckErr: any) {
+        if (spotCheckErr?.message?.includes('Cannot mix margin and spot')) throw spotCheckErr;
+        console.warn('⚠️ [RPC] Spot liquidity cross-check non-fatal:', spotCheckErr?.message || spotCheckErr);
+      }
+
       // Compute size in wei using precise BigInt math to match contract decimals
       let sizeWei: bigint;
       if (isUsdMode) {
@@ -1307,44 +1333,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       // Compute slippage bps (use UI state)
       const slippageBps = Math.max(SLIPPAGE_MIN_BPS, Math.min(SLIPPAGE_MAX_BPS, Number(maxSlippage || 100))); // clamp 0.1%..100%
 
-      // Preflight static call to surface revert reasons early
-      try {
-        console.log(`📡 [RPC] Running preflight static call for market order`);
-        let startTimePreflight = Date.now();
-        await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.staticCall(
-          sizeWei,
-          isBuy,
-          slippageBps
-        );
-        const durationPreflight = Date.now() - startTimePreflight;
-        console.log(`✅ [RPC] Preflight check passed in ${durationPreflight}ms`);
-      } catch (preflightErr) {
-        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
-        // Re-throw to let error mapper present a friendly message
-        throw preflightErr;
-      }
-
-      // Execute market order with slippage protection using default provider estimation
-      const mktOverrides: any = {};
-      // Pre-send native balance check to avoid -32603 from insufficient gas funds
-      try {
-        const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
-        const fromAddr = await signer.getAddress();
-        const feeData = await provider.getFeeData();
-        const gasPrice: bigint = (feeData?.maxFeePerGas ?? feeData?.gasPrice ?? 0n) as bigint;
-        const estGas: bigint = (mktOverrides?.gasLimit as bigint) || 0n;
-        if (gasPrice > 0n && estGas > 0n) {
-          const needed = gasPrice * estGas;
-          const balance = await provider.getBalance(fromAddr);
-          if (balance < needed) {
-            throw new Error(`Insufficient native balance for gas. Needed ~${ethers.formatEther(needed)} ETH, have ${ethers.formatEther(balance)}.`);
-          }
-        }
-      } catch (balErr: any) {
-        console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
-      }
-
       // Pre-trade validation: available collateral vs required (accurate margin bps)
+      // Runs before preflight so users see a clear message instead of a cryptic "!balance" revert
       try {
         const userAddr = address as string;
         console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
@@ -1366,12 +1356,119 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           throw new Error(`Insufficient available collateral. Need $${ethers.formatUnits(requiredMargin6, 6)}, available $${ethers.formatUnits(available, 6)}.`);
         }
       } catch (e: any) {
-        // If unable to fetch, surface error to user as it likely blocks placement
         if (!(e?.message || '').toLowerCase().includes('insufficient')) {
           console.warn('⚠️ [RPC] Collateral check warning:', e?.message || e);
         }
-        // Re-throw to be handled by error mapping below
         throw e;
+      }
+
+      // Vault ↔ OrderBook configuration check (mirrors gasless route validation)
+      try {
+        const mktIdHex = (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32;
+        if (mktIdHex) {
+          const obAddr = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
+            ? await (contracts.obOrderPlacement as any).getAddress()
+            : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
+
+          if ((contracts.vault as any)?.marketToOrderBook) {
+            const assignedOb = await (contracts.vault as any).marketToOrderBook(mktIdHex);
+            if (!assignedOb || String(assignedOb) === ethers.ZeroAddress) {
+              console.error('[DIAG][market-order] Vault has no OrderBook assigned for this market', { mktIdHex, vault: (contracts.vault as any)?.target });
+              throw new Error('This market is not yet configured in the vault. Please try again later or contact support.');
+            }
+            if (String(assignedOb).toLowerCase() !== String(obAddr).toLowerCase()) {
+              console.error('[DIAG][market-order] OrderBook address mismatch', { assigned: assignedOb, used: obAddr, mktIdHex });
+              throw new Error('Market configuration mismatch. The order book address does not match the vault assignment. Please refresh and try again.');
+            }
+          }
+
+          if ((contracts.vault as any)?.hasRole) {
+            const ORDERBOOK_ROLE = ethers.id('ORDERBOOK_ROLE');
+            const hasRole = await (contracts.vault as any).hasRole(ORDERBOOK_ROLE, obAddr);
+            if (!hasRole) {
+              console.error('[DIAG][market-order] OrderBook missing ORDERBOOK_ROLE in vault', { obAddr, vault: (contracts.vault as any)?.target });
+              throw new Error('This market\'s order book is not authorized by the vault. Please contact support.');
+            }
+          }
+        }
+      } catch (configErr: any) {
+        if (configErr?.message?.includes('not yet configured') || configErr?.message?.includes('mismatch') || configErr?.message?.includes('not authorized')) {
+          throw configErr;
+        }
+        console.warn('⚠️ [RPC] Vault config check non-fatal:', configErr?.message || configErr);
+      }
+
+      // Preflight static call to surface revert reasons early
+      try {
+        console.log(`📡 [RPC] Running preflight static call for market order`);
+        let startTimePreflight = Date.now();
+        await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.staticCall(
+          sizeWei,
+          isBuy,
+          slippageBps
+        );
+        const durationPreflight = Date.now() - startTimePreflight;
+        console.log(`✅ [RPC] Preflight check passed in ${durationPreflight}ms`);
+      } catch (preflightErr: any) {
+        // Diagnostic logging for market order preflight failures
+        let diagAvailable: bigint | null = null;
+        try {
+          const obAddr = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
+            ? await (contracts.obOrderPlacement as any).getAddress()
+            : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
+          const fromAddr = await signer.getAddress();
+          diagAvailable = await contracts.vault.getAvailableCollateral(fromAddr);
+          console.error('[DIAG][market-preflight] diagnostics', {
+            orderBookAddress: obAddr,
+            signerAddress: fromAddr,
+            uiAddress: address,
+            addressMatch: fromAddr.toLowerCase() === (address || '').toLowerCase(),
+            availableCollateral: diagAvailable.toString(),
+            availableUSD: ethers.formatUnits(diagAvailable, 6),
+            sizeWei: sizeWei.toString(),
+            isBuy,
+            slippageBps,
+            revertReason: preflightErr?.reason || preflightErr?.shortMessage || preflightErr?.message,
+          });
+        } catch (diagErr) {
+          console.warn('[DIAG][market-preflight] logging failed', diagErr);
+        }
+        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+        const reason = preflightErr?.reason || preflightErr?.message || '';
+        if (reason.includes('!balance')) {
+          // If user has ample collateral, the revert is likely from the counterparty side
+          const notional6 = (sizeWei * referencePrice) / 10n ** 18n;
+          const marginNeeded6 = (notional6 * 15000n) / 10000n;
+          if (diagAvailable !== null && diagAvailable > marginNeeded6 * 2n) {
+            throw new Error(
+              'Order failed due to a balance issue on the counterparty side of the book. ' +
+              'The resting orders may belong to traders with insufficient margin. ' +
+              'Try a smaller size or place a limit order instead.'
+            );
+          }
+          throw new Error('Insufficient available collateral. Please deposit more USDC using the "Deposit" button in the header.');
+        }
+        throw preflightErr;
+      }
+
+      // Execute market order with slippage protection using default provider estimation
+      const mktOverrides: any = {};
+      // Pre-send native balance check to avoid -32603 from insufficient gas funds
+      try {
+        const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
+        const fromAddr = await signer.getAddress();
+        const feeData = await provider.getFeeData();
+        const gasPrice: bigint = (feeData?.maxFeePerGas ?? feeData?.gasPrice ?? 0n) as bigint;
+        const estGas: bigint = (mktOverrides?.gasLimit as bigint) || 0n;
+        if (gasPrice > 0n && estGas > 0n) {
+          const needed = gasPrice * estGas;
+          const balance = await provider.getBalance(fromAddr);
+          if (balance < needed) {
+            throw new Error(`Insufficient native balance for gas. Needed ~${ethers.formatEther(needed)} ETH, have ${ethers.formatEther(balance)}.`);
+          }
+        }
+      } catch (balErr: any) {
+        console.warn('⚠️ [RPC] Gas funds check warning:', balErr?.message || balErr);
       }
 
       // [GASLESS] toggle and OB address log
@@ -1514,7 +1611,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       const errorStr = error?.message || error?.toString() || '';
       const lower = (errorStr || '').toLowerCase();
       
-      if (lower.includes('insufficient')) {
+      if (lower.includes('insufficient') || lower.includes('!balance')) {
         errorMessage = 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.';
         errorTitle = 'Insufficient Collateral';
       } else if (lower.includes('cancelled') || lower.includes('denied') || lower.includes('user denied')) {
@@ -1677,9 +1774,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         } catch (diagErr) {
           console.warn('[DIAG][limit-preflight] logging failed', diagErr);
         }
-        const msg = preflightErr?.message || preflightErr?.shortMessage || '';
+        const msg = preflightErr?.reason || preflightErr?.message || preflightErr?.shortMessage || '';
         console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
-        // Do not fall back to non-margin; limit orders must be supported on this market
+        if (msg.includes('!balance')) {
+          throw new Error('Insufficient available collateral. Please deposit more USDC using the "Deposit" button in the header.');
+        }
         throw preflightErr;
       }
 
@@ -1877,7 +1976,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       let errorTitle = 'Limit Order Failed';
       const errorStr = error?.message || error?.toString() || '';
       
-      if (errorStr.includes('insufficient') || errorStr.includes('Insufficient')) {
+      if (errorStr.includes('insufficient') || errorStr.includes('Insufficient') || errorStr.includes('!balance')) {
         errorMessage = 'Insufficient collateral. Please deposit more USDC using the "Deposit" button in the header.';
         errorTitle = 'Insufficient Collateral';
       } else if (errorStr.includes('cancelled') || errorStr.includes('denied') || errorStr.includes('User denied')) {

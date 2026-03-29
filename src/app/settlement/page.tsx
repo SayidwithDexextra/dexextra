@@ -46,9 +46,9 @@ export default function SettlementPage() {
 
   const isWindowActive = (m?: any) => {
     if (!m) return false;
-    if (!m.proposed_settlement_value || !m.settlement_window_expires_at) return false;
+    if (!m.proposed_settlement_value || !m.settlement_date) return false;
     try {
-      return new Date(m.settlement_window_expires_at).getTime() > Date.now();
+      return new Date(m.settlement_date).getTime() - 90_000 > Date.now();
     } catch {
       return false;
     }
@@ -128,7 +128,7 @@ export default function SettlementPage() {
 
       setState(prev => ({
         ...prev,
-        success: `Automated settlement window started with AI-proposed price: $${aiPrice?.toFixed(4) || 'N/A'}. ${updated?.settlement_window_expires_at ? `Expires ${new Date(updated.settlement_window_expires_at).toLocaleString()}` : ''}${waybackUrl ? `\nArchived snapshot: ${waybackUrl}` : ''}`,
+        success: `Automated settlement window started with AI-proposed price: $${aiPrice?.toFixed(4) || 'N/A'}. ${updated?.settlement_date ? `Window expires ${new Date(new Date(updated.settlement_date).getTime() - 90_000).toLocaleString()}` : ''}${waybackUrl ? `\nArchived snapshot: ${waybackUrl}` : ''}`,
         isSubmitting: false,
         confirming: false,
         aiPrice,
@@ -194,11 +194,11 @@ export default function SettlementPage() {
                 <span className="text-[10px] text-white font-mono ml-1">—</span>
               )}
             </div>
-            {windowActive && m.settlement_window_expires_at && (
+            {windowActive && m.settlement_date && (
               <div className="text-[9px] pt-1.5">
                 <span className="text-[#606060]">Window Expires:</span>
                 <span className="text-[10px] text-white font-mono ml-1">
-                  {new Date(m.settlement_window_expires_at).toLocaleString()}
+                  {new Date(new Date(m.settlement_date).getTime() - 90_000).toLocaleString()}
                 </span>
               </div>
             )}
@@ -324,11 +324,11 @@ export default function SettlementPage() {
                 <span className="text-white">—</span>
               )}
             </div>
-            {isWindowActive(selectedMarket) && selectedMarket.settlement_window_expires_at && (
+            {isWindowActive(selectedMarket) && selectedMarket.settlement_date && (
               <div className="mt-1 text-[9px] text-[#606060]">
                 Window Expires:{' '}
                 <span className="text-white">
-                  {new Date(selectedMarket.settlement_window_expires_at as string).toLocaleString()}
+                  {new Date(new Date(selectedMarket.settlement_date as string).getTime() - 90_000).toLocaleString()}
                 </span>
               </div>
             )}

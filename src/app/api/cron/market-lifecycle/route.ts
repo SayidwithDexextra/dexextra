@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Receiver } from '@upstash/qstash';
 import { ethers } from 'ethers';
-import { scheduleMarketLifecycle, scheduleSettlementFinalize, proportionalDurations } from '@/lib/qstash-scheduler';
+import { scheduleMarketLifecycle, scheduleSettlementFinalize, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 import { runSettlementTick, runSingleSettlementCheck, forceStartSettlementWindow } from '@/lib/settlement-engine';
 import { deployMarket } from '@/lib/deploy-market';
 import {
@@ -639,8 +639,8 @@ export async function POST(req: Request) {
         log('dispatch_settlement_finalize', 'success', result);
 
         const singleResult = result.result;
-        if (singleResult && !singleResult.ok && singleResult.reason === 'window_not_expired' && singleResult.settlementWindowExpiresAt) {
-          const retryAtUnix = Math.floor(new Date(singleResult.settlementWindowExpiresAt).getTime() / 1000);
+        if (singleResult && !singleResult.ok && singleResult.reason === 'window_not_expired' && singleResult.settlementDate) {
+          const retryAtUnix = Math.floor(new Date(singleResult.settlementDate).getTime() / 1000) - ONCHAIN_SETTLE_BUFFER_SEC;
           if (retryAtUnix > Math.floor(Date.now() / 1000)) {
             try {
               const retryId = await scheduleSettlementFinalize(marketId, retryAtUnix, {
@@ -649,7 +649,7 @@ export async function POST(req: Request) {
                 settlementDateUnix: typeof body.settlement_date_unix === 'number' ? body.settlement_date_unix : undefined,
               });
               log('dispatch_settlement_finalize_retry', 'success', {
-                marketId, retryAt: singleResult.settlementWindowExpiresAt, retryId,
+                marketId, retryAt: new Date(retryAtUnix * 1000).toISOString(), retryId,
               });
             } catch (e: any) {
               log('dispatch_settlement_finalize_retry', 'error', { error: e?.message });

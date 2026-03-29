@@ -76,7 +76,7 @@ export interface MarketInfoHeaderProps {
   settlementDate?: string | Date;
   settlementValue?: number | null;
   settlementPnl?: SettlementPnLData | null;
-  challengeWindowExpiresAt?: string | Date;
+
   orderbookAddress?: string;
   marketId?: string;
   markPrice?: number | null;
@@ -351,7 +351,6 @@ export default function MarketInfoHeader({
   settlementDate,
   settlementValue,
   settlementPnl,
-  challengeWindowExpiresAt,
   orderbookAddress,
   marketId,
   markPrice,
@@ -383,7 +382,6 @@ export default function MarketInfoHeader({
   const hasDescription = description && description.trim().length > 0;
   const formattedSettlement = settlementDate ? formatSettlementDate(settlementDate) : null;
   const countdown = useCountdown(settlementDate);
-  const challengeCountdown = useCountdown(challengeWindowExpiresAt);
   const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
   const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 1;
 
@@ -450,13 +448,12 @@ export default function MarketInfoHeader({
           </div>
         )}
 
-        {/* Settlement Date Badge */}
-        {effectiveStatus === 'settlement' && challengeCountdown ? (() => {
-          const cc = challengeCountdown;
-          const isExpired = cc.isSettled;
+        {/* Settlement Date Badge — one clock for all phases */}
+        {effectiveStatus === 'settlement' ? (() => {
+          const isCountdownDone = countdown?.isSettled;
           const badgeClass = [
             styles.settlementBadge,
-            isExpired ? styles.settlementBadgeSettling : styles.settlementBadgeSettlement,
+            isCountdownDone ? styles.settlementBadgeSettling : styles.settlementBadgeSettlement,
           ].filter(Boolean).join(' ');
 
           return (
@@ -464,27 +461,27 @@ export default function MarketInfoHeader({
               content={
                 <div className={styles.countdownTooltip}>
                   <div className={styles.countdownTooltipLabel}>
-                    {isExpired ? 'Awaiting on-chain settlement' : 'Challenge window closes in'}
+                    {isCountdownDone ? 'Completing on-chain settlement' : 'Settlement in progress'}
                   </div>
-                  {!isExpired && (
+                  {countdown && !isCountdownDone && (
                     <div className={styles.countdownDisplay}>
                       <span className={styles.countdownUnit}>
-                        <span className={styles.countdownValue}>{cc.days}</span>
+                        <span className={styles.countdownValue}>{countdown.days}</span>
                         <span className={styles.countdownLabel}>d</span>
                       </span>
                       <span className={styles.countdownSeparator}>:</span>
                       <span className={styles.countdownUnit}>
-                        <span className={styles.countdownValue}>{String(cc.hours).padStart(2, '0')}</span>
+                        <span className={styles.countdownValue}>{String(countdown.hours).padStart(2, '0')}</span>
                         <span className={styles.countdownLabel}>h</span>
                       </span>
                       <span className={styles.countdownSeparator}>:</span>
                       <span className={styles.countdownUnit}>
-                        <span className={styles.countdownValue}>{String(cc.minutes).padStart(2, '0')}</span>
+                        <span className={styles.countdownValue}>{String(countdown.minutes).padStart(2, '0')}</span>
                         <span className={styles.countdownLabel}>m</span>
                       </span>
                       <span className={styles.countdownSeparator}>:</span>
                       <span className={styles.countdownUnit}>
-                        <span className={styles.countdownValue}>{String(cc.seconds).padStart(2, '0')}</span>
+                        <span className={styles.countdownValue}>{String(countdown.seconds).padStart(2, '0')}</span>
                         <span className={styles.countdownLabel}>s</span>
                       </span>
                     </div>
@@ -495,19 +492,20 @@ export default function MarketInfoHeader({
               delay={100}
             >
               <div className={badgeClass} data-walkthrough="token-settlement-date">
-                {isExpired ? (
+                {isCountdownDone ? (
                   <>
                     <div className={styles.settlingDot} />
                     <span>Market Settling</span>
                   </>
                 ) : (
                   <>
-                    <CalendarIcon />
+                    <div className={styles.settlingDot} />
                     <span className={styles.inlineCountdown}>
-                      {cc.days > 0 && <>{cc.days}d </>}
-                      {cc.hours > 0 && <>{String(cc.hours).padStart(2, '0')}h </>}
-                      {String(cc.minutes).padStart(2, '0')}m{' '}
-                      {String(cc.seconds).padStart(2, '0')}s
+                      Settling{' '}
+                      {countdown && countdown.days > 0 && <>{countdown.days}d </>}
+                      {countdown && countdown.hours > 0 && <>{String(countdown.hours).padStart(2, '0')}h </>}
+                      {countdown && <>{String(countdown.minutes).padStart(2, '0')}m{' '}
+                      {String(countdown.seconds).padStart(2, '0')}s</>}
                     </span>
                   </>
                 )}
@@ -832,17 +830,6 @@ export default function MarketInfoHeader({
               </div>
             </>
           )}
-          {marketStats.lifecycleState != null && marketStats.lifecycleState > 0 && (
-            <>
-              <span className={styles.marketStatDivider} />
-              <div className={styles.marketStatItem}>
-                <span className={styles.marketStatLabel}>Lifecycle</span>
-                <span className={styles.marketStatValue}>
-                  {['Unsettled', 'Rollover', 'Challenge Window', 'Settled'][marketStats.lifecycleState] ?? `State ${marketStats.lifecycleState}`}
-                </span>
-              </div>
-            </>
-          )}
           {marketStats.challengeActive && (
             <>
               <span className={styles.marketStatDivider} />
@@ -875,11 +862,13 @@ export default function MarketInfoHeader({
         </div>
       )}
 
-      {/* Settlement P&L Bar */}
-      {effectiveStatus === 'settled' && settlementValue != null && settlementValue > 0 && settlementPnl && (
+      {/* Settlement P&L Bar — shown during challenge window (proposed) and after settlement (final) */}
+      {(effectiveStatus === 'settled' || effectiveStatus === 'settlement') && settlementValue != null && settlementValue > 0 && settlementPnl && (
         <div className={styles.marketStatsBar} style={{ borderTop: '1px solid rgba(251, 191, 36, 0.15)', background: 'rgba(251, 191, 36, 0.03)' }}>
           <div className={styles.marketStatItem}>
-            <span className={styles.marketStatLabel} style={{ color: '#fbbf24' }}>Settlement Price</span>
+            <span className={styles.marketStatLabel} style={{ color: '#fbbf24' }}>
+              {effectiveStatus === 'settlement' ? 'Proposed Settlement' : 'Settlement Price'}
+            </span>
             <span className={styles.marketStatValue}>{formatStatValue(settlementValue)}</span>
           </div>
           {settlementPnl && (

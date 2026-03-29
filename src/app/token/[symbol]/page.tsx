@@ -1203,9 +1203,13 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       verified: market.market_status === 'ACTIVE',
       status,
       settlementDate: market.settlement_date || undefined,
-      settlementValue: market.settlement_value != null ? Number(market.settlement_value) : (onChainStats?.settlementPrice ?? undefined),
+      settlementValue: market.settlement_value != null
+        ? Number(market.settlement_value)
+        : (market.proposed_settlement_value != null
+          ? Number(market.proposed_settlement_value)
+          : (onChainStats?.settlementPrice ?? undefined)),
       settlementPnl: headerSettlementPnl,
-      challengeWindowExpiresAt: market.settlement_window_expires_at || undefined,
+
       orderbookAddress: market.market_address || undefined,
       marketId: market.market_id_bytes32 || undefined,
       markPrice: Number(markPrice || 0),

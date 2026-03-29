@@ -33,10 +33,13 @@ export async function POST(request: NextRequest) {
     // 2) Validate active window
     const now = new Date();
     const hasProposal = market.proposed_settlement_value != null && market.proposed_settlement_at;
+    const windowExpiresMs = market.settlement_date
+      ? new Date(market.settlement_date).getTime() - 90_000
+      : 0;
     const windowActive =
       hasProposal &&
-      market.settlement_window_expires_at &&
-      new Date(market.settlement_window_expires_at) > now;
+      windowExpiresMs > 0 &&
+      windowExpiresMs > now.getTime();
     if (!windowActive) {
       return NextResponse.json({ error: 'No active settlement window' }, { status: 409 });
     }

@@ -415,9 +415,13 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     }) || null;
   }, [markets, symbol]);
 
-  const isMarketSettled = currentMarket?.market_status === 'SETTLED' || (onChainSettlementPrice != null && onChainSettlementPrice > 0);
-  const settlementPrice = isMarketSettled
-    ? (Number(currentMarket?.settlement_value ?? 0) || onChainSettlementPrice || 0)
+  const isMarketSettledOrSettling =
+    currentMarket?.market_status === 'SETTLED' ||
+    currentMarket?.market_status === 'SETTLEMENT_REQUESTED' ||
+    (onChainSettlementPrice != null && onChainSettlementPrice > 0);
+  const isMarketSettled = isMarketSettledOrSettling;
+  const settlementPrice = isMarketSettledOrSettling
+    ? (Number(currentMarket?.settlement_value ?? 0) || Number((currentMarket as any)?.proposed_settlement_value ?? 0) || onChainSettlementPrice || 0)
     : 0;
 
   const settledMarketSymbols = useMemo(() => {

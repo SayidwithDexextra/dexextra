@@ -550,8 +550,8 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   
   // Settlement compact row state (moved above early returns to keep Hooks order stable)
   const proposedSettlementValue = Number((marketData as any)?.proposed_settlement_value ?? 0);
-  const settlementExpiresAtStr = (marketData as any)?.settlement_window_expires_at ? String((marketData as any).settlement_window_expires_at) : '';
-  const settlementExpiresMs = settlementExpiresAtStr ? new Date(settlementExpiresAtStr).getTime() : 0;
+  const settlementDateStr = enhancedTokenData?.settlementDate || '';
+  const settlementExpiresMs = settlementDateStr ? new Date(settlementDateStr).getTime() - 90_000 : 0;
   const [nowTs, setNowTs] = useState<number>(Date.now());
   const settlementActiveCompact = enhancedTokenData?.marketStatus === 'SETTLEMENT_REQUESTED' && proposedSettlementValue > 0 && settlementExpiresMs > nowTs;
   

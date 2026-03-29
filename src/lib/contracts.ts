@@ -114,7 +114,9 @@ export const OBViewFacetABI = [
   "function getTradingParameters() external view returns (uint256 marginRequirement, uint256 fee, address recipient)",
   "function getFeeStructure() external view returns (uint256 takerFeeBps, uint256 makerFeeBps, address protocolFeeRecipient, uint256 protocolFeeShareBps, uint256 legacyTradingFee, address marketOwnerFeeRecipient)",
   "function getLeverageInfo() external view returns (bool enabled, uint256 maxLev, uint256 marginReq, address controller)",
-  "function getMarketStats() external view returns (tuple(uint256 lastPrice, uint256 volume24h, uint256 high24h, uint256 low24h, int256 priceChange24h, uint256 totalTrades, uint256 bestBid, uint256 bestAsk, uint256 spread) stats)"
+  "function getMarketStats() external view returns (tuple(uint256 lastPrice, uint256 volume24h, uint256 high24h, uint256 low24h, int256 priceChange24h, uint256 totalTrades, uint256 bestBid, uint256 bestAsk, uint256 spread) stats)",
+  "function buyLevels(uint256 price) external view returns (tuple(uint256 totalAmount, uint256 firstOrderId, uint256 lastOrderId, bool exists))",
+  "function sellLevels(uint256 price) external view returns (tuple(uint256 totalAmount, uint256 firstOrderId, uint256 lastOrderId, bool exists))"
 ];
 
 // OBPricingFacet - read-only functions for pricing (aligned with deployed facet)

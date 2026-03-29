@@ -27,7 +27,6 @@ export interface Market {
   settlement_timestamp?: string | null;
   proposed_settlement_value?: number | null;
   proposed_settlement_at?: string | null;
-  settlement_window_expires_at?: string | null;
   proposed_settlement_by?: string | null;
   alternative_settlement_value?: number | null;
   alternative_settlement_at?: string | null;
