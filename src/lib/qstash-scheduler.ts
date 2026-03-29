@@ -7,15 +7,22 @@ import { Client } from '@upstash/qstash';
 const ROLLOVER_DIVISOR = 12;  // matches Solidity: duration / 12
 const CHALLENGE_DIVISOR = 365; // matches Solidity: duration / DAYS_PER_YEAR (365)
 
-const MIN_ROLLOVER_LEAD_SEC = 5 * 60;   // 5 minutes — floor for ultra-short markets
-const MIN_CHALLENGE_DURATION_SEC = 60;   // 1 minute — matches Solidity MIN_CHALLENGE_DURATION
+// ── Observed on-chain execution times ──
+// Each lifecycle step takes wall-clock time to complete. Triggers must
+// fire early enough that the step finishes before its logical deadline.
+const ROLLOVER_EXECUTION_SEC = 150;      // ~2.5 min: deploy child, sync lifecycle, link lineage
+const AI_PRICE_DISCOVERY_SEC = 90;       // ~1 min (p95 ~90s): AI worker finds yield price
+const ONCHAIN_SETTLEMENT_SEC = 60;       // ~1 min: settleMarket tx confirmation
 
-// settlement_start fires a webhook-based AI job whose callback opens the
-// challenge window.  The finalize trigger must arrive AFTER that window
-// expires, so we pad T0 by the expected AI round-trip latency.
-// Observed p95 ≈ 90 s; 120 s gives comfortable headroom without
-// meaningfully delaying settlement on longer-duration markets.
-const AI_SETTLE_BUFFER_SEC = 120;
+// Minimum lead times incorporate execution overhead so the step completes
+// before T0 even on ultra-short markets.
+const MIN_ROLLOVER_LEAD_SEC = 5 * 60 + ROLLOVER_EXECUTION_SEC;  // 7.5 min floor
+const MIN_CHALLENGE_DURATION_SEC = 60 + AI_PRICE_DISCOVERY_SEC;  // 2.5 min floor
+
+// settlement_finalize must arrive AFTER the challenge window expires AND
+// leave room for the on-chain settleMarket tx. Buffer = AI round-trip
+// headroom (120s) + on-chain settlement execution (~60s).
+const AI_SETTLE_BUFFER_SEC = 120 + ONCHAIN_SETTLEMENT_SEC;  // 180s total
 
 // QStash pay-as-you-go plan supports up to 1 year delay.
 // Leave a 1-day buffer to avoid edge-case rejections.
@@ -30,24 +37,30 @@ type ScheduleIds = {
 
 /**
  * Derive rollover lead and challenge duration proportionally using the
- * same integer-division formulas as MarketLifecycleFacet.sol.
+ * same integer-division formulas as MarketLifecycleFacet.sol, then add
+ * the observed on-chain execution time so each step *completes* before
+ * its logical deadline rather than merely *starting* before it.
  *
- * Examples:
- *   1 year  → rollover ~30.4 d, challenge 24 h
- *   1 month → rollover 2.5 d,   challenge ~2 h
- *   1 week  → rollover 14 h,    challenge ~28 min
- *   24 h    → rollover 2 h,     challenge ~4 min
- *   1 h     → rollover 5 min,   challenge 1 min (clamped)
+ * Effective trigger offsets from T0:
+ *   rollover      fires at  T0 - (duration/12  + ROLLOVER_EXECUTION_SEC)
+ *   settlement    fires at  T0 - (duration/365 + AI_PRICE_DISCOVERY_SEC)
+ *
+ * Examples (trigger lead before T0):
+ *   1 year  → rollover ~30.4 d + 2.5 m, challenge 24 h  + 1.5 m
+ *   1 month → rollover 2.5 d  + 2.5 m,  challenge ~2 h  + 1.5 m
+ *   1 week  → rollover 14 h   + 2.5 m,  challenge ~28 m + 1.5 m
+ *   24 h    → rollover 2 h    + 2.5 m,  challenge ~4 m  + 1.5 m
+ *   1 h     → rollover 7.5 min (clamped), challenge 2.5 min (clamped)
  */
 function proportionalDurations(marketDurationSec: number) {
   return {
     rolloverLead: Math.max(
       MIN_ROLLOVER_LEAD_SEC,
-      Math.floor(marketDurationSec / ROLLOVER_DIVISOR),
+      Math.floor(marketDurationSec / ROLLOVER_DIVISOR) + ROLLOVER_EXECUTION_SEC,
     ),
     challengeDuration: Math.max(
       MIN_CHALLENGE_DURATION_SEC,
-      Math.floor(marketDurationSec / CHALLENGE_DIVISOR),
+      Math.floor(marketDurationSec / CHALLENGE_DIVISOR) + AI_PRICE_DISCOVERY_SEC,
     ),
   };
 }
@@ -116,8 +129,14 @@ async function publishOrDefer(
 /**
  * Schedule the three lifecycle triggers for a market:
  *   1. Rollover window start  (T0 - rolloverLead)
- *   2. Settlement start       (T0 - challengeDuration)  — propose price, open challenge window
- *   3. Settlement finalize    (T0)                       — finalize on-chain if undisputed
+ *      Includes ROLLOVER_EXECUTION_SEC (~2.5 min) so the child market is
+ *      fully deployed and linked before the rollover deadline.
+ *   2. Settlement start       (T0 - challengeDuration)
+ *      Includes AI_PRICE_DISCOVERY_SEC (~1.5 min) so the AI job completes
+ *      and the challenge window opens early enough to expire right at T0.
+ *   3. Settlement finalize    (T0 + AI_SETTLE_BUFFER_SEC)
+ *      Fires after T0 with enough buffer for both AI latency and the
+ *      on-chain settleMarket tx (~1 min) to confirm.
  *
  * T0 = settlementDateUnix (the date the market is fully settled).
  * The settlement START fires early so the challenge window expires right
@@ -125,8 +144,10 @@ async function publishOrDefer(
  *
  * Rollover lead and challenge duration are computed **proportionally** to
  * the market's total duration, using a 1-year contract as the reference
- * baseline (30-day rollover lead, 24-hour challenge window). Explicit
- * overrides via opts still take precedence.
+ * baseline (30-day rollover lead, 24-hour challenge window). On-chain
+ * execution overheads are added on top so triggers fire early enough for
+ * each step to *complete* before its deadline. Explicit overrides via
+ * opts still take precedence (but callers should include execution time).
  *
  * If any trigger is more than ~364 days out, a deferred "reschedule"
  * message is published instead, which chains forward until reachable.
@@ -213,7 +234,12 @@ export async function scheduleMarketLifecycle(
     marketDurationHours: Math.round(marketDuration / 3600 * 10) / 10,
     rolloverLeadHours: Math.round(rolloverLead / 3600 * 10) / 10,
     challengeDurationHours: Math.round(challengeDuration / 3600 * 10) / 10,
-    aiSettleBufferSec: AI_SETTLE_BUFFER_SEC,
+    executionBuffers: {
+      rolloverExecSec: ROLLOVER_EXECUTION_SEC,
+      aiPriceDiscoverySec: AI_PRICE_DISCOVERY_SEC,
+      onchainSettlementSec: ONCHAIN_SETTLEMENT_SEC,
+      totalFinalizeBufferSec: AI_SETTLE_BUFFER_SEC,
+    },
     rolloverTriggerAt: rolloverTriggerAt > nowSec ? new Date(rolloverTriggerAt * 1000).toISOString() : 'skipped (past)',
     settlementStartAt: settlementStartAt > nowSec ? new Date(settlementStartAt * 1000).toISOString() : 'skipped (past)',
     finalizeAt: finalizeAt > nowSec ? new Date(finalizeAt * 1000).toISOString() : 'skipped (past)',
