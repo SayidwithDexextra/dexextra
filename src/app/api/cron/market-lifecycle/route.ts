@@ -191,11 +191,13 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     return { ok: true, skipped: true, reason: 'child_already_exists', childId: rolloverConfig.child_market_id };
   }
 
-  // 1. Sync lifecycle on-chain
-  vStep('[2/7] Sync lifecycle on-chain', 'start', shortAddr(effectiveAddress));
-  const syncResult = await syncLifecycleOnChain(effectiveAddress);
-  vStep('[2/7] Sync lifecycle on-chain', syncResult.ok ? 'success' : 'error', syncResult.ok ? `state ${syncResult.previousState} -> ${syncResult.newState}` : (syncResult.error || 'failed'));
-  log('rollover_sync', syncResult.ok ? 'success' : 'error', syncResult as any);
+  // Skip syncLifecycle during rollover — calling it here can push the
+  // on-chain state to ChallengeWindow before settlement_start has
+  // proposed a price, resulting in a $0 settlement window on the UI.
+  // The settlement_start trigger handles the lifecycle sync in
+  // coordination with the AI price proposal.
+  vStep('[2/7] Sync lifecycle on-chain', 'skip', 'deferred to settlement_start');
+  log('rollover_sync', 'skipped', { reason: 'deferred_to_settlement_start' });
 
   // 2. Derive CREATOR wallet for rollover markets (gets 100% of fees)
   vStep('[3/7] Derive creator wallet', 'start');

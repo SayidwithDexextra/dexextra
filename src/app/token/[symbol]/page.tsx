@@ -304,7 +304,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
     const fetchStats = async () => {
       try {
-        const [priceData, tradeStats, chStats, totalMarginRaw, lifecycleState, activeChallengeInfo, proposedEvidence] = await Promise.all([
+        const [priceData, tradeStats, chStats, totalMarginRaw, lifecycleState, activeChallengeInfo, proposedEvidence, settledFlag] = await Promise.all([
           publicClient.readContract({
             address: addr,
             abi: PRICING_ABI,
@@ -345,6 +345,12 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             functionName: 'getProposedEvidence',
             args: [],
           }).catch(() => null),
+          publicClient.readContract({
+            address: addr,
+            abi: [{ type: 'function' as const, name: 'isSettled' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'bool', name: '' }] }],
+            functionName: 'isSettled',
+            args: [],
+          }).catch(() => null),
         ]);
 
         if (cancelled) return;
@@ -363,6 +369,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
 
         const parsedMarkPrice = pd ? Number(pd[4] ?? pd.markPrice ?? 0n) / 1e6 : 0;
         const parsedLifecycleState = lc != null ? Number(lc) : undefined;
+        const parsedIsSettled = settledFlag != null ? Boolean(settledFlag) : undefined;
 
         setOnChainStats({
           markPrice: parsedMarkPrice,
@@ -380,13 +387,14 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           priceChangePercent24h: chStats?.priceChangePercent24h ?? 0,
           totalMarginLocked: totalMarginRaw != null ? Number(totalMarginRaw) / 1e6 : undefined,
           lifecycleState: parsedLifecycleState,
+          isSettled: parsedIsSettled,
           challengeActive: ac ? Boolean(ac[0]) : undefined,
           challenger: ac && ac[0] ? String(ac[1]) : undefined,
           challengedPrice: ac && ac[0] ? Number(ac[2] ?? 0n) / 1e6 : undefined,
           challengeBondEscrowed: ac && ac[0] ? Number(ac[3] ?? 0n) / 1e6 : undefined,
           evidenceUrl: ev ? String(ev[1] || '') || undefined : undefined,
           evidenceHash: ev ? String(ev[0] || '') || undefined : undefined,
-          settlementPrice: parsedLifecycleState === 3 && parsedMarkPrice > 0 ? parsedMarkPrice : undefined,
+          settlementPrice: parsedIsSettled === true && parsedMarkPrice > 0 ? parsedMarkPrice : undefined,
         });
       } catch (err) {
         console.warn('[marketStats] Failed to fetch stats:', err);
@@ -1174,7 +1182,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     }));
     const moreTagsCount = categories.length > 3 ? categories.length - 3 : undefined;
 
-    const onChainSettled = onChainStats?.lifecycleState === 3;
+    const onChainSettled = onChainStats?.isSettled === true;
     const status: 'live' | 'pending' | 'inactive' | 'settlement' | 'settled' = 
       onChainSettled ? 'settled' :
       market.market_status === 'ACTIVE' ? 'live' :

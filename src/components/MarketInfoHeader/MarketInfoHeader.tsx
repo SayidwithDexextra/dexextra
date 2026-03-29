@@ -37,6 +37,7 @@ export interface MarketStatsOnChain {
   totalMarginLocked?: number;
   // Lifecycle state (on-chain)
   lifecycleState?: number; // 1=Rollover, 2=ChallengeWindow, 3=Settled
+  isSettled?: boolean; // true only after settleMarket() tx confirmed
   challengeActive?: boolean;
   challenger?: string;
   challengedPrice?: number;
@@ -386,14 +387,14 @@ export default function MarketInfoHeader({
   const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
   const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 1;
 
-  // Only show "settled" when the on-chain lifecycle confirms it (lifecycleState === 3).
-  // If on-chain data is available but lifecycle isn't Settled, downgrade to "settlement".
+  // Only show "settled" when the on-chain isSettled() confirms settleMarket() has executed.
+  // Downgrade to "settlement" if isSettled is false OR hasn't loaded yet.
   const effectiveStatus = useMemo(() => {
-    if (status === 'settled' && marketStats?.lifecycleState != null && marketStats.lifecycleState !== 3) {
+    if (status === 'settled' && marketStats?.isSettled !== true) {
       return 'settlement' as const;
     }
     return status;
-  }, [status, marketStats?.lifecycleState]);
+  }, [status, marketStats?.isSettled]);
 
   const handleWatchlistClick = () => {
     if (!isWatchlistLoading && !isWatchlistDisabled && onWatchlistToggle) {
