@@ -15,6 +15,14 @@ interface SimilarMarket {
   icon_image_url?: string | null;
 }
 
+const LEGACY_SYMBOL_RE = /-legacy\d+$/i;
+
+function isLegacyMarket(market: SimilarMarket): boolean {
+  if (LEGACY_SYMBOL_RE.test(market.symbol)) return true;
+  if (/\(Legacy \d+\)/i.test(market.name)) return true;
+  return false;
+}
+
 interface SimilarMarketsProps {
   marketName: string;
   marketDescription?: string;
@@ -134,8 +142,9 @@ export default function SimilarMarkets({
         }
       }
 
-      // Sort by score if available, otherwise keep original order
-      const sorted = allMatches.sort((a, b) => {
+      const filtered = allMatches.filter((m) => !isLegacyMarket(m));
+
+      const sorted = filtered.sort((a, b) => {
         const scoreA = (a as any).score ?? 0;
         const scoreB = (b as any).score ?? 0;
         return scoreB - scoreA;

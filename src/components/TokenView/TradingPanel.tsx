@@ -1480,49 +1480,94 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         const durationPreflight = Date.now() - startTimePreflight;
         console.log(`✅ [RPC] Preflight check passed in ${durationPreflight}ms`);
       } catch (preflightErr: any) {
-        // Diagnostic logging for market order preflight failures
+        // Comprehensive vault diagnostics for preflight failures
         let diagAvailable: bigint | null = null;
+        let diagPositionCount: number | null = null;
+        let diagTotalMarginUsed: bigint | null = null;
+        let diagUserCollateral: bigint | null = null;
+        let diagUnifiedSummary: any = null;
         let diagPosition: { size: string; entry: string } | null = null;
+        let diagZeroSizePositions = 0;
         try {
           const obAddr = typeof (contracts.obOrderPlacement as any)?.getAddress === 'function'
             ? await (contracts.obOrderPlacement as any).getAddress()
             : ((contracts.obOrderPlacement as any)?.target || (contracts.obOrderPlacement as any)?.address);
-          diagAvailable = await contracts.vault.getAvailableCollateral(signerAddr);
-          if (mktIdHex && (contracts.vault as any)?.getPositionSummary) {
-            const ps = await (contracts.vault as any).getPositionSummary(signerAddr, mktIdHex);
-            diagPosition = { size: BigInt(ps?.[0] ?? 0).toString(), entry: BigInt(ps?.[1] ?? 0).toString() };
+
+          // Parallel vault reads for speed
+          const [avail, posCount, marginUsed, collateral, unified, posSummary] = await Promise.allSettled([
+            contracts.vault.getAvailableCollateral(signerAddr),
+            (contracts.vault as any).getUserPositionCount?.(signerAddr),
+            (contracts.vault as any).getTotalMarginUsed?.(signerAddr),
+            (contracts.vault as any).userCollateral?.(signerAddr),
+            (contracts.vault as any).getUnifiedMarginSummary?.(signerAddr),
+            mktIdHex ? (contracts.vault as any).getPositionSummary?.(signerAddr, mktIdHex) : Promise.resolve(null),
+          ]);
+
+          diagAvailable = avail.status === 'fulfilled' ? BigInt(avail.value ?? 0) : null;
+          diagPositionCount = posCount.status === 'fulfilled' ? Number(posCount.value ?? 0) : null;
+          diagTotalMarginUsed = marginUsed.status === 'fulfilled' ? BigInt(marginUsed.value ?? 0) : null;
+          diagUserCollateral = collateral.status === 'fulfilled' ? BigInt(collateral.value ?? 0) : null;
+          if (unified.status === 'fulfilled' && unified.value) {
+            const u = unified.value;
+            diagUnifiedSummary = {
+              totalCollateral: u[0]?.toString(),
+              marginUsedInPositions: u[1]?.toString(),
+              marginReservedForOrders: u[2]?.toString(),
+              availableMargin: u[3]?.toString(),
+              realizedPnL: u[4]?.toString(),
+              unrealizedPnL: u[5]?.toString(),
+              totalCommitted: u[6]?.toString(),
+              isHealthy: u[7],
+            };
           }
-          console.error('[DIAG][market-preflight] diagnostics', {
+          if (posSummary.status === 'fulfilled' && posSummary.value) {
+            const ps = posSummary.value;
+            diagPosition = { size: BigInt(ps[0] ?? 0).toString(), entry: BigInt(ps[1] ?? 0).toString() };
+          }
+
+          // Count zero-size positions (stale entries that bloat the array)
+          if (diagPositionCount !== null && diagPositionCount > 5) {
+            try {
+              const positions = await contracts.vault.getUserPositions(signerAddr);
+              if (Array.isArray(positions)) {
+                diagZeroSizePositions = positions.filter((p: any) => BigInt(p?.size ?? 0) === 0n).length;
+              }
+            } catch {}
+          }
+
+          console.warn('[DIAG][market-preflight] FULL VAULT DIAGNOSTICS', {
             orderBookAddress: obAddr,
             signerAddress: signerAddr,
             uiAddress: address,
             addressMatch: signerAddr.toLowerCase() === (address || '').toLowerCase(),
-            availableCollateral: diagAvailable.toString(),
-            availableUSD: ethers.formatUnits(diagAvailable, 6),
-            existingPosition: diagPosition,
-            sizeWei: sizeWei.toString(),
-            isBuy,
-            slippageBps,
-            bestBid: bestBid.toString(),
-            bestAsk: bestAsk.toString(),
+            userCollateralRaw: diagUserCollateral?.toString(),
+            userCollateralUSD: diagUserCollateral ? ethers.formatUnits(diagUserCollateral, 6) : null,
+            availableCollateralUSD: diagAvailable ? ethers.formatUnits(diagAvailable, 6) : null,
+            totalMarginUsedUSD: diagTotalMarginUsed ? ethers.formatUnits(diagTotalMarginUsed, 6) : null,
+            positionCount: diagPositionCount,
+            zeroSizePositions: diagZeroSizePositions,
+            unifiedSummary: diagUnifiedSummary,
+            existingPositionOnThisMarket: diagPosition,
+            order: { sizeWei: sizeWei.toString(), isBuy, slippageBps },
+            book: { bestBid: bestBid.toString(), bestAsk: bestAsk.toString() },
             marketIdBytes32: mktIdHex || 'unknown',
             revertReason: preflightErr?.reason || preflightErr?.shortMessage || preflightErr?.message,
           });
         } catch (diagErr) {
           console.warn('[DIAG][market-preflight] logging failed', diagErr);
         }
-        console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+        // Use console.warn (not console.error) to avoid triggering Next.js dev error overlay
+        console.warn(`⚠️ [RPC] Preflight check failed:`, preflightErr?.reason || preflightErr?.shortMessage || preflightErr?.message);
         const reason = preflightErr?.reason || preflightErr?.message || '';
         if (reason.includes('!balance')) {
           const notional6 = (sizeWei * referencePrice) / 10n ** 18n;
           const marginNeeded6 = (notional6 * 15000n) / 10000n;
           if (diagAvailable !== null && diagAvailable > marginNeeded6 * 2n) {
-            // User has ample collateral — the !balance is from the book/counterparty side.
-            // The preflight uses a direct staticCall, but the actual execution goes through
-            // the gasless session path which may handle this differently. Continue instead of blocking.
+            // User has ample collateral — skip the preflight block and continue to gasless execution.
             console.warn(
-              `⚠️ [RPC] Preflight !balance but user has ample collateral ($${ethers.formatUnits(diagAvailable, 6)} >> $${ethers.formatUnits(marginNeeded6, 6)} needed). ` +
-              `Skipping preflight block — will attempt gasless execution.`
+              `⚠️ [RPC] Preflight !balance but user has ample collateral (available: $${ethers.formatUnits(diagAvailable, 6)}, ` +
+              `needed: $${ethers.formatUnits(marginNeeded6, 6)}, userCollateralRaw: ${diagUserCollateral?.toString() ?? '?'}). ` +
+              `Continuing to gasless execution path.`
             );
           } else {
             throw new Error('Insufficient available collateral. Please deposit more USDC using the "Deposit" button in the header.');

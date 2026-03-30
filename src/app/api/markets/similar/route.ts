@@ -272,6 +272,14 @@ function uniqStrings(xs: Array<string | null | undefined>) {
   return out;
 }
 
+const LEGACY_SYMBOL_RE = /-legacy\d+$/i;
+
+function isLegacyMarket(market: { symbol?: string; name?: string }): boolean {
+  if (market.symbol && LEGACY_SYMBOL_RE.test(market.symbol)) return true;
+  if (market.name && /\(Legacy \d+\)/i.test(market.name)) return true;
+  return false;
+}
+
 function escapeForSupabaseOr(term: string) {
   // Supabase `.or()` strings are comma-delimited; remove commas to avoid breaking the filter.
   return term.replace(/,/g, ' ').trim();
@@ -480,6 +488,7 @@ export async function POST(request: NextRequest) {
 
     const scored = combined
       ? candidates
+          .filter((m) => !isLegacyMarket(m))
           .map((m) => {
             const { score, reasons } = computeSimilarity({ queryNormalized, queryTokens, market: m });
             return { market: m, score, reasons };
@@ -515,7 +524,7 @@ export async function POST(request: NextRequest) {
         score: x.score,
         reasons: x.reasons,
       })),
-      metric_url_duplicates: metricUrlMatches.map((m) => ({
+      metric_url_duplicates: metricUrlMatches.filter((m) => !isLegacyMarket(m)).map((m) => ({
         id: m.id,
         market_identifier: m.market_identifier,
         symbol: m.symbol,

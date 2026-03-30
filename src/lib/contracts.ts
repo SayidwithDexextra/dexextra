@@ -47,6 +47,8 @@ const CoreVaultFallbackABI = [
   "function userCollateral(address user) external view returns (uint256)",
   "function getUnifiedMarginSummary(address user) external view returns (uint256, uint256, uint256, uint256, int256, int256, uint256, bool)",
   "function getAvailableCollateral(address user) external view returns (uint256)",
+  "function getUserPositionCount(address user) external view returns (uint256)",
+  "function getTotalMarginUsed(address user) external view returns (uint256)",
   // Margin management on existing positions
   "function topUpPositionMargin(bytes32 marketId, uint256 amount) external",
   "function releaseMargin(address user, bytes32 marketId, uint256 amount) external",

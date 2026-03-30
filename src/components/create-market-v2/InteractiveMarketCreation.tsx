@@ -1276,9 +1276,17 @@ export function InteractiveMarketCreation({
     name: string;
     metric_url: string | null;
   };
+  const SIMILAR_MARKETS_SESSION_KEY = 'similar_markets_popup_shown';
   const [similarMarkets, setSimilarMarkets] = React.useState<SimilarMarketMatch[]>([]);
   const [similarMarketsLoading, setSimilarMarketsLoading] = React.useState(false);
-  const [similarMarketsAcknowledged, setSimilarMarketsAcknowledged] = React.useState(initialState?.similarMarketsAcknowledged ?? false);
+  const [similarMarketsAcknowledged, setSimilarMarketsAcknowledged] = React.useState(() => {
+    if (initialState?.similarMarketsAcknowledged) return true;
+    try {
+      return sessionStorage.getItem(SIMILAR_MARKETS_SESSION_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [metricUrlDuplicates, setMetricUrlDuplicates] = React.useState<MetricUrlDuplicate[]>([]);
   const [metricUrlBlockedSource, setMetricUrlBlockedSource] = React.useState<string | null>(null);
 
@@ -2517,7 +2525,6 @@ export function InteractiveMarketCreation({
 
     console.log('[SimilarMarkets] scheduling search for', JSON.stringify(query));
     setSimilarMarketsLoading(true);
-    setSimilarMarketsAcknowledged(false);
 
     const controller = new AbortController();
 
@@ -2539,10 +2546,11 @@ export function InteractiveMarketCreation({
           const json = await res.json().catch(() => ({}));
           console.log('[SimilarMarkets] API response', JSON.stringify({ status: res.status, matchCount: json?.matches?.length, matches: json?.matches?.map((m: any) => ({ name: m.name, symbol: m.symbol, score: m.score })) }));
           if (!controller.signal.aborted && Array.isArray(json?.matches)) {
+            const legacyRe = /-legacy\d+$/i;
             const relevant = (json.matches as SimilarMarketMatch[]).filter(
-              (m) => m.score >= 0.08
+              (m) => m.score >= 0.08 && !legacyRe.test(m.symbol) && !/\(Legacy \d+\)/i.test(m.name)
             );
-            console.log('[SimilarMarkets] relevant matches (score >= 0.08):', relevant.length, relevant.map((m) => ({ name: m.name, score: m.score })));
+            console.log('[SimilarMarkets] relevant matches (score >= 0.08, non-legacy):', relevant.length, relevant.map((m) => ({ name: m.name, score: m.score })));
             setSimilarMarkets(relevant);
           }
         } catch (err) {
@@ -3322,7 +3330,10 @@ export function InteractiveMarketCreation({
             <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:gap-3">
               <button
                 type="button"
-                onClick={() => setSimilarMarketsAcknowledged(true)}
+                onClick={() => {
+                  setSimilarMarketsAcknowledged(true);
+                  try { sessionStorage.setItem(SIMILAR_MARKETS_SESSION_KEY, 'true'); } catch {}
+                }}
                 className="inline-flex h-9 items-center justify-center rounded-xl bg-white px-5 text-sm font-medium text-black hover:bg-white/90 transition-colors"
               >
                 Continue anyway

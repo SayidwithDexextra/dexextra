@@ -390,12 +390,11 @@ contract OBTradeExecutionFacet {
         for (uint256 i = 1; i <= s.totalTradeCount; i++) { OrderBookStorage.Trade storage t = s.trades[i]; totalVolume += t.tradeValue; totalFees += t.buyerFee + t.sellerFee; }
     }
 
-    /// @dev Deducts the full fee from the trader in a single atomic call, then
-    ///      splits the collected amount between the protocol and market owner.
-    ///      The old approach made two separate deductFees calls (80% then 20%),
-    ///      which meant the second call could revert with InsufficientBalance if
-    ///      the first call consumed the trader's remaining collateral -- silently
-    ///      losing the owner's share inside the try/catch.
+    /// @dev Splits the fee into owner share and protocol share, deducting each
+    ///      directly from the trader via separate deductFees calls. This avoids
+    ///      transferCollateral (which only checks userCollateral, ignoring
+    ///      userCrossChainCredit) and ensures cross-chain-deposited traders can
+    ///      pay fees without reverting.
     function _distributeFee(
         OrderBookStorage.State storage s,
         address trader,
@@ -404,7 +403,6 @@ contract OBTradeExecutionFacet {
         address protocolAddr,
         address ownerAddr
     ) internal {
-        // Determine valid recipients
         bool hasProtocol = protocolAddr != address(0);
         bool hasOwner    = ownerAddr    != address(0);
         if (!hasProtocol && !hasOwner) return;
@@ -412,11 +410,13 @@ contract OBTradeExecutionFacet {
         uint256 toProtocol = Math.mulDiv(totalFee, protocolShareBps, 10000);
 
         if (hasProtocol && hasOwner) {
-            try s.vault.deductFees(trader, totalFee, ownerAddr) {
-                if (toProtocol > 0) {
-                    s.vault.transferCollateral(ownerAddr, protocolAddr, toProtocol);
-                }
-            } catch { }
+            uint256 toOwner = totalFee > toProtocol ? totalFee - toProtocol : 0;
+            if (toOwner > 0) {
+                try s.vault.deductFees(trader, toOwner, ownerAddr) { } catch { }
+            }
+            if (toProtocol > 0) {
+                try s.vault.deductFees(trader, toProtocol, protocolAddr) { } catch { }
+            }
         } else if (hasProtocol) {
             try s.vault.deductFees(trader, totalFee, protocolAddr) { } catch { }
         } else {
