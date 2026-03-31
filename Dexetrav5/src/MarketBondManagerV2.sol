@@ -30,6 +30,11 @@ interface IOBTradeStatsFacetForBondV2 {
     function getTradeStatistics() external view returns (uint256 totalTrades, uint256 totalVolume, uint256 totalFees);
 }
 
+interface IMarketLifecycleFacetForBond {
+    function getLifecycleState() external view returns (uint8);
+    function getMarketLineage() external view returns (address parent, address child);
+}
+
 interface IOldMarketBondManagerV1 {
     function vault() external view returns (address);
     function bondByMarket(bytes32 marketId) external view returns (address creator, uint96 amount, bool refunded);
@@ -51,6 +56,7 @@ contract MarketBondManagerV2 {
     error InsufficientAvailable();
     error InvalidPenaltyBps();
     error MigrationSourceInvalid();
+    error RolloverNotConfirmed();
 
     // ============ Events ============
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
@@ -60,6 +66,7 @@ contract MarketBondManagerV2 {
     event BondPenaltyCollected(bytes32 indexed marketId, address indexed recipient, uint256 feeAmount);
     event BondPosted(bytes32 indexed marketId, address indexed creator, uint256 amount);
     event BondRefunded(bytes32 indexed marketId, address indexed creator, uint256 amount);
+    event BondRefundedOnRollover(bytes32 indexed marketId, address indexed creator, uint256 amount, address indexed childMarket);
     event BondImported(
         bytes32 indexed marketId,
         address indexed oldManager,
@@ -77,14 +84,15 @@ contract MarketBondManagerV2 {
     uint256 public defaultBondAmount; // 6 decimals (USDC precision in CoreVault)
     uint256 public minBondAmount;     // inclusive
     uint256 public maxBondAmount;     // inclusive (0 = no max)
-    // Penalty charged at market creation, applied against the bond principal.
-    // Example: 200 bps (2%) ⇒ bond=100 ⇒ fee=2 ⇒ refundable=98.
+    // Penalty applied only when the creator deactivates the market early.
+    // If the market completes its lifecycle (settlement/rollover), the full bond is returned.
+    // Example: 500 bps (5%) ⇒ bond=100 ⇒ deactivation fee=5 ⇒ refunded=95.
     uint16 public creationPenaltyBps; // 0..10000
     address public penaltyRecipient;
 
     struct BondInfo {
         address creator;
-        uint96 amount;   // refundable amount (6 decimals)
+        uint96 amount;   // full escrowed bond (6 decimals); penalty deducted only on deactivation
         bool refunded;
     }
 
@@ -229,16 +237,7 @@ contract MarketBondManagerV2 {
 
         vault.deductFees(creator, amount, address(this));
 
-        uint256 fee = (amount * uint256(creationPenaltyBps)) / 10_000;
-        uint256 refundable = amount - fee;
-        if (fee != 0) {
-            address recipient = penaltyRecipient;
-            if (recipient == address(0)) revert InvalidAddress();
-            vault.deductFees(address(this), fee, recipient);
-            emit BondPenaltyCollected(marketId, recipient, fee);
-        }
-
-        bondByMarket[marketId] = BondInfo({creator: creator, amount: uint96(refundable), refunded: false});
+        bondByMarket[marketId] = BondInfo({creator: creator, amount: uint96(amount), refunded: false});
         emit BondPosted(marketId, creator, amount);
     }
 
@@ -246,7 +245,7 @@ contract MarketBondManagerV2 {
      * @dev Called by FuturesMarketFactory BEFORE it de-registers and untracks a market.
      *
      * Enforces a conservative "unused market" rule (no trades, no open orders, no margin locked)
-     * then refunds the bond back to the original creator.
+     * then applies the deactivation penalty and refunds the remainder to the creator.
      */
     function onMarketDeactivate(bytes32 marketId, address orderBook, address caller) external onlyFactory {
         BondInfo storage b = bondByMarket[marketId];
@@ -263,10 +262,54 @@ contract MarketBondManagerV2 {
         uint256 totalLocked6 = IOBViewFacetForBondV2(orderBook).totalMarginLockedInMarket();
         if (totalTrades != 0 || buyLevels != 0 || sellLevels != 0 || totalLocked6 != 0) revert MarketHasActivity();
 
-        vault.deductFees(address(this), uint256(b.amount), b.creator);
+        uint256 fullAmount = uint256(b.amount);
+        uint256 fee = (fullAmount * uint256(creationPenaltyBps)) / 10_000;
+        uint256 refundable = fullAmount - fee;
+
+        if (fee != 0) {
+            address recipient = penaltyRecipient;
+            if (recipient == address(0)) revert InvalidAddress();
+            vault.deductFees(address(this), fee, recipient);
+            emit BondPenaltyCollected(marketId, recipient, fee);
+        }
+
+        if (refundable > 0) {
+            vault.deductFees(address(this), refundable, b.creator);
+        }
 
         b.refunded = true;
-        emit BondRefunded(marketId, b.creator, uint256(b.amount));
+        emit BondRefunded(marketId, b.creator, refundable);
+    }
+
+    /**
+     * @dev Refund the bond when a market's rollover is enacted.
+     *
+     * Callable by the factory OR the bond manager owner (admin). This dual-auth
+     * allows rollover refunds without redeploying the factory contract.
+     *
+     * Verifies the order book is in rollover state (or later) with a linked child market,
+     * then refunds the full bond back to the original creator (no deactivation penalty).
+     */
+    function onMarketRollover(bytes32 marketId, address orderBook) external {
+        if (msg.sender != factory && msg.sender != owner) revert OnlyFactory();
+        BondInfo storage b = bondByMarket[marketId];
+        if (b.creator == address(0)) revert BondNotFound();
+        if (b.refunded) revert BondAlreadyRefunded();
+
+        (, bytes32 obMarketId,,) = IOBViewFacetForBondV2(orderBook).marketStatic();
+        if (obMarketId != marketId) revert MarketMismatch();
+
+        // Lifecycle state: 0=Unsettled, 1=Rollover, 2=ChallengeWindow, 3=Settled
+        uint8 lifecycleState = IMarketLifecycleFacetForBond(orderBook).getLifecycleState();
+        (, address childMarket) = IMarketLifecycleFacetForBond(orderBook).getMarketLineage();
+        if (lifecycleState < 1 || childMarket == address(0)) revert RolloverNotConfirmed();
+
+        if (b.amount > 0) {
+            vault.deductFees(address(this), uint256(b.amount), b.creator);
+        }
+
+        b.refunded = true;
+        emit BondRefundedOnRollover(marketId, b.creator, uint256(b.amount), childMarket);
     }
 }
 

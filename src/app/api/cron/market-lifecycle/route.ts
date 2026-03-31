@@ -502,6 +502,35 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   await Promise.allSettled(lineageTasks);
 
+  // 8. Refund the parent market's creation bond to the creator
+  if (effectiveAddress && market.market_id_bytes32) {
+    try {
+      const bondManagerAddr = process.env.MARKET_BOND_MANAGER_ADDRESS;
+      if (bondManagerAddr && ethers.isAddress(bondManagerAddr)) {
+        vStep('[8] Refund bond', 'start', `market ${shortAddr(effectiveAddress)}`);
+        const provider = getRpcProvider();
+        const adminWallet = provider ? getAdminWallet(provider) : null;
+        if (adminWallet) {
+          const bondAbi = ['function onMarketRollover(bytes32 marketId, address orderBook) external'];
+          const bondMgr = new ethers.Contract(bondManagerAddr, bondAbi, adminWallet);
+          const bondTx = await bondMgr.onMarketRollover(market.market_id_bytes32, effectiveAddress);
+          const bondRc = await bondTx.wait();
+          vStep('[8] Refund bond', 'success', `tx ${bondRc?.hash?.slice(0, 10) || bondTx.hash.slice(0, 10)}...`);
+          log('rollover_bond_refund', 'success', { tx: bondRc?.hash || bondTx.hash, marketIdBytes32: market.market_id_bytes32 });
+        } else {
+          vStep('[8] Refund bond', 'skip', 'no admin wallet');
+          log('rollover_bond_refund', 'skipped', { reason: 'no_admin_wallet' });
+        }
+      } else {
+        vStep('[8] Refund bond', 'skip', 'no bond manager configured');
+        log('rollover_bond_refund', 'skipped', { reason: 'no_bond_manager_address' });
+      }
+    } catch (e: any) {
+      vStep('[8] Refund bond', 'error', e?.shortMessage || e?.message || String(e));
+      log('rollover_bond_refund', 'error', { error: e?.message || String(e) });
+    }
+  }
+
   log('rollover', 'success', {
     parentId: marketId,
     parentRenamedTo: legacySymbol,
