@@ -223,7 +223,7 @@ export default function CryptoMarketTicker({
           pushMarket(id);
         }
 
-        const finalItems = out;
+        const finalItems = out.slice(0, 25);
 
         if (!isMountedRef.current) return;
         setItems(finalItems);
