@@ -16,10 +16,13 @@ interface SimilarMarket {
 }
 
 const LEGACY_SYMBOL_RE = /-legacy\d+$/i;
+const TIMEFRAME_SYMBOL_RE = /-\d{0,2}[a-z]{3}\d{2}-/i;
 
-function isLegacyMarket(market: SimilarMarket): boolean {
+function isExpiredMarket(market: SimilarMarket): boolean {
   if (LEGACY_SYMBOL_RE.test(market.symbol)) return true;
+  if (TIMEFRAME_SYMBOL_RE.test(market.symbol)) return true;
   if (/\(Legacy \d+\)/i.test(market.name)) return true;
+  if (/\([^)]+\s[–\u2013-]\s[^)]+\)\s*$/.test(market.name)) return true;
   return false;
 }
 
@@ -142,7 +145,7 @@ export default function SimilarMarkets({
         }
       }
 
-      const filtered = allMatches.filter((m) => !isLegacyMarket(m));
+      const filtered = allMatches.filter((m) => !isExpiredMarket(m));
 
       const sorted = filtered.sort((a, b) => {
         const scoreA = (a as any).score ?? 0;

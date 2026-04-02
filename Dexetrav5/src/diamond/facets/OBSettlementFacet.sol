@@ -16,12 +16,24 @@ contract OBSettlementFacet {
         _;
     }
 
+    /// @dev Returns true if the challenge window is currently active on-chain.
+    ///      Safe to call even if MarketLifecycleFacet is not installed (returns false).
+    function _isInChallengeWindow() private view returns (bool) {
+        (bool ok, bytes memory data) = address(this).staticcall(
+            abi.encodeWithSignature("isInSettlementChallengeWindow()")
+        );
+        if (!ok || data.length < 32) return false;
+        return abi.decode(data, (bool));
+    }
+
     /**
      * @dev Settle this order book's market at the provided final price.
      *      Oracle-agnostic: price is provided by caller.
+     *      Reverts if the challenge window is still active.
      */
     function settleMarket(uint256 finalPrice) external {
         require(finalPrice > 0, "OB: !price");
+        require(!_isInChallengeWindow(), "OB: challenge window active");
         OrderBookStorage.State storage s = OrderBookStorage.state();
         // 1) Cancel all resting orders and release their reserved margin before settlement
         //    Perform inline to preserve owner auth and avoid cross-facet msg.sender issues

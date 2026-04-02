@@ -273,10 +273,13 @@ function uniqStrings(xs: Array<string | null | undefined>) {
 }
 
 const LEGACY_SYMBOL_RE = /-legacy\d+$/i;
+const TIMEFRAME_SYMBOL_RE = /-\d{0,2}[a-z]{3}\d{2}-/i;
 
-function isLegacyMarket(market: { symbol?: string; name?: string }): boolean {
+function isExpiredMarket(market: { symbol?: string; name?: string }): boolean {
   if (market.symbol && LEGACY_SYMBOL_RE.test(market.symbol)) return true;
+  if (market.symbol && TIMEFRAME_SYMBOL_RE.test(market.symbol)) return true;
   if (market.name && /\(Legacy \d+\)/i.test(market.name)) return true;
+  if (market.name && /\([^)]+\s[–\u2013-]\s[^)]+\)\s*$/.test(market.name)) return true;
   return false;
 }
 
@@ -488,7 +491,7 @@ export async function POST(request: NextRequest) {
 
     const scored = combined
       ? candidates
-          .filter((m) => !isLegacyMarket(m))
+          .filter((m) => !isExpiredMarket(m))
           .map((m) => {
             const { score, reasons } = computeSimilarity({ queryNormalized, queryTokens, market: m });
             return { market: m, score, reasons };
@@ -524,7 +527,7 @@ export async function POST(request: NextRequest) {
         score: x.score,
         reasons: x.reasons,
       })),
-      metric_url_duplicates: metricUrlMatches.filter((m) => !isLegacyMarket(m)).map((m) => ({
+      metric_url_duplicates: metricUrlMatches.filter((m) => !isExpiredMarket(m)).map((m) => ({
         id: m.id,
         market_identifier: m.market_identifier,
         symbol: m.symbol,

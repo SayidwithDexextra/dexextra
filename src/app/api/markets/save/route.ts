@@ -4,7 +4,7 @@ import { ethers } from 'ethers';
 import path from 'path';
 import { readFileSync } from 'node:fs';
 import { archivePage } from '@/lib/archivePage';
-import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { scheduleMarketLifecycle, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 import { suggestCategories } from '@/lib/suggestCategories';
 import {
   OBAdminFacetABI,
@@ -238,8 +238,7 @@ export async function POST(req: Request) {
     const speedRunConfig = (rawSpeedRunConfig && typeof rawSpeedRunConfig === 'object')
       ? {
           rolloverLeadSeconds: Number(rawSpeedRunConfig.rolloverLeadSeconds) || 0,
-          challengeDurationSeconds: Number(rawSpeedRunConfig.challengeDurationSeconds) || 0,
-          settlementWindowSeconds: Number(rawSpeedRunConfig.settlementWindowSeconds) || 0,
+          challengeWindowSeconds: Number(rawSpeedRunConfig.challengeWindowSeconds) || 0,
         }
       : null;
 
@@ -370,9 +369,8 @@ export async function POST(req: Request) {
     const marketConfig = {
       ...(speedRunConfig ? {
         speed_run: true,
-        settlement_window_seconds: speedRunConfig.settlementWindowSeconds,
+        challenge_window_seconds: speedRunConfig.challengeWindowSeconds,
         rollover_lead_seconds: speedRunConfig.rolloverLeadSeconds,
-        challenge_duration_seconds: speedRunConfig.challengeDurationSeconds,
       } : {}),
     };
 
@@ -535,15 +533,16 @@ export async function POST(req: Request) {
         const stlDate = Number(settlementDate);
         const scheduledNow = Math.floor(Date.now() / 1000);
         const marketDuration = Math.max(1, stlDate - scheduledNow);
-        const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? Math.max(300, Math.floor(marketDuration / 12));
-        const challengeDuration = speedRunConfig?.challengeDurationSeconds ?? Math.max(60, Math.floor(marketDuration / 365));
+        const proportional = proportionalDurations(marketDuration);
+        const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? proportional.rolloverLead;
+        const challengeWindow = speedRunConfig?.challengeWindowSeconds ?? proportional.challengeWindow;
 
         const scheduleIds = await scheduleMarketLifecycle(marketIdUuid, stlDate, {
           marketAddress: marketAddress || undefined,
           symbol: symbolStr || effectiveIdentifier,
           ...(speedRunConfig ? {
             rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
-            challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
+            challengeWindowSeconds: speedRunConfig.challengeWindowSeconds,
           } : {}),
         });
         logStep('qstash_schedule', 'success', { scheduleIds, speedRun: Boolean(speedRunConfig) });
@@ -559,8 +558,9 @@ export async function POST(req: Request) {
               qstash_lifecycle: {
                 schedule_ids: scheduleIds,
                 rollover_trigger_at: stlDate - rolloverLead,
+                challenge_open_at: stlDate,
                 settlement_trigger_at: stlDate,
-                finalize_trigger_at: stlDate + challengeDuration,
+                finalize_trigger_at: stlDate + challengeWindow + ONCHAIN_SETTLE_BUFFER_SEC,
                 scheduled_at: scheduledNow,
               },
             },

@@ -183,8 +183,7 @@ export async function createMarketOnChain(params: {
   settlementDate?: number;
   speedRunConfig?: {
     rolloverLeadSeconds: number;
-    challengeDurationSeconds: number;
-    settlementWindowSeconds: number;
+    challengeWindowSeconds: number;
   };
   feeRecipient?: string;
   onProgress?: (event: ProgressEvent) => void;

@@ -1,0 +1,2980 @@
+{
+  "metadata": {
+    "coreVaultAddress": "0x7bfFc6cEd5466925Aa45F0936De367a96376eAAd",
+    "collateralToken": "0xec7dEb757C6F77e3F5a4E1906548131752B632b4",
+    "collateralDecimals": 6,
+    "chainId": "999",
+    "blockNumber": "31217155",
+    "timestamp": "2026-03-31T12:25:54.228Z",
+    "snapshotVersion": "1.0.0"
+  },
+  "summary": {
+    "totalUsers": 47,
+    "totalMarkets": 18,
+    "totalPositions": 91,
+    "totalPendingOrders": 232,
+    "totalRegisteredOrderBooks": 18,
+    "sumUserCollateral": "1810899333",
+    "sumUserCrossChainCredit": "12729887615810",
+    "sumUserRealizedPnL": "-9853890417910978523784",
+    "vaultUsdcBalance": "0",
+    "collateralAccountingMatch": false,
+    "vaultUsdcFormatted": "0.0",
+    "sumCollateralFormatted": "1810.899333",
+    "sumCreditFormatted": "12729887.61581"
+  },
+  "globalConfig": {
+    "baseMmrBps": "1000",
+    "penaltyMmrBps": "1000",
+    "maxMmrBps": "2000",
+    "scalingSlopeBps": "0",
+    "priceGapSlopeBps": "0",
+    "mmrLiquidityDepthLevels": "1",
+    "totalCollateralDeposited": "110000000",
+    "totalMarginLocked": "49348395240"
+  },
+  "users": [
+    {
+      "address": "0x84b1e48e10D6326eD70a1947AaABF49AC8e290C7",
+      "userCollateral": "154339325",
+      "userCrossChainCredit": "57252228",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "168038656",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x64b33d4636e0a5604b0280c363eea5c2261dc15d9568b34de17adc188cb86e7b",
+          "size": "-10000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "15000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2083333"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "-442786700237278",
+          "entryPrice": "90336950000",
+          "marginLocked": "59999998",
+          "socializedLossAccrued6": "168038656",
+          "haircutUnits18": "442786700237278",
+          "liquidationPrice": "188201975402"
+        },
+        {
+          "marketId": "0x108e351a9682324852d83a73ff8833507658b408f1ea8ce58f27912be55d44bc",
+          "size": "-1000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "1500000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2083333"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x35a8a797fefe3b3fafb12296fc195765ebba1434cd61f139fc3615207160b5aa",
+          "marginReserved": "1500000",
+          "timestamp": "1765681774"
+        },
+        {
+          "orderId": "0x8a83594b4293da82a000553fda7c0dfa00f8b9955dcd4c41cb44ebff44dfe99d",
+          "marginReserved": "9999999",
+          "timestamp": "1765846973"
+        },
+        {
+          "orderId": "0xd792d8f3c32f73fd96e36c9dd95a564decad8ee5ccef59cf1f36ccba25ac283a",
+          "marginReserved": "7500000",
+          "timestamp": "1765678617"
+        },
+        {
+          "orderId": "0x420af7a751ad3196baba8d3fcc7558e82f3c2b12e77ed7556841033524753fbc",
+          "marginReserved": "1000000",
+          "timestamp": "1765846559"
+        }
+      ],
+      "marketIds": [
+        "0x64b33d4636e0a5604b0280c363eea5c2261dc15d9568b34de17adc188cb86e7b",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x108e351a9682324852d83a73ff8833507658b408f1ea8ce58f27912be55d44bc"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xddA468df398DDeEcC7d589Ef3195c828Df4812B4",
+      "userCollateral": "135691",
+      "userCrossChainCredit": "212440888",
+      "userRealizedPnL": "35371844724237031290699",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x64b33d4636e0a5604b0280c363eea5c2261dc15d9568b34de17adc188cb86e7b",
+          "size": "-4100000000000000000",
+          "entryPrice": "500000",
+          "marginLocked": "3075000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "1041666"
+        },
+        {
+          "marketId": "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+          "size": "2724637681159420289",
+          "entryPrice": "4960000",
+          "marginLocked": "15557681",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+          "size": "20000000000000000000",
+          "entryPrice": "2224291",
+          "marginLocked": "87916660",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "461021723258629442",
+          "entryPrice": "1000000",
+          "marginLocked": "461021",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "854447106366976761",
+          "entryPrice": "310273593",
+          "marginLocked": "265117848",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "6045068745596433365",
+          "entryPrice": "5178534",
+          "marginLocked": "32945624",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+          "size": "1500000000000000000",
+          "entryPrice": "190000000",
+          "marginLocked": "285000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+          "size": "325000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "325000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0xd96b67f8d678773e2f9edf9a0b7cdafb38bf33ce05ae9e544003a82f25c544a3",
+          "size": "-250000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "375000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2083333"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xf38365cbea5032cb59d83275b0cd68e66c7e046fedfaa95add4fc6f03b2674ec",
+          "marginReserved": "1000000000",
+          "timestamp": "1774796070"
+        }
+      ],
+      "marketIds": [
+        "0x64b33d4636e0a5604b0280c363eea5c2261dc15d9568b34de17adc188cb86e7b",
+        "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+        "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+        "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+        "0xd96b67f8d678773e2f9edf9a0b7cdafb38bf33ce05ae9e544003a82f25c544a3"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x9Dc8Bb2C8E004DC3700029965fA5bd0aa76641D0",
+      "userCollateral": "0",
+      "userCrossChainCredit": "865777750748",
+      "userRealizedPnL": "-45098468532920013390633",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x64b33d4636e0a5604b0280c363eea5c2261dc15d9568b34de17adc188cb86e7b",
+          "size": "14100000000000000000",
+          "entryPrice": "722960",
+          "marginLocked": "7050000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "184162062615101289",
+          "entryPrice": "5435000",
+          "marginLocked": "1001841",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x02e34d2b1d945cdacf9915cdd3bfc008e1949d0929fe1071de4817141d5d2254",
+          "size": "50464705882352941160",
+          "entryPrice": "945504",
+          "marginLocked": "42894999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "-2532250492747518765",
+          "entryPrice": "305000000",
+          "marginLocked": "1158504600",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "635416665"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x842d63b58dc454237d43b04e05e83b8af40a0080265e59337c7845f4e4e5cdd0",
+          "marginReserved": "9900000",
+          "timestamp": "1765479084"
+        },
+        {
+          "orderId": "0xabff9e75c59a4beede08f10c5142d29ba3cca203e0468f5f45269cb920b09405",
+          "marginReserved": "999999999",
+          "timestamp": "1772640908"
+        },
+        {
+          "orderId": "0x7af703d45df953ef2187f98a8a3189718e8c4449674659541517a48b78825af4",
+          "marginReserved": "999999999",
+          "timestamp": "1772640921"
+        },
+        {
+          "orderId": "0xcd00108c3432b4d38a8e6319e82414f38f739b1f9839c08ac7bc3245e03a67ac",
+          "marginReserved": "999999999",
+          "timestamp": "1772640941"
+        },
+        {
+          "orderId": "0xbe81d264977b7e772f8b0aa0be6e40969f61692028f1b3380115269be0c0b318",
+          "marginReserved": "334122312",
+          "timestamp": "1772640958"
+        },
+        {
+          "orderId": "0x4eec519d0b73e34e90a8a4c606eefd06014fbb83d1baa6f5b2a1be38e36fb948",
+          "marginReserved": "1499999998",
+          "timestamp": "1772640972"
+        }
+      ],
+      "marketIds": [
+        "0x64b33d4636e0a5604b0280c363eea5c2261dc15d9568b34de17adc188cb86e7b",
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x02e34d2b1d945cdacf9915cdd3bfc008e1949d0929fe1071de4817141d5d2254",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x67578a5bffc0fF03CF7661DB7eD51360884Fc371",
+      "userCollateral": "0",
+      "userCrossChainCredit": "0",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xDa3bc602Cc3C4BE2E33944E37eFe96003d471a27",
+      "userCollateral": "9998853",
+      "userCrossChainCredit": "11399980002",
+      "userRealizedPnL": "994976160662910781",
+      "userSocializedLoss": "1953299999",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x108e351a9682324852d83a73ff8833507658b408f1ea8ce58f27912be55d44bc",
+          "size": "1000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "1000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x2c8c7039246c5307ada12ba937cd9526acf2453da9007f5b9f91c6b865cdbcae",
+          "size": "-2236636099306642",
+          "entryPrice": "4471000000",
+          "marginLocked": "14999998",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "9314582587"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "999823160662989681",
+          "entryPrice": "1000000",
+          "marginLocked": "999823",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+          "size": "1000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "1000000",
+          "socializedLossAccrued6": "1953299999",
+          "haircutUnits18": "1000000000000000000",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+          "size": "-724637681159420289",
+          "entryPrice": "2760000",
+          "marginLocked": "2999998",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "5749997"
+        },
+        {
+          "marketId": "0xb54d3f45420919aed61141c34b29e4ce46216982d4772302b2c80647d71f30ef",
+          "size": "877192982456140",
+          "entryPrice": "1140000000000",
+          "marginLocked": "999999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xd1156a851e576854cae854f304dbef11e78a4c254cb853e08b1b22f4998c414c",
+          "marginReserved": "1000000",
+          "timestamp": "1765836748"
+        }
+      ],
+      "marketIds": [
+        "0x108e351a9682324852d83a73ff8833507658b408f1ea8ce58f27912be55d44bc",
+        "0x2c8c7039246c5307ada12ba937cd9526acf2453da9007f5b9f91c6b865cdbcae",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+        "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+        "0xb54d3f45420919aed61141c34b29e4ce46216982d4772302b2c80647d71f30ef"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x36Fc730041beA1c86f718Dc5360A3b49856bC97a",
+      "userCollateral": "0",
+      "userCrossChainCredit": "999985792",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+          "size": "12000000000000000000",
+          "entryPrice": "1184027",
+          "marginLocked": "25250004",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xfeDc3AE13DBfED752185410E688588675B393A75",
+      "userCollateral": "0",
+      "userCrossChainCredit": "100903325631",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "9766500000",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+          "size": "-22000000000000000000",
+          "entryPrice": "2210715",
+          "marginLocked": "145062489",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "7337053"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "2003865161184748",
+          "entryPrice": "67529935000",
+          "marginLocked": "140315387",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x2c8c7039246c5307ada12ba937cd9526acf2453da9007f5b9f91c6b865cdbcae",
+          "size": "2236636099306642",
+          "entryPrice": "4471000000",
+          "marginLocked": "9999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+          "size": "5000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "5000000",
+          "socializedLossAccrued6": "9766500000",
+          "haircutUnits18": "5000000000000000000",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x02e34d2b1d945cdacf9915cdd3bfc008e1949d0929fe1071de4817141d5d2254",
+          "size": "-1000000000000000000",
+          "entryPrice": "1500000",
+          "marginLocked": "2250000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "3125000"
+        },
+        {
+          "marketId": "0xa80ef9a8d867ab44b08b5ac0d016cda2fbb9b9483658b0f0b4b956f3175ee9f2",
+          "size": "136986301369863013698",
+          "entryPrice": "7300000",
+          "marginLocked": "999999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xa525f9fad7109f174da9e1d740bbbded5d8c6c7adff395add666fb2c02a8e7f3",
+          "marginReserved": "1000000",
+          "timestamp": "1766364847"
+        }
+      ],
+      "marketIds": [
+        "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x2c8c7039246c5307ada12ba937cd9526acf2453da9007f5b9f91c6b865cdbcae",
+        "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+        "0x02e34d2b1d945cdacf9915cdd3bfc008e1949d0929fe1071de4817141d5d2254",
+        "0xa80ef9a8d867ab44b08b5ac0d016cda2fbb9b9483658b0f0b4b956f3175ee9f2"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xb2E44f98A6A2d9356965865FC1D68310aED5B99b",
+      "userCollateral": "0",
+      "userCrossChainCredit": "998927240",
+      "userRealizedPnL": "-280868140905719016",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+          "size": "-10000000000000000000",
+          "entryPrice": "2110000",
+          "marginLocked": "31650000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "4395833"
+        },
+        {
+          "marketId": "0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2",
+          "size": "-3720000000000000042",
+          "entryPrice": "1250000",
+          "marginLocked": "6975000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2604165"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "628138368154765479",
+          "entryPrice": "304641796",
+          "marginLocked": "191330946",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-3260608966674657",
+          "entryPrice": "4300000",
+          "marginLocked": "21030",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "8958095"
+        },
+        {
+          "marketId": "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+          "size": "-51129972389814909",
+          "entryPrice": "1955800000",
+          "marginLocked": "149999998",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "4074583300"
+        },
+        {
+          "marketId": "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+          "size": "126262626262626262",
+          "entryPrice": "396000000",
+          "marginLocked": "49999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x95350ad034de624abf97a56ab7ae0e6213e99f7d6cfab0089506427b2255f449",
+          "marginReserved": "524998",
+          "timestamp": "1767663728"
+        }
+      ],
+      "marketIds": [
+        "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+        "0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+        "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xC1538bb07d7E526588Be67aBfA31330Df77d7f02",
+      "userCollateral": "0",
+      "userCrossChainCredit": "896319519",
+      "userRealizedPnL": "-11041670000000000000",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2",
+          "size": "3720000000000000042",
+          "entryPrice": "1250000",
+          "marginLocked": "4650000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "-147275405007363",
+          "entryPrice": "67900000000",
+          "marginLocked": "14999998",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "141458322016"
+        },
+        {
+          "marketId": "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+          "size": "5112997238981490",
+          "entryPrice": "1955800000",
+          "marginLocked": "9999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+          "size": "-126262626262626262",
+          "entryPrice": "396000000",
+          "marginLocked": "74999998",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "824999986"
+        },
+        {
+          "marketId": "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+          "size": "-100000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "150000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2083333"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xe76bbe734a47e18e1479c118f7556c57d05d8cf9381bbf7963b75c6a00fa5c43",
+          "marginReserved": "12400",
+          "timestamp": "1767669525"
+        },
+        {
+          "orderId": "0x056e84e200053806123e207063ccb0f7e2d25a84c099e22b2cec237425ceb6ec",
+          "marginReserved": "1000000",
+          "timestamp": "1767669770"
+        },
+        {
+          "orderId": "0xede6e136521c2ccbd09d4df50b26702149cea2d83421eaeea29dedfe8df7c7af",
+          "marginReserved": "12400",
+          "timestamp": "1767668988"
+        },
+        {
+          "orderId": "0xf244d14d83c82adf4d87edde0ced12431f0388f0821afe39f5af152648d6a7ae",
+          "marginReserved": "12400",
+          "timestamp": "1767669295"
+        },
+        {
+          "orderId": "0x3acf7bf3c7deac9d9cb3a26408b48ca24bcdca320f226221b18e068cc359e0d2",
+          "marginReserved": "99999999",
+          "timestamp": "1767852331"
+        },
+        {
+          "orderId": "0x74c73b5616ef505a2af2e4e9d2b95a7f040f3dee4109c416b1e5c4223977986a",
+          "marginReserved": "75000000",
+          "timestamp": "1771816330"
+        },
+        {
+          "orderId": "0x2a77200416e7a5225752be2351950f77671dd6c162fc71ccd3c8f9ba8c33b79c",
+          "marginReserved": "149999998",
+          "timestamp": "1771816375"
+        },
+        {
+          "orderId": "0xe3240cd554ad398fe60a6974e7e73a3e6848d329ce2a6d3a19d7721e21161bcd",
+          "marginReserved": "299999998",
+          "timestamp": "1771816395"
+        }
+      ],
+      "marketIds": [
+        "0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+        "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+        "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x724CbE7b515dab1CE4B0e262990d2E3C47c6CA36",
+      "userCollateral": "200000",
+      "userCrossChainCredit": "5927798539",
+      "userRealizedPnL": "-58181347631187635055",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "15495163147845460",
+          "entryPrice": "69999125000",
+          "marginLocked": "1084644375",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-739604159539239408",
+          "entryPrice": "5102500",
+          "marginLocked": "6046263",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "11064581"
+        },
+        {
+          "marketId": "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+          "size": "-372675205529394768",
+          "entryPrice": "57467500",
+          "marginLocked": "32221497",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "119939580"
+        },
+        {
+          "marketId": "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+          "size": "100000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "100000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x58fcfa6e42af90d2560cf5820766e29ffd651a1c5388fdbf7a850098b9933520",
+          "marginReserved": "222976",
+          "timestamp": "1771016604"
+        },
+        {
+          "orderId": "0x890e12b1eaf2fb0066a526b15c8d2b175756d6c9fcf7891e10cdcfb2d803e6b5",
+          "marginReserved": "321490",
+          "timestamp": "1771016598"
+        },
+        {
+          "orderId": "0x4e22d658129e85499965e1142384364cac183a2ebf82d5b171bfa9464903892a",
+          "marginReserved": "557440",
+          "timestamp": "1771016643"
+        },
+        {
+          "orderId": "0x4adda58edaea6b97ac2393ef1db6a10e9b37a43a7132cb3a8f97380ac85bd943",
+          "marginReserved": "945472",
+          "timestamp": "1771016589"
+        },
+        {
+          "orderId": "0xafad743793e1cba82cdcd4bb468a58bb856990ef1e59bbe50743408b431575ba",
+          "marginReserved": "852503",
+          "timestamp": "1771016581"
+        },
+        {
+          "orderId": "0x6b33eb7b1a6b1a3914770f72ec03febe5a2228c1f347d7b7a9f33a40ed63fa6c",
+          "marginReserved": "11728537",
+          "timestamp": "1771303093"
+        },
+        {
+          "orderId": "0x19383909fe2a656d023bf89188b1f1a768415be61d9335518c5290aaadfbd217",
+          "marginReserved": "5325221",
+          "timestamp": "1771303087"
+        },
+        {
+          "orderId": "0xb5eb8d5a24b8ae31e86a0b5fe1b177631911e8659e54a2e6ee5016c35d6e5140",
+          "marginReserved": "3746001",
+          "timestamp": "1771303090"
+        },
+        {
+          "orderId": "0xe899dae73a923cfe85da5f7740fd7ed1ce34d0dd77fb8fd399c40ea743b4795b",
+          "marginReserved": "824009",
+          "timestamp": "1771016611"
+        },
+        {
+          "orderId": "0x46e2dd6b8f2d5fd3f7af456cc80f4a274289e149bb9523cb89c85195a835eb21",
+          "marginReserved": "60112427",
+          "timestamp": "1772643107"
+        },
+        {
+          "orderId": "0x6b8636d2eb881a1f39c18625fae338ef798720b4698397a6c2d18b79a42fe360",
+          "marginReserved": "71323074",
+          "timestamp": "1772643115"
+        },
+        {
+          "orderId": "0x3e8a21f0ca46290c122cab516f135e049ab6151e37465ee62eef9f3e4c30e307",
+          "marginReserved": "29030087",
+          "timestamp": "1772643122"
+        },
+        {
+          "orderId": "0xf80f28cb437d397c4a2baeedf3ec97a93329811b482f0a1b6d1c9ea5b10f5b49",
+          "marginReserved": "20439493",
+          "timestamp": "1772643131"
+        },
+        {
+          "orderId": "0xa1610bbcfb979b2ab51198cabb79c0117a6176a14137045c889d011ca95f79ad",
+          "marginReserved": "63264668",
+          "timestamp": "1772643139"
+        },
+        {
+          "orderId": "0x7ad7fb3500f05a2257f22fb90bb070ba49c72d353e6032778cf8a8344a859288",
+          "marginReserved": "69202240",
+          "timestamp": "1772643148"
+        },
+        {
+          "orderId": "0x000e42c6ed0014288ecd841d5ed8163577664ccea173842566bb9d877f2d36ff",
+          "marginReserved": "90913836",
+          "timestamp": "1772643156"
+        },
+        {
+          "orderId": "0xdb91b86adb9aabcdf02cd60a87b61966635d4d2fe3e2feb7c4a47aaf9f24b261",
+          "marginReserved": "107868781",
+          "timestamp": "1772643166"
+        },
+        {
+          "orderId": "0x72ecb1054ac12330bc53f436e95c640a6e72b03fb51b303aa400d2b7e5e8e546",
+          "marginReserved": "43905009",
+          "timestamp": "1772643173"
+        },
+        {
+          "orderId": "0x22dde4a38402976a26cad1c54baeaa169d5d7b7d25b3e469dd2a8e1ce978be6b",
+          "marginReserved": "30912621",
+          "timestamp": "1772643181"
+        },
+        {
+          "orderId": "0xfcd93fecb58e279c343c6cf7085acea3fe9f9eb05526b2e868185df167b0c7ec",
+          "marginReserved": "95681274",
+          "timestamp": "1772643189"
+        },
+        {
+          "orderId": "0x521b3f7649786ff3bbb412235a6bb843e6d416a0e1e316c1a4d48fd887215222",
+          "marginReserved": "104661238",
+          "timestamp": "1772643197"
+        }
+      ],
+      "marketIds": [
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+        "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x53aca02402062a61C871D1b5b4ded3e4232826E5",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2908483188",
+      "userRealizedPnL": "1448716550610006549",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+          "size": "19000000000000000000",
+          "entryPrice": "2728750",
+          "marginLocked": "51846250",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-182631799158493592",
+          "entryPrice": "4801250",
+          "marginLocked": "1328646",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "10063540"
+        },
+        {
+          "marketId": "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+          "size": "-494238353495255512",
+          "entryPrice": "57462500",
+          "marginLocked": "42724434",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "119922915"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "6605972243933739",
+          "entryPrice": "69999342500",
+          "marginLocked": "462411054",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+          "size": "-225000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "337500000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2083333"
+        },
+        {
+          "marketId": "0xd96b67f8d678773e2f9edf9a0b7cdafb38bf33ce05ae9e544003a82f25c544a3",
+          "size": "250000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "250000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xe04334aed8898bd80c33b8f5f8575c350950183f6edaea1d5ca7dedba8363434",
+          "marginReserved": "1938394",
+          "timestamp": "1771016794"
+        },
+        {
+          "orderId": "0x08788e35ee97d62a481998fa135942598dd542789bb56f5a8fc958b4c53b5601",
+          "marginReserved": "238580",
+          "timestamp": "1771016698"
+        },
+        {
+          "orderId": "0x21bb2df4de91b08208b7410cbbb0d519e75aeecddffd1c11343044d0f5149cac",
+          "marginReserved": "389881",
+          "timestamp": "1771016675"
+        },
+        {
+          "orderId": "0x211287dccdea0907953a87bbbf25c318da9f913980918a505d56615125940861",
+          "marginReserved": "285611",
+          "timestamp": "1771016669"
+        },
+        {
+          "orderId": "0x8358bd2bb39ddb6bf21116edbbed026739cd84785bbdf5f49ca3a290c9492f6f",
+          "marginReserved": "790505",
+          "timestamp": "1771016682"
+        },
+        {
+          "orderId": "0x7f62bce589b70d6e4041a5babde3b5361f3ea1392c4c3e5165d32c5d929b62b3",
+          "marginReserved": "3387848",
+          "timestamp": "1771303133"
+        },
+        {
+          "orderId": "0x8c566ee8cec4877b79d1a381c6010d7c9ea7d842a200945c580a1ffab004396b",
+          "marginReserved": "13130907",
+          "timestamp": "1771303126"
+        },
+        {
+          "orderId": "0xe8360c3be3b037b77cfad550e4db981f5588e9d0c36b58d9fcbed97d5937ff45",
+          "marginReserved": "10932517",
+          "timestamp": "1771303130"
+        },
+        {
+          "orderId": "0xe85ae4286a49e0985e49b7ee1b335cac0aabf6446e280042e9650ac3a10492a1",
+          "marginReserved": "1623610",
+          "timestamp": "1771016799"
+        },
+        {
+          "orderId": "0xc11982463f0ec606ea2b77d06637dfc90e5002ae12327c3f51084c69c5bbabd4",
+          "marginReserved": "652599",
+          "timestamp": "1771016690"
+        },
+        {
+          "orderId": "0x4e7b53a6446c09a8fab62f73d2c3a39a5e258e8491c306cc76e2606677268cd4",
+          "marginReserved": "285611",
+          "timestamp": "1771016770"
+        },
+        {
+          "orderId": "0x20dab1598edca991b47072c6ec39b83d7b53432a910cd713d4741ca83a5b308e",
+          "marginReserved": "20139240",
+          "timestamp": "1772643205"
+        },
+        {
+          "orderId": "0xb657265c37b90ae9027fcbaaf8c78fc9040060ec6e84f6f8b0505c31bbfefb8e",
+          "marginReserved": "29484785",
+          "timestamp": "1772643213"
+        },
+        {
+          "orderId": "0x21eecb0fad607bde74c3df07569b956451502fcc0f656655ce27c78f9e747909",
+          "marginReserved": "71595159",
+          "timestamp": "1772643220"
+        },
+        {
+          "orderId": "0xd5236b237221a6fe4565f2162304cc4d820a93e3fbf47ec97cbcdfdd65cc3bcd",
+          "marginReserved": "59640873",
+          "timestamp": "1772643229"
+        },
+        {
+          "orderId": "0x856b5f48fee747ddb1eba2c0f41574db025d5fd1ece47f7198393eba97156753",
+          "marginReserved": "18271068",
+          "timestamp": "1772643238"
+        },
+        {
+          "orderId": "0x067e999ce2af6721da0bbbd98ac72711258a3fbe22550ac182cee271e1dcffd8",
+          "marginReserved": "32788216",
+          "timestamp": "1772643245"
+        },
+        {
+          "orderId": "0x191569d8bb53108c8ffdfd24481c26252942910f5dfaa5f2c3615eed4d21786a",
+          "marginReserved": "30458520",
+          "timestamp": "1772643252"
+        },
+        {
+          "orderId": "0x1fa39faa6aeb722469dffbe2eb223d41c45e6b6ee090fc44e14ecebae0a78074",
+          "marginReserved": "44592691",
+          "timestamp": "1772643261"
+        },
+        {
+          "orderId": "0xf5bad944106438f9965f05b571616070c01a8a465570db4542b855241b1b1faa",
+          "marginReserved": "108280281",
+          "timestamp": "1772643269"
+        },
+        {
+          "orderId": "0xc16a3040f29e4d6d9a8c9e94dd1c5a85a213c598a97bdf0cd5d592a7faeb73f1",
+          "marginReserved": "60306904",
+          "timestamp": "1772643277"
+        },
+        {
+          "orderId": "0x27914a5a961f67c24dc84990fcd7e5fff9236437c0a884fce15b0dda276c1792",
+          "marginReserved": "6030690",
+          "timestamp": "1772643284"
+        },
+        {
+          "orderId": "0x5264c5d4fa59d10c92bbd09fdae90551d848cbbf1055dc288cebfe6a09c2056b",
+          "marginReserved": "603069",
+          "timestamp": "1772643292"
+        }
+      ],
+      "marketIds": [
+        "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+        "0xd96b67f8d678773e2f9edf9a0b7cdafb38bf33ce05ae9e544003a82f25c544a3"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x89bD0aF6FE5292ed96fc026770b24f4B4F6DE7C6",
+      "userCollateral": "0",
+      "userCrossChainCredit": "6009416735",
+      "userRealizedPnL": "709292345815",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "14658226248983067",
+          "entryPrice": "69999122500",
+          "marginLocked": "1026059859",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-489599921445921784",
+          "entryPrice": "4750000",
+          "marginLocked": "3488398",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "9895830"
+        },
+        {
+          "marketId": "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+          "size": "-591880349001542669",
+          "entryPrice": "57460000",
+          "marginLocked": "51165096",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "119920831"
+        },
+        {
+          "marketId": "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+          "size": "-26000000000000000000",
+          "entryPrice": "5710000",
+          "marginLocked": "222690000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "11895833"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xded711b76f8ec934bffa928d4f2320b8ff28dbb6f14683a9a5f0028d1308bd8b",
+          "marginReserved": "8031901",
+          "timestamp": "1771303161"
+        },
+        {
+          "orderId": "0xff1487e92126bbc7952a5cd7709d820e061e717d9b6c092d11df3d99dd0ebe22",
+          "marginReserved": "492125",
+          "timestamp": "1771016831"
+        },
+        {
+          "orderId": "0x3e99d234342ac83b4042b5a7768431b38ab41e767eb119e230347ef0ff2906d1",
+          "marginReserved": "8244214",
+          "timestamp": "1771303168"
+        },
+        {
+          "orderId": "0xd02a930850fe44a88b8dbcd1346ca3fc4e6d2271fa751741a5d879ff1080306f",
+          "marginReserved": "1224366",
+          "timestamp": "1771016877"
+        },
+        {
+          "orderId": "0x4b86dfcca4953baf65238bef65e314682c728640e8fd8ef1f14f78faee4b203b",
+          "marginReserved": "166825",
+          "timestamp": "1771016824"
+        },
+        {
+          "orderId": "0xf8f5aadb0b5514faffa91d03bd09818077bd0c3fabd25a27ab58de880924c90f",
+          "marginReserved": "2778916",
+          "timestamp": "1771303164"
+        },
+        {
+          "orderId": "0xb359d3ed714230da439929fdd80e170801d444abed983e48d881d0e0dd54fe67",
+          "marginReserved": "411051",
+          "timestamp": "1771016871"
+        },
+        {
+          "orderId": "0x25ff815a3d5dbc5d031e1b6a471d7a4009c4b75a5448e399c0003e881fced992",
+          "marginReserved": "14024114",
+          "timestamp": "1771303171"
+        },
+        {
+          "orderId": "0x90f903d16b4068f568905030e18e23ebee2dc9cdd8b6509051e3def491437788",
+          "marginReserved": "989937",
+          "timestamp": "1771016838"
+        },
+        {
+          "orderId": "0x16b5d49e3bd63aef4756374a39ba72bd784758c4fee750481c95257632568be9",
+          "marginReserved": "626892",
+          "timestamp": "1771016819"
+        },
+        {
+          "orderId": "0x3c037274d3e7a150a275a28d8af2f5006a8729ea4aafd23088c2f81fdc073893",
+          "marginReserved": "353051",
+          "timestamp": "1771016846"
+        },
+        {
+          "orderId": "0x3f54158a6b26c6cf93a963635030b3e108c97b0781b38179e033fa9033f6af5e",
+          "marginReserved": "75454712",
+          "timestamp": "1772643300"
+        },
+        {
+          "orderId": "0xe8a6589f2edc1d49ad877efb5b08808e84f03691b4418780bdfc5ba279a92038",
+          "marginReserved": "47646957",
+          "timestamp": "1772643307"
+        },
+        {
+          "orderId": "0x20cc41a7c1bd107aaa795537c00254af566e6810fae7fa442019fea270e503db",
+          "marginReserved": "15154539",
+          "timestamp": "1772643315"
+        },
+        {
+          "orderId": "0x72e57eee0bc3a525d0301fe7b744fef3fc6b903df7e495adae948063a1f74b9f",
+          "marginReserved": "44975201",
+          "timestamp": "1772643324"
+        },
+        {
+          "orderId": "0x0d7050a817f54a8195e109effa80a73c3bb0c085641229083093ecda8fce0f2c",
+          "marginReserved": "75620227",
+          "timestamp": "1772643332"
+        },
+        {
+          "orderId": "0xe666a135ab21129b35596d0b1df54281c78cc1bb0806a2fb024ceaa54876c7b4",
+          "marginReserved": "43901104",
+          "timestamp": "1772643339"
+        },
+        {
+          "orderId": "0x662f8bf2b5c87397f94f92ff5ec3920a126bd08552e277d0e396f84cee560588",
+          "marginReserved": "114117456",
+          "timestamp": "1772643346"
+        },
+        {
+          "orderId": "0x3e865df0a6d2b83d9e2421d582048a8dca93eac979fc39f29ed3ebd478635f19",
+          "marginReserved": "72061099",
+          "timestamp": "1772643354"
+        },
+        {
+          "orderId": "0x15c9e4152b2a5e1e62a495e9c9e55a54b3c4b809806902ef31b515445e2d8c30",
+          "marginReserved": "22919674",
+          "timestamp": "1772643363"
+        },
+        {
+          "orderId": "0xd4aa809f6b099dd36d4db9f9ad4a5f07235582f0a1023649babb21a5d8375e88",
+          "marginReserved": "68020345",
+          "timestamp": "1772643390"
+        },
+        {
+          "orderId": "0x89eefc82c30a36684741834a316c77104f02b9e95e607d1bf35fb79867354dce",
+          "marginReserved": "114367782",
+          "timestamp": "1772643412"
+        },
+        {
+          "orderId": "0x2fd608ed880a9b7e3e28509a20a6e69c5961bed85fb11b375475c48d10147017",
+          "marginReserved": "66395884",
+          "timestamp": "1772643419"
+        }
+      ],
+      "marketIds": [
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+        "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xB5BaC03724F123Dd70bD6804fC1D3A5a8f611B25",
+      "userCollateral": "0",
+      "userCrossChainCredit": "5899231318",
+      "userRealizedPnL": "501532554619",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+          "size": "5000000000000000000",
+          "entryPrice": "5710000",
+          "marginLocked": "28550000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-508317481251179360",
+          "entryPrice": "4745000",
+          "marginLocked": "3682759",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "9991664"
+        },
+        {
+          "marketId": "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+          "size": "-597154671156296200",
+          "entryPrice": "57456250",
+          "marginLocked": "51612078",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "119905207"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "14973382287663203",
+          "entryPrice": "69999123750",
+          "marginLocked": "1048120588",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xfed3863f573a7333545a4d0ed61d56c38399a1b44d1d735a7854c0228d7667cc",
+          "marginReserved": "13351559",
+          "timestamp": "1771303206"
+        },
+        {
+          "orderId": "0x56fc9a2247181ec3a2a87a37b3a2757f394425e62d1bfeb9cc2d33319e30d208",
+          "marginReserved": "246895",
+          "timestamp": "1771016950"
+        },
+        {
+          "orderId": "0x76d3dccb7d2ae9cf101bc398f0a88740cc8578908dbfe937b9d8c736cc5e21d0",
+          "marginReserved": "751089",
+          "timestamp": "1771016937"
+        },
+        {
+          "orderId": "0x531ea9275294acdcc75b7de5c5adab345c5471ebd953ba732d79d8da88fb1839",
+          "marginReserved": "244368",
+          "timestamp": "1771016936"
+        },
+        {
+          "orderId": "0xcda6211b001fede426beaa99d48b26c1334700aa65e67c77785a254a3e253e6c",
+          "marginReserved": "861127",
+          "timestamp": "1771016956"
+        },
+        {
+          "orderId": "0x4118b9b8ccc8729658941b1e4bdd66f2bf4aca74fec097dc9b5292af6a4b15f6",
+          "marginReserved": "864639",
+          "timestamp": "1771016987"
+        },
+        {
+          "orderId": "0x255a899166203f40ae37b69c303db8288d09ae5f83cce01508c59e6b46df3000",
+          "marginReserved": "10615522",
+          "timestamp": "1771303203"
+        },
+        {
+          "orderId": "0x7e2ece72082d53312e95b8f251de067afd4eaca756acb736120904a73a701492",
+          "marginReserved": "1978899",
+          "timestamp": "1771016978"
+        },
+        {
+          "orderId": "0xff1bf737bf4cc02c4be9222d6480e5735a1075f3dd4e872f6a92451f055691bc",
+          "marginReserved": "349221",
+          "timestamp": "1771016944"
+        },
+        {
+          "orderId": "0x4da4d801d8dd5b95cb3c4a82d2ce103be36a75c7ba328e1d7fa51e73ccbd350d",
+          "marginReserved": "799263",
+          "timestamp": "1771016940"
+        },
+        {
+          "orderId": "0x77fe07ac4079149c5b5207f065f1c05dd0a4917b7637e78a1e63410f9591d1fe",
+          "marginReserved": "3481348",
+          "timestamp": "1771303215"
+        },
+        {
+          "orderId": "0x27de7db48dd651abe28936fb03fc44d1474d972e2500828d6e3c16e99dd8c5ef",
+          "marginReserved": "5833684",
+          "timestamp": "1771303211"
+        },
+        {
+          "orderId": "0xdd937a6b707435ecbfcd07731d38ba84111a545eb79a688f749cd1f6ca584e36",
+          "marginReserved": "17191060",
+          "timestamp": "1772643425"
+        },
+        {
+          "orderId": "0xc08ed9006d6a9c58796ff6ab555d23bbca1ce85ae153b80514e477df570c6539",
+          "marginReserved": "57230359",
+          "timestamp": "1772643448"
+        },
+        {
+          "orderId": "0x008d7b3211307d9f13a754c61caf04fd37b3f9fc9cd34074134bd9fc205bcd68",
+          "marginReserved": "72824498",
+          "timestamp": "1772643454"
+        },
+        {
+          "orderId": "0x6ce814bb6966657bfcbc69fe72468c69c8240370f96aeadb46765f70dcf2117e",
+          "marginReserved": "31819142",
+          "timestamp": "1772643460"
+        },
+        {
+          "orderId": "0x378d5a4bab729e2f29a1d4140f5f1e49765277e648eb3618ce6e852ccc51a382",
+          "marginReserved": "18765287",
+          "timestamp": "1772643465"
+        },
+        {
+          "orderId": "0xca3ce1f1dba6866645dcb1699dc7c1f606d6d81c03e4212bab068b522522810b",
+          "marginReserved": "60579330",
+          "timestamp": "1772643470"
+        },
+        {
+          "orderId": "0xc64f6ab09920ade847a46f99aa0a1152829eaf750e6688b6d6e305a185b8d75f",
+          "marginReserved": "25999702",
+          "timestamp": "1772643476"
+        },
+        {
+          "orderId": "0xa8248c10dd4c2763146450b7a1302ffe1c73150fcfeea7e0d3c875a9d9aef966",
+          "marginReserved": "86555005",
+          "timestamp": "1772643482"
+        },
+        {
+          "orderId": "0xfeba54273460fb2a2c3a2341554224a3de015bbf75624671623665a253d34043",
+          "marginReserved": "110139531",
+          "timestamp": "1772643486"
+        },
+        {
+          "orderId": "0x34412a0f471d298bc02f0cf1ca098ff154a86639b65f9e3e26691903fe66003f",
+          "marginReserved": "48123165",
+          "timestamp": "1772643491"
+        },
+        {
+          "orderId": "0x04d8b159e187814362ead3d6dc59251f95bd592489f7825fc16f9ce6d5061f05",
+          "marginReserved": "28380558",
+          "timestamp": "1772643498"
+        },
+        {
+          "orderId": "0x181580f35bc346d6d5e99b7f35032f08edc44eb0ffdf073f0ff8cb906f595f63",
+          "marginReserved": "91619979",
+          "timestamp": "1772643505"
+        },
+        {
+          "orderId": "0x62b16571cfa248e340383e33a54bd63834316feb541b876c967cb7c53c8d70bf",
+          "marginReserved": "25965604",
+          "timestamp": "1772650602"
+        }
+      ],
+      "marketIds": [
+        "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xDf4B23491a85d777dd0be799cBEd09368c42F087",
+      "userCollateral": "0",
+      "userCrossChainCredit": "5998730523",
+      "userRealizedPnL": "226842396618756994",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-560762941838664792",
+          "entryPrice": "4747500",
+          "marginLocked": "4071138",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "10006248"
+        },
+        {
+          "marketId": "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+          "size": "-608571529686824656",
+          "entryPrice": "57520000",
+          "marginLocked": "52607965",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "119970831"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "14962740160824582",
+          "entryPrice": "69999120000",
+          "marginLocked": "1047375501",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x3cb4b2a626ed93bace3c45fc22e38045e8b53697539127ef479cbb0a70f8e3e1",
+          "marginReserved": "730855",
+          "timestamp": "1771017060"
+        },
+        {
+          "orderId": "0x96d85f8884ad837a3398a0880d0095277af3a479ce4cf694094f28d593bd717f",
+          "marginReserved": "293762",
+          "timestamp": "1771017025"
+        },
+        {
+          "orderId": "0xe4cb409472231246813dc6f1e91e8f5b18aa966a23cacc47c8feb7a9b7e8fccf",
+          "marginReserved": "928916",
+          "timestamp": "1771017013"
+        },
+        {
+          "orderId": "0xa922ca1158982fcdb48bbdeb3235eea63a401dc836d9e4ca600869387472d38f",
+          "marginReserved": "288637",
+          "timestamp": "1771017019"
+        },
+        {
+          "orderId": "0x604969094e641a49265f85d1c17db2d176f14d090039f08efd1fca80ba4ecece",
+          "marginReserved": "282121",
+          "timestamp": "1771017042"
+        },
+        {
+          "orderId": "0x63076c35f88d347694496461787c8660a4da4d793de3719e0ff39e33e2f62a62",
+          "marginReserved": "1894585",
+          "timestamp": "1771017067"
+        },
+        {
+          "orderId": "0x7489f5d6a25e34dffdb9a44aa90ad9ac34d0e638ada65011de0fddbdfa3e3986",
+          "marginReserved": "4089024",
+          "timestamp": "1771303380"
+        },
+        {
+          "orderId": "0x78687409c444708408f48ad5c3559dcbc9b3c49ff3e590b3b6f2f98107295936",
+          "marginReserved": "4921184",
+          "timestamp": "1771303320"
+        },
+        {
+          "orderId": "0x368699e6574cb03cd4bf74a845918a40cbb068f4d3f4122a181536808b194193",
+          "marginReserved": "768917",
+          "timestamp": "1771017030"
+        },
+        {
+          "orderId": "0x4617a246753102976ab73c3a327d265859bc3df8016896f2200f6a5b51ff9135",
+          "marginReserved": "822889",
+          "timestamp": "1771017036"
+        },
+        {
+          "orderId": "0x001ac6ea8cf6f834e9492ef25e3b388d48fb97d438f7eabb3abace5a4d4b5b3c",
+          "marginReserved": "4921184",
+          "timestamp": "1771303380"
+        },
+        {
+          "orderId": "0x79f3626bf657c14ac02cd1805dfb1cb831b03cc86d415bfae9fb1170d9ab33dd",
+          "marginReserved": "4089024",
+          "timestamp": "1771303320"
+        },
+        {
+          "orderId": "0x743e5dcd5ef187af5909f798916be60a7fe2fa9849b636c0a553eb5e58af16d6",
+          "marginReserved": "65348210",
+          "timestamp": "1772643512"
+        },
+        {
+          "orderId": "0x0edfacdda83841d0c50d48cdfc0dae5cd9b4ea51d2840ba48eebe6df40cb56ed",
+          "marginReserved": "22048662",
+          "timestamp": "1772643517"
+        },
+        {
+          "orderId": "0xb7cdbf28101988c9d19163843877a7c11953f8eec3cecd6e5a7143fde6ed85a3",
+          "marginReserved": "26846857",
+          "timestamp": "1772643527"
+        },
+        {
+          "orderId": "0x85373c3af8f175a74c2cb5124d1bd07ba76ab87d35b3ffac2b17bb7e8c83be72",
+          "marginReserved": "69849157",
+          "timestamp": "1772643534"
+        },
+        {
+          "orderId": "0xc5bcbb00655341f71674aec015bccd767d38939a670e23bb2522b403a8240d11",
+          "marginReserved": "62386967",
+          "timestamp": "1772643539"
+        },
+        {
+          "orderId": "0x5ff9d438a1206f2bfe125556cd18a38330a523b21c43338959c6b940dbd74abd",
+          "marginReserved": "19846950",
+          "timestamp": "1772643548"
+        },
+        {
+          "orderId": "0x75d807975e7654aa39ed5dc66baafc90bf8859befceba7f7f4ca4457695d618d",
+          "marginReserved": "98832417",
+          "timestamp": "1772643553"
+        },
+        {
+          "orderId": "0x080e35254f0db4a2e119ff31d6f279e94edc2c7a78b35bf8b495632a0676d538",
+          "marginReserved": "33346323",
+          "timestamp": "1772643560"
+        },
+        {
+          "orderId": "0x6d1b698772261678fa08714faeb5b2036aca4eb43c3621091bb2d4029ca7e4ee",
+          "marginReserved": "40603098",
+          "timestamp": "1772643566"
+        },
+        {
+          "orderId": "0x9eebd7508f6c00b1c11681e8120f43cf3a761a38d2dd7731c43ac3b182aa56c4",
+          "marginReserved": "105639634",
+          "timestamp": "1772643572"
+        },
+        {
+          "orderId": "0x6fde3e491f79189d53605f26ce557de30c498ad19c583915113ae46dacc0f2e7",
+          "marginReserved": "94353841",
+          "timestamp": "1772643576"
+        },
+        {
+          "orderId": "0xd4e30fdbf30317a15d7043ef4e9153127ac6b29e4cda60c45b242dc69e0b6f3d",
+          "marginReserved": "30016461",
+          "timestamp": "1772643582"
+        }
+      ],
+      "marketIds": [
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xA0f2D53186801ba175f6911d0cAe6c99abbe5b19",
+      "userCollateral": "0",
+      "userCrossChainCredit": "999035951",
+      "userRealizedPnL": "-545562828280883518",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-761365094023471840",
+          "entryPrice": "4756250",
+          "marginLocked": "5550351",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "10038540"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "519914547600580759",
+          "entryPrice": "308932968",
+          "marginLocked": "160618744",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "2251398662143526",
+          "entryPrice": "69999310000",
+          "marginLocked": "157595429",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xba1e8e5fcbf5d1abd7849edd11ad1c4c06ddbca34f2bf1517ad33f0f4b0cd33a",
+          "marginReserved": "1070825",
+          "timestamp": "1771017128"
+        },
+        {
+          "orderId": "0xc078585cbf77ee2e237f0cf4e2892be74e408490916418e1eb69138a086c2938",
+          "marginReserved": "554512",
+          "timestamp": "1771017106"
+        },
+        {
+          "orderId": "0xa60bac660ffc92366d7226227b9deb0e35ef80c62affa1022c7e90877355088f",
+          "marginReserved": "541412",
+          "timestamp": "1771017090"
+        },
+        {
+          "orderId": "0x0c35d86e4e3067b432ca028194c3102d13e378cdc300af8be78050eb5d8d5e13",
+          "marginReserved": "976153",
+          "timestamp": "1771017097"
+        },
+        {
+          "orderId": "0xe57628ba3eb35a723a1ebf03cae1f1b8d951a540041a82f3f56400a31bdc198f",
+          "marginReserved": "170768",
+          "timestamp": "1771017115"
+        },
+        {
+          "orderId": "0xc3fa9085c12345100aa33b270ef64dd35db15d11cb9ada9e4584181edd7832d9",
+          "marginReserved": "552363",
+          "timestamp": "1771017120"
+        },
+        {
+          "orderId": "0x8fe9c9bd10b28aa7e753fd7a26ce3e73981be9ee8f80d100bdd5165ef620ccc0",
+          "marginReserved": "1386280",
+          "timestamp": "1771017144"
+        },
+        {
+          "orderId": "0x267569ffe0f60ff19f361f16e1cab2266c16e96cff1ca8ed57a5a666d8c0fdf9",
+          "marginReserved": "418738",
+          "timestamp": "1771017152"
+        },
+        {
+          "orderId": "0xf48d8bc2be2694b36d777536871d3e01366a89d83fd9aafdeb94e2653b861ddb",
+          "marginReserved": "38087758",
+          "timestamp": "1772643587"
+        },
+        {
+          "orderId": "0x9b0d8c4e0ee51d5dff25e65a3a975db0a479684e78d1b9c98185812397c9f825",
+          "marginReserved": "74945766",
+          "timestamp": "1772643592"
+        },
+        {
+          "orderId": "0xbb566cd5b290c72216c31c2c495ab60a6d5b25a4285f964091c9a55e672e1be3",
+          "marginReserved": "11926129",
+          "timestamp": "1772643596"
+        },
+        {
+          "orderId": "0xc959191b7bf36f6f6d6dee8d3b79121c196a4d65b88d4fb69ff724ce783bda8e",
+          "marginReserved": "1192613",
+          "timestamp": "1772643604"
+        },
+        {
+          "orderId": "0x55e6fc71a15b7a85661966ac2de24958060eb5e5ecf9df87df9e9ed79d9f5240",
+          "marginReserved": "119261",
+          "timestamp": "1772643613"
+        },
+        {
+          "orderId": "0xd6252b89cd1fafb9701924d6f20fea2ab0e0d0fde85ff08ff7816f1e87d99103",
+          "marginReserved": "11926",
+          "timestamp": "1772643620"
+        },
+        {
+          "orderId": "0x5ad3856105e8de43062373a2e4c2fcf9e6a988faccc63c1df7dffa8730804694",
+          "marginReserved": "50808367",
+          "timestamp": "1772644532"
+        },
+        {
+          "orderId": "0xb8a48093fff75e3550499df79c0478a25ddabb9b6e30c94c64b66e77aef906b6",
+          "marginReserved": "113332863",
+          "timestamp": "1772644510"
+        }
+      ],
+      "marketIds": [
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xc7D77fdE8eA75bC8E3FDf634756ee252095422cD",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1999506329",
+      "userRealizedPnL": "144409036086",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-564670578306604837",
+          "entryPrice": "5290781",
+          "marginLocked": "4616181",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "11221482"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "5682207655302890",
+          "entryPrice": "69999302500",
+          "marginLocked": "397748228",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "-194466231943720693",
+          "entryPrice": "304600000",
+          "marginLocked": "88851621",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "634583331"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0xef5becc7fb5b3689c92fda8836d313900076eefe1134ede94db52573b418940d",
+          "marginReserved": "545047",
+          "timestamp": "1771017184"
+        },
+        {
+          "orderId": "0x8e4f7b448a0cb1260a70878819a91e7c3a625ab4799cbf69da6be7c18e67cd64",
+          "marginReserved": "210277",
+          "timestamp": "1771017187"
+        },
+        {
+          "orderId": "0xa714115bfe2ad4949d0016aa84eebd740aa1f8dd2406066be9b5840295212bc2",
+          "marginReserved": "589642",
+          "timestamp": "1771017189"
+        },
+        {
+          "orderId": "0xb13a1b6f34bd89bc5741c18fa6f018090f25ea547dc18e07ef2366b6f4de4523",
+          "marginReserved": "819691",
+          "timestamp": "1771017192"
+        },
+        {
+          "orderId": "0x403cb5f3ae4dc081b25f592a10db568f2950f9255773546e10bc5a3b6dba1ac8",
+          "marginReserved": "461945",
+          "timestamp": "1771017194"
+        },
+        {
+          "orderId": "0x3b43278175228ddca417cb4ae28d71d6bd07a27678d6fe757e56b7a85a3d708e",
+          "marginReserved": "246631",
+          "timestamp": "1771017197"
+        },
+        {
+          "orderId": "0xfbdd643dd6f707838ab35f8ce15f6711a5cad8e80df70414289577293e55888d",
+          "marginReserved": "267126",
+          "timestamp": "1771017209"
+        },
+        {
+          "orderId": "0x8b4d568a0bf0ef871ae09e0e6014fbd5dce9b4c7c385a5fb4bc949ce6797b6e8",
+          "marginReserved": "1481274",
+          "timestamp": "1771017207"
+        },
+        {
+          "orderId": "0xfe7cb822487097c14007db1d71acdcf4514b2a32e34637cacbaadb6f88d64971",
+          "marginReserved": "38343476",
+          "timestamp": "1772643626"
+        },
+        {
+          "orderId": "0xe0fae9fad8d8721a08d51da39aacbfd43c6ff14358a36498223afefa2f197ab4",
+          "marginReserved": "16185495",
+          "timestamp": "1772643632"
+        },
+        {
+          "orderId": "0xb180f8709e9aff03658d93368f3f77058f0a7980cd3b1a4da12f6b915efe0e99",
+          "marginReserved": "54214815",
+          "timestamp": "1772643636"
+        },
+        {
+          "orderId": "0x6e78157d1c27e53d2ef72b1467b830d70f9e52a80e03024cd5a4d92d00b09ac0",
+          "marginReserved": "74016877",
+          "timestamp": "1772643643"
+        },
+        {
+          "orderId": "0xa88bf4f797a587fa9c56374ed9b7543a21524448af802919bdd09791f088e8cd",
+          "marginReserved": "32598065",
+          "timestamp": "1772643757"
+        },
+        {
+          "orderId": "0x3a94301cf0bd6b4fd7ff3813af390026ec8da364802cbee1fea9f5a4fd951650",
+          "marginReserved": "16267359",
+          "timestamp": "1772643765"
+        },
+        {
+          "orderId": "0xf5baaeeeffd9ec87b6bfe6f92e126d548005547989186b91aa442f21318cb11f",
+          "marginReserved": "24476481",
+          "timestamp": "1772644587"
+        },
+        {
+          "orderId": "0xde26a1688a257e5aaf1650b34d37ea5fd40fa24f14380056e10e6978ba962f51",
+          "marginReserved": "3992239",
+          "timestamp": "1772643783"
+        },
+        {
+          "orderId": "0xdf9bf1862c330d27cc539454ec5d8f070f46a14b767b06bb591b60599383e19d",
+          "marginReserved": "399223",
+          "timestamp": "1772643796"
+        },
+        {
+          "orderId": "0xc8cb2589c856c84152f6f5e2939b8f7f094872c4b9324561878339455a1cc941",
+          "marginReserved": "39924",
+          "timestamp": "1772643804"
+        }
+      ],
+      "marketIds": [
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xC8D3dA3a29762c2E6503945393a0fD1b70023a5a",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1999583557",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-958609707101252720",
+          "entryPrice": "5270937",
+          "marginLocked": "7822254",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "11192445"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "5672480332551619",
+          "entryPrice": "69999292500",
+          "marginLocked": "397067270",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "-32466982782036814",
+          "entryPrice": "304600000",
+          "marginLocked": "14834163",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "634583295"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x416039c61cfe5f7045856e6df488f3ca918118c20e517f20b8eef13cb80f4b6b",
+          "marginReserved": "926096",
+          "timestamp": "1771017216"
+        },
+        {
+          "orderId": "0xff731e5eddcc63bf71abe061456fc6874c7edca87126dcc647e7e7abe787feff",
+          "marginReserved": "874327",
+          "timestamp": "1771017218"
+        },
+        {
+          "orderId": "0x15b110546823c66d881300a3b559c6a61605b65fd48fb1a8a3767f1e69c30f87",
+          "marginReserved": "262624",
+          "timestamp": "1771017220"
+        },
+        {
+          "orderId": "0xe289dda50d889c6ff1ea462f48e51f7842a157a61626b16e1ceabe3aebf35dad",
+          "marginReserved": "271216",
+          "timestamp": "1771017223"
+        },
+        {
+          "orderId": "0xef52ee08a2bc471f43cf1290234e6c0fdf165b3079afe8c277ff8be58dedeb0e",
+          "marginReserved": "903620",
+          "timestamp": "1771017225"
+        },
+        {
+          "orderId": "0x045e0f0f9f60644a69c3ef95f3650e5dc97c35f85d54556d4d09f3e305f387dd",
+          "marginReserved": "920988",
+          "timestamp": "1771017228"
+        },
+        {
+          "orderId": "0x3c1335caa097c9c4465b0c8067c97a79b27f0c61adb8b1ea35a498a5dd5d8250",
+          "marginReserved": "662965",
+          "timestamp": "1771017235"
+        },
+        {
+          "orderId": "0xf9d5de37981f62e02dcda1f7b145cb5be17fbf6c87f48b886f87e12cab4b3f90",
+          "marginReserved": "65558995",
+          "timestamp": "1772643834"
+        },
+        {
+          "orderId": "0x158c2f247251b48429f6c2190e7ad0c6473144929d0fe6e432b83614791512a0",
+          "marginReserved": "67980634",
+          "timestamp": "1772643868"
+        },
+        {
+          "orderId": "0xe502be114fc952f5eb1e2d44cfc1cdcf0b6154e8a093efec9dbb26e6f59f8af9",
+          "marginReserved": "24291167",
+          "timestamp": "1772643913"
+        },
+        {
+          "orderId": "0x19a0ce030f9f48a246529f881eddc52bcc408b07743a271c47872a95071f883b",
+          "marginReserved": "24495021",
+          "timestamp": "1772643935"
+        },
+        {
+          "orderId": "0xcfaff437500faacecc6b9101acabfc8a6f01c00053e63810ed8d0a9b26fdf120",
+          "marginReserved": "68193093",
+          "timestamp": "1772643946"
+        },
+        {
+          "orderId": "0x8f0cf78c08558928497efadf938418f2fdc799c159d47c642edb4074cf04f880",
+          "marginReserved": "65347278",
+          "timestamp": "1772643955"
+        },
+        {
+          "orderId": "0xdd3a9d99303fb0926b0caa5049fd8d48897855afcee62d6c3daa19b3bf97cba8",
+          "marginReserved": "36705781",
+          "timestamp": "1772644628"
+        },
+        {
+          "orderId": "0x752ee0df8810f5d63634d31a94046224293b80fc83c5606093b7ff1a556ca4ab",
+          "marginReserved": "190009",
+          "timestamp": "1772643976"
+        },
+        {
+          "orderId": "0x2aa4ff0441a99a7bc01fb24fef984b8799bb3fe02c81e5a6dc8aa2fb11329e4b",
+          "marginReserved": "19002",
+          "timestamp": "1772643987"
+        },
+        {
+          "orderId": "0xa92dd3b6dbcc888a98c50f747538bf18fcc1a1a248ea1a2233dda4033a1b4e3c",
+          "marginReserved": "85469035",
+          "timestamp": "1772644611"
+        },
+        {
+          "orderId": "0x804acb1acc649f8094e84ef82070c0ba36b109cb955e6e41dc05451f32a2f3bb",
+          "marginReserved": "102299662",
+          "timestamp": "1772644621"
+        }
+      ],
+      "marketIds": [
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xDB55B652b8CdFaBc08623c0995E6D5f572555D9A",
+      "userCollateral": "0",
+      "userCrossChainCredit": "999799402",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-532175554837018032",
+          "entryPrice": "5295429",
+          "marginLocked": "4334569",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "11200355"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "2827949880449941",
+          "entryPrice": "69999290000",
+          "marginLocked": "197953324",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "-62279056714185",
+          "entryPrice": "304600000",
+          "marginLocked": "28455",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "634579305"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x8b2f49e987c7023762edda90666ff68cceddb989b2295a29dbb40be47d0ba4f9",
+          "marginReserved": "245742",
+          "timestamp": "1771017247"
+        },
+        {
+          "orderId": "0x09058901e6db003e4882d8a1384286aae7684ca51d56e6d62bb736fa2978036e",
+          "marginReserved": "451471",
+          "timestamp": "1771017250"
+        },
+        {
+          "orderId": "0xd82574504025dac47067f22b61f01b98f7acb57081a6ff0112061ee78b7c9fd9",
+          "marginReserved": "803506",
+          "timestamp": "1771017254"
+        },
+        {
+          "orderId": "0xc936856921701ca188ecd5ba3c5763bdf6221ae4773106e37376b34175031a49",
+          "marginReserved": "601055",
+          "timestamp": "1771017256"
+        },
+        {
+          "orderId": "0x877f723a840207034d770ca5b0b6c0ba59690a98404f3b4841b9be4e05efc318",
+          "marginReserved": "215218",
+          "timestamp": "1771017258"
+        },
+        {
+          "orderId": "0xcff66e618de12272e32eb66e183d7349fb840b21e92b85851d719a39371291ac",
+          "marginReserved": "546289",
+          "timestamp": "1771017261"
+        },
+        {
+          "orderId": "0xebf271084579423867ac68e9fa210f9fc18b58b805f3806d8a21d2b3cb0a7843",
+          "marginReserved": "2028363",
+          "timestamp": "1771017272"
+        },
+        {
+          "orderId": "0x8bd540a2cd1725263912709454eab8e08c796234efecee238197dea47de2811a",
+          "marginReserved": "17396310",
+          "timestamp": "1772644002"
+        },
+        {
+          "orderId": "0xce3af00206b13af0d60a12979aa29cc341109003429c13c6b39a700606d63338",
+          "marginReserved": "35191602",
+          "timestamp": "1772644012"
+        },
+        {
+          "orderId": "0xc62de6be79b09eb5cecddb80970721c588fca5fde57a057c36c7e507296c7516",
+          "marginReserved": "74319467",
+          "timestamp": "1772644023"
+        },
+        {
+          "orderId": "0x269690f3f0a62270102ca400ce656a79381275cf390395ab703c6c98c4f2280d",
+          "marginReserved": "28454939",
+          "timestamp": "1772644063"
+        },
+        {
+          "orderId": "0x58f8642c35a2b8edb5f7f2dd061667f01ae7bad980af435103bccba8d240162b",
+          "marginReserved": "2845494",
+          "timestamp": "1772644082"
+        },
+        {
+          "orderId": "0x80b499e19f31e12ac5fa3ba8582a96062062e58cf1c0ce72f4c43744135cbce3",
+          "marginReserved": "284549",
+          "timestamp": "1772644093"
+        },
+        {
+          "orderId": "0x52e6e77999dc2f21cbe49405f0a3fcf5c1475521aca358fe838334318519c641",
+          "marginReserved": "81739047",
+          "timestamp": "1772644740"
+        },
+        {
+          "orderId": "0xf7977aa066efff61ff4d330ab35f0555607e63ec3a7814f2b698ecdf914caea7",
+          "marginReserved": "26111610",
+          "timestamp": "1772644721"
+        },
+        {
+          "orderId": "0x06e616f1c977c29d9810a624dde8368b257acf8be2fabfc94687908392791917",
+          "marginReserved": "52961046",
+          "timestamp": "1772644728"
+        },
+        {
+          "orderId": "0x42e7ff06785aa7c84022233dcbddbd62d1c46aebb2d0d286201853bcbec254f2",
+          "marginReserved": "112302304",
+          "timestamp": "1772644733"
+        }
+      ],
+      "marketIds": [
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x0980f424B427d9D1584093c7B42C86f47113d3AC",
+      "userCollateral": "0",
+      "userCrossChainCredit": "999798101",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+          "size": "-928232961743013632",
+          "entryPrice": "5147500",
+          "marginLocked": "7546533",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "11064581"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "2820441950527812",
+          "entryPrice": "69999282500",
+          "marginLocked": "197427749",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "-49028234129930",
+          "entryPrice": "304600000",
+          "marginLocked": "22401",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "634583330"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x3d5696944289cf2944dbebe1093c38bfe969724ef95bd5f02757157d3a36026a",
+          "marginReserved": "1072959",
+          "timestamp": "1771017285"
+        },
+        {
+          "orderId": "0xf7da42783d5acfd33536010b1ca0e1e7dd7b569aa8046bf07b4e39d22e745c0c",
+          "marginReserved": "533675",
+          "timestamp": "1771017287"
+        },
+        {
+          "orderId": "0x9ed2225e7217b36d9c336959adb2a800dbed7d0d79e96edd6d7f7643b8823565",
+          "marginReserved": "167646",
+          "timestamp": "1771017295"
+        },
+        {
+          "orderId": "0x1fd5611ae01757c78b5644a0734fa76f1e4d24be48e4589193124f158172e2e8",
+          "marginReserved": "570965",
+          "timestamp": "1771017297"
+        },
+        {
+          "orderId": "0x92f3a1c959e910e28e14a4cb5d350ff6af0963e7074a20ff60e8222ccd8c31b1",
+          "marginReserved": "1002616",
+          "timestamp": "1771017303"
+        },
+        {
+          "orderId": "0x69f886674a42079c7158f2e1a0ef17e635ad9a4c8b33d70e13feaddb0e344a06",
+          "marginReserved": "535134",
+          "timestamp": "1771017308"
+        },
+        {
+          "orderId": "0x2ff97fc6b29b8fb9a6cb1647b849363534d5e6b6b78b80b280be11776c637942",
+          "marginReserved": "425266",
+          "timestamp": "1771017314"
+        },
+        {
+          "orderId": "0xe99f64305be64691982946e690600597e045486d8227986ee157fa6156136174",
+          "marginReserved": "75955559",
+          "timestamp": "1772644124"
+        },
+        {
+          "orderId": "0x77567008a2cadf728f6504dc486c4af3445733b058abd3552fc4c9de1a4b04e4",
+          "marginReserved": "41704896",
+          "timestamp": "1772644136"
+        },
+        {
+          "orderId": "0x4b447ec1f2b7c088bf2ec41cf3b5af8414f2c41e435a01095fbe4c3e1818b471",
+          "marginReserved": "15553168",
+          "timestamp": "1772644146"
+        },
+        {
+          "orderId": "0x6f54285ce7472adc255319be7b0ec39dd68eea5e49d25c70edb7581f10fc280a",
+          "marginReserved": "22400544",
+          "timestamp": "1772644167"
+        },
+        {
+          "orderId": "0x95f1fe63ec5aee1493c7e3f87d742914ff5b8edab3d47736b2c39250895aebd2",
+          "marginReserved": "2240054",
+          "timestamp": "1772644183"
+        },
+        {
+          "orderId": "0xd10239593360d158048a807f4e4fc9c59264e3bc1a02e3781ba176ac7db7a0b4",
+          "marginReserved": "224005",
+          "timestamp": "1772644192"
+        },
+        {
+          "orderId": "0x6b14a59fb75c5238b490cee1f0a4e259642b55c54444b7a372109b1d955d5805",
+          "marginReserved": "77414848",
+          "timestamp": "1772644769"
+        },
+        {
+          "orderId": "0xc233f4b03b08ae3a6c449b24bd24d366323b6ec8deb5fb0a08a14b674e103dcc",
+          "marginReserved": "114008196",
+          "timestamp": "1772644753"
+        },
+        {
+          "orderId": "0x31fa765dc8555dec90310deb4648a7e446d5c1c425547bbf63e2ebf54489303e",
+          "marginReserved": "62767248",
+          "timestamp": "1772644758"
+        },
+        {
+          "orderId": "0xab04cae7b6ae782d8f43822954063806b90186219386bd5160a0ccf23966d7c5",
+          "marginReserved": "23503551",
+          "timestamp": "1772644762"
+        }
+      ],
+      "marketIds": [
+        "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x4ebC2523DcC85C4c7Cf8Adb5164904C63cE18174",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xF3be0d441BAa6f04C7D50948C6e5229B0035132c",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x0709f8ECff2E1B2dF3e7913950f365a010597746",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xe6A0D4Ef945bD99BABe48c262F6D727264697627",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x253cc41e16835973029e96120829b99eb2ac0DB5",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x36eb6680D1096756b6bC8BcE5Bd6Ae89F47F2975",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x45c762CA9B89476037CDBB6eC12921BEe78eB1C5",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xCC962C58dEf2e2D90eAa0e779a29C67Ae87D51c4",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xb6dbEA7c0aD48FBBd5b01BC0B05FF35A5472bDD9",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x2cD554ffdb7d04d002c24AB44966714C0d237D44",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x7Cb44Bb65E9d9345b35481046d380B48912CA77d",
+      "userCollateral": "0",
+      "userCrossChainCredit": "2000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x062074C7c6ACfA5261465ee1fC2dcFDf17FEd517",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x898ecF00316D7B778E70EA04Cf78Aa28040980Cf",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x9D71FE045e048fb8eb9Da6AFdCd361d6d2be3b40",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xC3B04482Fa7473b262D82e4cF19f3bBD459F6C78",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1000000000",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+      "userCollateral": "88952164",
+      "userCrossChainCredit": "156955498",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xB8f9Cc53BA500593022e44aAc8ecDC5B557F56b9",
+      "userCollateral": "51115562",
+      "userCrossChainCredit": "1563884438",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x780825BF4100c71bBAE02Ba73Ee41d117A4a8047",
+      "userCollateral": "0",
+      "userCrossChainCredit": "39599735347",
+      "userRealizedPnL": "-435863364564051830",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+          "size": "2664520108869313805",
+          "entryPrice": "57629344",
+          "marginLocked": "153582939",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "651293063558702463",
+          "entryPrice": "284159526",
+          "marginLocked": "184804406",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x2A7D85fF4b0f4A9cce39eAe301d06f1a1a73451C",
+      "userCollateral": "0",
+      "userCrossChainCredit": "9893990006",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "147819660014781",
+          "entryPrice": "67650000000",
+          "marginLocked": "9999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0xb54d3f45420919aed61141c34b29e4ce46216982d4772302b2c80647d71f30ef",
+          "size": "-877192982456140",
+          "entryPrice": "1140000000000",
+          "marginLocked": "1499999998",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2374999998100"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0xb54d3f45420919aed61141c34b29e4ce46216982d4772302b2c80647d71f30ef"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xE3F64fC330A598987EFcc9DaCc2D6f416e3cba8F",
+      "userCollateral": "0",
+      "userCrossChainCredit": "9693366286",
+      "userRealizedPnL": "-6629753569772256740",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x02e34d2b1d945cdacf9915cdd3bfc008e1949d0929fe1071de4817141d5d2254",
+          "size": "-49464705882352941160",
+          "entryPrice": "949404",
+          "marginLocked": "70442983",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "1977924"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0x02e34d2b1d945cdacf9915cdd3bfc008e1949d0929fe1071de4817141d5d2254"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xCfD16FD6681F0A3884Cd4B97E56FBe8F781b9469",
+      "userCollateral": "394503",
+      "userCrossChainCredit": "97991721301",
+      "userRealizedPnL": "-1737185512106233136",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+          "size": "-1500000000000000000",
+          "entryPrice": "190000000",
+          "marginLocked": "427500000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "395833333"
+        },
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "451063945412593324",
+          "entryPrice": "69412500000",
+          "marginLocked": "31309476110",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "64464141821112006",
+          "entryPrice": "310250000",
+          "marginLocked": "19999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+          "size": "-100000000000000000000",
+          "entryPrice": "1000000",
+          "marginLocked": "150000000",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "2083333"
+        },
+        {
+          "marketId": "0xa80ef9a8d867ab44b08b5ac0d016cda2fbb9b9483658b0f0b4b956f3175ee9f2",
+          "size": "-136986301369863013698",
+          "entryPrice": "7300000",
+          "marginLocked": "1499999998",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "15208332"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+        "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+        "0xa80ef9a8d867ab44b08b5ac0d016cda2fbb9b9483658b0f0b4b956f3175ee9f2"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xf77ea029c7A3E41B6c5985b33f4f1fe95644136E",
+      "userCollateral": "0",
+      "userCrossChainCredit": "1011844999947",
+      "userRealizedPnL": "-51084894644305255399",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+          "size": "41037787261982919",
+          "entryPrice": "304600000",
+          "marginLocked": "12500109",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [
+        {
+          "orderId": "0x4e8a11b610665fa2fffedada8e7f21dcf1cfa12758ebc74d98ce317564846bf9",
+          "marginReserved": "999999",
+          "timestamp": "1772644069"
+        },
+        {
+          "orderId": "0x8171480409beb1b175edcf651090482d107bde73d3ce6103dc2cf5a4fe3fcc74",
+          "marginReserved": "999999",
+          "timestamp": "1772644132"
+        },
+        {
+          "orderId": "0x32261c1c0a088c645d306929b0e805b0f32251561a1dcaa19e601187db06154c",
+          "marginReserved": "1499999",
+          "timestamp": "1772644171"
+        },
+        {
+          "orderId": "0xa6854571945cde2e211fe710ec1b0c771ad89eca481fab1c5edd92e3d17bea6e",
+          "marginReserved": "999999",
+          "timestamp": "1772649383"
+        },
+        {
+          "orderId": "0xc7cb20ae99e2a43b80d982b46bb72d5c7ba63c3aedd9cf79396431f877ba3b33",
+          "marginReserved": "999999",
+          "timestamp": "1772649472"
+        },
+        {
+          "orderId": "0xbb16826c3ba52d6a5528c9108adb4b6108b3a226a5fc8dc69002e0353b2af099",
+          "marginReserved": "999999",
+          "timestamp": "1772649726"
+        },
+        {
+          "orderId": "0x1277e53f3d289248b0bda82d650cbfc45a5eda3f8acc3b6d492954fa47d6d82d",
+          "marginReserved": "999999",
+          "timestamp": "1772649767"
+        },
+        {
+          "orderId": "0xbc343079550a53e34633ee239b3a6c6ae5d28c137db2c07d98f3125c8e4fcd0b",
+          "marginReserved": "1499998",
+          "timestamp": "1772649817"
+        }
+      ],
+      "marketIds": [
+        "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x4F6D1A9181a372d5F632327Ac39b2e9E8C388bD8",
+      "userCollateral": "0",
+      "userCrossChainCredit": "19998875541",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x36b27f5e557e5bac11b4c96b6d772e8a7f56645a3b8301e0e1ceefb177f47a0e",
+          "size": "36901774941704115",
+          "entryPrice": "6771940000",
+          "marginLocked": "249913211",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0x36b27f5e557e5bac11b4c96b6d772e8a7f56645a3b8301e0e1ceefb177f47a0e"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x95e032363961aC41de16b675ef915c7983404A51",
+      "userCollateral": "0",
+      "userCrossChainCredit": "499999614339",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "161182906164794",
+          "entryPrice": "67265740000",
+          "marginLocked": "10842087",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        },
+        {
+          "marketId": "0x36b27f5e557e5bac11b4c96b6d772e8a7f56645a3b8301e0e1ceefb177f47a0e",
+          "size": "-36901774941704115",
+          "entryPrice": "6771940000",
+          "marginLocked": "374869816",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "14108770801"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+        "0x36b27f5e557e5bac11b4c96b6d772e8a7f56645a3b8301e0e1ceefb177f47a0e"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x973aA5f689015Fb18CED7C24858b4943ee1893A8",
+      "userCollateral": "0",
+      "userCrossChainCredit": "89955001",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [
+        {
+          "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+          "size": "145703969456951",
+          "entryPrice": "68632310000",
+          "marginLocked": "9999999",
+          "socializedLossAccrued6": "0",
+          "haircutUnits18": "0",
+          "liquidationPrice": "0"
+        }
+      ],
+      "pendingOrders": [],
+      "marketIds": [
+        "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453"
+      ],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306",
+      "userCollateral": "5275661",
+      "userCrossChainCredit": "10000002639989",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0x9A1ACE81A0BC85d9c9739b73A043F003E58daC56",
+      "userCollateral": "1500487574",
+      "userCrossChainCredit": "1064512426",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    },
+    {
+      "address": "0xA39c4d78d2EcED07F491CE1B23810892A1795A67",
+      "userCollateral": "0",
+      "userCrossChainCredit": "0",
+      "userRealizedPnL": "0",
+      "userSocializedLoss": "0",
+      "topUpNonce": "0",
+      "positions": [],
+      "pendingOrders": [],
+      "marketIds": [],
+      "liquidationFlags": {}
+    }
+  ],
+  "markets": [
+    {
+      "marketId": "0x64b33d4636e0a5604b0280c363eea5c2261dc15d9568b34de17adc188cb86e7b",
+      "orderBook": "0xed7D9669FBC9513758eEB945204832084da0FF4F",
+      "orderBookRegistered": true,
+      "markPrice": "500000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x1bd88f7ba4e2ae4db04a3ad8cdf3b9fa1acbf20e008a51a7dda9158a77bb1453",
+      "orderBook": "0xB6Ca359d31582BBa368a890Ed60e6e0E81937AA2",
+      "orderBookRegistered": true,
+      "markPrice": "67949025000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": true
+    },
+    {
+      "marketId": "0x108e351a9682324852d83a73ff8833507658b408f1ea8ce58f27912be55d44bc",
+      "orderBook": "0xE96BfdB38C15669Bd1fAC7060B764eB45D555c79",
+      "orderBookRegistered": true,
+      "markPrice": "1000000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0xa5722827b85180ffdb64b51d3592b3228c19eff0c80e8acc671323f2082034a1",
+      "orderBook": "0xdEe7613fD28a54E10CD231f19794D0CCc6549A16",
+      "orderBookRegistered": true,
+      "markPrice": "5710000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0xc98e598801b443c15f6ad94b35c6d5cefe0cd5c5c7e908f2160520d120753a8b",
+      "orderBook": "0xF66eE96799ec9B3B3A715D60671a6345A51FCEED",
+      "orderBookRegistered": true,
+      "markPrice": "2317803",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x308895d727ee4ebe1017d78b12cf71de8f93ae65ace85bfea9f308805b75e430",
+      "orderBook": "0xFbe79024aCe21df3810473B41b9E156951dF3eF4",
+      "orderBookRegistered": true,
+      "markPrice": "304550000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x281373ed3034aa01e2bffcae26ebce2bd27bb27e669fb6aa2f4b91d5da34e9dc",
+      "orderBook": "0x4e5D6F497fCf4070A8d87A5Abb019f83E16c64bb",
+      "orderBookRegistered": true,
+      "markPrice": "5161692",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x3fa392d8b56dfb95df4641d01cf46322f4f252a8519e270b4416d495aa8672b5",
+      "orderBook": "0x2d40BB6993DF3079A7B2CDC2370937B57823b437",
+      "orderBookRegistered": true,
+      "markPrice": "205993788",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x3acd62754834ba5549b56c165104169ffa6582213c9e0894eb494bc341c69d0e",
+      "orderBook": "0x07E3Ea537a33161430d8aC4AE3EFa1994F0AdE1e",
+      "orderBookRegistered": true,
+      "markPrice": "1000000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0xd96b67f8d678773e2f9edf9a0b7cdafb38bf33ce05ae9e544003a82f25c544a3",
+      "orderBook": "0x3A2EAAf8B1984a8DB21BE3f0476661efa62892C4",
+      "orderBookRegistered": true,
+      "markPrice": "1000000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x02e34d2b1d945cdacf9915cdd3bfc008e1949d0929fe1071de4817141d5d2254",
+      "orderBook": "0x3029d6D090eE614c10E0d707cF630D76D6e8202b",
+      "orderBookRegistered": true,
+      "markPrice": "1203677",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x2c8c7039246c5307ada12ba937cd9526acf2453da9007f5b9f91c6b865cdbcae",
+      "orderBook": "0xc5acF04ab3b4FC1379Deb3Acb552E026c1355d14",
+      "orderBookRegistered": true,
+      "markPrice": "4471000000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x03d8ae71026daaf597153a0e5ec399b18ee6ca6e2ed6f1d0801f905206776188",
+      "orderBook": "0x08553647ad2409353f690abCedeff949aBa78E6B",
+      "orderBookRegistered": true,
+      "markPrice": "1955800000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": true
+    },
+    {
+      "marketId": "0xb54d3f45420919aed61141c34b29e4ce46216982d4772302b2c80647d71f30ef",
+      "orderBook": "0xd5145Cb6F87F705a0F32e2aDB001b6B8137b9f0A",
+      "orderBookRegistered": true,
+      "markPrice": "1140000000000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0xa80ef9a8d867ab44b08b5ac0d016cda2fbb9b9483658b0f0b4b956f3175ee9f2",
+      "orderBook": "0xA0fd461397C9bA001b3942E31fB2427dEAC82965",
+      "orderBookRegistered": true,
+      "markPrice": "7300000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x8f64de7b105020f4c18ddc01f9ddfdf4ce4802c6e5dbd2fdbc02b51a47c7f9d2",
+      "orderBook": "0xE9B225Dfc187b657F199dBbEd573567b0e53b945",
+      "orderBookRegistered": true,
+      "markPrice": "1250000",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x25fff2976eb65f9c3593d185462dcb15a540825a403de30090a7c921024c4672",
+      "orderBook": "0xDEb718897ddd3EEcf29cC0C4193c5Bf7E8D7Ca16",
+      "orderBookRegistered": true,
+      "markPrice": "57255673",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    },
+    {
+      "marketId": "0x36b27f5e557e5bac11b4c96b6d772e8a7f56645a3b8301e0e1ceefb177f47a0e",
+      "orderBook": "0xE8B58dD4c6c95848Fbc16767f943DD05Ea4AE1FA",
+      "orderBookRegistered": true,
+      "markPrice": "6770307013",
+      "badDebt": "0",
+      "settled": false,
+      "disputed": false
+    }
+  ],
+  "registeredOrderBooks": [
+    {
+      "address": "0xed7D9669FBC9513758eEB945204832084da0FF4F",
+      "registered": true
+    },
+    {
+      "address": "0xB6Ca359d31582BBa368a890Ed60e6e0E81937AA2",
+      "registered": true
+    },
+    {
+      "address": "0xE96BfdB38C15669Bd1fAC7060B764eB45D555c79",
+      "registered": true
+    },
+    {
+      "address": "0xdEe7613fD28a54E10CD231f19794D0CCc6549A16",
+      "registered": true
+    },
+    {
+      "address": "0xF66eE96799ec9B3B3A715D60671a6345A51FCEED",
+      "registered": true
+    },
+    {
+      "address": "0xFbe79024aCe21df3810473B41b9E156951dF3eF4",
+      "registered": true
+    },
+    {
+      "address": "0x4e5D6F497fCf4070A8d87A5Abb019f83E16c64bb",
+      "registered": true
+    },
+    {
+      "address": "0x2d40BB6993DF3079A7B2CDC2370937B57823b437",
+      "registered": true
+    },
+    {
+      "address": "0x07E3Ea537a33161430d8aC4AE3EFa1994F0AdE1e",
+      "registered": true
+    },
+    {
+      "address": "0x3A2EAAf8B1984a8DB21BE3f0476661efa62892C4",
+      "registered": true
+    },
+    {
+      "address": "0x3029d6D090eE614c10E0d707cF630D76D6e8202b",
+      "registered": true
+    },
+    {
+      "address": "0xc5acF04ab3b4FC1379Deb3Acb552E026c1355d14",
+      "registered": true
+    },
+    {
+      "address": "0x08553647ad2409353f690abCedeff949aBa78E6B",
+      "registered": true
+    },
+    {
+      "address": "0xd5145Cb6F87F705a0F32e2aDB001b6B8137b9f0A",
+      "registered": true
+    },
+    {
+      "address": "0xA0fd461397C9bA001b3942E31fB2427dEAC82965",
+      "registered": true
+    },
+    {
+      "address": "0xE9B225Dfc187b657F199dBbEd573567b0e53b945",
+      "registered": true
+    },
+    {
+      "address": "0xDEb718897ddd3EEcf29cC0C4193c5Bf7E8D7Ca16",
+      "registered": true
+    },
+    {
+      "address": "0xE8B58dD4c6c95848Fbc16767f943DD05Ea4AE1FA",
+      "registered": true
+    }
+  ]
+}

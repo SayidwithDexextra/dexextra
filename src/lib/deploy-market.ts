@@ -36,8 +36,7 @@ export interface DeployMarketParams {
   isRollover?: boolean;
   speedRunConfig?: {
     rolloverLeadSeconds: number;
-    challengeDurationSeconds: number;
-    settlementWindowSeconds: number;
+    challengeWindowSeconds: number;
   } | null;
 }
 
@@ -635,45 +634,26 @@ export async function deployMarket(
       log('set_fee_recipient', 'error', { error: e?.message || String(e) });
     }
 
-    // 5. Initialize lifecycle controller
+    // 5. Initialize lifecycle controller with explicit timing
     try {
-      const isDevMode = !!speedRunConfig;
-      laneLog('A', 'Initialize lifecycle', 'start', `settlement=${settlementTs} devMode=${isDevMode}`);
-      log('initialize_lifecycle', 'start', { settlementTs, isDevMode });
+      const hasExplicitTiming = speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeWindowSeconds > 0;
+      const rolloverLead = hasExplicitTiming ? speedRunConfig.rolloverLeadSeconds : 0;
+      const challengeWindow = hasExplicitTiming ? speedRunConfig.challengeWindowSeconds : 0;
+      laneLog('A', 'Initialize lifecycle', 'start', `settlement=${settlementTs} rollover=${rolloverLead}s challenge=${challengeWindow}s`);
+      log('initialize_lifecycle', 'start', { settlementTs, rolloverLead, challengeWindow });
       const lcContract = new ethers.Contract(orderBook!, [
-        'function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external',
+        'function initializeLifecycleWithTiming(uint256 settlementTimestamp, address parent, bool devMode, uint256 rolloverLeadSeconds, uint256 challengeWindowSeconds) external',
       ], wallet);
       const ov = await nonceMgr.nextOverrides();
-      const txInit = await lcContract.initializeLifecycleWithMode(settlementTs, ethers.ZeroAddress, isDevMode, ov);
+      const txInit = await lcContract.initializeLifecycleWithTiming(
+        settlementTs, ethers.ZeroAddress, false,
+        rolloverLead, challengeWindow, ov,
+      );
       laneLog('A', 'Initialize lifecycle', 'start', `tx sent ${shortTx(txInit.hash)}`);
       pending.push({ label: 'Initialize lifecycle', logKey: 'initialize_lifecycle', tx: txInit });
     } catch (e: any) {
       laneLog('A', 'Initialize lifecycle', 'error', e?.shortMessage || e?.message || String(e));
       log('initialize_lifecycle', 'error', { error: e?.message || String(e) });
-    }
-
-    // 6. Speed-run lifecycle overrides
-    if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0) {
-      try {
-        laneLog('A', 'Speed-run overrides', 'start', `rollover=${speedRunConfig.rolloverLeadSeconds}s challenge=${speedRunConfig.challengeDurationSeconds}s`);
-        const lifecycleContract = new ethers.Contract(orderBook!, [
-          'function enableTestingMode(bool enabled) external',
-          'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
-        ], wallet);
-        const ov1 = await nonceMgr.nextOverrides();
-        const ov2 = { ...(await nonceMgr.nextOverrides()), gasLimit: 200_000n };
-        const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
-        laneLog('A', 'Speed-run enable', 'start', `tx sent ${shortTx(txEnable.hash)}`);
-        pending.push({ label: 'Speed-run enable', logKey: 'speed_run_enable', tx: txEnable });
-        const txLead = await lifecycleContract.setLeadTimes(
-          speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeDurationSeconds, ov2,
-        );
-        laneLog('A', 'Speed-run lead times', 'start', `tx sent ${shortTx(txLead.hash)}`);
-        pending.push({ label: 'Speed-run lead times', logKey: 'speed_run_lead', tx: txLead });
-      } catch (e: any) {
-        laneLog('A', 'Speed-run overrides', 'error', e?.shortMessage || e?.message || String(e));
-        log('speed_run', 'error', { error: e?.message || String(e) });
-      }
     }
 
     // Wait for ALL transactions to mine in parallel

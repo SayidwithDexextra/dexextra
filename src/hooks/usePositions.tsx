@@ -325,7 +325,7 @@ export function usePositions(
 
               // Liquidation price (6 decimals) from vault view
               try {
-                const [liqPrice, hasPos] = await contracts.vault.getLiquidationPrice(walletAddress, marketId);
+                const [liqPrice, hasPos] = await contracts.vault.getLiquidationPrice.staticCall(walletAddress, marketId);
                 if (hasPos) {
                   let liqBn: bigint = 0n;
                   try { liqBn = ethers.toBigInt(liqPrice); } catch { liqBn = 0n; }
@@ -483,7 +483,7 @@ export function usePositions(
                     pnlPercent = parseFloat(pnlPercent.toFixed(2));
                   }
                   try {
-                    const [liqPrice, hasPos] = await contracts.vault.getLiquidationPrice(walletAddress, marketId);
+                    const [liqPrice, hasPos] = await contracts.vault.getLiquidationPrice.staticCall(walletAddress, marketId);
                     if (hasPos) {
                       let liqBn: bigint = 0n;
                       try { liqBn = ethers.toBigInt(liqPrice); } catch { liqBn = 0n; }

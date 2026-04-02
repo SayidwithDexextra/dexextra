@@ -3,7 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { Receiver } from '@upstash/qstash';
 import { ethers } from 'ethers';
 import { scheduleMarketLifecycle, scheduleSettlementFinalize, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
-import { runSettlementTick, runSingleSettlementCheck, forceStartSettlementWindow } from '@/lib/settlement-engine';
+import { runSettlementTick, runSingleSettlementCheck, forceStartSettlementWindow, settlementSyncLifecycleOnChain } from '@/lib/settlement-engine';
+import type { MarketRow } from '@/lib/settlement-engine';
 import { deployMarket } from '@/lib/deploy-market';
 import {
   shortAddr, phaseHeader, phaseDivider, phaseFooter,
@@ -47,6 +48,64 @@ function log(step: string, status: string, data?: Record<string, unknown>) {
       timestamp: new Date().toISOString(), ...(data || {}),
     }));
   } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Timeframe formatting for rolled-over contracts
+// ---------------------------------------------------------------------------
+
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTHS_LOWER = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
+function formatActiveTimeframe(start: Date, end: Date): { display: string; symbolSuffix: string } {
+  const durationMs = end.getTime() - start.getTime();
+  const durationHours = durationMs / (1000 * 60 * 60);
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+
+  const formatTime12 = (d: Date) => {
+    let h = d.getUTCHours();
+    const m = d.getUTCMinutes();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return m === 0 ? `${h} ${ampm}` : `${h}:${pad2(m)} ${ampm}`;
+  };
+
+  if (durationHours < 24) {
+    const startTime = formatTime12(start);
+    const endTime = formatTime12(end);
+    const sameDay = start.getUTCFullYear() === end.getUTCFullYear()
+      && start.getUTCMonth() === end.getUTCMonth()
+      && start.getUTCDate() === end.getUTCDate();
+
+    const endDateStr = `${MONTHS_SHORT[end.getUTCMonth()]} ${end.getUTCDate()}, ${end.getUTCFullYear()}`;
+
+    const display = sameDay
+      ? `${startTime} – ${endTime} ${endDateStr}`
+      : `${startTime} ${MONTHS_SHORT[start.getUTCMonth()]} ${start.getUTCDate()} – ${endTime} ${endDateStr}`;
+
+    const symDate = `${pad2(start.getUTCDate())}${MONTHS_LOWER[start.getUTCMonth()]}${String(start.getUTCFullYear()).slice(2)}`;
+    const symStart = `${pad2(start.getUTCHours())}${pad2(start.getUTCMinutes())}`;
+    const symEnd = `${pad2(end.getUTCHours())}${pad2(end.getUTCMinutes())}`;
+
+    return { display, symbolSuffix: `${symDate}-${symStart}-${symEnd}` };
+  }
+
+  const sameYear = start.getUTCFullYear() === end.getUTCFullYear();
+
+  if (durationHours < 24 * 90) {
+    const display = sameYear
+      ? `${MONTHS_SHORT[start.getUTCMonth()]} ${start.getUTCDate()} – ${MONTHS_SHORT[end.getUTCMonth()]} ${end.getUTCDate()}, ${end.getUTCFullYear()}`
+      : `${MONTHS_SHORT[start.getUTCMonth()]} ${start.getUTCDate()}, ${start.getUTCFullYear()} – ${MONTHS_SHORT[end.getUTCMonth()]} ${end.getUTCDate()}, ${end.getUTCFullYear()}`;
+
+    const symStart = `${pad2(start.getUTCDate())}${MONTHS_LOWER[start.getUTCMonth()]}${String(start.getUTCFullYear()).slice(2)}`;
+    const symEnd = `${pad2(end.getUTCDate())}${MONTHS_LOWER[end.getUTCMonth()]}${String(end.getUTCFullYear()).slice(2)}`;
+    return { display, symbolSuffix: `${symStart}-${symEnd}` };
+  }
+
+  return {
+    display: `${MONTHS_SHORT[start.getUTCMonth()]} ${start.getUTCFullYear()} – ${MONTHS_SHORT[end.getUTCMonth()]} ${end.getUTCFullYear()}`,
+    symbolSuffix: `${MONTHS_LOWER[start.getUTCMonth()]}${String(start.getUTCFullYear()).slice(2)}-${MONTHS_LOWER[end.getUTCMonth()]}${String(end.getUTCFullYear()).slice(2)}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -191,13 +250,12 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     return { ok: true, skipped: true, reason: 'child_already_exists', childId: rolloverConfig.child_market_id };
   }
 
-  // Skip syncLifecycle during rollover — calling it here can push the
-  // on-chain state to ChallengeWindow before settlement_start has
-  // proposed a price, resulting in a $0 settlement window on the UI.
-  // The settlement_start trigger handles the lifecycle sync in
-  // coordination with the AI price proposal.
-  vStep('[2/7] Sync lifecycle on-chain', 'skip', 'deferred to settlement_start');
-  log('rollover_sync', 'skipped', { reason: 'deferred_to_settlement_start' });
+  // Skip syncLifecycle during rollover — the dedicated challenge_open
+  // trigger handles the on-chain state transition at T0, independent of
+  // AI price discovery. Calling syncLifecycle here would push the state
+  // to ChallengeWindow too early.
+  vStep('[2/7] Sync lifecycle on-chain', 'skip', 'deferred to challenge_open trigger');
+  log('rollover_sync', 'skipped', { reason: 'deferred_to_challenge_open' });
 
   // 2. Derive CREATOR wallet for rollover markets (gets 100% of fees)
   vStep('[3/7] Derive creator wallet', 'start');
@@ -290,11 +348,10 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   // duration as the parent instead of falling back to proportional defaults.
   const parentSpeedRunConfig = (() => {
     const cfg = existingConfig as any;
-    if (cfg?.speed_run && (cfg.rollover_lead_seconds || cfg.challenge_duration_seconds || cfg.settlement_window_seconds)) {
+    if (cfg?.speed_run && (cfg.rollover_lead_seconds || cfg.challenge_window_seconds || cfg.challenge_duration_seconds)) {
       return {
         rolloverLeadSeconds: Number(cfg.rollover_lead_seconds) || 0,
-        challengeDurationSeconds: Number(cfg.challenge_duration_seconds) || 0,
-        settlementWindowSeconds: Number(cfg.settlement_window_seconds) || 0,
+        challengeWindowSeconds: Number(cfg.challenge_window_seconds || cfg.challenge_duration_seconds) || 0,
       };
     }
     return null;
@@ -306,10 +363,13 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
   const rolloverCreator = funderAddress || market.creator_wallet_address || '';
   const childSymbol = trueBaseSymbol;
-  const legacySymbol = `${trueBaseSymbol}-legacy${parentSequence}`;
+  const parentStartDate = parentDeployedAt
+    || (market.created_at ? new Date(market.created_at) : new Date(parentSettlementDate.getTime() - lifecycleDurationMs));
+  const timeframe = formatActiveTimeframe(parentStartDate, parentSettlementDate);
+  const expiredSymbol = `${trueBaseSymbol}-${timeframe.symbolSuffix}`;
   const parentDisplayName = market.name || `${trueBaseSymbol} Futures`;
-  const childName = parentDisplayName.replace(/\s*\((?:Rollover #\d+|Legacy \d+)\)\s*$/, '');
-  const legacyName = `${childName} (Legacy ${parentSequence})`;
+  const childName = parentDisplayName.replace(/\s*\((?:Rollover #\d+|Legacy \d+|[^)]+\s*[–\u2013-]\s*[^)]+)\)\s*$/, '');
+  const expiredName = `${childName} (${timeframe.display})`;
   const metricUrl = (initialOrder as any)?.metricUrl || (initialOrder as any)?.metric_url || '';
   const dataSource = (initialOrder as any)?.dataSource || 'rollover';
   const tags = Array.isArray(market.category) ? market.category : ['CUSTOM'];
@@ -362,19 +422,19 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     return { ok: false, error: 'child_market_deploy_failed', details: e?.message || String(e) };
   }
 
-  // 5b. Rename parent market to legacy so the child can take the original identifier
-  vStep('[5b] Rename parent to legacy', 'start', legacySymbol);
+  // 5b. Rename parent market with its active timeframe so the child can take the original identifier
+  vStep('[5b] Rename parent (timeframe)', 'start', expiredSymbol);
   try {
     await supabase.from('markets').update({
-      market_identifier: legacySymbol.toUpperCase(),
-      symbol: legacySymbol,
-      name: legacyName,
+      market_identifier: expiredSymbol.toUpperCase(),
+      symbol: expiredSymbol,
+      name: expiredName,
       updated_at: new Date().toISOString(),
     }).eq('id', marketId);
-    vStep('[5b] Rename parent to legacy', 'success', `${baseSymbol} -> ${legacySymbol}`);
-    log('rollover_rename_parent', 'success', { legacySymbol, legacyName });
+    vStep('[5b] Rename parent (timeframe)', 'success', `${baseSymbol} -> ${expiredSymbol}`);
+    log('rollover_rename_parent', 'success', { expiredSymbol, expiredName });
   } catch (e: any) {
-    vStep('[5b] Rename parent to legacy', 'error', e?.message || String(e));
+    vStep('[5b] Rename parent (timeframe)', 'error', e?.message || String(e));
     log('rollover_rename_parent', 'error', { error: e?.message || String(e) });
     phaseFooter('Rollover failed (rename parent)', Date.now() - rolloverStart, false);
     return { ok: false, error: 'parent_rename_failed', details: e?.message || String(e) };
@@ -555,7 +615,7 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
 
   log('rollover', 'success', {
     parentId: marketId,
-    parentRenamedTo: legacySymbol,
+    parentRenamedTo: expiredSymbol,
     childMarketId: savedMarketId,
     childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),
@@ -564,12 +624,12 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     childSequence,
   });
 
-  phaseFooter(`Rollover ${childSymbol} (parent → ${legacySymbol})`, Date.now() - rolloverStart, true);
+  phaseFooter(`Rollover ${childSymbol} (parent → ${expiredSymbol})`, Date.now() - rolloverStart, true);
 
   return {
     ok: true,
     parentId: marketId,
-    parentRenamedTo: legacySymbol,
+    parentRenamedTo: expiredSymbol,
     childMarketId: savedMarketId,
     childSymbol,
     childSettlementDate: childSettlementDate.toISOString(),
@@ -690,6 +750,41 @@ export async function POST(req: Request) {
       return json(200, result);
     }
 
+    case 'challenge_open': {
+      if (!marketId) return json(400, { ok: false, error: 'market_id_required' });
+      const sb = getSupabase();
+      if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });
+
+      const { data: mktData, error: mktErr } = await sb
+        .from('markets')
+        .select('id, market_identifier, market_address, market_status, settlement_date, market_config')
+        .eq('id', marketId)
+        .maybeSingle();
+
+      if (mktErr || !mktData) {
+        return json(404, { ok: false, error: 'market_not_found' });
+      }
+
+      if (!['ACTIVE', 'SETTLEMENT_REQUESTED'].includes(mktData.market_status)) {
+        log('challenge_open', 'skipped', { reason: `status_is_${mktData.market_status}` });
+        return json(200, { ok: true, skipped: true, reason: `status_is_${mktData.market_status}` });
+      }
+
+      const syncResult = await settlementSyncLifecycleOnChain(mktData as MarketRow);
+      log('challenge_open', syncResult.ok ? 'success' : 'error', syncResult);
+
+      if (!syncResult.ok) {
+        return json(200, { ok: false, error: syncResult.error, action: 'challenge_open' });
+      }
+
+      return json(200, {
+        ok: true,
+        action: 'challenge_open',
+        previousState: syncResult.previousState,
+        newState: syncResult.newState,
+      });
+    }
+
     case 'settlement_start': {
       const sb = getSupabase();
       if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });
@@ -711,7 +806,7 @@ export async function POST(req: Request) {
 
         const singleResult = result.result;
         if (singleResult && !singleResult.ok && singleResult.reason === 'window_not_expired' && singleResult.settlementDate) {
-          const retryAtUnix = Math.floor(new Date(singleResult.settlementDate).getTime() / 1000) - ONCHAIN_SETTLE_BUFFER_SEC;
+          const retryAtUnix = Math.floor(new Date(singleResult.settlementDate).getTime() / 1000) + ONCHAIN_SETTLE_BUFFER_SEC;
           if (retryAtUnix > Math.floor(Date.now() / 1000)) {
             try {
               const retryId = await scheduleSettlementFinalize(marketId, retryAtUnix, {

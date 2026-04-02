@@ -404,21 +404,54 @@ async function main() {
       contracts.POSITION_MANAGER
     );
 
-    // Deploy CoreVault (with library linking)
-    console.log("  4️⃣ Deploying CoreVault...");
-    const CoreVault = await ethers.getContractFactory("CoreVault", {
+    // Deploy CoreVault implementation (UUPS — only needs PositionManager library)
+    console.log("  4️⃣ Deploying CoreVault (UUPS)...");
+    const CoreVaultImpl = await ethers.getContractFactory("CoreVault", {
       libraries: {
-        VaultAnalytics: contracts.VAULT_ANALYTICS,
         PositionManager: contracts.POSITION_MANAGER,
       },
     });
-    coreVault = await CoreVault.deploy(contracts.MOCK_USDC, deployer.address);
-    await coreVault.waitForDeployment();
-    contracts.CORE_VAULT = await coreVault.getAddress();
-    console.log("     ✅ CoreVault deployed at:", contracts.CORE_VAULT);
+    const coreVaultImpl = await CoreVaultImpl.deploy(contracts.MOCK_USDC);
+    await coreVaultImpl.waitForDeployment();
+    const implAddress = await coreVaultImpl.getAddress();
+    console.log("     ✅ CoreVault implementation at:", implAddress);
 
-    // 4b) Deploy LiquidationManager and wire into CoreVault
-    console.log("  4️⃣b Deploying LiquidationManager...");
+    // Deploy ERC1967Proxy with initialize calldata
+    console.log("  4️⃣a Deploying ERC1967Proxy + initialize...");
+    const initData = CoreVaultImpl.interface.encodeFunctionData("initialize", [deployer.address]);
+    const ERC1967Proxy = await ethers.getContractFactory(
+      "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy"
+    );
+    const proxy = await ERC1967Proxy.deploy(implAddress, initData);
+    await proxy.waitForDeployment();
+    contracts.CORE_VAULT = await proxy.getAddress();
+    coreVault = CoreVaultImpl.attach(contracts.CORE_VAULT);
+    console.log("     ✅ CoreVault proxy at:", contracts.CORE_VAULT);
+
+    // Deploy VaultViewsManager (only needs VaultAnalytics)
+    console.log("  4️⃣b Deploying VaultViewsManager...");
+    const VaultViewsManager = await ethers.getContractFactory("VaultViewsManager", {
+      libraries: {
+        VaultAnalytics: contracts.VAULT_ANALYTICS,
+      },
+    });
+    const viewsManager = await VaultViewsManager.deploy();
+    await viewsManager.waitForDeployment();
+    contracts.VAULT_VIEWS_MANAGER = await viewsManager.getAddress();
+    console.log("     ✅ VaultViewsManager at:", contracts.VAULT_VIEWS_MANAGER);
+
+    // Deploy SettlementManager (needs PositionManager via CoreVaultStorage)
+    console.log("  4️⃣c Deploying SettlementManager...");
+    const SettlementManager = await ethers.getContractFactory("SettlementManager", {
+      libraries: { PositionManager: contracts.POSITION_MANAGER },
+    });
+    const settlementManager = await SettlementManager.deploy();
+    await settlementManager.waitForDeployment();
+    contracts.SETTLEMENT_MANAGER = await settlementManager.getAddress();
+    console.log("     ✅ SettlementManager at:", contracts.SETTLEMENT_MANAGER);
+
+    // Deploy LiquidationManager (needs VaultAnalytics + PositionManager)
+    console.log("  4️⃣d Deploying LiquidationManager...");
     const LiquidationManager = await ethers.getContractFactory(
       "LiquidationManager",
       {
@@ -434,14 +467,18 @@ async function main() {
     );
     await liquidationManager.waitForDeployment();
     contracts.LIQUIDATION_MANAGER = await liquidationManager.getAddress();
-    console.log(
-      "     ✅ LiquidationManager deployed at:",
-      contracts.LIQUIDATION_MANAGER
-    );
+    console.log("     ✅ LiquidationManager at:", contracts.LIQUIDATION_MANAGER);
 
-    console.log("     🔧 Setting CoreVault.liquidationManager...");
-    await coreVault.setLiquidationManager(contracts.LIQUIDATION_MANAGER);
-    console.log("     ✅ LiquidationManager configured on CoreVault");
+    // Wire all managers into the CoreVault proxy
+    console.log("     🔧 Wiring managers into CoreVault...");
+    let wireTx;
+    wireTx = await coreVault.setLiquidationManager(contracts.LIQUIDATION_MANAGER);
+    await wireTx.wait();
+    wireTx = await coreVault.setViewsManager(contracts.VAULT_VIEWS_MANAGER);
+    await wireTx.wait();
+    wireTx = await coreVault.setSettlementManager(contracts.SETTLEMENT_MANAGER);
+    await wireTx.wait();
+    console.log("     ✅ All managers configured on CoreVault");
 
     // Deploy FuturesMarketFactory
     console.log("  5️⃣ Deploying FuturesMarketFactory...");
@@ -853,7 +890,7 @@ async function main() {
           contracts.MARKET_BOND_MANAGER
         );
         const bondAmount = await bondMgr.defaultBondAmount(); // gross bond (6 decimals)
-        const available = await coreVault.getAvailableCollateral(deployer.address);
+        const available = await coreVault.getAvailableCollateral.staticCall(deployer.address);
         if (available < bondAmount) {
           const needed = bondAmount - available;
           console.log(
@@ -868,7 +905,7 @@ async function main() {
           await mockUSDC.mint(deployer.address, needed);
           await mockUSDC.approve(contracts.CORE_VAULT, needed);
           await coreVault.depositCollateral(needed);
-          const afterAvail = await coreVault.getAvailableCollateral(deployer.address);
+          const afterAvail = await coreVault.getAvailableCollateral.staticCall(deployer.address);
           console.log(
             "     ✅ Deployer available collateral after top-up:",
             ethers.formatUnits(afterAvail, 6)
@@ -1357,7 +1394,7 @@ async function main() {
           const bestAskNow = await viewFacetRuntime.bestAsk();
           const slippageBps = await viewFacetRuntime.maxSlippageBps();
           const worstCasePrice = (bestAskNow * (10000n + slippageBps)) / 10000n;
-          const user1Avail = await coreVault.getAvailableCollateral(
+          const user1Avail = await coreVault.getAvailableCollateral.staticCall(
             user1Signer.address
           );
           console.log(

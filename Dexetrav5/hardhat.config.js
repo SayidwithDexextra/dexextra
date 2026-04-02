@@ -7,20 +7,20 @@ require("dotenv").config();
 // require("dotenv").config({ path: ".env.polygon" }); // Load specific network configs if needed
 
 // Single-source signer: PRIVATE_KEY_USERD
-const networkAccounts = process.env.PRIVATE_KEY_USERD
+const networkAccounts = process.env.ADMIN_PRIVATE_KEY
   ? [
+      process.env.ADMIN_PRIVATE_KEY,
       process.env.PRIVATE_KEY_USERD,
       process.env.PRIVATE_KEY_USER3,
       process.env.PRIVATE_KEY_USER2,
       process.env.PRIVATE_KEY_USER5,
       process.env.ADMIN_PRIVATE_KEY_4,
-
     ]
   : [];
 
 const config = {
   solidity: {
-    version: "0.8.20",
+    version: "0.8.22",
     settings: {
       optimizer: {
         enabled: true,
@@ -87,20 +87,10 @@ const config = {
     hyperliquid: {
       url: "https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-",
       accounts: networkAccounts,
-      chainId: 999, // HyperLiquid chain ID (corrected from RPC response)
+      chainId: 999,
       gasPrice: "auto",
       gas: "auto",
-      timeout: 60000,
-      allowUnlimitedContractSize: true,
-    },
-    // HyperLiquid Mainnet (default network)
-    hyperliquid: {
-      url: "https://hyperliquid-mainnet.g.alchemy.com/v2/PDSUXXYcDJZCb-VLvpvN-",
-      accounts: networkAccounts,
-      chainId: 999, // HyperLiquid chain ID (corrected from RPC response)
-      gasPrice: "auto",
-      gas: "auto",
-      timeout: 60000,
+      timeout: 120000,
       allowUnlimitedContractSize: true,
     },
     // HyperLiquid Testnet (if available)

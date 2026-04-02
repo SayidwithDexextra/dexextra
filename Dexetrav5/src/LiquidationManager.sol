@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "./CoreVaultStorage.sol";
 import "./VaultAnalytics.sol";
 import "./PositionManager.sol";
 import "./diamond/interfaces/IOBPricingFacet.sol";
@@ -14,7 +15,6 @@ interface IERC20Metadata {
     function decimals() external view returns (uint8);
 }
 
-/// @dev Minimal interface for order book liquidation entrypoint
 interface IOrderBookLiq {
     function liquidateDirect(address trader) external;
 }
@@ -29,7 +29,7 @@ interface IOrderBookLiq {
  *   4. Single-pass winner selection with partial heap
  *   5. Incremental aggregate caching for instant capacity calculations
  */
-contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
+contract LiquidationManager is CoreVaultStorage, AccessControl, ReentrancyGuard, Pausable {
     
     // ============ Custom Errors ============
     error InvalidAmount();
@@ -58,62 +58,18 @@ contract LiquidationManager is AccessControl, ReentrancyGuard, Pausable {
     bytes32 public constant FACTORY_ROLE = keccak256("FACTORY_ROLE");
     
 
-    // Storage alignment with CoreVault (must match order exactly for delegatecall)
-    address public liquidationManager; // alignment slot
-    IERC20 public immutable collateralToken;
+    // Storage inherited from CoreVaultStorage (slots 0-36).
+    // LM-specific storage starts at slot 37+.
 
-    mapping(address => uint256) public userCollateral;
-    mapping(address => uint256) public userCrossChainCredit;
-    mapping(address => int256) public userRealizedPnL;
-    mapping(address => PositionManager.Position[]) public userPositions;
-    mapping(address => VaultAnalytics.PendingOrder[]) public userPendingOrders;
-    mapping(address => bytes32[]) public userMarketIds;
-    mapping(address => uint256) public userSocializedLoss;
-    address[] public allKnownUsers;
-    mapping(address => bool) public isKnownUser;
+    IERC20 public immutable collateralToken; // bytecode-only, no storage slot
 
-    mapping(bytes32 => address) public marketToOrderBook;
-    mapping(address => mapping(bytes32 => bool)) public isUnderLiquidationPosition;
-    mapping(address => mapping(bytes32 => uint256)) public liquidationAnchorPrice;
-    mapping(address => mapping(bytes32 => uint256)) public liquidationAnchorTimestamp;
-    mapping(address => bool) public registeredOrderBooks;
-    mapping(address => bytes32[]) public orderBookToMarkets;
-    address[] public allOrderBooks;
-    mapping(bytes32 => uint256) public marketMarkPrices;
-    mapping(bytes32 => uint256) public marketBadDebt;
-    // Align with CoreVault slots to avoid overwriting settlement flags during delegatecall
-    mapping(bytes32 => bool) public marketSettled;
-    mapping(bytes32 => bool) public marketDisputed;
-
-    // ============ Optimized Index Structures ============
-    // O(1) market → user index with swap-and-pop removal
+    // ============ LM-Specific Index Structures (slot 37+) ============
     mapping(bytes32 => address[]) internal marketUsers;
-    mapping(bytes32 => mapping(address => uint256)) internal marketUserIndex; // user → index+1 (0 = not present)
-    
-    // Bitmap for profitable users (256 users per word) - enables O(1) profitable check
+    mapping(bytes32 => mapping(address => uint256)) internal marketUserIndex;
     mapping(bytes32 => mapping(uint256 => uint256)) internal profitableBitmap;
     mapping(bytes32 => uint256) internal profitableUserCount;
-    
-    // Cached aggregate data per market for instant calculations
     mapping(bytes32 => MarketAggregate) internal marketAggregates;
-    
-    // Per-user position cache for reduced storage reads
     mapping(bytes32 => mapping(address => PositionCache)) internal positionCache;
-
-    uint256 public baseMmrBps = 1000;
-    uint256 public penaltyMmrBps = 1000;
-    uint256 public maxMmrBps = 2000;
-    // Dynamic scaling parameters (kept minimal to restore ADL tuning hooks)
-    uint256 public scalingSlopeBps = 0;
-    uint256 public priceGapSlopeBps = 0;
-    uint256 public mmrLiquidityDepthLevels = 1;
-
-    uint256 public adlMaxCandidates = 50;
-    uint256 public adlMaxPositionsPerTx = 10;
-    bool public adlDebug = false;
-
-    uint256 public totalCollateralDeposited;
-    uint256 public totalMarginLocked;
     
     // ============ Optimized Structs ============
     

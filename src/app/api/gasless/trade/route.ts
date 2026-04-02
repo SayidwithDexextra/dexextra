@@ -898,7 +898,7 @@ export async function POST(req: Request) {
                 // OBTradeExecutionFacet can revert with "OrderBook: closing loss exceeds position margin".
                 // We approximate the first execution price as bestBid/bestAsk and precheck that invariant.
                 if (crosses) {
-                  const [posSize, entryPriceRaw] = await vault.getPositionSummary(params.trader, marketId);
+                  const [posSize, entryPriceRaw] = await vault.getPositionSummary.staticCall(params.trader, marketId);
                   const currentNet = BigInt(posSize as any);
                   const entryPricePos = BigInt(entryPriceRaw as any);
                   const closing =
@@ -956,7 +956,7 @@ export async function POST(req: Request) {
               // Closing or reducing an existing position releases margin, not consumes it.
               let effectiveAmount = amount < 1_000_000_000_000n ? 1_000_000_000_000n : amount;
               try {
-                const [posSize] = await vault.getPositionSummary(params.trader, marketId);
+                const [posSize] = await vault.getPositionSummary.staticCall(params.trader, marketId);
                 const currentNet = BigInt(posSize as any);
                 const isReducing =
                   (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
@@ -979,7 +979,7 @@ export async function POST(req: Request) {
               const marginBps = isBuy ? BigInt(marginReq) : 15000n;
               const marginRequired6 = (notional6 * marginBps) / 10000n;
               const totalRequired6 = marginRequired6 + estimatedFee6;
-              const available6 = BigInt(await vault.getAvailableCollateral(params.trader));
+              const available6 = BigInt(await vault.getAvailableCollateral.staticCall(params.trader));
 
               console.log('[UpGas][API][trade] margin precheck', {
                 trader: params.trader,

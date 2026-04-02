@@ -19,7 +19,7 @@ import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
 import { getPusherServer } from '@/lib/pusher-server';
-import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { scheduleMarketLifecycle, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 import { suggestCategories } from '@/lib/suggestCategories';
 
 // Vercel: this endpoint can be long-running during deployment.
@@ -385,8 +385,7 @@ export async function POST(req: Request) {
     const speedRunConfig = (body?.speedRunConfig && typeof body.speedRunConfig === 'object')
       ? {
           rolloverLeadSeconds: Number(body.speedRunConfig.rolloverLeadSeconds) || 0,
-          challengeDurationSeconds: Number(body.speedRunConfig.challengeDurationSeconds) || 0,
-          settlementWindowSeconds: Number(body.speedRunConfig.settlementWindowSeconds) || 0,
+          challengeWindowSeconds: Number(body.speedRunConfig.challengeWindowSeconds) || 0,
         }
       : null;
     // Validate settlement date is required and in the future
@@ -1250,24 +1249,22 @@ export async function POST(req: Request) {
       logS('set_fee_recipient', 'error', { error: e?.message || String(e) });
     }
 
-    // 4. Speed-run lifecycle overrides
-    if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0) {
+    // 4. Initialize lifecycle with explicit timing (replaces separate enableTestingMode + setLeadTimes)
+    if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeWindowSeconds > 0) {
       try {
-        logS('speed_run_testing_mode', 'start', { orderBook, speedRunConfig });
+        logS('initialize_lifecycle_timing', 'start', { orderBook, speedRunConfig });
         const lifecycleContract = new ethers.Contract(orderBook!, [
-          'function enableTestingMode(bool enabled) external',
-          'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
+          'function initializeLifecycleWithTiming(uint256 settlementTimestamp, address parent, bool devMode, uint256 rolloverLeadSeconds, uint256 challengeWindowSeconds) external',
         ], wallet);
-        const ov1 = await nonceMgr.nextOverrides();
-        const ov2 = { ...(await nonceMgr.nextOverrides()), gasLimit: 200_000n };
-        const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
-        logS('speed_run_enable_sent', 'success', { tx: txEnable.hash });
-        pending.push({ stepSent: 'speed_run_enable_sent', stepMined: 'speed_run_enable_mined', tx: txEnable });
-        const txLead = await lifecycleContract.setLeadTimes(speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeDurationSeconds, ov2);
-        logS('speed_run_lead_sent', 'success', { tx: txLead.hash });
-        pending.push({ stepSent: 'speed_run_lead_sent', stepMined: 'speed_run_lead_mined', tx: txLead });
+        const ov = await nonceMgr.nextOverrides();
+        const txInit = await lifecycleContract.initializeLifecycleWithTiming(
+          settlementTs, ethers.ZeroAddress, false,
+          speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeWindowSeconds, ov,
+        );
+        logS('lifecycle_timing_sent', 'success', { tx: txInit.hash });
+        pending.push({ stepSent: 'lifecycle_timing_sent', stepMined: 'lifecycle_timing_mined', tx: txInit });
       } catch (e: any) {
-        logS('speed_run_testing_mode', 'error', { error: e?.message || String(e) });
+        logS('initialize_lifecycle_timing', 'error', { error: e?.message || String(e) });
       }
     }
 
@@ -1443,9 +1440,8 @@ export async function POST(req: Request) {
             } : {}),
             ...(speedRunConfig ? {
               speed_run: true,
-              settlement_window_seconds: speedRunConfig.settlementWindowSeconds,
+              challenge_window_seconds: speedRunConfig.challengeWindowSeconds,
               rollover_lead_seconds: speedRunConfig.rolloverLeadSeconds,
-              challenge_duration_seconds: speedRunConfig.challengeDurationSeconds,
             } : {}),
           },
           ai_source_locator: aiSourceLocator
@@ -1560,15 +1556,16 @@ export async function POST(req: Request) {
         try {
           const scheduledNow = Math.floor(Date.now() / 1000);
           const marketDuration = Math.max(1, settlementTs - scheduledNow);
-          const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? Math.max(300, Math.floor(marketDuration / 12));
-          const challengeDuration = speedRunConfig?.challengeDurationSeconds ?? Math.max(60, Math.floor(marketDuration / 365));
+          const proportional = proportionalDurations(marketDuration);
+          const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? proportional.rolloverLead;
+          const challengeWindow = speedRunConfig?.challengeWindowSeconds ?? proportional.challengeWindow;
 
           const scheduleIds = await scheduleMarketLifecycle(savedRow.id, settlementTs, {
             marketAddress: orderBook,
             symbol,
             ...(speedRunConfig ? {
               rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
-              challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
+              challengeWindowSeconds: speedRunConfig.challengeWindowSeconds,
             } : {}),
           });
           logS('qstash_schedule', 'success', { scheduleIds, speedRun: Boolean(speedRunConfig) });
@@ -1583,8 +1580,9 @@ export async function POST(req: Request) {
                 qstash_lifecycle: {
                   schedule_ids: scheduleIds,
                   rollover_trigger_at: settlementTs - rolloverLead,
+                  challenge_open_at: settlementTs,
                   settlement_trigger_at: settlementTs,
-                  finalize_trigger_at: settlementTs + challengeDuration,
+                  finalize_trigger_at: settlementTs + challengeWindow + ONCHAIN_SETTLE_BUFFER_SEC,
                   scheduled_at: scheduledNow,
                 },
               },

@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
 import CoreVaultAbi from '@/lib/abis/CoreVault.json';
 import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib/relayerRouter';
+import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
+import { computeRelayerProof } from '@/lib/relayerMerkle';
 
-// Prefer server RPC but fall back to client-exposed value so local dev works
 const rpcUrl =
   process.env.RPC_URL ||
   process.env.HYPERLIQUID_RPC_URL ||
@@ -40,12 +41,13 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     if (!rpcUrl) return bad('server misconfigured', 500);
-    const { vault, user, marketId, amount, nonce, signature } = await req.json();
+    const body = await req.json();
+    const { vault, user, marketId, amount, sessionId, signature, nonce } = body;
+
     if (!vault || !ethers.isAddress(vault)) return bad('invalid vault');
     if (!user || !ethers.isAddress(user)) return bad('invalid user');
     if (!marketId || !ethers.isHexString(marketId, 32)) return bad('invalid marketId');
     if (amount === undefined || amount === null) return bad('missing amount');
-    if (!signature || typeof signature !== 'string') return bad('missing signature');
 
     let amountBn: bigint;
     try {
@@ -55,24 +57,60 @@ export async function POST(req: Request) {
       return bad('invalid amount');
     }
 
+    const isSession = Boolean(sessionId) && !signature;
+
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const sig = ethers.Signature.from(signature);
-    const tx = await withRelayer({
-      pool: 'hub_trade',
-      provider,
-      stickyKey: user,
-      action: async (wallet) => {
-        const cv = new ethers.Contract(vault, CoreVaultAbi.abi, wallet);
-        return await sendWithNonceRetry({
-          provider,
-          wallet,
-          contract: cv,
-          method: 'metaTopUpPositionMargin',
-          args: [user, marketId, amountBn, sig.v, sig.r, sig.s],
-          label: 'topup:metaTopUpPositionMargin',
-        });
-      }
-    });
+
+    let tx: any;
+
+    if (isSession) {
+      if (!/^0x[0-9a-fA-F]{64}$/.test(sessionId)) return bad('invalid sessionId');
+
+      const globalKeys = loadRelayerPoolFromEnv({
+        pool: 'global',
+        globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+        allowFallbackSingleKey: true,
+      });
+      const relayerAddrs = globalKeys.map((k) => ethers.getAddress(k.address));
+
+      tx = await withRelayer({
+        pool: 'hub_trade',
+        provider,
+        stickyKey: user,
+        action: async (wallet) => {
+          const relayerProof = computeRelayerProof(relayerAddrs, wallet.address);
+          const cv = new ethers.Contract(vault, CoreVaultAbi.abi, wallet);
+          return await sendWithNonceRetry({
+            provider,
+            wallet,
+            contract: cv,
+            method: 'sessionTopUpPositionMargin',
+            args: [sessionId, user, marketId, amountBn, wallet.address, relayerProof],
+            label: 'topup:sessionTopUpPositionMargin',
+          });
+        },
+      });
+    } else {
+      if (!signature || typeof signature !== 'string') return bad('missing signature');
+      const sig = ethers.Signature.from(signature);
+      tx = await withRelayer({
+        pool: 'hub_trade',
+        provider,
+        stickyKey: user,
+        action: async (wallet) => {
+          const cv = new ethers.Contract(vault, CoreVaultAbi.abi, wallet);
+          return await sendWithNonceRetry({
+            provider,
+            wallet,
+            contract: cv,
+            method: 'metaTopUpPositionMargin',
+            args: [user, marketId, amountBn, sig.v, sig.r, sig.s],
+            label: 'topup:metaTopUpPositionMargin',
+          });
+        },
+      });
+    }
+
     const waitConfirms = Number(process.env.GASLESS_TRADE_WAIT_CONFIRMS ?? '0');
     if (waitConfirms > 0) {
       const rc = await provider.waitForTransaction(tx.hash, waitConfirms);
@@ -84,7 +122,7 @@ export async function POST(req: Request) {
       console.error('[TOPUP] all relayers out of funds', e?.message || e);
       return NextResponse.json(
         { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
-        { status: 503 }
+        { status: 503 },
       );
     }
     console.error('[GASLESS][API][topup][POST] relay failed', e);

@@ -30,6 +30,28 @@
   animation: ob-shimmer 1.8s ease-in-out infinite;
 }
 
+/* Pending order shimmer (MarketActivityTabs inline processing indicator) */
+@keyframes pending-order-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.pending-order-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(59, 130, 246, 0.04) 25%,
+    rgba(59, 130, 246, 0.08) 50%,
+    rgba(59, 130, 246, 0.04) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: pending-order-shimmer 2s ease-in-out infinite;
+}
+
 /* Open order row slide-out to the right (MarketActivityTabs cancel) */
 @keyframes order-row-slide-out {
   from {

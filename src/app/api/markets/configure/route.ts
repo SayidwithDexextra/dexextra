@@ -117,8 +117,7 @@ export async function POST(req: Request) {
     const speedRunConfig = (body?.speedRunConfig && typeof body.speedRunConfig === 'object')
       ? {
           rolloverLeadSeconds: Number(body.speedRunConfig.rolloverLeadSeconds) || 0,
-          challengeDurationSeconds: Number(body.speedRunConfig.challengeDurationSeconds) || 0,
-          settlementWindowSeconds: Number(body.speedRunConfig.settlementWindowSeconds) || 0,
+          challengeWindowSeconds: Number(body.speedRunConfig.challengeWindowSeconds) || 0,
         }
       : null;
     const settlementTs = typeof body?.settlementTs === 'number' ? body.settlementTs : 0;
@@ -430,57 +429,32 @@ export async function POST(req: Request) {
         }
       }
 
-      // 5. Initialize lifecycle controller
+      // 5. Initialize lifecycle controller with explicit timing
       if (settlementTs > 0 && !configState.lifecycle_initialized) {
         try {
-          const isDevMode = !!speedRunConfig;
-          laneLog('A', 'Initialize lifecycle', 'start', `settlement=${settlementTs} devMode=${isDevMode}`);
-          logS('initialize_lifecycle', 'start', { settlementTs, isDevMode });
+          const hasExplicitTiming = speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeWindowSeconds > 0;
+          const rolloverLead = hasExplicitTiming ? speedRunConfig.rolloverLeadSeconds : 0;
+          const challengeWindow = hasExplicitTiming ? speedRunConfig.challengeWindowSeconds : 0;
+          laneLog('A', 'Initialize lifecycle', 'start', `settlement=${settlementTs} rollover=${rolloverLead}s challenge=${challengeWindow}s`);
+          logS('initialize_lifecycle', 'start', { settlementTs, rolloverLead, challengeWindow });
           const lcContract = new ethers.Contract(orderBook, [
-            'function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external',
+            'function initializeLifecycleWithTiming(uint256 settlementTimestamp, address parent, bool devMode, uint256 rolloverLeadSeconds, uint256 challengeWindowSeconds) external',
           ], wallet);
           const ov = await nonceMgr.nextOverrides();
-          const txInit = await lcContract.initializeLifecycleWithMode(settlementTs, ethers.ZeroAddress, isDevMode, ov);
+          const txInit = await lcContract.initializeLifecycleWithTiming(
+            settlementTs, ethers.ZeroAddress, false,
+            rolloverLead, challengeWindow, ov,
+          );
           const sentAt = Date.now();
           laneLog('A', 'Initialize lifecycle', 'start', `tx sent ${shortTx(txInit.hash)} +${sentAt - laneAStart}ms`);
           logS('initialize_lifecycle_sent', 'success', { tx: txInit.hash, elapsedMs: sentAt - laneAStart });
           pending.push({
             label: 'Initialize lifecycle', logKey: 'initialize_lifecycle', tx: txInit, sentAt,
-            onMined: () => { configState.lifecycle_initialized = true; },
+            onMined: () => { configState.lifecycle_initialized = true; configState.speed_run_set = true; },
           });
         } catch (e: any) {
           laneLog('A', 'Initialize lifecycle', 'error', e?.shortMessage || e?.message || String(e));
           logS('initialize_lifecycle', 'error', { error: e?.message || String(e) });
-        }
-      }
-
-      // 6. Speed-run lifecycle overrides
-      if (speedRunConfig && speedRunConfig.rolloverLeadSeconds > 0 && speedRunConfig.challengeDurationSeconds > 0 && !configState.speed_run_set) {
-        try {
-          laneLog('A', 'Speed-run overrides', 'start', `rollover=${speedRunConfig.rolloverLeadSeconds}s challenge=${speedRunConfig.challengeDurationSeconds}s`);
-          logS('speed_run_testing_mode', 'start', { orderBook, speedRunConfig });
-          const lifecycleContract = new ethers.Contract(orderBook, [
-            'function enableTestingMode(bool enabled) external',
-            'function setLeadTimes(uint256 rolloverLeadSeconds, uint256 challengeLeadSeconds) external',
-          ], wallet);
-          const ov1 = await nonceMgr.nextOverrides();
-          const ov2 = { ...(await nonceMgr.nextOverrides()), gasLimit: 200_000n };
-          const txEnable = await lifecycleContract.enableTestingMode(true, ov1);
-          const sentAt1 = Date.now();
-          laneLog('A', 'Speed-run enable', 'start', `tx sent ${shortTx(txEnable.hash)} +${sentAt1 - laneAStart}ms`);
-          pending.push({ label: 'Speed-run enable', logKey: 'speed_run_enable', tx: txEnable, sentAt: sentAt1 });
-          const txLead = await lifecycleContract.setLeadTimes(
-            speedRunConfig.rolloverLeadSeconds, speedRunConfig.challengeDurationSeconds, ov2,
-          );
-          const sentAt2 = Date.now();
-          laneLog('A', 'Speed-run lead times', 'start', `tx sent ${shortTx(txLead.hash)} +${sentAt2 - laneAStart}ms`);
-          pending.push({
-            label: 'Speed-run lead times', logKey: 'speed_run_lead', tx: txLead, sentAt: sentAt2,
-            onMined: () => { configState.speed_run_set = true; },
-          });
-        } catch (e: any) {
-          laneLog('A', 'Speed-run overrides', 'error', e?.shortMessage || e?.message || String(e));
-          logS('speed_run_testing_mode', 'error', { error: e?.message || String(e) });
         }
       }
 
@@ -624,7 +598,7 @@ export async function POST(req: Request) {
               marketAddress: orderBook,
               symbol: symbolStr,
               rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
-              challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
+              challengeWindowSeconds: speedRunConfig.challengeWindowSeconds,
             });
             vStep('Reschedule QStash', 'success', `${Object.keys(scheduleIds).length} events`);
             logS('reschedule_qstash', 'success', { marketId: mkt.id, scheduleIds });
@@ -638,8 +612,9 @@ export async function POST(req: Request) {
                 qstash_lifecycle: {
                   schedule_ids: scheduleIds,
                   rollover_trigger_at: newSettlementUnix - speedRunConfig.rolloverLeadSeconds,
+                  challenge_open_at: newSettlementUnix,
                   settlement_trigger_at: newSettlementUnix,
-                  finalize_trigger_at: newSettlementUnix + speedRunConfig.challengeDurationSeconds,
+                  finalize_trigger_at: newSettlementUnix + speedRunConfig.challengeWindowSeconds,
                   scheduled_at: Math.floor(Date.now() / 1000),
                 },
                 settlement_recalculated: true,

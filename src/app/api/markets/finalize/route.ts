@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import { createClient } from '@supabase/supabase-js';
 import { archivePage } from '@/lib/archivePage';
 import { getPusherServer } from '@/lib/pusher-server';
-import { scheduleMarketLifecycle } from '@/lib/qstash-scheduler';
+import { scheduleMarketLifecycle, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 import { suggestCategories } from '@/lib/suggestCategories';
 
 export const runtime = 'nodejs';
@@ -116,8 +116,7 @@ export async function POST(req: Request) {
     const speedRunConfig = (body?.speedRunConfig && typeof body.speedRunConfig === 'object')
       ? {
           rolloverLeadSeconds: Number(body.speedRunConfig.rolloverLeadSeconds) || 0,
-          challengeDurationSeconds: Number(body.speedRunConfig.challengeDurationSeconds) || 0,
-          settlementWindowSeconds: Number(body.speedRunConfig.settlementWindowSeconds) || 0,
+          challengeWindowSeconds: Number(body.speedRunConfig.challengeWindowSeconds) || 0,
         }
       : null;
 
@@ -243,9 +242,8 @@ export async function POST(req: Request) {
         } : {}),
         ...(speedRunConfig ? {
           speed_run: true,
-          settlement_window_seconds: speedRunConfig.settlementWindowSeconds,
+          challenge_window_seconds: speedRunConfig.challengeWindowSeconds,
           rollover_lead_seconds: speedRunConfig.rolloverLeadSeconds,
-          challenge_duration_seconds: speedRunConfig.challengeDurationSeconds,
         } : {}),
       },
       ai_source_locator: aiSourceLocator
@@ -342,14 +340,16 @@ export async function POST(req: Request) {
       try {
         const scheduledNow = Math.floor(Date.now() / 1000);
         const marketDuration = Math.max(1, settlementTs - scheduledNow);
-        const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? Math.max(300, Math.floor(marketDuration / 12));
-        const challengeDuration = speedRunConfig?.challengeDurationSeconds ?? Math.max(60, Math.floor(marketDuration / 365));
+        const proportional = proportionalDurations(marketDuration);
+        const rolloverLead = speedRunConfig?.rolloverLeadSeconds ?? proportional.rolloverLead;
+        const challengeWindow = speedRunConfig?.challengeWindowSeconds ?? proportional.challengeWindow;
+
         const scheduleIds = await scheduleMarketLifecycle(savedRow.id, settlementTs, {
           marketAddress: orderBook,
           symbol,
           ...(speedRunConfig ? {
             rolloverLeadSeconds: speedRunConfig.rolloverLeadSeconds,
-            challengeDurationSeconds: speedRunConfig.challengeDurationSeconds,
+            challengeWindowSeconds: speedRunConfig.challengeWindowSeconds,
           } : {}),
         });
         qstashIds = scheduleIds;
@@ -363,8 +363,9 @@ export async function POST(req: Request) {
               qstash_lifecycle: {
                 schedule_ids: scheduleIds,
                 rollover_trigger_at: settlementTs - rolloverLead,
+                challenge_open_at: settlementTs,
                 settlement_trigger_at: settlementTs,
-                finalize_trigger_at: settlementTs + challengeDuration,
+                finalize_trigger_at: settlementTs + challengeWindow + ONCHAIN_SETTLE_BUFFER_SEC,
                 scheduled_at: scheduledNow,
               },
             },

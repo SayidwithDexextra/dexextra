@@ -912,8 +912,9 @@ export async function submitSessionTrade(params: {
 }
 
 function defaultMethodsBitmap(): `0x${string}` {
-  // bits: 0..5 set
-  const v = (1n << 0n) | (1n << 1n) | (1n << 2n) | (1n << 3n) | (1n << 4n) | (1n << 5n);
+  // bits 0-5: MetaTradeFacet OB actions (limit, marginLimit, market, marginMarket, modify, cancel)
+  // bit 6: CoreVault sessionTopUpPositionMargin
+  const v = (1n << 0n) | (1n << 1n) | (1n << 2n) | (1n << 3n) | (1n << 4n) | (1n << 5n) | (1n << 6n);
   const hex = '0x' + v.toString(16).padStart(64, '0');
   return hex as `0x${string}`;
 }

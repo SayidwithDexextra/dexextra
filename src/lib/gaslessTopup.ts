@@ -4,6 +4,8 @@ import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from './contractConfig';
 import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
 
 const GASLESS_TOPUP_ENDPOINT = '/api/gasless/topup';
+
+type TopUpResult = { success: boolean; txHash?: string; error?: string };
 type ChainCheckResult = { ok: true } | { ok: false; error: string };
 
 function getWalletProvider(): EthereumProvider | null {
@@ -106,12 +108,58 @@ function normalizeMarketId(marketId: string): string | null {
   return trimmed;
 }
 
+export async function sessionTopUpPosition(params: {
+  vault?: string;
+  trader: string;
+  marketId: string;
+  amount: string;
+  sessionId: string;
+}): Promise<TopUpResult> {
+  const { trader, marketId, amount, sessionId } = params;
+  const vaultAddr = params.vault || CONTRACT_ADDRESSES.CORE_VAULT;
+  if (!vaultAddr) return { success: false, error: 'missing vault address' };
+  if (!trader) return { success: false, error: 'Missing trader address' };
+  if (!sessionId) return { success: false, error: 'Missing sessionId' };
+
+  const parsedMarketId = normalizeMarketId(marketId);
+  if (!parsedMarketId) return { success: false, error: 'Invalid marketId for top-up' };
+
+  let amountWei: bigint;
+  try {
+    amountWei = parseUnits(amount, 6);
+    if (amountWei <= 0n) return { success: false, error: 'Amount must be greater than 0' };
+  } catch {
+    return { success: false, error: 'Invalid amount' };
+  }
+
+  try {
+    const res = await fetch(GASLESS_TOPUP_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        vault: vaultAddr,
+        user: trader,
+        marketId: parsedMarketId,
+        amount: amountWei.toString(),
+        sessionId,
+      }),
+    });
+    const body = await res.json();
+    if (!res.ok || !body?.txHash) {
+      return { success: false, error: body?.error || 'session top-up relay failed' };
+    }
+    return { success: true, txHash: body.txHash };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'network error' };
+  }
+}
+
 export async function gaslessTopUpPosition(params: {
   vault?: string;
   trader: string;
   marketId: string;
   amount: string;
-}): Promise<{ success: boolean; txHash?: string; error?: string }> {
+}): Promise<TopUpResult> {
   const { trader, marketId, amount } = params;
   const vaultAddr = params.vault || CONTRACT_ADDRESSES.CORE_VAULT;
   if (!vaultAddr) return { success: false, error: 'missing vault address' };

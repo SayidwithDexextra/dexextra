@@ -224,41 +224,47 @@ function randomDevCode4() {
   return out;
 }
 
-type DevSettlementMode = 'standard' | 'immediate' | 'speed-run-30' | 'speed-run-15';
+type SettlementPreset = 'standard' | 'quick-15' | 'quick-30' | 'daily-24h';
 
 type SpeedRunConfig = {
   rolloverLeadSeconds: number;
-  challengeDurationSeconds: number;
-  settlementWindowSeconds: number;
+  challengeWindowSeconds: number;
 };
 
-const DEV_SETTLEMENT_OPTIONS: {
-  value: DevSettlementMode;
+const SETTLEMENT_PRESETS: {
+  value: SettlementPreset;
   label: string;
+  sublabel: string;
   settlementOffsetSeconds: number;
-  speedRunConfig?: SpeedRunConfig;
+  speedRunConfig: SpeedRunConfig;
 }[] = [
-  { value: 'standard', label: 'Standard (1 year)', settlementOffsetSeconds: 365 * 24 * 60 * 60 },
-  { value: 'immediate', label: 'Immediate (10 min)', settlementOffsetSeconds: 10 * 60 },
   {
-    value: 'speed-run-30',
-    label: 'Speed Run (30 min)',
-    settlementOffsetSeconds: 30 * 60,
-    speedRunConfig: {
-      rolloverLeadSeconds: 15 * 60,
-      challengeDurationSeconds: 10 * 60,
-      settlementWindowSeconds: 10 * 60,
-    },
+    value: 'quick-15',
+    label: '15 min',
+    sublabel: '7.5m rollover · 5m challenge',
+    settlementOffsetSeconds: 15 * 60,
+    speedRunConfig: { rolloverLeadSeconds: 7.5 * 60, challengeWindowSeconds: 5 * 60 },
   },
   {
-    value: 'speed-run-15',
-    label: 'Speed Run (15 min)',
-    settlementOffsetSeconds: 15 * 60,
-    speedRunConfig: {
-      rolloverLeadSeconds: 7.5 * 60,
-      challengeDurationSeconds: 5 * 60,
-      settlementWindowSeconds: 5 * 60,
-    },
+    value: 'quick-30',
+    label: '30 min',
+    sublabel: '15m rollover · 10m challenge',
+    settlementOffsetSeconds: 30 * 60,
+    speedRunConfig: { rolloverLeadSeconds: 15 * 60, challengeWindowSeconds: 10 * 60 },
+  },
+  {
+    value: 'daily-24h',
+    label: '24 hours',
+    sublabel: '12h rollover · 4h challenge',
+    settlementOffsetSeconds: 24 * 60 * 60,
+    speedRunConfig: { rolloverLeadSeconds: 12 * 60 * 60, challengeWindowSeconds: 4 * 60 * 60 },
+  },
+  {
+    value: 'standard',
+    label: '1 year',
+    sublabel: '30d rollover · 24h challenge',
+    settlementOffsetSeconds: 365 * 24 * 60 * 60,
+    speedRunConfig: { rolloverLeadSeconds: 30 * 24 * 60 * 60, challengeWindowSeconds: 24 * 60 * 60 },
   },
 ];
 
@@ -635,9 +641,9 @@ function MarketDetailsReview({
   onStartOver,
   onCreateMarket,
   isCreating,
-  showDevSettlementSelector,
-  devSettlementMode,
-  onChangeDevSettlementMode,
+  showSettlementPresets,
+  settlementPreset,
+  onChangeSettlementPreset,
 }: {
   marketName: string;
   marketDescription: string;
@@ -654,9 +660,9 @@ function MarketDetailsReview({
   onStartOver: () => void;
   onCreateMarket: () => void;
   isCreating: boolean;
-  showDevSettlementSelector?: boolean;
-  devSettlementMode?: DevSettlementMode;
-  onChangeDevSettlementMode?: (mode: DevSettlementMode) => void;
+  showSettlementPresets?: boolean;
+  settlementPreset?: SettlementPreset;
+  onChangeSettlementPreset?: (preset: SettlementPreset) => void;
 }) {
   const [hasAnimated, setHasAnimated] = React.useState(false);
   const [bondConfig, setBondConfig] = React.useState<{
@@ -754,15 +760,15 @@ function MarketDetailsReview({
               </svg>
               Start over
             </button>
-            {showDevSettlementSelector ? (
+            {showSettlementPresets ? (
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-white/35">Settlement</span>
+                <span className="text-[10px] text-white/35">Settles in</span>
                 <select
-                  value={devSettlementMode || 'standard'}
-                  onChange={(e) => onChangeDevSettlementMode?.(e.target.value as DevSettlementMode)}
+                  value={settlementPreset || 'quick-30'}
+                  onChange={(e) => onChangeSettlementPreset?.(e.target.value as SettlementPreset)}
                   className="h-6 rounded-md border border-white/10 bg-white/[0.03] px-1.5 text-[10px] text-white/60 outline-none focus:border-purple-500/40 transition-colors"
                 >
-                  {DEV_SETTLEMENT_OPTIONS.map((opt) => (
+                  {SETTLEMENT_PRESETS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -1029,7 +1035,7 @@ export function InteractiveMarketCreation({
 }: InteractiveMarketCreationProps = {}) {
   const devToolsEnabled = true; // TEMP: forced on for production testing
   const [devToolsOpen, setDevToolsOpen] = React.useState(false);
-  const [devSettlementMode, setDevSettlementMode] = React.useState<DevSettlementMode>('standard');
+  const [settlementPreset, setSettlementPreset] = React.useState<SettlementPreset>('quick-30');
   const [devSpeedRunSourceUrl, setDevSpeedRunSourceUrl] = React.useState('');
   const [devSpeedRunStartPrice, setDevSpeedRunStartPrice] = React.useState('');
   const [devSpeedRunName, setDevSpeedRunName] = React.useState('');
@@ -1736,7 +1742,7 @@ export function InteractiveMarketCreation({
     const code = randomDevCode4();
     setErrorMessage(null);
     setDiscoveryState('success');
-    setDevSettlementMode('immediate');
+    setSettlementPreset('quick-15');
 
     // Fill core fields with minimal test-friendly values.
     setMarketName(code);
@@ -1842,7 +1848,7 @@ export function InteractiveMarketCreation({
 
     setErrorMessage(null);
     setDiscoveryState('success');
-    setDevSettlementMode('speed-run-30');
+    setSettlementPreset('quick-30');
 
     setMarketName(code);
     setMarketDescription(desc);
@@ -2232,9 +2238,9 @@ export function InteractiveMarketCreation({
       const dataSource = selectedSource.authority || selectedSource.label || 'User Provided';
       const tags: string[] = [];
       const nowSec = Math.floor(Date.now() / 1000);
-      const selectedTiming = DEV_SETTLEMENT_OPTIONS.find((o) => o.value === devSettlementMode);
-      const settlementDateTs = nowSec + (selectedTiming?.settlementOffsetSeconds ?? 365 * 24 * 60 * 60);
-      const speedRunConfig = selectedTiming?.speedRunConfig ?? undefined;
+      const selectedTiming = SETTLEMENT_PRESETS.find((o) => o.value === settlementPreset) ?? SETTLEMENT_PRESETS[1];
+      const settlementDateTs = nowSec + selectedTiming.settlementOffsetSeconds;
+      const speedRunConfig = selectedTiming.speedRunConfig;
       let sourceLocator: { url: string; css_selector?: string; xpath?: string; html_snippet?: string; js_extractor?: string } | null = null;
       const cleanNumeric = (v: unknown): string => {
         const s = String(v ?? '').trim().replace(/,/g, '').replace(/[^0-9.\-]/g, '');
@@ -2469,7 +2475,7 @@ export function InteractiveMarketCreation({
     iconPreviewUrl,
     iconStoredUrl,
     deploymentOverlay,
-    devSettlementMode,
+    settlementPreset,
     pusher,
     router,
     pipelineMessages,
@@ -2547,10 +2553,15 @@ export function InteractiveMarketCreation({
           console.log('[SimilarMarkets] API response', JSON.stringify({ status: res.status, matchCount: json?.matches?.length, matches: json?.matches?.map((m: any) => ({ name: m.name, symbol: m.symbol, score: m.score })) }));
           if (!controller.signal.aborted && Array.isArray(json?.matches)) {
             const legacyRe = /-legacy\d+$/i;
+            const timeframeRe = /-\d{0,2}[a-z]{3}\d{2}-/i;
+            const isExpired = (m: SimilarMarketMatch) =>
+              legacyRe.test(m.symbol) || timeframeRe.test(m.symbol)
+              || /\(Legacy \d+\)/i.test(m.name)
+              || /\([^)]+\s[–\u2013-]\s[^)]+\)\s*$/.test(m.name);
             const relevant = (json.matches as SimilarMarketMatch[]).filter(
-              (m) => m.score >= 0.08 && !legacyRe.test(m.symbol) && !/\(Legacy \d+\)/i.test(m.name)
+              (m) => m.score >= 0.08 && !isExpired(m)
             );
-            console.log('[SimilarMarkets] relevant matches (score >= 0.08, non-legacy):', relevant.length, relevant.map((m) => ({ name: m.name, score: m.score })));
+            console.log('[SimilarMarkets] relevant matches (score >= 0.08, non-expired):', relevant.length, relevant.map((m) => ({ name: m.name, score: m.score })));
             setSimilarMarkets(relevant);
           }
         } catch (err) {
@@ -3621,9 +3632,9 @@ export function InteractiveMarketCreation({
           onStartOver={handleReset}
           onCreateMarket={handleCreateMarket}
           isCreating={isCreatingMarket}
-          showDevSettlementSelector={true}
-          devSettlementMode={devSettlementMode}
-          onChangeDevSettlementMode={setDevSettlementMode}
+          showSettlementPresets={true}
+          settlementPreset={settlementPreset}
+          onChangeSettlementPreset={setSettlementPreset}
         />
       )}
 

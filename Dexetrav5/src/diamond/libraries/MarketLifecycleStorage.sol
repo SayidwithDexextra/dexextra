@@ -6,14 +6,14 @@ library MarketLifecycleStorage {
     bytes32 internal constant STORAGE_SLOT = keccak256("dexextra.market.lifecycle.storage.v1");
 
     struct State {
-        // One-time initialization at market creation (T0 + 365 days)
+        // T0 = when challenge phase begins and trading pauses
         uint256 settlementTimestamp;
 
-        // Cached when signaled; derived as settlementTimestamp - 30 days
+        // Rollover window: opens at T0 - rolloverLead, closes at T0
         uint256 rolloverWindowStart;
         bool rolloverWindowStarted;
 
-        // Cached when signaled; derived as settlementTimestamp - 24 hours
+        // Challenge window: opens at T0, runs for challengeWindowDuration
         uint256 challengeWindowStart;
         bool challengeWindowStarted;
 
@@ -46,6 +46,14 @@ library MarketLifecycleStorage {
         bool challengeResolved;             // True after refund or slash
         bool challengerWon;                 // Outcome: true = refunded, false = slashed
         address challengeSlashRecipient;    // Treasury address that receives slashed bonds
+
+        // Permissionless settlement price proposal (v4; append-only)
+        uint256 proposedSettlementPrice;    // Initial proposed price (6 decimals), set by any participant
+        address proposedSettlementBy;       // Address that submitted the initial proposal
+        bool settlementProposed;            // True once an initial price has been proposed
+
+        // Explicit timing overrides (v4; append-only) — stored at init, avoids proportional coupling
+        uint256 rolloverLeadStored;         // Explicit rollover lead in seconds; 0 = use proportional default
     }
 
     function state() internal pure returns (State storage s) {

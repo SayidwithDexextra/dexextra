@@ -72,6 +72,7 @@ contract MarketLifecycleFacet {
     event ChallengeBondConfigured(address indexed market, uint256 bondAmount, address slashRecipient);
     event SettlementChallenged(address indexed market, address indexed challenger, uint256 alternativePrice, uint256 bondAmount);
     event ChallengeResolved(address indexed market, address indexed challenger, bool challengerWon, uint256 bondAmount, address recipient);
+    event SettlementPriceProposed(address indexed market, address indexed proposer, uint256 price, uint256 timestamp);
 
     // === Modifiers ===
     modifier onlyOwner() {
@@ -87,18 +88,20 @@ contract MarketLifecycleFacet {
 
     function _rolloverLead(MarketLifecycleStorage.State storage s) private view returns (uint256) {
         if (s.testingMode && s.rolloverLeadTimeOverride != 0) return s.rolloverLeadTimeOverride;
+        if (s.rolloverLeadStored != 0) return s.rolloverLeadStored;
         uint256 duration = _lifecycleDuration(s);
         if (duration == 0) return DEFAULT_ROLLOVER_LEAD;
-        uint256 lead = duration / 12; // 11/12 point activation
+        uint256 lead = duration / 12;
         return lead == 0 ? 1 : lead;
     }
 
     function _challengeDuration(MarketLifecycleStorage.State storage s) private view returns (uint256) {
         if (s.testingMode && s.challengeLeadTimeOverride != 0) return s.challengeLeadTimeOverride;
+        if (s.lifecycleDevMode) return DEFAULT_CHALLENGE_LEAD; // 24h fixed window in dev mode
         if (s.challengeWindowDuration != 0) return s.challengeWindowDuration;
         uint256 duration = _lifecycleDuration(s);
         if (duration == 0) return DEFAULT_CHALLENGE_LEAD;
-        uint256 proportional = duration / DAYS_PER_YEAR; // 24h for a 1y market, proportional for shorter markets
+        uint256 proportional = duration / DAYS_PER_YEAR;
         if (proportional < MIN_CHALLENGE_DURATION) return MIN_CHALLENGE_DURATION;
         return proportional;
     }
@@ -150,29 +153,59 @@ contract MarketLifecycleFacet {
     /**
      * @notice One-time initializer for lifecycle data on new or legacy markets.
      * @dev Restricted to diamond owner for safety; subsequent calls revert.
-     * @param settlementTimestamp Unix timestamp T0 + 365 days
+     * @param settlementTimestamp Unix timestamp when challenge phase begins (T0)
      * @param parent Address of parent market (zero for genesis)
      */
     function initializeLifecycle(uint256 settlementTimestamp, address parent) external onlyOwner {
-        _initializeLifecycle(settlementTimestamp, parent, false);
+        _initializeLifecycle(settlementTimestamp, parent, false, 0, 0);
     }
 
     /**
      * @notice One-time initializer with explicit dev mode toggle.
-     * @dev This is the constructor-equivalent for Diamond facet lifecycle mode configuration.
      */
     function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external onlyOwner {
-        _initializeLifecycle(settlementTimestamp, parent, devMode);
+        _initializeLifecycle(settlementTimestamp, parent, devMode, 0, 0);
     }
 
-    function _initializeLifecycle(uint256 settlementTimestamp, address parent, bool devMode) private {
+    /**
+     * @notice One-time initializer with explicit timing overrides.
+     * @param rolloverLeadSeconds Explicit rollover lead in seconds (0 = proportional default)
+     * @param challengeWindowSeconds Explicit challenge window duration (0 = proportional default)
+     */
+    function initializeLifecycleWithTiming(
+        uint256 settlementTimestamp,
+        address parent,
+        bool devMode,
+        uint256 rolloverLeadSeconds,
+        uint256 challengeWindowSeconds
+    ) external onlyOwner {
+        _initializeLifecycle(settlementTimestamp, parent, devMode, rolloverLeadSeconds, challengeWindowSeconds);
+    }
+
+    function _initializeLifecycle(
+        uint256 settlementTimestamp,
+        address parent,
+        bool devMode,
+        uint256 rolloverLeadSeconds,
+        uint256 challengeWindowSeconds
+    ) private {
         require(settlementTimestamp > block.timestamp, "LC: invalid settlement");
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.settlementTimestamp == 0, "LC: already init");
         s.settlementTimestamp = settlementTimestamp;
         s.lifecycleDurationSeconds = settlementTimestamp - block.timestamp;
-        uint256 proportionalChallenge = s.lifecycleDurationSeconds / DAYS_PER_YEAR;
-        s.challengeWindowDuration = proportionalChallenge < MIN_CHALLENGE_DURATION ? MIN_CHALLENGE_DURATION : proportionalChallenge;
+
+        if (challengeWindowSeconds > 0) {
+            s.challengeWindowDuration = challengeWindowSeconds;
+        } else {
+            uint256 proportionalChallenge = s.lifecycleDurationSeconds / DAYS_PER_YEAR;
+            s.challengeWindowDuration = proportionalChallenge < MIN_CHALLENGE_DURATION ? MIN_CHALLENGE_DURATION : proportionalChallenge;
+        }
+
+        if (rolloverLeadSeconds > 0) {
+            s.rolloverLeadStored = rolloverLeadSeconds;
+        }
+
         s.lifecycleDevMode = devMode;
         if (parent != address(0)) {
             s.parentMarket = parent;
@@ -210,12 +243,17 @@ contract MarketLifecycleFacet {
                 emit RolloverWindowStarted(address(this), rolloverStart, rolloverEnd);
                 progressed = true;
             } else if (previousState == uint8(LifecycleState.Rollover)) {
-                uint256 challengeStart = block.timestamp;
+                // Challenge window begins at end of market timeline, never before settlementTimestamp
+                uint256 challengeStart = block.timestamp >= s.settlementTimestamp
+                    ? block.timestamp
+                    : s.settlementTimestamp;
                 s.challengeWindowStart = challengeStart;
                 s.challengeWindowStarted = true;
                 emit SettlementChallengeWindowStarted(address(this), challengeStart, challengeStart + _challengeDuration(s));
                 progressed = true;
             } else if (previousState == uint8(LifecycleState.ChallengeWindow)) {
+                uint256 challengeEnd = s.challengeWindowStart + _challengeDuration(s);
+                require(block.timestamp >= challengeEnd, "LC: challenge window active");
                 s.lifecycleSettled = true;
                 progressed = true;
                 emit LifecycleSettled(
@@ -224,7 +262,7 @@ contract MarketLifecycleFacet {
                     false,
                     block.timestamp,
                     s.challengeWindowStart,
-                    s.challengeWindowStart + _challengeDuration(s)
+                    challengeEnd
                 );
             }
 
@@ -318,7 +356,7 @@ contract MarketLifecycleFacet {
     }
 
     /**
-     * @notice Emits SettlementChallengeWindowStarted once when eligible (T0 - 24h).
+     * @notice Emits SettlementChallengeWindowStarted once when eligible (at or after settlementTimestamp).
      * @dev Idempotent and time-gated.
      */
     function startSettlementChallengeWindow() external onlyOwner {
@@ -331,6 +369,34 @@ contract MarketLifecycleFacet {
         s.challengeWindowStarted = true;
         uint256 windowEnd = windowStart + _challengeDuration(s);
         emit SettlementChallengeWindowStarted(address(this), windowStart, windowEnd);
+    }
+
+    // === Permissionless settlement price proposal ===
+
+    /**
+     * @notice Propose an initial settlement price for this market.
+     * @dev Callable by ANYONE during the active challenge window. First valid
+     *      proposal wins — subsequent proposals revert (use challengeSettlement
+     *      to dispute). The AI bot calls this same function, acting as just
+     *      another public participant.
+     * @param price Settlement price in 6-decimal format (e.g. 1e6 = $1.00)
+     */
+    function proposeSettlementPrice(uint256 price) external {
+        require(price > 0, "LC: price=0");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+
+        require(s.challengeWindowStarted, "LC: window not started");
+        require(!s.lifecycleSettled, "LC: already settled");
+        uint256 challengeEnd = s.challengeWindowStart + _challengeDuration(s);
+        require(block.timestamp < challengeEnd, "LC: window expired");
+
+        require(!s.settlementProposed, "LC: already proposed");
+
+        s.proposedSettlementPrice = price;
+        s.proposedSettlementBy = msg.sender;
+        s.settlementProposed = true;
+
+        emit SettlementPriceProposed(address(this), msg.sender, price, block.timestamp);
     }
 
     /**
@@ -443,7 +509,14 @@ contract MarketLifecycleFacet {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         if (!s.challengeWindowStarted) return false;
         if (_currentLifecycleState(s) == LifecycleState.Settled) return false;
-        return block.timestamp < (s.challengeWindowStart + _challengeDuration(s));
+        return block.timestamp >= s.challengeWindowStart
+            && block.timestamp < (s.challengeWindowStart + _challengeDuration(s));
+    }
+    function getChallengeWindowEnd() external view returns (uint256) {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        if (s.challengeWindowStart != 0) return s.challengeWindowStart + _challengeDuration(s);
+        if (s.settlementTimestamp == 0) return 0;
+        return s.settlementTimestamp + _challengeDuration(s);
     }
     function getLifecycleState() external view returns (uint8) {
         return uint8(_currentLifecycleState(MarketLifecycleStorage.state()));
@@ -454,6 +527,16 @@ contract MarketLifecycleFacet {
     function getMarketLineage() external view returns (address parent, address child) {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         return (s.parentMarket, s.childMarket);
+    }
+    function getProposedSettlementPrice() external view returns (uint256 price, address proposer, bool proposed) {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        return (s.proposedSettlementPrice, s.proposedSettlementBy, s.settlementProposed);
+    }
+    function getRolloverLead() external view returns (uint256) {
+        return _rolloverLead(MarketLifecycleStorage.state());
+    }
+    function getChallengeWindowDuration() external view returns (uint256) {
+        return _challengeDuration(MarketLifecycleStorage.state());
     }
 
     // === Testing controls (owner-only, safe defaults) ===

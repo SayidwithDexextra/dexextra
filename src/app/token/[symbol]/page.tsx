@@ -147,7 +147,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   });
 
   // Reset settlement-related UI state when the underlying market changes
-  // (e.g. during rollover: parent renamed to legacy, child takes the symbol).
+  // (e.g. during rollover: parent renamed with active timeframe, child takes the symbol).
   const prevMarketIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const newId = (md.market as any)?.id as string | undefined;

@@ -83,22 +83,25 @@ export async function GET(req: Request) {
   const nowSec = Math.floor(Date.now() / 1000);
 
   let rolloverTriggerAt: number | null = null;
+  let challengeOpenAt: number | null = null;
   let settlementTriggerAt: number | null = null;
   let finalizeTriggerAt: number | null = null;
-  let scheduleIds: { rollover?: string; settlement?: string; finalize?: string } = {};
+  let scheduleIds: { rollover?: string; challenge_open?: string; settlement?: string; finalize?: string } = {};
 
   if (lifecycle) {
     rolloverTriggerAt = lifecycle.rollover_trigger_at ?? null;
+    challengeOpenAt = lifecycle.challenge_open_at ?? lifecycle.settlement_trigger_at ?? null;
     settlementTriggerAt = lifecycle.settlement_trigger_at ?? null;
     finalizeTriggerAt = lifecycle.finalize_trigger_at ?? null;
     scheduleIds = lifecycle.schedule_ids || {};
   } else if (market.settlement_date) {
     const stlUnix = Math.floor(new Date(market.settlement_date).getTime() / 1000);
     const duration = Math.max(1, stlUnix - (lifecycle?.scheduled_at ?? nowSec));
-    const { rolloverLead, challengeDuration } = proportionalDurations(duration);
+    const { rolloverLead, challengeWindow } = proportionalDurations(duration);
     rolloverTriggerAt = stlUnix - rolloverLead;
-    settlementTriggerAt = stlUnix - challengeDuration;
-    finalizeTriggerAt = stlUnix - ONCHAIN_SETTLE_BUFFER_SEC;
+    challengeOpenAt = stlUnix;
+    settlementTriggerAt = stlUnix;
+    finalizeTriggerAt = stlUnix + challengeWindow + ONCHAIN_SETTLE_BUFFER_SEC;
   }
 
   // Created-at timestamp: use scheduled_at from lifecycle, or approximate from rollover - market duration
@@ -108,6 +111,7 @@ export async function GET(req: Request) {
   const qstashClient = getQStashClient();
   const qstashResults: Record<string, QStashMessageInfo | null> = {
     rollover: null,
+    challenge_open: null,
     settlement: null,
     finalize: null,
   };

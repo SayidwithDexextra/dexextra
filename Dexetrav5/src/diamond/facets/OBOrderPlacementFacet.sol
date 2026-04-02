@@ -33,8 +33,8 @@ contract OBOrderPlacementFacet {
     event PriceLevelPruned(uint256 price, bool isBuy);
 
     modifier validOrder(uint256 price, uint256 amount) {
-        require(price > 0, "Price must be greater than 0");
-        require(amount > 0, "Amount must be greater than 0");
+        require(price > 0, "OB: price=0");
+        require(amount > 0, "OB: amount=0");
         _;
     }
 
@@ -43,9 +43,20 @@ contract OBOrderPlacementFacet {
         _;
     }
 
+    /// @dev Delegates to MarketLifecycleFacet via staticcall. Returns false
+    ///      (trading allowed) if the facet is not installed on this diamond.
+    function _isInChallengeWindow() private view returns (bool) {
+        (bool ok, bytes memory data) = address(this).staticcall(
+            abi.encodeWithSignature("isInSettlementChallengeWindow()")
+        );
+        if (!ok || data.length < 32) return false;
+        return abi.decode(data, (bool));
+    }
+
     modifier marketActive() {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         require(!s.vault.marketSettled(s.marketId), "OB: settled");
+        require(!_isInChallengeWindow(), "OB: challenge window active");
         _;
     }
 
@@ -70,7 +81,7 @@ contract OBOrderPlacementFacet {
         returns (uint256 orderId)
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OrderBook: margin orders require leverage to be enabled or 1:1 margin");
+        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OB: leverage off");
         uint256 adjustedAmount = amount;
         if (amount < 1e12) { adjustedAmount = 1e12; }
         uint256 marginRequired = _calculateMarginRequired(s, adjustedAmount, price, isBuy);
@@ -78,9 +89,9 @@ contract OBOrderPlacementFacet {
     }
     function placeMarketOrder(uint256 amount, bool isBuy) external marketActive returns (uint256 filledAmount) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(amount > 0, "Amount must be greater than 0");
+        require(amount > 0, "OB: amount=0");
         uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice != 0, "OrderBook: no liquidity available");
+        require(refPrice != 0, "OB: no liq");
         emit MarketOrderAttempt(msg.sender, isBuy, amount, refPrice, s.maxSlippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice, refPrice != 0);
         uint256 maxPrice = isBuy ? Math.mulDiv(refPrice, 10000 + s.maxSlippageBps, 10000) : type(uint256).max;
@@ -91,17 +102,17 @@ contract OBOrderPlacementFacet {
     }
     function placeMarginMarketOrder(uint256 amount, bool isBuy) external marketActive returns (uint256 filledAmount) {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OrderBook: margin orders require leverage to be enabled or 1:1 margin");
-        require(amount > 0, "Amount must be greater than 0");
+        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OB: leverage off");
+        require(amount > 0, "OB: amount=0");
         uint256 refPrice2 = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice2 != 0, "OrderBook: no liquidity available");
+        require(refPrice2 != 0, "OB: no liq");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice2, 10000 + s.maxSlippageBps, 10000) : refPrice2;
         uint256 estMargin = _marginRequiredForMarketOrder(s, msg.sender, amount, worstCase, isBuy);
         uint256 available = s.vault.getAvailableCollateral(msg.sender);
         emit MarketOrderAttempt(msg.sender, isBuy, amount, refPrice2, s.maxSlippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice2, refPrice2 != 0);
         emit MarketOrderMarginEstimation(worstCase, estMargin, available);
-        require(available >= estMargin, "OrderBook: insufficient collateral for market order");
+        require(available >= estMargin, "OB: low collateral");
         uint256 maxPrice = isBuy ? worstCase : type(uint256).max;
         uint256 minPrice = isBuy ? 0 : Math.mulDiv(refPrice2, 10000 - s.maxSlippageBps, 10000);
         emit MarketOrderPriceBounds(maxPrice, minPrice);
@@ -114,11 +125,11 @@ contract OBOrderPlacementFacet {
         marketActive
         returns (uint256 filledAmount)
     {
-        require(slippageBps <= 5000, "OrderBook: slippage too high");
+        require(slippageBps <= 5000, "OB: slippage");
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(amount > 0, "Amount must be greater than 0");
+        require(amount > 0, "OB: amount=0");
         uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice != 0, "OrderBook: no liquidity available");
+        require(refPrice != 0, "OB: no liq");
         emit MarketOrderAttempt(msg.sender, isBuy, amount, refPrice, slippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice, refPrice != 0);
         uint256 maxPrice = isBuy ? Math.mulDiv(refPrice, 10000 + slippageBps, 10000) : type(uint256).max;
@@ -132,19 +143,19 @@ contract OBOrderPlacementFacet {
         marketActive
         returns (uint256 filledAmount)
     {
-        require(slippageBps <= 5000, "OrderBook: slippage too high");
+        require(slippageBps <= 5000, "OB: slippage");
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OrderBook: margin orders require leverage to be enabled or 1:1 margin");
-        require(amount > 0, "Amount must be greater than 0");
+        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OB: leverage off");
+        require(amount > 0, "OB: amount=0");
         uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice != 0, "OrderBook: no liquidity available");
+        require(refPrice != 0, "OB: no liq");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice, 10000 + slippageBps, 10000) : refPrice;
         uint256 estMargin = _marginRequiredForMarketOrder(s, msg.sender, amount, worstCase, isBuy);
         uint256 available = s.vault.getAvailableCollateral(msg.sender);
         emit MarketOrderAttempt(msg.sender, isBuy, amount, refPrice, slippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice, refPrice != 0);
         emit MarketOrderMarginEstimation(worstCase, estMargin, available);
-        require(available >= estMargin, "OrderBook: insufficient collateral for market order");
+        require(available >= estMargin, "OB: low collateral");
         uint256 maxPrice = isBuy ? worstCase : type(uint256).max;
         uint256 minPrice = isBuy ? 0 : Math.mulDiv(refPrice, 10000 - slippageBps, 10000);
         emit MarketOrderPriceBounds(maxPrice, minPrice);
@@ -156,7 +167,7 @@ contract OBOrderPlacementFacet {
     // and can only be invoked by self-calls from within the diamond (e.g., MetaTradeFacet).
 
     modifier onlySelf() {
-        require(msg.sender == address(this), "Only self-calls allowed");
+        require(msg.sender == address(this), "OB: self only");
         _;
     }
 
@@ -178,7 +189,7 @@ contract OBOrderPlacementFacet {
         returns (uint256 orderId)
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OrderBook: margin orders require leverage to be enabled or 1:1 margin");
+        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OB: leverage off");
         uint256 adjustedAmount = amount;
         if (amount < 1e12) { adjustedAmount = 1e12; }
         uint256 marginRequired = _calculateMarginRequired(s, adjustedAmount, price, isBuy);
@@ -192,9 +203,9 @@ contract OBOrderPlacementFacet {
         returns (uint256 filledAmount)
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(amount > 0, "Amount must be greater than 0");
+        require(amount > 0, "OB: amount=0");
         uint256 refPrice = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice != 0, "OrderBook: no liquidity available");
+        require(refPrice != 0, "OB: no liq");
         emit MarketOrderAttempt(trader, isBuy, amount, refPrice, s.maxSlippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice, refPrice != 0);
         uint256 maxPrice = isBuy ? Math.mulDiv(refPrice, 10000 + s.maxSlippageBps, 10000) : type(uint256).max;
@@ -211,17 +222,17 @@ contract OBOrderPlacementFacet {
         returns (uint256 filledAmount)
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
-        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OrderBook: margin orders require leverage to be enabled or 1:1 margin");
-        require(amount > 0, "Amount must be greater than 0");
+        require(s.leverageEnabled || s.marginRequirementBps == 10000, "OB: leverage off");
+        require(amount > 0, "OB: amount=0");
         uint256 refPrice2 = isBuy ? s.bestAsk : s.bestBid;
-        require(refPrice2 != 0, "OrderBook: no liquidity available");
+        require(refPrice2 != 0, "OB: no liq");
         uint256 worstCase = isBuy ? Math.mulDiv(refPrice2, 10000 + s.maxSlippageBps, 10000) : refPrice2;
         uint256 estMargin = _marginRequiredForMarketOrder(s, trader, amount, worstCase, isBuy);
         uint256 available = s.vault.getAvailableCollateral(trader);
         emit MarketOrderAttempt(trader, isBuy, amount, refPrice2, s.maxSlippageBps);
         emit MarketOrderLiquidityCheck(isBuy, refPrice2, refPrice2 != 0);
         emit MarketOrderMarginEstimation(worstCase, estMargin, available);
-        require(available >= estMargin, "OrderBook: insufficient collateral for market order");
+        require(available >= estMargin, "OB: low collateral");
         uint256 maxPrice = isBuy ? worstCase : type(uint256).max;
         uint256 minPrice = isBuy ? 0 : Math.mulDiv(refPrice2, 10000 - s.maxSlippageBps, 10000);
         emit MarketOrderPriceBounds(maxPrice, minPrice);
@@ -234,8 +245,8 @@ contract OBOrderPlacementFacet {
     function cancelOrderBy(address trader, uint256 orderId) external onlySelf {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         OrderBookStorage.Order storage order = s.orders[orderId];
-        require(order.trader != address(0), "Order does not exist");
-        require(order.trader == trader, "Not order owner");
+        require(order.trader != address(0), "OB: no order");
+        require(order.trader == trader, "OB: not owner");
         if (order.isBuy) {
             _removeFromBuyBook(s, orderId, order.price);
         } else {
@@ -262,8 +273,8 @@ contract OBOrderPlacementFacet {
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         OrderBookStorage.Order storage oldOrder = s.orders[orderId];
-        require(oldOrder.trader != address(0), "Order does not exist");
-        require(oldOrder.trader == trader, "Not order owner");
+        require(oldOrder.trader != address(0), "OB: no order");
+        require(oldOrder.trader == trader, "OB: not owner");
 
         bool isBuy = oldOrder.isBuy;
         bool isMarginOrder = oldOrder.isMarginOrder;
@@ -289,8 +300,8 @@ contract OBOrderPlacementFacet {
     function cancelOrder(uint256 orderId) external {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         OrderBookStorage.Order storage order = s.orders[orderId];
-        require(order.trader != address(0), "Order does not exist");
-        require(order.trader == msg.sender, "Not order owner");
+        require(order.trader != address(0), "OB: no order");
+        require(order.trader == msg.sender, "OB: not owner");
         if (order.isBuy) {
             _removeFromBuyBook(s, orderId, order.price);
         } else {
@@ -316,7 +327,7 @@ contract OBOrderPlacementFacet {
     function adminCancelOrder(uint256 orderId) external onlyOwner {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         OrderBookStorage.Order storage order = s.orders[orderId];
-        require(order.trader != address(0), "Order does not exist");
+        require(order.trader != address(0), "OB: no order");
         // Remove from book side
         if (order.isBuy) {
             _removeFromBuyBook(s, orderId, order.price);
@@ -405,8 +416,8 @@ contract OBOrderPlacementFacet {
     {
         OrderBookStorage.State storage s = OrderBookStorage.state();
         OrderBookStorage.Order storage oldOrder = s.orders[orderId];
-        require(oldOrder.trader != address(0), "Order does not exist");
-        require(oldOrder.trader == msg.sender, "Not order owner");
+        require(oldOrder.trader != address(0), "OB: no order");
+        require(oldOrder.trader == msg.sender, "OB: not owner");
 
         bool isBuy = oldOrder.isBuy;
         bool isMarginOrder = oldOrder.isMarginOrder;
@@ -670,37 +681,6 @@ contract OBOrderPlacementFacet {
         uint256[] storage lst = s.userOrders[user];
         for (uint256 i = 0; i < lst.length; i++) {
             if (lst[i] == orderId) { if (i < lst.length - 1) { lst[i] = lst[lst.length - 1]; } lst.pop(); break; }
-        }
-    }
-
-    // --- Admin maintenance helpers ---
-    function defragPriceLevels() external onlyOwner {
-        OrderBookStorage.State storage s = OrderBookStorage.state();
-        _defragPriceArray(s, true);
-        _defragPriceArray(s, false);
-    }
-
-    function _defragPriceArray(OrderBookStorage.State storage s, bool isBuy) private {
-        uint256 writeIdx = 0;
-        uint256[] storage arr = isBuy ? s.buyPrices : s.sellPrices;
-        for (uint256 readIdx = 0; readIdx < arr.length; readIdx++) {
-            uint256 price = arr[readIdx];
-            OrderBookStorage.PriceLevel storage level = isBuy ? s.buyLevels[price] : s.sellLevels[price];
-            bool alive = level.exists && level.totalAmount > 0;
-            if (alive) {
-                arr[writeIdx] = price;
-                writeIdx++;
-            } else {
-                if (isBuy) { s.buyPriceExists[price] = false; }
-                else { s.sellPriceExists[price] = false; }
-                emit PriceLevelPruned(price, isBuy);
-            }
-        }
-        while (arr.length > writeIdx) { arr.pop(); }
-        if (isBuy) {
-            if (s.bestBid == 0 || !s.buyLevels[s.bestBid].exists) { s.bestBid = _findNewBestBid(s); }
-        } else {
-            if (s.bestAsk == 0 || !s.sellLevels[s.bestAsk].exists) { s.bestAsk = _findNewBestAsk(s); }
         }
     }
 

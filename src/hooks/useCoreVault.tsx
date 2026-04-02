@@ -391,12 +391,12 @@ export function useCoreVault(walletAddress?: string) {
       type CollateralBreakdown = [bigint, bigint, bigint, bigint];
       const [usdcBalance, marginSummary, socializedLossRaw, collateralBreakdown] = await Promise.all([
         withRetry<bigint>(() => contracts.mockUSDC.balanceOf(userAddress, { blockTag: snapshotBlock })),
-        withRetry<MarginSummary>(() => contracts.vault.getUnifiedMarginSummary(userAddress, { blockTag: snapshotBlock })),
+        withRetry<MarginSummary>(() => contracts.vault.getUnifiedMarginSummary.staticCall(userAddress, { blockTag: snapshotBlock })),
         hasUserSocializedLoss
           ? withRetry<bigint>(() => (contracts.vault as any).userSocializedLoss(userAddress, { blockTag: snapshotBlock }))
           : Promise.resolve(0n as bigint),
         hasCollateralBreakdown
-          ? withRetry<CollateralBreakdown>(() => (contracts.vault as any).getCollateralBreakdown(userAddress, { blockTag: snapshotBlock })).catch(() => null as any)
+          ? withRetry<CollateralBreakdown>(() => (contracts.vault as any).getCollateralBreakdown.staticCall(userAddress, { blockTag: snapshotBlock })).catch(() => null as any)
           : Promise.resolve(null as any),
       ]);
       

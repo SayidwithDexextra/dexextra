@@ -211,6 +211,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       allowClose: true,
       showProgressLabel: false,
     }));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pendingOrderResolved', { detail: { status: 'error' } }));
+    }
   }, []);
 
   const finishOrderFillModal = useCallback(() => {
@@ -223,6 +226,9 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       detailText: undefined,
       showProgressLabel: undefined,
     }));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pendingOrderResolved', { detail: { status: 'success' } }));
+    }
     window.setTimeout(() => {
       setOrderFillModal((cur) => ({
         ...cur,
@@ -451,6 +457,30 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     }, 1000);
     return () => window.clearInterval(id);
   }, [orderFillModal.isOpen, orderFillModal.kind, orderFillModal.startedAt, orderFillModal.status]);
+
+  // Auto-dismiss the order modal after 2s for market/limit orders so the user
+  // sees inline progress in the Market Activity tab instead of staying blocked.
+  useEffect(() => {
+    if (!orderFillModal.isOpen) return;
+    if (orderFillModal.kind !== 'market' && orderFillModal.kind !== 'limit') return;
+
+    const timer = setTimeout(() => {
+      setOrderFillModal((cur) => {
+        if (!cur.isOpen) return cur;
+        if (cur.status === 'error') return cur;
+        return {
+          ...cur,
+          isOpen: false,
+          kind: null,
+          headlineText: undefined,
+          detailText: undefined,
+          showProgressLabel: undefined,
+        };
+      });
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [orderFillModal.isOpen, orderFillModal.kind]);
 
   // Trading validation
   const canPlaceOrder = useCallback(() => {
@@ -1235,6 +1265,22 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     startOrderFillModal('market');
     setIsSubmittingOrder(true);
 
+    if (typeof window !== 'undefined') {
+      const approxPrice = resolveCurrentPrice() || 0;
+      const approxSize = isUsdMode && approxPrice > 0 ? amount / approxPrice : amount;
+      window.dispatchEvent(new CustomEvent('pendingOrderPlaced', {
+        detail: {
+          id: `pending-${Date.now()}`,
+          symbol: String(metricId || '').toUpperCase(),
+          side: selectedOption === 'long' ? 'BUY' : 'SELL',
+          type: 'MARKET',
+          price: approxPrice,
+          size: approxSize,
+          timestamp: Date.now(),
+        }
+      }));
+    }
+
     try {
       // Resolve current market price with robust fallbacks
       const currentPrice = resolveCurrentPrice();
@@ -1358,7 +1404,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         const userAddr = address as string;
         console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
         let startTimeCollateral = Date.now();
-        const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
+        const available: bigint = await contracts.vault.getAvailableCollateral.staticCall(userAddr);
         console.log('Available collateral:', available.toString());
         const durationCollateral = Date.now() - startTimeCollateral;
         const notional6: bigint = (sizeWei * referencePrice) / 10n ** 18n;
@@ -1428,7 +1474,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       const mktIdHex = (marketRow as any)?.market_id_bytes32 || (marketRow as any)?.market_identifier_bytes32;
       try {
         if (mktIdHex && (contracts.vault as any)?.getPositionSummary) {
-          const posSummary = await (contracts.vault as any).getPositionSummary(address, mktIdHex);
+          const posSummary = await (contracts.vault as any).getPositionSummary.staticCall(address, mktIdHex);
           const currentNet = BigInt(posSummary?.[0] ?? 0n);
           const entryPrice = BigInt(posSummary?.[1] ?? 0n);
           const isClosing = (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
@@ -1495,12 +1541,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
           // Parallel vault reads for speed
           const [avail, posCount, marginUsed, collateral, unified, posSummary] = await Promise.allSettled([
-            contracts.vault.getAvailableCollateral(signerAddr),
+            contracts.vault.getAvailableCollateral.staticCall(signerAddr),
             (contracts.vault as any).getUserPositionCount?.(signerAddr),
-            (contracts.vault as any).getTotalMarginUsed?.(signerAddr),
+            (contracts.vault as any).getTotalMarginUsed?.staticCall?.(signerAddr),
             (contracts.vault as any).userCollateral?.(signerAddr),
-            (contracts.vault as any).getUnifiedMarginSummary?.(signerAddr),
-            mktIdHex ? (contracts.vault as any).getPositionSummary?.(signerAddr, mktIdHex) : Promise.resolve(null),
+            (contracts.vault as any).getUnifiedMarginSummary?.staticCall?.(signerAddr),
+            mktIdHex ? (contracts.vault as any).getPositionSummary?.staticCall?.(signerAddr, mktIdHex) : Promise.resolve(null),
           ]);
 
           diagAvailable = avail.status === 'fulfilled' ? BigInt(avail.value ?? 0) : null;
@@ -1794,6 +1840,21 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
     startOrderFillModal('limit');
     setIsSubmittingOrder(true);
 
+    if (typeof window !== 'undefined') {
+      const approxSize = isUsdMode && triggerPrice > 0 ? amount / triggerPrice : amount;
+      window.dispatchEvent(new CustomEvent('pendingOrderPlaced', {
+        detail: {
+          id: `pending-${Date.now()}`,
+          symbol: String(metricId || '').toUpperCase(),
+          side: selectedOption === 'long' ? 'BUY' : 'SELL',
+          type: 'LIMIT',
+          price: triggerPrice,
+          size: approxSize,
+          timestamp: Date.now(),
+        }
+      }));
+    }
+
     try {
       // Calculate size in wei precisely from trigger price and amount
       let sizeWei: bigint;
@@ -1914,7 +1975,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           const userAddr = address as string;
           console.log(`📡 [RPC] Checking available collateral for ${userAddr.slice(0, 6)}...`);
           let startTimeCollateral = Date.now();
-          const available: bigint = await contracts.vault.getAvailableCollateral(userAddr);
+          const available: bigint = await contracts.vault.getAvailableCollateral.staticCall(userAddr);
           const durationCollateral = Date.now() - startTimeCollateral;
           // notional in 6 decimals
           const notional6: bigint = (sizeWei * priceWei) / 10n ** 18n;

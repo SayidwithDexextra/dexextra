@@ -91,13 +91,19 @@ function safeDateMs(input: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-// Challenge window expires at settlement_date - this buffer.
-// Matches ONCHAIN_SETTLE_BUFFER_SEC in qstash-scheduler.ts (90s).
-const ONCHAIN_SETTLE_BUFFER_MS = 90_000;
+// Challenge window opens AT settlement_date (T0) and runs for challengeWindow
+// seconds AFTER T0. Finalize fires at T0 + challengeWindow + buffer.
+function challengeWindowMs(market: MarketRow): number {
+  const cfg = asRecord(market.market_config);
+  const explicit = Number(cfg.challenge_window_seconds || cfg.challenge_duration_seconds || 0);
+  if (explicit > 0) return explicit * 1000;
+  return getConfig().defaultWindowSeconds * 1000;
+}
 
 function windowExpiryMs(market: MarketRow): number | null {
   const stl = safeDateMs(market.settlement_date);
-  return stl !== null ? stl - ONCHAIN_SETTLE_BUFFER_MS : null;
+  if (stl === null) return null;
+  return stl + challengeWindowMs(market);
 }
 
 function isWindowActive(market: MarketRow): boolean {
@@ -290,7 +296,7 @@ async function verifyOnchainSettlementTime(
   }
 }
 
-async function settlementSyncLifecycleOnChain(
+export async function settlementSyncLifecycleOnChain(
   market: MarketRow,
 ): Promise<{ ok: boolean; previousState?: number; newState?: number; error?: string }> {
   const cfg = getConfig();
@@ -451,8 +457,9 @@ async function maybeStartSettlementWindow(
 
   const now = new Date();
   const settlementMs = safeDateMs(market.settlement_date);
+  const cwMs = challengeWindowMs(market);
   const expiresAt = settlementMs
-    ? new Date(Math.max(settlementMs - ONCHAIN_SETTLE_BUFFER_MS, now.getTime() + 60_000))
+    ? new Date(Math.max(settlementMs + cwMs, now.getTime() + 60_000))
     : new Date(now.getTime() + getConfig().defaultWindowSeconds * 1000);
 
   const updatedConfig = nextMarketConfig(market, {
@@ -545,8 +552,7 @@ async function maybeFinalizeSettlement(
     return {
       marketId: market.id, marketIdentifier: market.market_identifier,
       action: 'finalize', ok: false,
-      settlementDate: market.settlement_date,
-
+      settlementDate: exp !== null ? new Date(exp).toISOString() : market.settlement_date,
       reason: 'window_not_expired',
     };
   }
@@ -560,8 +566,9 @@ async function maybeFinalizeSettlement(
 
       const healNow = new Date();
       const healSettlementMs = safeDateMs(market.settlement_date);
+      const healCwMs = challengeWindowMs(market);
       const healExpires = healSettlementMs
-        ? new Date(Math.max(healSettlementMs - ONCHAIN_SETTLE_BUFFER_MS, healNow.getTime() + 60_000))
+        ? new Date(Math.max(healSettlementMs + healCwMs, healNow.getTime() + 60_000))
         : new Date(healNow.getTime() + getConfig().defaultWindowSeconds * 1000);
 
       const healConfig = nextMarketConfig(market, {
@@ -742,7 +749,7 @@ export async function runSingleSettlementCheck(
   }
 
   // SETTLEMENT_REQUESTED markets bypass the settlement_not_due guard because
-  // their challenge window expires at T0 - ONCHAIN_SETTLE_BUFFER (before T0).
+  // their challenge window opens at T0 and expires at T0 + challengeWindow.
   // maybeFinalizeSettlement has its own window-expiry check.
   if (settlementMs > Date.now() && market.market_status !== 'SETTLEMENT_REQUESTED') {
     return {
@@ -771,13 +778,10 @@ export async function runSingleSettlementCheck(
 }
 
 /**
- * Explicitly start the settlement window for a market, bypassing the
- * "settlement_not_due" date guard. Used when QStash fires settlement_start
- * before the settlement date (challenge window should be open BEFORE T0
- * so it expires right when the market finalises).
- *
- * Instead of polling the AI worker, this fires the job with a callbackUrl
- * so the AI worker POSTs the result back when done.
+ * Fire the AI price discovery bot for a market. This is best-effort — the
+ * AI bot acts as a public participant proposing a settlement price in good
+ * faith. If AI fails, the challenge window still opens independently via
+ * the challenge_open trigger, and any user can submit a price proposal.
  */
 export async function forceStartSettlementWindow(
   supabase: SupabaseClient,
@@ -794,7 +798,7 @@ export async function forceStartSettlementWindow(
 
   const market = data as MarketRow;
 
-  if (market.market_status !== 'ACTIVE') {
+  if (!['ACTIVE', 'SETTLEMENT_REQUESTED'].includes(market.market_status)) {
     return {
       ok: true, mode: 'settlement_start',
       skipped: true, reason: `status_is_${market.market_status}`,
@@ -803,7 +807,17 @@ export async function forceStartSettlementWindow(
 
   const jobResult = await fireSettlementAIJob(market);
   if (!jobResult.ok) {
-    return { ok: false, mode: 'settlement_start', error: jobResult.error };
+    console.warn(`[settlement-engine] AI price discovery failed for ${market.market_identifier} (non-blocking): ${jobResult.error}`);
+    return {
+      ok: true, mode: 'settlement_start',
+      result: {
+        marketId: market.id,
+        marketIdentifier: market.market_identifier,
+        action: 'ai_job_failed_non_blocking',
+        ok: true,
+        details: { error: jobResult.error },
+      },
+    };
   }
 
   return {
@@ -938,8 +952,9 @@ export async function completeSettlementFromAIResult(
 
   const now = new Date();
   const settlementMs = safeDateMs(market.settlement_date);
+  const cwMs = challengeWindowMs(market);
   const expiresAt = settlementMs
-    ? new Date(Math.max(settlementMs - ONCHAIN_SETTLE_BUFFER_MS, now.getTime() + 60_000))
+    ? new Date(Math.max(settlementMs + cwMs, now.getTime() + 60_000))
     : new Date(now.getTime() + getConfig().defaultWindowSeconds * 1000);
 
   const updatedConfig = nextMarketConfig(market, {

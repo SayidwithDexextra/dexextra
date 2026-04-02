@@ -1,0 +1,17 @@
+{
+  "network": "hyperliquid",
+  "chainId": 999,
+  "deployer": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+  "timestamp": "2026-04-01T18:19:01.622Z",
+  "contracts": {
+    "CoreVaultProxy": "0x8DF1752FbBC364fD4aF7cBA8a1F8B1B345F767f1",
+    "CoreVaultImpl": "0x20CEaF26b1E7127D64387E2141F2e4C01d4CD804",
+    "VaultAnalytics": "0x065b4668B33a7B0CdcC3e552a5945B7601568057",
+    "PositionManager": "0xaf3D6C0c7dd20d25Db71f1dD8a82EB7f7b604c72",
+    "VaultViewsManager": "0x5047E8BCfE681F43bFf70531a486915146Bb1A3F",
+    "SettlementManager": "0xEE8e0FE37A08E7e3251e942F9d1CFaF39EA850eC",
+    "LiquidationManager": "0xFAeFac68BBe6C0220643d23CEEAa1E90E613Bad7",
+    "CollateralToken": "0xec7dEb757C6F77e3F5a4E1906548131752B632b4",
+    "SessionRegistry": "0xFad7D190180fd4c7910602D2A7bCCC715bf8454D"
+  }
+}

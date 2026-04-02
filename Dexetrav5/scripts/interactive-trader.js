@@ -594,31 +594,34 @@ async function getMarkPriceAndPnL(contracts, position) {
     let markPriceBigInt = 0n;
 
     try {
-      // Try to get the OrderBook address for this market
       const orderBookAddress = await contracts.vault.marketToOrderBook(
         pos.marketId
       );
 
       if (orderBookAddress && orderBookAddress !== ethers.ZeroAddress) {
-        // Use pricing facet directly at the market orderbook address
-        const obPricing = await ethers.getContractAt(
-          "OBPricingFacet",
-          orderBookAddress
-        );
-        markPriceBigInt = await obPricing.calculateMarkPrice();
-      } else {
-        // Fallback to default combined contract's pricing call
+        const obCode = await ethers.provider.getCode(orderBookAddress);
+        if (obCode !== "0x") {
+          const obPricing = await ethers.getContractAt(
+            "OBPricingFacet",
+            orderBookAddress
+          );
+          markPriceBigInt = await obPricing.calculateMarkPrice();
+        } else {
+          markPriceBigInt = await contracts.vault.getMarkPrice(pos.marketId);
+        }
+      } else if (contracts.obPricing) {
         markPriceBigInt = await contracts.obPricing.calculateMarkPrice();
+      } else {
+        markPriceBigInt = await contracts.vault.getMarkPrice(pos.marketId);
       }
     } catch (error) {
-      // Fallback to default OrderBook if market mapping fails
-      console.log(
-        `Using default OrderBook for market ${String(pos.marketId).substring(
-          0,
-          8
-        )}...`
-      );
-      markPriceBigInt = await contracts.obPricing.calculateMarkPrice();
+      try {
+        markPriceBigInt = await contracts.vault.getMarkPrice(pos.marketId);
+      } catch (_) {
+        if (contracts.obPricing) {
+          markPriceBigInt = await contracts.obPricing.calculateMarkPrice();
+        }
+      }
     }
 
     if (markPriceBigInt > 0) {
@@ -636,8 +639,7 @@ async function getMarkPriceAndPnL(contracts, position) {
       const pnl = parseFloat(ethers.formatUnits(pnlBigInt, 18)); // Result is in 18 decimals
 
       return { markPrice, pnl };
-    } else {
-      // Fallback: calculate manually using order book data
+    } else if (contracts.obView) {
       const bestBid = await contracts.obView.bestBid();
       const bestAsk = await contracts.obView.bestAsk();
 
@@ -824,7 +826,7 @@ class InteractiveTrader {
         unifiedUnrealizedPnL,
         unifiedTotalMarginCommitted,
         unifiedIsMarginHealthy,
-      ] = await this.contracts.vault.getUnifiedMarginSummary(address);
+      ] = await this.contracts.vault.getUnifiedMarginSummary.staticCall(address);
 
       // Strict unit handling to avoid mis-scaling: collateral=6d, realizedPnL=18d
       const totalCollateralNum = parseFloat(
@@ -897,7 +899,7 @@ class InteractiveTrader {
         this.contracts?.vault?.getCollateralBreakdown &&
         typeof this.contracts.vault.getCollateralBreakdown === "function"
       ) {
-        const res = await this.contracts.vault.getCollateralBreakdown(
+        const res = await this.contracts.vault.getCollateralBreakdown.staticCall(
           userAddress
         );
         if (Array.isArray(res) && res.length >= 4) {
@@ -935,7 +937,7 @@ class InteractiveTrader {
       const crossPromise = hasUserCross
         ? this.contracts.vault.userCrossChainCredit(userAddress)
         : Promise.resolve(0n);
-      const availablePromise = this.contracts.vault.getAvailableCollateral(
+      const availablePromise = this.contracts.vault.getAvailableCollateral.staticCall(
         userAddress
       );
 
@@ -2397,7 +2399,7 @@ ${gradient("╚═════╝ ╚══════╝╚═╝  ╚═╝�
                 marginUsed,
                 marginReserved,
                 availableMargin,
-              ] = await this.contracts.vault.getUnifiedMarginSummary(
+              ] = await this.contracts.vault.getUnifiedMarginSummary.staticCall(
                 liquidator
               );
 
@@ -6019,7 +6021,7 @@ ${colors.brightRed}└───────────────────�
             );
           const [_, __, ___, available] = await this.withConcurrency(() =>
             this.withRpcRetry(() =>
-              this.contracts.vault.getUnifiedMarginSummary(targetUser.address)
+              this.contracts.vault.getUnifiedMarginSummary.staticCall(targetUser.address)
             )
           );
           const actual6 = BigInt((available || 0).toString());
@@ -6074,7 +6076,7 @@ ${colors.brightRed}└───────────────────�
           const required6 = (amountWei * priceWei) / 10n ** 18n;
           const available6 = await this.withConcurrency(() =>
             this.withRpcRetry(() =>
-              this.contracts.vault.getAvailableCollateral(user.address)
+              this.contracts.vault.getAvailableCollateral.staticCall(user.address)
             )
           );
           if (available6 < required6) {
@@ -6648,10 +6650,12 @@ ${colors.brightRed}└───────────────────�
     console.log(gradient("═".repeat(80)));
     try {
       const [totalCollateral, _mu, _mr, available] =
-        await this.contracts.vault.getUnifiedMarginSummary(
+        await this.contracts.vault.getUnifiedMarginSummary.staticCall(
           this.currentUser?.address || ethers.ZeroAddress
         );
-      const [bestBid, bestAsk] = await this.contracts.obView.getBestPrices();
+      const [bestBid, bestAsk] = this.contracts.obView
+        ? await this.contracts.obView.getBestPrices()
+        : [0n, 0n];
       console.log(
         colorText(
           `User: ${
@@ -7153,7 +7157,7 @@ ${colors.brightRed}└───────────────────�
             _unifiedUnrealizedPnL,
             _totalCommitted,
             _isHealthy,
-          ] = await this.contracts.vault.getUnifiedMarginSummary(address);
+          ] = await this.contracts.vault.getUnifiedMarginSummary.staticCall(address);
           userTotals[i].realized18 = BigInt(
             (unifiedRealizedPnL || 0).toString()
           );
@@ -7505,9 +7509,9 @@ ${colors.brightRed}└───────────────────�
         }
       } catch (_) {}
 
-      // Snapshot order book depth
       let bidPrices, bidAmounts, askPrices, askAmounts;
       try {
+        if (!this.contracts.obPricing) throw new Error("No local OrderBook");
         const depth = 10;
         const data = await this.contracts.obPricing.getOrderBookDepth(depth);
         bidPrices = data[0];
@@ -7521,8 +7525,8 @@ ${colors.brightRed}└───────────────────�
             colors.yellow
           )
         );
-        const bestBid = await this.contracts.obView.bestBid();
-        const bestAsk = await this.contracts.obView.bestAsk();
+        const bestBid = this.contracts.obView ? await this.contracts.obView.bestBid() : 0n;
+        const bestAsk = this.contracts.obView ? await this.contracts.obView.bestAsk() : 0n;
         bidPrices = [bestBid];
         bidAmounts = [0n];
         askPrices = [bestAsk];
@@ -7553,8 +7557,10 @@ ${colors.brightRed}└───────────────────�
       let bestBid = 0n,
         bestAsk = 0n;
       try {
-        bestBid = await this.contracts.obView.bestBid();
-        bestAsk = await this.contracts.obView.bestAsk();
+        if (this.contracts.obView) {
+          bestBid = await this.contracts.obView.bestBid();
+          bestAsk = await this.contracts.obView.bestAsk();
+        }
       } catch (_) {}
       const midFloat =
         (toFloat6(bestBid) + toFloat6(bestAsk)) / 2 || newMarkPriceFloat;
@@ -7702,7 +7708,7 @@ ${colors.brightRed}└───────────────────�
         _unrealizedPnL18,
         totalCommitted,
         isHealthy,
-      ] = await this.contracts.vault.getUnifiedMarginSummary(address);
+      ] = await this.contracts.vault.getUnifiedMarginSummary.staticCall(address);
 
       const realized = parseFloat(
         ethers.formatUnits(BigInt(realizedPnL18.toString()), 18)
@@ -8172,7 +8178,7 @@ ${colors.brightRed}└───────────────────�
         unifiedUnrealizedPnL,
         unifiedTotalMarginCommitted,
         unifiedIsMarginHealthy,
-      ] = await this.contracts.vault.getUnifiedMarginSummary(
+      ] = await this.contracts.vault.getUnifiedMarginSummary.staticCall(
         this.currentUser.address
       );
 
@@ -8821,12 +8827,27 @@ ${colors.brightRed}└───────────────────�
     }
   }
   async displayOrderBook() {
+    const sym = this.currentMarket?.symbol || "ALU/USDC";
     console.log(
       colorText(
-        "\n📊 LIVE ORDER BOOK - ALU/USDC (with Traders)",
+        `\n📊 LIVE ORDER BOOK - ${sym} (with Traders)`,
         colors.brightYellow
       )
     );
+
+    if (!this.contracts.orderBook || !this.contracts.obView) {
+      console.log(colorText("  ℹ No local OrderBook for this market — vault data only", colors.dim));
+      try {
+        const marketId = this.currentMarket?.marketId;
+        if (marketId) {
+          const mp = await this.contracts.vault.getMarkPrice(marketId);
+          if (mp > 0n) {
+            console.log(colorText(`  Mark Price: $${formatPriceWithValidation(mp, 6, 4, false)}`, colors.brightCyan));
+          }
+        }
+      } catch (_) {}
+      return;
+    }
 
     try {
       const [buyCount, sellCount] =
@@ -9066,8 +9087,10 @@ ${colors.brightRed}└───────────────────�
       );
     }
   }
-  // Helper function to get enhanced order book data with trader information
   async getEnhancedOrderBookDepth(depth) {
+    if (!this.contracts.obPricing) {
+      return { bids: [], asks: [] };
+    }
     let [bidPrices, bidAmounts, askPrices, askAmounts] =
       await this.contracts.obPricing.getOrderBookDepth(depth);
 
@@ -9260,7 +9283,7 @@ ${colors.brightRed}└───────────────────�
                 )
               );
               const [liqPrice, hasPos] = await this.withRpcRetry(() =>
-                this.contracts.vault.getLiquidationPrice(
+                this.contracts.vault.getLiquidationPrice.staticCall(
                   this.currentUser.address,
                   position.marketId
                 )
@@ -9294,7 +9317,7 @@ ${colors.brightRed}└───────────────────�
                 "function"
               ) {
                 const res =
-                  await this.contracts.vault.getEffectiveMaintenanceDetails(
+                  await this.contracts.vault.getEffectiveMaintenanceDetails.staticCall(
                     this.currentUser.address,
                     position.marketId
                   );
@@ -9304,7 +9327,7 @@ ${colors.brightRed}└───────────────────�
                 hasPos2 = res[3];
               } else {
                 const res2 =
-                  await this.contracts.vault.getEffectiveMaintenanceMarginBps(
+                  await this.contracts.vault.getEffectiveMaintenanceMarginBps.staticCall(
                     this.currentUser.address,
                     position.marketId
                   );
@@ -9568,6 +9591,12 @@ ${colors.brightRed}└───────────────────�
       colorText("│ DL. 🧪 Debug Emit: RolloverCreated        │", colors.magenta)
     );
     console.log(
+      colorText(
+        "│ V. 🔄 Vault Migration (deploy+migrate)  │",
+        colors.brightMagenta
+      )
+    );
+    console.log(
       colorText("│ r. 🔄 Refresh Display                  │", colors.white)
     );
     console.log(
@@ -9694,6 +9723,9 @@ ${colors.brightRed}└───────────────────�
       case "l":
         await this.viewLiquidationBreakdown();
         break;
+      case "v":
+        await this.vaultMigrationFlow();
+        break;
       case "r":
         // Refresh - just continue loop
         break;
@@ -9708,15 +9740,17 @@ ${colors.brightRed}└───────────────────�
 
   async getActiveMarketId() {
     if (this.currentMarket?.marketId) return this.currentMarket.marketId;
-    // Try obView.marketStatic() first
     try {
-      const staticInfo = await this.contracts.obView.marketStatic();
-      if (staticInfo && staticInfo.length >= 2 && staticInfo[1]) return staticInfo[1];
+      if (this.contracts.obView) {
+        const staticInfo = await this.contracts.obView.marketStatic();
+        if (staticInfo && staticInfo.length >= 2 && staticInfo[1]) return staticInfo[1];
+      }
     } catch (_) {}
-    // Try obPricing.getMarketPriceData()
     try {
-      const marketData = await this.contracts.obPricing.getMarketPriceData();
-      if (marketData?.marketId) return marketData.marketId;
+      if (this.contracts.obPricing) {
+        const marketData = await this.contracts.obPricing.getMarketPriceData();
+        if (marketData?.marketId) return marketData.marketId;
+      }
     } catch (_) {}
     return ethers.ZeroHash;
   }
@@ -9743,6 +9777,495 @@ ${colors.brightRed}└───────────────────�
       )
     );
     await this.pause(1600);
+  }
+
+  async vaultMigrationFlow() {
+    console.clear();
+    console.log(boxText("🔄 VAULT MIGRATION — Deploy + Migrate + Repoint", colors.brightMagenta));
+    console.log(colorText("─".repeat(60), colors.dim));
+
+    const snapshotsDir = path.resolve(__dirname, "../snapshots");
+    let snapshotFiles = [];
+    try {
+      snapshotFiles = fs.readdirSync(snapshotsDir)
+        .filter(f => f.endsWith(".json"))
+        .sort()
+        .reverse();
+    } catch (_) {}
+
+    if (snapshotFiles.length === 0) {
+      console.log(colorText("  No snapshot files found in snapshots/. Run snapshot-corevault.js first.", colors.red));
+      await this.pause(3000);
+      return;
+    }
+
+    const snapshotPath = path.join(snapshotsDir, snapshotFiles[0]);
+    const snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+    console.log(colorText(`  Snapshot: ${snapshotFiles[0]}`, colors.cyan));
+    console.log(colorText(`  Users: ${snapshot.users.length}  Markets: ${snapshot.markets.length}  Positions: ${snapshot.users.reduce((s, u) => s + u.positions.length, 0)}`, colors.white));
+    console.log(colorText(`  Old vault: ${snapshot.metadata.coreVaultAddress}`, colors.dim));
+    console.log(colorText("─".repeat(60), colors.dim));
+
+    const [deployer] = await ethers.getSigners();
+    const collateralToken = await this.contracts.mockUSDC.getAddress();
+
+    const subChoice = await this.askQuestion(
+      colorText("\n  Actions:\n", colors.brightYellow) +
+      colorText("    1. Full migration (deploy → migrate → repoint → verify)\n", colors.green) +
+      colorText("    2. Deploy only (new vault + managers)\n", colors.cyan) +
+      colorText("    3. Migrate only (load state into existing new vault)\n", colors.yellow) +
+      colorText("    4. Repoint only (switch OrderBooks to new vault)\n", colors.magenta) +
+      colorText("    5. Verify only (compare new vault state vs snapshot)\n", colors.white) +
+      colorText("    0. Back\n", colors.dim) +
+      colorText("\n  Choose: ", colors.brightMagenta)
+    );
+
+    const action = subChoice.trim();
+    if (action === "0") return;
+
+    const deploymentsDir = path.resolve(__dirname, "../deployments");
+    const network = await ethers.provider.getNetwork();
+    const chainId = Number(network.chainId);
+    const deployFile = path.join(deploymentsDir, `upgraded-vault-${chainId}.json`);
+
+    const libraries = {};
+    let proxyAddress = null;
+
+    const loadDeployment = () => {
+      if (fs.existsSync(deployFile)) {
+        const d = JSON.parse(fs.readFileSync(deployFile, "utf8"));
+        return d;
+      }
+      return null;
+    };
+
+    // ═══════ DEPLOY ═══════
+    const runDeploy = async () => {
+      console.log(colorText("\n══ STEP 1: DEPLOY ══", colors.brightGreen));
+
+      console.log(colorText("  Deploying VaultAnalytics...", colors.white));
+      const VA = await ethers.getContractFactory("VaultAnalytics");
+      const va = await VA.deploy();
+      await va.waitForDeployment();
+      libraries.VaultAnalytics = await va.getAddress();
+      console.log(colorText(`    ✓ VaultAnalytics: ${libraries.VaultAnalytics}`, colors.green));
+
+      console.log(colorText("  Deploying PositionManager...", colors.white));
+      const PM = await ethers.getContractFactory("PositionManager");
+      const pm = await PM.deploy();
+      await pm.waitForDeployment();
+      libraries.PositionManager = await pm.getAddress();
+      console.log(colorText(`    ✓ PositionManager: ${libraries.PositionManager}`, colors.green));
+
+      console.log(colorText("  Deploying CoreVault implementation...", colors.white));
+      const CoreVaultImpl = await ethers.getContractFactory("CoreVault", {
+        libraries: { PositionManager: libraries.PositionManager },
+      });
+      const impl = await CoreVaultImpl.deploy(collateralToken);
+      await impl.waitForDeployment();
+      const implAddress = await impl.getAddress();
+      console.log(colorText(`    ✓ Implementation: ${implAddress}`, colors.green));
+
+      console.log(colorText("  Deploying ERC1967Proxy + initialize...", colors.white));
+      const initData = CoreVaultImpl.interface.encodeFunctionData("initialize", [deployer.address]);
+      const ERC1967Proxy = await ethers.getContractFactory(
+        "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy"
+      );
+      const proxy = await ERC1967Proxy.deploy(implAddress, initData);
+      await proxy.waitForDeployment();
+      proxyAddress = await proxy.getAddress();
+      console.log(colorText(`    ✓ Proxy: ${proxyAddress}`, colors.brightGreen));
+
+      const vault = CoreVaultImpl.attach(proxyAddress);
+
+      console.log(colorText("  Deploying VaultViewsManager...", colors.white));
+      const VVM = await ethers.getContractFactory("VaultViewsManager", {
+        libraries: { VaultAnalytics: libraries.VaultAnalytics },
+      });
+      const vvm = await VVM.deploy();
+      await vvm.waitForDeployment();
+      const vvmAddr = await vvm.getAddress();
+      console.log(colorText(`    ✓ VaultViewsManager: ${vvmAddr}`, colors.green));
+
+      console.log(colorText("  Deploying SettlementManager...", colors.white));
+      const SM = await ethers.getContractFactory("SettlementManager", {
+        libraries: { PositionManager: libraries.PositionManager },
+      });
+      const sm = await SM.deploy();
+      await sm.waitForDeployment();
+      const smAddr = await sm.getAddress();
+      console.log(colorText(`    ✓ SettlementManager: ${smAddr}`, colors.green));
+
+      console.log(colorText("  Deploying LiquidationManager...", colors.white));
+      const LM = await ethers.getContractFactory("LiquidationManager", {
+        libraries: { VaultAnalytics: libraries.VaultAnalytics, PositionManager: libraries.PositionManager },
+      });
+      const lm = await LM.deploy(collateralToken, deployer.address);
+      await lm.waitForDeployment();
+      const lmAddr = await lm.getAddress();
+      console.log(colorText(`    ✓ LiquidationManager: ${lmAddr}`, colors.green));
+
+      console.log(colorText("  Wiring managers...", colors.white));
+      let tx;
+      tx = await vault.setViewsManager(vvmAddr); await tx.wait();
+      tx = await vault.setSettlementManager(smAddr); await tx.wait();
+      tx = await vault.setLiquidationManager(lmAddr); await tx.wait();
+      console.log(colorText("    ✓ All managers wired", colors.green));
+
+      const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SETTLEMENT_ROLE"));
+      tx = await vault.grantRole(SETTLEMENT_ROLE, deployer.address);
+      await tx.wait();
+      console.log(colorText("    ✓ SETTLEMENT_ROLE granted to deployer", colors.green));
+
+      const deployment = {
+        network: process.env.HARDHAT_NETWORK || "unknown",
+        chainId,
+        deployer: deployer.address,
+        timestamp: new Date().toISOString(),
+        contracts: {
+          CoreVaultProxy: proxyAddress,
+          CoreVaultImpl: implAddress,
+          VaultAnalytics: libraries.VaultAnalytics,
+          PositionManager: libraries.PositionManager,
+          VaultViewsManager: vvmAddr,
+          SettlementManager: smAddr,
+          LiquidationManager: lmAddr,
+          CollateralToken: collateralToken,
+        },
+      };
+      if (!fs.existsSync(deploymentsDir)) fs.mkdirSync(deploymentsDir, { recursive: true });
+      fs.writeFileSync(deployFile, JSON.stringify(deployment, null, 2));
+      console.log(colorText(`    ✓ Saved: ${deployFile}`, colors.dim));
+      console.log(colorText(`\n  ✅ Deploy complete — proxy: ${proxyAddress}`, colors.brightGreen));
+      return proxyAddress;
+    };
+
+    // ═══════ MIGRATE ═══════
+    const runMigrate = async (vaultAddr) => {
+      console.log(colorText("\n══ STEP 2: MIGRATE STATE ══", colors.brightYellow));
+      const vault = await ethers.getContractAt("CoreVault", vaultAddr);
+
+      try {
+        const done = await vault.migrationComplete();
+        if (done) {
+          console.log(colorText("  ⚠ Migration already completed on this vault!", colors.red));
+          return;
+        }
+      } catch (_) {}
+
+      const { globalConfig, users, markets } = snapshot;
+
+      console.log(colorText("  Migrating global config...", colors.white));
+      let tx = await vault.migrateGlobalConfig(
+        globalConfig.baseMmrBps, globalConfig.penaltyMmrBps, globalConfig.maxMmrBps,
+        globalConfig.scalingSlopeBps, globalConfig.priceGapSlopeBps, globalConfig.mmrLiquidityDepthLevels,
+        50, 10, false, ethers.parseUnits("5", 17),
+        globalConfig.totalCollateralDeposited, globalConfig.totalMarginLocked
+      );
+      await tx.wait();
+      console.log(colorText("    ✓ Global config", colors.green));
+
+      console.log(colorText(`  Migrating ${users.length} users...`, colors.white));
+      let userOk = 0, userFail = 0;
+      for (let i = 0; i < users.length; i++) {
+        const u = users[i];
+        const label = `${u.address.slice(0, 6)}…${u.address.slice(-4)}`;
+        try {
+          tx = await vault.migrateUserState(u.address, u.userCollateral, u.userCrossChainCredit, u.userRealizedPnL, u.userSocializedLoss);
+          await tx.wait();
+
+          if (u.positions.length > 0) {
+            const posStructs = u.positions.map(p => ({
+              marketId: p.marketId, size: p.size, entryPrice: p.entryPrice,
+              marginLocked: p.marginLocked, socializedLossAccrued6: p.socializedLossAccrued6,
+              haircutUnits18: p.haircutUnits18, liquidationPrice: p.liquidationPrice,
+            }));
+            tx = await vault.migratePositions(u.address, posStructs);
+            await tx.wait();
+          }
+
+          if (u.pendingOrders.length > 0) {
+            const orderStructs = u.pendingOrders.map(o => ({
+              orderId: o.orderId, marginReserved: o.marginReserved, timestamp: o.timestamp,
+            }));
+            tx = await vault.migratePendingOrders(u.address, orderStructs);
+            await tx.wait();
+          }
+
+          if (u.marketIds && u.marketIds.length > 0) {
+            tx = await vault.migrateUserMarketIds(u.address, u.marketIds);
+            await tx.wait();
+          }
+
+          userOk++;
+          if ((i + 1) % 10 === 0 || i === users.length - 1) {
+            console.log(colorText(`    [${i + 1}/${users.length}] ${label} ✓`, colors.green));
+          }
+        } catch (err) {
+          userFail++;
+          console.log(colorText(`    [${i + 1}/${users.length}] ${label} ✗ ${err.message?.slice(0, 80)}`, colors.red));
+        }
+      }
+      console.log(colorText(`    Users: ${userOk} ok, ${userFail} failed`, userFail > 0 ? colors.yellow : colors.green));
+
+      console.log(colorText(`  Migrating ${markets.length} markets...`, colors.white));
+      let mktOk = 0, mktFail = 0;
+      for (const m of markets) {
+        try {
+          tx = await vault.migrateMarketConfig(m.marketId, m.orderBook, m.markPrice, m.settled, m.disputed, m.badDebt);
+          await tx.wait();
+          mktOk++;
+        } catch (err) {
+          mktFail++;
+          console.log(colorText(`    ✗ Market ${m.symbol || m.marketId.slice(0, 10)}: ${err.message?.slice(0, 80)}`, colors.red));
+        }
+      }
+      console.log(colorText(`    Markets: ${mktOk} ok, ${mktFail} failed`, mktFail > 0 ? colors.yellow : colors.green));
+
+      const nonceUsers = users.filter(u => u.topUpNonce && u.topUpNonce !== "0");
+      if (nonceUsers.length > 0) {
+        try {
+          tx = await vault.migrateTopUpNonces(nonceUsers.map(u => u.address), nonceUsers.map(u => u.topUpNonce));
+          await tx.wait();
+          console.log(colorText(`    ✓ ${nonceUsers.length} top-up nonces`, colors.green));
+        } catch (err) {
+          console.log(colorText(`    ✗ Top-up nonces: ${err.message?.slice(0, 80)}`, colors.red));
+        }
+      }
+
+      const lockAnswer = await this.askQuestion(
+        colorText("  Complete migration and lock vault? (yes/no): ", colors.brightYellow)
+      );
+      if (lockAnswer.trim().toLowerCase() === "yes" || lockAnswer.trim().toLowerCase() === "y") {
+        tx = await vault.completeMigration();
+        await tx.wait();
+        console.log(colorText("    ✓ Migration LOCKED", colors.brightGreen));
+      } else {
+        console.log(colorText("    – Skipped locking. Call completeMigration() manually.", colors.yellow));
+      }
+
+      console.log(colorText("\n  ✅ Migration complete", colors.brightGreen));
+    };
+
+    // ═══════ REPOINT ═══════
+    const runRepoint = async (vaultAddr) => {
+      console.log(colorText("\n══ STEP 3: REPOINT ORDERBOOKS ══", colors.brightCyan));
+      const vault = await ethers.getContractAt("CoreVault", vaultAddr);
+      const orderBooks = (snapshot.registeredOrderBooks || []).filter(ob => ob.registered);
+      console.log(colorText(`  ${orderBooks.length} registered OrderBooks to repoint`, colors.white));
+
+      const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ORDERBOOK_ROLE"));
+      const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SETTLEMENT_ROLE"));
+      let ok = 0, fail = 0;
+
+      for (let i = 0; i < orderBooks.length; i++) {
+        const obAddr = orderBooks[i].address;
+        const label = `${obAddr.slice(0, 6)}…${obAddr.slice(-4)}`;
+        try {
+          const ob = new ethers.Contract(obAddr, ["function setVault(address) external"], deployer);
+          let tx = await ob.setVault(vaultAddr); await tx.wait();
+          tx = await vault.grantRole(ORDERBOOK_ROLE, obAddr); await tx.wait();
+          tx = await vault.grantRole(SETTLEMENT_ROLE, obAddr); await tx.wait();
+          ok++;
+          if ((i + 1) % 10 === 0 || i === orderBooks.length - 1) {
+            console.log(colorText(`    [${i + 1}/${orderBooks.length}] ${label} ✓`, colors.green));
+          }
+        } catch (err) {
+          fail++;
+          console.log(colorText(`    [${i + 1}/${orderBooks.length}] ${label} ✗ ${err.message?.slice(0, 80)}`, colors.red));
+        }
+      }
+      console.log(colorText(`    Repointed: ${ok} ok, ${fail} failed`, fail > 0 ? colors.yellow : colors.green));
+    };
+
+    // ═══════ VERIFY ═══════
+    const runVerify = async (vaultAddr) => {
+      console.log(colorText("\n══ STEP 4: VERIFY MIGRATION ══", colors.brightBlue));
+      const vault = await ethers.getContractAt("CoreVault", vaultAddr);
+      const { globalConfig, users, markets } = snapshot;
+      let pass = 0, fail = 0;
+
+      const check = (label, expected, actual) => {
+        const exp = String(expected);
+        const act = String(actual);
+        if (exp === act) { pass++; }
+        else { fail++; console.log(colorText(`    ✗ ${label}: expected ${exp}, got ${act}`, colors.red)); }
+      };
+
+      console.log(colorText("  Checking global config...", colors.white));
+      check("baseMmrBps", globalConfig.baseMmrBps, await vault.baseMmrBps());
+      check("penaltyMmrBps", globalConfig.penaltyMmrBps, await vault.penaltyMmrBps());
+      check("maxMmrBps", globalConfig.maxMmrBps, await vault.maxMmrBps());
+      check("totalCollateralDeposited", globalConfig.totalCollateralDeposited, await vault.totalCollateralDeposited());
+      check("totalMarginLocked", globalConfig.totalMarginLocked, await vault.totalMarginLocked());
+      console.log(colorText(`    Global: ${pass} pass, ${fail} fail`, fail > 0 ? colors.yellow : colors.green));
+
+      console.log(colorText(`  Checking ${users.length} users...`, colors.white));
+      let userPass = 0, userFail = 0;
+      for (let i = 0; i < users.length; i++) {
+        const u = users[i];
+        try {
+          const col = await vault.userCollateral(u.address);
+          const cred = await vault.userCrossChainCredit(u.address);
+          const pnl = await vault.userRealizedPnL(u.address);
+          if (String(col) !== u.userCollateral || String(cred) !== u.userCrossChainCredit || String(pnl) !== u.userRealizedPnL) {
+            userFail++;
+            console.log(colorText(`    ✗ User ${u.address.slice(0, 8)}… mismatch`, colors.red));
+          } else {
+            userPass++;
+          }
+        } catch (err) {
+          userFail++;
+        }
+      }
+      console.log(colorText(`    Users: ${userPass} pass, ${userFail} fail`, userFail > 0 ? colors.yellow : colors.green));
+
+      console.log(colorText(`  Checking ${markets.length} markets...`, colors.white));
+      let mktPass = 0, mktFail = 0;
+      for (const m of markets) {
+        try {
+          const ob = await vault.marketToOrderBook(m.marketId);
+          const mp = await vault.marketMarkPrices(m.marketId);
+          if (ob.toLowerCase() !== m.orderBook.toLowerCase() || String(mp) !== m.markPrice) {
+            mktFail++;
+            console.log(colorText(`    ✗ Market ${m.symbol || m.marketId.slice(0, 10)}: OB or price mismatch`, colors.red));
+          } else {
+            mktPass++;
+          }
+        } catch (err) {
+          mktFail++;
+        }
+      }
+      console.log(colorText(`    Markets: ${mktPass} pass, ${mktFail} fail`, mktFail > 0 ? colors.yellow : colors.green));
+
+      const totalFail = fail + userFail + mktFail;
+      const totalPass = pass + userPass + mktPass;
+      console.log(colorText(
+        `\n  ${totalFail === 0 ? "✅" : "⚠"} Verification: ${totalPass} pass, ${totalFail} fail`,
+        totalFail === 0 ? colors.brightGreen : colors.brightRed
+      ));
+    };
+
+    // ═══════ LOAD PRODUCTION STATE INTO TRADER SESSION ═══════
+    const loadProductionState = async (vaultAddr) => {
+      console.log(colorText("\n══ LOADING PRODUCTION STATE INTO SESSION ══", colors.brightMagenta));
+
+      // 1) Rebind this.contracts.vault to the new migrated proxy
+      console.log(colorText("  Rebinding vault to new proxy...", colors.white));
+      const CoreVaultFactory = await ethers.getContractFactory("CoreVault", {
+        libraries: { PositionManager: libraries.PositionManager },
+      });
+      this.contracts.vault = CoreVaultFactory.attach(vaultAddr);
+      console.log(colorText(`    ✓ Vault bound to ${vaultAddr}`, colors.green));
+
+      // 2) Impersonate production users on localhost and fund them with ETH
+      console.log(colorText(`  Loading ${snapshot.users.length} production users...`, colors.white));
+      const impersonatedUsers = [];
+      for (const u of snapshot.users) {
+        try {
+          await ethers.provider.send("hardhat_impersonateAccount", [u.address]);
+          await ethers.provider.send("hardhat_setBalance", [
+            u.address,
+            "0x56BC75E2D63100000",
+          ]);
+          const signer = await ethers.getSigner(u.address);
+          impersonatedUsers.push(signer);
+        } catch (err) {
+          console.log(colorText(`    ⚠ Could not impersonate ${u.address}: ${err.message?.slice(0, 60)}`, colors.yellow));
+        }
+      }
+      const [deployerSigner] = await ethers.getSigners();
+      this.users = [deployerSigner, ...impersonatedUsers];
+      console.log(colorText(`    ✓ ${impersonatedUsers.length} production users loaded (+ deployer = ${this.users.length} total)`, colors.green));
+
+      // 3) Inject snapshot markets into MARKET_INFO, checking for local OB bytecode
+      console.log(colorText(`  Loading ${snapshot.markets.length} markets into session...`, colors.white));
+      Object.keys(MARKET_INFO).forEach((key) => delete MARKET_INFO[key]);
+      let activeCount = 0;
+      let localOBCount = 0;
+      for (const m of snapshot.markets) {
+        const sym = m.symbol || `MKT-${m.marketId.slice(0, 8)}`;
+        let hasLocalOB = false;
+        try {
+          const code = await ethers.provider.getCode(m.orderBook);
+          hasLocalOB = code !== "0x";
+        } catch (_) {}
+        MARKET_INFO[sym] = {
+          name: sym,
+          symbol: sym,
+          marketId: m.marketId,
+          orderBook: m.orderBook,
+          active: !m.settled,
+          hasLocalOB,
+        };
+        if (!m.settled) activeCount++;
+        if (hasLocalOB) localOBCount++;
+      }
+      console.log(colorText(`    ✓ ${Object.keys(MARKET_INFO).length} markets loaded (${activeCount} active, ${localOBCount} with local OrderBook)`, colors.green));
+      if (localOBCount < activeCount) {
+        console.log(colorText(`    ℹ ${activeCount - localOBCount} markets have no local OrderBook — vault queries work, order placement won't`, colors.dim));
+      }
+
+      // 4) Auto-select first active market (prefer one with a local OB)
+      const firstWithOB = Object.values(MARKET_INFO).find((m) => m.active && m.hasLocalOB);
+      const firstActive = firstWithOB || Object.values(MARKET_INFO).find((m) => m.active);
+      if (firstActive) {
+        this.currentMarket = {
+          symbol: firstActive.symbol,
+          marketId: firstActive.marketId,
+          orderBook: firstActive.orderBook,
+        };
+        if (firstActive.hasLocalOB) {
+          try {
+            await this.rebindOrderBook(firstActive.orderBook);
+            console.log(colorText(`    ✓ Active market: ${firstActive.symbol} (with OrderBook)`, colors.green));
+          } catch (err) {
+            console.log(colorText(`    ⚠ Could not bind OrderBook for ${firstActive.symbol}: ${err.message?.slice(0, 60)}`, colors.yellow));
+          }
+        } else {
+          console.log(colorText(`    ✓ Active market: ${firstActive.symbol} (vault-only, no local OrderBook)`, colors.yellow));
+        }
+      }
+
+      console.log(colorText("\n  ✅ Production state loaded — you can now trade as any snapshot user", colors.brightGreen));
+    };
+
+    // ═══════ EXECUTE CHOSEN ACTION ═══════
+    let finalVaultAddr = null;
+    try {
+      if (action === "1") {
+        proxyAddress = await runDeploy();
+        await runMigrate(proxyAddress);
+        await runRepoint(proxyAddress);
+        await runVerify(proxyAddress);
+        finalVaultAddr = proxyAddress;
+      } else if (action === "2") {
+        proxyAddress = await runDeploy();
+      } else if (action === "3") {
+        const d = loadDeployment();
+        if (!d) { console.log(colorText("  No deployment found. Run deploy first.", colors.red)); await this.pause(2000); return; }
+        await runMigrate(d.contracts.CoreVaultProxy);
+        finalVaultAddr = d.contracts.CoreVaultProxy;
+      } else if (action === "4") {
+        const d = loadDeployment();
+        if (!d) { console.log(colorText("  No deployment found. Run deploy first.", colors.red)); await this.pause(2000); return; }
+        await runRepoint(d.contracts.CoreVaultProxy);
+      } else if (action === "5") {
+        const d = loadDeployment();
+        if (!d) { console.log(colorText("  No deployment found. Run deploy first.", colors.red)); await this.pause(2000); return; }
+        await runVerify(d.contracts.CoreVaultProxy);
+      }
+
+      if (finalVaultAddr) {
+        await loadProductionState(finalVaultAddr);
+      }
+    } catch (err) {
+      console.log(colorText(`\n  ❌ Error: ${err.message}`, colors.red));
+      if (err.stack) console.log(colorText(err.stack.split("\n").slice(0, 5).join("\n"), colors.dim));
+    }
+
+    console.log(colorText("\n" + "─".repeat(60), colors.dim));
+    await this.askQuestion(colorText("  Press Enter to return to main menu...", colors.dim));
   }
 
   async liquidateDirectInteractive() {
@@ -10155,6 +10678,19 @@ ${colors.brightRed}└───────────────────�
           this.contracts.orderBook.removeAllListeners();
         } catch (_) {}
       }
+
+      const code = await ethers.provider.getCode(obAddress);
+      if (code === "0x") {
+        this.contracts.orderBookAddress = obAddress;
+        this.contracts.obView = null;
+        this.contracts.obPricing = null;
+        this.contracts.obPlace = null;
+        this.contracts.obExec = null;
+        this.contracts.obLiq = null;
+        this.contracts.orderBook = null;
+        return;
+      }
+
       this.contracts.orderBookAddress = obAddress;
       this.contracts.obView = await ethers.getContractAt(
         "OBViewFacet",
@@ -10272,7 +10808,7 @@ ${colors.brightRed}└───────────────────�
       const amount6 = ethers.parseUnits(amountStr, 6);
 
       const pos = positions[idx];
-      const [liqBefore] = await this.contracts.vault.getLiquidationPrice(
+      const [liqBefore] = await this.contracts.vault.getLiquidationPrice.staticCall(
         this.currentUser.address,
         pos.marketId
       );
@@ -10288,7 +10824,7 @@ ${colors.brightRed}└───────────────────�
       );
 
       // Show updated liq price
-      const [liqAfter] = await this.contracts.vault.getLiquidationPrice(
+      const [liqAfter] = await this.contracts.vault.getLiquidationPrice.staticCall(
         this.currentUser.address,
         pos.marketId
       );
@@ -10357,7 +10893,7 @@ ${colors.brightRed}└───────────────────�
       const amount6 = ethers.parseUnits(amountStr, 6);
 
       const pos = positions[idx];
-      const [liqBefore] = await this.contracts.vault.getLiquidationPrice(
+      const [liqBefore] = await this.contracts.vault.getLiquidationPrice.staticCall(
         this.currentUser.address,
         pos.marketId
       );
@@ -10386,7 +10922,7 @@ ${colors.brightRed}└───────────────────�
         return;
       }
 
-      const [liqAfter] = await this.contracts.vault.getLiquidationPrice(
+      const [liqAfter] = await this.contracts.vault.getLiquidationPrice.staticCall(
         this.currentUser.address,
         pos.marketId
       );
@@ -11422,7 +11958,7 @@ ${colors.brightRed}└───────────────────�
           // Also compute required margin and compare with available collateral
           const userAddr = this.currentUser.address;
           const [available] = await Promise.all([
-            this.contracts.vault.getAvailableCollateral(userAddr),
+            this.contracts.vault.getAvailableCollateral.staticCall(userAddr),
           ]);
 
           const required = (amountWei * priceWei) / 10n ** 18n; // 1:1 margin
@@ -12286,7 +12822,7 @@ ${colors.brightRed}└───────────────────�
         unifiedUnrealizedPnL2,
         unifiedTotalMarginCommitted2,
         unifiedIsMarginHealthy2,
-      ] = await this.contracts.vault.getUnifiedMarginSummary(
+      ] = await this.contracts.vault.getUnifiedMarginSummary.staticCall(
         this.currentUser.address
       );
 
@@ -12990,7 +13526,7 @@ ${colors.brightRed}└───────────────────�
             let liqDisplay = "N/A";
             try {
               const [liqPrice, hasPos] = await this.withRpcRetry(() =>
-                this.contracts.vault.getLiquidationPrice(
+                this.contracts.vault.getLiquidationPrice.staticCall(
                   this.currentUser.address,
                   position.marketId
                 )
@@ -15065,7 +15601,7 @@ ${colors.brightRed}└───────────────────�
         unrealizedPnL,
         totalMarginCommitted,
         isMarginHealthy,
-      ] = await this.contracts.vault.getUnifiedMarginSummary(
+      ] = await this.contracts.vault.getUnifiedMarginSummary.staticCall(
         this.currentUser.address
       );
       // Store unified margin data
@@ -15091,7 +15627,7 @@ ${colors.brightRed}└───────────────────�
       };
 
       // Get margin utilization ratio
-      const utilizationBps = await this.contracts.vault.getMarginUtilization(
+      const utilizationBps = await this.contracts.vault.getMarginUtilization.staticCall(
         this.currentUser.address
       );
       marginData.sources.marginUtilization = {

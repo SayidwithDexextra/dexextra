@@ -15,7 +15,7 @@ import { usePortfolioSnapshot } from '@/contexts/PortfolioSnapshotContext';
 import type { Address } from 'viem';
 import { signAndSubmitGasless, submitSessionTrade, isSessionErrorMessage } from '@/lib/gasless';
 import { CHAIN_CONFIG, CONTRACT_ADDRESSES } from '@/lib/contractConfig';
-import { gaslessTopUpPosition } from '@/lib/gaslessTopup';
+import { gaslessTopUpPosition, sessionTopUpPosition } from '@/lib/gaslessTopup';
 import { parseUnits } from 'viem';
 import { useSession } from '@/contexts/SessionContext';
 import { normalizeBytes32Hex } from '@/lib/hex';
@@ -143,6 +143,60 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   const [isCancelingOrder, setIsCancelingOrder] = useState(false);
   const [isCancelingAll, setIsCancelingAll] = useState(false);
   const [cancelAllProgress, setCancelAllProgress] = useState<{ done: number; total: number; failed: number }>({ done: 0, total: 0, failed: 0 });
+
+  // Pending orders placed via TradingPanel (shown inline with a loading animation)
+  const [pendingOrders, setPendingOrders] = useState<Array<{
+    id: string;
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    type: 'MARKET' | 'LIMIT';
+    price: number;
+    size: number;
+    timestamp: number;
+  }>>([]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const onPendingPlaced = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail?.id) return;
+      setPendingOrders(prev => [{
+        id: detail.id,
+        symbol: detail.symbol || '',
+        side: detail.side || 'BUY',
+        type: detail.type || 'MARKET',
+        price: Number(detail.price) || 0,
+        size: Number(detail.size) || 0,
+        timestamp: detail.timestamp || Date.now(),
+      }, ...prev]);
+      setActiveTab('orders');
+    };
+
+    const onPendingResolved = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (detail?.status === 'error') {
+        setPendingOrders([]);
+      } else {
+        setTimeout(() => setPendingOrders([]), 1500);
+      }
+    };
+
+    window.addEventListener('pendingOrderPlaced', onPendingPlaced);
+    window.addEventListener('pendingOrderResolved', onPendingResolved);
+
+    return () => {
+      window.removeEventListener('pendingOrderPlaced', onPendingPlaced);
+      window.removeEventListener('pendingOrderResolved', onPendingResolved);
+    };
+  }, []);
+
+  // Fallback cleanup: remove stale pending orders after 60s
+  useEffect(() => {
+    if (pendingOrders.length === 0) return;
+    const timer = setTimeout(() => setPendingOrders([]), 60_000);
+    return () => clearTimeout(timer);
+  }, [pendingOrders.length]);
 
   // Modify order modal state
   const [showModifyModal, setShowModifyModal] = useState(false);
@@ -304,8 +358,33 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   }, [orderFillModal.isOpen, orderFillModal.kind, orderFillModal.startedAt, orderFillModal.status]);
 
   const [optimisticallyRemovedOrderIds, setOptimisticallyRemovedOrderIds] = useState<Set<string>>(new Set());
-  /** Keys of orders currently playing slide-out animation (still visible until animation ends) */
-  const [animatingOutOrderKeys, setAnimatingOutOrderKeys] = useState<Set<string>>(new Set());
+
+  // Cancelled orders awaiting slide-out: 'waiting' = visible + dimmed for 2s, 'sliding' = playing animation
+  const [slideOutOrderKeys, setSlideOutOrderKeys] = useState<Map<string, 'waiting' | 'sliding'>>(new Map());
+  const slideOutTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  const scheduleSlideOut = useCallback((key: string) => {
+    if (slideOutTimersRef.current.has(key)) return;
+    setSlideOutOrderKeys(prev => { const n = new Map(prev); n.set(key, 'waiting'); return n; });
+    const timer = setTimeout(() => {
+      slideOutTimersRef.current.delete(key);
+      setSlideOutOrderKeys(prev => { const n = new Map(prev); n.set(key, 'sliding'); return n; });
+    }, 2000);
+    slideOutTimersRef.current.set(key, timer);
+  }, []);
+
+  const cancelSlideOut = useCallback((key: string) => {
+    const timer = slideOutTimersRef.current.get(key);
+    if (timer) { clearTimeout(timer); slideOutTimersRef.current.delete(key); }
+    setSlideOutOrderKeys(prev => { const n = new Map(prev); n.delete(key); return n; });
+  }, []);
+
+  const completeSlideOut = useCallback((key: string) => {
+    slideOutTimersRef.current.delete(key);
+    setSlideOutOrderKeys(prev => { const n = new Map(prev); n.delete(key); return n; });
+    setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(key); return n; });
+  }, []);
+
   // Global on-chain orders from OnchainOrdersContextV2
   const {
     orders: globalOnchainOrders,
@@ -1339,13 +1418,6 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   };
 
   const handleTopUpSubmit = async () => {
-    // Temporary: disable gasless top-up while CoreVault metaTopUp is under investigation
-    showError(
-      'Gasless margin top-up is temporarily disabled while we upgrade the vault. ' +
-      'You can still adjust risk by closing or reducing positions.'
-    , 'Top-up unavailable');
-    return;
-
     if (!topUpPositionId || !topUpAmount || !walletAddress) return;
 
     const amtNum = Number(topUpAmount);
@@ -1360,12 +1432,34 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       const marketId = topUpPositionId as string;
 
       if (GASLESS) {
-        const res = await gaslessTopUpPosition({
-          vault: CONTRACT_ADDRESSES.CORE_VAULT,
-          trader: walletAddress,
-          marketId,
-          amount: topUpAmount,
-        });
+        const activeSessionId =
+          globalSessionId ||
+          (typeof window !== 'undefined'
+            ? (window.localStorage.getItem(`gasless:session:${walletAddress}`) || '')
+            : '');
+
+        let res: { success: boolean; txHash?: string; error?: string };
+
+        if (activeSessionId && globalSessionActive === true) {
+          res = await sessionTopUpPosition({
+            vault: CONTRACT_ADDRESSES.CORE_VAULT,
+            trader: walletAddress,
+            marketId,
+            amount: topUpAmount,
+            sessionId: activeSessionId,
+          });
+          if (!res.success && isSessionErrorMessage(res.error || '')) {
+            clearSession();
+          }
+        } else {
+          res = await gaslessTopUpPosition({
+            vault: CONTRACT_ADDRESSES.CORE_VAULT,
+            trader: walletAddress,
+            marketId,
+            amount: topUpAmount,
+          });
+        }
+
         if (!res.success) throw new Error(res.error || 'gasless top-up failed');
         console.log('Gasless top-up tx:', res.txHash);
       } else {
@@ -1388,12 +1482,13 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       setTopUpPositionId(null);
       setTopUpSymbol('');
       setShowTopUpModal(false);
-      try {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('positionsRefreshRequested'));
-        }
-      } catch {}
-      showSuccess('Position top-up submitted. Pending confirmation.', 'Top-up sent');
+
+      refreshPositions();
+      for (const delay of [2000, 4000, 8000]) {
+        setTimeout(() => refreshPositions(), delay);
+      }
+
+      showSuccess('Position margin topped up successfully.', 'Top-up confirmed');
     } catch (error: any) {
       console.error('Error topping up position:', error);
       showError(error?.message || 'Failed to top up position. Please try again.');
@@ -1576,13 +1671,11 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     base.forEach(appendOrder);
 
     // Defensive: never render a LIMIT order with non-positive price/size.
-    // Keep orders that are animating out so the slide-out animation can complete.
+    // Keep orders visible while awaiting or playing slide-out animation.
     return Array.from(dedup.values())
       .filter((o) => {
         const removalKey = getOrderCompositeKey(o.symbol, o.id);
-        const isAnimatingOut = animatingOutOrderKeys.has(removalKey);
-        // Keep the order visible while animating, even if marked for removal
-        if (isAnimatingOut) return true;
+        if (slideOutOrderKeys.has(removalKey)) return true;
         return o.type !== 'MARKET' && o.status !== 'CANCELLED' && o.status !== 'FILLED' && !optimisticallyRemovedOrderIds.has(removalKey);
       })
       .filter((o) => {
@@ -1603,7 +1696,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         }
         return true;
       });
-  }, [sitewideActiveOrders, optimisticallyRemovedOrderIds, animatingOutOrderKeys]);
+  }, [sitewideActiveOrders, optimisticallyRemovedOrderIds, slideOutOrderKeys]);
   const openOrdersIsLoading = Boolean(isLoadingSitewideOrders && !hasHydratedSitewideOrders && activeTab === 'orders');
 
   // Optimistic overlay for open orders driven by `ordersUpdated` event detail.
@@ -1916,11 +2009,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
           try { oid = typeof order.id === 'bigint' ? (order.id as any) : BigInt(order.id as any); } catch { oid = 0n; }
           if (oid === 0n) throw new Error('Invalid order id');
 
-          setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
-          setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
-          setTimeout(() => {
-            setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
-          }, 400);
+          scheduleSlideOut(removalKey);
           const r = await submitSessionTrade({
             method: 'sessionCancelOrder',
             orderBook: obAddress,
@@ -1930,6 +2019,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
           });
 
           if (!r.success) {
+            cancelSlideOut(removalKey);
             const msg = r.error || 'Gasless cancel failed';
             if (isSessionErrorMessage(msg)) {
               clearSession();
@@ -1962,13 +2052,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
             } catch {}
           }
         } else {
-          setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
-          setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
-          setTimeout(() => {
-            setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
-          }, 400);
+          scheduleSlideOut(removalKey);
           const ok = await cancelOrderForMarket(order.id, metric);
           if (!ok) {
+            cancelSlideOut(removalKey);
             failed++;
           } else {
             try {
@@ -1995,7 +2082,6 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
         }
       } catch {
         failed++;
-        setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
       }
 
       done++;
@@ -2088,7 +2174,6 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       if (oid === 0n) throw new Error('Invalid order id');
 
       const removalKey = getOrderCompositeKey(modifyOrder.symbol, modifyOrder.id);
-      setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
 
       const cancelResult = await submitSessionTrade({
         method: 'sessionCancelOrder',
@@ -2099,7 +2184,6 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       });
 
       if (!cancelResult.success) {
-        setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.delete(removalKey); return next; });
         const msg = cancelResult.error || 'Failed to cancel existing order';
         if (isSessionErrorMessage(msg)) {
           clearSession();
@@ -2214,7 +2298,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
 
   const tabs = [
     { id: 'positions' as TabType, label: 'Positions', shortLabel: 'Pos', count: displayedPositions.length },
-    { id: 'orders' as TabType, label: 'Open Orders', shortLabel: 'Orders', count: displayedOpenOrders.length },
+    { id: 'orders' as TabType, label: 'Open Orders', shortLabel: 'Orders', count: displayedOpenOrders.length + pendingOrders.length },
     { id: 'trades' as TabType, label: 'Trade History', shortLabel: 'Trades', count: orderBookState.tradeCount },
     { id: 'history' as TabType, label: 'Order History', shortLabel: 'History', count: orderHistory.length },
   ];
@@ -2625,7 +2709,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
   };
 
   const renderOpenOrdersTable = () => {
-    if (displayedOpenOrders.length === 0) {
+    if (displayedOpenOrders.length === 0 && pendingOrders.length === 0) {
       return (
         <ActivityEmptyState
           message={openOrdersIsLoading ? 'Loading open orders…' : 'No open orders'}
@@ -2634,12 +2718,14 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       );
     }
 
+    const totalOrders = displayedOpenOrders.length + pendingOrders.length;
+
     return (
                   <div className="w-full overflow-x-hidden">
-                    {displayedOpenOrders.length > 1 && (
+                    {totalOrders > 1 && (
                       <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-t-stroke">
                         <span className="text-[10px] text-t-fg-label">
-                          {displayedOpenOrders.length} open order{displayedOpenOrders.length !== 1 ? 's' : ''}
+                          {totalOrders} open order{totalOrders !== 1 ? 's' : ''}
                         </span>
                         <button
                           onClick={handleCancelAllOrders}
@@ -2665,19 +2751,68 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                       </tr>
                     </thead>
                     <tbody>
+                      {pendingOrders.map((po) => (
+                        <tr
+                          key={po.id}
+                          className="pending-order-shimmer border-b border-t-stroke-sub"
+                        >
+                          <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
+                            <div className="flex items-center gap-1 min-w-0">
+                              <img
+                                src={(marketSymbolMap.get(po.symbol)?.icon as string) || FALLBACK_TOKEN_ICON}
+                                alt={`${po.symbol} logo`}
+                                className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 rounded-full border border-t-stroke-hover object-cover opacity-60"
+                              />
+                              <div className="min-w-0">
+                                <span className="block truncate text-[10px] sm:text-[11px] font-medium text-t-fg opacity-70">
+                                  {truncateMarketName(marketSymbolMap.get(po.symbol)?.name || po.symbol)}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-1 sm:px-2 py-1.5 whitespace-nowrap">
+                            <span className={`text-[10px] sm:text-[11px] font-medium opacity-70 ${po.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{po.side}</span>
+                          </td>
+                          <td className="hidden md:table-cell px-2 py-1.5">
+                            <span className="text-[11px] text-t-fg opacity-70">{po.type}</span>
+                          </td>
+                          <td className="px-1 sm:px-2 py-1.5 text-right">
+                            <span className="text-[10px] sm:text-[11px] text-t-fg font-mono opacity-70">
+                              {po.type === 'MARKET' ? 'Market' : `$${formatPrice(po.price)}`}
+                            </span>
+                          </td>
+                          <td className="hidden sm:table-cell px-2 py-1.5 text-right">
+                            <span className="text-[10px] sm:text-[11px] text-t-fg font-mono opacity-70">{formatAmount(po.size, 4)}</span>
+                          </td>
+                          <td className="hidden sm:table-cell px-2 py-1.5 text-right">
+                            <span className="inline-flex items-center gap-1.5 text-[10px] text-blue-400 font-medium">
+                              <svg className="w-3 h-3 animate-spin" viewBox="0 0 16 16" fill="none">
+                                <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.5" />
+                                <path d="M14.5 8a6.5 6.5 0 0 0-6.5-6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                              </svg>
+                              PROCESSING
+                            </span>
+                          </td>
+                          <td className="pr-1.5 sm:pr-2 pl-1 py-1.5 text-right">
+                            <span className="text-[9px] text-t-fg-label opacity-50">…</span>
+                          </td>
+                        </tr>
+                      ))}
                       {displayedOpenOrders.map((order, index) => {
                         const uiKey = getOrderUiKey(order);
                         const removalKey = getOrderCompositeKey(order.symbol, order.id);
-                        const isAnimatingOut = animatingOutOrderKeys.has(removalKey);
                         const isExpanded = expandedOrderKey === uiKey;
+                        const slidePhase = slideOutOrderKeys.get(removalKey);
+                        const isCancelWaiting = slidePhase === 'waiting';
+                        const isSliding = slidePhase === 'sliding';
                         return (
                         <React.Fragment key={uiKey}>
                           <tr
-                            className={`mat-slide-rtl group/row hover:bg-t-card-hover transition-colors duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-t-stroke-sub' : ''} ${isAnimatingOut ? 'order-row-slide-out' : ''}`}
+                            className={`mat-slide-rtl group/row hover:bg-t-card-hover transition-all duration-200 ${index !== displayedOpenOrders.length - 1 ? 'border-b border-t-stroke-sub' : ''} ${isSliding ? 'order-row-slide-out' : ''} ${isCancelWaiting ? 'opacity-50' : ''}`}
                             style={{ animationDelay: `${index * 50}ms` }}
                             onAnimationEnd={(e) => {
                               if (e.animationName !== 'order-row-slide-out') return;
-                              setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
+                              completeSlideOut(removalKey);
                             }}
                           >
                             <td className="pl-1.5 sm:pl-2 pr-1 py-1.5 max-w-0">
@@ -2729,7 +2864,7 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                             </td>
                           </tr>
                           {isExpanded && (
-                            <tr className={`bg-t-inset ${isAnimatingOut ? 'order-row-slide-out' : ''}`}>
+                            <tr className={`bg-t-inset ${isSliding ? 'order-row-slide-out' : ''}`}>
                               <td colSpan={100} className="px-0">
                                 <div className="px-2 py-1.5 border-t border-t-stroke">
                                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -2774,12 +2909,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                           onClick={async () => {
                                             const removalKey = getOrderCompositeKey(order.symbol, order.id);
                                             const revertOrder = () => {
+                                              cancelSlideOut(removalKey);
                                               setOptimisticallyRemovedOrderIds(prev => {
-                                                const next = new Set(prev);
-                                                next.delete(removalKey);
-                                                return next;
-                                              });
-                                              setAnimatingOutOrderKeys(prev => {
                                                 const next = new Set(prev);
                                                 next.delete(removalKey);
                                                 return next;
@@ -2802,13 +2933,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                                 if (!activeSessionId || globalSessionActive !== true) {
                                                   throw new Error('Trading session is not enabled. Click Enable Trading before using gasless cancel.');
                                                 }
-                                                await new Promise((r) => setTimeout(r, 400));
+                                                scheduleSlideOut(removalKey);
                                                 setOrderFillModal((cur) => ({ ...cur, status: 'canceling' }));
-                                                setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
-                                                setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
-                                                setTimeout(() => {
-                                                  setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
-                                                }, 400);
                                                 const r = await submitSessionTrade({
                                                   method: 'sessionCancelOrder',
                                                   orderBook: obAddress,
@@ -2851,13 +2977,8 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                                                   }
                                                 } catch {}
                                               } else {
-                                                await new Promise((r) => setTimeout(r, 400));
+                                                scheduleSlideOut(removalKey);
                                                 setOrderFillModal((cur) => ({ ...cur, status: 'canceling' }));
-                                                setAnimatingOutOrderKeys(prev => { const next = new Set(prev); next.add(removalKey); return next; });
-                                                setOptimisticallyRemovedOrderIds(prev => { const n = new Set(prev); n.add(removalKey); return n; });
-                                                setTimeout(() => {
-                                                  setAnimatingOutOrderKeys(prev => { const n = new Set(prev); n.delete(removalKey); return n; });
-                                                }, 400);
                                                 const ok = await cancelOrderForMarket(order.id, metric);
                                                 if (!ok) {
                                                   revertOrder();
