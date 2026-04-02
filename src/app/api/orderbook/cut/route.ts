@@ -107,18 +107,24 @@ function selectorsFromAbi(abi: any[]): string[] {
   }
 }
 
+function extractAbi(artifact: any): any[] {
+  if (Array.isArray(artifact)) return artifact;
+  if (artifact?.abi && Array.isArray(artifact.abi)) return artifact.abi;
+  return [];
+}
+
 function loadFacetAbi(contractName: string): any[] {
   switch (contractName) {
-    case 'OBAdminFacet': return (OBAdminFacetArtifact as any)?.abi || [];
-    case 'OBPricingFacet': return (OBPricingFacetArtifact as any)?.abi || [];
-    case 'OBOrderPlacementFacet': return (OBOrderPlacementFacetArtifact as any)?.abi || [];
-    case 'OBTradeExecutionFacet': return (OBTradeExecutionFacetArtifact as any)?.abi || [];
-    case 'OBLiquidationFacet': return (OBLiquidationFacetArtifact as any)?.abi || [];
-    case 'OBViewFacet': return (OBViewFacetArtifact as any)?.abi || [];
-    case 'OBSettlementFacet': return (OBSettlementFacetArtifact as any)?.abi || [];
-    case 'OrderBookVaultAdminFacet': return (OrderBookVaultAdminFacetArtifact as any)?.abi || [];
-    case 'MarketLifecycleFacet': return (MarketLifecycleFacetArtifact as any)?.abi || [];
-    case 'MetaTradeFacet': return (MetaTradeFacetArtifact as any)?.abi || [];
+    case 'OBAdminFacet': return extractAbi(OBAdminFacetArtifact);
+    case 'OBPricingFacet': return extractAbi(OBPricingFacetArtifact);
+    case 'OBOrderPlacementFacet': return extractAbi(OBOrderPlacementFacetArtifact);
+    case 'OBTradeExecutionFacet': return extractAbi(OBTradeExecutionFacetArtifact);
+    case 'OBLiquidationFacet': return extractAbi(OBLiquidationFacetArtifact);
+    case 'OBViewFacet': return extractAbi(OBViewFacetArtifact);
+    case 'OBSettlementFacet': return extractAbi(OBSettlementFacetArtifact);
+    case 'OrderBookVaultAdminFacet': return extractAbi(OrderBookVaultAdminFacetArtifact);
+    case 'MarketLifecycleFacet': return extractAbi(MarketLifecycleFacetArtifact);
+    case 'MetaTradeFacet': return extractAbi(MetaTradeFacetArtifact);
     default: return [];
   }
 }
