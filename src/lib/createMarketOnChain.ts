@@ -547,7 +547,18 @@ export async function createMarketOnChain(params: {
       });
       if (!deployRes.ok) {
         const text = await deployRes.text();
-        throw new Error(`deploy http ${deployRes.status}: ${text}`);
+        let msg = text;
+        try {
+          const j = JSON.parse(text) as { hint?: string; customError?: string; error?: string };
+          if (j?.hint) msg = j.hint;
+          else if (typeof j?.error === 'string') msg = j.error;
+          if (j?.customError && !msg.includes(String(j.customError))) {
+            msg = `${msg} [${j.customError}]`;
+          }
+        } catch {
+          /* keep raw text */
+        }
+        throw new Error(`deploy http ${deployRes.status}: ${msg}`);
       }
       deployResult = await deployRes.json();
       onProgress?.({ step: 'relayer_deploy', status: 'success', data: { hash: deployResult.transactionHash, orderBook: deployResult.orderBook, marketId: deployResult.marketId } });

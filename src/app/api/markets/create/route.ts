@@ -404,6 +404,12 @@ export async function POST(req: Request) {
         error: 'settlementDate must be in the future'
       }, { status: 400 });
     }
+    const maxSettlementHorizon = now + 365 * 24 * 60 * 60;
+    if (settlementTs > maxSettlementHorizon) {
+      return NextResponse.json({
+        error: 'settlementDate cannot be more than 365 days ahead (factory rejects longer horizons on-chain)',
+      }, { status: 400 });
+    }
 
     // One comprehensive, machine-readable env/config snapshot for Vercel vs localhost comparisons.
     // IMPORTANT: keep secrets masked; prefer presence + length over raw values.
@@ -699,6 +705,18 @@ export async function POST(req: Request) {
     const factoryIface = new ethers.Interface(factoryAbi);
     const feeRecipient = (body?.feeRecipient && ethers.isAddress(body.feeRecipient)) ? body.feeRecipient : (creatorWalletAddress || ownerAddress);
 
+    try {
+      const bm = await factory.bondManager();
+      if (!bm || bm === ethers.ZeroAddress) {
+        return NextResponse.json({
+          error: 'Factory bondManager is unset; onMarketCreate will revert. Configure bondManager on the factory contract.',
+          code: 'bond_manager_zero',
+        }, { status: 503 });
+      }
+    } catch (e: any) {
+      console.warn('[create] bondManager preflight failed', e?.message || String(e));
+    }
+
     // Preflight bytecode checks
     try {
       const [factoryCode, initCode, ...facetCodes] = await Promise.all([
@@ -716,12 +734,20 @@ export async function POST(req: Request) {
 
     let tx: ethers.TransactionResponse;
     let receipt: ethers.TransactionReceipt | null;
+    let gaslessDiamondOwner: string | null = null;
     if (gaslessEnabled && !isRollover) {
       // Gasless via meta-create: require user signature
       const creator = creatorWalletAddress;
       if (!creator) {
         return NextResponse.json({ error: 'creatorWalletAddress required for gasless create' }, { status: 400 });
       }
+      const envDiamondOwner =
+        process.env.FACTORY_DIAMOND_OWNER || (process.env as any).NEXT_PUBLIC_FACTORY_DIAMOND_OWNER;
+      const diamondOwnerMeta =
+        typeof envDiamondOwner === 'string' && ethers.isAddress(envDiamondOwner)
+          ? ethers.getAddress(envDiamondOwner)
+          : ethers.getAddress(feeRecipient);
+      gaslessDiamondOwner = diamondOwnerMeta;
       const signature = typeof body?.signature === 'string' ? String(body.signature) : null;
       const nonceStr = typeof body?.nonce !== 'undefined' ? String(body.nonce) : null;
       const deadlineStr = typeof body?.deadline !== 'undefined' ? String(body.deadline) : null;
@@ -812,7 +838,7 @@ export async function POST(req: Request) {
         startPrice: startPrice6.toString(),
         dataSource,
         tagsHash,
-        diamondOwner: ownerAddress,
+        diamondOwner: diamondOwnerMeta,
         cutHash,
         initFacet,
         creator,
@@ -848,7 +874,7 @@ export async function POST(req: Request) {
         startPriceRaw: startPrice,
         startPrice6: startPrice6.toString(),
           creator,
-          diamondOwner: ownerAddress,
+          diamondOwner: diamondOwnerMeta,
           cutArgPreview: Array.isArray(cutArg)
             ? cutArg.map((c: any) => ({
               facetAddress: c?.[0],
@@ -881,7 +907,7 @@ export async function POST(req: Request) {
         try {
           const structHash = ethers.keccak256(
             ethers.AbiCoder.defaultAbiCoder().encode(
-              ['bytes32','bytes32','bytes32','uint256','uint256','bytes32','bytes32','bytes32','address','address','uint256','uint256'],
+              ['bytes32','bytes32','bytes32','uint256','uint256','bytes32','bytes32','address','bytes32','address','address','uint256','uint256'],
               [
                 TYPEHASH_META_CREATE,
                 ethers.keccak256(ethers.toUtf8Bytes(symbol)),
@@ -890,6 +916,7 @@ export async function POST(req: Request) {
                 BigInt(startPrice6),
                 ethers.keccak256(ethers.toUtf8Bytes(dataSource)),
                 tagsHash,
+                diamondOwnerMeta,
                 cutHash,
                 initFacet,
                 creator,
@@ -959,7 +986,7 @@ export async function POST(req: Request) {
           callStartPrice,
           dataSource,
           callTags,
-          ownerAddress,
+          diamondOwnerMeta,
           cutArg,
           initFacet,
           creator,
@@ -999,7 +1026,7 @@ export async function POST(req: Request) {
         callStartPrice,
         dataSource,
         callTags,
-        ownerAddress,
+        diamondOwnerMeta,
         cutArg,
         initFacet,
         creator,
@@ -1113,7 +1140,7 @@ export async function POST(req: Request) {
     vaultWallet = new ethers.Wallet(normalizedSecondaryPk, provider);
     vaultNonceMgr = await createNonceManager(vaultWallet);
     logS('parallel_signers', 'success', {
-      diamondOwner: ownerAddress,
+      diamondOwner: gaslessDiamondOwner || ownerAddress,
       vaultAdmin: await vaultWallet.getAddress(),
     });
   } else {

@@ -132,13 +132,30 @@ function extractError(e: any) {
   } catch { return String(e); }
 }
 
+function extractRevertData(e: any): string | null {
+  const candidates = [
+    e?.data,
+    e?.error?.data,
+    e?.error?.error?.data,
+    e?.info?.error?.data,
+    e?.info?.error?.error?.data,
+    e?.payload?.error?.data,
+    typeof e?.body === 'string' ? (() => {
+      try {
+        const j = JSON.parse(e.body);
+        return j?.error?.data ?? j?.error?.error?.data;
+      } catch { return null; }
+    })() : null,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c;
+  }
+  return null;
+}
+
 function decodeRevert(iface: ethers.Interface, e: any) {
   try {
-    const data =
-      (typeof e?.data === 'string' && e.data) ||
-      (typeof e?.error?.data === 'string' && e.error.data) ||
-      (typeof e?.info?.error?.data === 'string' && e.info.error.data) ||
-      null;
+    const data = extractRevertData(e);
     if (data && data.startsWith('0x')) {
       try {
         const parsed = iface.parseError(data);
@@ -149,6 +166,51 @@ function decodeRevert(iface: ethers.Interface, e: any) {
   return null;
 }
 
+const ACCESS_CONTROL_UNAUTHORIZED_IFACE = new ethers.Interface([
+  'error AccessControlUnauthorizedAccount(address account,bytes32 role)',
+]);
+
+const ROLE_HASH_TO_NAME: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const n of ['FACTORY_ROLE', 'ORDERBOOK_ROLE', 'SETTLEMENT_ROLE', 'EXTERNAL_CREDITOR_ROLE']) {
+    m[ethers.keccak256(ethers.toUtf8Bytes(n)).toLowerCase()] = n;
+  }
+  return m;
+})();
+
+/** OpenZeppelin AccessControl — e.g. factory lacks SETTLEMENT_ROLE for vault.updateMarkPrice. */
+function hintForAccessControlRawData(rawData: string | null | undefined): string | null {
+  if (!rawData || rawData.length < 10 + 128) return null;
+  if (rawData.slice(0, 10).toLowerCase() !== '0xe2517d3f') return null;
+  try {
+    const parsed = ACCESS_CONTROL_UNAUTHORIZED_IFACE.parseError(rawData);
+    const account = String(parsed?.args?.[0] || '');
+    const role = String(parsed?.args?.[1] || '');
+    const roleName =
+      role.toLowerCase() === ethers.ZeroHash.toLowerCase()
+        ? 'DEFAULT_ADMIN_ROLE'
+        : (ROLE_HASH_TO_NAME[role.toLowerCase()] || role);
+    if (roleName === 'SETTLEMENT_ROLE') {
+      return (
+        'CoreVault rejected the factory: it needs SETTLEMENT_ROLE to call updateMarkPrice() at the end of market creation. ' +
+        `On CoreVault, run grantRole(SETTLEMENT_ROLE, ${account}) (see Dexetrav5/scripts/deploy.js).`
+      );
+    }
+    return `CoreVault AccessControl: ${account} is missing role ${roleName}. Grant that role on the vault.`;
+  } catch {
+    return 'CoreVault AccessControlUnauthorizedAccount: grant the required role on CoreVault (see deploy script).';
+  }
+}
+
+function revertJsonBody(status: number, raw: string, customError: string | null, rawData: string | null) {
+  const hint = hintForAccessControlRawData(rawData);
+  return NextResponse.json(
+    { error: raw, customError, rawData, ...(hint ? { hint } : {}) },
+    { status },
+  );
+}
+
+/** Factory + common nested reverts (vault, diamond cut, OZ ECDSA). */
 const ERROR_SELECTORS: Record<string, string> = {
   '0x5cd5d233': 'BadSignature',
   '0x7fb0cdec': 'MetaExpired',
@@ -156,6 +218,28 @@ const ERROR_SELECTORS: Record<string, string> = {
   '0x6dfe7469': 'MarketCreationRestricted',
   '0xd92e233d': 'ZeroAddress',
   '0x1f8f95a0': 'InvalidOraclePrice',
+  '0xb4fa3fb3': 'InvalidInput',
+  '0xee79ac51': 'InvalidMarketSymbol',
+  '0x213b197b': 'InvalidMetricUrl',
+  '0xc41f4b56': 'InvalidSettlementDate',
+  '0x94f5b720': 'MarketIdCollision',
+  '0x47556579': 'OnlyAdmin',
+  '0xf645eedf': 'ECDSAInvalidSignature',
+  '0xfce698f7': 'ECDSAInvalidSignatureLength',
+  '0xd78bce0c': 'ECDSAInvalidSignatureS',
+  '0xf4d678b8': 'InsufficientBalance',
+  '0x5fe02f59': 'InsufficientAvailable',
+  '0xe6c4247b': 'InvalidAddress',
+  '0x2c5211c6': 'InvalidAmount',
+  '0xfdcd7b14': 'InitializationFunctionReverted',
+  '0x6dc8921f': 'FacetAddressZero',
+  '0x5286e7e9': 'SelectorExists',
+  '0xe548e6b5': 'IncorrectFacetCutAction',
+  '0x0e0bf9eb': 'InitIsZeroButCalldataNotEmpty',
+  '0xbfcafd37': 'NotContractOwner',
+  '0xe043ab3f': 'NewOwnerIsZero',
+  '0xa9ad62f8': 'FunctionDoesNotExist',
+  '0xe2517d3f': 'AccessControlUnauthorizedAccount',
 };
 
 async function checkpointDraft(
@@ -226,6 +310,12 @@ export async function POST(req: Request) {
     const now = Math.floor(Date.now() / 1000);
     if (settlementTs <= now) {
       return NextResponse.json({ error: 'settlementDate must be in the future' }, { status: 400 });
+    }
+    const maxSettlementHorizon = now + 365 * 24 * 60 * 60;
+    if (settlementTs > maxSettlementHorizon) {
+      return NextResponse.json({
+        error: 'settlementDate cannot be more than 365 days ahead (factory rejects longer horizons on-chain)',
+      }, { status: 400 });
     }
 
     logS('validate_input', 'start');
@@ -338,6 +428,18 @@ export async function POST(req: Request) {
     const factoryIface = new ethers.Interface(factoryAbi);
     const feeRecipient = (body?.feeRecipient && ethers.isAddress(body.feeRecipient)) ? body.feeRecipient : (creatorWalletAddress || ownerAddress);
 
+    try {
+      const bm = await factory.bondManager();
+      if (!bm || bm === ethers.ZeroAddress) {
+        return NextResponse.json({
+          error: 'Factory bondManager is unset; onMarketCreate will revert. Configure bondManager on the factory contract.',
+          code: 'bond_manager_zero',
+        }, { status: 503 });
+      }
+    } catch (e: any) {
+      console.warn('[deploy] bondManager preflight failed', e?.message || String(e));
+    }
+
     // Preflight bytecode checks
     try {
       const [factoryCode, initCode, ...facetCodes] = await Promise.all([
@@ -377,6 +479,14 @@ export async function POST(req: Request) {
       }
       const nonce = BigInt(nonceStr);
       const deadline = BigInt(deadlineStr);
+
+      // Must match src/lib/createMarketOnChain.ts: env FACTORY_DIAMOND_OWNER / NEXT_PUBLIC_* else feeRecipient||signer
+      const envDiamondOwner =
+        process.env.FACTORY_DIAMOND_OWNER || (process.env as any).NEXT_PUBLIC_FACTORY_DIAMOND_OWNER;
+      const diamondOwnerMeta =
+        typeof envDiamondOwner === 'string' && ethers.isAddress(envDiamondOwner)
+          ? ethers.getAddress(envDiamondOwner)
+          : ethers.getAddress(feeRecipient);
 
       const net = await provider.getNetwork();
       let domainName = String(process.env.EIP712_FACTORY_DOMAIN_NAME || (process.env as any).NEXT_PUBLIC_EIP712_FACTORY_DOMAIN_NAME || 'DexeteraFactory');
@@ -426,7 +536,7 @@ export async function POST(req: Request) {
       const message = {
         marketSymbol: symbol, metricUrl, settlementDate: settlementTs,
         startPrice: startPrice6.toString(), dataSource, tagsHash,
-        diamondOwner: ownerAddress, cutHash, initFacet,
+        diamondOwner: diamondOwnerMeta, cutHash, initFacet,
         creator, nonce: nonce.toString(), deadline: deadline.toString(),
       };
 
@@ -453,18 +563,21 @@ export async function POST(req: Request) {
       try {
         await factory.getFunction('metaCreateFuturesMarketDiamond').staticCall(
           message.marketSymbol, message.metricUrl, Number(message.settlementDate),
-          BigInt(message.startPrice), dataSource, tags, ownerAddress,
+          BigInt(message.startPrice), dataSource, tags, diamondOwnerMeta,
           cutArg, initFacet, creator, nonce, deadline, signature
         );
         logS('factory_static_call_meta', 'success');
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed';
         const decoded = decodeRevert(factoryIface, e);
-        const rawData = (typeof e?.data === 'string' && e.data) || decoded?.data || null;
+        const rawData = decoded?.data || extractRevertData(e);
         const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
         const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
-        logS('factory_static_call_meta', 'error', { error: raw, customError });
-        return NextResponse.json({ error: raw, customError, rawData }, { status: 400 });
+        logS('factory_static_call_meta', 'error', {
+          error: raw, customError, selector, rawData,
+          hint: hintForAccessControlRawData(rawData),
+        });
+        return revertJsonBody(400, raw, customError, rawData);
       }
 
       // Send tx — estimate gas with fallback for chains where estimateGas is unreliable
@@ -473,7 +586,7 @@ export async function POST(req: Request) {
       const fallbackGasLimit = BigInt(process.env.FACTORY_GAS_LIMIT || '8000000');
       const metaArgs = [
         message.marketSymbol, message.metricUrl, Number(message.settlementDate),
-        BigInt(message.startPrice), dataSource, tags, ownerAddress,
+        BigInt(message.startPrice), dataSource, tags, diamondOwnerMeta,
         cutArg, initFacet, creator, nonce, deadline, signature,
       ];
       let gasLimit: bigint;
@@ -508,11 +621,11 @@ export async function POST(req: Request) {
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
         const decoded = decodeRevert(factoryIface, e);
-        const rawData = (typeof e?.data === 'string' && e.data) || decoded?.data || null;
+        const rawData = decoded?.data || extractRevertData(e);
         const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
         const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
-        logS('factory_send_tx_meta', 'error', { error: raw, customError });
-        return NextResponse.json({ error: raw, customError, rawData }, { status: 500 });
+        logS('factory_send_tx_meta', 'error', { error: raw, customError, selector, rawData, hint: hintForAccessControlRawData(rawData) });
+        return revertJsonBody(500, raw, customError, rawData);
       }
       logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash });
       // Progressive checkpoint: tx hash available
@@ -540,8 +653,11 @@ export async function POST(req: Request) {
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed';
         const decoded = decodeRevert(factoryIface, e);
-        logS('factory_static_call', 'error', { error: raw, customError: decoded?.name });
-        return NextResponse.json({ error: raw, customError: decoded?.name || null, rawData: decoded?.data || null }, { status: 400 });
+        const rawData = decoded?.data || extractRevertData(e);
+        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
+        const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
+        logS('factory_static_call', 'error', { error: raw, customError, selector, rawData, hint: hintForAccessControlRawData(rawData) });
+        return revertJsonBody(400, raw, customError, rawData);
       }
 
       logS('factory_send_tx', 'start');
@@ -582,8 +698,11 @@ export async function POST(req: Request) {
       } catch (e: any) {
         const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
         const decoded = decodeRevert(factoryIface, e);
-        logS('factory_send_tx', 'error', { error: raw, customError: decoded?.name });
-        return NextResponse.json({ error: raw, customError: decoded?.name || null, rawData: decoded?.data || null }, { status: 500 });
+        const rawData = decoded?.data || extractRevertData(e);
+        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
+        const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
+        logS('factory_send_tx', 'error', { error: raw, customError, selector, rawData, hint: hintForAccessControlRawData(rawData) });
+        return revertJsonBody(500, raw, customError, rawData);
       }
       logS('factory_send_tx_sent', 'success', { hash: tx.hash });
       // Progressive checkpoint: tx hash available
