@@ -97,28 +97,43 @@ async function main() {
   console.log("\n📦 STEP 1: Check & fund pool");
   console.log("─".repeat(60));
 
-  const bondAmount = ethers.parseUnits("50", 6); // 50 USDC per side
-  const totalNeeded = bondAmount * 2n; // 100 USDC total (assert + dispute)
+  // Use minimum bond for WETH (0.002) or USDC (check deployment)
+  const deployedBondToken = deployment.bondTokenInfo?.symbol || "USDC";
+  const isWeth = deployedBondToken === "WETH";
+  const decimals = isWeth ? 18 : 6;
+  const bondAmount = isWeth
+    ? ethers.parseEther("0.002")   // 0.002 WETH min bond
+    : ethers.parseUnits("50", 6);  // 50 USDC per side
+  const totalNeeded = bondAmount * 2n;
 
   let poolBal = await relay.poolBalance();
-  console.log(`   Pool balance: ${ethers.formatUnits(poolBal, 6)} USDC`);
+  console.log(`   Pool balance: ${ethers.formatUnits(poolBal, decimals)} ${deployedBondToken}`);
 
   if (poolBal < totalNeeded) {
     const deficit = totalNeeded - poolBal;
-    console.log(`   Need ${ethers.formatUnits(totalNeeded, 6)}, funding ${ethers.formatUnits(deficit, 6)}...`);
+    console.log(`   Need ${ethers.formatUnits(totalNeeded, decimals)}, funding ${ethers.formatUnits(deficit, decimals)}...`);
 
-    // Mint if MockUSDC
-    try {
-      await token.mint(signer.address, deficit);
-      console.log(`   ✅ Minted ${ethers.formatUnits(deficit, 6)} test USDC`);
-    } catch {
-      console.log("   ℹ️  Could not mint (not MockUSDC). Ensure you have enough tokens.");
+    // Mint if MockUSDC, or wrap ETH if WETH
+    if (isWeth) {
+      console.log("   Wrapping ETH → WETH...");
+      const wrapTx = await signer.sendTransaction({ to: BOND_TOKEN, value: deficit });
+      await wrapTx.wait();
+      console.log(`   ✅ Wrapped ${ethers.formatEther(deficit)} ETH → WETH`);
+    } else {
+      try {
+        await token.mint(signer.address, deficit);
+        console.log(`   ✅ Minted ${ethers.formatUnits(deficit, 6)} test USDC`);
+      } catch {
+        console.log("   ℹ️  Could not mint (not MockUSDC). Ensure you have enough tokens.");
+      }
     }
 
-    await token.approve(DISPUTE_RELAY, deficit);
-    await relay.deposit(deficit);
+    const approveTx = await token.approve(DISPUTE_RELAY, deficit);
+    await approveTx.wait();
+    const depositTx = await relay.deposit(deficit);
+    await depositTx.wait();
     poolBal = await relay.poolBalance();
-    console.log(`   ✅ Pool funded: ${ethers.formatUnits(poolBal, 6)} USDC`);
+    console.log(`   ✅ Pool funded: ${ethers.formatUnits(poolBal, decimals)} ${deployedBondToken}`);
   } else {
     console.log("   ✅ Pool has sufficient funds");
   }
@@ -138,7 +153,7 @@ async function main() {
   console.log(`   Market (mock):     ${mockMarket}`);
   console.log(`   Proposed price:    $${ethers.formatUnits(proposedPrice, 6)}`);
   console.log(`   Challenged price:  $${ethers.formatUnits(challengedPrice, 6)}`);
-  console.log(`   Bond per side:     ${ethers.formatUnits(bondAmount, 6)} USDC`);
+  console.log(`   Bond per side:     ${ethers.formatUnits(bondAmount, decimals)} ${deployedBondToken}`);
   console.log(`   Evidence:          ${evidenceUrl}`);
 
   console.log("\n   Calling escalateDisputeDirectToVote()...");
@@ -184,7 +199,7 @@ async function main() {
   console.log(`   proposedPrice:  ${ethers.formatUnits(dispute.proposedPrice, 6)}`);
   console.log(`   challengedPrice:${ethers.formatUnits(dispute.challengedPrice, 6)}`);
   console.log(`   resolved:       ${dispute.resolved}`);
-  console.log(`   bondAmount:     ${ethers.formatUnits(dispute.bondAmount, 6)}`);
+  console.log(`   bondAmount:     ${ethers.formatUnits(dispute.bondAmount, decimals)} ${deployedBondToken}`);
 
   // Check OOv3 assertion
   try {
@@ -193,7 +208,7 @@ async function main() {
     console.log(`   asserter:      ${assertion.asserter}`);
     console.log(`   disputer:      ${assertion.disputer}`);
     console.log(`   settled:       ${assertion.settled}`);
-    console.log(`   bond:          ${ethers.formatUnits(assertion.bond, 6)}`);
+    console.log(`   bond:          ${ethers.formatUnits(assertion.bond, decimals)} ${deployedBondToken}`);
 
     const hasDisputer = assertion.disputer !== ethers.ZeroAddress;
     console.log(`   auto-disputed:  ${hasDisputer ? "YES ✅ (direct to DVM)" : "NO ❌"}`);
@@ -297,7 +312,7 @@ async function main() {
   const disputeCount = await relay.getDisputeCount();
 
   console.log(`   Disputes created:  ${disputeCount}`);
-  console.log(`   Pool balance:      ${ethers.formatUnits(finalPoolBal, 6)} USDC`);
+  console.log(`   Pool balance:      ${ethers.formatUnits(finalPoolBal, decimals)} ${deployedBondToken}`);
   console.log(`   Assertion ID:      ${assertionId}`);
 
   const finalDispute = await relay.getDispute(assertionId);

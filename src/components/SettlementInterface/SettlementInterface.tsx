@@ -2,8 +2,14 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWallet } from '@/hooks/useWallet';
-import { getSupabaseClient } from '@/lib/supabase-browser';
+import { useCoreVault } from '@/hooks/useCoreVault';
 import { publicClient } from '@/lib/viemClient';
+import { ethers } from 'ethers';
+import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
+import { getMagicProvider, switchMagicChainWithRetry } from '@/lib/magic';
+import { getChainId } from '@/lib/network';
+import { MarketLifecycleFacetABI } from '@/lib/contracts';
+import { challengeWindowExpiresMs } from '@/lib/settlement-window';
 
 interface SettlementMarket {
   id: string;
@@ -25,9 +31,24 @@ interface SettlementMarket {
     [key: string]: unknown;
   } | null;
   market_config?: {
+    expires_at?: string;
+    challenge_window_seconds?: number;
+    challenge_duration_seconds?: number;
     settlement_wayback_url?: string;
     settlement_wayback_page_url?: string;
     settlement_screenshot_url?: string;
+    uma_assertion_id?: string;
+    uma_escalated_at?: string;
+    uma_escalation_tx?: string;
+    uma_resolved?: boolean;
+    uma_challenger_won?: boolean;
+    uma_resolution_tx?: string;
+    uma_resolved_at?: string;
+    challenger_evidence?: {
+      source_url?: string;
+      image_url?: string;
+      submitted_at?: string;
+    };
   };
 }
 
@@ -75,22 +96,37 @@ const formatAddress = (addr?: string | null) => {
   return addr.length <= 10 ? addr : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 };
 
+function isValidHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s.trim());
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export function SettlementInterface({
   market,
   className = '',
   onChallengeSaved,
 }: SettlementInterfaceProps) {
   const { walletData } = useWallet();
-  const supabase = getSupabaseClient();
+  const { availableBalance, fetchBalances: refreshVaultBalance } = useCoreVault();
   const [challengePrice, setChallengePrice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState<string>('');
+  const [challengeTxHash, setChallengeTxHash] = useState<string | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>('');
   const walletLabel = walletData?.address ? formatAddress(walletData.address) : 'Connect wallet';
   const [challengeNotice, setChallengeNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [onChain, setOnChain] = useState<OnChainSettlementState | null>(null);
   const [onChainError, setOnChainError] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const evidenceFileInputRef = useRef<HTMLInputElement | null>(null);
   const [screenshotExpanded, setScreenshotExpanded] = useState(true);
+  const [evidenceSourceUrl, setEvidenceSourceUrl] = useState('');
+  const [evidenceImageFile, setEvidenceImageFile] = useState<File | null>(null);
+  const [uploadedEvidenceImageUrl, setUploadedEvidenceImageUrl] = useState<string | null>(null);
 
   const fetchOnChainState = useCallback(async (addr: `0x${string}`) => {
     try {
@@ -166,9 +202,28 @@ export function SettlementInterface({
     return () => window.removeEventListener('settlementUpdated', handler);
   }, [market?.market_address, market?.symbol, fetchOnChainState]);
 
-  const windowExpiresMs = market?.settlement_date
-    ? new Date(market.settlement_date).getTime() - 90_000
-    : 0;
+  const windowExpiresMs = useMemo(() => {
+    if (!market) return 0;
+    return challengeWindowExpiresMs(market) ?? 0;
+  }, [
+    market?.settlement_date,
+    market?.market_config?.expires_at,
+    market?.market_config?.challenge_window_seconds,
+    market?.market_config?.challenge_duration_seconds,
+  ]);
+
+  const evidencePreviewUrl = useMemo(() => {
+    if (!evidenceImageFile) return null;
+    return URL.createObjectURL(evidenceImageFile);
+  }, [evidenceImageFile]);
+
+  useEffect(() => {
+    return () => {
+      if (evidencePreviewUrl) URL.revokeObjectURL(evidencePreviewUrl);
+    };
+  }, [evidencePreviewUrl]);
+
+  const isExpired = Boolean(windowExpiresMs && windowExpiresMs <= Date.now());
 
   useEffect(() => {
     if (!windowExpiresMs) return;
@@ -185,29 +240,129 @@ export function SettlementInterface({
     return () => clearInterval(interval);
   }, [windowExpiresMs]);
 
+  const availableBalanceNum = parseFloat(availableBalance || '0');
+  const bondRequired = onChain?.challengeBondAmount ?? 0;
+  const hasSufficientBalance = bondRequired <= 0 || availableBalanceNum >= bondRequired;
+
+  const evidenceUrlTrim = evidenceSourceUrl.trim();
+  const evidenceUrlFieldOk = evidenceUrlTrim === '' || isValidHttpUrl(evidenceUrlTrim);
+  const hasEvidenceSource = evidenceUrlTrim !== '' && isValidHttpUrl(evidenceUrlTrim);
+  const hasEvidenceImage = Boolean(uploadedEvidenceImageUrl) || Boolean(evidenceImageFile);
+  const evidenceComplete = hasEvidenceSource || hasEvidenceImage;
+
   const handleChallenge = async () => {
     if (!challengePrice) return;
     const price = Number(challengePrice);
     if (price <= 0 || !Number.isFinite(price)) { setChallengeNotice({ type: 'error', text: 'Enter a valid positive price.' }); return; }
     if (!walletData?.address) { setChallengeNotice({ type: 'error', text: 'Connect a wallet to submit a challenge.' }); return; }
     if (!market?.id) { setChallengeNotice({ type: 'error', text: 'Market unavailable.' }); return; }
+    if (!market?.market_address) { setChallengeNotice({ type: 'error', text: 'Market contract address not available.' }); return; }
     if (isExpired) { setChallengeNotice({ type: 'error', text: 'Settlement window already expired.' }); return; }
+    if (!hasSufficientBalance) { setChallengeNotice({ type: 'error', text: `Insufficient balance. Need ${bondRequired.toLocaleString()} USDC, you have ${availableBalanceNum.toFixed(2)} USDC.` }); return; }
+    if (!evidenceUrlFieldOk) { setChallengeNotice({ type: 'error', text: 'Evidence URL must be a valid http(s) link or left empty if you upload an image.' }); return; }
+    if (!evidenceComplete) { setChallengeNotice({ type: 'error', text: 'Provide evidence: a source URL and/or a screenshot image.' }); return; }
+
     try {
       setIsSubmitting(true);
       setChallengeNotice(null);
-      const nowIso = new Date().toISOString();
-      const { error } = await supabase
-        .from('markets')
-        .update({ alternative_settlement_value: price, alternative_settlement_at: nowIso, alternative_settlement_by: walletData.address, settlement_disputed: true, updated_at: nowIso })
-        .eq('id', market.id).select('id').single();
-      if (error) { setChallengeNotice({ type: 'error', text: error.message || 'Failed to save challenge.' }); return; }
+      setChallengeTxHash(null);
+
+      let imagePublicUrl = uploadedEvidenceImageUrl;
+      if (evidenceImageFile && !imagePublicUrl) {
+        setSubmitStep('Uploading evidence image...');
+        const fd = new FormData();
+        fd.append('file', evidenceImageFile);
+        fd.append('market_id', market.id);
+        const upRes = await fetch('/api/settlements/challenge-evidence', { method: 'POST', body: fd });
+        const upJson = await upRes.json().catch(() => ({}));
+        if (!upRes.ok) {
+          setChallengeNotice({ type: 'error', text: upJson.error || 'Could not upload evidence image.' });
+          return;
+        }
+        imagePublicUrl = typeof upJson.publicUrl === 'string' ? upJson.publicUrl : null;
+        if (!imagePublicUrl) {
+          setChallengeNotice({ type: 'error', text: 'Upload succeeded but no image URL was returned.' });
+          return;
+        }
+        setUploadedEvidenceImageUrl(imagePublicUrl);
+      }
+
+      // Step 1: Call challengeSettlement on-chain via user's wallet
+      setSubmitStep('Requesting wallet signature...');
+      const alternativePriceWei = ethers.parseUnits(price.toFixed(6), 6);
+
+      const preferred = typeof window !== 'undefined' ? window.localStorage.getItem('walletProvider') : null;
+      const isMagic = preferred === 'magic';
+      const eip1193: EthereumProvider | undefined =
+        (isMagic ? (getMagicProvider() as any as EthereumProvider) : null) ??
+        (getActiveEthereumProvider() ?? ((window as any).ethereum as EthereumProvider | undefined)) ??
+        undefined;
+      if (!eip1193) { setChallengeNotice({ type: 'error', text: 'No wallet provider found.' }); return; }
+
+      if (isMagic) {
+        await switchMagicChainWithRetry(getChainId(), { retries: 2 });
+      }
+
+      const browserProvider = new ethers.BrowserProvider(eip1193 as any);
+      const signer = await browserProvider.getSigner();
+      const marketContract = new ethers.Contract(
+        market.market_address,
+        MarketLifecycleFacetABI,
+        signer,
+      );
+
+      setSubmitStep('Submitting on-chain challenge...');
+      const tx = await marketContract.challengeSettlement(alternativePriceWei);
+      setSubmitStep('Waiting for confirmation...');
+      const receipt = await tx.wait();
+      const txHash = receipt.hash;
+      setChallengeTxHash(txHash);
+
+      // Step 2: Record to Supabase and trigger UMA escalation via API
+      setSubmitStep('Escalating to UMA...');
+      const apiRes = await fetch('/api/settlements/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          market_id: market.id,
+          market_address: market.market_address,
+          price,
+          proposer_wallet: walletData.address,
+          txHash,
+          evidence_source_url: hasEvidenceSource ? evidenceUrlTrim : undefined,
+          evidence_image_url: imagePublicUrl || undefined,
+        }),
+      });
+      const apiData = await apiRes.json();
+
+      if (!apiRes.ok) {
+        setChallengeNotice({ type: 'error', text: apiData.error || 'Challenge recorded on-chain but API update failed.' });
+        return;
+      }
+
       setChallengePrice('');
-      setChallengeNotice({ type: 'success', text: 'Alternative price saved to Supabase.' });
+      setEvidenceSourceUrl('');
+      setEvidenceImageFile(null);
+      setUploadedEvidenceImageUrl(null);
+      const umaInfo = apiData.uma_assertion_id
+        ? ` UMA Assertion: ${apiData.uma_assertion_id.slice(0, 10)}...`
+        : '';
+      setChallengeNotice({ type: 'success', text: `Challenge submitted on-chain and escalated to UMA.${umaInfo}` });
+      refreshVaultBalance();
       onChallengeSaved?.();
-    } finally { setIsSubmitting(false); }
+    } catch (err: any) {
+      const msg = err?.reason || err?.message || 'Transaction failed';
+      if (msg.includes('user rejected') || msg.includes('ACTION_REJECTED')) {
+        setChallengeNotice({ type: 'error', text: 'Transaction cancelled by user.' });
+      } else {
+        setChallengeNotice({ type: 'error', text: msg.length > 120 ? msg.slice(0, 120) + '...' : msg });
+      }
+    } finally {
+      setIsSubmitting(false);
+      setSubmitStep('');
+    }
   };
 
-  const isExpired = Boolean(windowExpiresMs && windowExpiresMs <= Date.now());
   const sourceUrl = market?.ai_source_locator?.url || market?.ai_source_locator?.primary_source_url;
   const settlementWaybackUrl = market?.market_config?.settlement_wayback_url || null;
   const settlementWaybackPageUrl = market?.market_config?.settlement_wayback_page_url || null;
@@ -229,7 +384,9 @@ export function SettlementInterface({
 
   const baseChallengeHelper = !walletData?.address
     ? 'Connect a wallet to post a challenge with UMA collateral.'
-    : isSubmitting ? 'Submitting challenge...' : 'Submit an alternative USDC price (6 decimals) before the window closes.';
+    : isSubmitting
+      ? (submitStep || 'Submitting challenge...')
+      : 'Enter your price, add a source link and/or screenshot, then confirm on-chain.';
   const helperText = challengeNotice?.text ?? baseChallengeHelper;
   const helperColor = challengeNotice?.type === 'error' ? 'text-red-400' : challengeNotice?.type === 'success' ? 'text-green-400' : 'text-[#606060]';
 
@@ -498,6 +655,30 @@ export function SettlementInterface({
               <div className="text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded">Disputed</div>
             </div>
           </div>
+          {(market.market_config?.challenger_evidence?.source_url || market.market_config?.challenger_evidence?.image_url) && (
+            <div className="px-2.5 pb-2 flex flex-wrap gap-1.5">
+              {market.market_config.challenger_evidence?.source_url && (
+                <a
+                  href={market.market_config.challenger_evidence.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[9px] px-2 py-0.5 rounded border border-red-500/25 bg-red-500/10 text-red-200 hover:border-red-400/40 hover:bg-red-500/15 transition-colors"
+                >
+                  Challenger source
+                </a>
+              )}
+              {market.market_config.challenger_evidence?.image_url && (
+                <a
+                  href={market.market_config.challenger_evidence.image_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[9px] px-2 py-0.5 rounded border border-red-500/25 bg-red-500/10 text-red-200 hover:border-red-400/40 hover:bg-red-500/15 transition-colors"
+                >
+                  Challenger image
+                </a>
+              )}
+            </div>
+          )}
           <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
             <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
               <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
@@ -509,6 +690,36 @@ export function SettlementInterface({
                   <span>Timestamp</span>
                   <span className="text-white font-mono">{market.alternative_settlement_at ? new Date(market.alternative_settlement_at).toLocaleString() : '—'}</span>
                 </div>
+                {(market.market_config?.challenger_evidence?.source_url || market.market_config?.challenger_evidence?.image_url) && (
+                  <div className="pt-1 space-y-0.5 border-t border-[#222222] mt-1">
+                    {market.market_config.challenger_evidence?.source_url && (
+                      <div className="flex justify-between gap-2 items-start">
+                        <span className="flex-shrink-0">Evidence URL</span>
+                        <a
+                          href={market.market_config.challenger_evidence.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-red-300 hover:text-red-200 underline truncate text-right"
+                        >
+                          Link
+                        </a>
+                      </div>
+                    )}
+                    {market.market_config.challenger_evidence?.image_url && (
+                      <div className="flex justify-between gap-2 items-start">
+                        <span className="flex-shrink-0">Screenshot</span>
+                        <a
+                          href={market.market_config.challenger_evidence.image_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-red-300 hover:text-red-200 underline truncate text-right"
+                        >
+                          Open image
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -630,6 +841,80 @@ export function SettlementInterface({
         </div>
       )}
 
+      {/* ═══════ UMA DISPUTE STATUS ═══════ */}
+      {market?.settlement_disputed && market?.market_config?.uma_assertion_id && (
+        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-indigo-500/20 hover:border-indigo-500/30 transition-all duration-200 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500" />
+          <div className="flex items-center justify-between p-2.5">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                market.market_config.uma_resolved
+                  ? market.market_config.uma_challenger_won ? 'bg-green-400' : 'bg-red-400'
+                  : 'bg-indigo-400 animate-pulse'
+              }`} />
+              <span className="text-[11px] font-medium text-[#808080]">UMA Dispute Resolution</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`text-[10px] px-1.5 py-0.5 rounded ${
+                market.market_config.uma_resolved
+                  ? market.market_config.uma_challenger_won
+                    ? 'text-green-400 bg-green-500/10'
+                    : 'text-red-400 bg-red-500/10'
+                  : 'text-indigo-400 bg-indigo-500/10'
+              }`}>
+                {market.market_config.uma_resolved
+                  ? market.market_config.uma_challenger_won ? 'Challenger Won' : 'Proposer Won'
+                  : 'Awaiting DVM Vote'}
+              </div>
+            </div>
+          </div>
+          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
+            <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
+              <div className="flex justify-between">
+                <span>Assertion ID</span>
+                <span className="text-white font-mono text-[8px] truncate max-w-[200px]" title={market.market_config.uma_assertion_id}>
+                  {market.market_config.uma_assertion_id.slice(0, 10)}...{market.market_config.uma_assertion_id.slice(-8)}
+                </span>
+              </div>
+              {market.market_config.uma_escalated_at && (
+                <div className="flex justify-between">
+                  <span>Escalated</span>
+                  <span className="text-white font-mono">{new Date(market.market_config.uma_escalated_at).toLocaleString()}</span>
+                </div>
+              )}
+              {market.market_config.uma_escalation_tx && (
+                <div className="flex justify-between">
+                  <span>Escalation Tx</span>
+                  <span className="text-indigo-400 font-mono text-[8px] truncate max-w-[200px]">
+                    {market.market_config.uma_escalation_tx.slice(0, 10)}...{market.market_config.uma_escalation_tx.slice(-8)}
+                  </span>
+                </div>
+              )}
+              {market.market_config.uma_resolved && market.market_config.uma_resolved_at && (
+                <div className="flex justify-between">
+                  <span>Resolved</span>
+                  <span className="text-white font-mono">{new Date(market.market_config.uma_resolved_at).toLocaleString()}</span>
+                </div>
+              )}
+              {market.market_config.uma_resolution_tx && (
+                <div className="flex justify-between">
+                  <span>Resolution Tx</span>
+                  <span className="text-indigo-400 font-mono text-[8px] truncate max-w-[200px]">
+                    {market.market_config.uma_resolution_tx.slice(0, 10)}...{market.market_config.uma_resolution_tx.slice(-8)}
+                  </span>
+                </div>
+              )}
+              {!market.market_config.uma_resolved && (
+                <div className="flex items-center gap-1 mt-1">
+                  <div className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse" />
+                  <span className="text-indigo-400/80">Dispute is being resolved by UMA&apos;s DVM token-holder vote. This typically takes 48-96 hours.</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══════ CHALLENGE FORM & SETTLEMENT STATUS ═══════ */}
       <div className={`grid gap-1 ${isSettled ? 'md:grid-cols-1' : 'md:grid-cols-2'}`}>
         {!isSettled && (
@@ -647,37 +932,148 @@ export function SettlementInterface({
               )}
             </div>
             <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
-              <div className="pt-2 space-y-2">
-                <label className="text-[10px] uppercase tracking-wide text-[#606060]">Alternative price (USDC)</label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-[#606060]">$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0.0000"
-                    value={challengePrice}
-                    onChange={(e) => setChallengePrice(e.target.value)}
-                    disabled={isSubmitting || isExpired}
-                    className="w-full bg-[#0F0F0F] text-white text-[10px] border border-[#222222] rounded px-4 py-1.5 outline-none focus:border-[#333333] font-mono placeholder-[#404040] disabled:opacity-50 transition-all duration-200"
-                  />
+              <div className="pt-2 space-y-3">
+                {onChain && onChain.challengeBondAmount > 0 && walletData?.address && (
+                  <div className={`flex items-center justify-between text-[10px] px-2 py-1.5 rounded border ${
+                    hasSufficientBalance
+                      ? 'border-green-500/20 bg-green-500/5'
+                      : 'border-red-500/20 bg-red-500/5'
+                  }`}>
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full ${hasSufficientBalance ? 'bg-green-400' : 'bg-red-400'}`} />
+                      <span className="text-[#808080]">Bond: <span className="text-white font-mono">${onChain.challengeBondAmount.toLocaleString()}</span></span>
+                    </div>
+                    <span className="text-[#808080]">Balance: <span className={`font-mono ${hasSufficientBalance ? 'text-green-400' : 'text-red-400'}`}>${availableBalanceNum.toFixed(2)}</span></span>
+                  </div>
+                )}
+
+                <div className="rounded-md border border-[#2A2A2A] bg-[#0A0A0A] p-2 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#9CA3AF]">Your challenge</span>
+                    {evidenceComplete && evidenceUrlFieldOk && (
+                      <span className="text-[9px] text-emerald-400/90">Evidence ready</span>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase tracking-wide text-[#606060] block mb-1">Alternative settlement price (USDC)</label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-[#606060]">$</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.0000"
+                        value={challengePrice}
+                        onChange={(e) => setChallengePrice(e.target.value)}
+                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                        className="w-full bg-[#0F0F0F] text-white text-[11px] border border-[#222222] rounded-md px-4 py-2 outline-none focus:border-red-500/30 focus:ring-1 focus:ring-red-500/20 font-mono placeholder-[#404040] disabled:opacity-50 transition-all duration-200"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="border-t border-[#222222] pt-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] uppercase tracking-wide text-[#606060]">Supporting evidence</span>
+                      <span className="text-[9px] text-[#505050]">required — URL and/or image</span>
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-[#707070] block mb-1">Source URL (metric page, archive, exchange, etc.)</label>
+                      <input
+                        type="url"
+                        inputMode="url"
+                        placeholder="https://…"
+                        value={evidenceSourceUrl}
+                        onChange={(e) => setEvidenceSourceUrl(e.target.value)}
+                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                        className={`w-full bg-[#0F0F0F] text-white text-[10px] border rounded-md px-2 py-1.5 outline-none font-mono placeholder-[#404040] disabled:opacity-50 transition-all duration-200 ${
+                          evidenceUrlTrim !== '' && !isValidHttpUrl(evidenceUrlTrim)
+                            ? 'border-red-500/40 focus:border-red-500/50'
+                            : 'border-[#222222] focus:border-red-500/30'
+                        }`}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 py-0.5">
+                      <div className="h-px flex-1 bg-[#2A2A2A]" />
+                      <span className="text-[8px] uppercase tracking-wider text-[#505050]">or</span>
+                      <div className="h-px flex-1 bg-[#2A2A2A]" />
+                    </div>
+                    <div>
+                      <input
+                        ref={evidenceFileInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        className="hidden"
+                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] ?? null;
+                          setEvidenceImageFile(f);
+                          setUploadedEvidenceImageUrl(null);
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                        onClick={() => evidenceFileInputRef.current?.click()}
+                        className="w-full rounded-md border border-dashed border-[#333333] hover:border-red-500/35 bg-[#0F0F0F] px-2 py-3 text-center transition-colors disabled:opacity-50"
+                      >
+                        <span className="text-[10px] text-[#808080] block">
+                          {evidenceImageFile ? evidenceImageFile.name : 'Upload screenshot (JPEG, PNG, WebP, GIF · max 4MB)'}
+                        </span>
+                        {evidencePreviewUrl && (
+                          <div className="mt-2 flex justify-center">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={evidencePreviewUrl} alt="Evidence preview" className="max-h-24 rounded border border-[#2A2A2A] object-contain" />
+                          </div>
+                        )}
+                      </button>
+                      {evidenceImageFile && (
+                        <button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() => {
+                            setEvidenceImageFile(null);
+                            setUploadedEvidenceImageUrl(null);
+                          }}
+                          className="mt-1 text-[9px] text-[#606060] hover:text-red-300 transition-colors"
+                        >
+                          Remove image
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <button
+                    type="button"
                     onClick={handleChallenge}
-                    disabled={!challengePrice || isSubmitting || !walletData?.address || isExpired}
-                    className="text-xs text-red-400 hover:text-red-300 disabled:text-[#404040] transition-colors"
+                    disabled={
+                      !challengePrice ||
+                      !evidenceComplete ||
+                      !evidenceUrlFieldOk ||
+                      isSubmitting ||
+                      !walletData?.address ||
+                      isExpired ||
+                      !hasSufficientBalance
+                    }
+                    className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/15 hover:border-red-400/40 disabled:border-[#2A2A2A] disabled:bg-transparent disabled:text-[#404040] transition-colors"
                   >
-                    {isSubmitting ? 'Submitting...' : 'Submit challenge'}
+                    {isSubmitting ? (submitStep || 'Submitting…') : 'Sign & submit challenge'}
                   </button>
-                  <span className={`text-[9px] ${helperColor} flex-1`}>{helperText}</span>
+                  <span className={`text-[9px] ${helperColor} sm:max-w-[min(100%,280px)] sm:text-right`}>{helperText}</span>
                 </div>
+                {challengeTxHash && (
+                  <div className="text-[9px] text-green-400/80 flex items-center gap-1 font-mono truncate">
+                    On-chain tx: {challengeTxHash.slice(0, 10)}...{challengeTxHash.slice(-8)}
+                  </div>
+                )}
                 {onChain && onChain.challengeBondAmount > 0 && (
                   <div className="text-[9px] text-yellow-400/60 flex items-center gap-1">
                     <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                       <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
                     </svg>
-                    Challenging requires a ${onChain.challengeBondAmount.toLocaleString()} USDC on-chain bond. The bond is slashed if your challenge is rejected.
+                    Bond of ${onChain.challengeBondAmount.toLocaleString()} USDC will be deducted from your CoreVault. Slashed if your challenge is rejected by UMA DVM.
                   </div>
                 )}
               </div>
@@ -729,7 +1125,7 @@ export function SettlementInterface({
               </>
             ) : (
               <>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-green-400" />Challenge window active after primary submission.</div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-green-400" />Challenge window active after primary submission. Challenges require an alternative price plus a source link and/or screenshot.</div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full bg-blue-400" />
                   {onChain && onChain.challengeBondAmount > 0

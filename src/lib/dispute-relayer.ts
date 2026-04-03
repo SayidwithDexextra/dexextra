@@ -45,6 +45,7 @@ export interface DisputeRelayerConfig {
   disputeRelayAddress: string;
   defaultBondAmount: bigint;
   defaultLiveness: number;
+  bondTokenDecimals: number;
 }
 
 export function getRelayerConfig(): DisputeRelayerConfig {
@@ -53,8 +54,11 @@ export function getRelayerConfig(): DisputeRelayerConfig {
   const sepoliaRpc = process.env.SEPOLIA_RPC_URL || '';
   const sepoliaKey = process.env.SEPOLIA_PRIVATE_KEY || process.env.CREATOR_PRIVATE_KEY || '';
   const relayAddr = process.env.DISPUTE_RELAY_ADDRESS || '';
-  const bondRaw = process.env.DISPUTE_BOND_AMOUNT || '100000000'; // 100 USDC (6 decimals)
-  const liveness = Number(process.env.DISPUTE_LIVENESS_SECONDS || '7200'); // 2 hours
+  const bondRaw = process.env.DISPUTE_BOND_AMOUNT || '2000000000000000'; // 0.002 WETH (18 decimals)
+  const liveness = Number(process.env.DISPUTE_LIVENESS_SECONDS || '7200');
+  const bondTokenAddr = process.env.SEPOLIA_BOND_TOKEN_ADDRESS || '';
+  const isWeth = bondTokenAddr.toLowerCase() === '0x7b79995e5f793a07bc00c21412e50ecae098e7f9';
+  const bondDecimals = isWeth ? 18 : 6;
 
   if (!hlRpc) throw new Error('RPC_URL is required for HyperLiquid');
   if (!hlKey) throw new Error('ADMIN_PRIVATE_KEY is required');
@@ -69,10 +73,16 @@ export function getRelayerConfig(): DisputeRelayerConfig {
     disputeRelayAddress: relayAddr,
     defaultBondAmount: BigInt(bondRaw),
     defaultLiveness: liveness,
+    bondTokenDecimals: bondDecimals,
   };
 }
 
 // ─── Core Functions ───
+
+export interface ChallengerEvidence {
+  source_url?: string;
+  image_url?: string;
+}
 
 export interface PendingChallenge {
   marketAddress: string;
@@ -125,9 +135,10 @@ export async function escalateToUMA(
 
   const poolBal = await relay.poolBalance();
   const needed = config.defaultBondAmount * 2n;
+  const dec = config.bondTokenDecimals;
   if (poolBal < needed) {
     throw new Error(
-      `DisputeRelay pool has ${ethers.formatUnits(poolBal, 6)} but needs ${ethers.formatUnits(needed, 6)} (2x bond)`
+      `DisputeRelay pool has ${ethers.formatUnits(poolBal, dec)} but needs ${ethers.formatUnits(needed, dec)} (2x bond)`
     );
   }
 
@@ -217,11 +228,38 @@ export interface RelayTickResult {
  *   3. Check if any pending UMA disputes have resolved
  *   4. If yes, relay result back to HL
  */
+/**
+ * Build a combined evidence URL for UMA DVM voters.
+ * Includes the proposer's on-chain evidence plus the challenger's
+ * source URL and/or screenshot so voters can compare both sides.
+ */
+function buildCombinedEvidenceUrl(
+  proposerEvidenceUrl: string,
+  challengerEvidence?: ChallengerEvidence,
+): string {
+  const parts: string[] = [];
+
+  if (proposerEvidenceUrl) {
+    parts.push(`Proposer evidence: ${proposerEvidenceUrl}`);
+  }
+
+  if (challengerEvidence?.source_url) {
+    parts.push(`Challenger evidence: ${challengerEvidence.source_url}`);
+  }
+
+  if (challengerEvidence?.image_url) {
+    parts.push(`Challenger screenshot: ${challengerEvidence.image_url}`);
+  }
+
+  return parts.join(' | ') || proposerEvidenceUrl || 'No evidence provided';
+}
+
 export async function relayTick(
   config: DisputeRelayerConfig,
   marketAddress: string,
   proposedPrice: bigint,
   pendingAssertionId?: string,
+  challengerEvidence?: ChallengerEvidence,
 ): Promise<RelayTickResult> {
   try {
     // Phase 1: Check for resolved disputes that need relaying back
@@ -246,6 +284,10 @@ export async function relayTick(
     if (!challenge) return { action: 'none', marketAddress };
 
     challenge.proposedPrice = proposedPrice;
+    challenge.evidenceUrl = buildCombinedEvidenceUrl(
+      challenge.evidenceUrl,
+      challengerEvidence,
+    );
     const { assertionId, txHash } = await escalateToUMA(config, challenge);
     return {
       action: 'escalated',

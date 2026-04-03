@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getRelayerConfig, relayTick, type RelayTickResult } from '@/lib/dispute-relayer';
+import { getRelayerConfig, relayTick, type RelayTickResult, type ChallengerEvidence } from '@/lib/dispute-relayer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -73,11 +73,14 @@ export async function POST(request: Request) {
       const pendingAssertionId = marketConfig.uma_assertion_id || undefined;
       const proposedPrice = BigInt(market.proposed_settlement_value || 0);
 
+      const chalEvidence = marketConfig.challenger_evidence as ChallengerEvidence | undefined;
+
       const result = await relayTick(
         config,
         market.market_address,
         proposedPrice,
         pendingAssertionId,
+        chalEvidence,
       );
 
       results.push(result);
