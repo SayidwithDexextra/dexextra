@@ -132,6 +132,16 @@ function extractError(e: any) {
   } catch { return String(e); }
 }
 
+/** EIP-2718 / RLP signed tx blobs (often embedded in RPC errors) — not EVM revert data. */
+function isSignedRawTransactionHex(s: string): boolean {
+  if (typeof s !== 'string' || !s.startsWith('0x') || s.length < 120) return false;
+  const low = s.toLowerCase();
+  const head2 = low.slice(2, 4);
+  if (head2 === '01' || head2 === '02' || head2 === '03' || head2 === '04' || head2 === '05') return true;
+  const b0 = parseInt(low.slice(2, 4), 16);
+  return !Number.isNaN(b0) && b0 >= 0xc0;
+}
+
 function extractRevertData(e: any): string | null {
   const candidates = [
     e?.data,
@@ -139,6 +149,7 @@ function extractRevertData(e: any): string | null {
     e?.error?.error?.data,
     e?.info?.error?.data,
     e?.info?.error?.error?.data,
+    e?.info?.error?.cause?.data,
     e?.payload?.error?.data,
     typeof e?.body === 'string' ? (() => {
       try {
@@ -148,9 +159,75 @@ function extractRevertData(e: any): string | null {
     })() : null,
   ];
   for (const c of candidates) {
-    if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c;
+    if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10 && !isSignedRawTransactionHex(c)) return c;
   }
   return null;
+}
+
+/**
+ * Ethers v6 JsonRpcProvider often throws UNKNOWN_ERROR "could not coalesce error" with the real
+ * revert / message under `info.error`. Walk the tree for hex revert data and human messages.
+ */
+function digJsonRpcError(e: any): {
+  rawData: string | null;
+  rpcDetail: string | null;
+  payloadMethod: string | null;
+  ethersCode: string | null;
+  sawSignedTxBlob: boolean;
+} {
+  const messages: string[] = [];
+  let bestHex: string | null = null;
+  let payloadMethod: string | null = null;
+  let sawSignedTxBlob = false;
+  const seen = new Set<object>();
+
+  function considerHex(s: unknown) {
+    if (typeof s !== 'string' || !s.startsWith('0x')) return;
+    if (!/^0x[0-9a-fA-F]+$/.test(s) || s.length < 10) return;
+    if (isSignedRawTransactionHex(s)) {
+      if (s.length > 200) sawSignedTxBlob = true;
+      return;
+    }
+    if (!bestHex || s.length > bestHex.length) bestHex = s;
+  }
+
+  function walk(x: any, depth: number) {
+    if (x == null || depth > 14) return;
+    if (typeof x === 'string') {
+      if (isSignedRawTransactionHex(x) && x.length > 200) sawSignedTxBlob = true;
+      considerHex(x);
+      if (x.length > 0 && x.length < 800 && !x.includes('\n')) messages.push(x);
+      return;
+    }
+    if (typeof x !== 'object') return;
+    if (seen.has(x)) return;
+    seen.add(x);
+    if (typeof (x as any).message === 'string') messages.push((x as any).message);
+    considerHex((x as any).data);
+    if (typeof (x as any).body === 'string') {
+      try {
+        const j = JSON.parse((x as any).body);
+        walk(j, depth + 1);
+      } catch { /* ignore */ }
+    }
+    if ((x as any).payload?.method) payloadMethod = String((x as any).payload.method);
+    for (const v of Object.values(x)) {
+      try { walk(v, depth + 1); } catch { /* ignore */ }
+    }
+  }
+
+  walk(e, 0);
+  const uniq = [...new Set(messages)].filter(
+    (m) => m && !/^could not coalesce error$/i.test(m.trim()),
+  );
+  const rpcDetail = uniq.length ? uniq.join(' | ') : null;
+  return {
+    rawData: bestHex,
+    rpcDetail,
+    payloadMethod,
+    ethersCode: e?.code != null ? String(e.code) : null,
+    sawSignedTxBlob,
+  };
 }
 
 function decodeRevert(iface: ethers.Interface, e: any) {
@@ -202,10 +279,43 @@ function hintForAccessControlRawData(rawData: string | null | undefined): string
   }
 }
 
-function revertJsonBody(status: number, raw: string, customError: string | null, rawData: string | null) {
-  const hint = hintForAccessControlRawData(rawData);
+function revertJsonBody(
+  status: number,
+  raw: string,
+  customError: string | null,
+  rawData: string | null,
+  dig?: {
+    rpcDetail: string | null;
+    payloadMethod: string | null;
+    ethersCode: string | null;
+    sawSignedTxBlob?: boolean;
+  },
+) {
+  const safeRawData =
+    rawData && !isSignedRawTransactionHex(rawData) ? rawData : null;
+  const acHint = hintForAccessControlRawData(safeRawData);
+  const coalesce =
+    typeof raw === 'string' &&
+    (raw === 'could not coalesce error' || raw.toLowerCase().includes('coalesce'));
+  const rpcHint =
+    coalesce && dig?.rpcDetail
+      ? 'Upstream RPC error (ethers could not normalize it). See rpcDetail / rawData.'
+      : null;
+  const txBlobHint =
+    dig?.sawSignedTxBlob && !dig?.rpcDetail && !safeRawData
+      ? 'RPC rejected eth_sendRawTransaction; the error payload contained a signed type-2 tx (not EVM revert data). Typical causes: tx or calldata exceeds the node/chain limit, gas limit above the block cap, or underpriced maxFeePerGas. metaCreateFuturesMarketDiamond is very large; try an RPC with a higher tx size limit, a chain with a higher block gas limit, or reduce facet selector payload if possible.'
+      : null;
+  const hint = [acHint, rpcHint, txBlobHint].filter(Boolean).join(' ') || null;
   return NextResponse.json(
-    { error: raw, customError, rawData, ...(hint ? { hint } : {}) },
+    {
+      error: raw,
+      customError,
+      rawData: safeRawData,
+      ...(hint ? { hint } : {}),
+      ...(dig?.rpcDetail ? { rpcDetail: dig.rpcDetail } : {}),
+      ...(dig?.payloadMethod ? { rpcMethod: dig.payloadMethod } : {}),
+      ...(dig?.ethersCode ? { ethersCode: dig.ethersCode } : {}),
+    },
     { status },
   );
 }
@@ -241,6 +351,18 @@ const ERROR_SELECTORS: Record<string, string> = {
   '0xa9ad62f8': 'FunctionDoesNotExist',
   '0xe2517d3f': 'AccessControlUnauthorizedAccount',
 };
+
+function handleDeployContractError(e: any, iface: ethers.Interface, fallbackLabel: string) {
+  const dug = digJsonRpcError(e);
+  let raw = e?.shortMessage || e?.reason || e?.message || fallbackLabel;
+  if (/coalesce/i.test(String(raw)) && dug.rpcDetail) raw = dug.rpcDetail;
+  const decoded = decodeRevert(iface, e);
+  let rawData = decoded?.data || extractRevertData(e) || dug.rawData;
+  if (rawData && isSignedRawTransactionHex(rawData)) rawData = null;
+  const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
+  const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
+  return { raw, customError, rawData, selector, dug };
+}
 
 async function checkpointDraft(
   supabase: any,
@@ -568,16 +690,17 @@ export async function POST(req: Request) {
         );
         logS('factory_static_call_meta', 'success');
       } catch (e: any) {
-        const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed';
-        const decoded = decodeRevert(factoryIface, e);
-        const rawData = decoded?.data || extractRevertData(e);
-        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
-        const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
+        const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+          e, factoryIface, 'static call failed',
+        );
         logS('factory_static_call_meta', 'error', {
           error: raw, customError, selector, rawData,
           hint: hintForAccessControlRawData(rawData),
+          rpcDetail: dug.rpcDetail,
+          ethersCode: dug.ethersCode,
+          rpcMethod: dug.payloadMethod,
         });
-        return revertJsonBody(400, raw, customError, rawData);
+        return revertJsonBody(400, raw, customError, rawData, dug);
       }
 
       // Send tx — estimate gas with fallback for chains where estimateGas is unreliable
@@ -619,13 +742,17 @@ export async function POST(req: Request) {
           { ...overrides, gasLimit } as any
         );
       } catch (e: any) {
-        const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
-        const decoded = decodeRevert(factoryIface, e);
-        const rawData = decoded?.data || extractRevertData(e);
-        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
-        const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
-        logS('factory_send_tx_meta', 'error', { error: raw, customError, selector, rawData, hint: hintForAccessControlRawData(rawData) });
-        return revertJsonBody(500, raw, customError, rawData);
+        const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+          e, factoryIface, 'send tx failed',
+        );
+        logS('factory_send_tx_meta', 'error', {
+          error: raw, customError, selector, rawData,
+          hint: hintForAccessControlRawData(rawData),
+          rpcDetail: dug.rpcDetail,
+          ethersCode: dug.ethersCode,
+          rpcMethod: dug.payloadMethod,
+        });
+        return revertJsonBody(500, raw, customError, rawData, dug);
       }
       logS('factory_send_tx_meta_sent', 'success', { hash: tx.hash });
       // Progressive checkpoint: tx hash available
@@ -651,13 +778,17 @@ export async function POST(req: Request) {
         );
         logS('factory_static_call', 'success');
       } catch (e: any) {
-        const raw = e?.shortMessage || e?.reason || e?.message || 'static call failed';
-        const decoded = decodeRevert(factoryIface, e);
-        const rawData = decoded?.data || extractRevertData(e);
-        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
-        const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
-        logS('factory_static_call', 'error', { error: raw, customError, selector, rawData, hint: hintForAccessControlRawData(rawData) });
-        return revertJsonBody(400, raw, customError, rawData);
+        const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+          e, factoryIface, 'static call failed',
+        );
+        logS('factory_static_call', 'error', {
+          error: raw, customError, selector, rawData,
+          hint: hintForAccessControlRawData(rawData),
+          rpcDetail: dug.rpcDetail,
+          ethersCode: dug.ethersCode,
+          rpcMethod: dug.payloadMethod,
+        });
+        return revertJsonBody(400, raw, customError, rawData, dug);
       }
 
       logS('factory_send_tx', 'start');
@@ -696,13 +827,17 @@ export async function POST(req: Request) {
           { ...overrides, gasLimit: gasLimitLegacy } as any
         );
       } catch (e: any) {
-        const raw = e?.shortMessage || e?.reason || e?.message || 'send tx failed';
-        const decoded = decodeRevert(factoryIface, e);
-        const rawData = decoded?.data || extractRevertData(e);
-        const selector = rawData && rawData.startsWith('0x') ? rawData.slice(0, 10) : null;
-        const customError = decoded?.name || (selector ? ERROR_SELECTORS[selector] : null) || null;
-        logS('factory_send_tx', 'error', { error: raw, customError, selector, rawData, hint: hintForAccessControlRawData(rawData) });
-        return revertJsonBody(500, raw, customError, rawData);
+        const { raw, customError, rawData, selector, dug } = handleDeployContractError(
+          e, factoryIface, 'send tx failed',
+        );
+        logS('factory_send_tx', 'error', {
+          error: raw, customError, selector, rawData,
+          hint: hintForAccessControlRawData(rawData),
+          rpcDetail: dug.rpcDetail,
+          ethersCode: dug.ethersCode,
+          rpcMethod: dug.payloadMethod,
+        });
+        return revertJsonBody(500, raw, customError, rawData, dug);
       }
       logS('factory_send_tx_sent', 'success', { hash: tx.hash });
       // Progressive checkpoint: tx hash available

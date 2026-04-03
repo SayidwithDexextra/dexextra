@@ -136,7 +136,22 @@
 .statusDot.settlement {
   background: #F59E0B;
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
-  animation: pulse 2s ease-in-out infinite;
+}
+
+.statusDot.challengeWindow {
+  background: #A855F7;
+  box-shadow: 0 0 6px rgba(168, 85, 247, 0.5);
+}
+
+.statusDot.settling {
+  background: #A855F7;
+  box-shadow: 0 0 6px rgba(168, 85, 247, 0.5);
+  animation: settlingDotPulse 2s ease-in-out infinite;
+}
+
+@keyframes settlingDotPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(168, 85, 247, 0.5); }
+  50% { opacity: 0.7; box-shadow: 0 0 12px rgba(168, 85, 247, 0.8); }
 }
 
 .statusDot.settled {
@@ -287,11 +302,24 @@
   background: rgba(245, 158, 11, 0.12);
   border-color: rgba(245, 158, 11, 0.35);
   color: #f59e0b;
-  animation: settlePulse 2s ease-in-out infinite;
 }
 
 .settlementBadgeSettlement svg {
   color: #f59e0b;
+}
+
+.settlementBadgeChallengeWindow {
+  background: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.35);
+  color: #c084fc;
+}
+
+.challengeWindowDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #c084fc;
+  flex-shrink: 0;
 }
 
 .settlementBadgeSettling {
@@ -1306,7 +1334,8 @@
 
 /* Reduced motion support */
 @media (prefers-reduced-motion: reduce) {
-  .statusDot.live {
+  .statusDot.live,
+  .statusDot.settling {
     animation: none;
   }
   

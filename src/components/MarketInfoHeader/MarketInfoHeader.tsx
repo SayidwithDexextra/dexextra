@@ -255,7 +255,7 @@ function formatPriceMaybe(value: number | null | undefined, prefix = '$'): strin
   if (!Number.isFinite(n) || n <= 0) return '—';
   return `${prefix}${n.toLocaleString('en-US', {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 8,
+    maximumFractionDigits: 4,
   })}`;
 }
 
@@ -394,6 +394,13 @@ export default function MarketInfoHeader({
     return status;
   }, [status, marketStats?.isSettled]);
 
+  const settlementPhase = useMemo<'pre-challenge' | 'challenge-window' | 'settling' | null>(() => {
+    if (effectiveStatus !== 'settlement') return null;
+    if (marketStats?.lifecycleState === 2 || marketStats?.challengeActive) return 'challenge-window';
+    if (countdown?.isSettled || marketStats?.lifecycleState === 3) return 'settling';
+    return 'pre-challenge';
+  }, [effectiveStatus, marketStats?.lifecycleState, marketStats?.challengeActive, countdown?.isSettled]);
+
   const handleWatchlistClick = () => {
     if (!isWatchlistLoading && !isWatchlistDisabled && onWatchlistToggle) {
       onWatchlistToggle();
@@ -425,7 +432,11 @@ export default function MarketInfoHeader({
           <div className={styles.logoWrapper}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={resolvedLogo} alt={name} className={styles.logo} />
-            <div className={`${styles.statusDot} ${styles[effectiveStatus]}`} />
+            <div className={`${styles.statusDot} ${
+              settlementPhase === 'challenge-window' ? styles.challengeWindow
+              : settlementPhase === 'settling' ? styles.settling
+              : styles[effectiveStatus]
+            }`} />
           </div>
           <div className={styles.nameBlock}>
             <div className={styles.nameRow}>
@@ -448,22 +459,34 @@ export default function MarketInfoHeader({
           </div>
         )}
 
-        {/* Settlement Date Badge — one clock for all phases */}
+        {/* Settlement Date Badge — phase-aware: pre-challenge → challenge window → settling */}
         {effectiveStatus === 'settlement' ? (() => {
-          const isCountdownDone = countdown?.isSettled;
           const badgeClass = [
             styles.settlementBadge,
-            isCountdownDone ? styles.settlementBadgeSettling : styles.settlementBadgeSettlement,
+            settlementPhase === 'challenge-window' ? styles.settlementBadgeChallengeWindow
+              : settlementPhase === 'settling' ? styles.settlementBadgeSettling
+              : styles.settlementBadgeSettlement,
           ].filter(Boolean).join(' ');
+
+          const tooltipLabel = settlementPhase === 'challenge-window'
+            ? 'Challenge window is active'
+            : settlementPhase === 'settling'
+            ? 'Completing on-chain settlement'
+            : 'Time until challenge window';
 
           return (
             <Tooltip
               content={
                 <div className={styles.countdownTooltip}>
                   <div className={styles.countdownTooltipLabel}>
-                    {isCountdownDone ? 'Completing on-chain settlement' : 'Settlement in progress'}
+                    {tooltipLabel}
                   </div>
-                  {countdown && !isCountdownDone && (
+                  {settlementPhase === 'challenge-window' && marketStats?.challengedPrice != null && (
+                    <div className={styles.countdownTooltipDate}>
+                      Challenged at {formatPriceMaybe(marketStats.challengedPrice)}
+                    </div>
+                  )}
+                  {settlementPhase === 'pre-challenge' && countdown && (
                     <div className={styles.countdownDisplay}>
                       <span className={styles.countdownUnit}>
                         <span className={styles.countdownValue}>{countdown.days}</span>
@@ -492,16 +515,20 @@ export default function MarketInfoHeader({
               delay={100}
             >
               <div className={badgeClass} data-walkthrough="token-settlement-date">
-                {isCountdownDone ? (
+                {settlementPhase === 'challenge-window' ? (
+                  <>
+                    <div className={styles.challengeWindowDot} />
+                    <span>Challenge Window</span>
+                  </>
+                ) : settlementPhase === 'settling' ? (
                   <>
                     <div className={styles.settlingDot} />
                     <span>Market Settling</span>
                   </>
                 ) : (
                   <>
-                    <div className={styles.settlingDot} />
+                    <CalendarIcon />
                     <span className={styles.inlineCountdown}>
-                      Settling{' '}
                       {countdown && countdown.days > 0 && <>{countdown.days}d </>}
                       {countdown && countdown.hours > 0 && <>{String(countdown.hours).padStart(2, '0')}h </>}
                       {countdown && <>{String(countdown.minutes).padStart(2, '0')}m{' '}
@@ -766,7 +793,7 @@ export default function MarketInfoHeader({
         <div className={styles.marketStatsBar}>
           <div className={styles.marketStatItem}>
             <span className={styles.marketStatLabel}>Mark</span>
-            <span className={styles.marketStatValue}>{formatStatValue(marketStats.markPrice)}</span>
+            <span className={styles.marketStatValue}>{formatPriceMaybe(marketStats.markPrice)}</span>
           </div>
           <span className={styles.marketStatDivider} />
           <div className={styles.marketStatItem}>

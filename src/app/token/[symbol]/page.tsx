@@ -1308,7 +1308,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
             <span className="text-[11px] font-medium text-t-fg truncate">{marketInfoHeaderProps.name}</span>
             <span className="text-[10px] text-t-fg-muted flex-shrink-0">{marketInfoHeaderProps.symbol}</span>
             <span className="ml-auto text-[11px] font-medium text-t-fg tabular-nums flex-shrink-0">
-              ${Number(markPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ${Number(markPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
             </span>
             <svg className="w-3 h-3 text-t-fg-muted flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="6 9 12 15 18 9" />

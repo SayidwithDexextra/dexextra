@@ -549,11 +549,28 @@ export async function createMarketOnChain(params: {
         const text = await deployRes.text();
         let msg = text;
         try {
-          const j = JSON.parse(text) as { hint?: string; customError?: string; error?: string };
+          const j = JSON.parse(text) as {
+            hint?: string;
+            customError?: string;
+            error?: string;
+            rpcDetail?: string;
+            rawData?: string | null;
+          };
           if (j?.hint) msg = j.hint;
+          else if (j?.rpcDetail) msg = j.rpcDetail;
           else if (typeof j?.error === 'string') msg = j.error;
           if (j?.customError && !msg.includes(String(j.customError))) {
             msg = `${msg} [${j.customError}]`;
+          }
+          const rd = j?.rawData;
+          if (typeof rd === 'string' && rd.startsWith('0x') && rd.length < 500) {
+            const head = rd.slice(2, 4).toLowerCase();
+            const isTxBlob =
+              rd.length > 200 &&
+              (head === '01' || head === '02' || head === '03' || head === '04' || head === '05');
+            if (!isTxBlob && !msg.includes(rd.slice(0, 14))) {
+              msg = `${msg} rawData=${rd}`;
+            }
           }
         } catch {
           /* keep raw text */

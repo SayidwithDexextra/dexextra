@@ -416,9 +416,11 @@ export function MetricSourceBubble({
       dataType: isApiLikeUrl(normalized) ? 'API' : 'Web',
     };
 
+    const faviconUrl = host ? makeFaviconUrl({ domain: host }) : undefined;
+
     setFocusedSource({
       id: 'custom-url',
-      icon: makeIconNode({ label: 'C' }),
+      icon: makeIconNode({ faviconUrl, label: 'Custom URL' }),
       label: 'Custom URL',
       sublabel: host || undefined,
       url: normalized,

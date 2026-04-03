@@ -19,12 +19,11 @@ const formatNumberWithCommas = (value: number): string => {
   });
 };
 
-// Helper: format price with commas and 2 decimals for display
 const formatPriceWithCommas = (value: number): string => {
   if (!Number.isFinite(value)) return '0.00';
   return value.toLocaleString('en-US', {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 2
+    maximumFractionDigits: 4
   });
 };
 
@@ -508,9 +507,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
   const symbolUpper = String(symbol || '').toUpperCase();
   useEffect(() => {
     if (effectiveMarkPrice <= 0) return;
-    const fmt = effectiveMarkPrice >= 1
-      ? effectiveMarkPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : effectiveMarkPrice.toPrecision(4);
+    const fmt = effectiveMarkPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
     document.title = `$${fmt} | ${symbolUpper} | Dexextra`;
     return () => { document.title = 'Dexextra'; };
   }, [effectiveMarkPrice, symbolUpper]);
