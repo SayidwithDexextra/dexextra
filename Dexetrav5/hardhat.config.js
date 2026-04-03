@@ -118,6 +118,16 @@ const config = {
       chainId: 10,
       gasPrice: "auto",
     },
+    sepolia: {
+      url:
+        process.env.SEPOLIA_RPC_URL ||
+        `https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
+      accounts: networkAccounts,
+      chainId: 11155111,
+      gasPrice: "auto",
+      gas: "auto",
+      timeout: 120000,
+    },
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS !== undefined,
@@ -128,6 +138,7 @@ const config = {
       polygon: process.env.POLYGONSCAN_API_KEY || "",
       polygonMumbai: process.env.POLYGONSCAN_API_KEY || "",
       mainnet: process.env.ETHERSCAN_API_KEY || "",
+      sepolia: process.env.ETHERSCAN_API_KEY || "",
     },
     // No customChains for Hyperliquid → enforce Sourcify-only flow
   },

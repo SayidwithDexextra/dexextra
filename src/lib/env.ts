@@ -65,6 +65,13 @@ const envSchema = z.object({
   SETTLEMENT_ENGINE_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid settlement engine address').optional(),
   METRICS_MARKET_FACTORY_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid factory address').optional(),
   UMA_ORACLE_MANAGER_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid UMA oracle address').optional(),
+
+  // UMA Dispute Relay (Sepolia/Arbitrum)
+  DISPUTE_RELAY_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid DisputeRelay address').optional(),
+  SEPOLIA_RPC_URL: z.string().url().optional(),
+  SEPOLIA_PRIVATE_KEY: z.string().optional(),
+  DISPUTE_BOND_AMOUNT: z.string().optional(),
+  DISPUTE_LIVENESS_SECONDS: z.string().optional(),
   USDC_TOKEN_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid USDC token address').default('0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174'),
 
   // Cross-chain collateral infrastructure
@@ -236,6 +243,11 @@ const processEnv = {
   SETTLEMENT_ENGINE_ADDRESS: process.env.SETTLEMENT_ENGINE_ADDRESS,
   METRICS_MARKET_FACTORY_ADDRESS: process.env.METRICS_MARKET_FACTORY_ADDRESS,
   UMA_ORACLE_MANAGER_ADDRESS: process.env.UMA_ORACLE_MANAGER_ADDRESS,
+  DISPUTE_RELAY_ADDRESS: process.env.DISPUTE_RELAY_ADDRESS,
+  SEPOLIA_RPC_URL: process.env.SEPOLIA_RPC_URL,
+  SEPOLIA_PRIVATE_KEY: process.env.SEPOLIA_PRIVATE_KEY,
+  DISPUTE_BOND_AMOUNT: process.env.DISPUTE_BOND_AMOUNT,
+  DISPUTE_LIVENESS_SECONDS: process.env.DISPUTE_LIVENESS_SECONDS,
   USDC_TOKEN_ADDRESS: process.env.USDC_TOKEN_ADDRESS || '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
 
   // Spoke Vault Addresses (allow NEXT_PUBLIC_ fallbacks on client)
@@ -446,6 +458,7 @@ export function getOrderBookContractConfig() {
     settlementEngine: env.SETTLEMENT_ENGINE_ADDRESS,
     metricsMarketFactory: env.METRICS_MARKET_FACTORY_ADDRESS,
     umaOracleManager: env.UMA_ORACLE_MANAGER_ADDRESS,
+    disputeRelay: env.DISPUTE_RELAY_ADDRESS,
     usdcToken: env.USDC_TOKEN_ADDRESS,
   }
 }

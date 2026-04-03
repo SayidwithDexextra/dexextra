@@ -13,6 +13,7 @@ import {
   OBViewFacetABI,
   OBSettlementFacetABI,
   CoreVaultABI,
+  resolveFactoryVault,
 } from '@/lib/contracts';
 import { MarketLifecycleFacetABI } from '@/lib/contracts';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
@@ -1124,6 +1125,19 @@ export async function POST(req: Request) {
   await nonceMgr.resync();
   if (useParallelSigners) await vaultNonceMgr.resync();
 
+  // Resolve the CoreVault the factory actually uses on-chain.
+  // If the factory's vault differs from env CORE_VAULT_ADDRESS, roles must be
+  // granted on the factory vault — otherwise the OrderBook won't be authorized.
+  const { effectiveVault: effectiveCoreVaultAddress, mismatch: vaultMismatch } =
+    await resolveFactoryVault(provider, coreVaultAddress, factoryAddress);
+  if (vaultMismatch) {
+    logS('vault_mismatch', 'start', {
+      envCoreVault: coreVaultAddress,
+      factoryVault: effectiveCoreVaultAddress,
+      action: 'using factory vault for role grants',
+    });
+  }
+
   const registryAddress =
     process.env.SESSION_REGISTRY_ADDRESS ||
     (process.env as any).NEXT_PUBLIC_SESSION_REGISTRY_ADDRESS || '';
@@ -1304,9 +1318,9 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2. Grant CoreVault roles
-    logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
-    const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, vaultWallet);
+    // 2. Grant CoreVault roles (on the factory's actual vault, not just env)
+    logS('grant_roles', 'start', { coreVault: effectiveCoreVaultAddress, orderBook });
+    const coreVault = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, vaultWallet);
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
 

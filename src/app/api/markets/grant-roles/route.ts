@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ethers } from 'ethers';
-import { CoreVaultABI } from '@/lib/contracts';
+import { CoreVaultABI, resolveFactoryVault } from '@/lib/contracts';
 
 function logStep(step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) {
   try {
@@ -43,23 +43,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid orderBook address' }, { status: 400 });
     }
 
-    const coreVaultAddress =
+    const envCoreVault =
       coreVaultOverride || (process.env as any).NEXT_PUBLIC_CORE_VAULT_ADDRESS || (globalThis as any).process?.env?.NEXT_PUBLIC_CORE_VAULT_ADDRESS;
-    if (!coreVaultAddress || !ethers.isAddress(coreVaultAddress)) {
+    if (!envCoreVault || !ethers.isAddress(envCoreVault)) {
       return NextResponse.json({ error: 'CoreVault address not configured' }, { status: 400 });
     }
 
-    // Use ADMIN_PRIVATE_KEY for market pipeline role grants (explicit user requirement).
-    // Keep ROLE_ADMIN_PRIVATE_KEY as a fallback for deployments that separate concerns.
     const adminPk = process.env.ADMIN_PRIVATE_KEY || process.env.ROLE_ADMIN_PRIVATE_KEY;
     const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
     if (!adminPk || !rpcUrl) {
       return NextResponse.json({ error: 'Server admin key or RPC URL not configured' }, { status: 400 });
     }
 
-    logStep('grant_roles', 'start', { orderBook, coreVault: coreVaultAddress });
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const wallet = new ethers.Wallet(adminPk, provider);
+
+    // When no explicit override, auto-resolve via factory to prevent mismatch
+    const { effectiveVault: coreVaultAddress, mismatch } =
+      coreVaultOverride
+        ? { effectiveVault: coreVaultOverride, mismatch: false }
+        : await resolveFactoryVault(provider, envCoreVault);
+    if (mismatch) {
+      logStep('vault_mismatch', 'start', {
+        envCoreVault, factoryVault: coreVaultAddress,
+        action: 'using factory vault for role grants',
+      });
+    }
+
+    logStep('grant_roles', 'start', { orderBook, coreVault: coreVaultAddress });
 
     const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, wallet);
 

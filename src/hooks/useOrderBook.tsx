@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWallet } from './useWallet';
 import { usePositions } from './usePositions';
-import { initializeContracts } from '@/lib/contracts';
+import { initializeContracts, OBOrderPlacementFacetABI } from '@/lib/contracts';
 import { useMarket } from '@/hooks/useMarket';
 import { CONTRACT_ADDRESSES, CHAIN_CONFIG, populateMarketInfoClient } from '@/lib/contractConfig';
 import { getReadProvider, ensureHyperliquidWallet } from '@/lib/network';
@@ -854,12 +854,18 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
       const sizeWei = parseEther(size.toString());
 
       // Determine available placement function via preflight (margin only)
+      const hookObAddress = (marketRow as any)?.market_address || await (contracts.obOrderPlacement as any)?.getAddress?.();
+      const hookSignerAddr = walletAddress;
       let placeFn: 'placeMarginLimitOrder' | 'placeLimitOrder' = 'placeMarginLimitOrder';
       try {
-        await contracts.obOrderPlacement.placeMarginLimitOrder.staticCall(
+        // Use server-side read provider for preflight to avoid wallet RPC mismatches
+        const hookReadProvider = getReadProvider();
+        const hookObRead = new ethers.Contract(hookObAddress, OBOrderPlacementFacetABI, hookReadProvider);
+        await hookObRead.placeMarginLimitOrder.staticCall(
           priceWei,
           sizeWei,
-          isBuy
+          isBuy,
+          { from: hookSignerAddr }
         );
       } catch (preflightErr: any) {
         const msg = preflightErr?.shortMessage || preflightErr?.message || preflightErr?.data?.message || String(preflightErr);
@@ -896,7 +902,19 @@ export function useOrderBook(marketId?: string): [OrderBookState, OrderBookActio
           console.warn('[ALTKN][DIAG][useOrderBook][limit-preflight] logging failed', diagErr);
         }
         console.error(`[ALTKN] ❌ [RPC] Preflight check failed:`, preflightErr);
-        setState(prev => ({ ...prev, error: msg || 'Limit order preflight failed' }));
+        let userMsg = msg;
+        if (preflightErr?.code === 'BAD_DATA' || msg.includes('could not decode result data')) {
+          userMsg = 'OrderBook contract is not available for this market. The contract may not be deployed or the facet is not registered.';
+        } else if (msg.includes('OB: settled')) {
+          userMsg = 'This market has been settled and is no longer accepting orders.';
+        } else if (msg.includes('challenge window')) {
+          userMsg = 'Trading is paused during the settlement challenge window.';
+        } else if (msg.includes('OB: leverage off')) {
+          userMsg = 'Margin trading is not enabled for this market.';
+        } else if (msg.includes('!balance')) {
+          userMsg = 'Insufficient available collateral. Please deposit more USDC.';
+        }
+        setState(prev => ({ ...prev, error: userMsg || 'Limit order preflight failed' }));
         return false;
       }
 

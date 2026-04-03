@@ -10,9 +10,9 @@ import { usePortfolioData, type PortfolioOrdersBucket } from '@/hooks/usePortfol
 import type { OrderBookOrder } from '@/hooks/useOrderBook';
 import { formatEther, parseEther } from 'viem';
 import { ethers } from 'ethers';
-import { initializeContracts } from '@/lib/contracts';
+import { initializeContracts, OBOrderPlacementFacetABI } from '@/lib/contracts';
 // Removed gas override utilities to rely on provider estimation
-import { ensureHyperliquidWallet, isOnCorrectChain } from '@/lib/network';
+import { ensureHyperliquidWallet, isOnCorrectChain, getReadProvider } from '@/lib/network';
 import type { Address } from 'viem';
 import { submitSessionTrade, isSessionErrorMessage, ensureGaslessChain } from '@/lib/gasless';
 import { useSession } from '@/contexts/SessionContext';
@@ -1458,13 +1458,12 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             const ORDERBOOK_ROLE = ethers.id('ORDERBOOK_ROLE');
             const hasRole = await (contracts.vault as any).hasRole(ORDERBOOK_ROLE, obAddr);
             if (!hasRole) {
-              console.error('[DIAG][market-order] OrderBook missing ORDERBOOK_ROLE in vault', { obAddr, vault: (contracts.vault as any)?.target });
-              throw new Error('This market\'s order book is not authorized by the vault. Please contact support.');
+              console.warn('[DIAG][market-order] OrderBook may be missing ORDERBOOK_ROLE on env CoreVault (OB may use a different vault internally)', { obAddr });
             }
           }
         }
       } catch (configErr: any) {
-        if (configErr?.message?.includes('not yet configured') || configErr?.message?.includes('mismatch') || configErr?.message?.includes('not authorized')) {
+        if (configErr?.message?.includes('not yet configured') || configErr?.message?.includes('mismatch')) {
           throw configErr;
         }
         console.warn('⚠️ [RPC] Vault config check non-fatal:', configErr?.message || configErr);
@@ -1514,10 +1513,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
       // Preflight static call to surface revert reasons early
       const signerAddr = await signer.getAddress();
+      const mktObAddress = marketRow.market_address || await (contracts.obOrderPlacement as any)?.getAddress?.();
       try {
         console.log(`📡 [RPC] Running preflight static call for market order (from: ${signerAddr.slice(0, 6)}...)`);
         let startTimePreflight = Date.now();
-        await contracts.obOrderPlacement.placeMarginMarketOrderWithSlippage.staticCall(
+        // Use server-side read provider for preflight to avoid wallet RPC mismatches
+        const mktReadProvider = getReadProvider();
+        const obReadContractMkt = new ethers.Contract(mktObAddress, OBOrderPlacementFacetABI, mktReadProvider);
+        await obReadContractMkt.placeMarginMarketOrderWithSlippage.staticCall(
           sizeWei,
           isBuy,
           slippageBps,
@@ -1605,6 +1608,11 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         // Use console.warn (not console.error) to avoid triggering Next.js dev error overlay
         console.warn(`⚠️ [RPC] Preflight check failed:`, preflightErr?.reason || preflightErr?.shortMessage || preflightErr?.message);
         const reason = preflightErr?.reason || preflightErr?.message || '';
+        const mktRevertData = preflightErr?.data || preflightErr?.error?.data || '';
+        // AccessControlUnauthorizedAccount(address,bytes32) selector = 0xe2517d3f
+        if (typeof mktRevertData === 'string' && mktRevertData.startsWith('0xe2517d3f')) {
+          throw new Error('This market\'s order book is not authorized by the vault (missing ORDERBOOK_ROLE). Please run market configuration or contact support.');
+        }
         if (reason.includes('!balance')) {
           const notional6 = (sizeWei * referencePrice) / 10n ** 18n;
           const marginNeeded6 = (notional6 * 15000n) / 10000n;
@@ -1618,6 +1626,14 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           } else {
             throw new Error('Insufficient available collateral. Please deposit more USDC using the "Deposit" button in the header.');
           }
+        } else if (preflightErr?.code === 'BAD_DATA' || reason.includes('could not decode result data')) {
+          throw new Error('OrderBook contract is not available for this market. The contract may not be deployed or the facet is not registered.');
+        } else if (reason.includes('OB: settled')) {
+          throw new Error('This market has been settled and is no longer accepting orders.');
+        } else if (reason.includes('challenge window')) {
+          throw new Error('Trading is paused during the settlement challenge window.');
+        } else if (reason.includes('OB: leverage off')) {
+          throw new Error('Margin trading is not enabled for this market.');
         } else {
           throw preflightErr;
         }
@@ -1813,6 +1829,18 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
         errorMessage =
           'Spot trading is disabled for this futures market. Please place your order as a margin trade instead.';
         errorTitle = 'Spot Trading Disabled';
+      } else if (lower.includes('not deployed') || lower.includes('not available for this market') || lower.includes('could not decode result data') || error?.code === 'BAD_DATA') {
+        errorMessage = 'OrderBook contract is not available. Please check that you are on the correct network.';
+        errorTitle = 'Contract Not Found';
+      } else if (lower.includes('not authorized') || lower.includes('orderbook_role') || (typeof error?.data === 'string' && error.data.startsWith('0xe2517d3f'))) {
+        errorMessage = 'This market\'s order book is not authorized by the vault. The admin needs to grant ORDERBOOK_ROLE.';
+        errorTitle = 'Market Not Configured';
+      } else if (lower.includes('settled')) {
+        errorMessage = 'This market has been settled and is no longer accepting orders.';
+        errorTitle = 'Market Settled';
+      } else if (lower.includes('leverage off') || lower.includes('margin trading is not enabled')) {
+        errorMessage = 'Margin trading is not enabled for this market.';
+        errorTitle = 'Margin Not Available';
       }
       
       showError(errorMessage, errorTitle);
@@ -1898,33 +1926,53 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       // Parse amounts to on-chain units (price: 6 decimals USDC, size: 18 decimals)
       const priceWei = ethers.parseUnits(String(Number(triggerPrice).toFixed(6)), 6);
 
-      // Sanity check: ensure OB contract code exists on-chain for current network
+      // Resolve OB address for code check and preflight
+      const obAddress = marketRow.market_address || await (contracts.obOrderPlacement as any)?.getAddress?.();
+
+      // Sanity check: ensure OB contract code exists using server-side RPC (reliable)
+      const readProvider = getReadProvider();
       try {
-        const obAddress = await (contracts.obOrderPlacement as any)?.getAddress?.();
-        const provider: any = (contracts.obOrderPlacement as any)?.runner?.provider || (contracts.obOrderPlacement as any)?.provider;
-        if (provider && obAddress) {
-          const code = await provider.getCode(obAddress);
+        if (obAddress) {
+          const code = await readProvider.getCode(obAddress);
           if (!code || code === '0x') {
-            throw new Error('OrderBook not deployed on current network. Please switch networks.');
+            throw new Error('OrderBook contract not deployed at ' + obAddress + '. Please switch to the correct network or check the market configuration.');
           }
         }
-      } catch (addrErr) {
-        console.warn('⚠️ [RPC] OrderBook code check warning:', (addrErr as any)?.message || addrErr);
+      } catch (addrErr: any) {
+        const msg = addrErr?.message || '';
+        if (msg.includes('not deployed') || msg.includes('OrderBook contract')) {
+          throw addrErr;
+        }
+        console.warn('⚠️ [RPC] OrderBook code check warning:', msg || addrErr);
       }
 
-      // Pre-trade validation: leverage/margin configuration
-      // Skip leverage check: not available on current facet build
+      // Vault ↔ OrderBook role check (advisory — OB may use a different vault than env's CoreVault)
+      try {
+        if ((contracts.vault as any)?.hasRole && obAddress) {
+          const OB_ROLE = ethers.id('ORDERBOOK_ROLE');
+          const hasRole = await (contracts.vault as any).hasRole(OB_ROLE, obAddress);
+          if (!hasRole) {
+            console.warn('[DIAG][limit-order] OrderBook may be missing ORDERBOOK_ROLE on env CoreVault (OB may use a different vault internally)', { obAddress });
+          }
+        }
+      } catch (roleErr: any) {
+        console.warn('⚠️ [RPC] Role check warning:', roleErr?.message || roleErr);
+      }
 
       // Determine available placement function via preflight BEFORE collateral checks
       const isBuy = selectedOption === 'long';
+      const signerAddr = await signer.getAddress();
       let placeFn: 'placeMarginLimitOrder' | 'placeLimitOrder' = 'placeMarginLimitOrder';
       try {
         console.log(`📡 [RPC] Running preflight static call for limit order (margin)`);
         let startTimePreflight = Date.now();
-        await contracts.obOrderPlacement.placeMarginLimitOrder.staticCall(
+        // Use server-side read provider for preflight to avoid wallet RPC mismatches
+        const obReadContract = new ethers.Contract(obAddress, OBOrderPlacementFacetABI, readProvider);
+        await obReadContract.placeMarginLimitOrder.staticCall(
           priceWei,
           sizeWei,
-          isBuy
+          isBuy,
+          { from: signerAddr }
         );
         const durationPreflight = Date.now() - startTimePreflight;
         console.log(`✅ [RPC] Preflight (margin) passed in ${durationPreflight}ms`);
@@ -1962,9 +2010,26 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           console.warn('[DIAG][limit-preflight] logging failed', diagErr);
         }
         const msg = preflightErr?.reason || preflightErr?.message || preflightErr?.shortMessage || '';
+        const revertData = preflightErr?.data || preflightErr?.error?.data || '';
         console.error(`❌ [RPC] Preflight check failed:`, preflightErr);
+        // AccessControlUnauthorizedAccount(address,bytes32) selector = 0xe2517d3f
+        if (typeof revertData === 'string' && revertData.startsWith('0xe2517d3f')) {
+          throw new Error('This market\'s order book is not authorized by the vault (missing ORDERBOOK_ROLE). Please run market configuration or contact support.');
+        }
         if (msg.includes('!balance')) {
           throw new Error('Insufficient available collateral. Please deposit more USDC using the "Deposit" button in the header.');
+        }
+        if (preflightErr?.code === 'BAD_DATA' || msg.includes('could not decode result data')) {
+          throw new Error('OrderBook contract is not available for this market. The contract may not be deployed or the facet is not registered. Please check the market configuration.');
+        }
+        if (msg.includes('OB: settled')) {
+          throw new Error('This market has been settled and is no longer accepting orders.');
+        }
+        if (msg.includes('challenge window')) {
+          throw new Error('Trading is paused during the settlement challenge window.');
+        }
+        if (msg.includes('OB: leverage off')) {
+          throw new Error('Margin trading is not enabled for this market.');
         }
         throw preflightErr;
       }
@@ -2175,12 +2240,24 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
       } else if (errorStr.includes('minimum') || errorStr.includes('below')) {
         errorMessage = 'Order size below minimum. Please increase the order amount.';
         errorTitle = 'Order Too Small';
-      } else if (errorStr.includes('paused')) {
+      } else if (errorStr.includes('paused') || errorStr.includes('challenge window')) {
         errorMessage = 'Trading is currently paused. Please try again later.';
         errorTitle = 'Trading Paused';
       } else if (errorStr.includes('margin configuration') || errorStr.includes('Invalid margin configuration')) {
         errorMessage = 'Trading temporarily unavailable due to margin configuration. Please try again later.';
         errorTitle = 'Invalid Margin Configuration';
+      } else if (errorStr.includes('not deployed') || errorStr.includes('not available for this market') || errorStr.includes('could not decode result data') || error?.code === 'BAD_DATA') {
+        errorMessage = 'OrderBook contract is not available. Please check that you are on the correct network.';
+        errorTitle = 'Contract Not Found';
+      } else if (errorStr.includes('not authorized') || errorStr.includes('ORDERBOOK_ROLE') || (typeof error?.data === 'string' && error.data.startsWith('0xe2517d3f'))) {
+        errorMessage = 'This market\'s order book is not authorized by the vault. The admin needs to grant ORDERBOOK_ROLE.';
+        errorTitle = 'Market Not Configured';
+      } else if (errorStr.includes('settled')) {
+        errorMessage = 'This market has been settled and is no longer accepting orders.';
+        errorTitle = 'Market Settled';
+      } else if (errorStr.includes('leverage off') || errorStr.includes('Margin trading is not enabled')) {
+        errorMessage = 'Margin trading is not enabled for this market.';
+        errorTitle = 'Margin Not Available';
       }
       
       showError(errorMessage, errorTitle);

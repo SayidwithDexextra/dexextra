@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import {
   OBOrderPlacementFacetABI,
   CoreVaultABI,
+  resolveFactoryVault,
 } from '@/lib/contracts';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import { getPusherServer } from '@/lib/pusher-server';
@@ -202,6 +203,17 @@ export async function POST(req: Request) {
     }
 
     const vaultAddr = await vaultWallet.getAddress();
+
+    // Resolve the CoreVault the factory actually uses on-chain
+    const { effectiveVault: effectiveCoreVaultAddress, mismatch: vaultMismatch } =
+      await resolveFactoryVault(provider, coreVaultAddress);
+    if (vaultMismatch) {
+      logS('vault_mismatch', 'start', {
+        envCoreVault: coreVaultAddress,
+        factoryVault: effectiveCoreVaultAddress,
+        action: 'using factory vault for role grants',
+      });
+    }
 
     phaseHeader('CONFIGURE MARKET', shortAddr(orderBook));
     laneOverview(
@@ -499,9 +511,9 @@ export async function POST(req: Request) {
       laneLog('B', 'Starting lane', 'start', `signer=${shortAddr(vaultAddr)}`);
 
       if (needRoles) {
-        laneLog('B', 'Grant CoreVault roles', 'start', shortAddr(coreVaultAddress));
-        logS('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
-        const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, vaultWallet);
+        laneLog('B', 'Grant CoreVault roles', 'start', shortAddr(effectiveCoreVaultAddress));
+        logS('grant_roles', 'start', { coreVault: effectiveCoreVaultAddress, orderBook });
+        const coreVault = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, vaultWallet);
         const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
         const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
 

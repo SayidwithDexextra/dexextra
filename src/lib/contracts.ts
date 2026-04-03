@@ -439,11 +439,13 @@ export async function initializeContracts(options?: ContractInitOptions): Promis
     
     // Cross-check against CoreVault mapping if a bytes32 marketId is provided
     try {
+      const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
       const idHex = options?.marketIdBytes32;
       const looksBytes32 = typeof idHex === 'string' && idHex.startsWith('0x') && idHex.length === 66;
       if (looksBytes32 && (coreVault as any)?.marketToOrderBook) {
         const mapped = await (coreVault as any).marketToOrderBook(idHex);
-        if (mapped && typeof mapped === 'string' && mapped.startsWith('0x') && mapped.length === 42) {
+        if (mapped && typeof mapped === 'string' && mapped.startsWith('0x') && mapped.length === 42
+            && mapped.toLowerCase() !== ZERO_ADDR) {
           if (mapped.toLowerCase() !== orderBookAddress.toLowerCase()) {
             console.warn('[initializeContracts] CoreVault mapping differs from provided OrderBook address; using mapped address', {
               provided: orderBookAddress,
@@ -563,3 +565,59 @@ export async function initializeContracts(options?: ContractInitOptions): Promis
 }
 
 export default initializeContracts;
+
+/**
+ * Query the FuturesMarketFactory's on-chain `vault()` to discover which
+ * CoreVault the factory actually wires new markets to.  Falls back to the
+ * supplied `fallback` (typically the env CORE_VAULT_ADDRESS) if the query
+ * fails or returns the zero address.
+ *
+ * Returns `{ effectiveVault, mismatch }` where `mismatch` is true when the
+ * factory vault differs from the env-configured one.
+ */
+export async function resolveFactoryVault(
+  provider: ethers.Provider,
+  fallbackCoreVault: string,
+  factoryAddress?: string | null,
+): Promise<{ effectiveVault: string; mismatch: boolean; factoryVault?: string }> {
+  const addr =
+    factoryAddress ||
+    process.env.FUTURES_MARKET_FACTORY_ADDRESS ||
+    (process.env as any).NEXT_PUBLIC_FUTURES_MARKET_FACTORY_ADDRESS;
+
+  if (!addr || !ethers.isAddress(addr)) {
+    return { effectiveVault: fallbackCoreVault, mismatch: false };
+  }
+
+  try {
+    const factory = new ethers.Contract(
+      addr,
+      ['function vault() view returns (address)'],
+      provider,
+    );
+    const vaultAddr: string = await factory.vault();
+    if (
+      !vaultAddr ||
+      !ethers.isAddress(vaultAddr) ||
+      vaultAddr.toLowerCase() === ethers.ZeroAddress.toLowerCase()
+    ) {
+      return { effectiveVault: fallbackCoreVault, mismatch: false };
+    }
+
+    const mismatch =
+      vaultAddr.toLowerCase() !== fallbackCoreVault.toLowerCase();
+    if (mismatch) {
+      console.warn(
+        '[resolveFactoryVault] Factory vault differs from env CORE_VAULT_ADDRESS — using factory vault for role grants',
+        { factoryVault: vaultAddr, envCoreVault: fallbackCoreVault },
+      );
+    }
+    return { effectiveVault: vaultAddr, mismatch, factoryVault: vaultAddr };
+  } catch (e: any) {
+    console.warn(
+      '[resolveFactoryVault] Failed to query factory.vault(), falling back to env CORE_VAULT_ADDRESS',
+      e?.message || String(e),
+    );
+    return { effectiveVault: fallbackCoreVault, mismatch: false };
+  }
+}

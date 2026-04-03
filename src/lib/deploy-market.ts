@@ -11,6 +11,7 @@ import {
   OBSettlementFacetABI,
   CoreVaultABI,
   MarketLifecycleFacetABI,
+  resolveFactoryVault,
 } from '@/lib/contracts';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
@@ -455,6 +456,17 @@ export async function deployMarket(
 
   log('parallel_configure', 'start', { orderBook, parallel: !!useParallelSigners });
 
+  // Resolve the CoreVault the factory actually uses on-chain
+  const { effectiveVault: effectiveCoreVaultAddress, mismatch: vaultMismatch } =
+    await resolveFactoryVault(provider, coreVaultAddress, factoryAddress);
+  if (vaultMismatch) {
+    log('vault_mismatch', 'start', {
+      envCoreVault: coreVaultAddress,
+      factoryVault: effectiveCoreVaultAddress,
+      action: 'using factory vault for role grants',
+    });
+  }
+
   const vaultAddr = await vaultWallet.getAddress();
   phaseHeader('CONFIGURE', shortAddr(orderBook!));
   laneOverview(
@@ -681,9 +693,9 @@ export async function deployMarket(
   const laneB = async () => {
     laneLog('B', 'Starting lane', 'start', `signer=${shortAddr(vaultAddr)}`);
 
-    laneLog('B', 'Grant CoreVault roles', 'start', shortAddr(coreVaultAddress));
-    log('grant_roles', 'start', { coreVault: coreVaultAddress, orderBook });
-    const coreVault = new ethers.Contract(coreVaultAddress, CoreVaultABI as any, vaultWallet);
+    laneLog('B', 'Grant CoreVault roles', 'start', shortAddr(effectiveCoreVaultAddress));
+    log('grant_roles', 'start', { coreVault: effectiveCoreVaultAddress, orderBook });
+    const coreVault = new ethers.Contract(effectiveCoreVaultAddress, CoreVaultABI as any, vaultWallet);
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
 
