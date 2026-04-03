@@ -76,8 +76,10 @@ async function main() {
     const fundAmount = BigInt(poolFundRaw);
     console.log(`\n💰 Funding dispute pool with ${ethers.formatUnits(fundAmount, 6)} USDC...`);
     const token = await ethers.getContractAt("MockUSDC", bondTokenAddr);
-    await token.approve(relayAddr, fundAmount);
-    await relay.deposit(fundAmount);
+    const approveTx = await token.approve(relayAddr, fundAmount);
+    await approveTx.wait();
+    const depositTx = await relay.deposit(fundAmount);
+    await depositTx.wait();
     const poolBal = await relay.poolBalance();
     console.log(`   ✅ Pool balance: ${ethers.formatUnits(poolBal, 6)} USDC`);
   } else {

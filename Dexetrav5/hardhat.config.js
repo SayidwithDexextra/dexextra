@@ -18,6 +18,10 @@ const networkAccounts = process.env.ADMIN_PRIVATE_KEY
     ]
   : [];
 
+const creatorAccounts = process.env.CREATOR_PRIVATE_KEY
+  ? [process.env.CREATOR_PRIVATE_KEY]
+  : [];
+
 const config = {
   solidity: {
     version: "0.8.22",
@@ -122,7 +126,7 @@ const config = {
       url:
         process.env.SEPOLIA_RPC_URL ||
         `https://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`,
-      accounts: networkAccounts,
+      accounts: creatorAccounts,
       chainId: 11155111,
       gasPrice: "auto",
       gas: "auto",

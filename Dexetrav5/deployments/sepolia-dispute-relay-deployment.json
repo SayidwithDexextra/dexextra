@@ -1,0 +1,18 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "timestamp": "2026-04-03T20:00:35.047Z",
+  "contracts": {
+    "DISPUTE_RELAY": "0x3BBBe8Fc89869Ea65dfdcAAD3b403481d6246cD1",
+    "UMA_OOV3": "0xFd9e2642a170aDD10F53Ee14a93FcF2F31924944",
+    "BOND_TOKEN": "0xDda57D5028350cdE8B4C471F7A1a560D96bF21da"
+  },
+  "deployer": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+  "umaNetworkAddresses": {
+    "OptimisticOracleV3": "0xFd9e2642a170aDD10F53Ee14a93FcF2F31924944",
+    "MockOracleAncillary": "0x5FE28AEa36420414692b1C907F7d0114d304eb0C",
+    "AddressWhitelist": "0xE8DE4bcE27f6214dcE18D8a7629f233C66A97B84",
+    "IdentifierWhitelist": "0xfcb6f77112951e1995d37542b519Fe0a85a1AA77",
+    "Store": "0x39e7FFA77A4ac4D34021C6BbE4C8778d47F684F2"
+  }
+}

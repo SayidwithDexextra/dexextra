@@ -224,7 +224,7 @@ function randomDevCode4() {
   return out;
 }
 
-type SettlementPreset = 'standard' | 'quick-15' | 'quick-30' | 'daily-24h';
+type SettlementPreset = 'standard' | 'quick-15' | 'quick-30' | 'challenge-test' | 'daily-24h';
 
 type SpeedRunConfig = {
   rolloverLeadSeconds: number;
@@ -251,6 +251,16 @@ const SETTLEMENT_PRESETS: {
     sublabel: '15m rollover · 10m challenge',
     settlementOffsetSeconds: 30 * 60,
     speedRunConfig: { rolloverLeadSeconds: 15 * 60, challengeWindowSeconds: 10 * 60 },
+  },
+  {
+    value: 'challenge-test',
+    label: 'Challenge test',
+    sublabel: '~5m to challenge · 7d challenge window',
+    settlementOffsetSeconds: 5 * 60,
+    speedRunConfig: {
+      rolloverLeadSeconds: 4 * 60 + 30,
+      challengeWindowSeconds: 7 * 24 * 60 * 60,
+    },
   },
   {
     value: 'daily-24h',

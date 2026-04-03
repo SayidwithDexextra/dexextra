@@ -51,7 +51,7 @@ export function getRelayerConfig(): DisputeRelayerConfig {
   const hlRpc = process.env.RPC_URL || process.env.JSON_RPC_URL || '';
   const hlKey = process.env.ADMIN_PRIVATE_KEY || process.env.PRIVATE_KEY || '';
   const sepoliaRpc = process.env.SEPOLIA_RPC_URL || '';
-  const sepoliaKey = process.env.SEPOLIA_PRIVATE_KEY || process.env.ADMIN_PRIVATE_KEY || '';
+  const sepoliaKey = process.env.SEPOLIA_PRIVATE_KEY || process.env.CREATOR_PRIVATE_KEY || '';
   const relayAddr = process.env.DISPUTE_RELAY_ADDRESS || '';
   const bondRaw = process.env.DISPUTE_BOND_AMOUNT || '100000000'; // 100 USDC (6 decimals)
   const liveness = Number(process.env.DISPUTE_LIVENESS_SECONDS || '7200'); // 2 hours
