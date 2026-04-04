@@ -383,6 +383,13 @@ export default function MarketInfoHeader({
   const formattedSettlement = settlementDate ? formatSettlementDate(settlementDate) : null;
   const countdown = useCountdown(settlementDate);
   const formattedMarkPrice = useMemo(() => formatPriceMaybe(markPrice, markPricePrefix), [markPrice, markPricePrefix]);
+  const resolvedMarkPrice = useMemo(() => {
+    const propPrice = Number(markPrice ?? 0);
+    const onChainPrice = Number(marketStats?.markPrice ?? 0);
+    if (propPrice > 0) return propPrice;
+    if (onChainPrice > 0) return onChainPrice;
+    return null;
+  }, [markPrice, marketStats?.markPrice]);
   const hasRollover = seriesSlug && seriesMarkets && seriesMarkets.length >= 1;
 
   // Only show "settled" when the on-chain isSettled() confirms settleMarket() has executed.
@@ -793,12 +800,12 @@ export default function MarketInfoHeader({
         <div className={styles.marketStatsBar}>
           <div className={styles.marketStatItem}>
             <span className={styles.marketStatLabel}>Mark</span>
-            <span className={styles.marketStatValue}>{formatPriceMaybe(marketStats.markPrice)}</span>
+            <span className={styles.marketStatValue}>{formatPriceMaybe(resolvedMarkPrice)}</span>
           </div>
           <span className={styles.marketStatDivider} />
           <div className={styles.marketStatItem}>
             <span className={styles.marketStatLabel}>Last</span>
-            <span className={styles.marketStatValue}>{formatStatValue(marketStats.lastTradePrice)}</span>
+            <span className={styles.marketStatValue}>{formatPriceMaybe(marketStats.lastTradePrice > 0 ? marketStats.lastTradePrice : resolvedMarkPrice)}</span>
           </div>
           <span className={styles.marketStatDivider} />
           <div className={styles.marketStatItem}>
