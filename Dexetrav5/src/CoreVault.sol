@@ -282,7 +282,11 @@ contract CoreVault is
         if (fromDeposit > 0) {
             if (userCollateral[msg.sender] < fromDeposit) revert InsufficientBalance();
             userCollateral[msg.sender] -= fromDeposit;
-            totalCollateralDeposited -= fromDeposit;
+            if (totalCollateralDeposited >= fromDeposit) {
+                totalCollateralDeposited -= fromDeposit;
+            } else {
+                totalCollateralDeposited = 0;
+            }
         }
 
         collateralToken.safeTransfer(msg.sender, amount);

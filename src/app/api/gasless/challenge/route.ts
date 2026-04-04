@@ -125,26 +125,33 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Select relayer wallet (prefer small-block pool for fast inclusion) ──
-    const challengeKeys = loadRelayerPoolFromEnv({
+    // Cascade: dedicated challenge pool → small-block pool → global pool (excluding big-block) → admin key
+    let relayerKeys = loadRelayerPoolFromEnv({
       pool: 'challenge',
       jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON',
       allowFallbackSingleKey: false,
     });
-    const smallKeys = challengeKeys.length > 0
-      ? challengeKeys
-      : loadRelayerPoolFromEnv({
-          pool: 'hub_trade_small',
-          jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
-          indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
-          allowFallbackSingleKey: false,
-        });
-
-    let relayerKey: RelayerKey | undefined;
-    if (smallKeys.length > 0) {
-      relayerKey = smallKeys[Math.floor(Math.random() * smallKeys.length)];
+    if (!relayerKeys.length) {
+      relayerKeys = loadRelayerPoolFromEnv({
+        pool: 'hub_trade_small',
+        jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
+        indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
+        allowFallbackSingleKey: false,
+      });
+    }
+    if (!relayerKeys.length) {
+      relayerKeys = loadRelayerPoolFromEnv({
+        pool: 'global_for_challenge',
+        globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+        allowFallbackSingleKey: true,
+        excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
+      });
     }
 
-    // Fall back to admin key if no small-block relayers configured
+    const relayerKey = relayerKeys.length > 0
+      ? relayerKeys[Math.floor(Math.random() * relayerKeys.length)]
+      : undefined;
+
     const walletKey = relayerKey?.privateKey || process.env.ADMIN_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '';
     if (!walletKey) {
       return NextResponse.json({ error: 'Server misconfigured: no challenge relayer key.' }, { status: 500 });

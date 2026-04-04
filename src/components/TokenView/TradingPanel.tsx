@@ -1680,6 +1680,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
         if (!activeSessionId || globalSessionActive !== true) {
           showError('Trading session is not enabled. Click Enable Trading before placing market orders.', 'Session Required');
+          markOrderFillError();
           return;
         }
 
@@ -1702,6 +1703,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             } else {
               showError(msg, 'Gasless Error');
             }
+            markOrderFillError();
             return;
           }
           const txHash = r.txHash || null;
@@ -1737,6 +1739,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   amount: (sizeWei as unknown as bigint)?.toString?.(),
                   isBuy,
                   isMarginOrder: true,
+                  isMarketOrder: true,
+                  orderType: 'MARKET',
                 }
               }));
             }
@@ -1748,7 +1752,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           if (mined) {
             finishOrderFillModal();
           } else {
-            if (!slow) window.setTimeout(() => finishOrderFillModal(), 1400);
+            window.setTimeout(() => finishOrderFillModal(), slow ? 5000 : 1400);
           }
           return;
         } catch (gerr: any) {
@@ -1761,6 +1765,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           } else {
             showError(msg, 'Gasless Error');
           }
+          markOrderFillError();
           return;
         }
       }
@@ -2105,6 +2110,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
           if (!activeSessionId || globalSessionActive !== true) {
             showError('Trading session is not enabled. Click Enable Trading before placing limit orders.', 'Session Required');
+            markOrderFillError();
             return;
           }
 
@@ -2126,6 +2132,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             } else {
               showError(msg, 'Gasless Error');
             }
+            markOrderFillError();
             return;
           }
           const txHash = r.txHash || null;
@@ -2174,12 +2181,13 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           setTriggerPrice(0);
           setTriggerPriceInput("");
           setOrderFillModal((cur) => ({ ...cur, status: mined ? 'success' : 'processing' }));
-          if (!slow) window.setTimeout(() => finishOrderFillModal(), mined ? 750 : 1100);
+          window.setTimeout(() => finishOrderFillModal(), slow ? 5000 : (mined ? 750 : 1100));
           return;
         } catch (gerr: any) {
           console.warn('[GASLESS] Limit order gasless path failed:', gerr?.message || gerr);
           console.warn('[UpGas][UI] limit submit: error', gerr?.message || gerr);
           showError(gerr?.message || 'Gasless limit order failed', 'Gasless Error');
+          markOrderFillError();
           return;
         }
       }

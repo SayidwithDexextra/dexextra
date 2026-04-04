@@ -2,7 +2,8 @@
 /**
  * register-lifecycle-operators.js
  *
- * Registers a list of addresses as lifecycle operators on a market diamond.
+ * Registers a list of addresses as lifecycle operators on a market diamond
+ * using a single batch transaction.
  *
  * Env:
  *   MARKET_ADDRESS — target diamond
@@ -33,27 +34,35 @@ async function main() {
   const [signer] = await ethers.getSigners();
   const lifecycle = await ethers.getContractAt(
     [
-      "function setLifecycleOperator(address operator, bool authorized) external",
+      "function setLifecycleOperatorBatch(address[] operators, bool authorized) external",
       "function isLifecycleOperator(address account) external view returns (bool)",
     ],
     marketAddress,
     signer,
   );
 
+  const toRegister = [];
   for (const addr of operators) {
     try {
       const already = await lifecycle.isLifecycleOperator(addr);
       if (already) {
         console.log(`   ⏭️  ${addr} already registered`);
-        continue;
+      } else {
+        toRegister.push(addr);
       }
-      const tx = await lifecycle.setLifecycleOperator(addr, true);
-      console.log(`   tx: ${tx.hash} → ${addr}`);
-      await tx.wait();
-      console.log(`   ✅ ${addr} registered`);
-    } catch (err) {
-      console.error(`   ❌ ${addr}: ${err?.reason || err?.message || err}`);
+    } catch {
+      toRegister.push(addr);
     }
+  }
+
+  if (!toRegister.length) {
+    console.log("\n   All operators already registered.");
+  } else {
+    console.log(`\n   📦 Batch registering ${toRegister.length} operator(s)...`);
+    const tx = await lifecycle.setLifecycleOperatorBatch(toRegister, true);
+    console.log(`   tx: ${tx.hash}`);
+    await tx.wait();
+    console.log(`   ✅ ${toRegister.length} operator(s) registered in one transaction`);
   }
 
   console.log("\n✅ Done.\n");

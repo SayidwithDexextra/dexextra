@@ -669,6 +669,46 @@ export async function deployMarket(
       log('initialize_lifecycle', 'error', { error: e?.message || String(e) });
     }
 
+    // 6. Configure challenge bond
+    try {
+      laneLog('A', 'Challenge bond config', 'start');
+      const CHALLENGE_BOND_USDC = 50_000_000; // 50 USDC (6 decimals)
+      const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
+      const bondContract = new ethers.Contract(orderBook!, [
+        'function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external',
+      ], wallet);
+      const bondTx = await bondContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, await nonceMgr.nextOverrides());
+      laneLog('A', 'Challenge bond config', 'start', `tx sent ${shortTx(bondTx.hash)}`);
+      pending.push({ label: 'Challenge bond config', logKey: 'challenge_bond_config', tx: bondTx, extra: { bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT } });
+    } catch (e: any) {
+      laneLog('A', 'Challenge bond config', 'error', e?.shortMessage || e?.message || String(e));
+      log('challenge_bond_config', 'error', { error: e?.message || String(e) });
+    }
+
+    // 7. Register lifecycle operators (small-block relayers for fast challenge submission)
+    try {
+      let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
+      if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'hub_trade_small', jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON', indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_', allowFallbackSingleKey: false });
+      if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_ops', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
+
+      if (relayerKeys.length > 0) {
+        laneLog('A', 'Lifecycle operators', 'start', `${relayerKeys.length} relayer(s)`);
+        const opContract = new ethers.Contract(orderBook!, [
+          'function setLifecycleOperatorBatch(address[] operators, bool authorized) external',
+        ], wallet);
+        const addrs = relayerKeys.map((k) => k.address);
+        const opTx = await opContract.setLifecycleOperatorBatch(addrs, true, await nonceMgr.nextOverrides());
+        laneLog('A', 'Lifecycle operators', 'start', `tx sent ${shortTx(opTx.hash)}`);
+        pending.push({ label: 'Lifecycle operators', logKey: 'lifecycle_operators', tx: opTx, extra: { count: addrs.length } });
+      } else {
+        laneLog('A', 'Lifecycle operators', 'success', 'no relayer keys found — skipped');
+        log('lifecycle_operators', 'skipped', { reason: 'no relayer keys found' });
+      }
+    } catch (e: any) {
+      laneLog('A', 'Lifecycle operators', 'error', e?.shortMessage || e?.message || String(e));
+      log('lifecycle_operators', 'error', { error: e?.message || String(e) });
+    }
+
     // Wait for ALL transactions to mine in parallel
     if (pending.length > 0) {
       laneLog('A', 'Awaiting confirmations', 'start', `${pending.length} pending txs`);
@@ -752,58 +792,6 @@ export async function deployMarket(
   }
 
   log('parallel_configure', 'success', { orderBook });
-
-  // Fire-and-forget: configure challenge bond (non-blocking, not essential for trading)
-  const CHALLENGE_BOND_USDC = 50_000_000; // 50 USDC (6 decimals)
-  const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
-  (async () => {
-    try {
-      const freshNonce = await wallet.getNonce('pending');
-      const bondContract = new ethers.Contract(orderBook!, [
-        'function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external',
-      ], wallet);
-      const tx = await bondContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, { nonce: freshNonce });
-      await tx.wait();
-      log('challenge_bond_config', 'success', { bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT, tx: tx.hash });
-    } catch (e: any) {
-      log('challenge_bond_config', 'error', { error: e?.message || String(e) });
-    }
-  })();
-
-  // Register small-block relayers as lifecycle operators so challenges don't require the big-block owner key
-  (async () => {
-    try {
-      const smallKeys = loadRelayerPoolFromEnv({
-        pool: 'hub_trade_small',
-        jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
-        indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
-        allowFallbackSingleKey: false,
-      });
-      if (!smallKeys.length) {
-        log('lifecycle_operators', 'skipped', { reason: 'no small-block keys configured' });
-        return;
-      }
-      const opContract = new ethers.Contract(orderBook!, [
-        'function setLifecycleOperator(address operator, bool authorized) external',
-        'function isLifecycleOperator(address account) external view returns (bool)',
-      ], wallet);
-      let registered = 0;
-      for (const key of smallKeys) {
-        try {
-          const already = await opContract.isLifecycleOperator(key.address);
-          if (already) continue;
-          const opTx = await opContract.setLifecycleOperator(key.address, true);
-          await opTx.wait();
-          registered++;
-        } catch (e: any) {
-          log('lifecycle_operator_register', 'error', { address: key.address, error: e?.message || String(e) });
-        }
-      }
-      log('lifecycle_operators', 'success', { registered, total: smallKeys.length });
-    } catch (e: any) {
-      log('lifecycle_operators', 'error', { error: e?.message || String(e) });
-    }
-  })();
 
   return {
     ok: true,

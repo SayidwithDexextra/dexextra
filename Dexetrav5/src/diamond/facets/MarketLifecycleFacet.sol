@@ -869,6 +869,18 @@ contract MarketLifecycleFacet {
     }
 
     /**
+     * @notice Batch grant or revoke operator privileges in a single transaction.
+     */
+    function setLifecycleOperatorBatch(address[] calldata operators, bool authorized) external onlyOwner {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        for (uint256 i = 0; i < operators.length; i++) {
+            require(operators[i] != address(0), "LC: operator=0");
+            s.lifecycleOperators[operators[i]] = authorized;
+            emit LifecycleOperatorUpdated(operators[i], authorized);
+        }
+    }
+
+    /**
      * @notice Check whether an address is an authorized lifecycle operator.
      */
     function isLifecycleOperator(address account) external view returns (bool) {

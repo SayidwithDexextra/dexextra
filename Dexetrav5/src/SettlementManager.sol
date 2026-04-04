@@ -90,7 +90,7 @@ contract SettlementManager is CoreVaultStorage {
                 if (delta6b > 0) {
                     uint256 profit6b = (uint256(delta6b) * scaleRay) / 1e18;
                     if (profit6b > 0) {
-                        userRealizedPnL[user2] += int256(profit6b) * int256(DECIMAL_SCALE);
+                        userCollateral[user2] += profit6b;
                         totalProfit6 += profit6b;
 
                         uint256 ledger = userSocializedLoss[user2];
@@ -106,7 +106,6 @@ contract SettlementManager is CoreVaultStorage {
                     if (seizeCap6b > totalBalance2) { seizeCap6b = totalBalance2; }
                     uint256 debit6 = loss6b <= seizeCap6b ? loss6b : seizeCap6b;
                     if (debit6 > 0) {
-                        userRealizedPnL[user2] -= int256(debit6) * int256(DECIMAL_SCALE);
                         uint256 extBal2 = userCrossChainCredit[user2];
                         uint256 useExt2 = debit6 <= extBal2 ? debit6 : extBal2;
                         if (useExt2 > 0) { userCrossChainCredit[user2] = extBal2 - useExt2; }

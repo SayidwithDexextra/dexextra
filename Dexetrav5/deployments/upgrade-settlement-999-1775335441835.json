@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-04-04T20:40:49.675Z",
+  "deployer": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500",
+  "network": "hyperliquid",
+  "chainId": 999,
+  "vaultProxy": "0x8DF1752FbBC364fD4aF7cBA8a1F8B1B345F767f1",
+  "changes": [
+    "SettlementManager swapped",
+    "CoreVault implementation upgraded (UUPS)"
+  ],
+  "newSettlementManager": "0x18398715bC52E33CfB785C1a9dEc3De672b8e848",
+  "setSettlementManagerTx": "0xa6801bc20185b6159fcdd36ea5f365a45cb1904e7999ab9aaf2869c47d9c9ae1",
+  "newCoreVaultImpl": "0x197d0C10870F2c85B1F9946F1890A315d574560F",
+  "upgradeToAndCallTx": "0xda8321a3a10dd4136889c3008381a28eae34cb2c2049ca603b5470c0c6f8be2b"
+}
