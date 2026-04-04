@@ -13,6 +13,7 @@ import {
   MarketLifecycleFacetABI,
   resolveFactoryVault,
 } from '@/lib/contracts';
+import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
@@ -766,6 +767,41 @@ export async function deployMarket(
       log('challenge_bond_config', 'success', { bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT, tx: tx.hash });
     } catch (e: any) {
       log('challenge_bond_config', 'error', { error: e?.message || String(e) });
+    }
+  })();
+
+  // Register small-block relayers as lifecycle operators so challenges don't require the big-block owner key
+  (async () => {
+    try {
+      const smallKeys = loadRelayerPoolFromEnv({
+        pool: 'hub_trade_small',
+        jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
+        indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
+        allowFallbackSingleKey: false,
+      });
+      if (!smallKeys.length) {
+        log('lifecycle_operators', 'skipped', { reason: 'no small-block keys configured' });
+        return;
+      }
+      const opContract = new ethers.Contract(orderBook!, [
+        'function setLifecycleOperator(address operator, bool authorized) external',
+        'function isLifecycleOperator(address account) external view returns (bool)',
+      ], wallet);
+      let registered = 0;
+      for (const key of smallKeys) {
+        try {
+          const already = await opContract.isLifecycleOperator(key.address);
+          if (already) continue;
+          const opTx = await opContract.setLifecycleOperator(key.address, true);
+          await opTx.wait();
+          registered++;
+        } catch (e: any) {
+          log('lifecycle_operator_register', 'error', { address: key.address, error: e?.message || String(e) });
+        }
+      }
+      log('lifecycle_operators', 'success', { registered, total: smallKeys.length });
+    } catch (e: any) {
+      log('lifecycle_operators', 'error', { error: e?.message || String(e) });
     }
   })();
 

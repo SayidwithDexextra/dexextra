@@ -54,9 +54,10 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
       }))
       .filter((s: any) => Boolean(s?.url));
 
+    const processingSec = (processingMs / 1000).toFixed(1);
     return {
       status: 'completed',
-      processingTime: `${processingMs}ms`,
+      processingTime: `${processingSec}s`,
       cached: false,
       data: {
         metric: String(ai?.metric || metric || ''),
@@ -71,10 +72,10 @@ export const MarketAIAssistant = forwardRef<MarketAIAssistantHandle, MarketAIAss
       performance: {
         totalTime: processingMs,
         breakdown: {
-          cacheCheck: '0ms',
-          scraping: '0ms',
-          processing: `${processingMs}ms`,
-          aiAnalysis: '0ms',
+          cacheCheck: '0s',
+          scraping: '0s',
+          processing: `${processingSec}s`,
+          aiAnalysis: '0s',
         },
       },
     };

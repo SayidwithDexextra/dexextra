@@ -5,6 +5,7 @@ import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
 import { MarketLifecycleFacetABI } from '@/lib/contracts';
 import { getRelayerConfig, relayTick, type ChallengerEvidence, type EscalationMeta } from '@/lib/dispute-relayer';
 import { isChallengeWindowActive } from '@/lib/settlement-window';
+import { loadRelayerPoolFromEnv, type RelayerKey } from '@/lib/relayerKeys';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -123,18 +124,72 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Market contract address not available.' }, { status: 400 });
     }
 
-    // ── Execute challengeSettlementFor via admin relayer ──
-    const adminKey = process.env.ADMIN_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '';
-    if (!adminKey) {
-      return NextResponse.json({ error: 'Server misconfigured: no admin relayer key.' }, { status: 500 });
+    // ── Select relayer wallet (prefer small-block pool for fast inclusion) ──
+    const challengeKeys = loadRelayerPoolFromEnv({
+      pool: 'challenge',
+      jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON',
+      allowFallbackSingleKey: false,
+    });
+    const smallKeys = challengeKeys.length > 0
+      ? challengeKeys
+      : loadRelayerPoolFromEnv({
+          pool: 'hub_trade_small',
+          jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
+          indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
+          allowFallbackSingleKey: false,
+        });
+
+    let relayerKey: RelayerKey | undefined;
+    if (smallKeys.length > 0) {
+      relayerKey = smallKeys[Math.floor(Math.random() * smallKeys.length)];
     }
 
-    const adminWallet = new ethers.Wallet(adminKey, provider);
+    // Fall back to admin key if no small-block relayers configured
+    const walletKey = relayerKey?.privateKey || process.env.ADMIN_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '';
+    if (!walletKey) {
+      return NextResponse.json({ error: 'Server misconfigured: no challenge relayer key.' }, { status: 500 });
+    }
+
+    const relayerWallet = new ethers.Wallet(walletKey, provider);
     const marketContract = new ethers.Contract(
       resolvedMarketAddress,
       MarketLifecycleFacetABI,
-      adminWallet,
+      relayerWallet,
     );
+
+    // Ensure the on-chain lifecycle is progressed before challenging.
+    // The DB may show the window as active before syncLifecycle has been called.
+    try {
+      const syncTx = await marketContract.syncLifecycle();
+      await syncTx.wait();
+    } catch (syncErr: any) {
+      console.warn('[gasless/challenge] syncLifecycle warning (non-fatal):', syncErr?.reason || syncErr?.shortMessage || syncErr?.message);
+    }
+
+    // Pre-flight: verify the on-chain window is actually open
+    try {
+      const windowActive = await marketContract.isInSettlementChallengeWindow();
+      if (!windowActive) {
+        const lifecycleState = await marketContract.getLifecycleState();
+        const stateNames = ['Unsettled', 'Rollover', 'ChallengeWindow', 'Settled'];
+        const stateName = stateNames[Number(lifecycleState)] ?? `Unknown(${lifecycleState})`;
+        console.error(`[gasless/challenge] On-chain window not active. lifecycleState=${stateName}`);
+        return NextResponse.json(
+          { error: `Challenge window is not active on-chain (state: ${stateName}). Please try again later.` },
+          { status: 409 },
+        );
+      }
+
+      const info = await marketContract.getActiveChallengeInfo();
+      if (info.active) {
+        return NextResponse.json(
+          { error: 'An active challenge already exists for this market.' },
+          { status: 409 },
+        );
+      }
+    } catch (checkErr: any) {
+      console.warn('[gasless/challenge] Pre-flight check warning:', checkErr?.reason || checkErr?.message);
+    }
 
     const alternativePriceWei = ethers.parseUnits(Number(price).toFixed(6), 6);
     let txHash: string;

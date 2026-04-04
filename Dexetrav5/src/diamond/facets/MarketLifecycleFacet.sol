@@ -75,10 +75,19 @@ contract MarketLifecycleFacet {
     event SettlementPriceProposed(address indexed market, address indexed proposer, uint256 price, uint256 timestamp);
     event ProposalBondExemptUpdated(address indexed account, bool exempt);
     event ProposalBondReturned(address indexed market, address indexed proposer, uint256 amount);
+    event LifecycleOperatorUpdated(address indexed operator, bool authorized);
 
     // === Modifiers ===
     modifier onlyOwner() {
         LibDiamond.enforceIsContractOwner();
+        _;
+    }
+
+    modifier onlyOwnerOrOperator() {
+        address caller = msg.sender;
+        if (caller != LibDiamond.diamondStorage().contractOwner) {
+            require(MarketLifecycleStorage.state().lifecycleOperators[caller], "LC: not owner or operator");
+        }
         _;
     }
 
@@ -714,7 +723,7 @@ contract MarketLifecycleFacet {
      * @param challenger The user's wallet address (treated as msg.sender in the normal path)
      * @param alternativePrice The challenger's proposed settlement price (6 decimals)
      */
-    function challengeSettlementFor(address challenger, uint256 alternativePrice) external onlyOwner {
+    function challengeSettlementFor(address challenger, uint256 alternativePrice) external onlyOwnerOrOperator {
         require(challenger != address(0), "LC: challenger=0");
         require(alternativePrice > 0, "LC: price=0");
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
@@ -750,7 +759,7 @@ contract MarketLifecycleFacet {
      * @notice Resolve an active challenge: refund the bond to the challenger or slash it to treasury.
      * @param challengerWins If true, bond is returned to challenger. If false, bond goes to slash recipient.
      */
-    function resolveChallenge(bool challengerWins) external onlyOwner {
+    function resolveChallenge(bool challengerWins) external onlyOwnerOrOperator {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.challengeActive, "LC: no active challenge");
         require(!s.challengeResolved, "LC: already resolved");
@@ -844,6 +853,26 @@ contract MarketLifecycleFacet {
         obs.vault.deductFees(address(this), amount, proposer);
 
         emit ProposalBondReturned(address(this), proposer, amount);
+    }
+
+    // === Lifecycle Operators ===
+
+    /**
+     * @notice Grant or revoke operator privileges for lifecycle actions (challengeSettlementFor, resolveChallenge).
+     * @dev Allows small-block relayers to submit challenges without the latency of the owner's big-block address.
+     */
+    function setLifecycleOperator(address operator, bool authorized) external onlyOwner {
+        require(operator != address(0), "LC: operator=0");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        s.lifecycleOperators[operator] = authorized;
+        emit LifecycleOperatorUpdated(operator, authorized);
+    }
+
+    /**
+     * @notice Check whether an address is an authorized lifecycle operator.
+     */
+    function isLifecycleOperator(address account) external view returns (bool) {
+        return MarketLifecycleStorage.state().lifecycleOperators[account];
     }
 }
 

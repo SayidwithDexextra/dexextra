@@ -1016,7 +1016,7 @@ export async function POST(req: NextRequest) {
             unit: 'unknown',
             confidence: bestConsensus.confidence,
             asset_price_suggestion: strVal,
-            reasoning: `Vision short-circuit: ${bestConsensus.summary}`,
+            reasoning: bestConsensus.summary,
             source_quotes: visionSources,
           };
 

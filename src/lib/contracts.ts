@@ -185,6 +185,9 @@ export const MarketLifecycleFacetABI = [
   "function setProposalBondExempt(address account, bool exempt) external",
   "function isProposalBondExempt(address account) external view returns (bool)",
   "function returnProposalBond() external",
+  // Lifecycle operators (small-block relayer authorization)
+  "function setLifecycleOperator(address operator, bool authorized) external",
+  "function isLifecycleOperator(address account) external view returns (bool)",
   // Views
   "function getSettlementTimestamp() external view returns (uint256)",
   "function getRolloverWindowStart() external view returns (uint256)",

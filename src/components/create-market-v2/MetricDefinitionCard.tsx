@@ -19,7 +19,7 @@ export function MetricDefinitionCard({
       <div className="flex items-start justify-between mb-3">
         <h3 className="text-lg font-medium text-green-400">✓ Metric Discovered</h3>
         {processingTime && (
-          <span className="text-xs text-white/50">{processingTime}ms</span>
+          <span className="text-xs text-white/50">{typeof processingTime === 'number' ? `${(processingTime / 1000).toFixed(1)}s` : processingTime}</span>
         )}
       </div>
 

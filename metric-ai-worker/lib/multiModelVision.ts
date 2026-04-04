@@ -233,7 +233,7 @@ export async function analyzeWithConsensus(
       confidence: boostedConf,
       agreement: 'full',
       models: tier1Models,
-      summary: `VISION_CONSENSUS - 2/2 models agree (${names}): median=${med}, confidence boosted to ${boostedConf.toFixed(2)}. Claude skipped (cost optimization).`,
+      summary: `Value verified by multiple AI vision models with high confidence. The extracted value of ${med} was consistently identified across independent analyses (${Math.round(boostedConf * 100)}% confidence).`,
     };
   }
 
@@ -309,7 +309,7 @@ export async function analyzeWithConsensus(
     return {
       value: String(med), numericValue: med, confidence: boostedConf,
       agreement, models: allModels,
-      summary: `${agreeing.length}/${allNums.length} models agree (${names}): median=${med}, confidence boosted to ${boostedConf.toFixed(2)}.`,
+      summary: `Value confirmed by ${agreeing.length} out of ${allNums.length} AI vision models. The extracted value of ${med} was verified with high confidence (${Math.round(boostedConf * 100)}%).`,
     };
   }
 
@@ -319,6 +319,6 @@ export async function analyzeWithConsensus(
     value: best.value, numericValue: parseNumeric(best.numericValue),
     confidence: Math.max((best.confidence || 0.5) - 0.15, 0.1),
     agreement: 'partial', models: allModels,
-    summary: `Models disagree (${allVals}). Using ${best.model}=${best.numericValue} (highest confidence), confidence reduced.`,
+    summary: `AI models provided varying readings. The most confident analysis identified a value of ${best.numericValue}, though confidence is reduced due to inconsistency between models.`,
   };
 }

@@ -293,9 +293,10 @@ function toModalResponse(ai: MetricAIResult, metric: string, processingMs: numbe
     }))
     .filter((s: any) => Boolean(s?.url));
 
+  const processingSec = (processingMs / 1000).toFixed(1);
   return {
     status: 'completed',
-    processingTime: `${processingMs}ms`,
+    processingTime: `${processingSec}s`,
     cached: false,
     data: {
       metric: String(ai?.metric || metric || ''),
@@ -310,10 +311,10 @@ function toModalResponse(ai: MetricAIResult, metric: string, processingMs: numbe
     performance: {
       totalTime: processingMs,
       breakdown: {
-        cacheCheck: '0ms',
-        scraping: '0ms',
-        processing: `${processingMs}ms`,
-        aiAnalysis: '0ms',
+        cacheCheck: '0s',
+        scraping: '0s',
+        processing: `${processingSec}s`,
+        aiAnalysis: '0s',
       },
     },
   };
@@ -3679,6 +3680,12 @@ export function InteractiveMarketCreation({
         }}
         response={validationResult}
         error={validationError}
+        imageUrl={validationResult?.data?.sources?.[0]?.screenshot_url
+          ? `https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/metric-oracle-screenshots/${validationResult.data.sources[0].screenshot_url}`
+          : undefined}
+        fullscreenImageUrl={validationResult?.data?.sources?.[0]?.screenshot_url
+          ? `https://khhknmobkkkvvogznxdj.supabase.co/storage/v1/object/public/metric-oracle-screenshots/${validationResult.data.sources[0].screenshot_url}`
+          : undefined}
         onAccept={() => {
           setIsValidationAccepted(true);
           setShowValidationModal(false);

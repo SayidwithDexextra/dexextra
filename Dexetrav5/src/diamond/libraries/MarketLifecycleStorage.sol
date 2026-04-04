@@ -58,6 +58,9 @@ library MarketLifecycleStorage {
         // Bond exemption (v5; append-only)
         mapping(address => bool) proposalBondExempt;  // Addresses exempt from proposal/challenge bond (AI workers)
         uint256 proposalBondEscrowed;                 // Actual bond escrowed from proposer (0 if exempt)
+
+        // Lifecycle operators (v6; append-only) — addresses authorized to call challengeSettlementFor / resolveChallenge
+        mapping(address => bool) lifecycleOperators;
     }
 
     function state() internal pure returns (State storage s) {
