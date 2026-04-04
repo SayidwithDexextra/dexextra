@@ -120,8 +120,11 @@ async function fetchFromSupabase(marketId: string): Promise<HistoricalStats | nu
 
     if (error || !data) return null;
 
-    const price = Number(data.mark_price);
-    if (!Number.isFinite(price) || price <= 0) return null;
+    const raw = Number(data.mark_price);
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+
+    // `market_tickers.mark_price` is stored as 6-decimal fixed point (same as on-chain startPrice), not human decimal.
+    const price = raw / 1_000_000;
 
     // With only one data point we can still provide basic context
     return {

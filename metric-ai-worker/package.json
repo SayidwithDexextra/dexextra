@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build --webpack",
-    "start": "next start",
+    "dev": "NODE_OPTIONS=--disable-warning=DEP0169 next dev",
+    "build": "NODE_OPTIONS=--disable-warning=DEP0169 next build --webpack",
+    "start": "NODE_OPTIONS=--disable-warning=DEP0169 next start",
     "lint": "next lint"
   },
   "dependencies": {

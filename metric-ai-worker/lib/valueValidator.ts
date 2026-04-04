@@ -7,6 +7,47 @@
 
 import type { HistoricalStats } from './historicalContext';
 
+const MICRO = 1_000_000;
+
+/**
+ * Historical series sometimes stores USDC-style 6-decimal fixed-point integers
+ * (e.g. 266500 → $0.2665) while extraction returns human decimal. When the raw
+ * history disagrees wildly with the candidate but history/1e6 agrees, scale
+ * stats to human units for comparison and prompts.
+ */
+export function alignHistoricalStatsToExtracted(
+  stats: HistoricalStats,
+  extracted: number
+): HistoricalStats {
+  if (stats.source === 'none' || stats.count === 0) return stats;
+  if (!(extracted > 0)) return stats;
+
+  const last = stats.lastValue;
+  if (last === null || !(last > 0)) return stats;
+
+  const micro = last / MICRO;
+  const rawRel = Math.abs(last - extracted) / Math.max(last, extracted);
+  const microRel = Math.abs(micro - extracted) / Math.max(micro, extracted);
+
+  if (!(microRel < 0.22 && rawRel > 0.35)) return stats;
+
+  const suspiciousAbove =
+    stats.suspiciousAbove === Infinity ? Infinity : stats.suspiciousAbove / MICRO;
+  return {
+    ...stats,
+    lastValue: last / MICRO,
+    min: stats.min / MICRO,
+    max: stats.max / MICRO,
+    mean: stats.mean / MICRO,
+    stdDev: stats.stdDev / MICRO,
+    suspiciousBelow: stats.suspiciousBelow / MICRO,
+    suspiciousAbove,
+    lastUpdatedAt: stats.lastUpdatedAt,
+    count: stats.count,
+    source: stats.source,
+  };
+}
+
 export interface ValidationResult {
   valid: boolean;
   /** Confidence cap — if invalid, confidence should be capped at this value */
@@ -42,6 +83,8 @@ export function validateExtractedValue(
   if (!Number.isFinite(num) || Number.isNaN(num)) {
     return { valid: false, maxConfidence: 0.1, warnings: [`Value "${rawValue}" is not a valid number`] };
   }
+
+  stats = alignHistoricalStatsToExtracted(stats, num);
 
   if (num <= 0) {
     warnings.push(`Value ${num} is <= 0, which is invalid for a price metric`);

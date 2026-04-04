@@ -7,7 +7,7 @@ import { uploadScreenshot, UploadResult } from '../../../lib/uploadScreenshot';
 import { VisionAnalysisResult } from '../../../lib/visionAnalysis';
 import { analyzeWithConsensus, VisionConsensus } from '../../../lib/multiModelVision';
 import { getHistoricalContext, formatHistoricalContextForPrompt, HistoricalStats } from '../../../lib/historicalContext';
-import { validateExtractedValue, buildSecondOpinionPrompt } from '../../../lib/valueValidator';
+import { validateExtractedValue, buildSecondOpinionPrompt, alignHistoricalStatsToExtracted } from '../../../lib/valueValidator';
 import { discoverLocators, fastExtract, AiSourceLocatorData, DiscoveredSelector } from '../../../lib/autoLocatorDiscovery';
 import { fetchWithJina, screenshotWithJina } from '../../../lib/jinaReader';
 
@@ -72,6 +72,33 @@ function getSupabase() {
 
 function safeText(s: unknown) {
   return String(s ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** Best-effort numeric from vision outputs to align historical stats (micro vs decimal) before fusion. */
+function pickVisionNumericHint(map: Map<string, SourceScreenshotData>): number | null {
+  let bestN: number | null = null;
+  let bestC = -1;
+  const consider = (raw: unknown, conf: number) => {
+    const x =
+      typeof raw === 'number'
+        ? raw
+        : Number(String(raw ?? '').replace(/,/g, '').replace(/[^0-9.+-eE]/g, ''));
+    if (!Number.isFinite(x) || x <= 0) return;
+    const c = Number.isFinite(conf) ? conf : 0;
+    if (c > bestC) {
+      bestC = c;
+      bestN = x;
+    }
+  };
+  for (const d of map.values()) {
+    if (d.visionConsensus?.numericValue != null) {
+      consider(d.visionConsensus.numericValue, d.visionConsensus.confidence ?? 0);
+    }
+    if (d.visionResult?.numericValue != null) {
+      consider(d.visionResult.numericValue, Number(d.visionResult.confidence) || 0);
+    }
+  }
+  return bestN;
 }
 
 function decodeBasicEntities(input: string) {
@@ -946,20 +973,25 @@ export async function POST(req: NextRequest) {
         //          trimmed prompt + gpt-4.1-mini.
         // Tier 3 — Full fusion: no vision data → full prompt + gpt-4.1.
 
-        const historicalPrompt = formatHistoricalContextForPrompt(historicalStats);
-
-        let json: any;
-        let fusionTier: 'vision_shortcircuit' | 'lightweight' | 'full';
-        let fusionPrompt: string | null = null;
-        let fusionModel: string | null = null;
-
-        // Collect the strongest vision consensus across all URLs
+        // Collect the strongest vision consensus across all URLs (before building prompts).
         const allConsensus = Array.from(screenshotDataMap.values())
           .map(d => d.visionConsensus)
           .filter((c): c is VisionConsensus => !!c);
         const bestConsensus = allConsensus
           .filter(c => c.agreement === 'full' && c.numericValue !== undefined)
           .sort((a, b) => b.confidence - a.confidence)[0] || null;
+
+        const visionHint = bestConsensus?.numericValue ?? pickVisionNumericHint(screenshotDataMap);
+        const statsForHistoricalPrompt =
+          typeof visionHint === 'number' && Number.isFinite(visionHint) && visionHint > 0
+            ? alignHistoricalStatsToExtracted(historicalStats, visionHint)
+            : historicalStats;
+        const historicalPrompt = formatHistoricalContextForPrompt(statsForHistoricalPrompt);
+
+        let json: any;
+        let fusionTier: 'vision_shortcircuit' | 'lightweight' | 'full';
+        let fusionPrompt: string | null = null;
+        let fusionModel: string | null = null;
 
         const hasAnyVisionOrLocator = visionConsensusParts.length > 0 ||
           visionEvidenceParts.length > 0 ||
@@ -1145,7 +1177,18 @@ export async function POST(req: NextRequest) {
           if (validation.maxConfidence <= 0.3 && fusionTier !== 'vision_shortcircuit' && fusionPrompt) {
             try {
               const secondOpinionModel = fusionModel || OPENAI_MODEL_FULL;
-              const secondOpinion = buildSecondOpinionPrompt(json.asset_price_suggestion, validation.warnings, historicalStats);
+              const secondOpinionExtracted = Number(
+                String(json.asset_price_suggestion ?? '').replace(/[^0-9.+-eE]/g, '')
+              );
+              const statsForSecondOpinion = alignHistoricalStatsToExtracted(
+                historicalStats,
+                Number.isFinite(secondOpinionExtracted) && secondOpinionExtracted > 0 ? secondOpinionExtracted : 0
+              );
+              const secondOpinion = buildSecondOpinionPrompt(
+                json.asset_price_suggestion,
+                validation.warnings,
+                statsForSecondOpinion
+              );
               console.log('[Metric-AI] 🔄 Requesting second opinion from AI', { model: secondOpinionModel });
               const resp2 = await openai.chat.completions.create({
                 model: secondOpinionModel,
