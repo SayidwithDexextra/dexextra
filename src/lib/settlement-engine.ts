@@ -981,7 +981,8 @@ async function fireSettlementAIJob(
 /**
  * Called by the /api/settlement/ai-callback webhook when the AI worker
  * finishes processing. Commits evidence on-chain and updates Supabase
- * to SETTLEMENT_REQUESTED.
+ * to SETTLEMENT_REQUESTED (from ACTIVE), or refreshes proposed price while
+ * already in SETTLEMENT_REQUESTED (e.g. second AI job after window opened).
  */
 export async function completeSettlementFromAIResult(
   marketId: string,
@@ -1003,7 +1004,9 @@ export async function completeSettlementFromAIResult(
   if (fetchErr || !data) return { ok: false, reason: `market_fetch_failed` };
   const market = data as MarketRow;
 
-  if (market.market_status !== 'ACTIVE') {
+  const openingFromActive = market.market_status === 'ACTIVE';
+  const refreshingDuringWindow = market.market_status === 'SETTLEMENT_REQUESTED';
+  if (!openingFromActive && !refreshingDuringWindow) {
     return { ok: false, reason: `market_status_is_${market.market_status}` };
   }
 
@@ -1029,31 +1032,47 @@ export async function completeSettlementFromAIResult(
     ? new Date(Math.max(settlementMs + cwMs, now.getTime() + 60_000))
     : new Date(now.getTime() + getConfig().defaultWindowSeconds * 1000);
 
-  const updatedConfig = nextMarketConfig(market, {
-    stage: 'window_started',
-    started_at: now.toISOString(),
-    expires_at: expiresAt.toISOString(),
-    ai_job_id: ai.jobId,
-  });
+  let updatedConfig: Record<string, unknown>;
+  if (openingFromActive) {
+    updatedConfig = nextMarketConfig(market, {
+      stage: 'window_started',
+      started_at: now.toISOString(),
+      expires_at: expiresAt.toISOString(),
+      ai_job_id: ai.jobId,
+    });
+  } else {
+    const cfg = asRecord(market.market_config);
+    const scheduler = asRecord(cfg.settlement_scheduler);
+    updatedConfig = {
+      ...cfg,
+      settlement_scheduler: {
+        ...scheduler,
+        ai_job_id: ai.jobId,
+      },
+    };
+  }
   if (ai.waybackUrl) updatedConfig.settlement_wayback_url = ai.waybackUrl;
   if (ai.waybackPageUrl) updatedConfig.settlement_wayback_page_url = ai.waybackPageUrl;
   if (ai.screenshotUrl) updatedConfig.settlement_screenshot_url = ai.screenshotUrl;
   if (evidenceHash) updatedConfig.settlement_evidence_hash = evidenceHash;
 
-  const { data: updatedRows, error: updateErr } = await supabase
-    .from('markets')
-    .update({
-      proposed_settlement_value: ai.price,
-      proposed_settlement_at: now.toISOString(),
+  const rowUpdate: Record<string, unknown> = {
+    proposed_settlement_value: ai.price,
+    proposed_settlement_at: now.toISOString(),
+    proposed_settlement_by: 'AI_SYSTEM',
+    market_config: updatedConfig,
+    updated_at: now.toISOString(),
+  };
+  if (openingFromActive) {
+    rowUpdate.market_status = 'SETTLEMENT_REQUESTED';
+  }
 
-      proposed_settlement_by: 'AI_SYSTEM',
-      market_status: 'SETTLEMENT_REQUESTED',
-      market_config: updatedConfig,
-      updated_at: now.toISOString(),
-    })
-    .eq('id', market.id)
-    .eq('market_status', 'ACTIVE')
-    .select('id');
+  let updateQuery = supabase.from('markets').update(rowUpdate).eq('id', market.id);
+  updateQuery = openingFromActive
+    ? updateQuery.eq('market_status', 'ACTIVE')
+    : updateQuery.eq('market_status', 'SETTLEMENT_REQUESTED');
+
+  const { data: updatedRows, error: updateErr } = await updateQuery.select('id');
 
   if (updateErr) {
     return { ok: false, reason: `db_update_failed: ${updateErr.message}` };
@@ -1061,8 +1080,9 @@ export async function completeSettlementFromAIResult(
   if (!updatedRows?.length) {
     return {
       ok: false,
-      reason:
-        'no_row_updated_market_not_active_or_race — proposed settlement only applies while market_status is ACTIVE',
+      reason: openingFromActive
+        ? 'no_row_updated_market_not_active_or_race'
+        : 'no_row_updated_settlement_window_race',
     };
   }
 
@@ -1071,10 +1091,10 @@ export async function completeSettlementFromAIResult(
     console.warn(`[settlement-engine] syncLifecycle at AI callback warning for ${market.market_identifier}: ${syncResult.error}`);
   }
 
-  console.log(`[settlement-engine] settlement started via webhook callback for ${market.market_identifier}`, {
-    price: ai.price, jobId: ai.jobId, evidenceHash, expiresAt: expiresAt.toISOString(),
-    lifecycleSync: syncResult,
-  });
+  console.log(
+    `[settlement-engine] settlement ${openingFromActive ? 'opened' : 'price_refreshed'} via AI callback for ${market.market_identifier}`,
+    { price: ai.price, jobId: ai.jobId, evidenceHash, expiresAt: expiresAt.toISOString(), lifecycleSync: syncResult },
+  );
 
   return {
     ok: true,
@@ -1086,6 +1106,7 @@ export async function completeSettlementFromAIResult(
       waybackUrl: ai.waybackUrl,
       waybackPageUrl: ai.waybackPageUrl,
       lifecycleSync: syncResult,
+      mode: openingFromActive ? 'opened_from_active' : 'refreshed_during_settlement',
     },
   };
 }
@@ -1114,7 +1135,7 @@ export async function retrySettlementAIJobForMarket(
   if (error || !data) return { ok: false, error: 'market_fetch_failed' };
   const market = data as MarketRow;
 
-  if (market.market_status !== 'ACTIVE') {
+  if (!['ACTIVE', 'SETTLEMENT_REQUESTED'].includes(market.market_status)) {
     return { ok: false, error: `market_status_is_${market.market_status}` };
   }
 

@@ -18,7 +18,13 @@ interface Market {
   created_at: string;
 }
 
-type Action = 'rollover' | 'settlement_start' | 'settlement_finalize' | 'challenge' | 'ai_propose';
+type Action =
+  | 'rollover'
+  | 'settlement_start'
+  | 'settlement_finalize'
+  | 'challenge'
+  | 'ai_propose'
+  | 'metric_realtime';
 
 interface ActionResult {
   marketId: string;
@@ -59,6 +65,12 @@ const ACTION_META: Record<Action, { label: string; description: string; color: s
     description: 'Triggers the AI worker to discover and propose a settlement price on-chain',
     color: 'bg-purple-600',
     hoverColor: 'hover:bg-purple-500',
+  },
+  metric_realtime: {
+    label: 'Simulate token chart realtime',
+    description: 'Pusher metric-update only — no DB/chain; use with token page open',
+    color: 'bg-cyan-700',
+    hoverColor: 'hover:bg-cyan-600',
   },
 };
 
@@ -129,6 +141,7 @@ export default function SettlementLifecyclePage() {
   const [actionResults, setActionResults] = useState<ActionResult[]>([]);
   const [inflight, setInflight] = useState<Set<string>>(new Set());
   const [challengePrice, setChallengePrice] = useState<string>('');
+  const [simMetricValue, setSimMetricValue] = useState<string>('');
   const [adminSecret, setAdminSecret] = useAdminSecret();
   const [showSecret, setShowSecret] = useState(false);
 
@@ -224,6 +237,85 @@ export default function SettlementLifecyclePage() {
       }
     },
     [adminSecret, challengePrice, fetchMarkets],
+  );
+
+  const triggerMetricRealtime = useCallback(
+    async (market: Market) => {
+      const key = `${market.id}:metric_realtime`;
+      setInflight((prev) => new Set(prev).add(key));
+
+      if (!adminSecret) {
+        setActionResults((prev) => [
+          {
+            marketId: market.id,
+            action: 'metric_realtime',
+            status: 'error',
+            error: 'Admin secret is required — enter it in the header bar',
+            timestamp: new Date().toISOString(),
+          },
+          ...prev,
+        ]);
+        setInflight((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+        return;
+      }
+
+      const trimmed = simMetricValue.trim();
+      const parsed = trimmed ? Number(trimmed.replace(/,/g, '')) : NaN;
+      const body: Record<string, unknown> = {
+        market_id: market.id,
+        metric_name: String(market.symbol || market.market_identifier || '')
+          .trim()
+          .toUpperCase(),
+      };
+      if (Number.isFinite(parsed)) {
+        body.value = parsed;
+      }
+
+      try {
+        const res = await fetch('/api/debug/trigger-metric-realtime', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-admin-secret': adminSecret,
+          },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        setActionResults((prev) => [
+          {
+            marketId: market.id,
+            action: 'metric_realtime',
+            status: res.ok ? 'success' : 'error',
+            data: res.ok ? data : undefined,
+            error: res.ok ? undefined : data?.error || `HTTP ${res.status}`,
+            timestamp: new Date().toISOString(),
+          },
+          ...prev,
+        ]);
+      } catch (e: unknown) {
+        setActionResults((prev) => [
+          {
+            marketId: market.id,
+            action: 'metric_realtime',
+            status: 'error',
+            error: e instanceof Error ? e.message : String(e),
+            timestamp: new Date().toISOString(),
+          },
+          ...prev,
+        ]);
+      } finally {
+        setInflight((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [adminSecret, simMetricValue],
   );
 
   const uniqueStatuses = Array.from(new Set(markets.map((m) => m.market_status))).sort();
@@ -430,7 +522,7 @@ export default function SettlementLifecyclePage() {
                 <div className="rounded-lg border border-[#1E1E1E] bg-[#111111] p-4">
                   <div className="text-[12px] font-medium text-white mb-3">Trigger Settlement Actions</div>
                   <div className="flex flex-col gap-2">
-                    {(['rollover', 'settlement_start', 'ai_propose', 'settlement_finalize', 'challenge'] as Action[]).map(
+                    {(['rollover', 'settlement_start', 'ai_propose', 'settlement_finalize', 'challenge'] as const).map(
                       (action) => {
                         const meta = ACTION_META[action];
                         const key = `${selected.id}:${action}`;
@@ -488,6 +580,61 @@ export default function SettlementLifecyclePage() {
                         );
                       },
                     )}
+                  </div>
+
+                  <div className="mt-4 border-t border-[#1E1E1E] pt-4">
+                    <div className="text-[11px] font-medium text-cyan-200/90 mb-1">
+                      {ACTION_META.metric_realtime.label}
+                    </div>
+                    <p className="text-[10px] text-[#666] mb-2 leading-relaxed">
+                      Sends the same Pusher event as live metric ingestion (
+                      <code className="text-[9px] text-cyan-600/80">metric-{'{uuid}'}</code> /{' '}
+                      <code className="text-[9px] text-cyan-600/80">metric-update</code>
+                      ). No Supabase, ClickHouse, or chain writes — reload the token page anytime for a clean slate.
+                    </p>
+                    <p className="text-[10px] text-[#555] mb-2">
+                      Open{' '}
+                      <a
+                        href={`/token/${encodeURIComponent(selected.symbol)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-cyan-400 underline hover:text-cyan-300"
+                      >
+                        /token/{selected.symbol}
+                      </a>{' '}
+                      (metric name matches this symbol). Leave value empty for a small auto-varying test number.
+                    </p>
+                    <input
+                      className="mb-2 w-full rounded border border-[#222] bg-[#0A0A0A] px-3 py-1.5 text-[12px] text-white placeholder-[#555] focus:border-cyan-700/50 focus:outline-none"
+                      placeholder="Optional plotted value (e.g. 0.2657)"
+                      type="text"
+                      inputMode="decimal"
+                      value={simMetricValue}
+                      onChange={(e) => setSimMetricValue(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => triggerMetricRealtime(selected)}
+                      disabled={inflight.has(`${selected.id}:metric_realtime`) || !adminSecret}
+                      className="w-full rounded px-4 py-2.5 text-left transition-colors disabled:opacity-50 bg-cyan-700 hover:bg-cyan-600"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-[12px] font-semibold text-white">Fire test metric-update</div>
+                          <div className="text-[10px] text-white/60">{ACTION_META.metric_realtime.description}</div>
+                        </div>
+                        {inflight.has(`${selected.id}:metric_realtime`) && (
+                          <svg className="h-4 w-4 animate-spin text-white/80" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                    </button>
                   </div>
                 </div>
 
