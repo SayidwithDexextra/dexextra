@@ -6,7 +6,13 @@ export function challengeWindowExpiresMs(market: {
   market_config?: Record<string, unknown> | null;
 }): number | null {
   const cfg = (market.market_config || {}) as Record<string, unknown>;
-  const raw = cfg.expires_at;
+  const scheduler = (cfg.settlement_scheduler || {}) as Record<string, unknown>;
+  const raw =
+    typeof cfg.expires_at === 'string' && cfg.expires_at.trim()
+      ? cfg.expires_at
+      : typeof scheduler.expires_at === 'string' && String(scheduler.expires_at).trim()
+        ? scheduler.expires_at
+        : null;
   if (typeof raw === 'string' && raw.trim()) {
     const ms = Date.parse(raw);
     if (Number.isFinite(ms)) return ms;

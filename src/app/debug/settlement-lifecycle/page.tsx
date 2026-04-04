@@ -24,7 +24,8 @@ type Action =
   | 'settlement_finalize'
   | 'challenge'
   | 'ai_propose'
-  | 'metric_realtime';
+  | 'mock_proposal_set'
+  | 'mock_proposal_clear';
 
 interface ActionResult {
   marketId: string;
@@ -66,11 +67,17 @@ const ACTION_META: Record<Action, { label: string; description: string; color: s
     color: 'bg-purple-600',
     hoverColor: 'hover:bg-purple-500',
   },
-  metric_realtime: {
-    label: 'Simulate token chart realtime',
-    description: 'Pusher metric-update only — no DB/chain; use with token page open',
+  mock_proposal_set: {
+    label: 'Mock proposed settlement price',
+    description: 'Writes proposed_settlement_* to Supabase like AI — reload token settlement view',
     color: 'bg-cyan-700',
     hoverColor: 'hover:bg-cyan-600',
+  },
+  mock_proposal_clear: {
+    label: 'Clear mock proposal',
+    description: 'Nulls proposed_settlement_* in Supabase',
+    color: 'bg-slate-700',
+    hoverColor: 'hover:bg-slate-600',
   },
 };
 
@@ -141,7 +148,7 @@ export default function SettlementLifecyclePage() {
   const [actionResults, setActionResults] = useState<ActionResult[]>([]);
   const [inflight, setInflight] = useState<Set<string>>(new Set());
   const [challengePrice, setChallengePrice] = useState<string>('');
-  const [simMetricValue, setSimMetricValue] = useState<string>('');
+  const [mockProposalPrice, setMockProposalPrice] = useState<string>('');
   const [adminSecret, setAdminSecret] = useAdminSecret();
   const [showSecret, setShowSecret] = useState(false);
 
@@ -239,16 +246,17 @@ export default function SettlementLifecyclePage() {
     [adminSecret, challengePrice, fetchMarkets],
   );
 
-  const triggerMetricRealtime = useCallback(
-    async (market: Market) => {
-      const key = `${market.id}:metric_realtime`;
+  const postMockSettlementProposal = useCallback(
+    async (market: Market, clear: boolean) => {
+      const action: Action = clear ? 'mock_proposal_clear' : 'mock_proposal_set';
+      const key = `${market.id}:${action}`;
       setInflight((prev) => new Set(prev).add(key));
 
       if (!adminSecret) {
         setActionResults((prev) => [
           {
             marketId: market.id,
-            action: 'metric_realtime',
+            action,
             status: 'error',
             error: 'Admin secret is required — enter it in the header bar',
             timestamp: new Date().toISOString(),
@@ -263,20 +271,36 @@ export default function SettlementLifecyclePage() {
         return;
       }
 
-      const trimmed = simMetricValue.trim();
-      const parsed = trimmed ? Number(trimmed.replace(/,/g, '')) : NaN;
-      const body: Record<string, unknown> = {
-        market_id: market.id,
-        metric_name: String(market.symbol || market.market_identifier || '')
-          .trim()
-          .toUpperCase(),
-      };
-      if (Number.isFinite(parsed)) {
-        body.value = parsed;
+      if (!clear) {
+        const p = Number(String(mockProposalPrice).trim().replace(/,/g, ''));
+        if (!Number.isFinite(p) || p <= 0) {
+          setActionResults((prev) => [
+            {
+              marketId: market.id,
+              action,
+              status: 'error',
+              error: 'Enter a positive mock proposed price (e.g. 0.2657)',
+              timestamp: new Date().toISOString(),
+            },
+            ...prev,
+          ]);
+          setInflight((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
+          return;
+        }
+      }
+
+      const body: Record<string, unknown> = { market_id: market.id, clear };
+      if (!clear) {
+        const p = Number(String(mockProposalPrice).trim().replace(/,/g, ''));
+        body.price = p;
       }
 
       try {
-        const res = await fetch('/api/debug/trigger-metric-realtime', {
+        const res = await fetch('/api/debug/mock-settlement-proposal', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -288,7 +312,7 @@ export default function SettlementLifecyclePage() {
         setActionResults((prev) => [
           {
             marketId: market.id,
-            action: 'metric_realtime',
+            action,
             status: res.ok ? 'success' : 'error',
             data: res.ok ? data : undefined,
             error: res.ok ? undefined : data?.error || `HTTP ${res.status}`,
@@ -296,11 +320,12 @@ export default function SettlementLifecyclePage() {
           },
           ...prev,
         ]);
+        if (res.ok) fetchMarkets();
       } catch (e: unknown) {
         setActionResults((prev) => [
           {
             marketId: market.id,
-            action: 'metric_realtime',
+            action,
             status: 'error',
             error: e instanceof Error ? e.message : String(e),
             timestamp: new Date().toISOString(),
@@ -315,7 +340,7 @@ export default function SettlementLifecyclePage() {
         });
       }
     },
-    [adminSecret, simMetricValue],
+    [adminSecret, mockProposalPrice, fetchMarkets],
   );
 
   const uniqueStatuses = Array.from(new Set(markets.map((m) => m.market_status))).sort();
@@ -584,13 +609,14 @@ export default function SettlementLifecyclePage() {
 
                   <div className="mt-4 border-t border-[#1E1E1E] pt-4">
                     <div className="text-[11px] font-medium text-cyan-200/90 mb-1">
-                      {ACTION_META.metric_realtime.label}
+                      {ACTION_META.mock_proposal_set.label}
                     </div>
                     <p className="text-[10px] text-[#666] mb-2 leading-relaxed">
-                      Sends the same Pusher event as live metric ingestion (
-                      <code className="text-[9px] text-cyan-600/80">metric-{'{uuid}'}</code> /{' '}
-                      <code className="text-[9px] text-cyan-600/80">metric-update</code>
-                      ). No Supabase, ClickHouse, or chain writes — reload the token page anytime for a clean slate.
+                      Updates Supabase <code className="text-[9px] text-cyan-600/80">proposed_settlement_value</code>,{' '}
+                      <code className="text-[9px] text-cyan-600/80">proposed_settlement_at</code>, window metadata in{' '}
+                      <code className="text-[9px] text-cyan-600/80">market_config</code>, and sets status to{' '}
+                      <code className="text-[9px] text-cyan-600/80">SETTLEMENT_REQUESTED</code> (unless the market is
+                      already settled). No on-chain transaction.
                     </p>
                     <p className="text-[10px] text-[#555] mb-2">
                       Open{' '}
@@ -601,29 +627,53 @@ export default function SettlementLifecyclePage() {
                         className="text-cyan-400 underline hover:text-cyan-300"
                       >
                         /token/{selected.symbol}
-                      </a>{' '}
-                      (metric name matches this symbol). Leave value empty for a small auto-varying test number.
+                      </a>
+                      , open the settlement overlay, then reload or wait for realtime so{' '}
+                      <span className="text-[#888]">Proposed Price</span> appears.
                     </p>
                     <input
                       className="mb-2 w-full rounded border border-[#222] bg-[#0A0A0A] px-3 py-1.5 text-[12px] text-white placeholder-[#555] focus:border-cyan-700/50 focus:outline-none"
-                      placeholder="Optional plotted value (e.g. 0.2657)"
+                      placeholder="Proposed price (e.g. 0.2657)"
                       type="text"
                       inputMode="decimal"
-                      value={simMetricValue}
-                      onChange={(e) => setSimMetricValue(e.target.value)}
+                      value={mockProposalPrice}
+                      onChange={(e) => setMockProposalPrice(e.target.value)}
                     />
                     <button
                       type="button"
-                      onClick={() => triggerMetricRealtime(selected)}
-                      disabled={inflight.has(`${selected.id}:metric_realtime`) || !adminSecret}
-                      className="w-full rounded px-4 py-2.5 text-left transition-colors disabled:opacity-50 bg-cyan-700 hover:bg-cyan-600"
+                      onClick={() => postMockSettlementProposal(selected, false)}
+                      disabled={inflight.has(`${selected.id}:mock_proposal_set`) || !adminSecret}
+                      className="mb-2 w-full rounded px-4 py-2.5 text-left transition-colors disabled:opacity-50 bg-cyan-700 hover:bg-cyan-600"
                     >
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="text-[12px] font-semibold text-white">Fire test metric-update</div>
-                          <div className="text-[10px] text-white/60">{ACTION_META.metric_realtime.description}</div>
+                          <div className="text-[12px] font-semibold text-white">Apply mock proposal</div>
+                          <div className="text-[10px] text-white/60">{ACTION_META.mock_proposal_set.description}</div>
                         </div>
-                        {inflight.has(`${selected.id}:metric_realtime`) && (
+                        {inflight.has(`${selected.id}:mock_proposal_set`) && (
+                          <svg className="h-4 w-4 animate-spin text-white/80" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => postMockSettlementProposal(selected, true)}
+                      disabled={inflight.has(`${selected.id}:mock_proposal_clear`) || !adminSecret}
+                      className="w-full rounded px-4 py-2.5 text-left transition-colors disabled:opacity-50 bg-slate-700 hover:bg-slate-600"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-[12px] font-semibold text-white">{ACTION_META.mock_proposal_clear.label}</div>
+                          <div className="text-[10px] text-white/60">{ACTION_META.mock_proposal_clear.description}</div>
+                        </div>
+                        {inflight.has(`${selected.id}:mock_proposal_clear`) && (
                           <svg className="h-4 w-4 animate-spin text-white/80" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path

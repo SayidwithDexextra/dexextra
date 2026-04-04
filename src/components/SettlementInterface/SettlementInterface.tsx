@@ -451,7 +451,8 @@ export function SettlementInterface({
   }
 
   const isSettled = market?.market_status === 'SETTLED';
-  const hasProposedPrice = typeof market?.proposed_settlement_value === 'number' && market.proposed_settlement_value > 0;
+  const proposedSettlementNum = Number(market?.proposed_settlement_value);
+  const hasProposedPrice = Number.isFinite(proposedSettlementNum) && proposedSettlementNum > 0;
 
   const statusDotClass = isSettled ? 'bg-blue-400'
     : isExpired ? 'bg-red-400'
