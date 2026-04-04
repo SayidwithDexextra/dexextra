@@ -708,6 +708,45 @@ contract MarketLifecycleFacet {
     }
 
     /**
+     * @notice Gasless variant: challenge on behalf of a user via relayer.
+     * @dev Only callable by the contract owner (admin/relayer). The caller specifies
+     *      the actual challenger address; bond is deducted from their CoreVault balance.
+     * @param challenger The user's wallet address (treated as msg.sender in the normal path)
+     * @param alternativePrice The challenger's proposed settlement price (6 decimals)
+     */
+    function challengeSettlementFor(address challenger, uint256 alternativePrice) external onlyOwner {
+        require(challenger != address(0), "LC: challenger=0");
+        require(alternativePrice > 0, "LC: price=0");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+
+        require(s.challengeWindowStarted, "LC: window not started");
+        require(!s.lifecycleSettled, "LC: already settled");
+        uint256 challengeEnd = s.challengeWindowStart + _challengeDuration(s);
+        require(block.timestamp < challengeEnd, "LC: window expired");
+
+        require(!s.challengeActive, "LC: challenge exists");
+
+        OrderBookStorage.State storage obs = OrderBookStorage.state();
+        require(address(obs.vault) != address(0), "LC: vault not set");
+
+        uint256 bondToEscrow = 0;
+        if (!s.proposalBondExempt[challenger]) {
+            require(s.challengeBondAmount > 0, "LC: bond not configured");
+            require(obs.vault.getAvailableCollateral(challenger) >= s.challengeBondAmount, "LC: insufficient collateral");
+            obs.vault.deductFees(challenger, s.challengeBondAmount, address(this));
+            bondToEscrow = s.challengeBondAmount;
+        }
+
+        s.challenger = challenger;
+        s.challengedPrice = alternativePrice;
+        s.challengeBondEscrowed = bondToEscrow;
+        s.challengeActive = true;
+        s.challengeResolved = false;
+
+        emit SettlementChallenged(address(this), challenger, alternativePrice, bondToEscrow);
+    }
+
+    /**
      * @notice Resolve an active challenge: refund the bond to the challenger or slash it to treasury.
      * @param challengerWins If true, bond is returned to challenger. If false, bond goes to slash recipient.
      */
