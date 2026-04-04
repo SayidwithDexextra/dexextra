@@ -75,7 +75,32 @@ function getConfig() {
     defaultWindowSeconds: parsePositiveInt(process.env.SETTLEMENT_WINDOW_SECONDS, 24 * 60 * 60),
     onchainDriftToleranceSeconds: parsePositiveInt(process.env.SETTLEMENT_CHAIN_DRIFT_TOLERANCE_SECONDS, 5 * 60),
     requireOnchainSettlementCheck: parseBool(process.env.REQUIRE_ONCHAIN_SETTLEMENT_CHECK, false),
+    settlementAiPollTimeoutMs: parsePositiveInt(process.env.SETTLEMENT_AI_POLL_TIMEOUT_MS, 120_000),
   };
+}
+
+/** Base URL used for AI worker webhooks (must be reachable from the worker process). */
+function normalizeAppUrl(): string {
+  return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
+}
+
+/**
+ * Webhook callbacks from the metric-ai-worker cannot reach localhost / missing APP_URL.
+ * In those cases we must poll the worker from this app and complete settlement inline.
+ */
+function shouldUseInlineSettlementAi(): boolean {
+  if (parseBool(process.env.SETTLEMENT_AI_INLINE, false)) return true;
+  const appUrl = normalizeAppUrl();
+  if (!appUrl) return true;
+  try {
+    const u = new URL(appUrl);
+    const h = u.hostname.toLowerCase();
+    if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0') return true;
+    if (h.endsWith('.local')) return true;
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 // ── Utilities ──
@@ -149,7 +174,10 @@ function nextMarketConfig(
 
 // ── AI price determination ──
 
-async function getAIPriceDetermination(
+/**
+ * Poll the metric-ai-worker until a price is returned (used by cron and inline settlement).
+ */
+export async function getAIPriceDetermination(
   market: MarketRow,
 ): Promise<{ price: number; jobId: string; waybackUrl: string | null; waybackPageUrl: string | null; screenshotUrl: string | null } | null> {
   const { metricAiWorkerUrl } = getConfig();
@@ -204,7 +232,7 @@ async function getAIPriceDetermination(
     }
     console.log(`[settlement-engine] AI job started: ${jobId} for ${market.market_identifier} (attempt ${attempt}/${maxRetries})`);
 
-    const timeoutMs = 30_000;
+    const timeoutMs = getConfig().settlementAiPollTimeoutMs;
     const pollEveryMs = 2_000;
     const startTs = Date.now();
     let shouldRetry = false;
@@ -805,29 +833,69 @@ export async function forceStartSettlementWindow(
     };
   }
 
-  const jobResult = await fireSettlementAIJob(market);
-  if (!jobResult.ok) {
-    console.warn(`[settlement-engine] AI price discovery failed for ${market.market_identifier} (non-blocking): ${jobResult.error}`);
+  if (shouldUseInlineSettlementAi()) {
+    console.log(`[settlement-engine] using inline AI settlement (APP_URL not webhook-reachable or SETTLEMENT_AI_INLINE=1) for ${market.market_identifier}`);
+    const ai = await getAIPriceDetermination(market);
+    if (!ai) {
+      return {
+        ok: false,
+        mode: 'settlement_start',
+        error: 'inline_ai_price_failed',
+        result: {
+          marketId: market.id,
+          marketIdentifier: market.market_identifier,
+          action: 'ai_price_failed',
+          ok: false,
+          reason: 'metric_worker_returned_no_valid_price_or_timed_out',
+        },
+      };
+    }
+    const outcome = await completeSettlementFromAIResult(market.id, ai);
     return {
-      ok: true, mode: 'settlement_start',
+      ok: outcome.ok,
+      mode: 'settlement_start',
+      error: outcome.ok ? undefined : outcome.reason,
       result: {
         marketId: market.id,
         marketIdentifier: market.market_identifier,
-        action: 'ai_job_failed_non_blocking',
-        ok: true,
+        action: outcome.ok ? 'settlement_started_inline' : 'settlement_db_or_chain_failed',
+        ok: outcome.ok,
+        reason: outcome.reason,
+        details: outcome.details,
+      },
+    };
+  }
+
+  const jobResult = await fireSettlementAIJob(market);
+  if (!jobResult.ok) {
+    console.warn(`[settlement-engine] AI webhook job failed for ${market.market_identifier}: ${jobResult.error}`);
+    return {
+      ok: false,
+      mode: 'settlement_start',
+      error: jobResult.error,
+      result: {
+        marketId: market.id,
+        marketIdentifier: market.market_identifier,
+        action: 'ai_job_failed',
+        ok: false,
         details: { error: jobResult.error },
       },
     };
   }
 
   return {
-    ok: true, mode: 'settlement_start',
+    ok: true,
+    mode: 'settlement_start',
     result: {
       marketId: market.id,
       marketIdentifier: market.market_identifier,
       action: 'ai_job_fired',
       ok: true,
-      details: { jobId: jobResult.jobId, callbackMode: true },
+      details: {
+        jobId: jobResult.jobId,
+        callbackMode: true,
+        callbackUrl: `${normalizeAppUrl()}/api/settlement/ai-callback`,
+      },
     },
   };
 }
@@ -844,11 +912,15 @@ async function fireSettlementAIJob(
   const urls = metricUrlsForMarket(market);
   if (urls.length === 0) return { ok: false, error: 'no_metric_urls' };
 
-  const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
+  const appUrl = normalizeAppUrl();
   if (!appUrl) return { ok: false, error: 'APP_URL_not_configured' };
 
-  if (appUrl.includes('localhost') || appUrl.includes('127.0.0.1')) {
-    console.error(`[settlement-engine] APP_URL points to localhost (${appUrl}) — AI callback will be unreachable in production`);
+  if (shouldUseInlineSettlementAi()) {
+    return {
+      ok: false,
+      error:
+        'APP_URL_is_localhost_or_unset_use_SETTLEMENT_AI_INLINE_or_public_APP_URL — webhook callbacks from the worker cannot reach this host',
+    };
   }
 
   const callbackUrl = `${appUrl}/api/settlement/ai-callback`;
@@ -968,7 +1040,7 @@ export async function completeSettlementFromAIResult(
   if (ai.screenshotUrl) updatedConfig.settlement_screenshot_url = ai.screenshotUrl;
   if (evidenceHash) updatedConfig.settlement_evidence_hash = evidenceHash;
 
-  const { error: updateErr } = await supabase
+  const { data: updatedRows, error: updateErr } = await supabase
     .from('markets')
     .update({
       proposed_settlement_value: ai.price,
@@ -980,10 +1052,18 @@ export async function completeSettlementFromAIResult(
       updated_at: now.toISOString(),
     })
     .eq('id', market.id)
-    .eq('market_status', 'ACTIVE');
+    .eq('market_status', 'ACTIVE')
+    .select('id');
 
   if (updateErr) {
     return { ok: false, reason: `db_update_failed: ${updateErr.message}` };
+  }
+  if (!updatedRows?.length) {
+    return {
+      ok: false,
+      reason:
+        'no_row_updated_market_not_active_or_race — proposed settlement only applies while market_status is ACTIVE',
+    };
   }
 
   const syncResult = await settlementSyncLifecycleOnChain(market);
