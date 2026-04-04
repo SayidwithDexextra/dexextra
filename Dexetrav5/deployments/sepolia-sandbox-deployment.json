@@ -1,0 +1,16 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "timestamp": "2026-04-04T13:49:37.647Z",
+  "mode": "sandbox",
+  "contracts": {
+    "SANDBOX_OOV3": "0x0F5341665c9cc2bB663333b2f197A65E862b51b8",
+    "DISPUTE_RELAY": "0x94E2545BefE6085D719D733F2777ed8386ef803B",
+    "BOND_TOKEN": "0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9"
+  },
+  "bondTokenInfo": {
+    "symbol": "WETH",
+    "decimals": 18
+  },
+  "deployer": "0x428d7cBd7feccf01a80dACE3d70b8eCf06451500"
+}

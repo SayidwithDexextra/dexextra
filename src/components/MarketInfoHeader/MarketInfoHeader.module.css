@@ -322,6 +322,31 @@
   flex-shrink: 0;
 }
 
+.settlementBadgeUmaDispute {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #f87171;
+}
+
+.umaDisputeDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f87171;
+  flex-shrink: 0;
+  animation: umaDisputePulse 2s ease-in-out infinite;
+}
+
+@keyframes umaDisputePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.umaDispute {
+  background: #f87171 !important;
+  animation: umaDisputePulse 2s ease-in-out infinite;
+}
+
 .settlementBadgeSettling {
   background: rgba(168, 85, 247, 0.10);
   border-color: rgba(168, 85, 247, 0.30);

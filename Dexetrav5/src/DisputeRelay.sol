@@ -131,7 +131,7 @@ contract DisputeRelay {
      * @param hlMarket The HyperLiquid market Diamond address (for tracking)
      * @param proposedPrice The original settlement price being defended (6 decimals)
      * @param challengedPrice The challenger's alternative price (6 decimals)
-     * @param evidenceUrl Wayback URL or evidence link for DVM voters
+     * @param claim Pre-built human-readable claim bytes for UMA DVM voters
      * @param bondAmount Bond per side in bond token units
      * @param liveness Minimum liveness in seconds (will be immediately overridden by dispute)
      */
@@ -139,7 +139,7 @@ contract DisputeRelay {
         address hlMarket,
         uint256 proposedPrice,
         uint256 challengedPrice,
-        string calldata evidenceUrl,
+        bytes calldata claim,
         uint256 bondAmount,
         uint64 liveness
     ) external onlyOwner returns (bytes32 assertionId) {
@@ -147,7 +147,7 @@ contract DisputeRelay {
         require(proposedPrice > 0, "DisputeRelay: zero proposed");
         require(challengedPrice > 0, "DisputeRelay: zero challenged");
         require(bondAmount > 0, "DisputeRelay: zero bond");
-        require(bytes(evidenceUrl).length > 0, "DisputeRelay: empty evidence");
+        require(claim.length > 0, "DisputeRelay: empty claim");
 
         uint256 totalNeeded = bondAmount * 2;
         require(
@@ -156,17 +156,6 @@ contract DisputeRelay {
         );
 
         bondToken.safeIncreaseAllowance(address(oov3), totalNeeded);
-
-        bytes memory claim = abi.encodePacked(
-            "The settlement price for Dexetra market 0x",
-            _addressToHex(hlMarket),
-            " is ",
-            _uint2str(proposedPrice),
-            " (6 decimals). Challenger proposes ",
-            _uint2str(challengedPrice),
-            ". Evidence: ",
-            evidenceUrl
-        );
 
         // Step 1: Assert that the proposer's price is correct
         assertionId = oov3.assertTruth(
@@ -284,33 +273,4 @@ contract DisputeRelay {
         owner = newOwner;
     }
 
-    // ═══════════════════════════════════════════════
-    // Internal helpers
-    // ═══════════════════════════════════════════════
-
-    function _uint2str(uint256 v) internal pure returns (string memory) {
-        if (v == 0) return "0";
-        uint256 temp = v;
-        uint256 digits;
-        while (temp != 0) { digits++; temp /= 10; }
-        bytes memory buffer = new bytes(digits);
-        while (v != 0) {
-            digits--;
-            buffer[digits] = bytes1(uint8(48 + v % 10));
-            v /= 10;
-        }
-        return string(buffer);
-    }
-
-    function _addressToHex(address a) internal pure returns (string memory) {
-        bytes memory result = new bytes(40);
-        bytes16 hexChars = "0123456789abcdef";
-        uint160 val = uint160(a);
-        for (uint256 i = 40; i > 0; ) {
-            i--;
-            result[i] = hexChars[val & 0xf];
-            val >>= 4;
-        }
-        return string(result);
-    }
 }

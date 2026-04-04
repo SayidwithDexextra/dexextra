@@ -3,12 +3,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWallet } from '@/hooks/useWallet';
 import { useCoreVault } from '@/hooks/useCoreVault';
+import { useSession } from '@/contexts/SessionContext';
 import { publicClient } from '@/lib/viemClient';
-import { ethers } from 'ethers';
-import { getActiveEthereumProvider, type EthereumProvider } from '@/lib/wallet';
-import { getMagicProvider, switchMagicChainWithRetry } from '@/lib/magic';
-import { getChainId } from '@/lib/network';
-import { MarketLifecycleFacetABI } from '@/lib/contracts';
 import { challengeWindowExpiresMs } from '@/lib/settlement-window';
 
 interface SettlementMarket {
@@ -42,6 +38,7 @@ interface SettlementMarket {
     uma_escalation_tx?: string;
     uma_resolved?: boolean;
     uma_challenger_won?: boolean;
+    uma_winning_price?: number;
     uma_resolution_tx?: string;
     uma_resolved_at?: string;
     challenger_evidence?: {
@@ -113,6 +110,7 @@ export function SettlementInterface({
 }: SettlementInterfaceProps) {
   const { walletData } = useWallet();
   const { availableBalance, fetchBalances: refreshVaultBalance } = useCoreVault();
+  const { sessionId, sessionActive, enableTrading, loading: sessionLoading } = useSession();
   const [challengePrice, setChallengePrice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStep, setSubmitStep] = useState<string>('');
@@ -273,6 +271,18 @@ export function SettlementInterface({
   const hasEvidenceImage = Boolean(uploadedEvidenceImageUrl) || Boolean(evidenceImageFile);
   const evidenceComplete = hasEvidenceSource || hasEvidenceImage;
 
+  const handleEnableSession = async () => {
+    setChallengeNotice(null);
+    const result = await enableTrading();
+    if (result.success) {
+      setChallengeNotice({ type: 'success', text: 'Gasless session enabled. You can now submit proposals without wallet popups.' });
+    } else {
+      setChallengeNotice({ type: 'error', text: result.error || 'Failed to create session.' });
+    }
+  };
+
+  const hasSession = Boolean(sessionActive && sessionId);
+
   const handleChallenge = async () => {
     if (!challengePrice) return;
     const price = Number(challengePrice);
@@ -284,6 +294,7 @@ export function SettlementInterface({
     if (!hasSufficientBalance) { setChallengeNotice({ type: 'error', text: `Insufficient balance. Need ${bondRequired.toLocaleString()} USDC, you have ${availableBalanceNum.toFixed(2)} USDC.` }); return; }
     if (!evidenceUrlFieldOk) { setChallengeNotice({ type: 'error', text: 'Evidence URL must be a valid http(s) link or left empty if you upload an image.' }); return; }
     if (!evidenceComplete) { setChallengeNotice({ type: 'error', text: 'Provide evidence: a source URL and/or a screenshot image.' }); return; }
+    if (!hasSession) { setChallengeNotice({ type: 'error', text: 'Enable gasless trading to submit a proposal.' }); return; }
 
     try {
       setIsSubmitting(true);
@@ -310,48 +321,16 @@ export function SettlementInterface({
         setUploadedEvidenceImageUrl(imagePublicUrl);
       }
 
-      // Step 1: Call challengeSettlement on-chain via user's wallet
-      setSubmitStep('Requesting wallet signature...');
-      const alternativePriceWei = ethers.parseUnits(price.toFixed(6), 6);
-
-      const preferred = typeof window !== 'undefined' ? window.localStorage.getItem('walletProvider') : null;
-      const isMagic = preferred === 'magic';
-      const eip1193: EthereumProvider | undefined =
-        (isMagic ? (getMagicProvider() as any as EthereumProvider) : null) ??
-        (getActiveEthereumProvider() ?? ((window as any).ethereum as EthereumProvider | undefined)) ??
-        undefined;
-      if (!eip1193) { setChallengeNotice({ type: 'error', text: 'No wallet provider found.' }); return; }
-
-      if (isMagic) {
-        await switchMagicChainWithRetry(getChainId(), { retries: 2 });
-      }
-
-      const browserProvider = new ethers.BrowserProvider(eip1193 as any);
-      const signer = await browserProvider.getSigner();
-      const marketContract = new ethers.Contract(
-        market.market_address,
-        MarketLifecycleFacetABI,
-        signer,
-      );
-
-      setSubmitStep('Submitting on-chain proposal...');
-      const tx = await marketContract.challengeSettlement(alternativePriceWei);
-      setSubmitStep('Waiting for confirmation...');
-      const receipt = await tx.wait();
-      const txHash = receipt.hash;
-      setChallengeTxHash(txHash);
-
-      // Step 2: Record to Supabase and trigger UMA escalation via API
-      setSubmitStep('Escalating to UMA...');
-      const apiRes = await fetch('/api/settlements/challenge', {
+      setSubmitStep('Submitting gasless proposal...');
+      const apiRes = await fetch('/api/gasless/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId,
+          trader: walletData.address,
           market_id: market.id,
           market_address: market.market_address,
           price,
-          proposer_wallet: walletData.address,
-          txHash,
           evidence_source_url: hasEvidenceSource ? evidenceUrlTrim : undefined,
           evidence_image_url: imagePublicUrl || undefined,
         }),
@@ -359,9 +338,11 @@ export function SettlementInterface({
       const apiData = await apiRes.json();
 
       if (!apiRes.ok) {
-        setChallengeNotice({ type: 'error', text: apiData.error || 'Challenge recorded on-chain but API update failed.' });
+        setChallengeNotice({ type: 'error', text: apiData.error || 'Gasless challenge failed.' });
         return;
       }
+
+      if (apiData.txHash) setChallengeTxHash(apiData.txHash);
 
       setChallengePrice('');
       setEvidenceSourceUrl('');
@@ -370,16 +351,12 @@ export function SettlementInterface({
       const umaInfo = apiData.uma_assertion_id
         ? ` UMA Assertion: ${apiData.uma_assertion_id.slice(0, 10)}...`
         : '';
-      setChallengeNotice({ type: 'success', text: `Proposal submitted on-chain. Escalated to UMA for verification.${umaInfo}` });
+      setChallengeNotice({ type: 'success', text: `Proposal submitted on-chain (gasless). Escalated to UMA for verification.${umaInfo}` });
       refreshVaultBalance();
       onChallengeSaved?.();
     } catch (err: any) {
-      const msg = err?.reason || err?.message || 'Transaction failed';
-      if (msg.includes('user rejected') || msg.includes('ACTION_REJECTED')) {
-        setChallengeNotice({ type: 'error', text: 'Transaction cancelled by user.' });
-      } else {
-        setChallengeNotice({ type: 'error', text: msg.length > 120 ? msg.slice(0, 120) + '...' : msg });
-      }
+      const msg = err?.reason || err?.message || 'Submission failed';
+      setChallengeNotice({ type: 'error', text: msg.length > 120 ? msg.slice(0, 120) + '...' : msg });
     } finally {
       setIsSubmitting(false);
       setSubmitStep('');
@@ -409,7 +386,9 @@ export function SettlementInterface({
     ? 'Connect a wallet to propose a settlement price.'
     : isSubmitting
       ? (submitStep || 'Submitting proposal...')
-      : 'Enter your proposed price, add supporting evidence, then confirm on-chain.';
+      : hasSession
+        ? 'Enter your proposed price and evidence. No wallet signature required.'
+        : 'Enable gasless trading to submit proposals without wallet popups.';
   const helperText = challengeNotice?.text ?? baseChallengeHelper;
   const helperColor = challengeNotice?.type === 'error' ? 'text-red-400' : challengeNotice?.type === 'success' ? 'text-green-400' : 'text-[#606060]';
 
@@ -451,20 +430,27 @@ export function SettlementInterface({
   }
 
   const isSettled = market?.market_status === 'SETTLED';
+  const umaResolved = market?.market_config?.uma_resolved === true;
   const proposedSettlementNum = Number(market?.proposed_settlement_value);
   const hasProposedPrice = Number.isFinite(proposedSettlementNum) && proposedSettlementNum > 0;
 
   const statusDotClass = isSettled ? 'bg-blue-400'
+    : umaResolved ? 'bg-emerald-400'
     : isExpired ? 'bg-red-400'
     : market?.settlement_disputed ? 'bg-yellow-400'
     : 'bg-green-400';
 
   const statusAccent = isSettled ? 'from-blue-500 to-indigo-500'
+    : umaResolved ? 'from-emerald-400 to-green-500'
     : isExpired ? 'from-red-500 to-rose-500'
     : market?.settlement_disputed ? 'from-yellow-400 to-amber-500'
     : 'from-green-400 to-emerald-500';
 
-  const statusLabel = isSettled ? 'Finalized' : isExpired ? 'Expired' : market?.settlement_disputed ? 'Disputed' : 'Active';
+  const statusLabel = isSettled ? 'Finalized'
+    : umaResolved ? 'Verdict Reached'
+    : isExpired ? 'Expired'
+    : market?.settlement_disputed ? 'Disputed'
+    : 'Active';
 
   return (
     <div className={`space-y-1 ${className}`}>
@@ -875,24 +861,38 @@ export function SettlementInterface({
       )}
 
       {/* ═══════ UMA DISPUTE STATUS ═══════ */}
-      {market?.settlement_disputed && market?.market_config?.uma_assertion_id && (
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-indigo-500/20 hover:border-indigo-500/30 transition-all duration-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500" />
+      {market?.market_config?.uma_assertion_id && (market?.settlement_disputed || market?.market_config?.uma_resolved) && (
+        <div className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border transition-all duration-200 relative overflow-hidden ${
+          market.market_config.uma_resolved
+            ? market.market_config.uma_challenger_won
+              ? 'border-green-500/20 hover:border-green-500/30'
+              : 'border-blue-500/20 hover:border-blue-500/30'
+            : 'border-indigo-500/20 hover:border-indigo-500/30'
+        }`}>
+          <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${
+            market.market_config.uma_resolved
+              ? market.market_config.uma_challenger_won
+                ? 'from-green-500 via-emerald-500 to-green-500'
+                : 'from-blue-500 via-indigo-500 to-blue-500'
+              : 'from-indigo-500 via-purple-500 to-indigo-500'
+          }`} />
           <div className="flex items-center justify-between p-2.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                 market.market_config.uma_resolved
-                  ? market.market_config.uma_challenger_won ? 'bg-green-400' : 'bg-red-400'
+                  ? market.market_config.uma_challenger_won ? 'bg-green-400' : 'bg-blue-400'
                   : 'bg-indigo-400 animate-pulse'
               }`} />
-              <span className="text-[11px] font-medium text-[#808080]">UMA Dispute Resolution</span>
+              <span className="text-[11px] font-medium text-[#808080]">
+                {market.market_config.uma_resolved ? 'UMA Dispute Resolved' : 'UMA Dispute Resolution'}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <div className={`text-[10px] px-1.5 py-0.5 rounded ${
                 market.market_config.uma_resolved
                   ? market.market_config.uma_challenger_won
                     ? 'text-green-400 bg-green-500/10'
-                    : 'text-red-400 bg-red-500/10'
+                    : 'text-blue-400 bg-blue-500/10'
                   : 'text-indigo-400 bg-indigo-500/10'
               }`}>
                 {market.market_config.uma_resolved
@@ -903,6 +903,14 @@ export function SettlementInterface({
           </div>
           <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
             <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
+              {market.market_config.uma_resolved && (
+                <div className="flex justify-between items-center py-1 mb-1 border-b border-[#1A1A1A]">
+                  <span className="text-[10px] text-[#808080]">Winning Price</span>
+                  <span className="text-sm font-mono font-semibold text-white">
+                    ${Number(market.market_config.uma_winning_price || market.proposed_settlement_value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span>Assertion ID</span>
                 <span className="text-white font-mono text-[8px] truncate max-w-[200px]" title={market.market_config.uma_assertion_id}>
@@ -934,6 +942,16 @@ export function SettlementInterface({
                   <span>Resolution Tx</span>
                   <span className="text-indigo-400 font-mono text-[8px] truncate max-w-[200px]">
                     {market.market_config.uma_resolution_tx.slice(0, 10)}...{market.market_config.uma_resolution_tx.slice(-8)}
+                  </span>
+                </div>
+              )}
+              {market.market_config.uma_resolved && (
+                <div className="flex items-center gap-1 mt-1.5 py-1 px-1.5 rounded bg-[#1A1A1A]">
+                  <svg className="w-3 h-3 text-green-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  <span className="text-[#808080]">
+                    {market.market_config.uma_challenger_won
+                      ? 'Settlement price overturned by DVM vote. Market will finalize with the challenger\u2019s price once the challenge window closes.'
+                      : 'Original settlement price upheld by DVM vote. Market will finalize as proposed once the challenge window closes.'}
                   </span>
                 </div>
               )}
@@ -1077,22 +1095,34 @@ export function SettlementInterface({
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <button
-                    type="button"
-                    onClick={handleChallenge}
-                    disabled={
-                      !challengePrice ||
-                      !evidenceComplete ||
-                      !evidenceUrlFieldOk ||
-                      isSubmitting ||
-                      !walletData?.address ||
-                      isExpired ||
-                      !hasSufficientBalance
-                    }
-                    className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/15 hover:border-red-400/40 disabled:border-[#2A2A2A] disabled:bg-transparent disabled:text-[#404040] transition-colors"
-                  >
-                    {isSubmitting ? (submitStep || 'Submitting…') : 'Sign & submit proposal'}
-                  </button>
+                  {walletData?.address && !hasSession ? (
+                    <button
+                      type="button"
+                      onClick={handleEnableSession}
+                      disabled={sessionLoading || isExpired}
+                      className="shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/15 hover:border-emerald-400/40 disabled:border-[#2A2A2A] disabled:bg-transparent disabled:text-[#404040] transition-colors"
+                    >
+                      {sessionLoading ? 'Creating session…' : 'Enable gasless trading'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleChallenge}
+                      disabled={
+                        !challengePrice ||
+                        !evidenceComplete ||
+                        !evidenceUrlFieldOk ||
+                        isSubmitting ||
+                        !walletData?.address ||
+                        isExpired ||
+                        !hasSufficientBalance ||
+                        !hasSession
+                      }
+                      className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/15 hover:border-red-400/40 disabled:border-[#2A2A2A] disabled:bg-transparent disabled:text-[#404040] transition-colors"
+                    >
+                      {isSubmitting ? (submitStep || 'Submitting…') : 'Submit proposal'}
+                    </button>
+                  )}
                   <span className={`text-[9px] ${helperColor} sm:max-w-[min(100%,280px)] sm:text-right`}>{helperText}</span>
                 </div>
                 {challengeTxHash && (
@@ -1134,7 +1164,9 @@ export function SettlementInterface({
               <span className="text-[9px] text-[#606060] block">
                 {isSettled
                   ? 'This market has been settled. The final price has been locked and positions resolved.'
-                  : 'Settlement finalizes once the challenge window closes and the proposed price is accepted.'}
+                  : umaResolved
+                    ? `UMA verdict reached. Settlement will finalize with the ${market?.market_config?.uma_challenger_won ? 'challenger\u2019s' : 'proposer\u2019s'} price once the challenge window closes.`
+                    : 'Settlement finalizes once the challenge window closes and the proposed price is accepted.'}
               </span>
             </div>
           </div>

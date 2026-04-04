@@ -177,6 +177,7 @@ export const MarketLifecycleFacetABI = [
   // Settlement challenge bond
   "function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external",
   "function challengeSettlement(uint256 alternativePrice) external",
+  "function challengeSettlementFor(address challenger, uint256 alternativePrice) external",
   "function resolveChallenge(bool challengerWins) external",
   "function getChallengeBondConfig() external view returns (uint256 bondAmount, address slashRecipient)",
   "function getActiveChallengeInfo() external view returns (bool active, address challengerAddr, uint256 challengedPriceVal, uint256 bondEscrowed, bool resolved, bool won)",

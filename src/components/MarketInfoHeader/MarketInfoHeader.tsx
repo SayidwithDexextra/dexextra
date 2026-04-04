@@ -89,6 +89,9 @@ export interface MarketInfoHeaderProps {
   actions?: MarketInfoHeaderAction[];
   websiteUrl?: string;
   twitterUrl?: string;
+  settlementDisputed?: boolean;
+  umaEscalated?: boolean;
+  umaResolved?: boolean;
   waybackSnapshot?: {
     url: string;
     timestamp?: string;
@@ -366,6 +369,9 @@ export default function MarketInfoHeader({
   waybackSnapshot,
   onShare,
   onWatchlistToggle,
+  settlementDisputed = false,
+  umaEscalated = false,
+  umaResolved = false,
   onTriggerSettlementOverlay,
   isWatchlisted = false,
   isWatchlistLoading = false,
@@ -401,12 +407,13 @@ export default function MarketInfoHeader({
     return status;
   }, [status, marketStats?.isSettled]);
 
-  const settlementPhase = useMemo<'pre-challenge' | 'challenge-window' | 'settling' | null>(() => {
+  const settlementPhase = useMemo<'pre-challenge' | 'challenge-window' | 'uma-dispute' | 'settling' | null>(() => {
     if (effectiveStatus !== 'settlement') return null;
+    if (settlementDisputed && umaEscalated && !umaResolved) return 'uma-dispute';
     if (marketStats?.lifecycleState === 2 || marketStats?.challengeActive) return 'challenge-window';
     if (countdown?.isSettled || marketStats?.lifecycleState === 3) return 'settling';
     return 'pre-challenge';
-  }, [effectiveStatus, marketStats?.lifecycleState, marketStats?.challengeActive, countdown?.isSettled]);
+  }, [effectiveStatus, marketStats?.lifecycleState, marketStats?.challengeActive, countdown?.isSettled, settlementDisputed, umaEscalated, umaResolved]);
 
   const handleWatchlistClick = () => {
     if (!isWatchlistLoading && !isWatchlistDisabled && onWatchlistToggle) {
@@ -440,7 +447,8 @@ export default function MarketInfoHeader({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={resolvedLogo} alt={name} className={styles.logo} />
             <div className={`${styles.statusDot} ${
-              settlementPhase === 'challenge-window' ? styles.challengeWindow
+              settlementPhase === 'uma-dispute' ? styles.umaDispute
+              : settlementPhase === 'challenge-window' ? styles.challengeWindow
               : settlementPhase === 'settling' ? styles.settling
               : styles[effectiveStatus]
             }`} />
@@ -470,12 +478,15 @@ export default function MarketInfoHeader({
         {effectiveStatus === 'settlement' ? (() => {
           const badgeClass = [
             styles.settlementBadge,
-            settlementPhase === 'challenge-window' ? styles.settlementBadgeChallengeWindow
+            settlementPhase === 'uma-dispute' ? styles.settlementBadgeUmaDispute
+              : settlementPhase === 'challenge-window' ? styles.settlementBadgeChallengeWindow
               : settlementPhase === 'settling' ? styles.settlementBadgeSettling
               : styles.settlementBadgeSettlement,
           ].filter(Boolean).join(' ');
 
-          const tooltipLabel = settlementPhase === 'challenge-window'
+          const tooltipLabel = settlementPhase === 'uma-dispute'
+            ? 'Dispute escalated to UMA oracle for resolution'
+            : settlementPhase === 'challenge-window'
             ? 'Challenge window is active'
             : settlementPhase === 'settling'
             ? 'Completing on-chain settlement'
@@ -488,6 +499,11 @@ export default function MarketInfoHeader({
                   <div className={styles.countdownTooltipLabel}>
                     {tooltipLabel}
                   </div>
+                  {settlementPhase === 'uma-dispute' && marketStats?.challengedPrice != null && (
+                    <div className={styles.countdownTooltipDate}>
+                      Challenged at {formatPriceMaybe(marketStats.challengedPrice)}
+                    </div>
+                  )}
                   {settlementPhase === 'challenge-window' && marketStats?.challengedPrice != null && (
                     <div className={styles.countdownTooltipDate}>
                       Challenged at {formatPriceMaybe(marketStats.challengedPrice)}
@@ -522,7 +538,12 @@ export default function MarketInfoHeader({
               delay={100}
             >
               <div className={badgeClass} data-walkthrough="token-settlement-date">
-                {settlementPhase === 'challenge-window' ? (
+                {settlementPhase === 'uma-dispute' ? (
+                  <>
+                    <div className={styles.umaDisputeDot} />
+                    <span>UMA Dispute</span>
+                  </>
+                ) : settlementPhase === 'challenge-window' ? (
                   <>
                     <div className={styles.challengeWindowDot} />
                     <span>Challenge Window</span>

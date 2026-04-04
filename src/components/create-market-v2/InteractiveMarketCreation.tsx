@@ -255,11 +255,11 @@ const SETTLEMENT_PRESETS: {
   {
     value: 'challenge-test',
     label: 'Challenge test',
-    sublabel: '~5m to challenge · 7d challenge window',
+    sublabel: '~5m to challenge · 25m challenge window',
     settlementOffsetSeconds: 5 * 60,
     speedRunConfig: {
       rolloverLeadSeconds: 4 * 60 + 30,
-      challengeWindowSeconds: 7 * 24 * 60 * 60,
+      challengeWindowSeconds: 25 * 60,
     },
   },
   {

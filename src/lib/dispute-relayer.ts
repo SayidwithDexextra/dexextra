@@ -26,7 +26,7 @@ const LIFECYCLE_CHALLENGE_ABI = [
 ] as const;
 
 const DISPUTE_RELAY_ABI = [
-  'function escalateDisputeDirectToVote(address hlMarket, uint256 proposedPrice, uint256 challengedPrice, string evidenceUrl, uint256 bondAmount, uint64 liveness) external returns (bytes32)',
+  'function escalateDisputeDirectToVote(address hlMarket, uint256 proposedPrice, uint256 challengedPrice, bytes claim, uint256 bondAmount, uint64 liveness) external returns (bytes32)',
   'function getDispute(bytes32 assertionId) external view returns (tuple(address hlMarket, uint256 proposedPrice, uint256 challengedPrice, bool resolved, bool challengerWon, uint256 bondAmount, uint256 timestamp))',
   'function getDisputeCount() external view returns (uint256)',
   'function getAssertionIdAt(uint256 index) external view returns (bytes32)',
@@ -93,6 +93,11 @@ export interface PendingChallenge {
   proposedPrice: bigint;
 }
 
+export interface EscalationMeta {
+  marketName: string;
+  settlementDate: string;
+}
+
 /**
  * Scan a HyperLiquid market for an active, unrelayed settlement challenge.
  */
@@ -128,6 +133,8 @@ export async function getActiveChallenge(
 export async function escalateToUMA(
   config: DisputeRelayerConfig,
   challenge: PendingChallenge & { proposedPrice: bigint },
+  meta: EscalationMeta,
+  challengerEvidence?: ChallengerEvidence,
 ): Promise<{ assertionId: string; txHash: string }> {
   const sepoliaProvider = new ethers.JsonRpcProvider(config.sepoliaRpcUrl);
   const sepoliaWallet = new ethers.Wallet(config.sepoliaPrivateKey, sepoliaProvider);
@@ -142,11 +149,21 @@ export async function escalateToUMA(
     );
   }
 
+  const claimText = buildUMAClaim({
+    marketName: meta.marketName,
+    settlementDate: meta.settlementDate,
+    proposedPrice: challenge.proposedPrice,
+    challengedPrice: challenge.alternativePrice,
+    proposerEvidenceUrl: challenge.evidenceUrl,
+    challengerEvidence,
+  });
+  const claimBytes = ethers.toUtf8Bytes(claimText);
+
   const tx = await relay.escalateDisputeDirectToVote(
     challenge.marketAddress,
     challenge.proposedPrice,
     challenge.alternativePrice,
-    challenge.evidenceUrl,
+    claimBytes,
     config.defaultBondAmount,
     config.defaultLiveness,
   );
@@ -213,10 +230,11 @@ export async function relayResolutionToHL(
 // ─── Full Relay Tick ───
 
 export interface RelayTickResult {
-  action: 'none' | 'escalated' | 'resolved' | 'error';
+  action: 'none' | 'escalated' | 'resolved' | 'uma_resolved' | 'error';
   marketAddress?: string;
   assertionId?: string;
   challengerWon?: boolean;
+  winningPrice?: bigint;
   txHash?: string;
   error?: string;
 }
@@ -228,30 +246,45 @@ export interface RelayTickResult {
  *   3. Check if any pending UMA disputes have resolved
  *   4. If yes, relay result back to HL
  */
+function formatPrice6dec(raw: bigint): string {
+  const num = Number(raw) / 1e6;
+  return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+}
+
 /**
- * Build a combined evidence URL for UMA DVM voters.
- * Includes the proposer's on-chain evidence plus the challenger's
- * source URL and/or screenshot so voters can compare both sides.
+ * Build a human-readable UMA claim for DVM voters.
+ * Uses market name and formatted prices instead of raw addresses and integers.
  */
-function buildCombinedEvidenceUrl(
-  proposerEvidenceUrl: string,
-  challengerEvidence?: ChallengerEvidence,
-): string {
-  const parts: string[] = [];
+function buildUMAClaim(params: {
+  marketName: string;
+  settlementDate: string;
+  proposedPrice: bigint;
+  challengedPrice: bigint;
+  proposerEvidenceUrl: string;
+  challengerEvidence?: ChallengerEvidence;
+}): string {
+  const proposed = formatPrice6dec(params.proposedPrice);
+  const challenged = formatPrice6dec(params.challengedPrice);
 
-  if (proposerEvidenceUrl) {
-    parts.push(`Proposer evidence: ${proposerEvidenceUrl}`);
+  let claim = `The settlement price for ${params.marketName} as of ${params.settlementDate} is ${proposed}.`;
+  claim += ` Challenger proposes ${challenged}.`;
+
+  const evidence: string[] = [];
+  if (params.proposerEvidenceUrl) {
+    evidence.push(`Proposer evidence: ${params.proposerEvidenceUrl}`);
+  }
+  if (params.challengerEvidence?.source_url) {
+    evidence.push(`Challenger evidence: ${params.challengerEvidence.source_url}`);
+  }
+  if (params.challengerEvidence?.image_url) {
+    evidence.push(`Challenger screenshot: ${params.challengerEvidence.image_url}`);
   }
 
-  if (challengerEvidence?.source_url) {
-    parts.push(`Challenger evidence: ${challengerEvidence.source_url}`);
+  if (evidence.length > 0) {
+    claim += ` ${evidence.join(' | ')}`;
   }
 
-  if (challengerEvidence?.image_url) {
-    parts.push(`Challenger screenshot: ${challengerEvidence.image_url}`);
-  }
-
-  return parts.join(' | ') || proposerEvidenceUrl || 'No evidence provided';
+  return claim;
 }
 
 export async function relayTick(
@@ -260,19 +293,21 @@ export async function relayTick(
   proposedPrice: bigint,
   pendingAssertionId?: string,
   challengerEvidence?: ChallengerEvidence,
+  meta?: EscalationMeta,
 ): Promise<RelayTickResult> {
   try {
-    // Phase 1: Check for resolved disputes that need relaying back
+    // Phase 1: Check for resolved disputes — record verdict but do NOT
+    // relay to HyperLiquid yet. The settlement engine handles the on-chain
+    // resolveChallenge() call once the challenge window expires.
     if (pendingAssertionId) {
       const resolution = await checkDisputeResolution(config, pendingAssertionId);
       if (resolution?.resolved) {
-        const txHash = await relayResolutionToHL(config, marketAddress, resolution.challengerWon);
         return {
-          action: 'resolved',
+          action: 'uma_resolved',
           marketAddress,
           assertionId: pendingAssertionId,
           challengerWon: resolution.challengerWon,
-          txHash,
+          winningPrice: resolution.winningPrice,
         };
       }
       return { action: 'none', marketAddress };
@@ -284,11 +319,13 @@ export async function relayTick(
     if (!challenge) return { action: 'none', marketAddress };
 
     challenge.proposedPrice = proposedPrice;
-    challenge.evidenceUrl = buildCombinedEvidenceUrl(
-      challenge.evidenceUrl,
-      challengerEvidence,
-    );
-    const { assertionId, txHash } = await escalateToUMA(config, challenge);
+
+    const escalationMeta: EscalationMeta = meta ?? {
+      marketName: `Market ${marketAddress.slice(0, 10)}…`,
+      settlementDate: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+    };
+
+    const { assertionId, txHash } = await escalateToUMA(config, challenge, escalationMeta, challengerEvidence);
     return {
       action: 'escalated',
       marketAddress,

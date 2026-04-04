@@ -15,6 +15,7 @@ export type MarketRow = {
   settlement_date: string | null;
   proposed_settlement_value: number | null;
   proposed_settlement_at: string | null;
+  alternative_settlement_value: number | null;
   settlement_disputed: boolean | null;
   market_config: Record<string, unknown> | null;
   initial_order: Record<string, unknown> | null;
@@ -406,6 +407,33 @@ async function commitEvidenceOnChain(
   }
 }
 
+async function resolveChallengeOnChain(
+  market: MarketRow,
+  challengerWon: boolean,
+): Promise<{ ok: boolean; txHash?: string; reason?: string }> {
+  const cfg = getConfig();
+  if (!cfg.rpcUrl) return { ok: false, reason: 'rpc_not_configured' };
+  if (!cfg.privateKey) return { ok: false, reason: 'private_key_not_configured' };
+  if (!market.market_address || !ethers.isAddress(market.market_address)) {
+    return { ok: false, reason: 'invalid_market_address' };
+  }
+
+  try {
+    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
+    const wallet = new ethers.Wallet(cfg.privateKey, provider);
+    const contract = new ethers.Contract(
+      market.market_address,
+      ['function resolveChallenge(bool challengerWins) external'],
+      wallet,
+    );
+    const tx = await contract.resolveChallenge(challengerWon);
+    await tx.wait();
+    return { ok: true, txHash: tx.hash };
+  } catch (err) {
+    return { ok: false, reason: `resolve_challenge_failed:${String(err)}` };
+  }
+}
+
 async function finalizeOnChain(
   market: MarketRow,
   finalPrice: number,
@@ -560,14 +588,43 @@ async function maybeFinalizeSettlement(
     };
   }
 
-  if (market.settlement_disputed === true) {
-    return {
-      marketId: market.id, marketIdentifier: market.market_identifier,
-      action: 'finalize', ok: false,
-      settlementDate: market.settlement_date,
+  let umaDisputeNeedsOnChainResolution = false;
+  let umaChallengerWon = false;
 
-      reason: 'settlement_disputed',
-    };
+  if (market.settlement_disputed === true) {
+    const cfg = asRecord(market.market_config);
+    const umaResolved = cfg.uma_resolved === true;
+
+    if (!umaResolved) {
+      return {
+        marketId: market.id, marketIdentifier: market.market_identifier,
+        action: 'finalize', ok: false,
+        settlementDate: market.settlement_date,
+        reason: 'settlement_disputed_awaiting_uma',
+      };
+    }
+
+    umaChallengerWon = cfg.uma_challenger_won === true;
+    umaDisputeNeedsOnChainResolution = true;
+
+    if (umaChallengerWon) {
+      const challengerPrice = market.alternative_settlement_value
+        ?? (cfg.uma_winning_price as number | undefined);
+      if (challengerPrice && Number.isFinite(challengerPrice) && challengerPrice > 0) {
+        market.proposed_settlement_value = challengerPrice;
+        console.log(`[settlement-engine] UMA resolved: challenger won for ${market.market_identifier}, adopting price ${challengerPrice}`);
+      } else {
+        console.warn(`[settlement-engine] UMA challenger won but no valid winning price for ${market.market_identifier}`);
+        return {
+          marketId: market.id, marketIdentifier: market.market_identifier,
+          action: 'finalize', ok: false,
+          settlementDate: market.settlement_date,
+          reason: 'uma_challenger_won_no_valid_price',
+        };
+      }
+    } else {
+      console.log(`[settlement-engine] UMA resolved: proposer won for ${market.market_identifier}, keeping original price`);
+    }
   }
 
   const syncResult = await settlementSyncLifecycleOnChain(market);
@@ -652,6 +709,16 @@ async function maybeFinalizeSettlement(
     };
   }
 
+  // If UMA resolved a dispute, call resolveChallenge() on HL before settling
+  if (umaDisputeNeedsOnChainResolution && market.market_address) {
+    const resolveResult = await resolveChallengeOnChain(market, umaChallengerWon);
+    if (!resolveResult.ok) {
+      console.warn(`[settlement-engine] resolveChallenge warning for ${market.market_identifier}: ${resolveResult.reason}`);
+    } else {
+      console.log(`[settlement-engine] resolveChallenge on HL for ${market.market_identifier}: challengerWon=${umaChallengerWon}`);
+    }
+  }
+
   let txHash: string | null = null;
   const settle = await finalizeOnChain(market, proposedPrice);
   if (!settle.ok) {
@@ -678,6 +745,7 @@ async function maybeFinalizeSettlement(
       market_status: 'SETTLED',
       settlement_value: proposedPrice,
       settlement_timestamp: now,
+      settlement_disputed: false,
       market_config: finalConfig,
       updated_at: now,
     })
@@ -714,6 +782,7 @@ const MARKET_SELECT = `
   settlement_date,
   proposed_settlement_value,
   proposed_settlement_at,
+  alternative_settlement_value,
   settlement_disputed,
   market_config,
   initial_order,

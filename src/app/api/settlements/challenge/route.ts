@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getRelayerConfig, relayTick, type ChallengerEvidence } from '@/lib/dispute-relayer';
+import { getRelayerConfig, relayTick, type ChallengerEvidence, type EscalationMeta } from '@/lib/dispute-relayer';
 import { isChallengeWindowActive } from '@/lib/settlement-window';
 import { ethers } from 'ethers';
 
@@ -126,12 +126,21 @@ export async function POST(request: NextRequest) {
           ...(imageOk ? { image_url: evidenceImageTrim } : {}),
         };
 
+        const settlementDateStr = existingConfig.expires_at || existingConfig.settlement_requested_at;
+        const meta: EscalationMeta = {
+          marketName: market.symbol || `Market ${resolvedMarketAddress.slice(0, 10)}…`,
+          settlementDate: settlementDateStr
+            ? new Date(settlementDateStr as string).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+            : now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+        };
+
         const result = await relayTick(
           config,
           resolvedMarketAddress,
           proposedPrice,
           undefined,
           challengerEvidence,
+          meta,
         );
 
         if (result.action === 'escalated' && result.assertionId) {

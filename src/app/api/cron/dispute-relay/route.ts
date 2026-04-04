@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { getRelayerConfig, relayTick, type RelayTickResult, type ChallengerEvidence } from '@/lib/dispute-relayer';
+import { getRelayerConfig, relayTick, type RelayTickResult, type ChallengerEvidence, type EscalationMeta } from '@/lib/dispute-relayer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -39,8 +39,7 @@ export async function POST(request: Request) {
         body.pendingAssertionId || undefined,
       );
 
-      // Persist to Supabase if we escalated or resolved
-      if (supabase && (result.action === 'escalated' || result.action === 'resolved')) {
+      if (supabase && (result.action === 'escalated' || result.action === 'uma_resolved')) {
         await persistRelayResult(supabase, result);
       }
 
@@ -58,7 +57,7 @@ export async function POST(request: Request) {
     // Find markets that have been challenged but not yet relayed to UMA
     const { data: disputedMarkets, error: fetchErr } = await supabase
       .from('markets')
-      .select('id, market_address, proposed_settlement_value, settlement_disputed, market_config')
+      .select('id, symbol, market_address, proposed_settlement_value, alternative_settlement_value, settlement_disputed, market_config')
       .eq('settlement_disputed', true)
       .not('market_address', 'is', null);
 
@@ -75,12 +74,21 @@ export async function POST(request: Request) {
 
       const chalEvidence = marketConfig.challenger_evidence as ChallengerEvidence | undefined;
 
+      const settlementDate = marketConfig.expires_at || marketConfig.settlement_requested_at;
+      const meta: EscalationMeta = {
+        marketName: market.symbol || `Market ${market.market_address.slice(0, 10)}…`,
+        settlementDate: settlementDate
+          ? new Date(settlementDate as string).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+          : new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+      };
+
       const result = await relayTick(
         config,
         market.market_address,
         proposedPrice,
         pendingAssertionId,
         chalEvidence,
+        meta,
       );
 
       results.push(result);
@@ -99,18 +107,25 @@ export async function POST(request: Request) {
           .eq('id', market.id);
       }
 
-      if (result.action === 'resolved') {
+      if (result.action === 'uma_resolved') {
+        const altPrice = market.alternative_settlement_value as number | null;
+
+        const updatePayload: Record<string, unknown> = {
+          market_config: {
+            ...marketConfig,
+            uma_resolved: true,
+            uma_challenger_won: result.challengerWon,
+            uma_winning_price: altPrice,
+            uma_resolved_at: new Date().toISOString(),
+          },
+          // Keep settlement_disputed=true — the settlement engine will clear
+          // it and call resolveChallenge() on HL once the challenge window expires.
+          updated_at: new Date().toISOString(),
+        };
+
         await supabase
           .from('markets')
-          .update({
-            market_config: {
-              ...marketConfig,
-              uma_resolved: true,
-              uma_challenger_won: result.challengerWon,
-              uma_resolution_tx: result.txHash,
-              uma_resolved_at: new Date().toISOString(),
-            },
-          })
+          .update(updatePayload)
           .eq('id', market.id);
       }
     }
@@ -130,13 +145,40 @@ export async function POST(request: Request) {
 }
 
 async function persistRelayResult(supabase: any, result: RelayTickResult) {
+  if (!result.marketAddress) return;
+
   try {
     if (result.action === 'escalated') {
       console.log(`[dispute-relay] Escalated ${result.marketAddress} → ${result.assertionId}`);
-    } else if (result.action === 'resolved') {
+    } else if (result.action === 'uma_resolved') {
+      const { data: mkt } = await supabase
+        .from('markets')
+        .select('id, alternative_settlement_value, market_config')
+        .eq('market_address', result.marketAddress)
+        .maybeSingle();
+
+      const altPrice = mkt?.alternative_settlement_value as number | null;
+      const existingConfig = (mkt?.market_config as Record<string, unknown>) || {};
+
+      await supabase
+        .from('markets')
+        .update({
+          market_config: {
+            ...existingConfig,
+            uma_resolved: true,
+            uma_challenger_won: result.challengerWon,
+            uma_winning_price: altPrice,
+            uma_resolved_at: new Date().toISOString(),
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('market_address', result.marketAddress);
+
       console.log(
-        `[dispute-relay] Resolved ${result.marketAddress}: challengerWon=${result.challengerWon}`,
+        `[dispute-relay] UMA verdict recorded for ${result.marketAddress}: challengerWon=${result.challengerWon} (on-chain resolution deferred to challenge window expiry)`,
       );
     }
-  } catch {}
+  } catch (err: any) {
+    console.error(`[dispute-relay] persistRelayResult error: ${err?.message}`);
+  }
 }

@@ -31,7 +31,7 @@ const fs = require("fs");
 const { ethers } = require("hardhat");
 
 const DISPUTE_RELAY_ABI = [
-  "function escalateDisputeDirectToVote(address hlMarket, uint256 proposedPrice, uint256 challengedPrice, string evidenceUrl, uint256 bondAmount, uint64 liveness) external returns (bytes32)",
+  "function escalateDisputeDirectToVote(address hlMarket, uint256 proposedPrice, uint256 challengedPrice, bytes claim, uint256 bondAmount, uint64 liveness) external returns (bytes32)",
   "function getDispute(bytes32 assertionId) external view returns (tuple(address hlMarket, uint256 proposedPrice, uint256 challengedPrice, bool resolved, bool challengerWon, uint256 bondAmount, uint256 timestamp))",
   "function getDisputeCount() external view returns (uint256)",
   "function poolBalance() external view returns (uint256)",
@@ -147,21 +147,22 @@ async function main() {
   const mockMarket = "0x0000000000000000000000000000000000000001";
   const proposedPrice = ethers.parseUnits("2500", 6);    // $2,500 (proposer's price)
   const challengedPrice = ethers.parseUnits("2700", 6);   // $2,700 (challenger's price)
-  const evidenceUrl = "https://web.archive.org/web/20260101/example.com/price";
+  const claimText = `The settlement price for Test Market as of January 1, 2026 is $2,500.00. Challenger proposes $2,700.00. Proposer evidence: https://web.archive.org/web/20260101/example.com/price`;
+  const claimBytes = ethers.toUtf8Bytes(claimText);
   const liveness = 120; // 2 minutes (irrelevant since we auto-dispute)
 
   console.log(`   Market (mock):     ${mockMarket}`);
   console.log(`   Proposed price:    $${ethers.formatUnits(proposedPrice, 6)}`);
   console.log(`   Challenged price:  $${ethers.formatUnits(challengedPrice, 6)}`);
   console.log(`   Bond per side:     ${ethers.formatUnits(bondAmount, decimals)} ${deployedBondToken}`);
-  console.log(`   Evidence:          ${evidenceUrl}`);
+  console.log(`   Claim:             ${claimText}`);
 
   console.log("\n   Calling escalateDisputeDirectToVote()...");
   const tx = await relay.escalateDisputeDirectToVote(
     mockMarket,
     proposedPrice,
     challengedPrice,
-    evidenceUrl,
+    claimBytes,
     bondAmount,
     liveness
   );
