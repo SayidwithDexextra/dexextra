@@ -8,22 +8,29 @@ interface UseMarketSettlementRealtimeOptions {
   currentStatus: string | null;
   onSettlementStarted: () => void;
   onSettled?: () => void;
+  /** Fired when proposed_settlement_value changes (e.g. AI bot reveals a price). */
+  onProposalUpdated?: () => void;
 }
 
 /**
  * Subscribes to Supabase realtime changes on the markets table for a specific
- * market. Fires onSettlementStarted when market_status transitions to
- * SETTLEMENT_REQUESTED, and onSettled when it transitions to SETTLED.
+ * market. Fires callbacks when:
+ *  - market_status transitions to SETTLEMENT_REQUESTED
+ *  - market_status transitions to SETTLED
+ *  - proposed_settlement_value changes (AI bot proposes / updates a price)
  */
 export function useMarketSettlementRealtime({
   marketId,
   currentStatus,
   onSettlementStarted,
   onSettled,
+  onProposalUpdated,
 }: UseMarketSettlementRealtimeOptions) {
   const callbackRef = useRef(onSettlementStarted);
   const settledCallbackRef = useRef(onSettled);
+  const proposalCallbackRef = useRef(onProposalUpdated);
   const statusRef = useRef(currentStatus);
+  const lastProposedRef = useRef<number | null>(null);
 
   useEffect(() => {
     callbackRef.current = onSettlementStarted;
@@ -32,6 +39,10 @@ export function useMarketSettlementRealtime({
   useEffect(() => {
     settledCallbackRef.current = onSettled;
   }, [onSettled]);
+
+  useEffect(() => {
+    proposalCallbackRef.current = onProposalUpdated;
+  }, [onProposalUpdated]);
 
   useEffect(() => {
     statusRef.current = currentStatus;
@@ -54,7 +65,9 @@ export function useMarketSettlementRealtime({
           filter: `id=eq.${marketId}`,
         },
         (payload: any) => {
-          const newStatus = payload.new?.market_status;
+          const newRow = payload.new;
+          const newStatus = newRow?.market_status;
+
           if (
             newStatus === 'SETTLEMENT_REQUESTED' &&
             statusRef.current !== 'SETTLEMENT_REQUESTED'
@@ -68,6 +81,15 @@ export function useMarketSettlementRealtime({
           ) {
             statusRef.current = newStatus;
             settledCallbackRef.current?.();
+          }
+
+          const newProposed = newRow?.proposed_settlement_value ?? null;
+          if (
+            newProposed !== null &&
+            newProposed !== lastProposedRef.current
+          ) {
+            lastProposedRef.current = newProposed;
+            proposalCallbackRef.current?.();
           }
         },
       )

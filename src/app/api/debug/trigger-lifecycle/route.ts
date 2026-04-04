@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-const VALID_ACTIONS = ['rollover', 'settlement_start', 'challenge_open', 'settlement_finalize'] as const;
+const VALID_ACTIONS = ['rollover', 'settlement_start', 'challenge_open', 'settlement_finalize', 'ai_propose'] as const;
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);

@@ -18,7 +18,7 @@ interface Market {
   created_at: string;
 }
 
-type Action = 'rollover' | 'settlement_start' | 'settlement_finalize' | 'challenge';
+type Action = 'rollover' | 'settlement_start' | 'settlement_finalize' | 'challenge' | 'ai_propose';
 
 interface ActionResult {
   marketId: string;
@@ -50,9 +50,15 @@ const ACTION_META: Record<Action, { label: string; description: string; color: s
   },
   challenge: {
     label: 'Challenge',
-    description: 'Submits an alternative price to dispute the proposed settlement',
+    description: 'Proposes a settlement price with supporting evidence and bond',
     color: 'bg-red-600',
     hoverColor: 'hover:bg-red-500',
+  },
+  ai_propose: {
+    label: 'AI Propose Price',
+    description: 'Triggers the AI worker to discover and propose a settlement price on-chain',
+    color: 'bg-purple-600',
+    hoverColor: 'hover:bg-purple-500',
   },
 };
 
@@ -424,7 +430,7 @@ export default function SettlementLifecyclePage() {
                 <div className="rounded-lg border border-[#1E1E1E] bg-[#111111] p-4">
                   <div className="text-[12px] font-medium text-white mb-3">Trigger Settlement Actions</div>
                   <div className="flex flex-col gap-2">
-                    {(['rollover', 'settlement_start', 'settlement_finalize', 'challenge'] as Action[]).map(
+                    {(['rollover', 'settlement_start', 'ai_propose', 'settlement_finalize', 'challenge'] as Action[]).map(
                       (action) => {
                         const meta = ACTION_META[action];
                         const key = `${selected.id}:${action}`;

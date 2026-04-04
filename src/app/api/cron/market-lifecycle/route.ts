@@ -797,6 +797,15 @@ export async function POST(req: Request) {
       return json(200, result);
     }
 
+    case 'ai_propose': {
+      if (!marketId) return json(400, { ok: false, error: 'market_id_required_for_ai_propose' });
+      const sb = getSupabase();
+      if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });
+      const result = await forceStartSettlementWindow(sb, marketId);
+      log('dispatch_ai_propose', 'success', result);
+      return json(200, result);
+    }
+
     case 'settlement_finalize': {
       const sb = getSupabase();
       if (!sb) return json(500, { ok: false, error: 'supabase_not_configured' });

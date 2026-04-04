@@ -84,6 +84,7 @@ const LIFECYCLE_STATE_ABI = [{ type: 'function' as const, name: 'getLifecycleSta
 const CHALLENGE_BOND_CONFIG_ABI = [{ type: 'function' as const, name: 'getChallengeBondConfig' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'uint256', name: 'bondAmount' }, { type: 'address', name: 'slashRecipient' }] }] as const;
 const ACTIVE_CHALLENGE_ABI = [{ type: 'function' as const, name: 'getActiveChallengeInfo' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'bool', name: 'active' }, { type: 'address', name: 'challengerAddr' }, { type: 'uint256', name: 'challengedPriceVal' }, { type: 'uint256', name: 'bondEscrowed' }, { type: 'bool', name: 'resolved' }, { type: 'bool', name: 'won' }] }] as const;
 const PROPOSED_EVIDENCE_ABI = [{ type: 'function' as const, name: 'getProposedEvidence' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'bytes32', name: 'evidenceHash' }, { type: 'string', name: 'evidenceUrl' }] }] as const;
+const BOND_EXEMPT_ABI = [{ type: 'function' as const, name: 'isProposalBondExempt' as const, stateMutability: 'view' as const, inputs: [{ type: 'address', name: 'account' }], outputs: [{ type: 'bool', name: '' }] }] as const;
 
 interface SettlementInterfaceProps {
   market?: SettlementMarket;
@@ -127,6 +128,7 @@ export function SettlementInterface({
   const [evidenceSourceUrl, setEvidenceSourceUrl] = useState('');
   const [evidenceImageFile, setEvidenceImageFile] = useState<File | null>(null);
   const [uploadedEvidenceImageUrl, setUploadedEvidenceImageUrl] = useState<string | null>(null);
+  const [isBondExempt, setIsBondExempt] = useState(false);
 
   const fetchOnChainState = useCallback(async (addr: `0x${string}`) => {
     try {
@@ -177,6 +179,27 @@ export function SettlementInterface({
     void poll();
     return () => { cancelled = true; if (pollRef.current) clearTimeout(pollRef.current); };
   }, [market?.market_address, fetchOnChainState]);
+
+  useEffect(() => {
+    const marketAddr = market?.market_address;
+    const userAddr = walletData?.address;
+    if (!marketAddr || !userAddr || typeof marketAddr !== 'string' || !marketAddr.startsWith('0x') || marketAddr.length !== 42) {
+      setIsBondExempt(false);
+      return;
+    }
+    let cancelled = false;
+    publicClient.readContract({
+      address: marketAddr as `0x${string}`,
+      abi: BOND_EXEMPT_ABI,
+      functionName: 'isProposalBondExempt',
+      args: [userAddr as `0x${string}`],
+    }).then((result) => {
+      if (!cancelled) setIsBondExempt(Boolean(result));
+    }).catch(() => {
+      if (!cancelled) setIsBondExempt(false);
+    });
+    return () => { cancelled = true; };
+  }, [market?.market_address, walletData?.address]);
 
   useEffect(() => {
     const addr = market?.market_address;
@@ -241,7 +264,7 @@ export function SettlementInterface({
   }, [windowExpiresMs]);
 
   const availableBalanceNum = parseFloat(availableBalance || '0');
-  const bondRequired = onChain?.challengeBondAmount ?? 0;
+  const bondRequired = isBondExempt ? 0 : (onChain?.challengeBondAmount ?? 0);
   const hasSufficientBalance = bondRequired <= 0 || availableBalanceNum >= bondRequired;
 
   const evidenceUrlTrim = evidenceSourceUrl.trim();
@@ -254,7 +277,7 @@ export function SettlementInterface({
     if (!challengePrice) return;
     const price = Number(challengePrice);
     if (price <= 0 || !Number.isFinite(price)) { setChallengeNotice({ type: 'error', text: 'Enter a valid positive price.' }); return; }
-    if (!walletData?.address) { setChallengeNotice({ type: 'error', text: 'Connect a wallet to submit a challenge.' }); return; }
+    if (!walletData?.address) { setChallengeNotice({ type: 'error', text: 'Connect a wallet to propose a settlement price.' }); return; }
     if (!market?.id) { setChallengeNotice({ type: 'error', text: 'Market unavailable.' }); return; }
     if (!market?.market_address) { setChallengeNotice({ type: 'error', text: 'Market contract address not available.' }); return; }
     if (isExpired) { setChallengeNotice({ type: 'error', text: 'Settlement window already expired.' }); return; }
@@ -311,7 +334,7 @@ export function SettlementInterface({
         signer,
       );
 
-      setSubmitStep('Submitting on-chain challenge...');
+      setSubmitStep('Submitting on-chain proposal...');
       const tx = await marketContract.challengeSettlement(alternativePriceWei);
       setSubmitStep('Waiting for confirmation...');
       const receipt = await tx.wait();
@@ -347,7 +370,7 @@ export function SettlementInterface({
       const umaInfo = apiData.uma_assertion_id
         ? ` UMA Assertion: ${apiData.uma_assertion_id.slice(0, 10)}...`
         : '';
-      setChallengeNotice({ type: 'success', text: `Challenge submitted on-chain and escalated to UMA.${umaInfo}` });
+      setChallengeNotice({ type: 'success', text: `Proposal submitted on-chain. Escalated to UMA for verification.${umaInfo}` });
       refreshVaultBalance();
       onChallengeSaved?.();
     } catch (err: any) {
@@ -383,10 +406,10 @@ export function SettlementInterface({
   }, [market?.alternative_settlement_value]);
 
   const baseChallengeHelper = !walletData?.address
-    ? 'Connect a wallet to post a challenge with UMA collateral.'
+    ? 'Connect a wallet to propose a settlement price.'
     : isSubmitting
-      ? (submitStep || 'Submitting challenge...')
-      : 'Enter your price, add a source link and/or screenshot, then confirm on-chain.';
+      ? (submitStep || 'Submitting proposal...')
+      : 'Enter your proposed price, add supporting evidence, then confirm on-chain.';
   const helperText = challengeNotice?.text ?? baseChallengeHelper;
   const helperColor = challengeNotice?.type === 'error' ? 'text-red-400' : challengeNotice?.type === 'success' ? 'text-green-400' : 'text-[#606060]';
 
@@ -428,6 +451,7 @@ export function SettlementInterface({
   }
 
   const isSettled = market?.market_status === 'SETTLED';
+  const hasProposedPrice = typeof market?.proposed_settlement_value === 'number' && market.proposed_settlement_value > 0;
 
   const statusDotClass = isSettled ? 'bg-blue-400'
     : isExpired ? 'bg-red-400'
@@ -472,10 +496,10 @@ export function SettlementInterface({
           <div className="flex items-end justify-between pt-2">
             <div>
               <div className="text-[9px] uppercase tracking-wider text-[#606060] mb-0.5">
-                {isSettled ? 'Final Price' : 'Proposed Price'}
+                {isSettled ? 'Final Price' : hasProposedPrice ? 'Proposed Price' : 'Awaiting Proposal'}
               </div>
-              <div className="text-lg font-mono font-semibold text-white tracking-tight">
-                ${formattedProposed}
+              <div className={`text-lg font-mono font-semibold tracking-tight ${hasProposedPrice || isSettled ? 'text-white' : 'text-[#404040]'}`}>
+                {hasProposedPrice || isSettled ? `$${formattedProposed}` : '—'}
               </div>
             </div>
             <div className="text-right">
@@ -564,11 +588,15 @@ export function SettlementInterface({
           <div className="flex items-center justify-between p-2.5">
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-              <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Price' : 'Proposed Settlement'}</span>
+              <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Price' : hasProposedPrice ? 'Proposed Settlement' : 'Settlement Price'}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-white font-mono font-semibold">${formattedProposed}</span>
-              <div className="text-[10px] text-green-400 bg-[#1A1A1A] px-1.5 py-0.5 rounded">Primary</div>
+              <span className={`text-sm font-mono font-semibold ${hasProposedPrice || isSettled ? 'text-white' : 'text-[#404040]'}`}>{hasProposedPrice || isSettled ? `$${formattedProposed}` : '—'}</span>
+              {hasProposedPrice || isSettled ? (
+                <div className="text-[10px] text-green-400 bg-[#1A1A1A] px-1.5 py-0.5 rounded">Proposed</div>
+              ) : (
+                <div className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">Awaiting</div>
+              )}
             </div>
           </div>
           <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
@@ -746,8 +774,12 @@ export function SettlementInterface({
               <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
                 {onChain.challengeBondAmount > 0 && (
                   <div className="flex justify-between">
-                    <span>Challenge Bond Required</span>
-                    <span className="text-white font-mono">${onChain.challengeBondAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDC</span>
+                    <span>Proposal Bond</span>
+                    {isBondExempt ? (
+                      <span className="text-green-400 font-mono">Exempt</span>
+                    ) : (
+                      <span className="text-white font-mono">${onChain.challengeBondAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDC</span>
+                    )}
                   </div>
                 )}
                 {onChain.slashRecipient && onChain.slashRecipient !== '0x0000000000000000000000000000000000000000' && (
@@ -923,17 +955,17 @@ export function SettlementInterface({
             <div className="flex items-center justify-between p-2.5">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-                <span className="text-[11px] font-medium text-[#808080]">Challenge Settlement</span>
+                <span className="text-[11px] font-medium text-[#808080]">Propose Settlement Price</span>
               </div>
               {onChain && onChain.challengeBondAmount > 0 && (
-                <div className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">
-                  Bond: ${onChain.challengeBondAmount.toLocaleString()} USDC
+                <div className={`text-[10px] px-1.5 py-0.5 rounded ${isBondExempt ? 'text-green-400 bg-green-500/10' : 'text-yellow-400 bg-yellow-500/10'}`}>
+                  {isBondExempt ? 'Bond Exempt' : `Bond: $${onChain.challengeBondAmount.toLocaleString()} USDC`}
                 </div>
               )}
             </div>
             <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
               <div className="pt-2 space-y-3">
-                {onChain && onChain.challengeBondAmount > 0 && walletData?.address && (
+                {onChain && onChain.challengeBondAmount > 0 && walletData?.address && !isBondExempt && (
                   <div className={`flex items-center justify-between text-[10px] px-2 py-1.5 rounded border ${
                     hasSufficientBalance
                       ? 'border-green-500/20 bg-green-500/5'
@@ -949,13 +981,13 @@ export function SettlementInterface({
 
                 <div className="rounded-md border border-[#2A2A2A] bg-[#0A0A0A] p-2 space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#9CA3AF]">Your challenge</span>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#9CA3AF]">Your proposal</span>
                     {evidenceComplete && evidenceUrlFieldOk && (
                       <span className="text-[9px] text-emerald-400/90">Evidence ready</span>
                     )}
                   </div>
                   <div>
-                    <label className="text-[9px] uppercase tracking-wide text-[#606060] block mb-1">Alternative settlement price (USDC)</label>
+                    <label className="text-[9px] uppercase tracking-wide text-[#606060] block mb-1">Proposed settlement price (USDC)</label>
                     <div className="relative">
                       <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-[#606060]">$</span>
                       <input
@@ -1058,7 +1090,7 @@ export function SettlementInterface({
                     }
                     className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/15 hover:border-red-400/40 disabled:border-[#2A2A2A] disabled:bg-transparent disabled:text-[#404040] transition-colors"
                   >
-                    {isSubmitting ? (submitStep || 'Submitting…') : 'Sign & submit challenge'}
+                    {isSubmitting ? (submitStep || 'Submitting…') : 'Sign & submit proposal'}
                   </button>
                   <span className={`text-[9px] ${helperColor} sm:max-w-[min(100%,280px)] sm:text-right`}>{helperText}</span>
                 </div>
@@ -1068,12 +1100,14 @@ export function SettlementInterface({
                   </div>
                 )}
                 {onChain && onChain.challengeBondAmount > 0 && (
-                  <div className="text-[9px] text-yellow-400/60 flex items-center gap-1">
+                  <div className={`text-[9px] flex items-center gap-1 ${isBondExempt ? 'text-green-400/60' : 'text-yellow-400/60'}`}>
                     <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                       <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
                     </svg>
-                    Bond of ${onChain.challengeBondAmount.toLocaleString()} USDC will be deducted from your CoreVault. Slashed if your challenge is rejected by UMA DVM.
+                    {isBondExempt
+                      ? 'Your address is bond-exempt. No bond will be deducted for this proposal.'
+                      : `Bond of $${onChain.challengeBondAmount.toLocaleString()} USDC will be held from your CoreVault. Returned when settlement finalizes unopposed.`}
                   </div>
                 )}
               </div>
@@ -1099,7 +1133,7 @@ export function SettlementInterface({
               <span className="text-[9px] text-[#606060] block">
                 {isSettled
                   ? 'This market has been settled. The final price has been locked and positions resolved.'
-                  : 'Final settlement execution is handled by protocol operators once the challenge window closes.'}
+                  : 'Settlement finalizes once the challenge window closes and the proposed price is accepted.'}
               </span>
             </div>
           </div>
@@ -1125,15 +1159,17 @@ export function SettlementInterface({
               </>
             ) : (
               <>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-green-400" />Challenge window active after primary submission. Challenges require an alternative price plus a source link and/or screenshot.</div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-green-400" />Anyone can propose a settlement price with supporting evidence. The AI worker proposes first and is bond-exempt.</div>
                 <div className="flex items-center gap-1.5">
                   <div className="w-1 h-1 rounded-full bg-blue-400" />
                   {onChain && onChain.challengeBondAmount > 0
-                    ? `On-chain bond of $${onChain.challengeBondAmount.toLocaleString()} USDC required to challenge. Bond is slashed if incorrect.`
+                    ? isBondExempt
+                      ? 'Your address is bond-exempt. No bond required to propose a settlement price.'
+                      : `On-chain bond of $${onChain.challengeBondAmount.toLocaleString()} USDC required to propose. Bond is returned when settlement finalizes unopposed.`
                     : 'On-chain bond and archived evidence secure the process.'}
                 </div>
                 <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-purple-400" />Evidence hash committed on-chain at proposal time for tamper-proof verification.</div>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-yellow-400" />Window expiry or acceptance finalizes the market.</div>
+                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-yellow-400" />If the AI worker fails to propose, any user can step in and propose a price by posting a bond and submitting evidence.</div>
               </>
             )}
           </div>

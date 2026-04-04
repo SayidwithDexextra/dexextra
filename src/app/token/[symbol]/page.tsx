@@ -109,6 +109,16 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         await md.refetchMarket();
       }
     },
+    onProposalUpdated: async () => {
+      if (typeof md.refetchMarket === 'function') {
+        await md.refetchMarket();
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('settlementUpdated', {
+          detail: { symbol: symbolUpper, source: 'proposal_realtime' },
+        }));
+      }
+    },
   });
 
   const settlementRefetchMarket = useCallback(async () => {

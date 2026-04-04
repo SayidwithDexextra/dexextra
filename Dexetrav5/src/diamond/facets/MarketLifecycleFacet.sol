@@ -73,6 +73,8 @@ contract MarketLifecycleFacet {
     event SettlementChallenged(address indexed market, address indexed challenger, uint256 alternativePrice, uint256 bondAmount);
     event ChallengeResolved(address indexed market, address indexed challenger, bool challengerWon, uint256 bondAmount, address recipient);
     event SettlementPriceProposed(address indexed market, address indexed proposer, uint256 price, uint256 timestamp);
+    event ProposalBondExemptUpdated(address indexed account, bool exempt);
+    event ProposalBondReturned(address indexed market, address indexed proposer, uint256 amount);
 
     // === Modifiers ===
     modifier onlyOwner() {
@@ -377,8 +379,8 @@ contract MarketLifecycleFacet {
      * @notice Propose an initial settlement price for this market.
      * @dev Callable by ANYONE during the active challenge window. First valid
      *      proposal wins — subsequent proposals revert (use challengeSettlement
-     *      to dispute). The AI bot calls this same function, acting as just
-     *      another public participant.
+     *      to dispute). Bond-exempt addresses (AI workers) skip the bond;
+     *      all other callers must escrow the configured challengeBondAmount.
      * @param price Settlement price in 6-decimal format (e.g. 1e6 = $1.00)
      */
     function proposeSettlementPrice(uint256 price) external {
@@ -392,9 +394,22 @@ contract MarketLifecycleFacet {
 
         require(!s.settlementProposed, "LC: already proposed");
 
+        uint256 bondEscrowed = 0;
+        if (s.challengeBondAmount > 0 && !s.proposalBondExempt[msg.sender]) {
+            OrderBookStorage.State storage obs = OrderBookStorage.state();
+            require(address(obs.vault) != address(0), "LC: vault not set");
+            require(
+                obs.vault.getAvailableCollateral(msg.sender) >= s.challengeBondAmount,
+                "LC: insufficient collateral for bond"
+            );
+            obs.vault.deductFees(msg.sender, s.challengeBondAmount, address(this));
+            bondEscrowed = s.challengeBondAmount;
+        }
+
         s.proposedSettlementPrice = price;
         s.proposedSettlementBy = msg.sender;
         s.settlementProposed = true;
+        s.proposalBondEscrowed = bondEscrowed;
 
         emit SettlementPriceProposed(address(this), msg.sender, price, block.timestamp);
     }
@@ -656,8 +671,9 @@ contract MarketLifecycleFacet {
 
     /**
      * @notice Challenge the proposed settlement by posting a bond and alternative price.
-     * @dev Callable by anyone during the active challenge window. The bond is escrowed
-     *      from the caller's CoreVault collateral balance. Only one active challenge per market.
+     * @dev Callable by anyone during the active challenge window. Bond-exempt addresses
+     *      (AI workers) skip the bond; all other callers must escrow challengeBondAmount.
+     *      Only one active challenge per market.
      * @param alternativePrice The challenger's proposed settlement price (6 decimals)
      */
     function challengeSettlement(uint256 alternativePrice) external {
@@ -670,21 +686,25 @@ contract MarketLifecycleFacet {
         require(block.timestamp < challengeEnd, "LC: window expired");
 
         require(!s.challengeActive, "LC: challenge exists");
-        require(s.challengeBondAmount > 0, "LC: bond not configured");
 
         OrderBookStorage.State storage obs = OrderBookStorage.state();
         require(address(obs.vault) != address(0), "LC: vault not set");
-        require(obs.vault.getAvailableCollateral(msg.sender) >= s.challengeBondAmount, "LC: insufficient collateral");
 
-        obs.vault.deductFees(msg.sender, s.challengeBondAmount, address(this));
+        uint256 bondToEscrow = 0;
+        if (!s.proposalBondExempt[msg.sender]) {
+            require(s.challengeBondAmount > 0, "LC: bond not configured");
+            require(obs.vault.getAvailableCollateral(msg.sender) >= s.challengeBondAmount, "LC: insufficient collateral");
+            obs.vault.deductFees(msg.sender, s.challengeBondAmount, address(this));
+            bondToEscrow = s.challengeBondAmount;
+        }
 
         s.challenger = msg.sender;
         s.challengedPrice = alternativePrice;
-        s.challengeBondEscrowed = s.challengeBondAmount;
+        s.challengeBondEscrowed = bondToEscrow;
         s.challengeActive = true;
         s.challengeResolved = false;
 
-        emit SettlementChallenged(address(this), msg.sender, alternativePrice, s.challengeBondAmount);
+        emit SettlementChallenged(address(this), msg.sender, alternativePrice, bondToEscrow);
     }
 
     /**
@@ -738,6 +758,53 @@ contract MarketLifecycleFacet {
             s.challengeResolved,
             s.challengerWon
         );
+    }
+
+    // === Proposal Bond Exemption ===
+
+    /**
+     * @notice Mark an address as exempt from the proposal/challenge bond requirement.
+     * @dev Intended for trusted AI worker addresses that propose prices without collateral.
+     * @param account The address to exempt or un-exempt
+     * @param exempt  True to exempt, false to revoke exemption
+     */
+    function setProposalBondExempt(address account, bool exempt) external onlyOwner {
+        require(account != address(0), "LC: zero addr");
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        s.proposalBondExempt[account] = exempt;
+        emit ProposalBondExemptUpdated(account, exempt);
+    }
+
+    /**
+     * @notice Check whether an address is exempt from the proposal/challenge bond.
+     */
+    function isProposalBondExempt(address account) external view returns (bool) {
+        return MarketLifecycleStorage.state().proposalBondExempt[account];
+    }
+
+    /**
+     * @notice Return the escrowed proposal bond to the original proposer.
+     * @dev Called by the owner after settlement finalizes unopposed. No-ops if
+     *      no bond was escrowed (exempt proposer or zero bond config).
+     */
+    function returnProposalBond() external onlyOwner {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        require(s.settlementProposed, "LC: no proposal");
+        require(!s.challengeActive, "LC: active challenge");
+
+        uint256 amount = s.proposalBondEscrowed;
+        if (amount == 0) return;
+
+        address proposer = s.proposedSettlementBy;
+        require(proposer != address(0), "LC: no proposer");
+
+        s.proposalBondEscrowed = 0;
+
+        OrderBookStorage.State storage obs = OrderBookStorage.state();
+        require(address(obs.vault) != address(0), "LC: vault not set");
+        obs.vault.deductFees(address(this), amount, proposer);
+
+        emit ProposalBondReturned(address(this), proposer, amount);
     }
 }
 

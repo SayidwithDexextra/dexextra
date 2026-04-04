@@ -85,11 +85,11 @@ export function SettlementTransitionOverlay({
         {/* Announcement text */}
         <div className="text-center space-y-2">
           <h2 className="text-xl md:text-2xl font-medium text-white tracking-tight">
-            Entering Settlement Challenge Phase
+            Entering Settlement Window
           </h2>
           <p className="text-sm text-[#808080] max-w-md">
-            The market has reached its settlement date. A challenge window is now
-            open for price verification.
+            The market has reached its settlement date. A settlement price will
+            be proposed and open for verification.
           </p>
         </div>
 

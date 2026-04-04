@@ -180,6 +180,10 @@ export const MarketLifecycleFacetABI = [
   "function resolveChallenge(bool challengerWins) external",
   "function getChallengeBondConfig() external view returns (uint256 bondAmount, address slashRecipient)",
   "function getActiveChallengeInfo() external view returns (bool active, address challengerAddr, uint256 challengedPriceVal, uint256 bondEscrowed, bool resolved, bool won)",
+  // Proposal bond exemption
+  "function setProposalBondExempt(address account, bool exempt) external",
+  "function isProposalBondExempt(address account) external view returns (bool)",
+  "function returnProposalBond() external",
   // Views
   "function getSettlementTimestamp() external view returns (uint256)",
   "function getRolloverWindowStart() external view returns (uint256)",

@@ -54,6 +54,10 @@ library MarketLifecycleStorage {
 
         // Explicit timing overrides (v4; append-only) — stored at init, avoids proportional coupling
         uint256 rolloverLeadStored;         // Explicit rollover lead in seconds; 0 = use proportional default
+
+        // Bond exemption (v5; append-only)
+        mapping(address => bool) proposalBondExempt;  // Addresses exempt from proposal/challenge bond (AI workers)
+        uint256 proposalBondEscrowed;                 // Actual bond escrowed from proposer (0 if exempt)
     }
 
     function state() internal pure returns (State storage s) {
