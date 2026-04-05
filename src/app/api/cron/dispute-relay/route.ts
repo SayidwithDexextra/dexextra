@@ -118,8 +118,6 @@ export async function POST(request: Request) {
             uma_winning_price: altPrice,
             uma_resolved_at: new Date().toISOString(),
           },
-          // Keep settlement_disputed=true — the settlement engine will clear
-          // it and call resolveChallenge() on HL once the challenge window expires.
           updated_at: new Date().toISOString(),
         };
 
@@ -127,6 +125,9 @@ export async function POST(request: Request) {
           .from('markets')
           .update(updatePayload)
           .eq('id', market.id);
+
+        // Trigger immediate settlement finalization
+        await triggerSettlementFinalize(market.id, market.symbol);
       }
     }
 
@@ -144,6 +145,47 @@ export async function POST(request: Request) {
   }
 }
 
+async function triggerSettlementFinalize(marketId: string, symbol: string) {
+  const appUrl = process.env.APP_URL || process.env.VERCEL_URL;
+  if (!appUrl) {
+    console.log(`[dispute-relay] APP_URL not set, skipping settlement trigger for ${symbol}`);
+    return;
+  }
+
+  const baseUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
+  const endpoint = `${baseUrl.replace(/\/+$/, '')}/api/cron/market-lifecycle`;
+
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+      headers['Authorization'] = `Bearer ${cronSecret}`;
+    }
+
+    console.log(`[dispute-relay] Triggering settlement finalization for ${symbol}...`);
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'settlement_finalize',
+        marketId,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    const result = data.result || data;
+
+    if (result.ok) {
+      console.log(`[dispute-relay] Settlement finalized for ${symbol}`);
+    } else {
+      console.log(`[dispute-relay] Settlement pending for ${symbol}: ${result.reason || 'unknown'}`);
+    }
+  } catch (err: any) {
+    console.error(`[dispute-relay] Settlement trigger error for ${symbol}:`, err?.message);
+  }
+}
+
 async function persistRelayResult(supabase: any, result: RelayTickResult) {
   if (!result.marketAddress) return;
 
@@ -153,7 +195,7 @@ async function persistRelayResult(supabase: any, result: RelayTickResult) {
     } else if (result.action === 'uma_resolved') {
       const { data: mkt } = await supabase
         .from('markets')
-        .select('id, alternative_settlement_value, market_config')
+        .select('id, symbol, alternative_settlement_value, market_config')
         .eq('market_address', result.marketAddress)
         .maybeSingle();
 
@@ -175,8 +217,13 @@ async function persistRelayResult(supabase: any, result: RelayTickResult) {
         .eq('market_address', result.marketAddress);
 
       console.log(
-        `[dispute-relay] UMA verdict recorded for ${result.marketAddress}: challengerWon=${result.challengerWon} (on-chain resolution deferred to challenge window expiry)`,
+        `[dispute-relay] UMA verdict recorded for ${result.marketAddress}: challengerWon=${result.challengerWon}`,
       );
+
+      // Trigger immediate settlement
+      if (mkt?.id) {
+        await triggerSettlementFinalize(mkt.id, mkt.symbol || result.marketAddress);
+      }
     }
   } catch (err: any) {
     console.error(`[dispute-relay] persistRelayResult error: ${err?.message}`);

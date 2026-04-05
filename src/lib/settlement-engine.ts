@@ -339,8 +339,12 @@ export async function settlementSyncLifecycleOnChain(
   market: MarketRow,
 ): Promise<{ ok: boolean; previousState?: number; newState?: number; error?: string }> {
   const cfg = getConfig();
-  if (!cfg.rpcUrl) return { ok: false, error: 'rpc_not_configured' };
+  if (!cfg.rpcUrl) {
+    console.error(`[syncLifecycle] ABORT: rpcUrl is empty`);
+    return { ok: false, error: 'rpc_not_configured' };
+  }
   if (!market.market_address || !ethers.isAddress(market.market_address)) {
+    console.error(`[syncLifecycle] ABORT: invalid market_address=${market.market_address} for ${market.market_identifier}`);
     return { ok: false, error: 'invalid_market_address' };
   }
 
@@ -350,8 +354,11 @@ export async function settlementSyncLifecycleOnChain(
     allowFallbackSingleKey: true,
   });
   if (relayers.length === 0) {
+    console.error(`[syncLifecycle] ABORT: no relayer keys configured (check RELAYER_PRIVATE_KEYS_JSON or RELAYER_PRIVATE_KEY env vars)`);
     return { ok: false, error: 'no_relayer_keys_configured' };
   }
+
+  console.log(`[syncLifecycle] START for ${market.market_identifier}: marketAddress=${market.market_address}, relayerPoolSize=${relayers.length}, relayerAddresses=[${relayers.map(r => r.address).join(',')}]`);
 
   const maxAttempts = 2;
   let lastError = '';
@@ -368,43 +375,57 @@ export async function settlementSyncLifecycleOnChain(
         wallet,
       );
 
-      // Pre-flight: verify lifecycle facet is reachable via a cheap view call
+      // Pre-flight 1: verify lifecycle facet is reachable via a cheap view call
       try {
-        await contract.getLifecycleState();
+        const lifecycleState = await contract.getLifecycleState();
+        console.log(`[syncLifecycle] pre-flight getLifecycleState for ${market.market_identifier}: state=${lifecycleState}, attempt=${attempt}`);
       } catch (viewErr: unknown) {
         const viewMsg = String(viewErr);
+        console.warn(`[syncLifecycle] pre-flight getLifecycleState FAILED for ${market.market_identifier} (attempt ${attempt}): ${viewMsg.slice(0, 250)}`);
         if (viewMsg.includes('FunctionDoesNotExist') || viewMsg.includes('CALL_EXCEPTION')) {
+          console.error(`[syncLifecycle] FATAL: lifecycle facet not installed on Diamond ${market.market_address}`);
           return { ok: false, error: `lifecycle_facet_not_installed:${market.market_address}` };
         }
-        // View call failed for other reasons (RPC flaky) — proceed with the tx attempt
-        console.warn(`[settlement-engine] getLifecycleState view call failed for ${market.market_identifier}, proceeding: ${viewMsg.slice(0, 200)}`);
       }
 
-      // Simulate via eth_call to detect contract-level errors before sending.
-      // Some RPC nodes fail eth_estimateGas for Diamond delegatecall patterns
-      // even when the actual transaction would succeed, so we use staticCall for
-      // diagnostics only and always set an explicit gasLimit to bypass estimateGas.
+      // Pre-flight 2: check relayer ETH balance
+      try {
+        const balance = await provider.getBalance(relayer.address);
+        const balanceEth = ethers.formatEther(balance);
+        console.log(`[syncLifecycle] relayer balance for ${market.market_identifier}: ${balanceEth} ETH, relayer=${relayer.address}, attempt=${attempt}`);
+        if (balance === 0n) {
+          console.error(`[syncLifecycle] FATAL: relayer ${relayer.address} has 0 ETH — cannot pay gas`);
+          return { ok: false, error: `relayer_zero_balance:${relayer.address}` };
+        }
+      } catch (balErr) {
+        console.warn(`[syncLifecycle] balance check failed (proceeding): ${String(balErr).slice(0, 150)}`);
+      }
+
+      // Pre-flight 3: staticCall simulation to detect contract-level errors
       try {
         await contract.syncLifecycle.staticCall();
+        console.log(`[syncLifecycle] staticCall simulation OK for ${market.market_identifier} (attempt ${attempt})`);
       } catch (simErr: unknown) {
         const simMsg = String(simErr);
+        console.warn(`[syncLifecycle] staticCall simulation FAILED for ${market.market_identifier} (attempt ${attempt}): ${simMsg.slice(0, 300)}`);
         if (simMsg.includes('FunctionDoesNotExist')) {
+          console.error(`[syncLifecycle] FATAL: syncLifecycle selector not found on Diamond ${market.market_address}`);
           return { ok: false, error: `syncLifecycle_not_in_diamond:${market.market_address}` };
         }
         if (simMsg.includes('NotContractOwner')) {
+          console.error(`[syncLifecycle] FATAL: relayer ${relayer.address} not authorized`);
           return { ok: false, error: `relayer_not_authorized:${relayer.address}` };
         }
         if (simMsg.includes('LC: unset')) {
+          console.error(`[syncLifecycle] FATAL: lifecycle not initialized on ${market.market_address}`);
           return { ok: false, error: `lifecycle_not_initialized:${market.market_address}` };
         }
-        // Unknown simulation failure — proceed anyway with explicit gasLimit
-        // (eth_estimateGas is unreliable for Diamond proxies on some RPC nodes)
-        console.warn(`[settlement-engine] syncLifecycle simulation unclear for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}), proceeding with explicit gasLimit: ${simMsg.slice(0, 300)}`);
+        console.warn(`[syncLifecycle] simulation unclear, proceeding with explicit gasLimit for ${market.market_identifier}`);
       }
 
       const feeData = await provider.getFeeData();
       const txOverrides: Record<string, unknown> = {
-        gasLimit: 500_000n,
+        gasLimit: 1_000_000n,
       };
       if (feeData.maxFeePerGas) {
         const maxFee = feeData.maxFeePerGas * 120n / 100n;
@@ -412,14 +433,18 @@ export async function settlementSyncLifecycleOnChain(
         const rawPriority = feeData.maxPriorityFeePerGas
           ? feeData.maxPriorityFeePerGas * 120n / 100n
           : defaultPriority;
-        // Ensure priorityFee never exceeds maxFee (EIP-1559 requirement)
         const priorityFee = rawPriority > maxFee ? maxFee : rawPriority;
         txOverrides.maxFeePerGas = maxFee;
         txOverrides.maxPriorityFeePerGas = priorityFee;
       }
 
+      console.log(`[syncLifecycle] sending tx for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}): relayer=${relayer.address}, gasLimit=1000000, maxFeePerGas=${txOverrides.maxFeePerGas ? String(txOverrides.maxFeePerGas) : 'legacy'}`);
+
       const tx = await contract.syncLifecycle(txOverrides);
+      console.log(`[syncLifecycle] tx SENT for ${market.market_identifier}: hash=${tx.hash}, relayer=${relayer.address} (attempt ${attempt})`);
+
       const receipt = await tx.wait();
+      const success = receipt?.status === 1;
 
       let previousState: number | undefined;
       let newState: number | undefined;
@@ -434,30 +459,50 @@ export async function settlementSyncLifecycleOnChain(
         } catch {}
       }
 
-      console.log(`[settlement-engine] syncLifecycle via relayer ${relayer.address} for ${market.market_identifier}`, {
-        previousState, newState, txHash: receipt?.hash, attempt,
-      });
+      console.log(`[syncLifecycle] tx ${success ? 'CONFIRMED' : 'REVERTED'} for ${market.market_identifier}: txHash=${receipt?.hash}, status=${receipt?.status}, gasUsed=${receipt?.gasUsed?.toString()}, blockNumber=${receipt?.blockNumber}, previousState=${previousState}, newState=${newState}, logs=${receipt?.logs?.length ?? 0}, attempt=${attempt}`);
+
+      if (!success) {
+        lastError = `tx_reverted_onchain:status=0,gasUsed=${receipt?.gasUsed},tx=${receipt?.hash}`;
+        if (attempt < maxAttempts) {
+          console.warn(`[syncLifecycle] on-chain revert for ${market.market_identifier}, retrying...`);
+          await new Promise((r) => setTimeout(r, 2000 * attempt));
+          continue;
+        }
+        return { ok: false, error: lastError };
+      }
+
+      console.log(`[syncLifecycle] SUCCESS for ${market.market_identifier}: previousState=${previousState}, newState=${newState}, tx=${receipt?.hash}`);
       return { ok: true, previousState, newState };
     } catch (err: unknown) {
       const errMsg = String(err);
       lastError = errMsg;
 
-      // Decode known non-retriable errors
+      const isEstimateGas = errMsg.includes('estimateGas');
+      const isNonce = errMsg.includes('nonce');
+      const isRevert = errMsg.includes('CALL_EXCEPTION');
+      const isInsufficientFunds = errMsg.includes('insufficient funds');
+      const errorType = isEstimateGas ? 'estimateGas_revert' : isNonce ? 'nonce_conflict' : isRevert ? 'call_exception' : isInsufficientFunds ? 'insufficient_funds' : 'unknown';
+
+      console.error(`[syncLifecycle] attempt ${attempt}/${maxAttempts} EXCEPTION for ${market.market_identifier}: type=${errorType}, relayer=${relayer.address}, market=${market.market_address}, error=${errMsg.slice(0, 400)}`);
+
       if (errMsg.includes('FunctionDoesNotExist')) {
+        console.error(`[syncLifecycle] FATAL: lifecycle facet missing on Diamond ${market.market_address}`);
         return { ok: false, error: `lifecycle_facet_missing_on_diamond:${market.market_address}` };
       }
       if (errMsg.includes('LC: unset')) {
+        console.error(`[syncLifecycle] FATAL: lifecycle not initialized on ${market.market_address}`);
         return { ok: false, error: `lifecycle_not_initialized:${market.market_address}` };
       }
 
       if (attempt < maxAttempts) {
         const backoffMs = 2000 * attempt;
-        console.warn(`[settlement-engine] syncLifecycle attempt ${attempt}/${maxAttempts} failed for ${market.market_identifier} via relayer ${relayer.address}, retrying in ${backoffMs}ms: ${errMsg.slice(0, 300)}`);
+        console.warn(`[syncLifecycle] retrying in ${backoffMs}ms for ${market.market_identifier}...`);
         await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
   }
 
+  console.error(`[syncLifecycle] ALL ${maxAttempts} ATTEMPTS FAILED for ${market.market_identifier}: relayers=[${relayers.map(r => r.address).join(',')}], market=${market.market_address}, lastError=${lastError.slice(0, 500)}`);
   return { ok: false, error: `sync_lifecycle_failed_after_${maxAttempts}_attempts:${lastError.slice(0, 500)}` };
 }
 
@@ -466,26 +511,36 @@ async function commitEvidenceOnChain(
   waybackUrl: string,
 ): Promise<{ ok: boolean; evidenceHash?: string; error?: string; alreadyCommitted?: boolean }> {
   const cfg = getConfig();
-  if (!cfg.rpcUrl) return { ok: false, error: 'rpc_not_configured' };
+  if (!cfg.rpcUrl) {
+    console.error(`[commitEvidence] ABORT: rpcUrl is empty`);
+    return { ok: false, error: 'rpc_not_configured' };
+  }
   if (!market.market_address || !ethers.isAddress(market.market_address)) {
+    console.error(`[commitEvidence] ABORT: invalid market_address=${market.market_address} for ${market.market_identifier}`);
     return { ok: false, error: 'invalid_market_address' };
   }
 
-  const relayers = loadRelayerPoolFromEnv({
-    pool: 'evidence_commit',
-    globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
-    allowFallbackSingleKey: true,
-  });
+  // commitEvidence() is onlyOwner on the Diamond — MUST use the Diamond owner key.
+  // Relayer pool keys are NOT the Diamond owner; use ADMIN_PRIVATE_KEY / PRIVATE_KEY.
+  const signerKey = cfg.privateKey;
+  if (!signerKey) {
+    console.error(`[commitEvidence] ABORT: ADMIN_PRIVATE_KEY / PRIVATE_KEY is empty — cannot call onlyOwner function`);
+    return { ok: false, error: 'admin_key_not_configured' };
+  }
 
-  let signerKey = relayers.length > 0
-    ? relayers[Math.floor(Math.random() * relayers.length)].privateKey
-    : cfg.privateKey;
-
-  if (!signerKey) return { ok: false, error: 'no_signer_key_configured' };
-
+  const signerAddress = new ethers.Wallet(signerKey).address;
   const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes(waybackUrl));
   const maxRetries = 3;
   let lastError = '';
+
+  console.log(`[commitEvidence] START for ${market.market_identifier}`, JSON.stringify({
+    marketAddress: market.market_address,
+    signerAddress,
+    evidenceHash,
+    waybackUrlLength: waybackUrl.length,
+    waybackUrlPreview: waybackUrl.slice(0, 120),
+    rpcUrl: cfg.rpcUrl.replace(/\/\/.*@/, '//***@').slice(0, 60),
+  }));
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -497,25 +552,51 @@ async function commitEvidenceOnChain(
         [
           'function commitEvidence(string calldata evidenceUrl) external',
           'function getProposedEvidence() external view returns (bytes32 evidenceHash, string evidenceUrl)',
+          'function owner() external view returns (address)',
           'error FunctionDoesNotExist()',
           'error NotContractOwner()',
         ],
         wallet,
       );
 
-      // Pre-flight: check if evidence is already committed (idempotent)
+      // Pre-flight 1: check if evidence is already committed (idempotent)
       try {
-        const [existingHash] = await contract.getProposedEvidence();
+        const [existingHash, existingUrl] = await contract.getProposedEvidence();
+        console.log(`[commitEvidence] pre-flight getProposedEvidence for ${market.market_identifier}: existingHash=${existingHash}, hasUrl=${!!existingUrl}, attempt=${attempt}`);
         if (existingHash && existingHash !== ethers.ZeroHash) {
-          console.log(`[settlement-engine] evidence already committed on-chain for ${market.market_identifier}: ${existingHash}`);
+          console.log(`[commitEvidence] ALREADY COMMITTED on-chain for ${market.market_identifier}: ${existingHash}`);
           return { ok: true, evidenceHash: existingHash, alreadyCommitted: true };
         }
-      } catch {
-        // View call failed — proceed with commit attempt anyway
+      } catch (viewErr) {
+        console.warn(`[commitEvidence] pre-flight getProposedEvidence FAILED for ${market.market_identifier} (attempt ${attempt}): ${String(viewErr).slice(0, 200)}`);
       }
 
-      // Explicit gasLimit bypasses eth_estimateGas which is unreliable for
-      // Diamond proxy delegatecalls on some RPC nodes / chains.
+      // Pre-flight 2: verify signer IS the Diamond owner
+      try {
+        const diamondOwner = await contract.owner();
+        const isOwner = diamondOwner.toLowerCase() === signerAddress.toLowerCase();
+        console.log(`[commitEvidence] ownership check for ${market.market_identifier}: diamondOwner=${diamondOwner}, signerAddress=${signerAddress}, isOwner=${isOwner}, attempt=${attempt}`);
+        if (!isOwner) {
+          console.error(`[commitEvidence] FATAL: signer ${signerAddress} is NOT the Diamond owner ${diamondOwner} — commitEvidence will revert with NotContractOwner`);
+          return { ok: false, error: `signer_not_diamond_owner:signer=${signerAddress},owner=${diamondOwner}` };
+        }
+      } catch (ownerErr) {
+        console.warn(`[commitEvidence] ownership check FAILED for ${market.market_identifier} (proceeding anyway): ${String(ownerErr).slice(0, 200)}`);
+      }
+
+      // Pre-flight 3: check signer ETH balance for gas
+      try {
+        const balance = await provider.getBalance(signerAddress);
+        const balanceEth = ethers.formatEther(balance);
+        console.log(`[commitEvidence] signer balance for ${market.market_identifier}: ${balanceEth} ETH (attempt ${attempt})`);
+        if (balance === 0n) {
+          console.error(`[commitEvidence] FATAL: signer ${signerAddress} has 0 ETH — cannot pay gas`);
+          return { ok: false, error: `signer_zero_balance:${signerAddress}` };
+        }
+      } catch (balErr) {
+        console.warn(`[commitEvidence] balance check failed (proceeding): ${String(balErr).slice(0, 150)}`);
+      }
+
       const feeData = await provider.getFeeData();
       const txOverrides: Record<string, unknown> = {
         gasLimit: 200_000n,
@@ -526,45 +607,67 @@ async function commitEvidenceOnChain(
         const rawPriority = feeData.maxPriorityFeePerGas
           ? feeData.maxPriorityFeePerGas * 120n / 100n
           : defaultPriority;
-        // Ensure priorityFee never exceeds maxFee (EIP-1559 requirement)
         const priorityFee = rawPriority > maxFee ? maxFee : rawPriority;
         txOverrides.maxFeePerGas = maxFee;
         txOverrides.maxPriorityFeePerGas = priorityFee;
       }
+      console.log(`[commitEvidence] sending tx for ${market.market_identifier} (attempt ${attempt}/${maxRetries}): gasLimit=200000, maxFeePerGas=${txOverrides.maxFeePerGas ? String(txOverrides.maxFeePerGas) : 'legacy'}`);
 
       const tx = await contract.commitEvidence(waybackUrl, txOverrides);
+      console.log(`[commitEvidence] tx SENT for ${market.market_identifier}: hash=${tx.hash} (attempt ${attempt})`);
+
       const receipt = await tx.wait();
-      console.log(`[settlement-engine] evidence committed on-chain (attempt ${attempt}): ${evidenceHash} tx=${receipt?.hash} (url: ${waybackUrl})`);
+      const success = receipt?.status === 1;
+      console.log(`[commitEvidence] tx ${success ? 'CONFIRMED' : 'REVERTED'} for ${market.market_identifier}: txHash=${receipt?.hash}, status=${receipt?.status}, gasUsed=${receipt?.gasUsed?.toString()}, blockNumber=${receipt?.blockNumber}, logs=${receipt?.logs?.length ?? 0}, attempt=${attempt}`);
+
+      if (!success) {
+        lastError = `tx_reverted_onchain:status=0,gasUsed=${receipt?.gasUsed},tx=${receipt?.hash}`;
+        if (attempt < maxRetries) {
+          console.warn(`[commitEvidence] on-chain revert for ${market.market_identifier}, retrying...`);
+          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+          continue;
+        }
+        return { ok: false, error: lastError };
+      }
+
+      console.log(`[commitEvidence] SUCCESS for ${market.market_identifier}: evidenceHash=${evidenceHash}, tx=${receipt?.hash}`);
       return { ok: true, evidenceHash };
     } catch (err: unknown) {
       const errMsg = String(err);
       lastError = errMsg;
 
-      // "evidence already committed" revert is a success — another path committed first
+      const isEstimateGas = errMsg.includes('estimateGas');
+      const isNonce = errMsg.includes('nonce');
+      const isRevert = errMsg.includes('CALL_EXCEPTION');
+      const isInsufficientFunds = errMsg.includes('insufficient funds');
+      const errorType = isEstimateGas ? 'estimateGas_revert' : isNonce ? 'nonce_conflict' : isRevert ? 'call_exception' : isInsufficientFunds ? 'insufficient_funds' : 'unknown';
+
+      console.error(`[commitEvidence] attempt ${attempt}/${maxRetries} EXCEPTION for ${market.market_identifier}: type=${errorType}, signer=${signerAddress}, market=${market.market_address}, error=${errMsg.slice(0, 400)}`);
+
       if (errMsg.includes('evidence already committed')) {
-        console.log(`[settlement-engine] evidence already committed (race OK) for ${market.market_identifier}`);
+        console.log(`[commitEvidence] RACE OK for ${market.market_identifier} — evidence already committed by another caller`);
         return { ok: true, evidenceHash, alreadyCommitted: true };
       }
 
-      // Non-retriable: lifecycle facet not installed on this Diamond
-      if (errMsg.includes('FunctionDoesNotExist')) {
-        return { ok: false, error: `lifecycle_facet_not_installed:${market.market_address}` };
+      if (errMsg.includes('NotContractOwner')) {
+        console.error(`[commitEvidence] FATAL: NotContractOwner revert — signer ${signerAddress} is not the Diamond owner for ${market.market_address}`);
+        return { ok: false, error: `not_contract_owner:signer=${signerAddress},market=${market.market_address}` };
       }
 
-      // Nonce collision — pick a different relayer key for next attempt
-      if (errMsg.includes('nonce') && relayers.length > 1) {
-        const nextRelayer = relayers[Math.floor(Math.random() * relayers.length)];
-        signerKey = nextRelayer.privateKey;
+      if (errMsg.includes('FunctionDoesNotExist')) {
+        console.error(`[commitEvidence] FATAL: commitEvidence selector not found on Diamond ${market.market_address} — lifecycle facet not installed`);
+        return { ok: false, error: `lifecycle_facet_not_installed:${market.market_address}` };
       }
 
       if (attempt < maxRetries) {
         const backoffMs = 1000 * Math.pow(2, attempt - 1);
-        console.warn(`[settlement-engine] commitEvidence attempt ${attempt}/${maxRetries} failed for ${market.market_identifier}, retrying in ${backoffMs}ms: ${errMsg.slice(0, 200)}`);
+        console.warn(`[commitEvidence] retrying in ${backoffMs}ms for ${market.market_identifier}...`);
         await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
   }
 
+  console.error(`[commitEvidence] ALL ${maxRetries} ATTEMPTS FAILED for ${market.market_identifier}: signer=${signerAddress}, market=${market.market_address}, lastError=${lastError.slice(0, 500)}`);
   return { ok: false, error: `commit_evidence_failed_after_${maxRetries}_attempts:${lastError.slice(0, 300)}` };
 }
 
@@ -587,7 +690,7 @@ async function resolveChallengeOnChain(
       ['function resolveChallenge(bool challengerWins) external'],
       wallet,
     );
-    const tx = await contract.resolveChallenge(challengerWon, { gasLimit: 300_000n });
+    const tx = await contract.resolveChallenge(challengerWon, { gasLimit: 1_000_000n });
     await tx.wait();
     return { ok: true, txHash: tx.hash };
   } catch (err) {
@@ -614,7 +717,7 @@ async function finalizeOnChain(
       ['function settleMarket(uint256 finalPrice) external'],
       wallet,
     );
-    const tx = await ob.settleMarket(ethers.parseUnits(finalPrice.toString(), 6), { gasLimit: 500_000n });
+    const tx = await ob.settleMarket(ethers.parseUnits(finalPrice.toString(), 6), { gasLimit: 2_000_000n });
     await tx.wait();
     return { ok: true, txHash: tx.hash };
   } catch (err) {
@@ -799,14 +902,20 @@ async function maybeFinalizeSettlement(
     console.warn(`[settlement-engine] syncLifecycle warning for ${market.market_identifier}: ${syncResult.error}`);
   }
 
-  const exp = windowExpiryMs(market);
-  if (exp === null || exp > Date.now()) {
-    return {
-      marketId: market.id, marketIdentifier: market.market_identifier,
-      action: 'finalize', ok: false,
-      settlementDate: exp !== null ? new Date(exp).toISOString() : market.settlement_date,
-      reason: 'window_not_expired',
-    };
+  // Skip window expiry check if UMA has already resolved the dispute.
+  // The DVM verdict is final, so we can settle immediately.
+  if (!umaDisputeNeedsOnChainResolution) {
+    const exp = windowExpiryMs(market);
+    if (exp === null || exp > Date.now()) {
+      return {
+        marketId: market.id, marketIdentifier: market.market_identifier,
+        action: 'finalize', ok: false,
+        settlementDate: exp !== null ? new Date(exp).toISOString() : market.settlement_date,
+        reason: 'window_not_expired',
+      };
+    }
+  } else {
+    console.log(`[settlement-engine] UMA resolved for ${market.market_identifier}, bypassing window expiry check`);
   }
 
   let proposedPrice = market.proposed_settlement_value;

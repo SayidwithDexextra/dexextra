@@ -39,3 +39,7 @@ export type { PerformanceTier, DevicePerformanceInfo } from './useDevicePerforma
 // Comments system with real-time
 export { useComments } from './useComments';
 export type { Comment, CommentImage } from './useComments';
+
+// On-chain challenger info (HyperLiquid market disputes)
+export { useChallengerInfo, fetchChallengerInfo } from './useChallengerInfo';
+export type { ChallengerInfo } from './useChallengerInfo';

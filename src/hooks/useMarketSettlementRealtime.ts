@@ -3,6 +3,14 @@
 import { useEffect, useRef } from 'react';
 import { getSupabaseClient } from '@/lib/supabase-browser';
 
+interface MarketConfigState {
+  uma_assertion_id?: string;
+  uma_escalated_at?: string;
+  uma_resolved?: boolean;
+  uma_challenger_won?: boolean;
+  uma_resolved_at?: string;
+}
+
 interface UseMarketSettlementRealtimeOptions {
   marketId: string | null;
   currentStatus: string | null;
@@ -10,6 +18,12 @@ interface UseMarketSettlementRealtimeOptions {
   onSettled?: () => void;
   /** Fired when proposed_settlement_value changes (e.g. AI bot reveals a price). */
   onProposalUpdated?: () => void;
+  /** Fired when a dispute is escalated to UMA (uma_assertion_id is set). */
+  onUmaEscalated?: () => void;
+  /** Fired when UMA resolves the dispute (uma_resolved becomes true). */
+  onUmaResolved?: (challengerWon: boolean) => void;
+  /** Fired when settlement_disputed changes. */
+  onDisputeStatusChanged?: (disputed: boolean) => void;
 }
 
 /**
@@ -18,6 +32,9 @@ interface UseMarketSettlementRealtimeOptions {
  *  - market_status transitions to SETTLEMENT_REQUESTED
  *  - market_status transitions to SETTLED
  *  - proposed_settlement_value changes (AI bot proposes / updates a price)
+ *  - settlement_disputed changes (challenge submitted or resolved)
+ *  - market_config.uma_assertion_id is set (escalated to UMA)
+ *  - market_config.uma_resolved becomes true (UMA DVM resolved)
  */
 export function useMarketSettlementRealtime({
   marketId,
@@ -25,12 +42,21 @@ export function useMarketSettlementRealtime({
   onSettlementStarted,
   onSettled,
   onProposalUpdated,
+  onUmaEscalated,
+  onUmaResolved,
+  onDisputeStatusChanged,
 }: UseMarketSettlementRealtimeOptions) {
   const callbackRef = useRef(onSettlementStarted);
   const settledCallbackRef = useRef(onSettled);
   const proposalCallbackRef = useRef(onProposalUpdated);
+  const umaEscalatedCallbackRef = useRef(onUmaEscalated);
+  const umaResolvedCallbackRef = useRef(onUmaResolved);
+  const disputeStatusCallbackRef = useRef(onDisputeStatusChanged);
+
   const statusRef = useRef(currentStatus);
   const lastProposedRef = useRef<number | null>(null);
+  const lastDisputedRef = useRef<boolean | null>(null);
+  const lastConfigRef = useRef<MarketConfigState | null>(null);
 
   useEffect(() => {
     callbackRef.current = onSettlementStarted;
@@ -43,6 +69,18 @@ export function useMarketSettlementRealtime({
   useEffect(() => {
     proposalCallbackRef.current = onProposalUpdated;
   }, [onProposalUpdated]);
+
+  useEffect(() => {
+    umaEscalatedCallbackRef.current = onUmaEscalated;
+  }, [onUmaEscalated]);
+
+  useEffect(() => {
+    umaResolvedCallbackRef.current = onUmaResolved;
+  }, [onUmaResolved]);
+
+  useEffect(() => {
+    disputeStatusCallbackRef.current = onDisputeStatusChanged;
+  }, [onDisputeStatusChanged]);
 
   useEffect(() => {
     statusRef.current = currentStatus;
@@ -91,6 +129,33 @@ export function useMarketSettlementRealtime({
             lastProposedRef.current = newProposed;
             proposalCallbackRef.current?.();
           }
+
+          const newDisputed = newRow?.settlement_disputed ?? null;
+          if (
+            newDisputed !== null &&
+            newDisputed !== lastDisputedRef.current
+          ) {
+            lastDisputedRef.current = newDisputed;
+            disputeStatusCallbackRef.current?.(newDisputed);
+          }
+
+          const newConfig = (newRow?.market_config ?? {}) as MarketConfigState;
+          const prevConfig = lastConfigRef.current;
+
+          const newAssertionId = newConfig.uma_assertion_id;
+          const prevAssertionId = prevConfig?.uma_assertion_id;
+          if (newAssertionId && newAssertionId !== prevAssertionId) {
+            umaEscalatedCallbackRef.current?.();
+          }
+
+          const newUmaResolved = newConfig.uma_resolved === true;
+          const prevUmaResolved = prevConfig?.uma_resolved === true;
+          if (newUmaResolved && !prevUmaResolved) {
+            const challengerWon = newConfig.uma_challenger_won === true;
+            umaResolvedCallbackRef.current?.(challengerWon);
+          }
+
+          lastConfigRef.current = newConfig;
         },
       )
       .subscribe();

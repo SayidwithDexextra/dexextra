@@ -119,6 +119,36 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         }));
       }
     },
+    onUmaEscalated: async () => {
+      if (typeof md.refetchMarket === 'function') {
+        await md.refetchMarket();
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('settlementUpdated', {
+          detail: { symbol: symbolUpper, source: 'uma_escalated', eventName: 'UmaEscalated' },
+        }));
+      }
+    },
+    onUmaResolved: async (challengerWon) => {
+      if (typeof md.refetchMarket === 'function') {
+        await md.refetchMarket();
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('settlementUpdated', {
+          detail: { symbol: symbolUpper, source: 'uma_resolved', eventName: 'UmaResolved', challengerWon },
+        }));
+      }
+    },
+    onDisputeStatusChanged: async (disputed) => {
+      if (typeof md.refetchMarket === 'function') {
+        await md.refetchMarket();
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('settlementUpdated', {
+          detail: { symbol: symbolUpper, source: 'dispute_status', eventName: 'DisputeStatusChanged', disputed },
+        }));
+      }
+    },
   });
 
   const settlementRefetchMarket = useCallback(async () => {
