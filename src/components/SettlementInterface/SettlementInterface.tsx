@@ -431,6 +431,7 @@ export function SettlementInterface({
 
   const isSettled = market?.market_status === 'SETTLED';
   const umaResolved = market?.market_config?.uma_resolved === true;
+  const isUmaDispute = Boolean(market?.market_config?.uma_assertion_id);
   const proposedSettlementNum = Number(market?.proposed_settlement_value);
   const hasProposedPrice = Number.isFinite(proposedSettlementNum) && proposedSettlementNum > 0;
 
@@ -490,7 +491,7 @@ export function SettlementInterface({
               </div>
             </div>
             <div className="text-right">
-              {!isSettled && timeRemaining && (
+              {!isSettled && !isUmaDispute && timeRemaining && (
                 <div className="flex items-center gap-1.5">
                   <svg className="w-3 h-3 text-[#606060]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
@@ -498,12 +499,18 @@ export function SettlementInterface({
                   <span className={`text-[10px] font-mono ${isExpired ? 'text-red-400' : 'text-white'}`}>{timeRemaining}</span>
                 </div>
               )}
+              {isUmaDispute && !umaResolved && (
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                  <span className="text-[10px] font-mono text-indigo-400">Awaiting DVM</span>
+                </div>
+              )}
               <div className="text-[9px] text-[#606060] font-mono mt-0.5 truncate max-w-[200px]">{market.market_identifier}</div>
             </div>
           </div>
 
-          {/* Progress bar */}
-          {!isSettled && (
+          {/* Progress bar - hidden during UMA dispute since DVM handles resolution */}
+          {!isSettled && !isUmaDispute && (
             <div className="mt-2">
               <div className="flex items-center justify-between text-[9px] text-[#606060] mb-1">
                 <span>Window Progress</span>
@@ -511,6 +518,15 @@ export function SettlementInterface({
               </div>
               <div className="h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
                 <div className={`h-full rounded-full bg-gradient-to-r ${statusAccent} transition-all duration-1000 ease-out`} style={{ width: `${windowProgress}%` }} />
+              </div>
+            </div>
+          )}
+          {/* UMA dispute indicator replaces progress bar */}
+          {isUmaDispute && !umaResolved && (
+            <div className="mt-2">
+              <div className="flex items-center gap-2 text-[9px] text-indigo-400/80">
+                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                <span>Settlement paused while UMA DVM resolves the dispute (typically 48-96 hours)</span>
               </div>
             </div>
           )}
