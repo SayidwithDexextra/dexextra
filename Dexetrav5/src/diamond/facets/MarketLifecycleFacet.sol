@@ -533,6 +533,7 @@ contract MarketLifecycleFacet {
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         if (!s.challengeWindowStarted) return false;
         if (_currentLifecycleState(s) == LifecycleState.Settled) return false;
+        if (s.challengeResolved) return false; // Challenge resolved (e.g. UMA vote) - window effectively closed
         return block.timestamp >= s.challengeWindowStart
             && block.timestamp < (s.challengeWindowStart + _challengeDuration(s));
     }

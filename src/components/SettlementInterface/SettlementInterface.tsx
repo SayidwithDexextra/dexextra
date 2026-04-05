@@ -70,13 +70,6 @@ const LIFECYCLE_LABELS: Record<number, string> = {
   3: 'Settled',
 };
 
-const LIFECYCLE_DOT_COLOR: Record<number, string> = {
-  0: 'bg-[#404040]',
-  1: 'bg-yellow-400',
-  2: 'bg-yellow-400',
-  3: 'bg-blue-400',
-};
-
 const LIFECYCLE_STATE_ABI = [{ type: 'function' as const, name: 'getLifecycleState' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'uint8', name: '' }] }] as const;
 const CHALLENGE_BOND_CONFIG_ABI = [{ type: 'function' as const, name: 'getChallengeBondConfig' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'uint256', name: 'bondAmount' }, { type: 'address', name: 'slashRecipient' }] }] as const;
 const ACTIVE_CHALLENGE_ABI = [{ type: 'function' as const, name: 'getActiveChallengeInfo' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'bool', name: 'active' }, { type: 'address', name: 'challengerAddr' }, { type: 'uint256', name: 'challengedPriceVal' }, { type: 'uint256', name: 'bondEscrowed' }, { type: 'bool', name: 'resolved' }, { type: 'bool', name: 'won' }] }] as const;
@@ -275,7 +268,7 @@ export function SettlementInterface({
     setChallengeNotice(null);
     const result = await enableTrading();
     if (result.success) {
-      setChallengeNotice({ type: 'success', text: 'Gasless session enabled. You can now submit proposals without wallet popups.' });
+      setChallengeNotice({ type: 'success', text: 'Gasless session enabled.' });
     } else {
       setChallengeNotice({ type: 'error', text: result.error || 'Failed to create session.' });
     }
@@ -291,10 +284,10 @@ export function SettlementInterface({
     if (!market?.id) { setChallengeNotice({ type: 'error', text: 'Market unavailable.' }); return; }
     if (!market?.market_address) { setChallengeNotice({ type: 'error', text: 'Market contract address not available.' }); return; }
     if (isExpired) { setChallengeNotice({ type: 'error', text: 'Settlement window already expired.' }); return; }
-    if (!hasSufficientBalance) { setChallengeNotice({ type: 'error', text: `Insufficient balance. Need ${bondRequired.toLocaleString()} USDC, you have ${availableBalanceNum.toFixed(2)} USDC.` }); return; }
-    if (!evidenceUrlFieldOk) { setChallengeNotice({ type: 'error', text: 'Evidence URL must be a valid http(s) link or left empty if you upload an image.' }); return; }
-    if (!evidenceComplete) { setChallengeNotice({ type: 'error', text: 'Provide evidence: a source URL and/or a screenshot image.' }); return; }
-    if (!hasSession) { setChallengeNotice({ type: 'error', text: 'Enable gasless trading to submit a proposal.' }); return; }
+    if (!hasSufficientBalance) { setChallengeNotice({ type: 'error', text: `Insufficient balance. Need ${bondRequired.toLocaleString()} USDC.` }); return; }
+    if (!evidenceUrlFieldOk) { setChallengeNotice({ type: 'error', text: 'Evidence URL must be a valid http(s) link.' }); return; }
+    if (!evidenceComplete) { setChallengeNotice({ type: 'error', text: 'Provide evidence: a source URL and/or a screenshot.' }); return; }
+    if (!hasSession) { setChallengeNotice({ type: 'error', text: 'Enable gasless trading first.' }); return; }
 
     try {
       setIsSubmitting(true);
@@ -303,25 +296,25 @@ export function SettlementInterface({
 
       let imagePublicUrl = uploadedEvidenceImageUrl;
       if (evidenceImageFile && !imagePublicUrl) {
-        setSubmitStep('Uploading evidence image...');
+        setSubmitStep('Uploading evidence...');
         const fd = new FormData();
         fd.append('file', evidenceImageFile);
         fd.append('market_id', market.id);
         const upRes = await fetch('/api/settlements/challenge-evidence', { method: 'POST', body: fd });
         const upJson = await upRes.json().catch(() => ({}));
         if (!upRes.ok) {
-          setChallengeNotice({ type: 'error', text: upJson.error || 'Could not upload evidence image.' });
+          setChallengeNotice({ type: 'error', text: upJson.error || 'Could not upload evidence.' });
           return;
         }
         imagePublicUrl = typeof upJson.publicUrl === 'string' ? upJson.publicUrl : null;
         if (!imagePublicUrl) {
-          setChallengeNotice({ type: 'error', text: 'Upload succeeded but no image URL was returned.' });
+          setChallengeNotice({ type: 'error', text: 'Upload succeeded but no URL returned.' });
           return;
         }
         setUploadedEvidenceImageUrl(imagePublicUrl);
       }
 
-      setSubmitStep('Submitting gasless proposal...');
+      setSubmitStep('Submitting proposal...');
       const apiRes = await fetch('/api/gasless/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -338,7 +331,7 @@ export function SettlementInterface({
       const apiData = await apiRes.json();
 
       if (!apiRes.ok) {
-        setChallengeNotice({ type: 'error', text: apiData.error || 'Gasless challenge failed.' });
+        setChallengeNotice({ type: 'error', text: apiData.error || 'Proposal failed.' });
         return;
       }
 
@@ -348,15 +341,12 @@ export function SettlementInterface({
       setEvidenceSourceUrl('');
       setEvidenceImageFile(null);
       setUploadedEvidenceImageUrl(null);
-      const umaInfo = apiData.uma_assertion_id
-        ? ` UMA Assertion: ${apiData.uma_assertion_id.slice(0, 10)}...`
-        : '';
-      setChallengeNotice({ type: 'success', text: `Proposal submitted on-chain (gasless). Escalated to UMA for verification.${umaInfo}` });
+      setChallengeNotice({ type: 'success', text: 'Proposal submitted successfully.' });
       refreshVaultBalance();
       onChallengeSaved?.();
     } catch (err: any) {
       const msg = err?.reason || err?.message || 'Submission failed';
-      setChallengeNotice({ type: 'error', text: msg.length > 120 ? msg.slice(0, 120) + '...' : msg });
+      setChallengeNotice({ type: 'error', text: msg.length > 100 ? msg.slice(0, 100) + '...' : msg });
     } finally {
       setIsSubmitting(false);
       setSubmitStep('');
@@ -364,8 +354,6 @@ export function SettlementInterface({
   };
 
   const sourceUrl = market?.ai_source_locator?.url || market?.ai_source_locator?.primary_source_url;
-  const settlementWaybackUrl = market?.market_config?.settlement_wayback_url || null;
-  const settlementWaybackPageUrl = market?.market_config?.settlement_wayback_page_url || null;
   const settlementScreenshotUrl = market?.market_config?.settlement_screenshot_url || null;
 
   const formattedProposed = useMemo(() => {
@@ -382,21 +370,6 @@ export function SettlementInterface({
     return Number.isFinite(v) ? v.toFixed(4) : null;
   }, [market?.alternative_settlement_value]);
 
-  const baseChallengeHelper = !walletData?.address
-    ? 'Connect a wallet to propose a settlement price.'
-    : isSubmitting
-      ? (submitStep || 'Submitting proposal...')
-      : hasSession
-        ? 'Enter your proposed price and evidence. No wallet signature required.'
-        : 'Enable gasless trading to submit proposals without wallet popups.';
-  const helperText = challengeNotice?.text ?? baseChallengeHelper;
-  const helperColor = challengeNotice?.type === 'error' ? 'text-red-400' : challengeNotice?.type === 'success' ? 'text-green-400' : 'text-[#606060]';
-
-  const sourceHost = useMemo(() => {
-    if (!sourceUrl) return null;
-    try { return new URL(sourceUrl).hostname; } catch { return sourceUrl.replace(/^https?:\/\//, ''); }
-  }, [sourceUrl]);
-
   const windowProgress = useMemo(() => {
     if (!market?.proposed_settlement_at || !windowExpiresMs) return 0;
     const start = new Date(market.proposed_settlement_at).getTime();
@@ -406,24 +379,15 @@ export function SettlementInterface({
     return Math.round(((now - start) / (windowExpiresMs - start)) * 100);
   }, [market?.proposed_settlement_at, windowExpiresMs]);
 
-  /* ──────────────────────── Loading state ──────────────────────── */
-
   if (!market) {
     return (
-      <div className={`min-h-[60vh] flex items-center justify-center ${className}`}>
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200">
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400 animate-pulse" />
-              <span className="text-[11px] font-medium text-[#808080]">Loading settlement data</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
-                <div className="h-full bg-blue-400 animate-pulse" style={{ width: '60%' }} />
-              </div>
-              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-            </div>
+      <div className={`min-h-[50vh] flex items-center justify-center ${className}`}>
+        <div className="flex flex-col items-center gap-3">
+          <div className="relative">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 animate-pulse" />
+            <div className="absolute inset-0 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 opacity-20 blur-lg animate-pulse" />
           </div>
+          <span className="text-xs text-t-fg-muted">Loading settlement data...</span>
         </div>
       </div>
     );
@@ -435,790 +399,592 @@ export function SettlementInterface({
   const proposedSettlementNum = Number(market?.proposed_settlement_value);
   const hasProposedPrice = Number.isFinite(proposedSettlementNum) && proposedSettlementNum > 0;
 
-  const statusDotClass = isSettled ? 'bg-blue-400'
-    : umaResolved ? 'bg-emerald-400'
-    : isExpired ? 'bg-red-400'
-    : market?.settlement_disputed ? 'bg-yellow-400'
-    : 'bg-green-400';
+  const statusGradient = isSettled 
+    ? 'from-blue-500 via-indigo-500 to-violet-500'
+    : umaResolved 
+      ? 'from-emerald-400 via-teal-500 to-cyan-500'
+      : isExpired 
+        ? 'from-rose-500 via-red-500 to-orange-500'
+        : market?.settlement_disputed 
+          ? 'from-amber-400 via-orange-500 to-rose-500'
+          : 'from-emerald-400 via-cyan-500 to-blue-500';
 
-  const statusAccent = isSettled ? 'from-blue-500 to-indigo-500'
-    : umaResolved ? 'from-emerald-400 to-green-500'
-    : isExpired ? 'from-red-500 to-rose-500'
-    : market?.settlement_disputed ? 'from-yellow-400 to-amber-500'
-    : 'from-green-400 to-emerald-500';
-
-  const statusLabel = isSettled ? 'Finalized'
-    : umaResolved ? 'Verdict Reached'
-    : isExpired ? 'Expired'
-    : market?.settlement_disputed ? 'Disputed'
-    : 'Active';
+  const statusLabel = isSettled 
+    ? 'Finalized'
+    : umaResolved 
+      ? 'Verdict Reached'
+      : isExpired 
+        ? 'Expired'
+        : market?.settlement_disputed 
+          ? 'Disputed'
+          : 'Active';
 
   return (
-    <div className={`space-y-1 ${className}`}>
-
-      {/* ═══════ HERO HEADER ═══════ */}
-      <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-        <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${statusAccent}`} />
-
-        <div className="flex items-start justify-between p-2.5 pt-3">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass}`} />
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <span className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
-                {isSettled ? 'Settlement Result' : 'Settlement Window'}
+    <div className={`space-y-4 ${className}`}>
+      
+      {/* Hero Section */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-t-card via-t-card to-t-page">
+        <div className={`absolute inset-0 bg-gradient-to-br ${statusGradient} opacity-[0.03]`} />
+        <div className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r ${statusGradient}`} />
+        
+        <div className="relative p-6">
+          <div className="flex items-start justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className={`w-2.5 h-2.5 rounded-full bg-gradient-to-br ${statusGradient} shadow-lg`} 
+                   style={{ boxShadow: `0 0 12px var(--tw-gradient-from)` }} />
+              <div>
+                <h2 className="text-sm font-medium text-t-fg">
+                  {isSettled ? 'Settlement Complete' : 'Settlement Window'}
+                </h2>
+                <p className="text-xs text-t-fg-muted mt-0.5">{market.symbol}</p>
+              </div>
+            </div>
+            <div className={`px-3 py-1.5 rounded-full bg-gradient-to-r ${statusGradient} bg-opacity-10`}>
+              <span className={`text-[10px] font-semibold uppercase tracking-wider bg-gradient-to-r ${statusGradient} bg-clip-text text-transparent`}>
+                {statusLabel}
               </span>
-              <span className="text-[10px] text-[#606060]">•</span>
-              <span className="text-[10px] text-white font-mono truncate">{market.symbol}</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className={`text-[10px] font-medium px-1.5 py-0.5 rounded bg-gradient-to-r ${statusAccent} text-white`}>
-              {statusLabel}
-            </div>
-            <div className={`w-1.5 h-1.5 rounded-full ${statusDotClass}`} />
-          </div>
-        </div>
 
-        {/* Price + Timer row */}
-        <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
-          <div className="flex items-end justify-between pt-2">
+          <div className="flex items-end justify-between">
             <div>
-              <div className="text-[9px] uppercase tracking-wider text-[#606060] mb-0.5">
+              <p className="text-[10px] uppercase tracking-wider text-t-fg-muted mb-1">
                 {isSettled ? 'Final Price' : hasProposedPrice ? 'Proposed Price' : 'Awaiting Proposal'}
-              </div>
-              <div className={`text-lg font-mono font-semibold tracking-tight ${hasProposedPrice || isSettled ? 'text-white' : 'text-[#404040]'}`}>
+              </p>
+              <p className={`text-3xl font-light tracking-tight ${hasProposedPrice || isSettled ? 'text-t-fg' : 'text-t-fg-muted'}`}>
                 {hasProposedPrice || isSettled ? `$${formattedProposed}` : '—'}
+              </p>
+            </div>
+            
+            {!isSettled && !isUmaDispute && timeRemaining && (
+              <div className="text-right">
+                <p className="text-[10px] uppercase tracking-wider text-t-fg-muted mb-1">Time Remaining</p>
+                <p className={`text-lg font-mono ${isExpired ? 'text-rose-400' : 'text-t-fg'}`}>{timeRemaining}</p>
               </div>
-            </div>
-            <div className="text-right">
-              {!isSettled && !isUmaDispute && timeRemaining && (
-                <div className="flex items-center gap-1.5">
-                  <svg className="w-3 h-3 text-[#606060]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-                  </svg>
-                  <span className={`text-[10px] font-mono ${isExpired ? 'text-red-400' : 'text-white'}`}>{timeRemaining}</span>
-                </div>
-              )}
-              {isUmaDispute && !umaResolved && (
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
-                  <span className="text-[10px] font-mono text-indigo-400">Awaiting DVM</span>
-                </div>
-              )}
-              <div className="text-[9px] text-[#606060] font-mono mt-0.5 truncate max-w-[200px]">{market.market_identifier}</div>
-            </div>
+            )}
+            
+            {isUmaDispute && !umaResolved && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                <span className="text-xs text-indigo-300">Awaiting DVM</span>
+              </div>
+            )}
           </div>
 
-          {/* Progress bar - hidden during UMA dispute since DVM handles resolution */}
           {!isSettled && !isUmaDispute && (
-            <div className="mt-2">
-              <div className="flex items-center justify-between text-[9px] text-[#606060] mb-1">
+            <div className="mt-6">
+              <div className="flex items-center justify-between text-[10px] text-t-fg-muted mb-2">
                 <span>Window Progress</span>
-                <span className="font-mono text-[#808080]">{windowProgress}%</span>
+                <span className="font-mono">{windowProgress}%</span>
               </div>
-              <div className="h-1 bg-[#2A2A2A] rounded-full overflow-hidden">
-                <div className={`h-full rounded-full bg-gradient-to-r ${statusAccent} transition-all duration-1000 ease-out`} style={{ width: `${windowProgress}%` }} />
-              </div>
-            </div>
-          )}
-          {/* UMA dispute indicator replaces progress bar */}
-          {isUmaDispute && !umaResolved && (
-            <div className="mt-2">
-              <div className="flex items-center gap-2 text-[9px] text-indigo-400/80">
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                <span>Settlement paused while UMA DVM resolves the dispute (typically 48-96 hours)</span>
+              <div className="h-1.5 bg-t-inset rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full bg-gradient-to-r ${statusGradient} transition-all duration-1000`}
+                  style={{ width: `${windowProgress}%` }}
+                />
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* ═══════ SCREENSHOT / EVIDENCE IMAGE ═══════ */}
+      {/* Evidence Screenshot */}
       {settlementScreenshotUrl && (
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-blue-400 to-purple-500" />
-
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span className="text-[11px] font-medium text-[#808080]">Evidence Screenshot</span>
-                <span className="text-[9px] text-[#606060]">AI-captured at settlement time</span>
+        <div className="relative overflow-hidden rounded-2xl bg-t-card">
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-violet-500/50 to-transparent" />
+          
+          <button
+            onClick={() => setScreenshotExpanded(!screenshotExpanded)}
+            className="w-full flex items-center justify-between p-4 hover:bg-t-card-hover transition-colors"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 flex items-center justify-center">
+                <svg className="w-4 h-4 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-medium text-t-fg">Evidence Screenshot</p>
+                <p className="text-[10px] text-t-fg-muted">AI-captured at settlement time</p>
               </div>
             </div>
-            <button
-              onClick={() => setScreenshotExpanded(!screenshotExpanded)}
-              className="text-[10px] text-[#808080] hover:text-white flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#1A1A1A] hover:bg-[#2A2A2A] transition-all duration-200"
+            <svg 
+              className={`w-4 h-4 text-t-fg-muted transition-transform duration-300 ${screenshotExpanded ? 'rotate-180' : ''}`} 
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             >
-              {screenshotExpanded ? 'Collapse' : 'Expand'}
-              <svg className={`w-3 h-3 transition-transform duration-200 ${screenshotExpanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
-          </div>
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
 
-          <div className={`transition-all duration-300 ease-in-out ${screenshotExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
-            <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
+          <div className={`transition-all duration-300 ease-out ${screenshotExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
+            <div className="px-4 pb-4">
               <a
                 href={settlementScreenshotUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group/img block relative rounded-md overflow-hidden border border-[#222222] hover:border-[#333333] transition-all duration-200 mt-2"
+                className="block relative rounded-xl overflow-hidden group"
               >
-                <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover/img:opacity-100 transition-opacity z-10" />
-                <div className="absolute bottom-2 left-2 right-2 z-20 opacity-0 group-hover/img:opacity-100 transition-opacity">
-                  <span className="text-[9px] text-white/80">Click to open full resolution</span>
-                </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity z-10" />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={settlementScreenshotUrl}
-                  alt="Settlement metric source screenshot"
-                  className="w-full h-auto max-h-[500px] object-contain bg-black/20 group-hover/img:scale-[1.005] transition-transform duration-500"
+                  alt="Settlement evidence"
+                  className="w-full h-auto max-h-[500px] object-contain bg-black/20 group-hover:scale-[1.02] transition-transform duration-500"
                   loading="lazy"
                 />
+                <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="text-[10px] text-white/80">Click to view full resolution</span>
+                </div>
               </a>
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══════ PRICE & SOURCE CARDS ═══════ */}
-      <div className="grid gap-1 md:grid-cols-2">
-
-        {/* Proposed Settlement Card */}
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-green-400/50 to-emerald-500/50" />
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400" />
-              <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Price' : hasProposedPrice ? 'Proposed Settlement' : 'Settlement Price'}</span>
+      {/* Price Cards Grid */}
+      <div className="grid gap-3 md:grid-cols-2">
+        {/* Proposed Settlement */}
+        <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
+          
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 flex items-center justify-center">
+              <svg className="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
             </div>
-            <div className="flex items-center gap-2">
-              <span className={`text-sm font-mono font-semibold ${hasProposedPrice || isSettled ? 'text-white' : 'text-[#404040]'}`}>{hasProposedPrice || isSettled ? `$${formattedProposed}` : '—'}</span>
-              {hasProposedPrice || isSettled ? (
-                <div className="text-[10px] text-green-400 bg-[#1A1A1A] px-1.5 py-0.5 rounded">Proposed</div>
-              ) : (
-                <div className="text-[10px] text-yellow-400 bg-yellow-500/10 px-1.5 py-0.5 rounded">Awaiting</div>
-              )}
-            </div>
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-            <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-              <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
-                <div className="flex justify-between">
-                  <span>Submitted</span>
-                  <span className="text-white font-mono">{market.proposed_settlement_at ? new Date(market.proposed_settlement_at).toLocaleString() : '—'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Window Expires</span>
-                  <span className="text-white font-mono">{windowExpiresMs ? new Date(windowExpiresMs).toLocaleString() : 'Awaiting activation'}</span>
-                </div>
-              </div>
+            <div>
+              <p className="text-xs font-medium text-t-fg">{isSettled ? 'Final Price' : 'Proposed Settlement'}</p>
+              <p className="text-[10px] text-t-fg-muted">
+                {market.proposed_settlement_at ? new Date(market.proposed_settlement_at).toLocaleDateString() : 'Pending'}
+              </p>
             </div>
           </div>
+          
+          <p className={`text-2xl font-light ${hasProposedPrice || isSettled ? 'text-t-fg' : 'text-t-fg-muted'}`}>
+            {hasProposedPrice || isSettled ? `$${formattedProposed}` : '—'}
+          </p>
         </div>
 
-        {/* Evidence Source Card */}
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-blue-400/50 to-indigo-500/50" />
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-              <span className="text-[11px] font-medium text-[#808080]">Evidence Source</span>
+        {/* Evidence Source */}
+        <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
+          
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500/20 to-indigo-500/20 flex items-center justify-center">
+              <svg className="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
             </div>
-            <div className="flex items-center gap-2">
-              {sourceUrl && (
-                <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-400 hover:text-blue-300 underline truncate max-w-[140px]">{sourceHost}</a>
-              )}
-              {settlementWaybackUrl && (
-                <a href={settlementWaybackUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none"><path d="M2 13h12M3 3h10M4 3v10M12 3v10M8 3v10M2 8h12M5.5 3v10M10.5 3v10" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-                  <span className="underline">Snapshot</span>
-                </a>
-              )}
-              {settlementWaybackPageUrl && (
-                <a href={settlementWaybackPageUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1">
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none"><path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/><path d="M10 2v3h3M5 8h6M5 10.5h6" stroke="currentColor" strokeWidth="1" strokeLinecap="round"/></svg>
-                  <span className="underline">Page</span>
-                </a>
-              )}
-              {settlementScreenshotUrl && (
-                <button onClick={() => setScreenshotExpanded(!screenshotExpanded)} className="text-[10px] text-[#9CA3AF] hover:text-white flex items-center gap-1 transition-colors">
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" strokeWidth="1"/><circle cx="5.5" cy="6.5" r="1" stroke="currentColor" strokeWidth="0.75"/><path d="M2 11l3-3 2 2 3-4 4 5" stroke="currentColor" strokeWidth="0.75" strokeLinejoin="round"/></svg>
-                  <span>{screenshotExpanded ? 'Hide' : 'View'}</span>
-                </button>
-              )}
+            <div>
+              <p className="text-xs font-medium text-t-fg">Evidence Source</p>
+              <p className="text-[10px] text-t-fg-muted">Primary data reference</p>
             </div>
           </div>
-          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-            <div className="text-[9px] pt-1.5 text-[#606060] space-y-0.5">
-              {settlementWaybackUrl && (
-                <div className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-emerald-400/60" />Screenshot archived to Wayback Machine at settlement time.</div>
-              )}
-              {settlementWaybackPageUrl && (
-                <div className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-amber-400/60" />Original source page archived to Wayback Machine.</div>
-              )}
-              {settlementScreenshotUrl && !settlementWaybackUrl && !settlementWaybackPageUrl && (
-                <div className="flex items-center gap-1"><div className="w-1 h-1 rounded-full bg-blue-400/60" />AI screenshot available. Click View to inspect.</div>
-              )}
-              {!settlementWaybackUrl && !settlementWaybackPageUrl && !settlementScreenshotUrl && sourceUrl && (
-                <div>Live metric source. No archive available.</div>
-              )}
-              {!settlementWaybackUrl && !settlementWaybackPageUrl && !settlementScreenshotUrl && !sourceUrl && (
-                <div>No primary source attached.</div>
-              )}
-            </div>
+          
+          <div className="flex flex-wrap gap-2">
+            {sourceUrl && (
+              <a 
+                href={sourceUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 text-[11px] hover:bg-blue-500/20 transition-colors"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+                Source
+              </a>
+            )}
+            {market?.market_config?.settlement_wayback_url && (
+              <a 
+                href={market.market_config.settlement_wayback_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 text-[11px] hover:bg-emerald-500/20 transition-colors"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                Archive
+              </a>
+            )}
           </div>
         </div>
       </div>
 
-      {/* ═══════ CHALLENGE PROPOSAL (if disputed) ═══════ */}
+      {/* Challenge Proposal (if disputed) */}
       {formattedChallenge && (
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-red-500/20 hover:border-red-500/30 transition-all duration-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-red-500 to-rose-500" />
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400 animate-pulse" />
-              <span className="text-[11px] font-medium text-[#808080]">Challenge Proposal</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-white font-mono font-semibold">${formattedChallenge}</span>
-              <div className="text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded">Disputed</div>
-            </div>
-          </div>
-          {(market.market_config?.challenger_evidence?.source_url || market.market_config?.challenger_evidence?.image_url) && (
-            <div className="px-2.5 pb-2 flex flex-wrap gap-1.5">
-              {market.market_config.challenger_evidence?.source_url && (
-                <a
-                  href={market.market_config.challenger_evidence.source_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[9px] px-2 py-0.5 rounded border border-red-500/25 bg-red-500/10 text-red-200 hover:border-red-400/40 hover:bg-red-500/15 transition-colors"
-                >
-                  Challenger source
-                </a>
-              )}
-              {market.market_config.challenger_evidence?.image_url && (
-                <a
-                  href={market.market_config.challenger_evidence.image_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[9px] px-2 py-0.5 rounded border border-red-500/25 bg-red-500/10 text-red-200 hover:border-red-400/40 hover:bg-red-500/15 transition-colors"
-                >
-                  Challenger image
-                </a>
-              )}
-            </div>
-          )}
-          <div className="opacity-0 group-hover:opacity-100 max-h-0 group-hover:max-h-20 overflow-hidden transition-all duration-200">
-            <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-              <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
-                <div className="flex justify-between">
-                  <span>Challenged By</span>
-                  <span className="text-white font-mono">{formatAddress(market.alternative_settlement_by)}</span>
+        <div className="relative overflow-hidden rounded-2xl bg-t-card">
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-br from-rose-500/[0.02] to-orange-500/[0.02]" />
+          
+          <div className="relative p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500/20 to-orange-500/20 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
                 </div>
-                <div className="flex justify-between">
-                  <span>Timestamp</span>
-                  <span className="text-white font-mono">{market.alternative_settlement_at ? new Date(market.alternative_settlement_at).toLocaleString() : '—'}</span>
+                <div>
+                  <p className="text-xs font-medium text-t-fg">Challenge Proposal</p>
+                  <p className="text-[10px] text-t-fg-muted">Alternative price submitted</p>
                 </div>
-                {(market.market_config?.challenger_evidence?.source_url || market.market_config?.challenger_evidence?.image_url) && (
-                  <div className="pt-1 space-y-0.5 border-t border-[#222222] mt-1">
-                    {market.market_config.challenger_evidence?.source_url && (
-                      <div className="flex justify-between gap-2 items-start">
-                        <span className="flex-shrink-0">Evidence URL</span>
-                        <a
-                          href={market.market_config.challenger_evidence.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-red-300 hover:text-red-200 underline truncate text-right"
-                        >
-                          Link
-                        </a>
-                      </div>
-                    )}
-                    {market.market_config.challenger_evidence?.image_url && (
-                      <div className="flex justify-between gap-2 items-start">
-                        <span className="flex-shrink-0">Screenshot</span>
-                        <a
-                          href={market.market_config.challenger_evidence.image_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-red-300 hover:text-red-200 underline truncate text-right"
-                        >
-                          Open image
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
+              <span className="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-[10px] font-medium">
+                Disputed
+              </span>
+            </div>
+            
+            <p className="text-2xl font-light text-t-fg">${formattedChallenge}</p>
+            
+            <div className="mt-3 pt-3 border-t border-t-stroke-sub flex items-center justify-between text-[10px] text-t-fg-muted">
+              <span>Challenged by {formatAddress(market.alternative_settlement_by)}</span>
+              {market.alternative_settlement_at && (
+                <span>{new Date(market.alternative_settlement_at).toLocaleString()}</span>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══════ ON-CHAIN VERIFICATION ═══════ */}
+      {/* On-Chain Status */}
       {onChain && !onChainError && (
-        <div className="grid gap-1 md:grid-cols-2">
-          {/* On-Chain Lifecycle */}
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-purple-400/40 to-violet-500/40" />
-            <div className="flex items-center justify-between p-2.5">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${LIFECYCLE_DOT_COLOR[onChain.lifecycleState] || 'bg-green-400'}`} />
-                <span className="text-[11px] font-medium text-[#808080]">On-Chain Lifecycle</span>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
+            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-purple-500/50 to-transparent" />
+            
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/20 to-violet-500/20 flex items-center justify-center">
+                <svg className="w-4 h-4 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                </svg>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-white font-mono">{LIFECYCLE_LABELS[onChain.lifecycleState] ?? `State ${onChain.lifecycleState}`}</span>
-                <div className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">On-Chain</div>
-              </div>
-            </div>
-            <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-              <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
-                {onChain.challengeBondAmount > 0 && (
-                  <div className="flex justify-between">
-                    <span>Proposal Bond</span>
-                    {isBondExempt ? (
-                      <span className="text-green-400 font-mono">Exempt</span>
-                    ) : (
-                      <span className="text-white font-mono">${onChain.challengeBondAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDC</span>
-                    )}
-                  </div>
-                )}
-                {onChain.slashRecipient && onChain.slashRecipient !== '0x0000000000000000000000000000000000000000' && (
-                  <div className="flex justify-between">
-                    <span>Slash Recipient</span>
-                    <span className="text-white font-mono">{formatAddress(onChain.slashRecipient)}</span>
-                  </div>
-                )}
+              <div>
+                <p className="text-xs font-medium text-t-fg">On-Chain State</p>
+                <p className="text-[10px] text-t-fg-muted">Lifecycle status</p>
               </div>
             </div>
-          </div>
-
-          {/* Evidence Commitment */}
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-cyan-400/40 to-blue-500/40" />
-            <div className="flex items-center justify-between p-2.5">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${onChain.evidenceHash && onChain.evidenceHash !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? 'bg-emerald-400' : 'bg-[#404040]'}`} />
-                <span className="text-[11px] font-medium text-[#808080]">Evidence Commitment</span>
-              </div>
-              <div className="text-[10px] text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">On-Chain</div>
-            </div>
-            <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-              <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
-                {onChain.evidenceHash && onChain.evidenceHash !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? (
-                  <>
-                    <div className="flex justify-between">
-                      <span>Hash</span>
-                      <span className="text-white font-mono text-[8px] truncate max-w-[180px]" title={onChain.evidenceHash}>
-                        {onChain.evidenceHash.slice(0, 10)}...{onChain.evidenceHash.slice(-8)}
-                      </span>
-                    </div>
-                    {onChain.evidenceUrl && (
-                      <div className="flex justify-between items-center">
-                        <span>Archived Source</span>
-                        <a href={onChain.evidenceUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline underline-offset-2 truncate max-w-[180px]">
-                          Wayback Archive
-                        </a>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="text-[#404040]">No evidence committed on-chain yet.</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════ ON-CHAIN ACTIVE CHALLENGE ═══════ */}
-      {onChain && onChain.challengeActive && (
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-red-500/30 hover:border-red-500/50 transition-all duration-200 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-pulse" />
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400 animate-pulse" />
-              <span className="text-[11px] font-medium text-[#808080]">On-Chain Challenge</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-red-400 font-mono">${onChain.challengedPrice.toLocaleString(undefined, { minimumFractionDigits: 4 })}</span>
-              <div className={`text-[10px] px-1.5 py-0.5 rounded ${
-                onChain.challengeResolved
-                  ? onChain.challengerWon ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'
-                  : 'text-red-400 bg-red-500/10'
-              }`}>
-                {onChain.challengeResolved ? (onChain.challengerWon ? 'Won' : 'Slashed') : 'Active'}
-              </div>
-            </div>
-          </div>
-          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-            <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
-              <div className="flex justify-between">
-                <span>Challenger</span>
-                <span className="text-white font-mono">{formatAddress(onChain.challenger)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Bond Escrowed</span>
-                <span className="text-white font-mono">${onChain.bondEscrowed.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDC</span>
-              </div>
-              {onChain.challengeResolved && (
-                <div className="flex justify-between">
-                  <span>Outcome</span>
-                  <span className={`font-mono ${onChain.challengerWon ? 'text-green-400' : 'text-red-400'}`}>
-                    {onChain.challengerWon ? 'Bond refunded' : 'Bond slashed'}
-                  </span>
-                </div>
+            
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-t-fg">{LIFECYCLE_LABELS[onChain.lifecycleState] ?? `State ${onChain.lifecycleState}`}</span>
+              {onChain.challengeBondAmount > 0 && (
+                <span className={`text-[10px] ${isBondExempt ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {isBondExempt ? 'Bond Exempt' : `Bond: $${onChain.challengeBondAmount.toLocaleString()}`}
+                </span>
               )}
             </div>
           </div>
+
+          <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
+            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent" />
+            
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center">
+                <svg className="w-4 h-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-t-fg">Evidence Hash</p>
+                <p className="text-[10px] text-t-fg-muted">On-chain commitment</p>
+              </div>
+            </div>
+            
+            {onChain.evidenceHash && onChain.evidenceHash !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? (
+              <p className="text-[10px] font-mono text-t-fg-sub truncate">{onChain.evidenceHash}</p>
+            ) : (
+              <p className="text-xs text-t-fg-muted">No evidence committed</p>
+            )}
+          </div>
         </div>
       )}
 
-      {/* ═══════ UMA DISPUTE STATUS ═══════ */}
+      {/* UMA Dispute Status */}
       {market?.market_config?.uma_assertion_id && (market?.settlement_disputed || market?.market_config?.uma_resolved) && (
-        <div className={`group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border transition-all duration-200 relative overflow-hidden ${
-          market.market_config.uma_resolved
-            ? market.market_config.uma_challenger_won
-              ? 'border-green-500/20 hover:border-green-500/30'
-              : 'border-blue-500/20 hover:border-blue-500/30'
-            : 'border-indigo-500/20 hover:border-indigo-500/30'
-        }`}>
-          <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${
+        <div className="relative overflow-hidden rounded-2xl bg-t-card">
+          <div className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r ${
             market.market_config.uma_resolved
               ? market.market_config.uma_challenger_won
-                ? 'from-green-500 via-emerald-500 to-green-500'
-                : 'from-blue-500 via-indigo-500 to-blue-500'
-              : 'from-indigo-500 via-purple-500 to-indigo-500'
+                ? 'from-transparent via-emerald-500 to-transparent'
+                : 'from-transparent via-blue-500 to-transparent'
+              : 'from-transparent via-indigo-500 to-transparent'
           }`} />
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                market.market_config.uma_resolved
-                  ? market.market_config.uma_challenger_won ? 'bg-green-400' : 'bg-blue-400'
-                  : 'bg-indigo-400 animate-pulse'
-              }`} />
-              <span className="text-[11px] font-medium text-[#808080]">
-                {market.market_config.uma_resolved ? 'UMA Dispute Resolved' : 'UMA Dispute Resolution'}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className={`text-[10px] px-1.5 py-0.5 rounded ${
-                market.market_config.uma_resolved
-                  ? market.market_config.uma_challenger_won
-                    ? 'text-green-400 bg-green-500/10'
-                    : 'text-blue-400 bg-blue-500/10'
-                  : 'text-indigo-400 bg-indigo-500/10'
-              }`}>
-                {market.market_config.uma_resolved
-                  ? market.market_config.uma_challenger_won ? 'Challenger Won' : 'Proposer Won'
-                  : 'Awaiting DVM Vote'}
+          
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                  market.market_config.uma_resolved
+                    ? market.market_config.uma_challenger_won
+                      ? 'bg-gradient-to-br from-emerald-500/20 to-teal-500/20'
+                      : 'bg-gradient-to-br from-blue-500/20 to-indigo-500/20'
+                    : 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    market.market_config.uma_resolved
+                      ? market.market_config.uma_challenger_won ? 'bg-emerald-400' : 'bg-blue-400'
+                      : 'bg-indigo-400 animate-pulse'
+                  }`} />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-t-fg">
+                    {market.market_config.uma_resolved ? 'UMA Resolved' : 'UMA Dispute'}
+                  </p>
+                  <p className="text-[10px] text-t-fg-muted">
+                    {market.market_config.uma_resolved
+                      ? market.market_config.uma_challenger_won ? 'Challenger won' : 'Proposer won'
+                      : 'Awaiting DVM vote'}
+                  </p>
+                </div>
               </div>
+              
+              {market.market_config.uma_resolved && (
+                <p className="text-lg font-light text-t-fg">
+                  ${Number(market.market_config.uma_winning_price || market.proposed_settlement_value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                </p>
+              )}
             </div>
+
+            {!market.market_config.uma_resolved && (
+              <p className="text-[10px] text-indigo-400/80">
+                Dispute being resolved by UMA DVM vote. Typically 48-96 hours.
+              </p>
+            )}
           </div>
-          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-            <div className="text-[9px] pt-1.5 text-[#606060] space-y-1">
-              {market.market_config.uma_resolved && (
-                <div className="flex justify-between items-center py-1 mb-1 border-b border-[#1A1A1A]">
-                  <span className="text-[10px] text-[#808080]">Winning Price</span>
-                  <span className="text-sm font-mono font-semibold text-white">
-                    ${Number(market.market_config.uma_winning_price || market.proposed_settlement_value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
-                  </span>
+        </div>
+      )}
+
+      {/* Proposal Form */}
+      {!isSettled && (
+        <div className="relative overflow-hidden rounded-2xl bg-t-card">
+          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-fuchsia-500/50 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/[0.02] to-violet-500/[0.02]" />
+          
+          <div className="relative p-5">
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-fuchsia-500/20 to-violet-500/20 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 19l7-7 3 3-7 7-3-3z" />
+                    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+                    <path d="M2 2l7.586 7.586" />
+                  </svg>
                 </div>
-              )}
-              <div className="flex justify-between">
-                <span>Assertion ID</span>
-                <span className="text-white font-mono text-[8px] truncate max-w-[200px]" title={market.market_config.uma_assertion_id}>
-                  {market.market_config.uma_assertion_id.slice(0, 10)}...{market.market_config.uma_assertion_id.slice(-8)}
-                </span>
+                <div>
+                  <p className="text-sm font-medium text-t-fg">Submit Proposal</p>
+                  <p className="text-[10px] text-t-fg-muted">Propose a settlement price</p>
+                </div>
               </div>
-              {market.market_config.uma_escalated_at && (
-                <div className="flex justify-between">
-                  <span>Escalated</span>
-                  <span className="text-white font-mono">{new Date(market.market_config.uma_escalated_at).toLocaleString()}</span>
-                </div>
+              
+              {onChain && onChain.challengeBondAmount > 0 && (
+                <span className={`text-[10px] px-2.5 py-1 rounded-full ${
+                  isBondExempt ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'
+                }`}>
+                  {isBondExempt ? 'Bond Exempt' : `Bond: $${onChain.challengeBondAmount.toLocaleString()}`}
+                </span>
               )}
-              {market.market_config.uma_escalation_tx && (
-                <div className="flex justify-between">
-                  <span>Escalation Tx</span>
-                  <span className="text-indigo-400 font-mono text-[8px] truncate max-w-[200px]">
-                    {market.market_config.uma_escalation_tx.slice(0, 10)}...{market.market_config.uma_escalation_tx.slice(-8)}
+            </div>
+
+            <div className="space-y-4">
+              {/* Price Input */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-t-fg-muted mb-2">
+                  Settlement Price (USDC)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-t-fg-muted">$</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0.0000"
+                    value={challengePrice}
+                    onChange={(e) => setChallengePrice(e.target.value)}
+                    disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                    className="w-full bg-t-inset text-t-fg text-sm rounded-xl pl-8 pr-4 py-3 border border-t-stroke focus:border-fuchsia-500/50 focus:ring-1 focus:ring-fuchsia-500/20 outline-none font-mono placeholder-t-fg-muted disabled:opacity-50 transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Evidence Section */}
+              <div className="space-y-3">
+                <label className="block text-[10px] uppercase tracking-wider text-t-fg-muted">
+                  Supporting Evidence
+                </label>
+                
+                <input
+                  type="url"
+                  placeholder="https://source-url.com/..."
+                  value={evidenceSourceUrl}
+                  onChange={(e) => setEvidenceSourceUrl(e.target.value)}
+                  disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                  className={`w-full bg-t-inset text-t-fg text-sm rounded-xl px-4 py-3 border outline-none font-mono placeholder-t-fg-muted disabled:opacity-50 transition-all ${
+                    evidenceUrlTrim !== '' && !isValidHttpUrl(evidenceUrlTrim)
+                      ? 'border-rose-500/50 focus:border-rose-500'
+                      : 'border-t-stroke focus:border-fuchsia-500/50'
+                  }`}
+                />
+
+                <div className="relative">
+                  <input
+                    ref={evidenceFileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null;
+                      setEvidenceImageFile(f);
+                      setUploadedEvidenceImageUrl(null);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                    onClick={() => evidenceFileInputRef.current?.click()}
+                    className="w-full rounded-xl border border-dashed border-t-stroke hover:border-fuchsia-500/30 bg-t-inset px-4 py-4 text-center transition-colors disabled:opacity-50 group"
+                  >
+                    {evidenceImageFile ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <span className="text-xs text-t-fg">{evidenceImageFile.name}</span>
+                        {evidencePreviewUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={evidencePreviewUrl} alt="Preview" className="max-h-20 rounded-lg border border-t-stroke object-contain" />
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-1.5">
+                        <div className="w-10 h-10 rounded-xl bg-t-card-hover flex items-center justify-center group-hover:bg-fuchsia-500/10 transition-colors">
+                          <svg className="w-5 h-5 text-t-fg-muted group-hover:text-fuchsia-400 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+                            <path d="M12 12v9" />
+                            <path d="m16 16-4-4-4 4" />
+                          </svg>
+                        </div>
+                        <span className="text-[10px] text-t-fg-muted">Upload screenshot (max 4MB)</span>
+                      </div>
+                    )}
+                  </button>
+                  {evidenceImageFile && (
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => {
+                        setEvidenceImageFile(null);
+                        setUploadedEvidenceImageUrl(null);
+                      }}
+                      className="mt-2 text-[10px] text-t-fg-muted hover:text-rose-400 transition-colors"
+                    >
+                      Remove image
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Balance indicator */}
+              {onChain && onChain.challengeBondAmount > 0 && walletData?.address && !isBondExempt && (
+                <div className={`flex items-center justify-between px-3 py-2 rounded-xl ${
+                  hasSufficientBalance ? 'bg-emerald-500/5 border border-emerald-500/20' : 'bg-rose-500/5 border border-rose-500/20'
+                }`}>
+                  <span className="text-[10px] text-t-fg-muted">
+                    Required: <span className="text-t-fg font-mono">${onChain.challengeBondAmount.toLocaleString()}</span>
+                  </span>
+                  <span className={`text-[10px] font-mono ${hasSufficientBalance ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    Balance: ${availableBalanceNum.toFixed(2)}
                   </span>
                 </div>
               )}
-              {market.market_config.uma_resolved && market.market_config.uma_resolved_at && (
-                <div className="flex justify-between">
-                  <span>Resolved</span>
-                  <span className="text-white font-mono">{new Date(market.market_config.uma_resolved_at).toLocaleString()}</span>
+
+              {/* Notice */}
+              {challengeNotice && (
+                <div className={`px-3 py-2.5 rounded-xl text-xs ${
+                  challengeNotice.type === 'error' 
+                    ? 'bg-rose-500/10 border border-rose-500/20 text-rose-400'
+                    : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                }`}>
+                  {challengeNotice.text}
                 </div>
               )}
-              {market.market_config.uma_resolution_tx && (
-                <div className="flex justify-between">
-                  <span>Resolution Tx</span>
-                  <span className="text-indigo-400 font-mono text-[8px] truncate max-w-[200px]">
-                    {market.market_config.uma_resolution_tx.slice(0, 10)}...{market.market_config.uma_resolution_tx.slice(-8)}
-                  </span>
-                </div>
-              )}
-              {market.market_config.uma_resolved && (
-                <div className="flex items-center gap-1 mt-1.5 py-1 px-1.5 rounded bg-[#1A1A1A]">
-                  <svg className="w-3 h-3 text-green-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                  <span className="text-[#808080]">
-                    {market.market_config.uma_challenger_won
-                      ? 'Settlement price overturned by DVM vote. Market will finalize with the challenger\u2019s price once the challenge window closes.'
-                      : 'Original settlement price upheld by DVM vote. Market will finalize as proposed once the challenge window closes.'}
-                  </span>
-                </div>
-              )}
-              {!market.market_config.uma_resolved && (
-                <div className="flex items-center gap-1 mt-1">
-                  <div className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse" />
-                  <span className="text-indigo-400/80">Dispute is being resolved by UMA&apos;s DVM token-holder vote. This typically takes 48-96 hours.</span>
-                </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3">
+                {walletData?.address && !hasSession ? (
+                  <button
+                    type="button"
+                    onClick={handleEnableSession}
+                    disabled={sessionLoading || isExpired}
+                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-all"
+                  >
+                    {sessionLoading ? 'Creating session...' : 'Enable Gasless Trading'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleChallenge}
+                    disabled={
+                      !challengePrice ||
+                      !evidenceComplete ||
+                      !evidenceUrlFieldOk ||
+                      isSubmitting ||
+                      !walletData?.address ||
+                      isExpired ||
+                      !hasSufficientBalance ||
+                      !hasSession
+                    }
+                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:from-t-skeleton disabled:to-t-skeleton transition-all"
+                  >
+                    {isSubmitting ? (submitStep || 'Submitting...') : 'Submit Proposal'}
+                  </button>
+                )}
+              </div>
+
+              {challengeTxHash && (
+                <p className="text-[10px] text-emerald-400 font-mono truncate">
+                  Tx: {challengeTxHash}
+                </p>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══════ CHALLENGE FORM & SETTLEMENT STATUS ═══════ */}
-      <div className={`grid gap-1 ${isSettled ? 'md:grid-cols-1' : 'md:grid-cols-2'}`}>
-        {!isSettled && (
-          <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-red-400/40 to-orange-500/40" />
-            <div className="flex items-center justify-between p-2.5">
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-                <span className="text-[11px] font-medium text-[#808080]">Propose Settlement Price</span>
-              </div>
-              {onChain && onChain.challengeBondAmount > 0 && (
-                <div className={`text-[10px] px-1.5 py-0.5 rounded ${isBondExempt ? 'text-green-400 bg-green-500/10' : 'text-yellow-400 bg-yellow-500/10'}`}>
-                  {isBondExempt ? 'Bond Exempt' : `Bond: $${onChain.challengeBondAmount.toLocaleString()} USDC`}
-                </div>
-              )}
+      {/* Settlement Info */}
+      <div className="relative overflow-hidden rounded-2xl bg-t-card">
+        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-t-fg-muted/20 to-transparent" />
+        
+        <div className="p-4">
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-t-fg-muted/10 to-t-fg-muted/5 flex items-center justify-center">
+              <svg className="w-4 h-4 text-t-fg-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
             </div>
-            <div className="px-2.5 pb-2.5 border-t border-[#1A1A1A]">
-              <div className="pt-2 space-y-3">
-                {onChain && onChain.challengeBondAmount > 0 && walletData?.address && !isBondExempt && (
-                  <div className={`flex items-center justify-between text-[10px] px-2 py-1.5 rounded border ${
-                    hasSufficientBalance
-                      ? 'border-green-500/20 bg-green-500/5'
-                      : 'border-red-500/20 bg-red-500/5'
-                  }`}>
-                    <div className="flex items-center gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full ${hasSufficientBalance ? 'bg-green-400' : 'bg-red-400'}`} />
-                      <span className="text-[#808080]">Bond: <span className="text-white font-mono">${onChain.challengeBondAmount.toLocaleString()}</span></span>
-                    </div>
-                    <span className="text-[#808080]">Balance: <span className={`font-mono ${hasSufficientBalance ? 'text-green-400' : 'text-red-400'}`}>${availableBalanceNum.toFixed(2)}</span></span>
-                  </div>
-                )}
-
-                <div className="rounded-md border border-[#2A2A2A] bg-[#0A0A0A] p-2 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#9CA3AF]">Your proposal</span>
-                    {evidenceComplete && evidenceUrlFieldOk && (
-                      <span className="text-[9px] text-emerald-400/90">Evidence ready</span>
-                    )}
-                  </div>
-                  <div>
-                    <label className="text-[9px] uppercase tracking-wide text-[#606060] block mb-1">Proposed settlement price (USDC)</label>
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-[#606060]">$</span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0.0000"
-                        value={challengePrice}
-                        onChange={(e) => setChallengePrice(e.target.value)}
-                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                        className="w-full bg-[#0F0F0F] text-white text-[11px] border border-[#222222] rounded-md px-4 py-2 outline-none focus:border-red-500/30 focus:ring-1 focus:ring-red-500/20 font-mono placeholder-[#404040] disabled:opacity-50 transition-all duration-200"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="border-t border-[#222222] pt-2 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[9px] uppercase tracking-wide text-[#606060]">Supporting evidence</span>
-                      <span className="text-[9px] text-[#505050]">required — URL and/or image</span>
-                    </div>
-                    <div>
-                      <label className="text-[9px] text-[#707070] block mb-1">Source URL (metric page, archive, exchange, etc.)</label>
-                      <input
-                        type="url"
-                        inputMode="url"
-                        placeholder="https://…"
-                        value={evidenceSourceUrl}
-                        onChange={(e) => setEvidenceSourceUrl(e.target.value)}
-                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                        className={`w-full bg-[#0F0F0F] text-white text-[10px] border rounded-md px-2 py-1.5 outline-none font-mono placeholder-[#404040] disabled:opacity-50 transition-all duration-200 ${
-                          evidenceUrlTrim !== '' && !isValidHttpUrl(evidenceUrlTrim)
-                            ? 'border-red-500/40 focus:border-red-500/50'
-                            : 'border-[#222222] focus:border-red-500/30'
-                        }`}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 py-0.5">
-                      <div className="h-px flex-1 bg-[#2A2A2A]" />
-                      <span className="text-[8px] uppercase tracking-wider text-[#505050]">or</span>
-                      <div className="h-px flex-1 bg-[#2A2A2A]" />
-                    </div>
-                    <div>
-                      <input
-                        ref={evidenceFileInputRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,image/gif"
-                        className="hidden"
-                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0] ?? null;
-                          setEvidenceImageFile(f);
-                          setUploadedEvidenceImageUrl(null);
-                          e.target.value = '';
-                        }}
-                      />
-                      <button
-                        type="button"
-                        disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                        onClick={() => evidenceFileInputRef.current?.click()}
-                        className="w-full rounded-md border border-dashed border-[#333333] hover:border-red-500/35 bg-[#0F0F0F] px-2 py-3 text-center transition-colors disabled:opacity-50"
-                      >
-                        <span className="text-[10px] text-[#808080] block">
-                          {evidenceImageFile ? evidenceImageFile.name : 'Upload screenshot (JPEG, PNG, WebP, GIF · max 4MB)'}
-                        </span>
-                        {evidencePreviewUrl && (
-                          <div className="mt-2 flex justify-center">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={evidencePreviewUrl} alt="Evidence preview" className="max-h-24 rounded border border-[#2A2A2A] object-contain" />
-                          </div>
-                        )}
-                      </button>
-                      {evidenceImageFile && (
-                        <button
-                          type="button"
-                          disabled={isSubmitting}
-                          onClick={() => {
-                            setEvidenceImageFile(null);
-                            setUploadedEvidenceImageUrl(null);
-                          }}
-                          className="mt-1 text-[9px] text-[#606060] hover:text-red-300 transition-colors"
-                        >
-                          Remove image
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  {walletData?.address && !hasSession ? (
-                    <button
-                      type="button"
-                      onClick={handleEnableSession}
-                      disabled={sessionLoading || isExpired}
-                      className="shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/15 hover:border-emerald-400/40 disabled:border-[#2A2A2A] disabled:bg-transparent disabled:text-[#404040] transition-colors"
-                    >
-                      {sessionLoading ? 'Creating session…' : 'Enable gasless trading'}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleChallenge}
-                      disabled={
-                        !challengePrice ||
-                        !evidenceComplete ||
-                        !evidenceUrlFieldOk ||
-                        isSubmitting ||
-                        !walletData?.address ||
-                        isExpired ||
-                        !hasSufficientBalance ||
-                        !hasSession
-                      }
-                      className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-200 hover:bg-red-500/15 hover:border-red-400/40 disabled:border-[#2A2A2A] disabled:bg-transparent disabled:text-[#404040] transition-colors"
-                    >
-                      {isSubmitting ? (submitStep || 'Submitting…') : 'Submit proposal'}
-                    </button>
-                  )}
-                  <span className={`text-[9px] ${helperColor} sm:max-w-[min(100%,280px)] sm:text-right`}>{helperText}</span>
-                </div>
-                {challengeTxHash && (
-                  <div className="text-[9px] text-green-400/80 flex items-center gap-1 font-mono truncate">
-                    On-chain tx: {challengeTxHash.slice(0, 10)}...{challengeTxHash.slice(-8)}
-                  </div>
-                )}
-                {onChain && onChain.challengeBondAmount > 0 && (
-                  <div className={`text-[9px] flex items-center gap-1 ${isBondExempt ? 'text-green-400/60' : 'text-yellow-400/60'}`}>
-                    <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                      <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-                    </svg>
-                    {isBondExempt
-                      ? 'Your address is bond-exempt. No bond will be deducted for this proposal.'
-                      : `Bond of $${onChain.challengeBondAmount.toLocaleString()} USDC will be held from your CoreVault. Returned when settlement finalizes unopposed.`}
-                  </div>
-                )}
-              </div>
-            </div>
+            <p className="text-xs font-medium text-t-fg">How Settlement Works</p>
           </div>
-        )}
-
-        <div className="group bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-          <div className={`absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r ${isSettled ? 'from-blue-400/40 to-indigo-500/40' : 'from-green-400/40 to-emerald-500/40'}`} />
-          <div className="flex items-center justify-between p-2.5">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSettled ? 'bg-blue-400' : 'bg-green-400'}`} />
-              <span className="text-[11px] font-medium text-[#808080]">{isSettled ? 'Final Settlement' : 'Settlement Status'}</span>
-            </div>
-            <span className="text-[10px] text-white font-mono">${formattedProposed}</span>
-          </div>
-          <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-            <div className="pt-2 space-y-2">
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-[#606060]">Wallet</span>
-                <span className="text-white font-mono">{walletLabel}</span>
-              </div>
-              <span className="text-[9px] text-[#606060] block">
-                {isSettled
-                  ? 'This market has been settled. The final price has been locked and positions resolved.'
-                  : umaResolved
-                    ? `UMA verdict reached. Settlement will finalize with the ${market?.market_config?.uma_challenger_won ? 'challenger\u2019s' : 'proposer\u2019s'} price once the challenge window closes.`
-                    : 'Settlement finalizes once the challenge window closes and the proposed price is accepted.'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ═══════ SETTLEMENT PROCESS INFO ═══════ */}
-      <div className="bg-[#0F0F0F] hover:bg-[#1A1A1A] rounded-md border border-[#222222] hover:border-[#333333] transition-all duration-200 relative overflow-hidden">
-        <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-indigo-400/30 to-violet-500/30" />
-        <div className="flex items-center justify-between p-2.5">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-blue-400" />
-            <span className="text-[11px] font-medium text-[#808080]">Settlement Process</span>
-          </div>
-          <div className="text-[10px] text-[#606060] bg-[#1A1A1A] px-1.5 py-0.5 rounded">Info</div>
-        </div>
-        <div className="px-2.5 pb-2 border-t border-[#1A1A1A]">
-          <div className="text-[9px] pt-1.5 space-y-1 text-[#606060]">
+          
+          <div className="space-y-2 text-[10px] text-t-fg-muted leading-relaxed">
             {isSettled ? (
               <>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-blue-400" />Settlement finalized. Positions have been resolved at the final price.</div>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-blue-400" />Archived evidence and screenshots are preserved for the record.</div>
+                <p>This market has been settled. The final price is locked and all positions have been resolved.</p>
+                <p>Archived evidence and screenshots are preserved for reference.</p>
               </>
             ) : (
               <>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-green-400" />Anyone can propose a settlement price with supporting evidence. The AI worker proposes first and is bond-exempt.</div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1 h-1 rounded-full bg-blue-400" />
-                  {onChain && onChain.challengeBondAmount > 0
-                    ? isBondExempt
-                      ? 'Your address is bond-exempt. No bond required to propose a settlement price.'
-                      : `On-chain bond of $${onChain.challengeBondAmount.toLocaleString()} USDC required to propose. Bond is returned when settlement finalizes unopposed.`
-                    : 'On-chain bond and archived evidence secure the process.'}
-                </div>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-purple-400" />Evidence hash committed on-chain at proposal time for tamper-proof verification.</div>
-                <div className="flex items-center gap-1.5"><div className="w-1 h-1 rounded-full bg-yellow-400" />If the AI worker fails to propose, any user can step in and propose a price by posting a bond and submitting evidence.</div>
+                <p>Anyone can propose a settlement price with supporting evidence. The AI worker proposes first and is bond-exempt.</p>
+                <p>A bond is required to propose. It is returned when settlement finalizes unopposed.</p>
+                <p>Evidence hash is committed on-chain for tamper-proof verification.</p>
               </>
             )}
           </div>
