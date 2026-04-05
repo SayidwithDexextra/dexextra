@@ -65,6 +65,9 @@
     },
     "src/app/api/cron/market-lifecycle/route.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/gasless/challenge/route.ts": {
+      "maxDuration": 300
     }
   },
   "env": {

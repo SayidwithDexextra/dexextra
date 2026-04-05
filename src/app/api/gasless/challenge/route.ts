@@ -13,7 +13,7 @@ const supabase = createClient(
 );
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── Verify session on-chain ──
+    // ── Validate server config early ──
     const rpcUrl = process.env.RPC_URL || process.env.RPC_URL_HYPEREVM;
     const registryAddress = process.env.SESSION_REGISTRY_ADDRESS;
     if (!rpcUrl) {
@@ -76,45 +76,48 @@ export async function POST(request: NextRequest) {
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const registry = new ethers.Contract(registryAddress, (GlobalSessionRegistry as any).abi, provider);
 
-    let traderOnchain: string;
-    try {
-      const s = await registry.sessions(sessionId);
-      traderOnchain = String(s?.trader || ethers.ZeroAddress);
-      const expiryOnchain = Number(s?.expiry || 0);
-      const revokedOnchain = Boolean(s?.revoked);
-      const now = Math.floor(Date.now() / 1000);
+    // ── Phase 1: Run independent lookups in parallel ──
+    // Session verification + market fetch + relayer pool loading are independent.
+    const [sessionResult, marketResult] = await Promise.allSettled([
+      registry.sessions(sessionId),
+      supabase.from('markets').select('*').eq('id', market_id).maybeSingle(),
+    ]);
 
-      if (traderOnchain === ethers.ZeroAddress) {
-        return NextResponse.json({ error: 'Session not found on-chain.' }, { status: 400 });
-      }
-      if (traderOnchain.toLowerCase() !== trader.toLowerCase()) {
-        return NextResponse.json({ error: 'Session does not belong to this trader.' }, { status: 403 });
-      }
-      if (revokedOnchain) {
-        return NextResponse.json({ error: 'Session has been revoked. Please create a new session.' }, { status: 400 });
-      }
-      if (expiryOnchain > 0 && now > expiryOnchain) {
-        return NextResponse.json({ error: 'Session has expired. Please create a new session.' }, { status: 400 });
-      }
-    } catch (err: any) {
-      console.error('[gasless/challenge] Session verification failed:', err?.message || err);
+    // Validate session
+    if (sessionResult.status === 'rejected') {
+      console.error('[gasless/challenge] Session verification failed:', sessionResult.reason?.message || sessionResult.reason);
       return NextResponse.json({ error: 'Failed to verify session on-chain.' }, { status: 500 });
     }
+    const s = sessionResult.value;
+    const traderOnchain = String(s?.trader || ethers.ZeroAddress);
+    const expiryOnchain = Number(s?.expiry || 0);
+    const revokedOnchain = Boolean(s?.revoked);
+    const nowSec = Math.floor(Date.now() / 1000);
 
-    // ── Load market from Supabase ──
-    const { data: market, error: fetchErr } = await supabase
-      .from('markets')
-      .select('*')
-      .eq('id', market_id)
-      .maybeSingle();
+    if (traderOnchain === ethers.ZeroAddress) {
+      return NextResponse.json({ error: 'Session not found on-chain.' }, { status: 400 });
+    }
+    if (traderOnchain.toLowerCase() !== trader.toLowerCase()) {
+      return NextResponse.json({ error: 'Session does not belong to this trader.' }, { status: 403 });
+    }
+    if (revokedOnchain) {
+      return NextResponse.json({ error: 'Session has been revoked. Please create a new session.' }, { status: 400 });
+    }
+    if (expiryOnchain > 0 && nowSec > expiryOnchain) {
+      return NextResponse.json({ error: 'Session has expired. Please create a new session.' }, { status: 400 });
+    }
 
+    // Validate market
+    if (marketResult.status === 'rejected') {
+      return NextResponse.json({ error: `Failed to fetch market: ${marketResult.reason?.message}` }, { status: 500 });
+    }
+    const { data: market, error: fetchErr } = marketResult.value;
     if (fetchErr) {
       return NextResponse.json({ error: `Failed to fetch market: ${fetchErr.message}` }, { status: 500 });
     }
     if (!market) {
       return NextResponse.json({ error: 'Market not found.' }, { status: 404 });
     }
-
     if (!isChallengeWindowActive(market)) {
       return NextResponse.json({ error: 'No active settlement window.' }, { status: 409 });
     }
@@ -124,9 +127,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Market contract address not available.' }, { status: 400 });
     }
 
-    // Select a lifecycle-operator relayer for challengeSettlementFor.
-    // The contract accepts onlyOwnerOrOperator, so any registered operator works.
-    // Cascade: challenge pool → small-block pool → global pool → admin key (owner fallback).
+    // ── Phase 2: Select relayer — check operators in parallel ──
     let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
     if (!relayerKeys.length) {
       relayerKeys = loadRelayerPoolFromEnv({ pool: 'hub_trade_small', jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON', indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_', allowFallbackSingleKey: false });
@@ -137,8 +138,6 @@ export async function POST(request: NextRequest) {
 
     const adminKey = process.env.ADMIN_PRIVATE_KEY || '';
 
-    // Pick a random relayer, but verify it's a registered operator on-chain.
-    // Fall back to admin key (diamond owner) if no operator relayer is available.
     const operatorCheckContract = new ethers.Contract(
       resolvedMarketAddress,
       ['function isLifecycleOperator(address) external view returns (bool)'],
@@ -148,11 +147,17 @@ export async function POST(request: NextRequest) {
     let selectedKey = '';
     if (relayerKeys.length > 0) {
       const shuffled = [...relayerKeys].sort(() => Math.random() - 0.5);
-      for (const rk of shuffled) {
-        try {
+      const operatorChecks = await Promise.allSettled(
+        shuffled.map(async (rk) => {
           const isOp = await operatorCheckContract.isLifecycleOperator(rk.address);
-          if (isOp) { selectedKey = rk.privateKey; break; }
-        } catch { /* skip */ }
+          return { privateKey: rk.privateKey, isOp };
+        }),
+      );
+      for (const result of operatorChecks) {
+        if (result.status === 'fulfilled' && result.value.isOp) {
+          selectedKey = result.value.privateKey;
+          break;
+        }
       }
     }
     if (!selectedKey) selectedKey = adminKey;
@@ -161,24 +166,34 @@ export async function POST(request: NextRequest) {
     }
 
     const challengeWallet = new ethers.Wallet(selectedKey, provider);
+    const isAdmin = selectedKey === adminKey;
+    console.log(`[gasless/challenge] Relayer selected: ${challengeWallet.address} (${isAdmin ? 'admin fallback' : 'operator pool'}) | market=${resolvedMarketAddress} trader=${trader}`);
+
     const marketContract = new ethers.Contract(
       resolvedMarketAddress,
       MarketLifecycleFacetABI,
       challengeWallet,
     );
 
-    // Ensure the on-chain lifecycle is progressed before challenging.
-    // The DB may show the window as active before syncLifecycle has been called.
+    // ── Phase 3: syncLifecycle + pre-flight (pipeline) ──
+    // Fire syncLifecycle but don't block indefinitely — give it 15s max.
     try {
       const syncTx = await marketContract.syncLifecycle();
-      await syncTx.wait();
+      await Promise.race([
+        syncTx.wait(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('syncLifecycle wait timeout')), 15_000)),
+      ]);
     } catch (syncErr: any) {
       console.warn('[gasless/challenge] syncLifecycle warning (non-fatal):', syncErr?.reason || syncErr?.shortMessage || syncErr?.message);
     }
 
-    // Pre-flight: verify the on-chain window is actually open
+    // Pre-flight: check window + existing challenge in parallel
     try {
-      const windowActive = await marketContract.isInSettlementChallengeWindow();
+      const [windowActive, challengeInfo] = await Promise.all([
+        marketContract.isInSettlementChallengeWindow(),
+        marketContract.getActiveChallengeInfo(),
+      ]);
+
       if (!windowActive) {
         const lifecycleState = await marketContract.getLifecycleState();
         const stateNames = ['Unsettled', 'Rollover', 'ChallengeWindow', 'Settled'];
@@ -190,8 +205,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const info = await marketContract.getActiveChallengeInfo();
-      if (info.active) {
+      if (challengeInfo.active) {
         return NextResponse.json(
           { error: 'An active challenge already exists for this market.' },
           { status: 409 },
@@ -201,6 +215,7 @@ export async function POST(request: NextRequest) {
       console.warn('[gasless/challenge] Pre-flight check warning:', checkErr?.reason || checkErr?.message);
     }
 
+    // ── Phase 4: Submit the challenge transaction ──
     const alternativePriceWei = ethers.parseUnits(Number(price).toFixed(6), 6);
     let txHash: string;
     try {
@@ -222,7 +237,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: reason.length > 200 ? reason.slice(0, 200) : reason }, { status: 500 });
     }
 
-    // ── Update Supabase + trigger UMA escalation (same as regular challenge route) ──
+    // ── Phase 5: Supabase update + UMA escalation in parallel ──
     const now = new Date();
     const existingConfig = (market.market_config || {}) as Record<string, unknown>;
     const priorEvidence = (existingConfig.challenger_evidence as Record<string, unknown> | undefined) || {};
@@ -242,85 +257,93 @@ export async function POST(request: NextRequest) {
       updated_at: now.toISOString(),
     };
 
-    const { data: updated, error: updateErr } = await supabase
-      .from('markets')
-      .update(updateData)
-      .eq('id', market_id)
-      .select()
-      .single();
+    // Run the DB update and UMA escalation concurrently
+    const umaEscalationPromise = (async (): Promise<{ uma_assertion_id?: string; uma_escalation_tx?: string; relay_error?: string }> => {
+      try {
+        const config = getRelayerConfig();
+        const proposedPrice = ethers.parseUnits(
+          (market.proposed_settlement_value ?? 0).toFixed(6),
+          6,
+        );
 
-    if (updateErr) {
-      console.error('[gasless/challenge] Supabase update failed:', updateErr.message);
+        const challengerEvidence: ChallengerEvidence = {
+          ...(sourceOk ? { source_url: evidenceSourceTrim } : {}),
+          ...(imageOk ? { image_url: evidenceImageTrim } : {}),
+        };
+
+        const marketConfig = (market.market_config as Record<string, any>) || {};
+        const settlementDateStr = marketConfig.expires_at || marketConfig.settlement_requested_at;
+        const meta: EscalationMeta = {
+          marketName: market.symbol || `Market ${resolvedMarketAddress.slice(0, 10)}…`,
+          settlementDate: settlementDateStr
+            ? new Date(settlementDateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+            : now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+        };
+
+        const result = await relayTick(
+          config,
+          resolvedMarketAddress,
+          proposedPrice,
+          undefined,
+          challengerEvidence,
+          meta,
+        );
+
+        if (result.action === 'escalated' && result.assertionId) {
+          return {
+            uma_assertion_id: result.assertionId,
+            uma_escalation_tx: result.txHash,
+          };
+        } else if (result.action === 'error') {
+          console.error('[gasless/challenge] UMA escalation error:', result.error);
+          return { relay_error: result.error };
+        }
+        return {};
+      } catch (relayErr: any) {
+        console.error('[gasless/challenge] UMA relay exception:', relayErr);
+        return { relay_error: relayErr?.message || 'Unknown relay error' };
+      }
+    })();
+
+    const [dbResult, umaResult] = await Promise.allSettled([
+      supabase.from('markets').update(updateData).eq('id', market_id).select().single(),
+      umaEscalationPromise,
+    ]);
+
+    // Process DB result
+    if (dbResult.status === 'rejected' || dbResult.value.error) {
+      const errMsg = dbResult.status === 'rejected' ? dbResult.reason?.message : dbResult.value.error?.message;
+      console.error('[gasless/challenge] Supabase update failed:', errMsg);
       return NextResponse.json(
         { error: `Challenge recorded on-chain (tx: ${txHash}) but database update failed.` },
         { status: 500 },
       );
     }
+    const updated = dbResult.value.data;
 
-    // ── Trigger UMA escalation ──
-    let umaResult: { uma_assertion_id?: string; uma_escalation_tx?: string; relay_error?: string } = {};
-    try {
-      const config = getRelayerConfig();
-      const proposedPrice = ethers.parseUnits(
-        (market.proposed_settlement_value ?? 0).toFixed(6),
-        6,
-      );
+    // Process UMA result
+    const umaData = umaResult.status === 'fulfilled' ? umaResult.value : { relay_error: umaResult.reason?.message || 'UMA escalation failed' };
 
-      const challengerEvidence: ChallengerEvidence = {
-        ...(sourceOk ? { source_url: evidenceSourceTrim } : {}),
-        ...(imageOk ? { image_url: evidenceImageTrim } : {}),
+    // If UMA escalated successfully, persist the assertion ID
+    if (umaData.uma_assertion_id) {
+      const configUpdate = {
+        ...updateData.market_config,
+        uma_assertion_id: umaData.uma_assertion_id,
+        uma_escalated_at: now.toISOString(),
+        uma_escalation_tx: umaData.uma_escalation_tx,
+        uma_challenge_tx_hash: txHash,
       };
-
-      const marketConfig = (market.market_config as Record<string, any>) || {};
-      const settlementDateStr = marketConfig.expires_at || marketConfig.settlement_requested_at;
-      const meta: EscalationMeta = {
-        marketName: market.symbol || `Market ${resolvedMarketAddress.slice(0, 10)}…`,
-        settlementDate: settlementDateStr
-          ? new Date(settlementDateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-          : now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-      };
-
-      const result = await relayTick(
-        config,
-        resolvedMarketAddress,
-        proposedPrice,
-        undefined,
-        challengerEvidence,
-        meta,
-      );
-
-      if (result.action === 'escalated' && result.assertionId) {
-        umaResult = {
-          uma_assertion_id: result.assertionId,
-          uma_escalation_tx: result.txHash,
-        };
-
-        const configUpdate = {
-          ...updateData.market_config,
-          uma_assertion_id: result.assertionId,
-          uma_escalated_at: now.toISOString(),
-          uma_escalation_tx: result.txHash,
-          uma_challenge_tx_hash: txHash,
-        };
-
-        await supabase
-          .from('markets')
-          .update({ market_config: configUpdate, updated_at: now.toISOString() })
-          .eq('id', market_id);
-      } else if (result.action === 'error') {
-        umaResult = { relay_error: result.error };
-        console.error('[gasless/challenge] UMA escalation error:', result.error);
-      }
-    } catch (relayErr: any) {
-      umaResult = { relay_error: relayErr?.message || 'Unknown relay error' };
-      console.error('[gasless/challenge] UMA relay exception:', relayErr);
+      await supabase
+        .from('markets')
+        .update({ market_config: configUpdate, updated_at: now.toISOString() })
+        .eq('id', market_id);
     }
 
     return NextResponse.json({
       success: true,
       txHash,
       market: updated,
-      ...umaResult,
+      ...umaData,
     });
   } catch (e: any) {
     console.error('[gasless/challenge] Unhandled error:', e?.message || e);

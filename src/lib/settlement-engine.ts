@@ -325,6 +325,16 @@ async function verifyOnchainSettlementTime(
   }
 }
 
+const LIFECYCLE_SYNC_ABI = [
+  'function syncLifecycle() external returns (uint8 previousState, uint8 newState)',
+  'function getLifecycleState() external view returns (uint8)',
+  'function getSettlementTimestamp() external view returns (uint256)',
+  'event LifecycleSync(address indexed market, address indexed caller, uint8 previousState, uint8 newState, bool progressed, bool devMode, bool settledOnChain, uint256 rolloverWindowStart, uint256 challengeWindowStart, uint256 challengeWindowEnd, uint256 timestamp)',
+  // Diamond-level errors for proper decoding
+  'error FunctionDoesNotExist()',
+  'error NotContractOwner()',
+];
+
 export async function settlementSyncLifecycleOnChain(
   market: MarketRow,
 ): Promise<{ ok: boolean; previousState?: number; newState?: number; error?: string }> {
@@ -343,41 +353,103 @@ export async function settlementSyncLifecycleOnChain(
     return { ok: false, error: 'no_relayer_keys_configured' };
   }
 
-  const relayer = relayers[Math.floor(Math.random() * relayers.length)];
+  const maxAttempts = 2;
+  let lastError = '';
 
-  try {
-    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
-    const wallet = new ethers.Wallet(relayer.privateKey, provider);
-    const contract = new ethers.Contract(
-      market.market_address,
-      ['function syncLifecycle() external returns (uint8 previousState, uint8 newState)'],
-      wallet,
-    );
-    const tx = await contract.syncLifecycle();
-    const receipt = await tx.wait();
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const relayer = relayers[Math.floor(Math.random() * relayers.length)];
 
-    let previousState: number | undefined;
-    let newState: number | undefined;
-    const iface = new ethers.Interface([
-      'event LifecycleSync(address indexed market, address indexed caller, uint8 previousState, uint8 newState, bool progressed, bool devMode, bool settledOnChain, uint256 rolloverWindowStart, uint256 challengeWindowStart, uint256 challengeWindowEnd, uint256 timestamp)',
-    ]);
-    for (const log of receipt?.logs ?? []) {
+    try {
+      const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
+      const wallet = new ethers.Wallet(relayer.privateKey, provider);
+      const contract = new ethers.Contract(
+        market.market_address,
+        LIFECYCLE_SYNC_ABI,
+        wallet,
+      );
+
+      // Pre-flight: verify lifecycle facet is reachable via a cheap view call
       try {
-        const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
-        if (parsed?.name === 'LifecycleSync') {
-          previousState = Number(parsed.args.previousState);
-          newState = Number(parsed.args.newState);
+        await contract.getLifecycleState();
+      } catch (viewErr: unknown) {
+        const viewMsg = String(viewErr);
+        if (viewMsg.includes('FunctionDoesNotExist') || viewMsg.includes('CALL_EXCEPTION')) {
+          return { ok: false, error: `lifecycle_facet_not_installed:${market.market_address}` };
         }
-      } catch {}
-    }
+        // View call failed for other reasons (RPC flaky) — proceed with the tx attempt
+        console.warn(`[settlement-engine] getLifecycleState view call failed for ${market.market_identifier}, proceeding: ${viewMsg.slice(0, 200)}`);
+      }
 
-    console.log(`[settlement-engine] syncLifecycle via relayer ${relayer.address} for ${market.market_identifier}`, {
-      previousState, newState, txHash: receipt?.hash,
-    });
-    return { ok: true, previousState, newState };
-  } catch (err) {
-    return { ok: false, error: `sync_lifecycle_failed:${String(err)}` };
+      // Simulate via eth_call first to catch reverts before spending gas
+      try {
+        await contract.syncLifecycle.staticCall();
+      } catch (simErr: unknown) {
+        const simMsg = String(simErr);
+        // Non-retriable contract-level errors
+        if (simMsg.includes('FunctionDoesNotExist')) {
+          return { ok: false, error: `syncLifecycle_not_in_diamond:${market.market_address}` };
+        }
+        if (simMsg.includes('NotContractOwner')) {
+          return { ok: false, error: `relayer_not_authorized:${relayer.address}` };
+        }
+        if (simMsg.includes('LC: unset')) {
+          return { ok: false, error: `lifecycle_not_initialized:${market.market_address}` };
+        }
+        // For unknown simulation failures, log the details and attempt the real tx anyway
+        // (some nodes reject static calls for state-changing functions)
+        console.warn(`[settlement-engine] syncLifecycle simulation failed for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}), sending tx anyway: ${simMsg.slice(0, 300)}`);
+      }
+
+      const feeData = await provider.getFeeData();
+      const txOverrides: Record<string, unknown> = {};
+      if (feeData.maxFeePerGas) {
+        txOverrides.maxFeePerGas = feeData.maxFeePerGas * 120n / 100n;
+        txOverrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+          ? feeData.maxPriorityFeePerGas * 120n / 100n
+          : ethers.parseUnits('1', 'gwei');
+      }
+
+      const tx = await contract.syncLifecycle(txOverrides);
+      const receipt = await tx.wait();
+
+      let previousState: number | undefined;
+      let newState: number | undefined;
+      const iface = new ethers.Interface(LIFECYCLE_SYNC_ABI);
+      for (const log of receipt?.logs ?? []) {
+        try {
+          const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+          if (parsed?.name === 'LifecycleSync') {
+            previousState = Number(parsed.args.previousState);
+            newState = Number(parsed.args.newState);
+          }
+        } catch {}
+      }
+
+      console.log(`[settlement-engine] syncLifecycle via relayer ${relayer.address} for ${market.market_identifier}`, {
+        previousState, newState, txHash: receipt?.hash, attempt,
+      });
+      return { ok: true, previousState, newState };
+    } catch (err: unknown) {
+      const errMsg = String(err);
+      lastError = errMsg;
+
+      // Decode known non-retriable errors
+      if (errMsg.includes('FunctionDoesNotExist')) {
+        return { ok: false, error: `lifecycle_facet_missing_on_diamond:${market.market_address}` };
+      }
+      if (errMsg.includes('LC: unset')) {
+        return { ok: false, error: `lifecycle_not_initialized:${market.market_address}` };
+      }
+
+      if (attempt < maxAttempts) {
+        const backoffMs = 2000 * attempt;
+        console.warn(`[settlement-engine] syncLifecycle attempt ${attempt}/${maxAttempts} failed for ${market.market_identifier} via relayer ${relayer.address}, retrying in ${backoffMs}ms: ${errMsg.slice(0, 300)}`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
   }
+
+  return { ok: false, error: `sync_lifecycle_failed_after_${maxAttempts}_attempts:${lastError.slice(0, 500)}` };
 }
 
 async function commitEvidenceOnChain(
@@ -416,6 +488,8 @@ async function commitEvidenceOnChain(
         [
           'function commitEvidence(string calldata evidenceUrl) external',
           'function getProposedEvidence() external view returns (bytes32 evidenceHash, string evidenceUrl)',
+          'error FunctionDoesNotExist()',
+          'error NotContractOwner()',
         ],
         wallet,
       );
@@ -452,6 +526,11 @@ async function commitEvidenceOnChain(
       if (errMsg.includes('evidence already committed')) {
         console.log(`[settlement-engine] evidence already committed (race OK) for ${market.market_identifier}`);
         return { ok: true, evidenceHash, alreadyCommitted: true };
+      }
+
+      // Non-retriable: lifecycle facet not installed on this Diamond
+      if (errMsg.includes('FunctionDoesNotExist')) {
+        return { ok: false, error: `lifecycle_facet_not_installed:${market.market_address}` };
       }
 
       // Nonce collision — pick a different relayer key for next attempt
