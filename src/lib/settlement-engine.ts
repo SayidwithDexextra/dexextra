@@ -380,12 +380,14 @@ export async function settlementSyncLifecycleOnChain(
         console.warn(`[settlement-engine] getLifecycleState view call failed for ${market.market_identifier}, proceeding: ${viewMsg.slice(0, 200)}`);
       }
 
-      // Simulate via eth_call first to catch reverts before spending gas
+      // Simulate via eth_call to detect contract-level errors before sending.
+      // Some RPC nodes fail eth_estimateGas for Diamond delegatecall patterns
+      // even when the actual transaction would succeed, so we use staticCall for
+      // diagnostics only and always set an explicit gasLimit to bypass estimateGas.
       try {
         await contract.syncLifecycle.staticCall();
       } catch (simErr: unknown) {
         const simMsg = String(simErr);
-        // Non-retriable contract-level errors
         if (simMsg.includes('FunctionDoesNotExist')) {
           return { ok: false, error: `syncLifecycle_not_in_diamond:${market.market_address}` };
         }
@@ -395,13 +397,15 @@ export async function settlementSyncLifecycleOnChain(
         if (simMsg.includes('LC: unset')) {
           return { ok: false, error: `lifecycle_not_initialized:${market.market_address}` };
         }
-        // For unknown simulation failures, log the details and attempt the real tx anyway
-        // (some nodes reject static calls for state-changing functions)
-        console.warn(`[settlement-engine] syncLifecycle simulation failed for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}), sending tx anyway: ${simMsg.slice(0, 300)}`);
+        // Unknown simulation failure — proceed anyway with explicit gasLimit
+        // (eth_estimateGas is unreliable for Diamond proxies on some RPC nodes)
+        console.warn(`[settlement-engine] syncLifecycle simulation unclear for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}), proceeding with explicit gasLimit: ${simMsg.slice(0, 300)}`);
       }
 
       const feeData = await provider.getFeeData();
-      const txOverrides: Record<string, unknown> = {};
+      const txOverrides: Record<string, unknown> = {
+        gasLimit: 500_000n,
+      };
       if (feeData.maxFeePerGas) {
         txOverrides.maxFeePerGas = feeData.maxFeePerGas * 120n / 100n;
         txOverrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
@@ -505,8 +509,12 @@ async function commitEvidenceOnChain(
         // View call failed — proceed with commit attempt anyway
       }
 
+      // Explicit gasLimit bypasses eth_estimateGas which is unreliable for
+      // Diamond proxy delegatecalls on some RPC nodes / chains.
       const feeData = await provider.getFeeData();
-      const txOverrides: Record<string, unknown> = {};
+      const txOverrides: Record<string, unknown> = {
+        gasLimit: 200_000n,
+      };
       if (feeData.maxFeePerGas) {
         txOverrides.maxFeePerGas = feeData.maxFeePerGas * 120n / 100n;
         txOverrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
@@ -569,7 +577,7 @@ async function resolveChallengeOnChain(
       ['function resolveChallenge(bool challengerWins) external'],
       wallet,
     );
-    const tx = await contract.resolveChallenge(challengerWon);
+    const tx = await contract.resolveChallenge(challengerWon, { gasLimit: 300_000n });
     await tx.wait();
     return { ok: true, txHash: tx.hash };
   } catch (err) {
@@ -596,7 +604,7 @@ async function finalizeOnChain(
       ['function settleMarket(uint256 finalPrice) external'],
       wallet,
     );
-    const tx = await ob.settleMarket(ethers.parseUnits(finalPrice.toString(), 6));
+    const tx = await ob.settleMarket(ethers.parseUnits(finalPrice.toString(), 6), { gasLimit: 500_000n });
     await tx.wait();
     return { ok: true, txHash: tx.hash };
   } catch (err) {

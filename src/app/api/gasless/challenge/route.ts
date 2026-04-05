@@ -184,10 +184,7 @@ export async function POST(request: NextRequest) {
       challengeWallet,
     );
 
-    // ── Phase 3: syncLifecycle + pre-flight ──
-    // Dry-run syncLifecycle first to avoid sending a TX that will revert
-    // (wastes gas + time). If the static call succeeds, send and WAIT —
-    // we must not send challengeSettlementFor before the nonce clears.
+    // ── Phase 3: syncLifecycle + advance to ChallengeWindow if needed ──
     try {
       await marketContract.syncLifecycle.staticCall();
       console.log('[gasless/challenge] syncLifecycle needed — sending TX');
@@ -198,7 +195,48 @@ export async function POST(request: NextRequest) {
       console.warn('[gasless/challenge] syncLifecycle skipped (already synced or reverted):', syncErr?.reason || syncErr?.shortMessage || syncErr?.message);
     }
 
-    // Pre-flight: check window + existing challenge in parallel
+    // Check current state — if stuck in Rollover, try to advance to ChallengeWindow
+    const stateNames = ['Unsettled', 'Rollover', 'ChallengeWindow', 'Settled'];
+    let lifecycleState = Number(await marketContract.getLifecycleState());
+    console.log(`[gasless/challenge] Post-sync lifecycle state: ${stateNames[lifecycleState] ?? `Unknown(${lifecycleState})`}`);
+
+    if (lifecycleState === 1) {
+      // Rollover — the on-chain challenge window hasn't been opened yet.
+      // Check if a settlement price was proposed on-chain; if so, try to
+      // explicitly start the challenge window.
+      try {
+        const [proposedPrice, , proposed] = await marketContract.getProposedSettlementPrice();
+        console.log(`[gasless/challenge] On-chain proposal: proposed=${proposed} price=${proposedPrice}`);
+
+        if (proposed) {
+          console.log('[gasless/challenge] Settlement proposed on-chain but state is Rollover — calling startSettlementChallengeWindow');
+          const startTx = await marketContract.startSettlementChallengeWindow();
+          await startTx.wait();
+          lifecycleState = Number(await marketContract.getLifecycleState());
+          console.log(`[gasless/challenge] After startSettlementChallengeWindow: state=${stateNames[lifecycleState] ?? lifecycleState}`);
+        } else {
+          // No proposal on-chain — propose it from the DB value
+          const dbProposedValue = market.proposed_settlement_value;
+          if (dbProposedValue != null && Number(dbProposedValue) > 0) {
+            const proposalPriceWei = ethers.parseUnits(Number(dbProposedValue).toFixed(6), 6);
+            console.log(`[gasless/challenge] No on-chain proposal — submitting from DB: ${dbProposedValue} (${proposalPriceWei})`);
+            const proposeTx = await marketContract.proposeSettlementPrice(proposalPriceWei);
+            await proposeTx.wait();
+            console.log('[gasless/challenge] Settlement proposed on-chain — calling startSettlementChallengeWindow');
+            const startTx = await marketContract.startSettlementChallengeWindow();
+            await startTx.wait();
+            lifecycleState = Number(await marketContract.getLifecycleState());
+            console.log(`[gasless/challenge] After proposal + startChallengeWindow: state=${stateNames[lifecycleState] ?? lifecycleState}`);
+          } else {
+            console.error('[gasless/challenge] State is Rollover, no on-chain proposal, and no DB proposed value');
+          }
+        }
+      } catch (advanceErr: any) {
+        console.error('[gasless/challenge] Failed to advance from Rollover to ChallengeWindow:', advanceErr?.reason || advanceErr?.shortMessage || advanceErr?.message);
+      }
+    }
+
+    // Pre-flight: verify the challenge window is now open
     try {
       const [windowActive, challengeInfo] = await Promise.all([
         marketContract.isInSettlementChallengeWindow(),
@@ -206,12 +244,10 @@ export async function POST(request: NextRequest) {
       ]);
 
       if (!windowActive) {
-        const lifecycleState = await marketContract.getLifecycleState();
-        const stateNames = ['Unsettled', 'Rollover', 'ChallengeWindow', 'Settled'];
-        const stateName = stateNames[Number(lifecycleState)] ?? `Unknown(${lifecycleState})`;
-        console.error(`[gasless/challenge] On-chain window not active. lifecycleState=${stateName}`);
+        const currentState = stateNames[lifecycleState] ?? `Unknown(${lifecycleState})`;
+        console.error(`[gasless/challenge] On-chain window still not active after recovery attempt. lifecycleState=${currentState}`);
         return NextResponse.json(
-          { error: `Challenge window is not active on-chain (state: ${stateName}). Please try again later.` },
+          { error: `Challenge window is not active on-chain (state: ${currentState}). The settlement may not have been proposed on-chain yet.` },
           { status: 409 },
         );
       }
@@ -226,8 +262,60 @@ export async function POST(request: NextRequest) {
       console.warn('[gasless/challenge] Pre-flight check warning:', checkErr?.reason || checkErr?.message);
     }
 
-    // ── Phase 4: Submit the challenge transaction ──
+    // ── Phase 4: Pre-check bond config + submit the challenge transaction ──
     const alternativePriceWei = ethers.parseUnits(Number(price).toFixed(6), 6);
+
+    // Verify bond is configured — auto-repair if missing (deployment may have failed silently)
+    try {
+      const [bondAmount, slashRecipient] = await marketContract.getChallengeBondConfig();
+      if (BigInt(bondAmount) === 0n || slashRecipient === ethers.ZeroAddress) {
+        console.warn(`[gasless/challenge] Bond NOT configured on ${resolvedMarketAddress} — auto-repairing`);
+        const CHALLENGE_BOND_USDC = 50_000_000;
+        const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
+        const bondTx = await marketContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT);
+        await bondTx.wait();
+        const [newBond, newSlash] = await marketContract.getChallengeBondConfig();
+        console.log(`[gasless/challenge] Bond auto-repaired: bond=${Number(newBond) / 1e6} USDC slash=${newSlash}`);
+      } else {
+        console.log(`[gasless/challenge] Bond verified: ${Number(bondAmount) / 1e6} USDC`);
+      }
+    } catch (bondErr: any) {
+      console.error('[gasless/challenge] Bond config check/repair failed:', bondErr?.reason || bondErr?.message);
+    }
+
+    // Dry-run to surface exact revert reason before spending gas
+    try {
+      await marketContract.challengeSettlementFor.staticCall(trader, alternativePriceWei);
+      console.log('[gasless/challenge] Static call passed — submitting TX');
+    } catch (staticErr: any) {
+      const staticReason = staticErr?.reason || staticErr?.shortMessage || staticErr?.message || 'Unknown';
+      console.error('[gasless/challenge] Static call reverted:', staticReason, {
+        wallet: challengeWallet.address,
+        trader,
+        price: alternativePriceWei.toString(),
+        market: resolvedMarketAddress,
+      });
+
+      let diagnostics = '';
+      try {
+        const [bondAmount, slashRecipient] = await marketContract.getChallengeBondConfig();
+        const isBondExempt = await marketContract.isProposalBondExempt(trader);
+        const vaultContract = new ethers.Contract(
+          process.env.NEXT_PUBLIC_CORE_VAULT_ADDRESS || '',
+          ['function getAvailableCollateral(address) external view returns (uint256)'],
+          provider,
+        );
+        let collateral = 'unknown';
+        try { collateral = (await vaultContract.getAvailableCollateral(trader)).toString(); } catch {}
+        diagnostics = ` | bond=${bondAmount} slashRecipient=${slashRecipient} traderExempt=${isBondExempt} traderCollateral=${collateral}`;
+        console.error(`[gasless/challenge] Bond diagnostics:${diagnostics}`);
+      } catch {}
+
+      return NextResponse.json({
+        error: `Challenge rejected by contract: ${staticReason}${diagnostics}`,
+      }, { status: 400 });
+    }
+
     let txHash: string;
     try {
       const tx = await marketContract.challengeSettlementFor(trader, alternativePriceWei, {
