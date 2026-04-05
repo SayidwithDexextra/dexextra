@@ -184,16 +184,18 @@ export async function POST(request: NextRequest) {
       challengeWallet,
     );
 
-    // ── Phase 3: syncLifecycle + pre-flight (pipeline) ──
-    // Fire syncLifecycle but don't block indefinitely — give it 15s max.
+    // ── Phase 3: syncLifecycle + pre-flight ──
+    // Dry-run syncLifecycle first to avoid sending a TX that will revert
+    // (wastes gas + time). If the static call succeeds, send and WAIT —
+    // we must not send challengeSettlementFor before the nonce clears.
     try {
+      await marketContract.syncLifecycle.staticCall();
+      console.log('[gasless/challenge] syncLifecycle needed — sending TX');
       const syncTx = await marketContract.syncLifecycle();
-      await Promise.race([
-        syncTx.wait(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('syncLifecycle wait timeout')), 15_000)),
-      ]);
+      const syncReceipt = await syncTx.wait();
+      console.log(`[gasless/challenge] syncLifecycle confirmed: ${syncReceipt.hash}`);
     } catch (syncErr: any) {
-      console.warn('[gasless/challenge] syncLifecycle warning (non-fatal):', syncErr?.reason || syncErr?.shortMessage || syncErr?.message);
+      console.warn('[gasless/challenge] syncLifecycle skipped (already synced or reverted):', syncErr?.reason || syncErr?.shortMessage || syncErr?.message);
     }
 
     // Pre-flight: check window + existing challenge in parallel

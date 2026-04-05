@@ -687,9 +687,32 @@ export async function deployMarket(
 
     // 7. Register lifecycle operators + grant bond exemptions (relayers need both to submit gasless challenges)
     try {
+      let relayerPoolSource = 'none';
       let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
-      if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'hub_trade_small', jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON', indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_', allowFallbackSingleKey: false });
-      if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_ops', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
+      if (relayerKeys.length) {
+        relayerPoolSource = 'challenge';
+      } else {
+        relayerKeys = loadRelayerPoolFromEnv({ pool: 'hub_trade_small', jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON', indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_', allowFallbackSingleKey: false });
+        if (relayerKeys.length) {
+          relayerPoolSource = 'hub_trade_small';
+        } else {
+          relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_ops', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
+          if (relayerKeys.length) relayerPoolSource = 'global';
+        }
+      }
+
+      laneLog('A', 'Lifecycle operators', 'start', `pool=${relayerPoolSource} candidates=${relayerKeys.length}`);
+      log('lifecycle_operators_pool', 'start', {
+        pool: relayerPoolSource,
+        count: relayerKeys.length,
+        addresses: relayerKeys.map((k) => k.address),
+        market: orderBook,
+        envKeys: {
+          RELAYER_PRIVATE_KEYS_CHALLENGE_JSON: !!process.env.RELAYER_PRIVATE_KEYS_CHALLENGE_JSON,
+          RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON: !!process.env.RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON,
+          RELAYER_PRIVATE_KEYS_JSON: !!process.env.RELAYER_PRIVATE_KEYS_JSON,
+        },
+      });
 
       if (relayerKeys.length > 0) {
         const addrs = relayerKeys.map((k) => k.address);
@@ -699,40 +722,55 @@ export async function deployMarket(
           'function setProposalBondExemptBatch(address[] accounts, bool exempt) external',
         ], wallet);
 
-        laneLog('A', 'Lifecycle operators', 'start', `${addrs.length} relayer(s)`);
+        laneLog('A', 'Lifecycle operators', 'start', `registering ${addrs.length} relayer(s) on ${shortAddr(orderBook!)} [${addrs.map(shortAddr).join(', ')}]`);
         const opTx = await opsAndExemptContract.setLifecycleOperatorBatch(addrs, true, await nonceMgr.nextOverrides());
         laneLog('A', 'Lifecycle operators', 'start', `tx sent ${shortTx(opTx.hash)}`);
-        pending.push({ label: 'Lifecycle operators', logKey: 'lifecycle_operators', tx: opTx, extra: { count: addrs.length } });
+        log('lifecycle_operators_tx', 'start', { tx: opTx.hash, count: addrs.length, market: orderBook });
+        pending.push({ label: 'Lifecycle operators', logKey: 'lifecycle_operators', tx: opTx, extra: { count: addrs.length, addresses: addrs, market: orderBook } });
 
-        laneLog('A', 'Bond exemptions', 'start', `${addrs.length} address(es)`);
+        laneLog('A', 'Bond exemptions', 'start', `${addrs.length} address(es) on ${shortAddr(orderBook!)}`);
         const exemptTx = await opsAndExemptContract.setProposalBondExemptBatch(addrs, true, await nonceMgr.nextOverrides());
         laneLog('A', 'Bond exemptions', 'start', `tx sent ${shortTx(exemptTx.hash)}`);
-        pending.push({ label: 'Bond exemptions', logKey: 'bond_exempt', tx: exemptTx, extra: { count: addrs.length } });
+        log('bond_exempt_tx', 'start', { tx: exemptTx.hash, count: addrs.length, market: orderBook });
+        pending.push({ label: 'Bond exemptions', logKey: 'bond_exempt', tx: exemptTx, extra: { count: addrs.length, addresses: addrs, market: orderBook } });
       } else {
-        laneLog('A', 'Lifecycle operators', 'success', 'no relayer keys found — skipped');
-        log('lifecycle_operators', 'skipped', { reason: 'no relayer keys found' });
+        laneLog('A', 'Lifecycle operators', 'error', `NO RELAYER KEYS FOUND — pool=${relayerPoolSource}. Gasless challenges will fall back to admin key.`);
+        log('lifecycle_operators', 'skipped', { reason: 'no relayer keys found', pool: relayerPoolSource, market: orderBook });
       }
     } catch (e: any) {
       laneLog('A', 'Lifecycle operators / bond exemptions', 'error', e?.shortMessage || e?.message || String(e));
-      log('lifecycle_operators', 'error', { error: e?.message || String(e) });
+      log('lifecycle_operators', 'error', { error: e?.message || String(e), market: orderBook, stack: e?.stack?.split('\n').slice(0, 3).join(' | ') });
     }
 
     // Wait for ALL transactions to mine in parallel
     if (pending.length > 0) {
-      laneLog('A', 'Awaiting confirmations', 'start', `${pending.length} pending txs`);
-      await Promise.allSettled(
+      laneLog('A', 'Awaiting confirmations', 'start', `${pending.length} pending txs: [${pending.map(p => p.label).join(', ')}]`);
+      const results = await Promise.allSettled(
         pending.map(({ label, logKey, tx, successDetail, extra }) =>
           tx.wait()
             .then((receipt: any) => {
-              laneLog('A', label, 'success', successDetail || 'mined');
-              log(logKey, 'success', { tx: receipt?.hash || tx.hash, ...(extra || {}) });
+              const status = receipt?.status === 1 ? 'confirmed' : `reverted (status=${receipt?.status})`;
+              laneLog('A', label, receipt?.status === 1 ? 'success' : 'error', `${status} block=${receipt?.blockNumber} gas=${receipt?.gasUsed?.toString()}`);
+              log(logKey, receipt?.status === 1 ? 'success' : 'error', {
+                tx: receipt?.hash || tx.hash,
+                status: receipt?.status,
+                blockNumber: receipt?.blockNumber,
+                gasUsed: receipt?.gasUsed?.toString(),
+                ...(extra || {}),
+              });
+              return { label, success: receipt?.status === 1 };
             })
             .catch((e: any) => {
-              laneLog('A', label, 'error', e?.message || String(e));
-              log(logKey, 'error', { error: e?.message || String(e) });
+              const reason = e?.reason || e?.shortMessage || e?.message || String(e);
+              laneLog('A', label, 'error', `TX FAILED: ${reason}`);
+              log(logKey, 'error', { error: reason, tx: tx.hash, ...(extra || {}) });
+              return { label, success: false };
             })
         ),
       );
+      const succeeded = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+      const failed = results.length - succeeded;
+      laneLog('A', 'Confirmations complete', failed > 0 ? 'error' : 'success', `${succeeded}/${results.length} succeeded${failed > 0 ? ` — ${failed} FAILED` : ''}`);
     }
 
     laneLog('A', 'Lane complete', 'success');
