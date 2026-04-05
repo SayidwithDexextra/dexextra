@@ -183,6 +183,7 @@ export const MarketLifecycleFacetABI = [
   "function getActiveChallengeInfo() external view returns (bool active, address challengerAddr, uint256 challengedPriceVal, uint256 bondEscrowed, bool resolved, bool won)",
   // Proposal bond exemption
   "function setProposalBondExempt(address account, bool exempt) external",
+  "function setProposalBondExemptBatch(address[] accounts, bool exempt) external",
   "function isProposalBondExempt(address account) external view returns (bool)",
   "function returnProposalBond() external",
   // Lifecycle operators (small-block relayer authorization)

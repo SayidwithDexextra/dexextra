@@ -2,8 +2,8 @@
 /**
  * register-lifecycle-operators.js
  *
- * Registers a list of addresses as lifecycle operators on a market diamond
- * using a single batch transaction.
+ * Registers a list of addresses as lifecycle operators AND grants bond
+ * exemptions on a market diamond.
  *
  * Env:
  *   MARKET_ADDRESS — target diamond
@@ -29,24 +29,28 @@ async function main() {
   }
 
   const operators = operatorsCsv.split(",").map((a) => a.trim()).filter(Boolean);
-  console.log(`\n🔑 Registering ${operators.length} operator(s) on ${marketAddress}\n`);
+  console.log(`\nRegistering ${operators.length} operator(s) on ${marketAddress}\n`);
 
   const [signer] = await ethers.getSigners();
   const lifecycle = await ethers.getContractAt(
     [
       "function setLifecycleOperatorBatch(address[] operators, bool authorized) external",
       "function isLifecycleOperator(address account) external view returns (bool)",
+      "function setProposalBondExempt(address account, bool exempt) external",
+      "function setProposalBondExemptBatch(address[] accounts, bool exempt) external",
+      "function isProposalBondExempt(address account) external view returns (bool)",
     ],
     marketAddress,
     signer,
   );
 
+  // --- Lifecycle operators ---
   const toRegister = [];
   for (const addr of operators) {
     try {
       const already = await lifecycle.isLifecycleOperator(addr);
       if (already) {
-        console.log(`   ⏭️  ${addr} already registered`);
+        console.log(`  [operator] ${addr} already registered`);
       } else {
         toRegister.push(addr);
       }
@@ -56,21 +60,46 @@ async function main() {
   }
 
   if (!toRegister.length) {
-    console.log("\n   All operators already registered.");
+    console.log("\n  All operators already registered.");
   } else {
-    console.log(`\n   📦 Batch registering ${toRegister.length} operator(s)...`);
+    console.log(`\n  Batch registering ${toRegister.length} operator(s)...`);
     const tx = await lifecycle.setLifecycleOperatorBatch(toRegister, true);
-    console.log(`   tx: ${tx.hash}`);
+    console.log(`  tx: ${tx.hash}`);
     await tx.wait();
-    console.log(`   ✅ ${toRegister.length} operator(s) registered in one transaction`);
+    console.log(`  ${toRegister.length} operator(s) registered`);
   }
 
-  console.log("\n✅ Done.\n");
+  // --- Bond exemptions ---
+  const toExempt = [];
+  for (const addr of operators) {
+    try {
+      const already = await lifecycle.isProposalBondExempt(addr);
+      if (already) {
+        console.log(`  [bond-exempt] ${addr} already exempt`);
+      } else {
+        toExempt.push(addr);
+      }
+    } catch {
+      toExempt.push(addr);
+    }
+  }
+
+  if (!toExempt.length) {
+    console.log("\n  All operators already bond-exempt.");
+  } else {
+    console.log(`\n  Batch granting bond exemption to ${toExempt.length} address(es)...`);
+    const tx = await lifecycle.setProposalBondExemptBatch(toExempt, true);
+    console.log(`  tx: ${tx.hash}`);
+    await tx.wait();
+    console.log(`  ${toExempt.length} bond exemption(s) granted in one transaction`);
+  }
+
+  console.log("\nDone.\n");
 }
 
 main()
   .then(() => process.exit(0))
   .catch((e) => {
-    console.error("\n❌ Failed:", e?.message || String(e));
+    console.error("\nFailed:", e?.message || String(e));
     process.exit(1);
   });

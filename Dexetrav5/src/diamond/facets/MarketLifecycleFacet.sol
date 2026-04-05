@@ -824,6 +824,18 @@ contract MarketLifecycleFacet {
     }
 
     /**
+     * @notice Batch grant or revoke bond exemptions in a single transaction.
+     */
+    function setProposalBondExemptBatch(address[] calldata accounts, bool exempt) external onlyOwner {
+        MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
+        for (uint256 i = 0; i < accounts.length; i++) {
+            require(accounts[i] != address(0), "LC: zero addr");
+            s.proposalBondExempt[accounts[i]] = exempt;
+            emit ProposalBondExemptUpdated(accounts[i], exempt);
+        }
+    }
+
+    /**
      * @notice Check whether an address is exempt from the proposal/challenge bond.
      */
     function isProposalBondExempt(address account) external view returns (bool) {

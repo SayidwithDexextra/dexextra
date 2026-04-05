@@ -685,27 +685,35 @@ export async function deployMarket(
       log('challenge_bond_config', 'error', { error: e?.message || String(e) });
     }
 
-    // 7. Register lifecycle operators (small-block relayers for fast challenge submission)
+    // 7. Register lifecycle operators + grant bond exemptions (relayers need both to submit gasless challenges)
     try {
       let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
       if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'hub_trade_small', jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON', indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_', allowFallbackSingleKey: false });
       if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_ops', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
 
       if (relayerKeys.length > 0) {
-        laneLog('A', 'Lifecycle operators', 'start', `${relayerKeys.length} relayer(s)`);
-        const opContract = new ethers.Contract(orderBook!, [
-          'function setLifecycleOperatorBatch(address[] operators, bool authorized) external',
-        ], wallet);
         const addrs = relayerKeys.map((k) => k.address);
-        const opTx = await opContract.setLifecycleOperatorBatch(addrs, true, await nonceMgr.nextOverrides());
+
+        const opsAndExemptContract = new ethers.Contract(orderBook!, [
+          'function setLifecycleOperatorBatch(address[] operators, bool authorized) external',
+          'function setProposalBondExemptBatch(address[] accounts, bool exempt) external',
+        ], wallet);
+
+        laneLog('A', 'Lifecycle operators', 'start', `${addrs.length} relayer(s)`);
+        const opTx = await opsAndExemptContract.setLifecycleOperatorBatch(addrs, true, await nonceMgr.nextOverrides());
         laneLog('A', 'Lifecycle operators', 'start', `tx sent ${shortTx(opTx.hash)}`);
         pending.push({ label: 'Lifecycle operators', logKey: 'lifecycle_operators', tx: opTx, extra: { count: addrs.length } });
+
+        laneLog('A', 'Bond exemptions', 'start', `${addrs.length} address(es)`);
+        const exemptTx = await opsAndExemptContract.setProposalBondExemptBatch(addrs, true, await nonceMgr.nextOverrides());
+        laneLog('A', 'Bond exemptions', 'start', `tx sent ${shortTx(exemptTx.hash)}`);
+        pending.push({ label: 'Bond exemptions', logKey: 'bond_exempt', tx: exemptTx, extra: { count: addrs.length } });
       } else {
         laneLog('A', 'Lifecycle operators', 'success', 'no relayer keys found — skipped');
         log('lifecycle_operators', 'skipped', { reason: 'no relayer keys found' });
       }
     } catch (e: any) {
-      laneLog('A', 'Lifecycle operators', 'error', e?.shortMessage || e?.message || String(e));
+      laneLog('A', 'Lifecycle operators / bond exemptions', 'error', e?.shortMessage || e?.message || String(e));
       log('lifecycle_operators', 'error', { error: e?.message || String(e) });
     }
 

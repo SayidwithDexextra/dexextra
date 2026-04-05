@@ -1075,6 +1075,9 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
 
   // On settlement: animate settled positions out, then refresh markets data
   // so `settledMarketSymbols` picks up the SETTLED status and filters them.
+  // IMPORTANT: only slide-out positions when the market is actually finalized
+  // on-chain (lifecycle state 3 / LifecycleSettled). During the challenge phase
+  // positions must remain visible since the settlement is not yet final.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -1082,30 +1085,37 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     const onSettlement = (e: Event) => {
       const detail = (e as CustomEvent)?.detail;
       const sym = String(detail?.symbol || '').toUpperCase();
-      if (sym) {
-        setSettlingSymbols((prev) => new Set(prev).add(sym));
-      }
+      const eventName = String(detail?.eventName || '');
+      const newState = detail?.newState !== undefined ? Number(detail.newState) : undefined;
 
+      const isFinalized =
+        eventName === 'LifecycleSettled' ||
+        (eventName === 'LifecycleStateChanged' && newState === 3) ||
+        detail?.settledOnChain === true;
+
+      // Always refresh market/position data so settlement UI stays current,
+      // but only trigger the position slide-out animation when finalized.
       refetchMarkets();
       refreshPositions();
 
-      // Stagger refetches — the DB may lag behind the on-chain event by a few seconds.
       for (const delay of [2000, 5000, 10000]) {
         timers.push(setTimeout(() => refetchMarkets(), delay));
       }
 
-      // After the slide-out animation, clear settling flag.
-      // Positions from SETTLED markets will be filtered by settledMarketSymbols.
-      timers.push(setTimeout(() => {
-        if (sym) {
+      if (isFinalized && sym) {
+        setSettlingSymbols((prev) => new Set(prev).add(sym));
+
+        // After the slide-out animation, clear settling flag.
+        // Positions from SETTLED markets will be filtered by settledMarketSymbols.
+        timers.push(setTimeout(() => {
           setSettlingSymbols((prev) => {
             const next = new Set(prev);
             next.delete(sym);
             return next;
           });
-        }
-        refreshPositions();
-      }, 600));
+          refreshPositions();
+        }, 600));
+      }
     };
 
     window.addEventListener('settlementUpdated', onSettlement as EventListener);

@@ -5,7 +5,7 @@ import GlobalSessionRegistry from '@/lib/abis/GlobalSessionRegistry.json';
 import { MarketLifecycleFacetABI } from '@/lib/contracts';
 import { getRelayerConfig, relayTick, type ChallengerEvidence, type EscalationMeta } from '@/lib/dispute-relayer';
 import { isChallengeWindowActive } from '@/lib/settlement-window';
-import { loadRelayerPoolFromEnv, type RelayerKey } from '@/lib/relayerKeys';
+import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -124,44 +124,47 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Market contract address not available.' }, { status: 400 });
     }
 
-    // ── Select relayer wallet (prefer small-block pool for fast inclusion) ──
-    // Cascade: dedicated challenge pool → small-block pool → global pool (excluding big-block) → admin key
-    let relayerKeys = loadRelayerPoolFromEnv({
-      pool: 'challenge',
-      jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON',
-      allowFallbackSingleKey: false,
-    });
+    // Select a lifecycle-operator relayer for challengeSettlementFor.
+    // The contract accepts onlyOwnerOrOperator, so any registered operator works.
+    // Cascade: challenge pool → small-block pool → global pool → admin key (owner fallback).
+    let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
     if (!relayerKeys.length) {
-      relayerKeys = loadRelayerPoolFromEnv({
-        pool: 'hub_trade_small',
-        jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON',
-        indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_',
-        allowFallbackSingleKey: false,
-      });
+      relayerKeys = loadRelayerPoolFromEnv({ pool: 'hub_trade_small', jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON', indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_', allowFallbackSingleKey: false });
     }
     if (!relayerKeys.length) {
-      relayerKeys = loadRelayerPoolFromEnv({
-        pool: 'global_for_challenge',
-        globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
-        allowFallbackSingleKey: true,
-        excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'],
-      });
+      relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_challenge', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
     }
 
-    const relayerKey = relayerKeys.length > 0
-      ? relayerKeys[Math.floor(Math.random() * relayerKeys.length)]
-      : undefined;
+    const adminKey = process.env.ADMIN_PRIVATE_KEY || '';
 
-    const walletKey = relayerKey?.privateKey || process.env.ADMIN_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '';
-    if (!walletKey) {
-      return NextResponse.json({ error: 'Server misconfigured: no challenge relayer key.' }, { status: 500 });
+    // Pick a random relayer, but verify it's a registered operator on-chain.
+    // Fall back to admin key (diamond owner) if no operator relayer is available.
+    const operatorCheckContract = new ethers.Contract(
+      resolvedMarketAddress,
+      ['function isLifecycleOperator(address) external view returns (bool)'],
+      provider,
+    );
+
+    let selectedKey = '';
+    if (relayerKeys.length > 0) {
+      const shuffled = [...relayerKeys].sort(() => Math.random() - 0.5);
+      for (const rk of shuffled) {
+        try {
+          const isOp = await operatorCheckContract.isLifecycleOperator(rk.address);
+          if (isOp) { selectedKey = rk.privateKey; break; }
+        } catch { /* skip */ }
+      }
+    }
+    if (!selectedKey) selectedKey = adminKey;
+    if (!selectedKey) {
+      return NextResponse.json({ error: 'Server misconfigured: no challenge relayer or admin key.' }, { status: 500 });
     }
 
-    const relayerWallet = new ethers.Wallet(walletKey, provider);
+    const challengeWallet = new ethers.Wallet(selectedKey, provider);
     const marketContract = new ethers.Contract(
       resolvedMarketAddress,
       MarketLifecycleFacetABI,
-      relayerWallet,
+      challengeWallet,
     );
 
     // Ensure the on-chain lifecycle is progressed before challenging.
@@ -207,8 +210,15 @@ export async function POST(request: NextRequest) {
       const receipt = await tx.wait();
       txHash = receipt.hash;
     } catch (txErr: any) {
-      const reason = txErr?.reason || txErr?.shortMessage || txErr?.message || 'Transaction failed';
-      console.error('[gasless/challenge] On-chain tx failed:', reason);
+      let reason = txErr?.reason || txErr?.shortMessage || txErr?.message || 'Transaction failed';
+      if (reason.includes('execution reverted') && txErr?.data) {
+        const knownErrors: Record<string, string> = {
+          '0xbfcafd37': 'NotContractOwner: admin wallet is not the diamond owner',
+        };
+        const selector = typeof txErr.data === 'string' ? txErr.data.slice(0, 10) : '';
+        if (knownErrors[selector]) reason = knownErrors[selector];
+      }
+      console.error('[gasless/challenge] On-chain tx failed:', reason, { wallet: challengeWallet.address });
       return NextResponse.json({ error: reason.length > 200 ? reason.slice(0, 200) : reason }, { status: 500 });
     }
 

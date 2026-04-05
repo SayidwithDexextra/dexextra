@@ -265,6 +265,7 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
   }
 
   let lastErr: any = null
+  let feeBumpMultiplier = 0
   for (let i = 0; i < attempts; i++) {
     const observedPendingRaw = await (params.provider as any).getTransactionCount(params.wallet.address, 'pending')
     const observedPending = BigInt(observedPendingRaw)
@@ -299,11 +300,34 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
         console.warn(`[relayer][nonce-allocator] allocator unavailable, falling back: ${msg}`)
       }
     }
+
+    // Build fee overrides — bump fees progressively on replacement-underpriced retries
+    // so the node accepts the tx as a valid replacement (requires ~10% higher fees).
+    let feeOverrides: Record<string, bigint> = {}
+    if (feeBumpMultiplier > 0) {
+      try {
+        const fee = await params.provider.getFeeData()
+        if (fee.maxFeePerGas && fee.maxPriorityFeePerGas) {
+          const bumpBps = 100n + 15n * BigInt(feeBumpMultiplier)
+          feeOverrides = {
+            maxPriorityFeePerGas: (fee.maxPriorityFeePerGas * bumpBps) / 100n || ethers.parseUnits('0.15', 'gwei'),
+            maxFeePerGas: (fee.maxFeePerGas * bumpBps) / 100n,
+          }
+        } else if (fee.gasPrice) {
+          const bumpBps = 100n + 15n * BigInt(feeBumpMultiplier)
+          feeOverrides = { gasPrice: (fee.gasPrice * bumpBps) / 100n }
+        }
+      } catch {
+        // If fee fetch fails, continue without explicit fees — provider will fill defaults.
+      }
+    }
+
     try {
       const fn = (params.contract as any)[params.method]
       if (typeof fn !== 'function') throw new Error(`Contract missing method: ${params.method}`)
       const tx: ethers.TransactionResponse = await fn(...params.args, {
         ...(params.overrides || {}),
+        ...feeOverrides,
         nonce,
       })
 
@@ -349,6 +373,8 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
       const nonceish = isNonceUsed || isReplacementUnderpriced
       if (!nonceish) throw e
 
+      if (isReplacementUnderpriced) feeBumpMultiplier++
+
       // If the node says "known/already known", we likely broadcasted this nonce already.
       // If it says "replacement underpriced", we are accidentally trying to reuse a nonce
       // that already has a pending tx. In both cases, move our local hint forward.
@@ -363,7 +389,7 @@ export async function sendWithNonceRetry<T extends ethers.Contract>(
       // brief delay before retry to let provider/mempool catch up
       await new Promise((r) => setTimeout(r, isReplacementUnderpriced ? 1200 : 700))
       if (process.env.NODE_ENV !== 'production') {
-        console.log(`[relayer][nonce-retry] ${label} attempt ${i + 1}/${attempts} failed: ${msg}`)
+        console.log(`[relayer][nonce-retry] ${label} attempt ${i + 1}/${attempts} failed (feeBump=${feeBumpMultiplier}): ${msg}`)
       }
     }
   }
