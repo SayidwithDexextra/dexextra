@@ -285,12 +285,33 @@ export async function POST(request: Request) {
     const body = await request.json();
     const supabase = getSupabase();
 
-    // Verify webhook signature if configured (for Alchemy/QuickNode)
-    const webhookSecret = process.env.UMA_WEBHOOK_SECRET;
-    if (webhookSecret) {
-      const signature = request.headers.get('x-alchemy-signature') 
-        || request.headers.get('x-webhook-signature');
-      // Add signature verification here if needed
+    // Verify Alchemy webhook signature for DisputeRelay events
+    const signingKey = process.env.DISPUTE_RELAY_ALCHEMY_SIGNING_KEY;
+    if (signingKey) {
+      const signature = request.headers.get('x-alchemy-signature');
+      if (!signature) {
+        console.warn('[uma-resolution] Missing x-alchemy-signature header');
+        return NextResponse.json(
+          { ok: false, error: 'Missing webhook signature' },
+          { status: 401 },
+        );
+      }
+      
+      // Alchemy signs the raw request body with HMAC-SHA256
+      const rawBody = JSON.stringify(body);
+      const crypto = await import('crypto');
+      const expectedSignature = crypto
+        .createHmac('sha256', signingKey)
+        .update(rawBody)
+        .digest('hex');
+      
+      if (signature !== expectedSignature) {
+        console.warn('[uma-resolution] Invalid webhook signature');
+        return NextResponse.json(
+          { ok: false, error: 'Invalid webhook signature' },
+          { status: 401 },
+        );
+      }
     }
 
     // Parse the payload - support both direct and Alchemy formats
