@@ -128,15 +128,23 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Phase 2: Select relayer — check operators in parallel ──
+    let relayerPoolSource = 'none';
     let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
-    if (!relayerKeys.length) {
+    if (relayerKeys.length) {
+      relayerPoolSource = 'challenge';
+    } else {
       relayerKeys = loadRelayerPoolFromEnv({ pool: 'hub_trade_small', jsonEnv: 'RELAYER_PRIVATE_KEYS_HUB_TRADE_SMALL_JSON', indexedPrefix: 'RELAYER_PRIVATE_KEY_HUB_TRADE_SMALL_', allowFallbackSingleKey: false });
-    }
-    if (!relayerKeys.length) {
-      relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_challenge', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
+      if (relayerKeys.length) {
+        relayerPoolSource = 'hub_trade_small';
+      } else {
+        relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_challenge', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
+        if (relayerKeys.length) relayerPoolSource = 'global';
+      }
     }
 
     const adminKey = process.env.ADMIN_PRIVATE_KEY || '';
+    const adminAddress = adminKey ? new ethers.Wallet(adminKey).address : 'none';
+    console.log(`[gasless/challenge] Relayer pool: source=${relayerPoolSource} candidates=${relayerKeys.length} addresses=[${relayerKeys.map(k => k.address).join(', ')}] adminAddress=${adminAddress}`);
 
     const operatorCheckContract = new ethers.Contract(
       resolvedMarketAddress,
@@ -150,7 +158,8 @@ export async function POST(request: NextRequest) {
       const operatorChecks = await Promise.allSettled(
         shuffled.map(async (rk) => {
           const isOp = await operatorCheckContract.isLifecycleOperator(rk.address);
-          return { privateKey: rk.privateKey, isOp };
+          console.log(`[gasless/challenge] Operator check: ${rk.address} isLifecycleOperator=${isOp}`);
+          return { privateKey: rk.privateKey, address: rk.address, isOp };
         }),
       );
       for (const result of operatorChecks) {
@@ -167,7 +176,7 @@ export async function POST(request: NextRequest) {
 
     const challengeWallet = new ethers.Wallet(selectedKey, provider);
     const isAdmin = selectedKey === adminKey;
-    console.log(`[gasless/challenge] Relayer selected: ${challengeWallet.address} (${isAdmin ? 'admin fallback' : 'operator pool'}) | market=${resolvedMarketAddress} trader=${trader}`);
+    console.log(`[gasless/challenge] SELECTED: ${challengeWallet.address} (${isAdmin ? 'ADMIN FALLBACK — no pool operator found' : `operator from ${relayerPoolSource} pool`}) | market=${resolvedMarketAddress} trader=${trader}`);
 
     const marketContract = new ethers.Contract(
       resolvedMarketAddress,
