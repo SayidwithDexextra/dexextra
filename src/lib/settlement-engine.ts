@@ -383,28 +383,92 @@ export async function settlementSyncLifecycleOnChain(
 async function commitEvidenceOnChain(
   market: MarketRow,
   waybackUrl: string,
-): Promise<{ ok: boolean; evidenceHash?: string; error?: string }> {
+): Promise<{ ok: boolean; evidenceHash?: string; error?: string; alreadyCommitted?: boolean }> {
   const cfg = getConfig();
-  if (!cfg.rpcUrl || !cfg.privateKey) return { ok: false, error: 'rpc_or_key_not_configured' };
+  if (!cfg.rpcUrl) return { ok: false, error: 'rpc_not_configured' };
   if (!market.market_address || !ethers.isAddress(market.market_address)) {
     return { ok: false, error: 'invalid_market_address' };
   }
-  try {
-    const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes(waybackUrl));
-    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
-    const wallet = new ethers.Wallet(cfg.privateKey, provider);
-    const contract = new ethers.Contract(
-      market.market_address,
-      ['function commitEvidence(string calldata evidenceUrl) external'],
-      wallet,
-    );
-    const tx = await contract.commitEvidence(waybackUrl);
-    await tx.wait();
-    console.log(`[settlement-engine] evidence committed on-chain: ${evidenceHash} (url: ${waybackUrl})`);
-    return { ok: true, evidenceHash };
-  } catch (err) {
-    return { ok: false, error: `commit_evidence_failed:${String(err)}` };
+
+  const relayers = loadRelayerPoolFromEnv({
+    pool: 'evidence_commit',
+    globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+    allowFallbackSingleKey: true,
+  });
+
+  let signerKey = relayers.length > 0
+    ? relayers[Math.floor(Math.random() * relayers.length)].privateKey
+    : cfg.privateKey;
+
+  if (!signerKey) return { ok: false, error: 'no_signer_key_configured' };
+
+  const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes(waybackUrl));
+  const maxRetries = 3;
+  let lastError = '';
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
+      const wallet = new ethers.Wallet(signerKey, provider);
+
+      const contract = new ethers.Contract(
+        market.market_address,
+        [
+          'function commitEvidence(string calldata evidenceUrl) external',
+          'function getProposedEvidence() external view returns (bytes32 evidenceHash, string evidenceUrl)',
+        ],
+        wallet,
+      );
+
+      // Pre-flight: check if evidence is already committed (idempotent)
+      try {
+        const [existingHash] = await contract.getProposedEvidence();
+        if (existingHash && existingHash !== ethers.ZeroHash) {
+          console.log(`[settlement-engine] evidence already committed on-chain for ${market.market_identifier}: ${existingHash}`);
+          return { ok: true, evidenceHash: existingHash, alreadyCommitted: true };
+        }
+      } catch {
+        // View call failed — proceed with commit attempt anyway
+      }
+
+      const feeData = await provider.getFeeData();
+      const txOverrides: Record<string, unknown> = {};
+      if (feeData.maxFeePerGas) {
+        txOverrides.maxFeePerGas = feeData.maxFeePerGas * 120n / 100n;
+        txOverrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+          ? feeData.maxPriorityFeePerGas * 120n / 100n
+          : ethers.parseUnits('1', 'gwei');
+      }
+
+      const tx = await contract.commitEvidence(waybackUrl, txOverrides);
+      const receipt = await tx.wait();
+      console.log(`[settlement-engine] evidence committed on-chain (attempt ${attempt}): ${evidenceHash} tx=${receipt?.hash} (url: ${waybackUrl})`);
+      return { ok: true, evidenceHash };
+    } catch (err: unknown) {
+      const errMsg = String(err);
+      lastError = errMsg;
+
+      // "evidence already committed" revert is a success — another path committed first
+      if (errMsg.includes('evidence already committed')) {
+        console.log(`[settlement-engine] evidence already committed (race OK) for ${market.market_identifier}`);
+        return { ok: true, evidenceHash, alreadyCommitted: true };
+      }
+
+      // Nonce collision — pick a different relayer key for next attempt
+      if (errMsg.includes('nonce') && relayers.length > 1) {
+        const nextRelayer = relayers[Math.floor(Math.random() * relayers.length)];
+        signerKey = nextRelayer.privateKey;
+      }
+
+      if (attempt < maxRetries) {
+        const backoffMs = 1000 * Math.pow(2, attempt - 1);
+        console.warn(`[settlement-engine] commitEvidence attempt ${attempt}/${maxRetries} failed for ${market.market_identifier}, retrying in ${backoffMs}ms: ${errMsg.slice(0, 200)}`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
   }
+
+  return { ok: false, error: `commit_evidence_failed_after_${maxRetries}_attempts:${lastError.slice(0, 300)}` };
 }
 
 async function resolveChallengeOnChain(
@@ -502,13 +566,18 @@ async function maybeStartSettlementWindow(
   // Use waybackPageUrl (the archived page) as the canonical evidence source; fall back to waybackUrl.
   const evidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
   let evidenceHash: string | null = null;
+  let evidenceCommitStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
   if (evidenceUrl) {
     const commitResult = await commitEvidenceOnChain(market, evidenceUrl);
     if (commitResult.ok) {
       evidenceHash = commitResult.evidenceHash ?? null;
+      evidenceCommitStatus = commitResult.alreadyCommitted ? 'already_committed' : 'committed';
     } else {
-      console.warn(`[settlement-engine] evidence hash commit warning for ${market.market_identifier}: ${commitResult.error}`);
+      evidenceCommitStatus = 'failed';
+      console.error(`[settlement-engine] CRITICAL: evidence commitment FAILED for ${market.market_identifier}: ${commitResult.error}`);
     }
+  } else {
+    console.error(`[settlement-engine] CRITICAL: no evidence URL available for ${market.market_identifier} — AI returned no wayback/archive URL. Evidence will NOT be on-chain.`);
   }
 
   const now = new Date();
@@ -536,6 +605,7 @@ async function maybeStartSettlementWindow(
   if (evidenceHash) {
     updatedConfig.settlement_evidence_hash = evidenceHash;
   }
+  updatedConfig.evidence_commit_status = evidenceCommitStatus;
 
   const { error } = await supabase
     .from('markets')
@@ -570,7 +640,7 @@ async function maybeStartSettlementWindow(
     marketId: market.id, marketIdentifier: market.market_identifier,
     action: 'start_window', ok: true,
     settlementDate: market.settlement_date,
-    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl, evidenceHash, lifecycleSync: syncResult },
+    details: { aiPrice: ai.price, aiJobId: ai.jobId, expiresAt: expiresAt.toISOString(), waybackUrl: ai.waybackUrl, waybackPageUrl: ai.waybackPageUrl, evidenceHash, evidenceCommitStatus, lifecycleSync: syncResult },
   };
 }
 
@@ -649,6 +719,23 @@ async function maybeFinalizeSettlement(
     if (ai && Number.isFinite(ai.price) && ai.price > 0) {
       proposedPrice = ai.price;
 
+      // Self-heal path: commit evidence on-chain (was previously missing)
+      const healEvidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
+      let healEvidenceHash: string | null = null;
+      let healEvidenceStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
+      if (healEvidenceUrl) {
+        const commitResult = await commitEvidenceOnChain(market, healEvidenceUrl);
+        if (commitResult.ok) {
+          healEvidenceHash = commitResult.evidenceHash ?? null;
+          healEvidenceStatus = commitResult.alreadyCommitted ? 'already_committed' : 'committed';
+        } else {
+          healEvidenceStatus = 'failed';
+          console.error(`[settlement-engine] CRITICAL: self-heal evidence commitment FAILED for ${market.market_identifier}: ${commitResult.error}`);
+        }
+      } else {
+        console.error(`[settlement-engine] CRITICAL: self-heal has no evidence URL for ${market.market_identifier}`);
+      }
+
       const healNow = new Date();
       const healSettlementMs = safeDateMs(market.settlement_date);
       const healCwMs = challengeWindowMs(market);
@@ -663,6 +750,11 @@ async function maybeFinalizeSettlement(
         ai_job_id: ai.jobId,
         healed: true,
       });
+      if (ai.waybackUrl) healConfig.settlement_wayback_url = ai.waybackUrl;
+      if (ai.waybackPageUrl) healConfig.settlement_wayback_page_url = ai.waybackPageUrl;
+      if (ai.screenshotUrl) healConfig.settlement_screenshot_url = ai.screenshotUrl;
+      if (healEvidenceHash) healConfig.settlement_evidence_hash = healEvidenceHash;
+      healConfig.evidence_commit_status = healEvidenceStatus;
 
       const { error: healErr } = await supabase
         .from('markets')
@@ -688,7 +780,7 @@ async function maybeFinalizeSettlement(
       }
 
       console.log(`[settlement-engine] self-healed proposed_settlement_value for ${market.market_identifier}`, {
-        price: ai.price, jobId: ai.jobId, expiresAt: healExpires.toISOString(),
+        price: ai.price, jobId: ai.jobId, expiresAt: healExpires.toISOString(), evidenceStatus: healEvidenceStatus,
       });
 
       return {
@@ -696,7 +788,7 @@ async function maybeFinalizeSettlement(
         action: 'finalize', ok: false,
         settlementDate: market.settlement_date,
         reason: 'self_healed_reopened_window',
-        details: { aiPrice: ai.price, aiJobId: ai.jobId, newExpiresAt: healExpires.toISOString() },
+        details: { aiPrice: ai.price, aiJobId: ai.jobId, newExpiresAt: healExpires.toISOString(), evidenceHash: healEvidenceHash, evidenceCommitStatus: healEvidenceStatus },
       };
     }
 
@@ -707,6 +799,25 @@ async function maybeFinalizeSettlement(
 
       reason: 'no_proposed_settlement_value',
     };
+  }
+
+  // Last-chance evidence commit: if evidence was never committed, attempt now before finalizing.
+  const marketCfg = asRecord(market.market_config);
+  const priorEvidenceStatus = marketCfg.evidence_commit_status;
+  if (priorEvidenceStatus !== 'committed' && priorEvidenceStatus !== 'already_committed') {
+    const evidenceUrl = (marketCfg.settlement_wayback_page_url || marketCfg.settlement_wayback_url) as string | undefined;
+    if (evidenceUrl && market.market_address) {
+      console.log(`[settlement-engine] last-chance evidence commit for ${market.market_identifier} (prior status: ${priorEvidenceStatus || 'unknown'})`);
+      const retryResult = await commitEvidenceOnChain(market, evidenceUrl);
+      if (retryResult.ok) {
+        const newStatus = retryResult.alreadyCommitted ? 'already_committed' : 'committed';
+        console.log(`[settlement-engine] last-chance evidence commit succeeded for ${market.market_identifier}: ${newStatus}`);
+        const patchConfig = { ...marketCfg, evidence_commit_status: newStatus, settlement_evidence_hash: retryResult.evidenceHash };
+        await supabase.from('markets').update({ market_config: patchConfig, updated_at: new Date().toISOString() }).eq('id', market.id);
+      } else {
+        console.error(`[settlement-engine] CRITICAL: last-chance evidence commit FAILED for ${market.market_identifier}: ${retryResult.error}. Proceeding to finalize anyway.`);
+      }
+    }
   }
 
   // If UMA resolved a dispute, call resolveChallenge() on HL before settling
@@ -1085,13 +1196,18 @@ export async function completeSettlementFromAIResult(
 
   const evidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
   let evidenceHash: string | null = null;
+  let evidenceCommitStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
   if (evidenceUrl) {
     const commitResult = await commitEvidenceOnChain(market, evidenceUrl);
     if (commitResult.ok) {
       evidenceHash = commitResult.evidenceHash ?? null;
+      evidenceCommitStatus = commitResult.alreadyCommitted ? 'already_committed' : 'committed';
     } else {
-      console.warn(`[settlement-engine] evidence commit warning for ${market.market_identifier}: ${commitResult.error}`);
+      evidenceCommitStatus = 'failed';
+      console.error(`[settlement-engine] CRITICAL: evidence commitment FAILED for ${market.market_identifier}: ${commitResult.error}`);
     }
+  } else {
+    console.error(`[settlement-engine] CRITICAL: no evidence URL available for ${market.market_identifier} — AI returned no wayback/archive URL. Evidence will NOT be on-chain.`);
   }
 
   const now = new Date();
@@ -1124,6 +1240,7 @@ export async function completeSettlementFromAIResult(
   if (ai.waybackPageUrl) updatedConfig.settlement_wayback_page_url = ai.waybackPageUrl;
   if (ai.screenshotUrl) updatedConfig.settlement_screenshot_url = ai.screenshotUrl;
   if (evidenceHash) updatedConfig.settlement_evidence_hash = evidenceHash;
+  updatedConfig.evidence_commit_status = evidenceCommitStatus;
 
   const rowUpdate: Record<string, unknown> = {
     proposed_settlement_value: ai.price,
@@ -1171,6 +1288,7 @@ export async function completeSettlementFromAIResult(
       price: ai.price,
       jobId: ai.jobId,
       evidenceHash,
+      evidenceCommitStatus,
       expiresAt: expiresAt.toISOString(),
       waybackUrl: ai.waybackUrl,
       waybackPageUrl: ai.waybackPageUrl,
