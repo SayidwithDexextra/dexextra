@@ -470,6 +470,68 @@ export async function POST(req: Request) {
         }
       }
 
+      // Contract with ABIs for bond + operator configuration
+      const criticalContract = new ethers.Contract(orderBook, [
+        'function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external',
+        'function getChallengeBondConfig() external view returns (uint256 bondAmount, address slashRecipient)',
+        'function setLifecycleOperatorBatch(address[] operators, bool authorized) external',
+        'function setProposalBondExemptBatch(address[] accounts, bool exempt) external',
+        'function isLifecycleOperator(address account) external view returns (bool)',
+      ], wallet);
+
+      // 6. Configure challenge bond
+      {
+        const CHALLENGE_BOND_USDC = 50_000_000; // 50 USDC (6 decimals)
+        const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
+        try {
+          laneLog('A', 'Challenge bond config', 'start', `bond=${CHALLENGE_BOND_USDC / 1e6} USDC`);
+          const bondTx = await criticalContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, await nonceMgr.nextOverrides());
+          const sentAt = Date.now();
+          laneLog('A', 'Challenge bond config', 'start', `tx sent ${shortTx(bondTx.hash)} +${sentAt - laneAStart}ms`);
+          logS('challenge_bond_config_sent', 'start', { tx: bondTx.hash, bondUsdc: 50, market: orderBook });
+          pending.push({ label: 'Challenge bond config', logKey: 'challenge_bond_config', tx: bondTx, sentAt, extra: { bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT, market: orderBook } });
+        } catch (e: any) {
+          laneLog('A', 'Challenge bond config', 'error', e?.shortMessage || e?.message || String(e));
+          logS('challenge_bond_config', 'error', { error: e?.message || String(e), market: orderBook });
+        }
+      }
+
+      // 7. Register lifecycle operators + grant bond exemptions
+      {
+        const { loadRelayerPoolFromEnv } = await import('@/lib/relayerKeys');
+        let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
+        if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_ops', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
+        const operatorAddrs = relayerKeys.map((k) => k.address);
+
+        if (operatorAddrs.length > 0) {
+          try {
+            laneLog('A', 'Lifecycle operators', 'start', `${operatorAddrs.length} relayer(s)`);
+            const opTx = await criticalContract.setLifecycleOperatorBatch(operatorAddrs, true, await nonceMgr.nextOverrides());
+            const sentAt = Date.now();
+            laneLog('A', 'Lifecycle operators', 'start', `tx sent ${shortTx(opTx.hash)} +${sentAt - laneAStart}ms`);
+            logS('lifecycle_operators_sent', 'start', { tx: opTx.hash, count: operatorAddrs.length, market: orderBook });
+            pending.push({ label: 'Lifecycle operators', logKey: 'lifecycle_operators', tx: opTx, sentAt, extra: { count: operatorAddrs.length, market: orderBook } });
+          } catch (e: any) {
+            laneLog('A', 'Lifecycle operators', 'error', e?.shortMessage || e?.message || String(e));
+            logS('lifecycle_operators', 'error', { error: e?.message || String(e), market: orderBook });
+          }
+
+          try {
+            const exemptTx = await criticalContract.setProposalBondExemptBatch(operatorAddrs, true, await nonceMgr.nextOverrides());
+            const sentAt = Date.now();
+            laneLog('A', 'Bond exemptions', 'start', `tx sent ${shortTx(exemptTx.hash)} +${sentAt - laneAStart}ms`);
+            logS('bond_exempt_sent', 'start', { tx: exemptTx.hash, count: operatorAddrs.length, market: orderBook });
+            pending.push({ label: 'Bond exemptions', logKey: 'bond_exempt', tx: exemptTx, sentAt, extra: { count: operatorAddrs.length, market: orderBook } });
+          } catch (e: any) {
+            laneLog('A', 'Bond exemptions', 'error', e?.shortMessage || e?.message || String(e));
+            logS('bond_exempt', 'error', { error: e?.message || String(e), market: orderBook });
+          }
+        } else {
+          laneLog('A', 'Lifecycle operators', 'error', 'NO RELAYER KEYS FOUND — gasless challenges will use admin fallback');
+          logS('lifecycle_operators', 'skipped', { reason: 'no relayer keys found', market: orderBook });
+        }
+      }
+
       // ── All txs sent — log summary before waiting for confirmations ──
       const allSentAt = Date.now();
       const sentSummary = pending.map((p) => ({ label: p.label, tx: shortTx(p.tx.hash), sentAt: `+${p.sentAt - laneAStart}ms` }));
@@ -500,6 +562,25 @@ export async function POST(req: Request) {
         const rejected = results.filter((r) => r.status === 'rejected').length;
         console.log(`[LANE A] Confirmations done: ${fulfilled}/${pending.length} ok, ${rejected} failed, total lane time: ${confirmDone - laneAStart}ms`);
         logS('lane_a_confirmations_done', 'success', { fulfilled, rejected, total: pending.length, totalLaneMs: confirmDone - laneAStart });
+      }
+
+      // Verify: challenge bond read-back
+      try {
+        const [bondAmt, slashAddr] = await criticalContract.getChallengeBondConfig();
+        if (BigInt(bondAmt) > 0n && slashAddr !== ethers.ZeroAddress) {
+          laneLog('A', 'Challenge bond VERIFIED', 'success', `bond=${Number(bondAmt) / 1e6} USDC`);
+          logS('challenge_bond_verify', 'success', { bondAmount: bondAmt.toString(), slashRecipient: slashAddr, market: orderBook });
+        } else {
+          laneLog('A', 'Challenge bond MISSING', 'error', `bond=${bondAmt} slash=${slashAddr} — retrying`);
+          logS('challenge_bond_verify', 'error', { bondAmount: bondAmt.toString(), market: orderBook });
+          await nonceMgr.resync();
+          const retryTx = await criticalContract.setChallengeBondConfig(50_000_000, '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306', await nonceMgr.nextOverrides());
+          await retryTx.wait();
+          laneLog('A', 'Challenge bond retry', 'success', 'confirmed');
+        }
+      } catch (e: any) {
+        laneLog('A', 'Challenge bond verify', 'error', e?.message || String(e));
+        logS('challenge_bond_verify', 'error', { critical: true, error: e?.message, market: orderBook });
       }
 
       await checkpointConfigure(supabase, draftId, configState);
@@ -677,128 +758,6 @@ export async function POST(req: Request) {
         signal: ctrl.signal,
       }).then(() => clearTimeout(timeout)).catch(() => clearTimeout(timeout));
     } catch {}
-
-    // ── Post-lane critical config: challenge bond + lifecycle operators ──
-    // All TXs fired concurrently with sequential nonces, then confirmed together.
-    // Single block wait for the whole batch — no extra deployment time.
-    const CHALLENGE_BOND_USDC = 50_000_000; // 50 USDC (6 decimals)
-    const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
-
-    await nonceMgr.resync();
-
-    const criticalContract = new ethers.Contract(orderBook, [
-      'function setChallengeBondConfig(uint256 bondAmount, address slashRecipient) external',
-      'function getChallengeBondConfig() external view returns (uint256 bondAmount, address slashRecipient)',
-      'function setLifecycleOperatorBatch(address[] operators, bool authorized) external',
-      'function setProposalBondExemptBatch(address[] accounts, bool exempt) external',
-      'function isLifecycleOperator(address account) external view returns (bool)',
-    ], wallet);
-
-    const { loadRelayerPoolFromEnv } = await import('@/lib/relayerKeys');
-    let relayerKeys = loadRelayerPoolFromEnv({ pool: 'challenge', jsonEnv: 'RELAYER_PRIVATE_KEYS_CHALLENGE_JSON', allowFallbackSingleKey: false });
-    if (!relayerKeys.length) relayerKeys = loadRelayerPoolFromEnv({ pool: 'global_for_ops', globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON', allowFallbackSingleKey: true, excludeJsonEnvs: ['RELAYER_PRIVATE_KEYS_HUB_TRADE_BIG_JSON'] });
-    const operatorAddrs = relayerKeys.map((k) => k.address);
-
-    // Fire all TXs with sequential nonces — they batch into the same block
-    type CriticalTx = { label: string; tx: ethers.TransactionResponse };
-    const criticalTxs: CriticalTx[] = [];
-
-    try {
-      const bondTx = await criticalContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, await nonceMgr.nextOverrides());
-      laneLog('A', 'Challenge bond config', 'start', `tx sent ${shortTx(bondTx.hash)}`);
-      logS('challenge_bond_config_sent', 'start', { tx: bondTx.hash, market: orderBook });
-      criticalTxs.push({ label: 'Challenge bond config', tx: bondTx });
-    } catch (e: any) {
-      laneLog('A', 'Challenge bond config', 'error', `send failed: ${e?.shortMessage || e?.message}`);
-      logS('challenge_bond_config', 'error', { error: e?.message, market: orderBook });
-    }
-
-    if (operatorAddrs.length > 0) {
-      try {
-        const opTx = await criticalContract.setLifecycleOperatorBatch(operatorAddrs, true, await nonceMgr.nextOverrides());
-        laneLog('A', 'Lifecycle operators', 'start', `tx sent ${shortTx(opTx.hash)} (${operatorAddrs.length} addrs)`);
-        logS('lifecycle_operators_sent', 'start', { tx: opTx.hash, count: operatorAddrs.length, market: orderBook });
-        criticalTxs.push({ label: 'Lifecycle operators', tx: opTx });
-      } catch (e: any) {
-        laneLog('A', 'Lifecycle operators', 'error', `send failed: ${e?.shortMessage || e?.message}`);
-        logS('lifecycle_operators', 'error', { error: e?.message, market: orderBook });
-      }
-
-      try {
-        const exemptTx = await criticalContract.setProposalBondExemptBatch(operatorAddrs, true, await nonceMgr.nextOverrides());
-        laneLog('A', 'Bond exemptions', 'start', `tx sent ${shortTx(exemptTx.hash)}`);
-        logS('bond_exempt_sent', 'start', { tx: exemptTx.hash, count: operatorAddrs.length, market: orderBook });
-        criticalTxs.push({ label: 'Bond exemptions', tx: exemptTx });
-      } catch (e: any) {
-        laneLog('A', 'Bond exemptions', 'error', `send failed: ${e?.shortMessage || e?.message}`);
-        logS('bond_exempt', 'error', { error: e?.message, market: orderBook });
-      }
-    } else {
-      laneLog('A', 'Lifecycle operators', 'error', 'NO RELAYER KEYS FOUND — gasless challenges will use admin fallback');
-      logS('lifecycle_operators', 'skipped', { reason: 'no relayer keys found', market: orderBook });
-    }
-
-    // Wait for all TXs to confirm together — single block wait
-    if (criticalTxs.length > 0) {
-      laneLog('A', 'Critical config', 'start', `awaiting ${criticalTxs.length} txs: [${criticalTxs.map(t => t.label).join(', ')}]`);
-      const results = await Promise.allSettled(
-        criticalTxs.map(({ label, tx }) =>
-          tx.wait()
-            .then((receipt: any) => {
-              laneLog('A', label, receipt?.status === 1 ? 'success' : 'error', receipt?.status === 1 ? 'confirmed' : `reverted (status=${receipt?.status})`);
-              logS(`${label.toLowerCase().replace(/\s+/g, '_')}_mined`, receipt?.status === 1 ? 'success' : 'error', { tx: receipt?.hash || tx.hash, market: orderBook });
-              return receipt?.status === 1;
-            })
-            .catch((e: any) => {
-              laneLog('A', label, 'error', `TX FAILED: ${e?.reason || e?.shortMessage || e?.message}`);
-              logS(`${label.toLowerCase().replace(/\s+/g, '_')}`, 'error', { error: e?.message, tx: tx.hash, market: orderBook });
-              return false;
-            }),
-        ),
-      );
-      const succeeded = results.filter(r => r.status === 'fulfilled' && r.value).length;
-      const failed = results.length - succeeded;
-      laneLog('A', 'Critical config done', failed > 0 ? 'error' : 'success', `${succeeded}/${results.length} confirmed${failed > 0 ? ` — ${failed} FAILED` : ''}`);
-    }
-
-    // Verify: read back on-chain state
-    try {
-      const [bondAmt, slashAddr] = await criticalContract.getChallengeBondConfig();
-      if (BigInt(bondAmt) > 0n && slashAddr !== ethers.ZeroAddress) {
-        laneLog('A', 'Challenge bond VERIFIED', 'success', `bond=${Number(bondAmt) / 1e6} USDC`);
-        logS('challenge_bond_verify', 'success', { bondAmount: bondAmt.toString(), slashRecipient: slashAddr, market: orderBook });
-      } else {
-        laneLog('A', 'Challenge bond MISSING', 'error', `bond=${bondAmt} slash=${slashAddr} — retrying`);
-        logS('challenge_bond_verify', 'error', { bondAmount: bondAmt.toString(), market: orderBook });
-        await nonceMgr.resync();
-        const retryTx = await criticalContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, await nonceMgr.nextOverrides());
-        await retryTx.wait();
-        laneLog('A', 'Challenge bond retry', 'success', 'confirmed');
-      }
-    } catch (e: any) {
-      laneLog('A', 'Challenge bond verify', 'error', e?.message || String(e));
-      logS('challenge_bond_verify', 'error', { critical: true, error: e?.message, market: orderBook });
-    }
-
-    if (operatorAddrs.length > 0) {
-      try {
-        const isOp = await criticalContract.isLifecycleOperator(operatorAddrs[0]);
-        if (isOp) {
-          laneLog('A', 'Operators VERIFIED', 'success', `sample ${shortAddr(operatorAddrs[0])}=true`);
-          logS('lifecycle_operators_verify', 'success', { count: operatorAddrs.length, market: orderBook });
-        } else {
-          laneLog('A', 'Operators NOT VERIFIED', 'error', `sample ${shortAddr(operatorAddrs[0])}=false — retrying`);
-          logS('lifecycle_operators_verify', 'error', { sample: operatorAddrs[0], market: orderBook });
-          await nonceMgr.resync();
-          const retryOp = await criticalContract.setLifecycleOperatorBatch(operatorAddrs, true, await nonceMgr.nextOverrides());
-          await retryOp.wait();
-          laneLog('A', 'Operators retry', 'success', 'confirmed');
-        }
-      } catch (e: any) {
-        laneLog('A', 'Operators verify', 'error', e?.message || String(e));
-        logS('lifecycle_operators_verify', 'error', { critical: true, error: e?.message, market: orderBook });
-      }
-    }
 
     logS('configure_complete', 'success', { orderBook, draftId });
 

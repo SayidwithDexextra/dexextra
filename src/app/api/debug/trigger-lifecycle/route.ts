@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-const VALID_ACTIONS = ['rollover', 'settlement_start', 'challenge_open', 'settlement_finalize', 'ai_propose'] as const;
+const VALID_ACTIONS = ['rollover', 'settlement_start', 'challenge_open', 'settlement_finalize', 'ai_propose', 'open_challenge_window'] as const;
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -56,7 +56,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const lifecycleBody: Record<string, unknown> = { action, market_id };
+  // Map open_challenge_window to challenge_open (same underlying action)
+  const effectiveAction = action === 'open_challenge_window' ? 'challenge_open' : action;
+  const lifecycleBody: Record<string, unknown> = { action: effectiveAction, market_id };
   if (typeof market_address === 'string' && market_address) {
     lifecycleBody.marketAddress = market_address;
   }

@@ -407,10 +407,15 @@ export async function settlementSyncLifecycleOnChain(
         gasLimit: 500_000n,
       };
       if (feeData.maxFeePerGas) {
-        txOverrides.maxFeePerGas = feeData.maxFeePerGas * 120n / 100n;
-        txOverrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+        const maxFee = feeData.maxFeePerGas * 120n / 100n;
+        const defaultPriority = ethers.parseUnits('1', 'gwei');
+        const rawPriority = feeData.maxPriorityFeePerGas
           ? feeData.maxPriorityFeePerGas * 120n / 100n
-          : ethers.parseUnits('1', 'gwei');
+          : defaultPriority;
+        // Ensure priorityFee never exceeds maxFee (EIP-1559 requirement)
+        const priorityFee = rawPriority > maxFee ? maxFee : rawPriority;
+        txOverrides.maxFeePerGas = maxFee;
+        txOverrides.maxPriorityFeePerGas = priorityFee;
       }
 
       const tx = await contract.syncLifecycle(txOverrides);
@@ -516,10 +521,15 @@ async function commitEvidenceOnChain(
         gasLimit: 200_000n,
       };
       if (feeData.maxFeePerGas) {
-        txOverrides.maxFeePerGas = feeData.maxFeePerGas * 120n / 100n;
-        txOverrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+        const maxFee = feeData.maxFeePerGas * 120n / 100n;
+        const defaultPriority = ethers.parseUnits('1', 'gwei');
+        const rawPriority = feeData.maxPriorityFeePerGas
           ? feeData.maxPriorityFeePerGas * 120n / 100n
-          : ethers.parseUnits('1', 'gwei');
+          : defaultPriority;
+        // Ensure priorityFee never exceeds maxFee (EIP-1559 requirement)
+        const priorityFee = rawPriority > maxFee ? maxFee : rawPriority;
+        txOverrides.maxFeePerGas = maxFee;
+        txOverrides.maxPriorityFeePerGas = priorityFee;
       }
 
       const tx = await contract.commitEvidence(waybackUrl, txOverrides);

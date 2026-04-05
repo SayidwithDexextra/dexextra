@@ -24,6 +24,7 @@ type Action =
   | 'settlement_finalize'
   | 'challenge'
   | 'ai_propose'
+  | 'open_challenge_window'
   | 'mock_proposal_set'
   | 'mock_proposal_clear';
 
@@ -66,6 +67,12 @@ const ACTION_META: Record<Action, { label: string; description: string; color: s
     description: 'Triggers the AI worker to discover and propose a settlement price on-chain',
     color: 'bg-purple-600',
     hoverColor: 'hover:bg-purple-500',
+  },
+  open_challenge_window: {
+    label: 'Open Challenge Window',
+    description: 'Calls syncLifecycle() to push contract into ChallengeWindow state on-chain',
+    color: 'bg-orange-600',
+    hoverColor: 'hover:bg-orange-500',
   },
   mock_proposal_set: {
     label: 'Mock proposed settlement price',
@@ -547,7 +554,7 @@ export default function SettlementLifecyclePage() {
                 <div className="rounded-lg border border-[#1E1E1E] bg-[#111111] p-4">
                   <div className="text-[12px] font-medium text-white mb-3">Trigger Settlement Actions</div>
                   <div className="flex flex-col gap-2">
-                    {(['rollover', 'settlement_start', 'ai_propose', 'settlement_finalize', 'challenge'] as const).map(
+                    {(['rollover', 'settlement_start', 'ai_propose', 'open_challenge_window', 'settlement_finalize', 'challenge'] as const).map(
                       (action) => {
                         const meta = ACTION_META[action];
                         const key = `${selected.id}:${action}`;
