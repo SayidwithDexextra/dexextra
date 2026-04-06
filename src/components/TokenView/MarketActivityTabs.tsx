@@ -499,9 +499,35 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
     currentMarket?.market_status === 'SETTLEMENT_REQUESTED' ||
     (onChainSettlementPrice != null && onChainSettlementPrice > 0);
   const isMarketSettled = isMarketSettledOrSettling;
-  const settlementPrice = isMarketSettledOrSettling
-    ? (Number(currentMarket?.settlement_value ?? 0) || Number((currentMarket as any)?.proposed_settlement_value ?? 0) || onChainSettlementPrice || 0)
-    : 0;
+  
+  // Determine final settlement price, accounting for UMA dispute resolution
+  const settlementPrice = useMemo(() => {
+    if (!isMarketSettledOrSettling) return 0;
+    
+    const marketConfig = (currentMarket as any)?.market_config;
+    const umaResolved = marketConfig?.uma_resolved === true;
+    const umaChallengerWon = marketConfig?.uma_challenger_won === true;
+    const umaWinningPrice = marketConfig?.uma_winning_price;
+    
+    // If UMA resolved and challenger won, use the winning price
+    if (umaResolved && umaChallengerWon && umaWinningPrice != null && Number(umaWinningPrice) > 0) {
+      return Number(umaWinningPrice);
+    }
+    
+    // If UMA resolved but challenger lost, use the original proposed price
+    if (umaResolved && !umaChallengerWon) {
+      const proposed = Number((currentMarket as any)?.proposed_settlement_value ?? 0);
+      if (proposed > 0) return proposed;
+    }
+    
+    // Otherwise use settlement_value, proposed_settlement_value, or onChainSettlementPrice
+    return (
+      Number(currentMarket?.settlement_value ?? 0) || 
+      Number((currentMarket as any)?.proposed_settlement_value ?? 0) || 
+      onChainSettlementPrice || 
+      0
+    );
+  }, [isMarketSettledOrSettling, currentMarket, onChainSettlementPrice]);
 
   const settledMarketSymbols = useMemo(() => {
     const set = new Set<string>();

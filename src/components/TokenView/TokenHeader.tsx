@@ -469,7 +469,7 @@ export default function TokenHeader({ symbol }: TokenHeaderProps) {
       // Deployment and market status
       isDeployed,
       created_at: market.created_at,
-      marketStatus: market.market_status,
+      marketStatus: (market as any).market_config?.uma_resolved === true ? 'SETTLED' : market.market_status,
       settlementDate: (market as any).settlement_date || '',
       totalTrades: (market as any).total_trades ?? 0,
       openInterestLong: (market as any).open_interest_long ?? 0,

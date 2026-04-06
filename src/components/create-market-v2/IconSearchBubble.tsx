@@ -346,7 +346,7 @@ export function IconSearchBubble({
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept="image/*"
+                      accept="image/*,.svg,image/svg+xml"
                       className="hidden"
                       onChange={handleFileChange}
                     />

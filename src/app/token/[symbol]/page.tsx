@@ -1238,8 +1238,10 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
     const moreTagsCount = categories.length > 3 ? categories.length - 3 : undefined;
 
     const onChainSettled = onChainStats?.isSettled === true;
+    const umaResolved = market.market_config?.uma_resolved === true;
     const status: 'live' | 'pending' | 'inactive' | 'settlement' | 'settled' = 
       onChainSettled ? 'settled' :
+      umaResolved ? 'settled' :
       market.market_status === 'ACTIVE' ? 'live' :
       market.market_status === 'PENDING' || market.market_status === 'DEPLOYING' ? 'pending' :
       market.market_status === 'SETTLEMENT_REQUESTED' ? 'settlement' :
@@ -1751,6 +1753,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     await md.refetchMarket();
                   }
                 }}
+                settlementPnl={settlementPnlData}
               />
             </div>
           </div>

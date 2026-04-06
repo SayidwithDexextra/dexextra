@@ -6,6 +6,8 @@ import { useCoreVault } from '@/hooks/useCoreVault';
 import { useSession } from '@/contexts/SessionContext';
 import { publicClient } from '@/lib/viemClient';
 import { challengeWindowExpiresMs } from '@/lib/settlement-window';
+import { useAllTrades } from '@/hooks/useAllTrades';
+import EarningsPieChart, { type EarningsPieSlice } from '@/components/ui/EarningsPieChart';
 
 interface SettlementMarket {
   id: string;
@@ -13,6 +15,7 @@ interface SettlementMarket {
   market_identifier: string;
   market_status?: string;
   market_address?: string;
+  icon_image_url?: string;
   proposed_settlement_value: number;
   proposed_settlement_at: string;
   proposed_settlement_by: string;
@@ -76,10 +79,38 @@ const ACTIVE_CHALLENGE_ABI = [{ type: 'function' as const, name: 'getActiveChall
 const PROPOSED_EVIDENCE_ABI = [{ type: 'function' as const, name: 'getProposedEvidence' as const, stateMutability: 'view' as const, inputs: [], outputs: [{ type: 'bytes32', name: 'evidenceHash' }, { type: 'string', name: 'evidenceUrl' }] }] as const;
 const BOND_EXEMPT_ABI = [{ type: 'function' as const, name: 'isProposalBondExempt' as const, stateMutability: 'view' as const, inputs: [{ type: 'address', name: 'account' }], outputs: [{ type: 'bool', name: '' }] }] as const;
 
+interface SettledPosition {
+  direction: 'LONG' | 'SHORT';
+  entryPrice: number;
+  exitPrice: number;
+  size: number;
+  entryValue: number;
+  exitValue: number;
+  pnl: number;
+  pnlPercent: number;
+  totalFees: number;
+  entryTime: number;
+  exitTime: number;
+  settledViaSettlement?: boolean;
+}
+
+interface SettlementPnLData {
+  totalPnl: number;
+  returnOnMargin: number;
+  totalMarginUsed: number;
+  totalFees: number;
+  longCount: number;
+  shortCount: number;
+  longPnl: number;
+  shortPnl: number;
+  settledPositions?: SettledPosition[];
+}
+
 interface SettlementInterfaceProps {
   market?: SettlementMarket;
   className?: string;
   onChallengeSaved?: () => void;
+  settlementPnl?: SettlementPnLData | null;
 }
 
 const formatAddress = (addr?: string | null) => {
@@ -96,10 +127,26 @@ function isValidHttpUrl(s: string): boolean {
   }
 }
 
+const styles = {
+  surface: 'bg-[#0d0f14]',
+  surface2: 'bg-[#14161e]',
+  border: 'border-[#1a1d28]',
+  borderAccent: 'border-[#282c3a]',
+  text: 'text-[#d8dae2]',
+  textDim: 'text-[#5c6178]',
+  textMuted: 'text-[#505672]',
+  green: '#00ff88',
+  red: '#ff2a4a',
+  accent: '#7c4dff',
+  cyan: '#00e5ff',
+  yellow: '#ffab00',
+};
+
 export function SettlementInterface({
   market,
   className = '',
   onChallengeSaved,
+  settlementPnl,
 }: SettlementInterfaceProps) {
   const { walletData } = useWallet();
   const { availableBalance, fetchBalances: refreshVaultBalance } = useCoreVault();
@@ -120,6 +167,67 @@ export function SettlementInterface({
   const [evidenceImageFile, setEvidenceImageFile] = useState<File | null>(null);
   const [uploadedEvidenceImageUrl, setUploadedEvidenceImageUrl] = useState<string | null>(null);
   const [isBondExempt, setIsBondExempt] = useState(false);
+
+  // Fetch all trades for market participant breakdown
+  const { trades: allTrades, stats: tradeStats, loadInitial: loadAllTrades, isLoading: tradesLoading } = useAllTrades(market?.market_address);
+  
+  // Load trades when market address is available
+  useEffect(() => {
+    if (market?.market_address) {
+      loadAllTrades();
+    }
+  }, [market?.market_address, loadAllTrades]);
+
+  // Compute unique users breakdown from trades
+  const userBreakdown = useMemo((): EarningsPieSlice[] => {
+    if (!allTrades || allTrades.length === 0) return [];
+    
+    const volumeByUser = new Map<string, number>();
+    
+    for (const trade of allTrades) {
+      const buyer = trade.buyer.toLowerCase();
+      const seller = trade.seller.toLowerCase();
+      const tradeVol = trade.tradeValue || 0;
+      
+      volumeByUser.set(buyer, (volumeByUser.get(buyer) || 0) + tradeVol);
+      volumeByUser.set(seller, (volumeByUser.get(seller) || 0) + tradeVol);
+    }
+    
+    // Sort by volume and take top users
+    const sorted = Array.from(volumeByUser.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8);
+    
+    // Group remaining into "Others" if more than 8 users
+    const totalUsers = volumeByUser.size;
+    const topVolume = sorted.reduce((s, [, v]) => s + v, 0);
+    const totalVolume = Array.from(volumeByUser.values()).reduce((s, v) => s + v, 0);
+    const othersVolume = totalVolume - topVolume;
+    
+    const slices: EarningsPieSlice[] = sorted.map(([addr, vol]) => ({
+      label: `${addr.slice(0, 6)}...${addr.slice(-4)}`,
+      value: vol,
+    }));
+    
+    if (othersVolume > 0 && totalUsers > 8) {
+      slices.push({
+        label: `Others (${totalUsers - 8})`,
+        value: othersVolume,
+      });
+    }
+    
+    return slices;
+  }, [allTrades]);
+
+  const uniqueUserCount = useMemo(() => {
+    if (!allTrades || allTrades.length === 0) return 0;
+    const users = new Set<string>();
+    for (const trade of allTrades) {
+      users.add(trade.buyer.toLowerCase());
+      users.add(trade.seller.toLowerCase());
+    }
+    return users.size;
+  }, [allTrades]);
 
   const fetchOnChainState = useCallback(async (addr: `0x${string}`) => {
     try {
@@ -247,7 +355,7 @@ export function SettlementInterface({
       const hours = Math.floor(diff / (1000 * 60 * 60));
       const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
       const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-      setTimeRemaining(`${hours}h ${minutes}m ${seconds}s`);
+      setTimeRemaining(`${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
     };
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
@@ -370,6 +478,30 @@ export function SettlementInterface({
     return Number.isFinite(v) ? v.toFixed(4) : null;
   }, [market?.alternative_settlement_value]);
 
+  const umaResolved = market?.market_config?.uma_resolved === true;
+  const umaChallengerWon = market?.market_config?.uma_challenger_won === true;
+  const umaWinningPrice = market?.market_config?.uma_winning_price;
+  
+  const { finalPrice, finalPriceFormatted, priceSource } = useMemo(() => {
+    if (umaResolved && umaChallengerWon) {
+      const winningVal = umaWinningPrice ?? market?.alternative_settlement_value;
+      if (winningVal != null && Number.isFinite(Number(winningVal)) && Number(winningVal) > 0) {
+        return { finalPrice: Number(winningVal), finalPriceFormatted: Number(winningVal).toFixed(4), priceSource: 'challenger' as const };
+      }
+    }
+    if (umaResolved && !umaChallengerWon) {
+      const proposedVal = market?.proposed_settlement_value;
+      if (proposedVal != null && Number.isFinite(Number(proposedVal)) && Number(proposedVal) > 0) {
+        return { finalPrice: Number(proposedVal), finalPriceFormatted: Number(proposedVal).toFixed(4), priceSource: 'proposer' as const };
+      }
+    }
+    const proposedVal = market?.proposed_settlement_value;
+    if (proposedVal != null && Number.isFinite(Number(proposedVal)) && Number(proposedVal) > 0) {
+      return { finalPrice: Number(proposedVal), finalPriceFormatted: Number(proposedVal).toFixed(4), priceSource: 'proposed' as const };
+    }
+    return { finalPrice: 0, finalPriceFormatted: '0.0000', priceSource: 'none' as const };
+  }, [umaResolved, umaChallengerWon, umaWinningPrice, market?.alternative_settlement_value, market?.proposed_settlement_value]);
+
   const windowProgress = useMemo(() => {
     if (!market?.proposed_settlement_at || !windowExpiresMs) return 0;
     const start = new Date(market.proposed_settlement_at).getTime();
@@ -382,614 +514,689 @@ export function SettlementInterface({
   if (!market) {
     return (
       <div className={`min-h-[50vh] flex items-center justify-center ${className}`}>
-        <div className="flex flex-col items-center gap-3">
-          <div className="relative">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 animate-pulse" />
-            <div className="absolute inset-0 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 opacity-20 blur-lg animate-pulse" />
-          </div>
-          <span className="text-xs text-t-fg-muted">Loading settlement data...</span>
+        <div className="flex items-center gap-3">
+          <div 
+            className="w-2 h-2 rounded-full animate-pulse"
+            style={{ background: styles.yellow, boxShadow: `0 0 8px ${styles.yellow}` }}
+          />
+          <span className="font-mono text-xs text-[#505672]">Loading settlement data...</span>
         </div>
       </div>
     );
   }
 
   const isSettled = market?.market_status === 'SETTLED';
-  const umaResolved = market?.market_config?.uma_resolved === true;
   const isUmaDispute = Boolean(market?.market_config?.uma_assertion_id);
   const proposedSettlementNum = Number(market?.proposed_settlement_value);
   const hasProposedPrice = Number.isFinite(proposedSettlementNum) && proposedSettlementNum > 0;
+  const hasFinalPrice = finalPrice > 0;
 
-  const statusGradient = isSettled 
-    ? 'from-blue-500 via-indigo-500 to-violet-500'
-    : umaResolved 
-      ? 'from-emerald-400 via-teal-500 to-cyan-500'
-      : isExpired 
-        ? 'from-rose-500 via-red-500 to-orange-500'
-        : market?.settlement_disputed 
-          ? 'from-amber-400 via-orange-500 to-rose-500'
-          : 'from-emerald-400 via-cyan-500 to-blue-500';
+  const isDown = market?.settlement_disputed || (umaResolved && umaChallengerWon);
+  const neonColor = isDown ? styles.red : styles.green;
+  const neonGlow = isDown 
+    ? '0 0 12px rgba(255,42,74,0.6), 0 0 40px rgba(255,42,74,0.3)' 
+    : '0 0 20px rgba(0,255,136,0.4), 0 0 60px rgba(0,255,136,0.15)';
 
-  const statusLabel = isSettled 
-    ? 'Finalized'
-    : umaResolved 
-      ? 'Verdict Reached'
-      : isExpired 
-        ? 'Expired'
-        : market?.settlement_disputed 
-          ? 'Disputed'
-          : 'Active';
+  const statusLabel = (isSettled || umaResolved)
+    ? 'SETTLED'
+    : isExpired 
+      ? 'EXPIRED'
+      : market?.settlement_disputed 
+        ? 'DISPUTED'
+        : 'ACTIVE';
+
+  const userAddress = walletData?.address;
+  const hasUserTrades = settlementPnl && (settlementPnl.longCount > 0 || settlementPnl.shortCount > 0);
 
   return (
-    <div className={`space-y-4 ${className}`}>
+    <div className={`font-sans ${className}`} style={{ fontFamily: "'Instrument Sans', sans-serif" }}>
       
-      {/* Hero Section */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-t-card via-t-card to-t-page">
-        <div className={`absolute inset-0 bg-gradient-to-br ${statusGradient} opacity-[0.03]`} />
-        <div className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r ${statusGradient}`} />
+      {/* Two Column Layout */}
+      <div className="grid grid-cols-2 gap-4">
         
-        <div className="relative p-6">
-          <div className="flex items-start justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className={`w-2.5 h-2.5 rounded-full bg-gradient-to-br ${statusGradient} shadow-lg`} 
-                   style={{ boxShadow: `0 0 12px var(--tw-gradient-from)` }} />
-              <div>
-                <h2 className="text-sm font-medium text-t-fg">
-                  {isSettled ? 'Settlement Complete' : 'Settlement Window'}
-                </h2>
-                <p className="text-xs text-t-fg-muted mt-0.5">{market.symbol}</p>
+        {/* LEFT COLUMN - Settlement Result & Your Position */}
+        <div className="space-y-3">
+          
+          {/* Settlement Hero Card */}
+          <div 
+            className="bg-[#0d0f14] border rounded-xl overflow-hidden"
+            style={{ borderColor: '#1a1d28' }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#1a1d28]">
+              <div className="flex items-center gap-2">
+                <div 
+                  className="w-[5px] h-[5px] rounded-full animate-pulse"
+                  style={{ 
+                    background: isExpired ? styles.red : isSettled ? styles.cyan : styles.green,
+                    boxShadow: `0 0 6px ${isExpired ? styles.red : isSettled ? styles.cyan : styles.green}`
+                  }}
+                />
+                <span className="font-mono text-[9px] uppercase tracking-[2px] text-[#505672] font-semibold">
+                  {market.symbol}
+                </span>
               </div>
-            </div>
-            <div className={`px-3 py-1.5 rounded-full bg-gradient-to-r ${statusGradient} bg-opacity-10`}>
-              <span className={`text-[10px] font-semibold uppercase tracking-wider bg-gradient-to-r ${statusGradient} bg-clip-text text-transparent`}>
+              <span 
+                className="font-mono text-[9px] uppercase tracking-[1px] px-2 py-0.5 rounded"
+                style={{ 
+                  color: isDown ? styles.red : isSettled ? styles.cyan : styles.green,
+                  background: isDown ? 'rgba(255,42,74,0.08)' : isSettled ? 'rgba(0,229,255,0.06)' : 'rgba(0,255,136,0.08)',
+                  border: `1px solid ${isDown ? 'rgba(255,42,74,0.15)' : isSettled ? 'rgba(0,229,255,0.12)' : 'rgba(0,255,136,0.15)'}`
+                }}
+              >
                 {statusLabel}
               </span>
             </div>
-          </div>
 
-          <div className="flex items-end justify-between">
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-t-fg-muted mb-1">
-                {isSettled ? 'Final Price' : hasProposedPrice ? 'Proposed Price' : 'Awaiting Proposal'}
-              </p>
-              <p className={`text-3xl font-light tracking-tight ${hasProposedPrice || isSettled ? 'text-t-fg' : 'text-t-fg-muted'}`}>
-                {hasProposedPrice || isSettled ? `$${formattedProposed}` : '—'}
-              </p>
+            {/* Price Display */}
+            <div className="text-center py-6 px-4">
+              <div className="mb-1">
+                <span className="font-mono text-[9px] uppercase tracking-[2px] text-[#505672] font-semibold">
+                  {isSettled || umaResolved ? 'Final Settlement' : hasProposedPrice ? 'Proposed Price' : 'Settlement Price'}
+                </span>
+                {umaResolved && umaChallengerWon && (
+                  <span className="ml-2 font-mono text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded text-[#00ff88] bg-[rgba(0,255,136,0.08)] border border-[rgba(0,255,136,0.15)]">
+                    Challenger Won
+                  </span>
+                )}
+              </div>
+              
+              <div 
+                className="font-mono text-[28px] font-bold tracking-tight"
+                style={{ 
+                  color: neonColor,
+                  textShadow: neonGlow,
+                  animation: 'neonPulse 3s ease-in-out infinite'
+                }}
+              >
+                {hasFinalPrice || isSettled ? `$${finalPriceFormatted}` : '—'}
+              </div>
+
+              {umaResolved && umaChallengerWon && formattedProposed && (
+                <div className="mt-1 font-mono text-[11px] text-[#505672]">
+                  <span className="line-through opacity-60">${formattedProposed}</span>
+                  <span className="mx-2 text-[#5c6178]">→</span>
+                  <span style={{ color: styles.green }}>${finalPriceFormatted}</span>
+                </div>
+              )}
+
+              {!isSettled && !isUmaDispute && timeRemaining && (
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <span className="font-mono text-[9px] text-[#505672]">Expires in</span>
+                  <span className={`font-mono text-xs font-semibold ${isExpired ? 'text-[#ff2a4a]' : 'text-[#d8dae2]'}`}>
+                    {timeRemaining}
+                  </span>
+                </div>
+              )}
             </div>
-            
-            {!isSettled && !isUmaDispute && timeRemaining && (
-              <div className="text-right">
-                <p className="text-[10px] uppercase tracking-wider text-t-fg-muted mb-1">Time Remaining</p>
-                <p className={`text-lg font-mono ${isExpired ? 'text-rose-400' : 'text-t-fg'}`}>{timeRemaining}</p>
-              </div>
-            )}
-            
-            {isUmaDispute && !umaResolved && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-                <span className="text-xs text-indigo-300">Awaiting DVM</span>
+
+            {/* Progress bar */}
+            {!isSettled && !isUmaDispute && windowProgress > 0 && (
+              <div className="px-4 pb-4">
+                <div className="h-1 bg-[#14161e] rounded-full overflow-hidden">
+                  <div 
+                    className="h-full rounded-full transition-all duration-1000"
+                    style={{ 
+                      width: `${windowProgress}%`,
+                      background: isExpired ? styles.red : styles.green,
+                      boxShadow: `0 0 8px ${isExpired ? styles.red : styles.green}`
+                    }}
+                  />
+                </div>
               </div>
             )}
           </div>
 
-          {!isSettled && !isUmaDispute && (
-            <div className="mt-6">
-              <div className="flex items-center justify-between text-[10px] text-t-fg-muted mb-2">
-                <span>Window Progress</span>
-                <span className="font-mono">{windowProgress}%</span>
+          {/* User Settlement Card */}
+          {hasUserTrades && settlementPnl && (() => {
+            const pos = settlementPnl.settledPositions?.[0];
+            const direction = settlementPnl.longCount > 0 ? 'LONG' : 'SHORT';
+            return (
+              <div 
+                className="bg-[#0d0f14] border rounded-xl overflow-hidden"
+                style={{ 
+                  borderColor: settlementPnl.totalPnl >= 0 ? 'rgba(0,255,136,0.2)' : 'rgba(255,42,74,0.2)',
+                }}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#1a1d28]">
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-[#505672] font-semibold">
+                    Your Position
+                  </span>
+                  <span 
+                    className="font-mono text-[9px] font-bold uppercase px-1.5 py-0.5 rounded"
+                    style={{ 
+                      color: direction === 'LONG' ? styles.green : styles.red,
+                      background: direction === 'LONG' ? 'rgba(0,255,136,0.1)' : 'rgba(255,42,74,0.1)'
+                    }}
+                  >
+                    {direction}
+                  </span>
+                </div>
+
+                {/* Content */}
+                <div className="p-4">
+                  <div className="flex items-center gap-3 mb-4">
+                    {/* Stacked Icons - User icon in front (larger), Market icon behind */}
+                    <div className="relative w-12 h-12 flex-shrink-0">
+                      {/* Market Icon (behind, smaller) */}
+                      <div 
+                        className="absolute top-0 left-0 w-7 h-7 rounded-md overflow-hidden border"
+                        style={{ borderColor: '#282c3a', background: '#14161e' }}
+                      >
+                        {market.icon_image_url ? (
+                          <img 
+                            src={market.icon_image_url}
+                            alt={market.symbol}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                              const fallback = (e.target as HTMLImageElement).nextElementSibling;
+                              if (fallback) fallback.classList.remove('hidden');
+                            }}
+                          />
+                        ) : null}
+                        <div className={`w-full h-full flex items-center justify-center text-[8px] font-bold text-[#5c6178] ${market.icon_image_url ? 'hidden' : ''}`}>
+                          {market.symbol?.slice(0, 2) || '??'}
+                        </div>
+                      </div>
+                      {/* User Icon (in front, larger) */}
+                      <div 
+                        className="absolute bottom-0 right-0 w-9 h-9 rounded-full overflow-hidden border-2 flex items-center justify-center"
+                        style={{ 
+                          borderColor: settlementPnl.totalPnl >= 0 ? 'rgba(0,255,136,0.4)' : 'rgba(255,42,74,0.4)',
+                          background: '#1a1d28',
+                          boxShadow: settlementPnl.totalPnl >= 0 
+                            ? '0 0 8px rgba(0,255,136,0.2)' 
+                            : '0 0 8px rgba(255,42,74,0.2)'
+                        }}
+                      >
+                        {walletData?.userProfile?.profile_image_url ? (
+                          <img 
+                            src={walletData.userProfile.profile_image_url}
+                            alt="Profile"
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                              const fallback = (e.target as HTMLImageElement).nextElementSibling;
+                              if (fallback) fallback.classList.remove('hidden');
+                            }}
+                          />
+                        ) : null}
+                        <svg className={`w-4 h-4 text-[#5c6178] ${walletData?.userProfile?.profile_image_url ? 'hidden' : ''}`} fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <div className="font-mono text-[9px] text-[#505672] mb-0.5">
+                        {userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : 'Trader'}
+                      </div>
+                      {pos && (
+                        <div className="font-mono text-[11px] text-[#d8dae2]">
+                          {pos.size.toFixed(4)} units
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* P&L Display */}
+                  <div 
+                    className="text-center py-3 rounded-lg mb-3"
+                    style={{ background: settlementPnl.totalPnl >= 0 ? 'rgba(0,255,136,0.05)' : 'rgba(255,42,74,0.05)' }}
+                  >
+                    <div className="font-mono text-[9px] uppercase tracking-wider text-[#505672] mb-1">
+                      {settlementPnl.totalPnl >= 0 ? 'Profit' : 'Loss'}
+                    </div>
+                    <div 
+                      className="font-mono text-2xl font-bold"
+                      style={{ color: settlementPnl.totalPnl >= 0 ? styles.green : styles.red }}
+                    >
+                      {settlementPnl.totalPnl >= 0 ? '+' : ''}${settlementPnl.totalPnl.toFixed(2)}
+                    </div>
+                    <div 
+                      className="font-mono text-[11px] mt-0.5"
+                      style={{ color: settlementPnl.returnOnMargin >= 0 ? 'rgba(0,255,136,0.7)' : 'rgba(255,42,74,0.7)' }}
+                    >
+                      {settlementPnl.returnOnMargin >= 0 ? '+' : ''}{settlementPnl.returnOnMargin.toFixed(1)}% ROI
+                    </div>
+                  </div>
+
+                  {/* Trade Details */}
+                  {pos && (
+                    <div className="grid grid-cols-2 gap-2 text-center">
+                      <div className="bg-[#14161e] rounded-lg py-2 px-3">
+                        <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Entry</div>
+                        <div className="font-mono text-[12px] text-[#d8dae2]">${pos.entryPrice.toFixed(2)}</div>
+                      </div>
+                      <div className="bg-[#14161e] rounded-lg py-2 px-3">
+                        <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Exit</div>
+                        <div className="font-mono text-[12px] text-[#d8dae2]">${pos.exitPrice.toFixed(2)}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="h-1.5 bg-t-inset rounded-full overflow-hidden">
-                <div 
-                  className={`h-full rounded-full bg-gradient-to-r ${statusGradient} transition-all duration-1000`}
-                  style={{ width: `${windowProgress}%` }}
-                />
+            );
+          })()}
+
+          {/* Evidence Screenshot */}
+          {settlementScreenshotUrl && (
+            <div className="bg-[#0d0f14] border border-[#1a1d28] rounded-xl overflow-hidden">
+              <button
+                onClick={() => setScreenshotExpanded(!screenshotExpanded)}
+                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[#14161e] transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#7c4dff]" style={{ boxShadow: '0 0 6px #7c4dff' }} />
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-[#5c6178] font-semibold">
+                    Evidence
+                  </span>
+                </div>
+                <span className="font-mono text-[10px] text-[#505672]">
+                  {screenshotExpanded ? '−' : '+'}
+                </span>
+              </button>
+
+              <div className={`transition-all duration-300 ${screenshotExpanded ? 'max-h-[400px]' : 'max-h-0'} overflow-hidden`}>
+                <div className="p-3 pt-0">
+                  <a
+                    href={settlementScreenshotUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block relative rounded-lg overflow-hidden border border-[#1a1d28] hover:border-[#282c3a] transition-colors"
+                  >
+                    <img
+                      src={settlementScreenshotUrl}
+                      alt="Settlement evidence"
+                      className="w-full h-auto max-h-[300px] object-contain bg-black/20"
+                      loading="lazy"
+                    />
+                  </a>
+                </div>
               </div>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Evidence Screenshot */}
-      {settlementScreenshotUrl && (
-        <div className="relative overflow-hidden rounded-2xl bg-t-card">
-          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-violet-500/50 to-transparent" />
+        {/* RIGHT COLUMN - Settlement Details & Actions */}
+        <div className="space-y-3">
           
-          <button
-            onClick={() => setScreenshotExpanded(!screenshotExpanded)}
-            className="w-full flex items-center justify-between p-4 hover:bg-t-card-hover transition-colors"
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 flex items-center justify-center">
-                <svg className="w-4 h-4 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="M21 15l-5-5L5 21" />
-                </svg>
-              </div>
-              <div className="text-left">
-                <p className="text-sm font-medium text-t-fg">Evidence Screenshot</p>
-                <p className="text-[10px] text-t-fg-muted">AI-captured at settlement time</p>
-              </div>
-            </div>
-            <svg 
-              className={`w-4 h-4 text-t-fg-muted transition-transform duration-300 ${screenshotExpanded ? 'rotate-180' : ''}`} 
-              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-
-          <div className={`transition-all duration-300 ease-out ${screenshotExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}>
-            <div className="px-4 pb-4">
-              <a
-                href={settlementScreenshotUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block relative rounded-xl overflow-hidden group"
-              >
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity z-10" />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={settlementScreenshotUrl}
-                  alt="Settlement evidence"
-                  className="w-full h-auto max-h-[500px] object-contain bg-black/20 group-hover:scale-[1.02] transition-transform duration-500"
-                  loading="lazy"
-                />
-                <div className="absolute bottom-3 left-3 right-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <span className="text-[10px] text-white/80">Click to view full resolution</span>
-                </div>
-              </a>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Price Cards Grid */}
-      <div className="grid gap-3 md:grid-cols-2">
-        {/* Proposed Settlement */}
-        <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
-          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent" />
-          
-          <div className="flex items-center gap-2.5 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 flex items-center justify-center">
-              <svg className="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-t-fg">{isSettled ? 'Final Price' : 'Proposed Settlement'}</p>
-              <p className="text-[10px] text-t-fg-muted">
-                {market.proposed_settlement_at ? new Date(market.proposed_settlement_at).toLocaleDateString() : 'Pending'}
-              </p>
-            </div>
-          </div>
-          
-          <p className={`text-2xl font-light ${hasProposedPrice || isSettled ? 'text-t-fg' : 'text-t-fg-muted'}`}>
-            {hasProposedPrice || isSettled ? `$${formattedProposed}` : '—'}
-          </p>
-        </div>
-
-        {/* Evidence Source */}
-        <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
-          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
-          
-          <div className="flex items-center gap-2.5 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500/20 to-indigo-500/20 flex items-center justify-center">
-              <svg className="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-t-fg">Evidence Source</p>
-              <p className="text-[10px] text-t-fg-muted">Primary data reference</p>
-            </div>
-          </div>
-          
-          <div className="flex flex-wrap gap-2">
-            {sourceUrl && (
-              <a 
-                href={sourceUrl} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 text-[11px] hover:bg-blue-500/20 transition-colors"
-              >
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                  <polyline points="15 3 21 3 21 9" />
-                  <line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
-                Source
-              </a>
-            )}
-            {market?.market_config?.settlement_wayback_url && (
-              <a 
-                href={market.market_config.settlement_wayback_url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 text-[11px] hover:bg-emerald-500/20 transition-colors"
-              >
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-                Archive
-              </a>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Challenge Proposal (if disputed) */}
-      {formattedChallenge && (
-        <div className="relative overflow-hidden rounded-2xl bg-t-card">
-          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-rose-500 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-br from-rose-500/[0.02] to-orange-500/[0.02]" />
-          
-          <div className="relative p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500/20 to-orange-500/20 flex items-center justify-center">
-                  <svg className="w-4 h-4 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                    <line x1="12" y1="9" x2="12" y2="13" />
-                    <line x1="12" y1="17" x2="12.01" y2="17" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-t-fg">Challenge Proposal</p>
-                  <p className="text-[10px] text-t-fg-muted">Alternative price submitted</p>
-                </div>
-              </div>
-              <span className="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-[10px] font-medium">
-                Disputed
+          {/* Settlement Details Card */}
+          <div className="bg-[#0d0f14] border border-[#1a1d28] rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-[#1a1d28]">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-[#505672] font-semibold">
+                Settlement Details
               </span>
             </div>
             
-            <p className="text-2xl font-light text-t-fg">${formattedChallenge}</p>
-            
-            <div className="mt-3 pt-3 border-t border-t-stroke-sub flex items-center justify-between text-[10px] text-t-fg-muted">
-              <span>Challenged by {formatAddress(market.alternative_settlement_by)}</span>
-              {market.alternative_settlement_at && (
-                <span>{new Date(market.alternative_settlement_at).toLocaleString()}</span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* On-Chain Status */}
-      {onChain && !onChainError && (
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
-            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-purple-500/50 to-transparent" />
-            
-            <div className="flex items-center gap-2.5 mb-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/20 to-violet-500/20 flex items-center justify-center">
-                <svg className="w-4 h-4 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-t-fg">On-Chain State</p>
-                <p className="text-[10px] text-t-fg-muted">Lifecycle status</p>
-              </div>
-            </div>
-            
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-t-fg">{LIFECYCLE_LABELS[onChain.lifecycleState] ?? `State ${onChain.lifecycleState}`}</span>
-              {onChain.challengeBondAmount > 0 && (
-                <span className={`text-[10px] ${isBondExempt ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {isBondExempt ? 'Bond Exempt' : `Bond: $${onChain.challengeBondAmount.toLocaleString()}`}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="relative overflow-hidden rounded-2xl bg-t-card p-4">
-            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent" />
-            
-            <div className="flex items-center gap-2.5 mb-3">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center">
-                <svg className="w-4 h-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-t-fg">Evidence Hash</p>
-                <p className="text-[10px] text-t-fg-muted">On-chain commitment</p>
-              </div>
-            </div>
-            
-            {onChain.evidenceHash && onChain.evidenceHash !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? (
-              <p className="text-[10px] font-mono text-t-fg-sub truncate">{onChain.evidenceHash}</p>
-            ) : (
-              <p className="text-xs text-t-fg-muted">No evidence committed</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* UMA Dispute Status */}
-      {market?.market_config?.uma_assertion_id && (market?.settlement_disputed || market?.market_config?.uma_resolved) && (
-        <div className="relative overflow-hidden rounded-2xl bg-t-card">
-          <div className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r ${
-            market.market_config.uma_resolved
-              ? market.market_config.uma_challenger_won
-                ? 'from-transparent via-emerald-500 to-transparent'
-                : 'from-transparent via-blue-500 to-transparent'
-              : 'from-transparent via-indigo-500 to-transparent'
-          }`} />
-          
-          <div className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2.5">
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  market.market_config.uma_resolved
-                    ? market.market_config.uma_challenger_won
-                      ? 'bg-gradient-to-br from-emerald-500/20 to-teal-500/20'
-                      : 'bg-gradient-to-br from-blue-500/20 to-indigo-500/20'
-                    : 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20'
-                }`}>
-                  <div className={`w-2 h-2 rounded-full ${
-                    market.market_config.uma_resolved
-                      ? market.market_config.uma_challenger_won ? 'bg-emerald-400' : 'bg-blue-400'
-                      : 'bg-indigo-400 animate-pulse'
-                  }`} />
-                </div>
+            <div className="p-4 space-y-3">
+              {/* Asset & Status */}
+              <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-medium text-t-fg">
-                    {market.market_config.uma_resolved ? 'UMA Resolved' : 'UMA Dispute'}
-                  </p>
-                  <p className="text-[10px] text-t-fg-muted">
-                    {market.market_config.uma_resolved
-                      ? market.market_config.uma_challenger_won ? 'Challenger won' : 'Proposer won'
-                      : 'Awaiting DVM vote'}
-                  </p>
+                  <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Asset</div>
+                  <div className="font-semibold text-[13px] text-[#d8dae2] tracking-tight">{market.symbol}</div>
                 </div>
-              </div>
-              
-              {market.market_config.uma_resolved && (
-                <p className="text-lg font-light text-t-fg">
-                  ${Number(market.market_config.uma_winning_price || market.proposed_settlement_value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
-                </p>
-              )}
-            </div>
-
-            {!market.market_config.uma_resolved && (
-              <p className="text-[10px] text-indigo-400/80">
-                Dispute being resolved by UMA DVM vote. Typically 48-96 hours.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Proposal Form */}
-      {!isSettled && (
-        <div className="relative overflow-hidden rounded-2xl bg-t-card">
-          <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-fuchsia-500/50 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-br from-fuchsia-500/[0.02] to-violet-500/[0.02]" />
-          
-          <div className="relative p-5">
-            <div className="flex items-center justify-between mb-5">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-fuchsia-500/20 to-violet-500/20 flex items-center justify-center">
-                  <svg className="w-4 h-4 text-fuchsia-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 19l7-7 3 3-7 7-3-3z" />
-                    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-                    <path d="M2 2l7.586 7.586" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-t-fg">Submit Proposal</p>
-                  <p className="text-[10px] text-t-fg-muted">Propose a settlement price</p>
-                </div>
-              </div>
-              
-              {onChain && onChain.challengeBondAmount > 0 && (
-                <span className={`text-[10px] px-2.5 py-1 rounded-full ${
-                  isBondExempt ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'
-                }`}>
-                  {isBondExempt ? 'Bond Exempt' : `Bond: $${onChain.challengeBondAmount.toLocaleString()}`}
-                </span>
-              )}
-            </div>
-
-            <div className="space-y-4">
-              {/* Price Input */}
-              <div>
-                <label className="block text-[10px] uppercase tracking-wider text-t-fg-muted mb-2">
-                  Settlement Price (USDC)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-t-fg-muted">$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0.0000"
-                    value={challengePrice}
-                    onChange={(e) => setChallengePrice(e.target.value)}
-                    disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                    className="w-full bg-t-inset text-t-fg text-sm rounded-xl pl-8 pr-4 py-3 border border-t-stroke focus:border-fuchsia-500/50 focus:ring-1 focus:ring-fuchsia-500/20 outline-none font-mono placeholder-t-fg-muted disabled:opacity-50 transition-all"
-                  />
-                </div>
-              </div>
-
-              {/* Evidence Section */}
-              <div className="space-y-3">
-                <label className="block text-[10px] uppercase tracking-wider text-t-fg-muted">
-                  Supporting Evidence
-                </label>
-                
-                <input
-                  type="url"
-                  placeholder="https://source-url.com/..."
-                  value={evidenceSourceUrl}
-                  onChange={(e) => setEvidenceSourceUrl(e.target.value)}
-                  disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                  className={`w-full bg-t-inset text-t-fg text-sm rounded-xl px-4 py-3 border outline-none font-mono placeholder-t-fg-muted disabled:opacity-50 transition-all ${
-                    evidenceUrlTrim !== '' && !isValidHttpUrl(evidenceUrlTrim)
-                      ? 'border-rose-500/50 focus:border-rose-500'
-                      : 'border-t-stroke focus:border-fuchsia-500/50'
-                  }`}
-                />
-
-                <div className="relative">
-                  <input
-                    ref={evidenceFileInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    className="hidden"
-                    disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] ?? null;
-                      setEvidenceImageFile(f);
-                      setUploadedEvidenceImageUrl(null);
-                      e.target.value = '';
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={isSubmitting || isExpired || !hasSufficientBalance}
-                    onClick={() => evidenceFileInputRef.current?.click()}
-                    className="w-full rounded-xl border border-dashed border-t-stroke hover:border-fuchsia-500/30 bg-t-inset px-4 py-4 text-center transition-colors disabled:opacity-50 group"
+                <div className="text-right">
+                  <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Final Price</div>
+                  <div 
+                    className="font-mono text-sm font-bold"
+                    style={{ color: hasFinalPrice ? (umaResolved && umaChallengerWon ? styles.green : '#d8dae2') : '#505672' }}
                   >
-                    {evidenceImageFile ? (
-                      <div className="flex flex-col items-center gap-2">
-                        <span className="text-xs text-t-fg">{evidenceImageFile.name}</span>
-                        {evidencePreviewUrl && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={evidencePreviewUrl} alt="Preview" className="max-h-20 rounded-lg border border-t-stroke object-contain" />
-                        )}
+                    {hasFinalPrice ? `$${finalPriceFormatted}` : '—'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Challenge Info */}
+              {formattedChallenge && (
+                <div className="pt-3 border-t border-[#1a1d28]">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Challenge Price</div>
+                      <div 
+                        className="font-mono text-sm font-semibold"
+                        style={{ 
+                          color: umaResolved && umaChallengerWon ? styles.green : umaResolved ? '#505672' : styles.yellow,
+                          textDecoration: umaResolved && !umaChallengerWon ? 'line-through' : 'none'
+                        }}
+                      >
+                        ${formattedChallenge}
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center gap-1.5">
-                        <div className="w-10 h-10 rounded-xl bg-t-card-hover flex items-center justify-center group-hover:bg-fuchsia-500/10 transition-colors">
-                          <svg className="w-5 h-5 text-t-fg-muted group-hover:text-fuchsia-400 transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
-                            <path d="M12 12v9" />
-                            <path d="m16 16-4-4-4 4" />
-                          </svg>
-                        </div>
-                        <span className="text-[10px] text-t-fg-muted">Upload screenshot (max 4MB)</span>
-                      </div>
-                    )}
-                  </button>
-                  {evidenceImageFile && (
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => {
-                        setEvidenceImageFile(null);
-                        setUploadedEvidenceImageUrl(null);
+                    </div>
+                    <span 
+                      className="font-mono text-[9px] font-bold uppercase px-2 py-0.5 rounded"
+                      style={{ 
+                        color: umaResolved && umaChallengerWon ? styles.green : umaResolved ? styles.red : styles.yellow,
+                        background: umaResolved && umaChallengerWon ? 'rgba(0,255,136,0.08)' : umaResolved ? 'rgba(255,42,74,0.08)' : 'rgba(255,171,0,0.08)',
+                        border: `1px solid ${umaResolved && umaChallengerWon ? 'rgba(0,255,136,0.15)' : umaResolved ? 'rgba(255,42,74,0.15)' : 'rgba(255,171,0,0.15)'}`
                       }}
-                      className="mt-2 text-[10px] text-t-fg-muted hover:text-rose-400 transition-colors"
                     >
-                      Remove image
-                    </button>
+                      {umaResolved && umaChallengerWon ? 'ACCEPTED' : umaResolved ? 'REJECTED' : 'PENDING'}
+                    </span>
+                  </div>
+                  <div className="font-mono text-[9px] text-[#505672]">
+                    Challenger: {formatAddress(market.alternative_settlement_by)}
+                  </div>
+                </div>
+              )}
+
+              {/* Original Proposal (if overturned) */}
+              {umaResolved && umaChallengerWon && (
+                <div className="pt-3 border-t border-[#1a1d28] opacity-60">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Original Proposal</div>
+                      <div className="font-mono text-sm text-[#505672] line-through">${formattedProposed}</div>
+                    </div>
+                    <span className="font-mono text-[9px] text-[#ff2a4a]">OVERTURNED</span>
+                  </div>
+                  <div className="font-mono text-[9px] text-[#505672] mt-1">
+                    Proposer: {formatAddress(market.proposed_settlement_by)}
+                  </div>
+                </div>
+              )}
+
+              {/* On-Chain State */}
+              {onChain && !onChainError && (
+                <div className="pt-3 border-t border-[#1a1d28]">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Lifecycle</div>
+                      <div className="font-mono text-[11px] text-[#d8dae2]">
+                        {LIFECYCLE_LABELS[onChain.lifecycleState] ?? `State ${onChain.lifecycleState}`}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Bond</div>
+                      <div 
+                        className="font-mono text-[11px]"
+                        style={{ color: isBondExempt ? styles.green : styles.yellow }}
+                      >
+                        {isBondExempt ? 'EXEMPT' : `$${onChain.challengeBondAmount.toLocaleString()}`}
+                      </div>
+                    </div>
+                  </div>
+                  {sourceUrl && (
+                    <div className="mt-2">
+                      <a 
+                        href={sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-[10px] hover:underline inline-flex items-center gap-1"
+                        style={{ color: styles.cyan }}
+                      >
+                        View Source →
+                      </a>
+                    </div>
                   )}
                 </div>
-              </div>
+              )}
+            </div>
+          </div>
 
-              {/* Balance indicator */}
-              {onChain && onChain.challengeBondAmount > 0 && walletData?.address && !isBondExempt && (
-                <div className={`flex items-center justify-between px-3 py-2 rounded-xl ${
-                  hasSufficientBalance ? 'bg-emerald-500/5 border border-emerald-500/20' : 'bg-rose-500/5 border border-rose-500/20'
-                }`}>
-                  <span className="text-[10px] text-t-fg-muted">
-                    Required: <span className="text-t-fg font-mono">${onChain.challengeBondAmount.toLocaleString()}</span>
-                  </span>
-                  <span className={`text-[10px] font-mono ${hasSufficientBalance ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    Balance: ${availableBalanceNum.toFixed(2)}
-                  </span>
+          {/* Market Participants Pie Chart */}
+          <div className="bg-[#0d0f14] border border-[#1a1d28] rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-[#1a1d28] flex items-center justify-between">
+              <span className="font-mono text-[9px] uppercase tracking-wider text-[#505672] font-semibold">
+                Market Participants
+              </span>
+              {uniqueUserCount > 0 && (
+                <span className="font-mono text-[9px] text-[#5c6178]">
+                  {uniqueUserCount} trader{uniqueUserCount !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            
+            <div className="p-4">
+              {tradesLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <div className="w-4 h-4 border-2 border-[#282c3a] border-t-[#5c6178] rounded-full animate-spin" />
+                  <span className="ml-2 font-mono text-[10px] text-[#505672]">Loading trades...</span>
+                </div>
+              ) : userBreakdown.length > 0 ? (
+                <EarningsPieChart
+                  slices={userBreakdown}
+                  size={140}
+                  compact
+                  formatValue={(v) => `$${v.toFixed(0)}`}
+                />
+              ) : (
+                <div className="text-center py-6">
+                  <span className="font-mono text-[10px] text-[#505672]">No trade data available</span>
                 </div>
               )}
-
-              {/* Notice */}
-              {challengeNotice && (
-                <div className={`px-3 py-2.5 rounded-xl text-xs ${
-                  challengeNotice.type === 'error' 
-                    ? 'bg-rose-500/10 border border-rose-500/20 text-rose-400'
-                    : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                }`}>
-                  {challengeNotice.text}
+              
+              {tradeStats && (
+                <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-[#1a1d28]">
+                  <div className="text-center">
+                    <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Total Trades</div>
+                    <div className="font-mono text-sm font-semibold text-[#d8dae2]">
+                      {tradeStats.totalTrades.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Volume</div>
+                    <div className="font-mono text-sm font-semibold text-[#d8dae2]">
+                      ${tradeStats.totalVolume >= 1000 ? `${(tradeStats.totalVolume / 1000).toFixed(1)}k` : tradeStats.totalVolume.toFixed(0)}
+                    </div>
+                  </div>
                 </div>
               )}
+            </div>
+          </div>
 
-              {/* Action Buttons */}
-              <div className="flex gap-3">
-                {walletData?.address && !hasSession ? (
-                  <button
-                    type="button"
-                    onClick={handleEnableSession}
-                    disabled={sessionLoading || isExpired}
-                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-all"
+          {/* Proposal Form */}
+          {!isSettled && (
+            <div className="bg-[#0d0f14] border border-[#1a1d28] rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#1a1d28]">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full" style={{ background: styles.accent, boxShadow: `0 0 6px ${styles.accent}` }} />
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-[#5c6178] font-semibold">
+                    Submit Proposal
+                  </span>
+                </div>
+                {onChain && onChain.challengeBondAmount > 0 && (
+                  <span 
+                    className="font-mono text-[9px] px-2 py-0.5 rounded"
+                    style={{ 
+                      color: isBondExempt ? styles.green : styles.yellow,
+                      background: isBondExempt ? 'rgba(0,255,136,0.08)' : 'rgba(255,171,0,0.08)',
+                      border: `1px solid ${isBondExempt ? 'rgba(0,255,136,0.15)' : 'rgba(255,171,0,0.12)'}`
+                    }}
                   >
-                    {sessionLoading ? 'Creating session...' : 'Enable Gasless Trading'}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleChallenge}
-                    disabled={
-                      !challengePrice ||
-                      !evidenceComplete ||
-                      !evidenceUrlFieldOk ||
-                      isSubmitting ||
-                      !walletData?.address ||
-                      isExpired ||
-                      !hasSufficientBalance ||
-                      !hasSession
-                    }
-                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-fuchsia-500 to-violet-500 text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:from-t-skeleton disabled:to-t-skeleton transition-all"
-                  >
-                    {isSubmitting ? (submitStep || 'Submitting...') : 'Submit Proposal'}
-                  </button>
+                    {isBondExempt ? 'EXEMPT' : `BOND: $${onChain.challengeBondAmount.toLocaleString()}`}
+                  </span>
                 )}
               </div>
 
+              <div className="p-4 space-y-3">
+            {/* Price Input */}
+            <div>
+              <label className="block font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-2">
+                Settlement Price (USDC)
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-[#505672]">$</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.0000"
+                  value={challengePrice}
+                  onChange={(e) => setChallengePrice(e.target.value)}
+                  disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                  className="w-full bg-transparent text-[#d8dae2] font-mono text-sm rounded-lg pl-7 pr-4 py-3 border border-[#1a1d28] focus:border-[#7c4dff] focus:outline-none placeholder-[#505672] disabled:opacity-50 transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Evidence */}
+            <div className="space-y-3">
+              <label className="block font-mono text-[8px] uppercase tracking-wider text-[#505672]">
+                Supporting Evidence
+              </label>
+              
+              <input
+                type="url"
+                placeholder="https://source-url.com/..."
+                value={evidenceSourceUrl}
+                onChange={(e) => setEvidenceSourceUrl(e.target.value)}
+                disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                className={`w-full bg-transparent text-[#d8dae2] font-mono text-xs rounded-lg px-4 py-2.5 border focus:outline-none placeholder-[#505672] disabled:opacity-50 transition-colors ${
+                  evidenceUrlTrim !== '' && !isValidHttpUrl(evidenceUrlTrim)
+                    ? 'border-[#ff2a4a] focus:border-[#ff2a4a]'
+                    : 'border-[#1a1d28] focus:border-[#7c4dff]'
+                }`}
+              />
+
+              <div>
+                <input
+                  ref={evidenceFileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setEvidenceImageFile(f);
+                    setUploadedEvidenceImageUrl(null);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={isSubmitting || isExpired || !hasSufficientBalance}
+                  onClick={() => evidenceFileInputRef.current?.click()}
+                  className="w-full rounded-lg border border-dashed border-[#1a1d28] hover:border-[#282c3a] bg-transparent px-4 py-3 text-center transition-colors disabled:opacity-50"
+                >
+                  {evidenceImageFile ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <span className="font-mono text-[10px] text-[#d8dae2]">{evidenceImageFile.name}</span>
+                      {evidencePreviewUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={evidencePreviewUrl} alt="Preview" className="max-h-16 rounded border border-[#1a1d28] object-contain" />
+                      )}
+                    </div>
+                  ) : (
+                    <span className="font-mono text-[10px] text-[#505672]">Upload screenshot (max 4MB)</span>
+                  )}
+                </button>
+                {evidenceImageFile && (
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => { setEvidenceImageFile(null); setUploadedEvidenceImageUrl(null); }}
+                    className="mt-1 font-mono text-[9px] text-[#505672] hover:text-[#ff2a4a] transition-colors"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Balance Check */}
+            {onChain && onChain.challengeBondAmount > 0 && walletData?.address && !isBondExempt && (
+              <div 
+                className="flex items-center justify-between px-3 py-2 rounded-lg font-mono text-[10px]"
+                style={{ 
+                  background: hasSufficientBalance ? 'rgba(0,255,136,0.04)' : 'rgba(255,42,74,0.04)',
+                  border: `1px solid ${hasSufficientBalance ? 'rgba(0,255,136,0.12)' : 'rgba(255,42,74,0.12)'}`
+                }}
+              >
+                <span className="text-[#505672]">
+                  Required: <span className="text-[#d8dae2]">${onChain.challengeBondAmount.toLocaleString()}</span>
+                </span>
+                <span style={{ color: hasSufficientBalance ? styles.green : styles.red }}>
+                  Balance: ${availableBalanceNum.toFixed(2)}
+                </span>
+              </div>
+            )}
+
+            {/* Notice */}
+            {challengeNotice && (
+              <div 
+                className="px-3 py-2.5 rounded-lg font-mono text-[11px]"
+                style={{ 
+                  background: challengeNotice.type === 'error' ? 'rgba(255,42,74,0.08)' : 'rgba(0,255,136,0.08)',
+                  border: `1px solid ${challengeNotice.type === 'error' ? 'rgba(255,42,74,0.2)' : 'rgba(0,255,136,0.2)'}`,
+                  color: challengeNotice.type === 'error' ? styles.red : styles.green
+                }}
+              >
+                {challengeNotice.text}
+              </div>
+            )}
+
+            {/* Submit Button */}
+            <div>
+              {walletData?.address && !hasSession ? (
+                <button
+                  type="button"
+                  onClick={handleEnableSession}
+                  disabled={sessionLoading || isExpired}
+                  className="w-full py-3 rounded-lg font-mono text-xs font-semibold uppercase tracking-wider transition-all disabled:opacity-50"
+                  style={{ 
+                    background: `linear-gradient(135deg, ${styles.cyan}, ${styles.accent})`,
+                    color: '#0d0f14'
+                  }}
+                >
+                  {sessionLoading ? 'Creating session...' : 'Enable Gasless Trading'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleChallenge}
+                  disabled={
+                    !challengePrice ||
+                    !evidenceComplete ||
+                    !evidenceUrlFieldOk ||
+                    isSubmitting ||
+                    !walletData?.address ||
+                    isExpired ||
+                    !hasSufficientBalance ||
+                    !hasSession
+                  }
+                  className="w-full py-3 rounded-lg font-mono text-xs font-semibold uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ 
+                    background: `linear-gradient(135deg, ${styles.accent}, #9c4dff)`,
+                    color: '#fff',
+                    boxShadow: !isSubmitting && challengePrice && evidenceComplete ? `0 0 20px rgba(124,77,255,0.3)` : 'none'
+                  }}
+                >
+                  {isSubmitting ? (submitStep || 'Submitting...') : 'Submit Proposal'}
+                </button>
+              )}
+            </div>
+
               {challengeTxHash && (
-                <p className="text-[10px] text-emerald-400 font-mono truncate">
+                <p className="font-mono text-[10px] text-[#00ff88] truncate">
                   Tx: {challengeTxHash}
                 </p>
               )}
             </div>
           </div>
-        </div>
-      )}
+          )}
 
-      {/* Settlement Info */}
-      <div className="relative overflow-hidden rounded-2xl bg-t-card">
-        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-t-fg-muted/20 to-transparent" />
-        
-        <div className="p-4">
-          <div className="flex items-center gap-2.5 mb-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-t-fg-muted/10 to-t-fg-muted/5 flex items-center justify-center">
-              <svg className="w-4 h-4 text-t-fg-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
-            </div>
-            <p className="text-xs font-medium text-t-fg">How Settlement Works</p>
-          </div>
-          
-          <div className="space-y-2 text-[10px] text-t-fg-muted leading-relaxed">
-            {isSettled ? (
-              <>
-                <p>This market has been settled. The final price is locked and all positions have been resolved.</p>
-                <p>Archived evidence and screenshots are preserved for reference.</p>
-              </>
-            ) : (
-              <>
-                <p>Anyone can propose a settlement price with supporting evidence. The AI worker proposes first and is bond-exempt.</p>
-                <p>A bond is required to propose. It is returned when settlement finalizes unopposed.</p>
-                <p>Evidence hash is committed on-chain for tamper-proof verification.</p>
-              </>
-            )}
-          </div>
         </div>
+        {/* END RIGHT COLUMN */}
+
       </div>
+      {/* END Two Column Layout */}
+
+      {/* Info Footer */}
+      <div className="text-center py-3 mt-4 border-t border-[#1a1d28]">
+        <p className="font-mono text-[9px] text-[#505672]">
+          {isSettled 
+            ? 'Settlement finalized. Positions resolved at final price.'
+            : 'Settlement secured by on-chain evidence hash and UMA DVM dispute resolution.'}
+        </p>
+      </div>
+
+      <style jsx>{`
+        @keyframes neonPulse {
+          0%, 100% { opacity: 1; filter: brightness(1); }
+          50% { opacity: 0.88; filter: brightness(1.15); }
+        }
+      `}</style>
     </div>
   );
 }
