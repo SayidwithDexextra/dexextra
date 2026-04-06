@@ -44,6 +44,7 @@ import { useDeploymentOverlay } from '@/contexts/DeploymentOverlayContext';
 import { LifecycleDevDrawer } from '@/components/LifecycleDevDrawer';
 import useWallet from '@/hooks/useWallet';
 import { DEFAULT_PROFILE_IMAGE } from '@/types/userProfile';
+import { RolloverNotificationModal } from '@/components/RolloverNotificationModal';
 
 interface TokenPageProps {
   params: Promise<{ symbol: string }>;
@@ -94,6 +95,11 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const [watchlistCount, setWatchlistCount] = useState<number | null>(null);
   const [settlementPnlData, setSettlementPnlData] = useState<SettlementPnLSummary | null>(null);
   const symbolUpper = String(symbol || '').toUpperCase();
+
+  // Rollover notification modal state
+  const [showRolloverModal, setShowRolloverModal] = useState(false);
+  const [rolloverParentSymbol, setRolloverParentSymbol] = useState<string | null>(null);
+  const rolloverShownRef = useRef<string | null>(null);
 
   useMarketSettlementRealtime({
     marketId: (md.market as any)?.id || null,
@@ -189,17 +195,57 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   // Reset settlement-related UI state when the underlying market changes
   // (e.g. during rollover: parent renamed with active timeframe, child takes the symbol).
   const prevMarketIdRef = useRef<string | undefined>(undefined);
+  const prevMarketSymbolRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const newId = (md.market as any)?.id as string | undefined;
+    const newSymbol = (md.market as any)?.symbol as string | undefined;
+    const marketConfig = (md.market as any)?.market_config;
+    const rolloverLineage = marketConfig?.rollover_lineage;
+    const parentMarketId = rolloverLineage?.parent_market_id as string | undefined;
+
     if (prevMarketIdRef.current && newId && prevMarketIdRef.current !== newId) {
       const ms = (md.market as any)?.market_status;
       if (ms !== 'SETTLEMENT_REQUESTED' && ms !== 'SETTLED') {
         setIsSettlementView(false);
         setShowSettlementOverlay(false);
       }
+
+      // Detect rollover: the new market is a child of the previous market
+      // This happens when we were viewing the parent, and after rollover,
+      // the URL symbol now resolves to the new child market
+      if (parentMarketId && parentMarketId === prevMarketIdRef.current) {
+        const rolloverKey = `${parentMarketId}->${newId}`;
+        if (rolloverShownRef.current !== rolloverKey) {
+          rolloverShownRef.current = rolloverKey;
+          // The previous symbol is now the "old contract" (parent with timeframe suffix)
+          // We need to fetch the parent's new symbol to show in the modal
+          fetchParentSymbolAndShowModal(parentMarketId);
+        }
+      }
     }
+
     prevMarketIdRef.current = newId;
-  }, [(md.market as any)?.id]);
+    prevMarketSymbolRef.current = newSymbol;
+  }, [(md.market as any)?.id, (md.market as any)?.symbol, (md.market as any)?.market_config?.rollover_lineage?.parent_market_id]);
+
+  // Fetch the renamed parent symbol and show the rollover modal
+  const fetchParentSymbolAndShowModal = useCallback(async (parentId: string) => {
+    try {
+      const supabase = getSupabaseClient();
+      const { data } = await supabase
+        .from('markets')
+        .select('symbol')
+        .eq('id', parentId)
+        .maybeSingle();
+      
+      if (data?.symbol) {
+        setRolloverParentSymbol(data.symbol);
+        setShowRolloverModal(true);
+      }
+    } catch (err) {
+      console.error('Failed to fetch parent market symbol:', err);
+    }
+  }, []);
 
   useEffect(() => {
     const ms = (md.market as any)?.market_status;
@@ -1945,6 +1991,14 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       )}
 
       {lifecycleDebug && <LifecycleDevDrawer marketId={currentMarketId ?? null} />}
+
+      {/* Rollover Notification Modal */}
+      <RolloverNotificationModal
+        isOpen={showRolloverModal}
+        onClose={() => setShowRolloverModal(false)}
+        childSymbol={symbol}
+        parentSymbol={rolloverParentSymbol || ''}
+      />
     </div>
   );
 }
