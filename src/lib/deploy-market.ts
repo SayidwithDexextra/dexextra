@@ -697,7 +697,7 @@ export async function deployMarket(
     }
 
     // 6. Configure challenge bond
-    const CHALLENGE_BOND_USDC = 50_000_000; // 50 USDC (6 decimals)
+    const CHALLENGE_BOND_USDC = 500_000_000; // 500 USDC (6 decimals)
     const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
     try {
       laneLog('A', 'Challenge bond config', 'start', `bond=${CHALLENGE_BOND_USDC / 1e6} USDC slash=${shortAddr(CHALLENGE_SLASH_RECIPIENT)}`);
@@ -706,8 +706,8 @@ export async function deployMarket(
       ], wallet);
       const bondTx = await bondContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, await nonceMgr.nextOverrides());
       laneLog('A', 'Challenge bond config', 'start', `tx sent ${shortTx(bondTx.hash)}`);
-      log('challenge_bond_config', 'start', { tx: bondTx.hash, bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT, market: orderBook });
-      pending.push({ label: 'Challenge bond config', logKey: 'challenge_bond_config', tx: bondTx, extra: { bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT, market: orderBook } });
+      log('challenge_bond_config', 'start', { tx: bondTx.hash, bondUsdc: 500, slashRecipient: CHALLENGE_SLASH_RECIPIENT, market: orderBook });
+      pending.push({ label: 'Challenge bond config', logKey: 'challenge_bond_config', tx: bondTx, extra: { bondUsdc: 500, slashRecipient: CHALLENGE_SLASH_RECIPIENT, market: orderBook } });
     } catch (e: any) {
       laneLog('A', 'Challenge bond config', 'error', e?.shortMessage || e?.message || String(e));
       log('challenge_bond_config', 'error', { error: e?.message || String(e), market: orderBook });

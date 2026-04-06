@@ -6,7 +6,7 @@ async function main() {
   console.log("Signer:", await signer.getAddress());
   console.log("Market:", market);
 
-  const bondUsdc = 50000000n; // 50 USDC (6 decimals)
+  const bondUsdc = 500000000n; // 500 USDC (6 decimals)
   const slashRecipient = "0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306";
 
   const lc = await ethers.getContractAt(

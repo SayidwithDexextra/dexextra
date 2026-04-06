@@ -270,7 +270,7 @@ export async function POST(request: NextRequest) {
       const [bondAmount, slashRecipient] = await marketContract.getChallengeBondConfig();
       if (BigInt(bondAmount) === 0n || slashRecipient === ethers.ZeroAddress) {
         console.warn(`[gasless/challenge] Bond NOT configured on ${resolvedMarketAddress} — auto-repairing`);
-        const CHALLENGE_BOND_USDC = 50_000_000;
+        const CHALLENGE_BOND_USDC = 500_000_000;
         const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
         const bondTx = await marketContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT);
         await bondTx.wait();

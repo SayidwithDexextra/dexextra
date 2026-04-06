@@ -481,15 +481,15 @@ export async function POST(req: Request) {
 
       // 6. Configure challenge bond
       {
-        const CHALLENGE_BOND_USDC = 50_000_000; // 50 USDC (6 decimals)
+        const CHALLENGE_BOND_USDC = 500_000_000; // 500 USDC (6 decimals)
         const CHALLENGE_SLASH_RECIPIENT = '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306';
         try {
           laneLog('A', 'Challenge bond config', 'start', `bond=${CHALLENGE_BOND_USDC / 1e6} USDC`);
           const bondTx = await criticalContract.setChallengeBondConfig(CHALLENGE_BOND_USDC, CHALLENGE_SLASH_RECIPIENT, await nonceMgr.nextOverrides());
           const sentAt = Date.now();
           laneLog('A', 'Challenge bond config', 'start', `tx sent ${shortTx(bondTx.hash)} +${sentAt - laneAStart}ms`);
-          logS('challenge_bond_config_sent', 'start', { tx: bondTx.hash, bondUsdc: 50, market: orderBook });
-          pending.push({ label: 'Challenge bond config', logKey: 'challenge_bond_config', tx: bondTx, sentAt, extra: { bondUsdc: 50, slashRecipient: CHALLENGE_SLASH_RECIPIENT, market: orderBook } });
+          logS('challenge_bond_config_sent', 'start', { tx: bondTx.hash, bondUsdc: 500, market: orderBook });
+          pending.push({ label: 'Challenge bond config', logKey: 'challenge_bond_config', tx: bondTx, sentAt, extra: { bondUsdc: 500, slashRecipient: CHALLENGE_SLASH_RECIPIENT, market: orderBook } });
         } catch (e: any) {
           laneLog('A', 'Challenge bond config', 'error', e?.shortMessage || e?.message || String(e));
           logS('challenge_bond_config', 'error', { error: e?.message || String(e), market: orderBook });
@@ -574,7 +574,7 @@ export async function POST(req: Request) {
           laneLog('A', 'Challenge bond MISSING', 'error', `bond=${bondAmt} slash=${slashAddr} — retrying`);
           logS('challenge_bond_verify', 'error', { bondAmount: bondAmt.toString(), market: orderBook });
           await nonceMgr.resync();
-          const retryTx = await criticalContract.setChallengeBondConfig(50_000_000, '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306', await nonceMgr.nextOverrides());
+          const retryTx = await criticalContract.setChallengeBondConfig(500_000_000, '0x25b67c3AcCdFd5F1865f7a8A206Bbfc15cBc2306', await nonceMgr.nextOverrides());
           await retryTx.wait();
           laneLog('A', 'Challenge bond retry', 'success', 'confirmed');
         }
