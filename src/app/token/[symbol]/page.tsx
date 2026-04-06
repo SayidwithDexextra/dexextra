@@ -1731,9 +1731,9 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
           </div>
           {/* Settlement overlay (no layout shift) */}
           <div
-            className={`token-page absolute inset-0 z-20 bg-black/95 backdrop-blur transition-transform duration-500 ease-in-out ${isSettlementView ? 'translate-x-0' : 'translate-x-full'}`}
+            className={`token-page absolute inset-x-0 top-0 z-20 bg-black/95 backdrop-blur transition-transform duration-500 ease-in-out ${isSettlementView ? 'translate-x-0' : 'translate-x-full'}`}
           >
-            <div className="h-full overflow-y-auto scrollbar-none px-2 pt-2 pb-4 md:px-4 md:pt-3 md:pb-6">
+            <div className="overflow-y-auto scrollbar-none px-2 pt-2 pb-4 md:px-4 md:pt-3 md:pb-6">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-medium text-[#9CA3AF] uppercase tracking-wide">
                   {(md.market as any)?.market_status === 'SETTLED' ? 'Settlement Result' : 'Settlement Window'}

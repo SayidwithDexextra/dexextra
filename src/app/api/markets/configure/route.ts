@@ -603,7 +603,9 @@ export async function POST(req: Request) {
         ): Promise<ethers.TransactionResponse> => {
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-              if (attempt > 1) await vaultNonceMgr.resync();
+              // Always resync nonce before each attempt - the vault wallet may be used
+              // concurrently by other rollover jobs, causing stale nonces even on first try
+              await vaultNonceMgr.resync();
               const ov = await vaultNonceMgr.nextOverrides();
               const tx = await coreVault.grantRole(roleHash, orderBook, ov);
               laneLog('B', roleName, 'start', `tx sent ${shortTx(tx.hash)}${attempt > 1 ? ` (retry ${attempt})` : ''}`);
@@ -612,13 +614,15 @@ export async function POST(req: Request) {
             } catch (e: any) {
               const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
               const code = e?.error?.code ?? e?.code;
+              const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
               const isTransient =
+                isNonceError ||
                 code === -32100 ||
                 code === 'UNKNOWN_ERROR' ||
                 /unexpected error|timeout|ECONNRESET|ENOTFOUND|socket hang up|rate.?limit|ETIMEDOUT/i.test(msg);
               if (!isTransient || attempt === maxRetries) throw e;
               laneLog('B', roleName, 'error', `send failed (attempt ${attempt}/${maxRetries}): ${msg}`);
-              logS(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg });
+              logS(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg, isNonceError });
               await new Promise((r) => setTimeout(r, 1000 * attempt));
             }
           }

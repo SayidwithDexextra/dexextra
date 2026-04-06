@@ -22,6 +22,7 @@ import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAd
 import { getPusherServer } from '@/lib/pusher-server';
 import { scheduleMarketLifecycle, proportionalDurations, ONCHAIN_SETTLE_BUFFER_SEC } from '@/lib/qstash-scheduler';
 import { suggestCategories } from '@/lib/suggestCategories';
+import { generateMarketNaming, isShortFormat, cleanSymbol } from '@/lib/market-naming';
 
 // Vercel: this endpoint can be long-running during deployment.
 export const runtime = 'nodejs';
@@ -341,7 +342,27 @@ export async function POST(req: Request) {
       }
     };
     const rawSymbol = String(body?.symbol || '').trim();
-    const symbol = rawSymbol.toUpperCase();
+    // Generate clean, short market naming from raw input
+    // If input is already short format (e.g., "BTC-1D"), preserve it
+    // Otherwise, transform verbose names (e.g., "DAILY-PALLADIUM-PRICE" → "XPD-1D")
+    const useShortNaming = body?.useShortNaming !== false; // opt-out via useShortNaming: false
+    const naming = useShortNaming && !isShortFormat(rawSymbol)
+      ? generateMarketNaming(rawSymbol)
+      : null;
+    const symbol = naming?.symbol || cleanSymbol(rawSymbol) || rawSymbol.toUpperCase();
+    const marketIdentifier = naming?.identifier || symbol;
+    const derivedDisplayName = naming?.displayName || null;
+    // Log naming transformation for debugging
+    if (naming) {
+      console.log('[markets/create] naming transformation:', {
+        raw: rawSymbol,
+        identifier: marketIdentifier,
+        symbol,
+        displayName: derivedDisplayName,
+        assetTicker: naming.assetTicker,
+        periodSuffix: naming.periodSuffix,
+      });
+    }
     const metricUrl = String(body?.metricUrl || '').trim();
     let startPrice = String(body?.startPrice || '1');
     const dataSource = String(body?.dataSource || 'User Provided');
@@ -1330,18 +1351,32 @@ export async function POST(req: Request) {
   const laneBCreate = async () => {
     const txWaits: Promise<any>[] = [];
 
-    // 1. Allow orderbook on registry
+    // 1. Allow orderbook on registry (with retry for nonce conflicts)
     if (needRegistryAllow) {
-      try {
-        const registry = new ethers.Contract(registryAddress, regAbi, vaultWallet);
-        const ov = { ...(await vaultNonceMgr.nextOverrides()), gasLimit: 300000n };
-        const txAllow = await registry.setAllowedOrderbook(orderBook!, true, ov as any);
-        logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook' });
-        txWaits.push(txAllow.wait().then(() =>
-          logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook' })
-        ));
-      } catch (e: any) {
-        logS('attach_session_registry', 'error', { error: e?.message || String(e), action: 'allow_orderbook' });
+      const maxRetries = 3;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // Resync nonce before each attempt to handle concurrent operations
+          await vaultNonceMgr.resync();
+          const registry = new ethers.Contract(registryAddress, regAbi, vaultWallet);
+          const ov = { ...(await vaultNonceMgr.nextOverrides()), gasLimit: 300000n };
+          const txAllow = await registry.setAllowedOrderbook(orderBook!, true, ov as any);
+          logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook', attempt });
+          txWaits.push(txAllow.wait().then(() =>
+            logS('attach_session_registry_mined', 'success', { action: 'allow_orderbook' })
+          ));
+          break;
+        } catch (e: any) {
+          const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
+          const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
+          const isTransient = isNonceError || /unexpected error|timeout|ECONNRESET/i.test(msg);
+          if (!isTransient || attempt === maxRetries) {
+            logS('attach_session_registry', 'error', { error: msg, action: 'allow_orderbook', attempt });
+            break;
+          }
+          logS('attach_session_registry_retry', 'error', { error: msg, attempt, maxRetries, isNonceError });
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
       }
     }
 
@@ -1351,12 +1386,37 @@ export async function POST(req: Request) {
     const ORDERBOOK_ROLE = ethers.keccak256(ethers.toUtf8Bytes('ORDERBOOK_ROLE'));
     const SETTLEMENT_ROLE = ethers.keccak256(ethers.toUtf8Bytes('SETTLEMENT_ROLE'));
 
-    const ov1 = await vaultNonceMgr.nextOverrides();
-    const ov2 = await vaultNonceMgr.nextOverrides();
-    const tx1 = await coreVault.grantRole(ORDERBOOK_ROLE, orderBook!, ov1);
-    logS('grant_ORDERBOOK_ROLE_sent', 'success', { tx: tx1.hash });
-    const tx2 = await coreVault.grantRole(SETTLEMENT_ROLE, orderBook!, ov2);
-    logS('grant_SETTLEMENT_ROLE_sent', 'success', { tx: tx2.hash });
+    const sendRoleWithRetry = async (
+      roleName: string, roleHash: string, maxRetries = 3,
+    ): Promise<ethers.TransactionResponse> => {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // Always resync nonce before each attempt - the vault wallet may be used
+          // concurrently by other operations, causing stale nonces
+          await vaultNonceMgr.resync();
+          const ov = await vaultNonceMgr.nextOverrides();
+          const tx = await coreVault.grantRole(roleHash, orderBook!, ov);
+          logS(`grant_${roleName}_sent`, 'success', { tx: tx.hash, attempt });
+          return tx;
+        } catch (e: any) {
+          const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
+          const code = e?.error?.code ?? e?.code;
+          const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
+          const isTransient =
+            isNonceError ||
+            code === -32100 ||
+            code === 'UNKNOWN_ERROR' ||
+            /unexpected error|timeout|ECONNRESET|ENOTFOUND|socket hang up|rate.?limit|ETIMEDOUT/i.test(msg);
+          if (!isTransient || attempt === maxRetries) throw e;
+          logS(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg, isNonceError });
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
+      }
+      throw new Error(`${roleName} grant failed after ${maxRetries} retries`);
+    };
+
+    const tx1 = await sendRoleWithRetry('ORDERBOOK_ROLE', ORDERBOOK_ROLE);
+    const tx2 = await sendRoleWithRetry('SETTLEMENT_ROLE', SETTLEMENT_ROLE);
 
     const [r1, r2] = await Promise.all([...txWaits, tx1.wait(), tx2.wait()]);
     logS('grant_ORDERBOOK_ROLE_mined', 'success', { tx: r1?.hash || tx1.hash, blockNumber: r1?.blockNumber });
@@ -1433,7 +1493,9 @@ export async function POST(req: Request) {
         } catch (e: any) {
           try { console.warn('[markets/create] Wayback archive error', e?.message || String(e)); } catch {}
         }
-        const derivedName = `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`;
+        // Use derived display name from naming utility, or fall back to simple format
+        const fallbackName = `${(symbol.split('-')[0] || symbol).toUpperCase()} Futures`;
+        const derivedName = derivedDisplayName || fallbackName;
         const networkNameRaw = String(process.env.NEXT_PUBLIC_NETWORK_NAME || process.env.NETWORK_NAME || '');
         const safeName =
           (providedName ? providedName : derivedName).slice(0, 100);
@@ -1455,8 +1517,8 @@ export async function POST(req: Request) {
         }
 
         const insertPayload: any = {
-          market_identifier: symbol,
-          symbol,
+          market_identifier: marketIdentifier,
+          symbol: marketIdentifier,
           name: safeName,
           description: safeDescription,
           category: resolvedCategory,
@@ -1472,6 +1534,15 @@ export async function POST(req: Request) {
           initial_order: { metricUrl, startPrice: String(startPrice), dataSource, tags, waybackUrl: archivedWaybackUrl || null, waybackTimestamp: archivedWaybackTs || null },
           market_config: {
             wayback_snapshot: archivedWaybackUrl ? { url: archivedWaybackUrl, timestamp: archivedWaybackTs, source_url: metricUrl } : null,
+            // Store original raw symbol and naming metadata for reference
+            ...(naming ? {
+              naming: {
+                raw_input: rawSymbol,
+                asset_ticker: naming.assetTicker,
+                period_suffix: naming.periodSuffix,
+                transformed_at: new Date().toISOString(),
+              },
+            } : {}),
             ...(isRollover ? {
               rollover_lineage: {
                 parent_market_id: parentMarketId,

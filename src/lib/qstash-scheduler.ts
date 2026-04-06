@@ -189,7 +189,7 @@ export async function scheduleMarketLifecycle(
       ids.settlement = await publishOrDefer(
         client, destination, settlementStartAt,
         { ...commonBody, action: 'settlement_start' },
-        `${sym}.settlement`,
+        `${sym}.AI-Fetch`,
       );
     } catch (e: any) {
       console.error('[qstash-scheduler] Failed to schedule settlement trigger:', e?.message || e);

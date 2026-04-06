@@ -21,6 +21,7 @@ import {
   shortAddr, shortTx, laneLog, phaseHeader,
   laneOverview, phaseSummary, stepLog as vStepLog,
 } from '@/lib/console-logger';
+import { generateMarketNaming, isShortFormat, cleanSymbol } from '@/lib/market-naming';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,6 +41,8 @@ export interface DeployMarketParams {
     rolloverLeadSeconds: number;
     challengeWindowSeconds: number;
   } | null;
+  /** Set to false to disable short naming transformation */
+  useShortNaming?: boolean;
 }
 
 export interface DeployMarketResult {
@@ -52,6 +55,10 @@ export interface DeployMarketResult {
   chainId: number;
   network: string;
   ownerAddress: string;
+  /** Clean short market identifier (e.g., "XPD-1D") */
+  marketIdentifier: string;
+  /** Display name (e.g., "Palladium Daily") */
+  displayName: string | null;
 }
 
 type LogFn = (step: string, status: 'start' | 'success' | 'error', data?: Record<string, any>) => void;
@@ -192,7 +199,7 @@ export async function deployMarket(
   log: LogFn = defaultLog,
 ): Promise<DeployMarketResult> {
   const {
-    symbol,
+    symbol: rawSymbol,
     metricUrl,
     settlementTs,
     startPrice6,
@@ -202,7 +209,27 @@ export async function deployMarket(
     feeRecipient: feeRecipientInput,
     isRollover = false,
     speedRunConfig = null,
+    useShortNaming = true,
   } = params;
+
+  // Generate clean, short market naming from raw input
+  const naming = useShortNaming && !isShortFormat(rawSymbol)
+    ? generateMarketNaming(rawSymbol)
+    : null;
+  const symbol = naming?.symbol || cleanSymbol(rawSymbol) || rawSymbol.toUpperCase();
+  const marketIdentifier = naming?.identifier || symbol;
+  const derivedDisplayName = naming?.displayName || null;
+
+  if (naming) {
+    log('naming_transform', 'success', {
+      raw: rawSymbol,
+      identifier: marketIdentifier,
+      symbol,
+      displayName: derivedDisplayName,
+      assetTicker: naming.assetTicker,
+      periodSuffix: naming.periodSuffix,
+    });
+  }
 
   // ── Env configuration ──
   const rpcUrl = process.env.RPC_URL || process.env.JSON_RPC_URL || process.env.ALCHEMY_RPC_URL;
@@ -887,7 +914,9 @@ export async function deployMarket(
     ): Promise<ethers.TransactionResponse> => {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          if (attempt > 1) await vaultNonceMgr.resync();
+          // Always resync nonce before each attempt - the vault wallet may be used
+          // concurrently by other rollover jobs, causing stale nonces even on first try
+          await vaultNonceMgr.resync();
           const ov = await vaultNonceMgr.nextOverrides();
           const tx = await coreVault.grantRole(roleHash, orderBook!, ov);
           laneLog('B', roleName, 'start', `tx sent ${shortTx(tx.hash)}${attempt > 1 ? ` (retry ${attempt})` : ''}`);
@@ -896,13 +925,15 @@ export async function deployMarket(
         } catch (e: any) {
           const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
           const code = e?.error?.code ?? e?.code;
+          const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
           const isTransient =
+            isNonceError ||
             code === -32100 ||
             code === 'UNKNOWN_ERROR' ||
             /unexpected error|timeout|ECONNRESET|ENOTFOUND|socket hang up|rate.?limit|ETIMEDOUT/i.test(msg);
           if (!isTransient || attempt === maxRetries) throw e;
           laneLog('B', roleName, 'error', `send failed (attempt ${attempt}/${maxRetries}): ${msg}`);
-          log(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg });
+          log(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg, isNonceError });
           await new Promise((r) => setTimeout(r, 1000 * attempt));
         }
       }
@@ -945,5 +976,7 @@ export async function deployMarket(
     chainId,
     network: networkName,
     ownerAddress,
+    marketIdentifier,
+    displayName: derivedDisplayName,
   };
 }
