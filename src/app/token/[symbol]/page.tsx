@@ -85,6 +85,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
   const deploymentOverlay = useDeploymentOverlay();
   const metricDebug = sp.get('metricDebug') === '1' && process.env.NODE_ENV !== 'production';
   const lifecycleDebug = sp.get('lifecycleDebug') === '1' && process.env.NODE_ENV !== 'production';
+  const rolloverDebug = sp.get('rolloverDebug') === '1';
   const [isSettlementView, setIsSettlementView] = useState(false);
   const [showSettlementOverlay, setShowSettlementOverlay] = useState(false);
   const [mobileSheet, setMobileSheet] = useState<'trade' | 'comments' | 'activity' | 'info' | null>(null);
@@ -217,8 +218,6 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
         const rolloverKey = `${parentMarketId}->${newId}`;
         if (rolloverShownRef.current !== rolloverKey) {
           rolloverShownRef.current = rolloverKey;
-          // The previous symbol is now the "old contract" (parent with timeframe suffix)
-          // We need to fetch the parent's new symbol to show in the modal
           fetchParentSymbolAndShowModal(parentMarketId);
         }
       }
@@ -246,6 +245,58 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
       console.error('Failed to fetch parent market symbol:', err);
     }
   }, []);
+
+  // Detect rollover on initial page load or navigation:
+  // Show modal if this market is a child that was recently created from rollover
+  // and the user hasn't dismissed it yet for this session
+  useEffect(() => {
+    const market = md.market as any;
+    if (!market?.id) return;
+
+    const rolloverLineage = market.market_config?.rollover_lineage;
+    const parentMarketId = rolloverLineage?.parent_market_id as string | undefined;
+    
+    if (!parentMarketId) return;
+
+    // Check if we already showed the modal for this market in this session
+    const sessionKey = `rollover-shown-${market.id}`;
+    if (typeof window !== 'undefined' && sessionStorage.getItem(sessionKey)) {
+      return;
+    }
+
+    // Check if rollover happened recently (within 24 hours)
+    const createdAt = market.created_at ? new Date(market.created_at).getTime() : 0;
+    const hoursSinceCreation = (Date.now() - createdAt) / (1000 * 60 * 60);
+    
+    if (hoursSinceCreation <= 24) {
+      // This is a recently rolled-over child market - show the modal
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(sessionKey, 'true');
+      }
+      fetchParentSymbolAndShowModal(parentMarketId);
+    }
+  }, [(md.market as any)?.id, (md.market as any)?.market_config?.rollover_lineage?.parent_market_id]);
+
+  // Debug mode: show rollover modal with mock data when ?rolloverDebug=1
+  useEffect(() => {
+    if (!rolloverDebug) return;
+    const market = md.market as any;
+    if (!market?.symbol) return;
+    
+    // Use series data if available, otherwise create mock parent symbol
+    const rolloverLineage = market.market_config?.rollover_lineage;
+    const parentMarketId = rolloverLineage?.parent_market_id as string | undefined;
+    
+    if (parentMarketId) {
+      // Real rollover - fetch actual parent symbol
+      fetchParentSymbolAndShowModal(parentMarketId);
+    } else {
+      // Mock rollover for testing - create a fake parent symbol with date suffix
+      const mockParentSymbol = `${market.symbol}-JAN25`;
+      setRolloverParentSymbol(mockParentSymbol);
+      setShowRolloverModal(true);
+    }
+  }, [rolloverDebug, (md.market as any)?.symbol]);
 
   useEffect(() => {
     const ms = (md.market as any)?.market_status;

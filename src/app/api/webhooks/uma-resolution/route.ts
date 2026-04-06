@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
+import { scheduleSettlementFinalize } from '@/lib/qstash-scheduler';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -222,60 +223,42 @@ async function processResolution(
 
   console.log(`[uma-resolution] Updated ${market.symbol}: uma_resolved=true, challengerWon=${challengerWon}`);
 
-  // Trigger immediate settlement finalization
-  const settleResult = await triggerSettlement(market.id);
+  // Schedule immediate settlement finalization via QStash (non-blocking)
+  const settleResult = await triggerSettlement(market.id, {
+    marketAddress: market.market_address,
+    symbol: market.symbol,
+  });
 
   return {
     ok: true,
     marketId: market.id,
     symbol: market.symbol,
-    settled: settleResult.ok,
+    settled: settleResult.scheduled === true,
   };
 }
 
-async function triggerSettlement(marketId: string): Promise<{ ok: boolean; error?: string }> {
-  const appUrl = process.env.APP_URL || process.env.VERCEL_URL;
-  if (!appUrl) {
-    console.warn('[uma-resolution] APP_URL not set, cannot trigger settlement');
-    return { ok: false, error: 'APP_URL not configured' };
-  }
-
-  const baseUrl = appUrl.startsWith('http') ? appUrl : `https://${appUrl}`;
-  const endpoint = `${baseUrl.replace(/\/+$/, '')}/api/cron/market-lifecycle`;
+async function triggerSettlement(
+  marketId: string,
+  opts?: { marketAddress?: string; symbol?: string },
+): Promise<{ ok: boolean; scheduled?: boolean; messageId?: string; error?: string }> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const triggerAt = nowSec + 5;
 
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      headers['Authorization'] = `Bearer ${cronSecret}`;
-    }
-
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        action: 'settlement_finalize',
-        marketId,
-      }),
+    const messageId = await scheduleSettlementFinalize(marketId, triggerAt, {
+      marketAddress: opts?.marketAddress,
+      symbol: opts?.symbol,
     });
 
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      console.error(`[uma-resolution] Settlement trigger failed (${res.status}):`, data);
-      return { ok: false, error: data.error || `HTTP ${res.status}` };
+    if (messageId) {
+      console.log(`[uma-resolution] Scheduled settlement finalize for ${marketId} via QStash (msgId: ${messageId})`);
+      return { ok: true, scheduled: true, messageId };
     }
 
-    const result = data.result || data;
-    if (result.ok) {
-      console.log(`[uma-resolution] Settlement finalized for ${marketId}`);
-      return { ok: true };
-    } else {
-      console.log(`[uma-resolution] Settlement pending for ${marketId}: ${result.reason}`);
-      return { ok: false, error: result.reason };
-    }
+    console.warn(`[uma-resolution] QStash not configured, settlement for ${marketId} not scheduled`);
+    return { ok: false, error: 'QStash not configured' };
   } catch (err: any) {
-    console.error('[uma-resolution] Settlement trigger error:', err?.message);
+    console.error('[uma-resolution] Settlement schedule error:', err?.message);
     return { ok: false, error: err?.message };
   }
 }
