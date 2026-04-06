@@ -819,11 +819,28 @@ export default function MarketInfoHeader({
       {/* On-Chain Market Stats Bar */}
       {marketStats && (
         <div className={styles.marketStatsBar}>
-          <div className={styles.marketStatItem}>
-            <span className={styles.marketStatLabel}>Mark</span>
-            <span className={styles.marketStatValue}>{formatPriceMaybe(resolvedMarkPrice)}</span>
-          </div>
-          <span className={styles.marketStatDivider} />
+          {/* Show Settlement Price prominently when market is settled */}
+          {(effectiveStatus === 'settled' || effectiveStatus === 'settlement') && (marketStats.settlementPrice != null && marketStats.settlementPrice > 0 || (settlementValue != null && settlementValue > 0)) ? (
+            <>
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel} style={{ color: '#fbbf24' }}>
+                  {effectiveStatus === 'settlement' ? 'Proposed' : 'Settled'}
+                </span>
+                <span className={styles.marketStatValue} style={{ color: '#fbbf24', fontWeight: 600 }}>
+                  {formatPriceMaybe(marketStats.settlementPrice ?? settlementValue ?? 0)}
+                </span>
+              </div>
+              <span className={styles.marketStatDivider} />
+            </>
+          ) : (
+            <>
+              <div className={styles.marketStatItem}>
+                <span className={styles.marketStatLabel}>Mark</span>
+                <span className={styles.marketStatValue}>{formatPriceMaybe(resolvedMarkPrice)}</span>
+              </div>
+              <span className={styles.marketStatDivider} />
+            </>
+          )}
           <div className={styles.marketStatItem}>
             <span className={styles.marketStatLabel}>Last</span>
             <span className={styles.marketStatValue}>{formatPriceMaybe(marketStats.lastTradePrice > 0 ? marketStats.lastTradePrice : resolvedMarkPrice)}</span>
@@ -917,14 +934,14 @@ export default function MarketInfoHeader({
         </div>
       )}
 
-      {/* Settlement P&L Bar — shown during challenge window (proposed) and after settlement (final) */}
-      {(effectiveStatus === 'settled' || effectiveStatus === 'settlement') && settlementValue != null && settlementValue > 0 && settlementPnl && (
+      {/* Settlement Price Bar — shown during challenge window (proposed) and after settlement (final) */}
+      {(effectiveStatus === 'settled' || effectiveStatus === 'settlement') && settlementValue != null && settlementValue > 0 && (
         <div className={styles.marketStatsBar} style={{ borderTop: '1px solid rgba(251, 191, 36, 0.15)', background: 'rgba(251, 191, 36, 0.03)' }}>
           <div className={styles.marketStatItem}>
             <span className={styles.marketStatLabel} style={{ color: '#fbbf24' }}>
               {effectiveStatus === 'settlement' ? 'Proposed Settlement' : 'Settlement Price'}
             </span>
-            <span className={styles.marketStatValue}>{formatStatValue(settlementValue)}</span>
+            <span className={styles.marketStatValue} style={{ color: '#fbbf24', fontWeight: 600 }}>{formatStatValue(settlementValue)}</span>
           </div>
           {settlementPnl && (
             <>

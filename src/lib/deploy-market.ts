@@ -912,12 +912,20 @@ export async function deployMarket(
     const sendRoleWithRetry = async (
       roleName: string, roleHash: string, maxRetries = 3,
     ): Promise<ethers.TransactionResponse> => {
+      let gasBumpMultiplier = 1n;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           // Always resync nonce before each attempt - the vault wallet may be used
           // concurrently by other rollover jobs, causing stale nonces even on first try
           await vaultNonceMgr.resync();
-          const ov = await vaultNonceMgr.nextOverrides();
+          const baseOv = await vaultNonceMgr.nextOverrides();
+          // Apply gas bump if this is a retry due to replacement underpriced
+          const ov = gasBumpMultiplier > 1n ? {
+            ...baseOv,
+            maxFeePerGas: baseOv.maxFeePerGas ? baseOv.maxFeePerGas * gasBumpMultiplier : undefined,
+            maxPriorityFeePerGas: baseOv.maxPriorityFeePerGas ? baseOv.maxPriorityFeePerGas * gasBumpMultiplier : undefined,
+            gasPrice: baseOv.gasPrice ? baseOv.gasPrice * gasBumpMultiplier : undefined,
+          } : baseOv;
           const tx = await coreVault.grantRole(roleHash, orderBook!, ov);
           laneLog('B', roleName, 'start', `tx sent ${shortTx(tx.hash)}${attempt > 1 ? ` (retry ${attempt})` : ''}`);
           log(`grant_${roleName}_sent`, 'success', { tx: tx.hash, attempt });
@@ -926,14 +934,18 @@ export async function deployMarket(
           const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
           const code = e?.error?.code ?? e?.code;
           const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
+          const isReplacementError = /replacement.*underpriced|REPLACEMENT_UNDERPRICED|replacement fee too low/i.test(msg) || code === 'REPLACEMENT_UNDERPRICED';
           const isTransient =
             isNonceError ||
+            isReplacementError ||
             code === -32100 ||
             code === 'UNKNOWN_ERROR' ||
             /unexpected error|timeout|ECONNRESET|ENOTFOUND|socket hang up|rate.?limit|ETIMEDOUT/i.test(msg);
           if (!isTransient || attempt === maxRetries) throw e;
+          // Bump gas price for replacement errors (need 10%+ increase to replace pending tx)
+          if (isReplacementError) gasBumpMultiplier = gasBumpMultiplier === 1n ? 2n : gasBumpMultiplier + 1n;
           laneLog('B', roleName, 'error', `send failed (attempt ${attempt}/${maxRetries}): ${msg}`);
-          log(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg, isNonceError });
+          log(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg, isNonceError, isReplacementError, gasBump: Number(gasBumpMultiplier) });
           await new Promise((r) => setTimeout(r, 1000 * attempt));
         }
       }

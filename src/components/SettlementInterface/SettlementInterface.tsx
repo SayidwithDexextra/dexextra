@@ -465,17 +465,17 @@ export function SettlementInterface({
   const settlementScreenshotUrl = market?.market_config?.settlement_screenshot_url || null;
 
   const formattedProposed = useMemo(() => {
-    if (typeof market?.proposed_settlement_value === 'number') return market.proposed_settlement_value.toFixed(4);
-    if (market?.proposed_settlement_value == null) return '0.0000';
+    if (typeof market?.proposed_settlement_value === 'number') return String(market.proposed_settlement_value);
+    if (market?.proposed_settlement_value == null) return '0';
     const v = Number(market.proposed_settlement_value);
-    return Number.isFinite(v) ? v.toFixed(4) : '0.0000';
+    return Number.isFinite(v) ? String(market.proposed_settlement_value) : '0';
   }, [market?.proposed_settlement_value]);
 
   const formattedChallenge = useMemo(() => {
-    if (typeof market?.alternative_settlement_value === 'number') return market.alternative_settlement_value.toFixed(4);
+    if (typeof market?.alternative_settlement_value === 'number') return String(market.alternative_settlement_value);
     if (market?.alternative_settlement_value == null) return null;
     const v = Number(market.alternative_settlement_value);
-    return Number.isFinite(v) ? v.toFixed(4) : null;
+    return Number.isFinite(v) ? String(market.alternative_settlement_value) : null;
   }, [market?.alternative_settlement_value]);
 
   const umaResolved = market?.market_config?.uma_resolved === true;
@@ -486,20 +486,20 @@ export function SettlementInterface({
     if (umaResolved && umaChallengerWon) {
       const winningVal = umaWinningPrice ?? market?.alternative_settlement_value;
       if (winningVal != null && Number.isFinite(Number(winningVal)) && Number(winningVal) > 0) {
-        return { finalPrice: Number(winningVal), finalPriceFormatted: Number(winningVal).toFixed(4), priceSource: 'challenger' as const };
+        return { finalPrice: Number(winningVal), finalPriceFormatted: String(winningVal), priceSource: 'challenger' as const };
       }
     }
     if (umaResolved && !umaChallengerWon) {
       const proposedVal = market?.proposed_settlement_value;
       if (proposedVal != null && Number.isFinite(Number(proposedVal)) && Number(proposedVal) > 0) {
-        return { finalPrice: Number(proposedVal), finalPriceFormatted: Number(proposedVal).toFixed(4), priceSource: 'proposer' as const };
+        return { finalPrice: Number(proposedVal), finalPriceFormatted: String(proposedVal), priceSource: 'proposer' as const };
       }
     }
     const proposedVal = market?.proposed_settlement_value;
     if (proposedVal != null && Number.isFinite(Number(proposedVal)) && Number(proposedVal) > 0) {
-      return { finalPrice: Number(proposedVal), finalPriceFormatted: Number(proposedVal).toFixed(4), priceSource: 'proposed' as const };
+      return { finalPrice: Number(proposedVal), finalPriceFormatted: String(proposedVal), priceSource: 'proposed' as const };
     }
-    return { finalPrice: 0, finalPriceFormatted: '0.0000', priceSource: 'none' as const };
+    return { finalPrice: 0, finalPriceFormatted: '0', priceSource: 'none' as const };
   }, [umaResolved, umaChallengerWon, umaWinningPrice, market?.alternative_settlement_value, market?.proposed_settlement_value]);
 
   const windowProgress = useMemo(() => {

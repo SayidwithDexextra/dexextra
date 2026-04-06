@@ -24,8 +24,8 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
   onDeny,
   onPickAnotherSource,
   onDenySuggestedAssetPrice,
-  imageUrl = 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=600&h=300&fit=crop&auto=format',
-  fullscreenImageUrl = 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=1400&h=900&fit=crop&auto=format'
+  imageUrl,
+  fullscreenImageUrl
 }) => {
   const [mounted, setMounted] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -287,16 +287,18 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
                 </div>
               </div>
 
-              {/* Screenshot */}
-              <div>
-                <div className="text-[9px] text-t-fg-muted uppercase tracking-wider font-medium mb-1.5">Preview</div>
-                <img 
-                  src={imageUrl} 
-                  alt="Analysis visualization" 
-                  className="w-full h-[80px] object-cover rounded-md border border-t-stroke hover:border-t-stroke-hover cursor-pointer transition-all duration-200"
-                  onClick={() => setIsImageExpanded(true)}
-                />
-              </div>
+              {/* Screenshot - only show when imageUrl is available */}
+              {imageUrl && (
+                <div>
+                  <div className="text-[9px] text-t-fg-muted uppercase tracking-wider font-medium mb-1.5">Preview</div>
+                  <img 
+                    src={imageUrl} 
+                    alt="Analysis visualization" 
+                    className="w-full h-[80px] object-cover rounded-md border border-t-stroke hover:border-t-stroke-hover cursor-pointer transition-all duration-200"
+                    onClick={() => setIsImageExpanded(true)}
+                  />
+                </div>
+              )}
 
               {/* Processing Time */}
               {processingTime ? (
@@ -362,7 +364,7 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
       </div>
 
       {/* Fullscreen Image Overlay */}
-      {isImageExpanded && (
+      {isImageExpanded && (fullscreenImageUrl || imageUrl) && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/95 animate-in fade-in" onClick={() => setIsImageExpanded(false)}>
           <div className="relative max-w-[90vw] max-h-[90vh] flex items-center justify-center">
             <button 
@@ -374,7 +376,7 @@ const MetricResolutionModal: React.FC<MetricResolutionModalProps> = ({
               </svg>
             </button>
             <img 
-              src={fullscreenImageUrl} 
+              src={fullscreenImageUrl || imageUrl} 
               alt="Analysis visualization - Full size" 
               className="max-w-full max-h-full object-contain rounded-md"
               style={{ boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8)' }}

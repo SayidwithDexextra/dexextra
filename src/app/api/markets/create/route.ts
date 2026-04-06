@@ -1354,12 +1354,20 @@ export async function POST(req: Request) {
     // 1. Allow orderbook on registry (with retry for nonce conflicts)
     if (needRegistryAllow) {
       const maxRetries = 3;
+      let gasBumpMultiplier = 1n;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           // Resync nonce before each attempt to handle concurrent operations
           await vaultNonceMgr.resync();
           const registry = new ethers.Contract(registryAddress, regAbi, vaultWallet);
-          const ov = { ...(await vaultNonceMgr.nextOverrides()), gasLimit: 300000n };
+          const baseOv = { ...(await vaultNonceMgr.nextOverrides()), gasLimit: 300000n };
+          // Apply gas bump if this is a retry due to replacement underpriced
+          const ov = gasBumpMultiplier > 1n ? {
+            ...baseOv,
+            maxFeePerGas: baseOv.maxFeePerGas ? baseOv.maxFeePerGas * gasBumpMultiplier : undefined,
+            maxPriorityFeePerGas: baseOv.maxPriorityFeePerGas ? baseOv.maxPriorityFeePerGas * gasBumpMultiplier : undefined,
+            gasPrice: baseOv.gasPrice ? baseOv.gasPrice * gasBumpMultiplier : undefined,
+          } : baseOv;
           const txAllow = await registry.setAllowedOrderbook(orderBook!, true, ov as any);
           logS('attach_session_registry_sent', 'success', { tx: txAllow.hash, action: 'allow_orderbook', attempt });
           txWaits.push(txAllow.wait().then(() =>
@@ -1368,13 +1376,17 @@ export async function POST(req: Request) {
           break;
         } catch (e: any) {
           const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
+          const code = e?.error?.code ?? e?.code;
           const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
-          const isTransient = isNonceError || /unexpected error|timeout|ECONNRESET/i.test(msg);
+          const isReplacementError = /replacement.*underpriced|REPLACEMENT_UNDERPRICED|replacement fee too low/i.test(msg) || code === 'REPLACEMENT_UNDERPRICED';
+          const isTransient = isNonceError || isReplacementError || /unexpected error|timeout|ECONNRESET/i.test(msg);
           if (!isTransient || attempt === maxRetries) {
             logS('attach_session_registry', 'error', { error: msg, action: 'allow_orderbook', attempt });
             break;
           }
-          logS('attach_session_registry_retry', 'error', { error: msg, attempt, maxRetries, isNonceError });
+          // Bump gas price for replacement errors
+          if (isReplacementError) gasBumpMultiplier = gasBumpMultiplier === 1n ? 2n : gasBumpMultiplier + 1n;
+          logS('attach_session_registry_retry', 'error', { error: msg, attempt, maxRetries, isNonceError, isReplacementError, gasBump: Number(gasBumpMultiplier) });
           await new Promise((r) => setTimeout(r, 1000 * attempt));
         }
       }
@@ -1389,12 +1401,20 @@ export async function POST(req: Request) {
     const sendRoleWithRetry = async (
       roleName: string, roleHash: string, maxRetries = 3,
     ): Promise<ethers.TransactionResponse> => {
+      let gasBumpMultiplier = 1n;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           // Always resync nonce before each attempt - the vault wallet may be used
           // concurrently by other operations, causing stale nonces
           await vaultNonceMgr.resync();
-          const ov = await vaultNonceMgr.nextOverrides();
+          const baseOv = await vaultNonceMgr.nextOverrides();
+          // Apply gas bump if this is a retry due to replacement underpriced
+          const ov = gasBumpMultiplier > 1n ? {
+            ...baseOv,
+            maxFeePerGas: baseOv.maxFeePerGas ? baseOv.maxFeePerGas * gasBumpMultiplier : undefined,
+            maxPriorityFeePerGas: baseOv.maxPriorityFeePerGas ? baseOv.maxPriorityFeePerGas * gasBumpMultiplier : undefined,
+            gasPrice: baseOv.gasPrice ? baseOv.gasPrice * gasBumpMultiplier : undefined,
+          } : baseOv;
           const tx = await coreVault.grantRole(roleHash, orderBook!, ov);
           logS(`grant_${roleName}_sent`, 'success', { tx: tx.hash, attempt });
           return tx;
@@ -1402,13 +1422,17 @@ export async function POST(req: Request) {
           const msg = e?.shortMessage || e?.error?.message || e?.message || String(e);
           const code = e?.error?.code ?? e?.code;
           const isNonceError = /nonce.*too low|nonce.*already.*used|NONCE_EXPIRED/i.test(msg);
+          const isReplacementError = /replacement.*underpriced|REPLACEMENT_UNDERPRICED|replacement fee too low/i.test(msg) || code === 'REPLACEMENT_UNDERPRICED';
           const isTransient =
             isNonceError ||
+            isReplacementError ||
             code === -32100 ||
             code === 'UNKNOWN_ERROR' ||
             /unexpected error|timeout|ECONNRESET|ENOTFOUND|socket hang up|rate.?limit|ETIMEDOUT/i.test(msg);
           if (!isTransient || attempt === maxRetries) throw e;
-          logS(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg, isNonceError });
+          // Bump gas price for replacement errors (need 10%+ increase to replace pending tx)
+          if (isReplacementError) gasBumpMultiplier = gasBumpMultiplier === 1n ? 2n : gasBumpMultiplier + 1n;
+          logS(`grant_${roleName}_retry`, 'error', { attempt, maxRetries, error: msg, isNonceError, isReplacementError, gasBump: Number(gasBumpMultiplier) });
           await new Promise((r) => setTimeout(r, 1000 * attempt));
         }
       }

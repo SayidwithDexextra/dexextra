@@ -2377,6 +2377,17 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
       maximumFractionDigits: 4,
     }).format(Number.isFinite(value) ? value : 0);
 
+  // Format price exactly as returned without rounding (preserves all significant decimals)
+  const formatPriceExact = (value: number) => {
+    if (!Number.isFinite(value)) return '0.00';
+    const str = String(value);
+    const [intPart, decPart] = str.split('.');
+    const formattedInt = new Intl.NumberFormat('en-US').format(Number(intPart));
+    if (!decPart) return `${formattedInt}.00`;
+    const trimmed = decPart.length < 2 ? decPart.padEnd(2, '0') : decPart;
+    return `${formattedInt}.${trimmed}`;
+  };
+
   // Format P&L amount with grouping (e.g. 69,913.59)
   const formatPnlAmount = (value: number) =>
     new Intl.NumberFormat('en-US', {
@@ -2578,10 +2589,10 @@ export default function MarketActivityTabs({ symbol, className = '', onSettlemen
                             <span className="text-[10px] sm:text-[11px] text-t-fg font-mono">{formatSize(position.size)}</span>
                           </td>
                           <td className="hidden sm:table-cell px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-t-fg-muted font-mono">${formatPrice(position.entryPrice)}</span>
+                            <span className="text-[11px] text-t-fg-muted font-mono">${formatPrice4(position.entryPrice)}</span>
                           </td>
                           <td className="hidden md:table-cell px-2 py-1.5 text-right">
-                            <span className="text-[11px] text-t-fg font-mono">${formatPrice(position.markPrice)}</span>
+                            <span className="text-[11px] text-t-fg font-mono">${formatPrice4(position.markPrice)}</span>
                           </td>
                           <td className="px-1 sm:px-2 py-1.5 text-right">
                             <div className="flex flex-col items-end">
