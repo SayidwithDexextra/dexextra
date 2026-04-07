@@ -645,11 +645,13 @@ contract MarketLifecycleFacet {
 
     /**
      * @notice Commit the Wayback URL and its hash on-chain at proposal time.
-     * @dev Called once. The hash is computed on-chain from the URL so both are guaranteed consistent.
-     *      Immutable after set — reverts if evidence was already committed.
+     * @dev Called once by owner or lifecycle operator. The hash is computed on-chain from the URL
+     *      so both are guaranteed consistent. Immutable after set — reverts if evidence was already committed.
+     *      Using onlyOwnerOrOperator allows the relayer pool to commit evidence, avoiding nonce conflicts
+     *      when a single admin key is used for multiple concurrent settlements.
      * @param evidenceUrl The full Wayback Machine URL used as the data source for the proposed price
      */
-    function commitEvidence(string calldata evidenceUrl) external onlyOwner {
+    function commitEvidence(string calldata evidenceUrl) external onlyOwnerOrOperator {
         require(bytes(evidenceUrl).length > 0, "LC: empty url");
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.proposedEvidenceHash == bytes32(0), "LC: evidence already committed");

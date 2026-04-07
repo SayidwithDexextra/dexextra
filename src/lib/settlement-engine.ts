@@ -520,38 +520,47 @@ async function commitEvidenceOnChain(
     return { ok: false, error: 'invalid_market_address' };
   }
 
-  // commitEvidence() is onlyOwner on the Diamond — MUST use the Diamond owner key.
-  // Relayer pool keys are NOT the Diamond owner; use ADMIN_PRIVATE_KEY / PRIVATE_KEY.
-  const signerKey = cfg.privateKey;
-  if (!signerKey) {
-    console.error(`[commitEvidence] ABORT: ADMIN_PRIVATE_KEY / PRIVATE_KEY is empty — cannot call onlyOwner function`);
-    return { ok: false, error: 'admin_key_not_configured' };
+  // commitEvidence() is onlyOwnerOrOperator on the Diamond — use the relayer pool
+  // (lifecycle operators) to avoid nonce conflicts when multiple settlements run concurrently.
+  // Fall back to ADMIN_PRIVATE_KEY if no relayer pool is configured.
+  const relayers = loadRelayerPoolFromEnv({
+    pool: 'evidence_commit',
+    globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
+    allowFallbackSingleKey: true,
+  });
+  if (relayers.length === 0) {
+    console.error(`[commitEvidence] ABORT: no relayer keys configured (check RELAYER_PRIVATE_KEYS_JSON or RELAYER_PRIVATE_KEY env vars)`);
+    return { ok: false, error: 'no_relayer_keys_configured' };
   }
 
-  const signerAddress = new ethers.Wallet(signerKey).address;
   const evidenceHash = ethers.keccak256(ethers.toUtf8Bytes(waybackUrl));
-  const maxRetries = 3;
+  const maxAttempts = 3;
   let lastError = '';
 
   console.log(`[commitEvidence] START for ${market.market_identifier}`, JSON.stringify({
     marketAddress: market.market_address,
-    signerAddress,
+    relayerPoolSize: relayers.length,
+    relayerAddresses: relayers.map(r => r.address),
     evidenceHash,
     waybackUrlLength: waybackUrl.length,
     waybackUrlPreview: waybackUrl.slice(0, 120),
     rpcUrl: cfg.rpcUrl.replace(/\/\/.*@/, '//***@').slice(0, 60),
   }));
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Pick a random relayer from the pool to distribute load and avoid nonce conflicts
+    const relayer = relayers[Math.floor(Math.random() * relayers.length)];
+
     try {
       const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
-      const wallet = new ethers.Wallet(signerKey, provider);
+      const wallet = new ethers.Wallet(relayer.privateKey, provider);
 
       const contract = new ethers.Contract(
         market.market_address,
         [
           'function commitEvidence(string calldata evidenceUrl) external',
           'function getProposedEvidence() external view returns (bytes32 evidenceHash, string evidenceUrl)',
+          'function isLifecycleOperator(address account) external view returns (bool)',
           'function owner() external view returns (address)',
           'error FunctionDoesNotExist()',
           'error NotContractOwner()',
@@ -571,27 +580,31 @@ async function commitEvidenceOnChain(
         console.warn(`[commitEvidence] pre-flight getProposedEvidence FAILED for ${market.market_identifier} (attempt ${attempt}): ${String(viewErr).slice(0, 200)}`);
       }
 
-      // Pre-flight 2: verify signer IS the Diamond owner
+      // Pre-flight 2: verify relayer is authorized (owner or lifecycle operator)
       try {
         const diamondOwner = await contract.owner();
-        const isOwner = diamondOwner.toLowerCase() === signerAddress.toLowerCase();
-        console.log(`[commitEvidence] ownership check for ${market.market_identifier}: diamondOwner=${diamondOwner}, signerAddress=${signerAddress}, isOwner=${isOwner}, attempt=${attempt}`);
+        const isOwner = diamondOwner.toLowerCase() === relayer.address.toLowerCase();
+        let isOperator = false;
         if (!isOwner) {
-          console.error(`[commitEvidence] FATAL: signer ${signerAddress} is NOT the Diamond owner ${diamondOwner} — commitEvidence will revert with NotContractOwner`);
-          return { ok: false, error: `signer_not_diamond_owner:signer=${signerAddress},owner=${diamondOwner}` };
+          isOperator = await contract.isLifecycleOperator(relayer.address);
         }
-      } catch (ownerErr) {
-        console.warn(`[commitEvidence] ownership check FAILED for ${market.market_identifier} (proceeding anyway): ${String(ownerErr).slice(0, 200)}`);
+        console.log(`[commitEvidence] authorization check for ${market.market_identifier}: diamondOwner=${diamondOwner}, relayer=${relayer.address}, isOwner=${isOwner}, isOperator=${isOperator}, attempt=${attempt}`);
+        if (!isOwner && !isOperator) {
+          console.error(`[commitEvidence] FATAL: relayer ${relayer.address} is NOT the Diamond owner ${diamondOwner} and NOT a lifecycle operator — commitEvidence will revert`);
+          return { ok: false, error: `relayer_not_authorized:relayer=${relayer.address},owner=${diamondOwner}` };
+        }
+      } catch (authErr) {
+        console.warn(`[commitEvidence] authorization check FAILED for ${market.market_identifier} (proceeding anyway): ${String(authErr).slice(0, 200)}`);
       }
 
-      // Pre-flight 3: check signer ETH balance for gas
+      // Pre-flight 3: check relayer ETH balance for gas
       try {
-        const balance = await provider.getBalance(signerAddress);
+        const balance = await provider.getBalance(relayer.address);
         const balanceEth = ethers.formatEther(balance);
-        console.log(`[commitEvidence] signer balance for ${market.market_identifier}: ${balanceEth} ETH (attempt ${attempt})`);
+        console.log(`[commitEvidence] relayer balance for ${market.market_identifier}: ${balanceEth} ETH, relayer=${relayer.address} (attempt ${attempt})`);
         if (balance === 0n) {
-          console.error(`[commitEvidence] FATAL: signer ${signerAddress} has 0 ETH — cannot pay gas`);
-          return { ok: false, error: `signer_zero_balance:${signerAddress}` };
+          console.error(`[commitEvidence] FATAL: relayer ${relayer.address} has 0 ETH — cannot pay gas`);
+          return { ok: false, error: `relayer_zero_balance:${relayer.address}` };
         }
       } catch (balErr) {
         console.warn(`[commitEvidence] balance check failed (proceeding): ${String(balErr).slice(0, 150)}`);
@@ -611,26 +624,26 @@ async function commitEvidenceOnChain(
         txOverrides.maxFeePerGas = maxFee;
         txOverrides.maxPriorityFeePerGas = priorityFee;
       }
-      console.log(`[commitEvidence] sending tx for ${market.market_identifier} (attempt ${attempt}/${maxRetries}): gasLimit=200000, maxFeePerGas=${txOverrides.maxFeePerGas ? String(txOverrides.maxFeePerGas) : 'legacy'}`);
+      console.log(`[commitEvidence] sending tx for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}): relayer=${relayer.address}, gasLimit=200000, maxFeePerGas=${txOverrides.maxFeePerGas ? String(txOverrides.maxFeePerGas) : 'legacy'}`);
 
       const tx = await contract.commitEvidence(waybackUrl, txOverrides);
-      console.log(`[commitEvidence] tx SENT for ${market.market_identifier}: hash=${tx.hash} (attempt ${attempt})`);
+      console.log(`[commitEvidence] tx SENT for ${market.market_identifier}: hash=${tx.hash}, relayer=${relayer.address} (attempt ${attempt})`);
 
       const receipt = await tx.wait();
       const success = receipt?.status === 1;
-      console.log(`[commitEvidence] tx ${success ? 'CONFIRMED' : 'REVERTED'} for ${market.market_identifier}: txHash=${receipt?.hash}, status=${receipt?.status}, gasUsed=${receipt?.gasUsed?.toString()}, blockNumber=${receipt?.blockNumber}, logs=${receipt?.logs?.length ?? 0}, attempt=${attempt}`);
+      console.log(`[commitEvidence] tx ${success ? 'CONFIRMED' : 'REVERTED'} for ${market.market_identifier}: txHash=${receipt?.hash}, status=${receipt?.status}, gasUsed=${receipt?.gasUsed?.toString()}, blockNumber=${receipt?.blockNumber}, logs=${receipt?.logs?.length ?? 0}, relayer=${relayer.address}, attempt=${attempt}`);
 
       if (!success) {
         lastError = `tx_reverted_onchain:status=0,gasUsed=${receipt?.gasUsed},tx=${receipt?.hash}`;
-        if (attempt < maxRetries) {
-          console.warn(`[commitEvidence] on-chain revert for ${market.market_identifier}, retrying...`);
-          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+        if (attempt < maxAttempts) {
+          console.warn(`[commitEvidence] on-chain revert for ${market.market_identifier}, retrying with different relayer...`);
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
           continue;
         }
         return { ok: false, error: lastError };
       }
 
-      console.log(`[commitEvidence] SUCCESS for ${market.market_identifier}: evidenceHash=${evidenceHash}, tx=${receipt?.hash}`);
+      console.log(`[commitEvidence] SUCCESS for ${market.market_identifier}: evidenceHash=${evidenceHash}, tx=${receipt?.hash}, relayer=${relayer.address}`);
       return { ok: true, evidenceHash };
     } catch (err: unknown) {
       const errMsg = String(err);
@@ -638,20 +651,21 @@ async function commitEvidenceOnChain(
 
       const isEstimateGas = errMsg.includes('estimateGas');
       const isNonce = errMsg.includes('nonce');
+      const isReplacementFee = errMsg.includes('replacement fee too low');
       const isRevert = errMsg.includes('CALL_EXCEPTION');
       const isInsufficientFunds = errMsg.includes('insufficient funds');
-      const errorType = isEstimateGas ? 'estimateGas_revert' : isNonce ? 'nonce_conflict' : isRevert ? 'call_exception' : isInsufficientFunds ? 'insufficient_funds' : 'unknown';
+      const errorType = isEstimateGas ? 'estimateGas_revert' : isNonce ? 'nonce_conflict' : isReplacementFee ? 'replacement_fee' : isRevert ? 'call_exception' : isInsufficientFunds ? 'insufficient_funds' : 'unknown';
 
-      console.error(`[commitEvidence] attempt ${attempt}/${maxRetries} EXCEPTION for ${market.market_identifier}: type=${errorType}, signer=${signerAddress}, market=${market.market_address}, error=${errMsg.slice(0, 400)}`);
+      console.error(`[commitEvidence] attempt ${attempt}/${maxAttempts} EXCEPTION for ${market.market_identifier}: type=${errorType}, relayer=${relayer.address}, market=${market.market_address}, error=${errMsg.slice(0, 400)}`);
 
-      if (errMsg.includes('evidence already committed')) {
+      if (errMsg.includes('evidence already committed') || errMsg.includes('LC: evidence already committed')) {
         console.log(`[commitEvidence] RACE OK for ${market.market_identifier} — evidence already committed by another caller`);
         return { ok: true, evidenceHash, alreadyCommitted: true };
       }
 
-      if (errMsg.includes('NotContractOwner')) {
-        console.error(`[commitEvidence] FATAL: NotContractOwner revert — signer ${signerAddress} is not the Diamond owner for ${market.market_address}`);
-        return { ok: false, error: `not_contract_owner:signer=${signerAddress},market=${market.market_address}` };
+      if (errMsg.includes('NotContractOwner') || errMsg.includes('LC: not owner or operator')) {
+        console.error(`[commitEvidence] FATAL: relayer ${relayer.address} not authorized for ${market.market_address}`);
+        return { ok: false, error: `relayer_not_authorized:relayer=${relayer.address},market=${market.market_address}` };
       }
 
       if (errMsg.includes('FunctionDoesNotExist')) {
@@ -659,16 +673,16 @@ async function commitEvidenceOnChain(
         return { ok: false, error: `lifecycle_facet_not_installed:${market.market_address}` };
       }
 
-      if (attempt < maxRetries) {
-        const backoffMs = 1000 * Math.pow(2, attempt - 1);
-        console.warn(`[commitEvidence] retrying in ${backoffMs}ms for ${market.market_identifier}...`);
+      if (attempt < maxAttempts) {
+        const backoffMs = 1000 * attempt;
+        console.warn(`[commitEvidence] retrying in ${backoffMs}ms with different relayer for ${market.market_identifier}...`);
         await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
   }
 
-  console.error(`[commitEvidence] ALL ${maxRetries} ATTEMPTS FAILED for ${market.market_identifier}: signer=${signerAddress}, market=${market.market_address}, lastError=${lastError.slice(0, 500)}`);
-  return { ok: false, error: `commit_evidence_failed_after_${maxRetries}_attempts:${lastError.slice(0, 300)}` };
+  console.error(`[commitEvidence] ALL ${maxAttempts} ATTEMPTS FAILED for ${market.market_identifier}: relayers=[${relayers.map(r => r.address).join(',')}], market=${market.market_address}, lastError=${lastError.slice(0, 500)}`);
+  return { ok: false, error: `commit_evidence_failed_after_${maxAttempts}_attempts:${lastError.slice(0, 300)}` };
 }
 
 async function resolveChallengeOnChain(
