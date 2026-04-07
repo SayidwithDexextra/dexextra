@@ -961,6 +961,44 @@
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "settlementTimestamp",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "parent",
+          "type": "address"
+        },
+        {
+          "internalType": "bool",
+          "name": "devMode",
+          "type": "bool"
+        },
+        {
+          "internalType": "uint256",
+          "name": "rolloverLeadSeconds",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "challengeWindowSeconds",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "lifecycleDurationSeconds",
+          "type": "uint256"
+        }
+      ],
+      "name": "initializeLifecycleWithDuration",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "isInRolloverWindow",
       "outputs": [

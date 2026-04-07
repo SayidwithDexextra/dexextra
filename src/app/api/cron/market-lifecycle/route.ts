@@ -391,9 +391,18 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     });
   }
 
+  // Child settlement = parent settlement + lifecycle duration
+  // This ensures continuous coverage: when parent ends, child begins
   const childSettlementDate = new Date(parentSettlementDate.getTime() + lifecycleDurationMs);
   const childSettlementUnix = Math.floor(childSettlementDate.getTime() / 1000);
-  vStep('[4/7] Compute settlement date', 'success', `${childSettlementDate.toISOString()} (source: ${lifecycleDurationSource})`);
+  
+  // CRITICAL: Calculate the child's lifecycle duration based on when it will be deployed (now)
+  // vs when it will settle. This ensures the on-chain lifecycleDurationSeconds matches the parent.
+  const nowMs = Date.now();
+  const childActualDurationMs = childSettlementDate.getTime() - nowMs;
+  const childActualDurationSec = Math.floor(childActualDurationMs / 1000);
+  
+  vStep('[4/7] Compute settlement date', 'success', `${childSettlementDate.toISOString()} (source: ${lifecycleDurationSource}, parentDuration=${Math.floor(lifecycleDurationMs/1000)}s, childActualDuration=${childActualDurationSec}s)`);
   phaseDivider();
 
   // Inherit the parent's timing config so child markets use the same
@@ -401,8 +410,8 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   // Priority order:
   //   1. Explicit speed_run config from database (if market was created with custom timing)
   //   2. Read from on-chain contract (getRolloverLead, getChallengeWindowDuration)
-  //   3. Let the child market use proportional defaults (not ideal, but works)
-  let parentSpeedRunConfig: { rolloverLeadSeconds: number; challengeWindowSeconds: number } | null = null;
+  //   3. Calculate proportional values based on parent's ACTUAL lifecycle duration
+  let parentSpeedRunConfig: { rolloverLeadSeconds: number; challengeWindowSeconds: number; lifecycleDurationSeconds?: number } | null = null;
 
   // First try database config
   const cfg = existingConfig as any;
@@ -440,8 +449,33 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     }
   }
 
+  // ALWAYS ensure we have explicit timing config for the child
+  // Calculate proportional values based on parent's lifecycle duration
+  const parentDurationSec = Math.floor(lifecycleDurationMs / 1000);
   if (!parentSpeedRunConfig) {
-    log('rollover_timing_inherit', 'start', { source: 'proportional_defaults', reason: 'no explicit config found' });
+    // Rollover lead = duration / 12 (matches Solidity)
+    const rolloverLeadSec = Math.max(60, Math.floor(parentDurationSec / 12));
+    // Challenge window = duration / 365 with minimum 60 seconds
+    const challengeWindowSec = Math.max(60, Math.floor(parentDurationSec / 365));
+    
+    parentSpeedRunConfig = {
+      rolloverLeadSeconds: rolloverLeadSec,
+      challengeWindowSeconds: challengeWindowSec,
+      lifecycleDurationSeconds: parentDurationSec,
+    };
+    log('rollover_timing_inherit', 'success', { 
+      source: 'calculated_from_parent_duration', 
+      parentDurationSec,
+      ...parentSpeedRunConfig 
+    });
+  } else {
+    // Add lifecycle duration to existing config
+    parentSpeedRunConfig.lifecycleDurationSeconds = parentDurationSec;
+    log('rollover_timing_inherit', 'success', { 
+      source: 'existing_config_with_duration', 
+      parentDurationSec,
+      ...parentSpeedRunConfig 
+    });
   }
 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};

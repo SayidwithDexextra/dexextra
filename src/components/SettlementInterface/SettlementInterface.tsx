@@ -649,8 +649,22 @@ export function SettlementInterface({
 
           {/* User Settlement Card */}
           {hasUserTrades && settlementPnl && (() => {
-            const pos = settlementPnl.settledPositions?.[0];
+            const positions = settlementPnl.settledPositions || [];
             const direction = settlementPnl.longCount > 0 ? 'LONG' : 'SHORT';
+            
+            // Aggregate all positions to get total size and weighted average entry price
+            const totalSize = positions.reduce((sum, p) => sum + p.size, 0);
+            const weightedEntryPrice = totalSize > 0
+              ? positions.reduce((sum, p) => sum + (p.entryPrice * p.size), 0) / totalSize
+              : 0;
+            // Exit price is the settlement price, same for all
+            const exitPrice = positions[0]?.exitPrice ?? 0;
+            
+            const aggregatedPos = totalSize > 0 ? {
+              size: totalSize,
+              entryPrice: weightedEntryPrice,
+              exitPrice,
+            } : null;
             return (
               <div 
                 className="bg-[#0d0f14] border rounded-xl overflow-hidden"
@@ -732,9 +746,9 @@ export function SettlementInterface({
                       <div className="font-mono text-[9px] text-[#505672] mb-0.5">
                         {userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : 'Trader'}
                       </div>
-                      {pos && (
+                      {aggregatedPos && (
                         <div className="font-mono text-[11px] text-[#d8dae2]">
-                          {pos.size.toFixed(4)} units
+                          {aggregatedPos.size.toFixed(4)} units
                         </div>
                       )}
                     </div>
@@ -763,15 +777,15 @@ export function SettlementInterface({
                   </div>
 
                   {/* Trade Details */}
-                  {pos && (
+                  {aggregatedPos && (
                     <div className="grid grid-cols-2 gap-2 text-center">
                       <div className="bg-[#14161e] rounded-lg py-2 px-3">
                         <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Entry</div>
-                        <div className="font-mono text-[12px] text-[#d8dae2]">${pos.entryPrice.toFixed(2)}</div>
+                        <div className="font-mono text-[12px] text-[#d8dae2]">${aggregatedPos.entryPrice.toFixed(2)}</div>
                       </div>
                       <div className="bg-[#14161e] rounded-lg py-2 px-3">
                         <div className="font-mono text-[8px] uppercase tracking-wider text-[#505672] mb-1">Exit</div>
-                        <div className="font-mono text-[12px] text-[#d8dae2]">${pos.exitPrice.toFixed(2)}</div>
+                        <div className="font-mono text-[12px] text-[#d8dae2]">${aggregatedPos.exitPrice.toFixed(2)}</div>
                       </div>
                     </div>
                   )}

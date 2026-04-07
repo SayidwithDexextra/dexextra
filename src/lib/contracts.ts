@@ -160,6 +160,7 @@ export const MarketLifecycleFacetABI = [
   "function initializeLifecycle(uint256 settlementTimestamp, address parent) external",
   "function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external",
   "function initializeLifecycleWithTiming(uint256 settlementTimestamp, address parent, bool devMode, uint256 rolloverLeadSeconds, uint256 challengeWindowSeconds) external",
+  "function initializeLifecycleWithDuration(uint256 settlementTimestamp, address parent, bool devMode, uint256 rolloverLeadSeconds, uint256 challengeWindowSeconds, uint256 lifecycleDurationSeconds) external",
   "function proposeSettlementPrice(uint256 price) external",
   "function getProposedSettlementPrice() external view returns (uint256 price, address proposer, bool proposed)",
   "function getRolloverLead() external view returns (uint256)",

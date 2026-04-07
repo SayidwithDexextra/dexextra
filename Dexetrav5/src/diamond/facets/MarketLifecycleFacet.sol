@@ -168,14 +168,14 @@ contract MarketLifecycleFacet {
      * @param parent Address of parent market (zero for genesis)
      */
     function initializeLifecycle(uint256 settlementTimestamp, address parent) external onlyOwner {
-        _initializeLifecycle(settlementTimestamp, parent, false, 0, 0);
+        _initializeLifecycle(settlementTimestamp, parent, false, 0, 0, 0);
     }
 
     /**
      * @notice One-time initializer with explicit dev mode toggle.
      */
     function initializeLifecycleWithMode(uint256 settlementTimestamp, address parent, bool devMode) external onlyOwner {
-        _initializeLifecycle(settlementTimestamp, parent, devMode, 0, 0);
+        _initializeLifecycle(settlementTimestamp, parent, devMode, 0, 0, 0);
     }
 
     /**
@@ -190,7 +190,24 @@ contract MarketLifecycleFacet {
         uint256 rolloverLeadSeconds,
         uint256 challengeWindowSeconds
     ) external onlyOwner {
-        _initializeLifecycle(settlementTimestamp, parent, devMode, rolloverLeadSeconds, challengeWindowSeconds);
+        _initializeLifecycle(settlementTimestamp, parent, devMode, rolloverLeadSeconds, challengeWindowSeconds, 0);
+    }
+
+    /**
+     * @notice One-time initializer with explicit lifecycle duration (for rollover child markets).
+     * @dev Use this for child markets created during rollover to ensure lifecycleDurationSeconds
+     *      matches the parent's duration exactly, rather than being calculated from block.timestamp.
+     * @param lifecycleDurationSeconds Explicit lifecycle duration in seconds (0 = calculate from block.timestamp)
+     */
+    function initializeLifecycleWithDuration(
+        uint256 settlementTimestamp,
+        address parent,
+        bool devMode,
+        uint256 rolloverLeadSeconds,
+        uint256 challengeWindowSeconds,
+        uint256 lifecycleDurationSeconds
+    ) external onlyOwner {
+        _initializeLifecycle(settlementTimestamp, parent, devMode, rolloverLeadSeconds, challengeWindowSeconds, lifecycleDurationSeconds);
     }
 
     function _initializeLifecycle(
@@ -198,13 +215,20 @@ contract MarketLifecycleFacet {
         address parent,
         bool devMode,
         uint256 rolloverLeadSeconds,
-        uint256 challengeWindowSeconds
+        uint256 challengeWindowSeconds,
+        uint256 explicitLifecycleDuration
     ) private {
         require(settlementTimestamp > block.timestamp, "LC: invalid settlement");
         MarketLifecycleStorage.State storage s = MarketLifecycleStorage.state();
         require(s.settlementTimestamp == 0, "LC: already init");
         s.settlementTimestamp = settlementTimestamp;
-        s.lifecycleDurationSeconds = settlementTimestamp - block.timestamp;
+        
+        // Use explicit lifecycle duration if provided, otherwise calculate from block.timestamp
+        if (explicitLifecycleDuration > 0) {
+            s.lifecycleDurationSeconds = explicitLifecycleDuration;
+        } else {
+            s.lifecycleDurationSeconds = settlementTimestamp - block.timestamp;
+        }
 
         if (challengeWindowSeconds > 0) {
             s.challengeWindowDuration = challengeWindowSeconds;

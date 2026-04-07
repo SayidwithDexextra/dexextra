@@ -61,6 +61,7 @@ contract MarketBondManagerV2 {
     // ============ Events ============
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
     event FactoryUpdated(address indexed oldFactory, address indexed newFactory);
+    event VaultUpdated(address indexed oldVault, address indexed newVault);
     event DefaultBondUpdated(uint256 defaultBondAmount, uint256 minBondAmount, uint256 maxBondAmount);
     event PenaltyConfigUpdated(uint256 penaltyBps, address indexed recipient);
     event BondPenaltyCollected(bytes32 indexed marketId, address indexed recipient, uint256 feeAmount);
@@ -77,7 +78,7 @@ contract MarketBondManagerV2 {
     );
 
     // ============ Storage ============
-    ICoreVaultBondLedgerV2 public immutable vault;
+    ICoreVaultBondLedgerV2 public vault;
     address public factory;
     address public owner;
 
@@ -141,6 +142,13 @@ contract MarketBondManagerV2 {
         address old = factory;
         factory = newFactory;
         emit FactoryUpdated(old, newFactory);
+    }
+
+    function setVault(address newVault) external onlyOwner {
+        if (newVault == address(0)) revert InvalidAddress();
+        address old = address(vault);
+        vault = ICoreVaultBondLedgerV2(newVault);
+        emit VaultUpdated(old, newVault);
     }
 
     function setBondConfig(uint256 _defaultBondAmount, uint256 _minBondAmount, uint256 _maxBondAmount) external onlyOwner {
