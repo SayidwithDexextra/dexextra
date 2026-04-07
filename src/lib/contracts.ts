@@ -164,6 +164,7 @@ export const MarketLifecycleFacetABI = [
   "function getProposedSettlementPrice() external view returns (uint256 price, address proposer, bool proposed)",
   "function getRolloverLead() external view returns (uint256)",
   "function getChallengeWindowDuration() external view returns (uint256)",
+  "function getLifecycleDuration() external view returns (uint256)",
   "function startRolloverWindow() external",
   "function startSettlementChallengeWindow() external",
   "function syncLifecycle() external returns (uint8 previousState, uint8 newState)",

@@ -563,6 +563,9 @@ contract MarketLifecycleFacet {
     function getChallengeWindowDuration() external view returns (uint256) {
         return _challengeDuration(MarketLifecycleStorage.state());
     }
+    function getLifecycleDuration() external view returns (uint256) {
+        return _lifecycleDuration(MarketLifecycleStorage.state());
+    }
 
     // === Testing controls (owner-only, safe defaults) ===
     function enableTestingMode(bool enabled) external onlyOwner {

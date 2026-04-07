@@ -322,6 +322,10 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
   const trueBaseSymbol = baseSymbol.replace(/-R\d+$/, '');
 
   // 4. Compute child settlement date (same duration as parent)
+  // Priority order for determining lifecycle duration:
+  //   1. Read lifecycleDurationSeconds from parent market on-chain (most reliable)
+  //   2. Calculate from deployed_at in database
+  //   3. Fall back to 365 days only as last resort
   vStep('[4/7] Compute settlement date', 'start');
   const parentSettlementDate = market.settlement_date ? new Date(market.settlement_date) : null;
   const parentDeployedAt = market.deployed_at ? new Date(market.deployed_at) : null;
@@ -330,34 +334,114 @@ async function handleRollover(marketId: string, marketAddress?: string | null): 
     return { ok: false, error: 'no_parent_settlement_date' };
   }
 
-  let lifecycleDurationMs: number;
-  if (parentDeployedAt) {
-    lifecycleDurationMs = parentSettlementDate.getTime() - parentDeployedAt.getTime();
-  } else {
-    lifecycleDurationMs = 365 * 24 * 60 * 60 * 1000;
+  let lifecycleDurationMs: number = 0;
+  let lifecycleDurationSource = 'fallback_365d';
+
+  // Try to read from on-chain first (most reliable)
+  if (effectiveAddress) {
+    const provider = getRpcProvider();
+    if (provider) {
+      try {
+        const lifecycleContract = new ethers.Contract(effectiveAddress, [
+          'function getLifecycleDuration() external view returns (uint256)',
+          'function getRolloverLead() external view returns (uint256)',
+          'function getChallengeWindowDuration() external view returns (uint256)',
+        ], provider);
+        const onchainDurationSec = await lifecycleContract.getLifecycleDuration();
+        if (onchainDurationSec && Number(onchainDurationSec) > 0) {
+          lifecycleDurationMs = Number(onchainDurationSec) * 1000;
+          lifecycleDurationSource = 'onchain_lifecycleDuration';
+          log('rollover_duration', 'success', {
+            source: lifecycleDurationSource,
+            durationSeconds: Number(onchainDurationSec),
+            durationMs: lifecycleDurationMs,
+          });
+        }
+      } catch (e: any) {
+        log('rollover_duration_onchain', 'error', {
+          error: e?.message || String(e),
+          fallback: 'deployed_at',
+        });
+      }
+    }
   }
-  if (lifecycleDurationMs <= 0) lifecycleDurationMs = 365 * 24 * 60 * 60 * 1000;
+
+  // Fall back to deployed_at calculation if on-chain read failed
+  if (lifecycleDurationSource === 'fallback_365d' && parentDeployedAt) {
+    lifecycleDurationMs = parentSettlementDate.getTime() - parentDeployedAt.getTime();
+    if (lifecycleDurationMs > 0) {
+      lifecycleDurationSource = 'deployed_at';
+      log('rollover_duration', 'success', {
+        source: lifecycleDurationSource,
+        durationMs: lifecycleDurationMs,
+        parentDeployedAt: parentDeployedAt.toISOString(),
+        parentSettlementDate: parentSettlementDate.toISOString(),
+      });
+    }
+  }
+
+  // Final fallback to 365 days (should rarely happen)
+  if (lifecycleDurationSource === 'fallback_365d' || !lifecycleDurationMs || lifecycleDurationMs <= 0) {
+    lifecycleDurationMs = 365 * 24 * 60 * 60 * 1000;
+    lifecycleDurationSource = 'fallback_365d';
+    log('rollover_duration', 'error', {
+      source: lifecycleDurationSource,
+      reason: 'no onchain data and no deployed_at',
+      durationMs: lifecycleDurationMs,
+    });
+  }
 
   const childSettlementDate = new Date(parentSettlementDate.getTime() + lifecycleDurationMs);
   const childSettlementUnix = Math.floor(childSettlementDate.getTime() / 1000);
-  vStep('[4/7] Compute settlement date', 'success', childSettlementDate.toISOString());
+  vStep('[4/7] Compute settlement date', 'success', `${childSettlementDate.toISOString()} (source: ${lifecycleDurationSource})`);
   phaseDivider();
 
-  // Inherit the parent's speed-run / settlement timing config so child
-  // markets use the same settlement window, rollover lead, and challenge
-  // duration as the parent instead of falling back to proportional defaults.
-  const parentSpeedRunConfig = (() => {
-    const cfg = existingConfig as any;
-    if (cfg?.speed_run && (cfg.rollover_lead_seconds || cfg.challenge_window_seconds || cfg.challenge_duration_seconds)) {
-      return {
-        rolloverLeadSeconds: Number(cfg.rollover_lead_seconds) || 0,
-        challengeWindowSeconds: Number(cfg.challenge_window_seconds || cfg.challenge_duration_seconds) || 0,
-      };
+  // Inherit the parent's timing config so child markets use the same
+  // rollover lead and challenge window duration as the parent.
+  // Priority order:
+  //   1. Explicit speed_run config from database (if market was created with custom timing)
+  //   2. Read from on-chain contract (getRolloverLead, getChallengeWindowDuration)
+  //   3. Let the child market use proportional defaults (not ideal, but works)
+  let parentSpeedRunConfig: { rolloverLeadSeconds: number; challengeWindowSeconds: number } | null = null;
+
+  // First try database config
+  const cfg = existingConfig as any;
+  if (cfg?.speed_run && (cfg.rollover_lead_seconds || cfg.challenge_window_seconds || cfg.challenge_duration_seconds)) {
+    parentSpeedRunConfig = {
+      rolloverLeadSeconds: Number(cfg.rollover_lead_seconds) || 0,
+      challengeWindowSeconds: Number(cfg.challenge_window_seconds || cfg.challenge_duration_seconds) || 0,
+    };
+    log('rollover_timing_inherit', 'success', { source: 'database_speed_run', ...parentSpeedRunConfig });
+  }
+
+  // If no database config, try reading from on-chain
+  if (!parentSpeedRunConfig && effectiveAddress) {
+    const provider = getRpcProvider();
+    if (provider) {
+      try {
+        const lifecycleContract = new ethers.Contract(effectiveAddress, [
+          'function getRolloverLead() external view returns (uint256)',
+          'function getChallengeWindowDuration() external view returns (uint256)',
+        ], provider);
+        const [onchainRolloverLead, onchainChallengeWindow] = await Promise.all([
+          lifecycleContract.getRolloverLead(),
+          lifecycleContract.getChallengeWindowDuration(),
+        ]);
+        if (onchainRolloverLead > 0 || onchainChallengeWindow > 0) {
+          parentSpeedRunConfig = {
+            rolloverLeadSeconds: Number(onchainRolloverLead),
+            challengeWindowSeconds: Number(onchainChallengeWindow),
+          };
+          log('rollover_timing_inherit', 'success', { source: 'onchain', ...parentSpeedRunConfig });
+        }
+      } catch (e: any) {
+        log('rollover_timing_onchain', 'error', { error: e?.message || String(e) });
+      }
     }
-    return null;
-  })();
-  if (parentSpeedRunConfig) {
-    log('rollover_speed_run_inherit', 'success', parentSpeedRunConfig);
+  }
+
+  if (!parentSpeedRunConfig) {
+    log('rollover_timing_inherit', 'start', { source: 'proportional_defaults', reason: 'no explicit config found' });
   }
 
   const initialOrder = (typeof market.initial_order === 'object' && market.initial_order) || {};
