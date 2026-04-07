@@ -348,23 +348,31 @@ export async function settlementSyncLifecycleOnChain(
     return { ok: false, error: 'invalid_market_address' };
   }
 
-  const relayers = loadRelayerPoolFromEnv({
+  const allRelayers = loadRelayerPoolFromEnv({
     pool: 'lifecycle_sync',
     globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
     allowFallbackSingleKey: true,
   });
-  if (relayers.length === 0) {
+  
+  // Exclude the admin key from the pool to distribute load across dedicated relayers
+  const adminAddress = process.env.DIAMOND_OWNER_ADDRESS?.toLowerCase() || '';
+  const relayers = allRelayers.filter(r => r.address.toLowerCase() !== adminAddress);
+  
+  // Fall back to full pool if filtering removed all relayers
+  const effectiveRelayers = relayers.length > 0 ? relayers : allRelayers;
+  
+  if (effectiveRelayers.length === 0) {
     console.error(`[syncLifecycle] ABORT: no relayer keys configured (check RELAYER_PRIVATE_KEYS_JSON or RELAYER_PRIVATE_KEY env vars)`);
     return { ok: false, error: 'no_relayer_keys_configured' };
   }
 
-  console.log(`[syncLifecycle] START for ${market.market_identifier}: marketAddress=${market.market_address}, relayerPoolSize=${relayers.length}, relayerAddresses=[${relayers.map(r => r.address).join(',')}]`);
+  console.log(`[syncLifecycle] START for ${market.market_identifier}: marketAddress=${market.market_address}, relayerPoolSize=${effectiveRelayers.length}, relayerAddresses=[${effectiveRelayers.map(r => r.address).join(',')}]`);
 
   const maxAttempts = 2;
   let lastError = '';
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const relayer = relayers[Math.floor(Math.random() * relayers.length)];
+    const relayer = effectiveRelayers[Math.floor(Math.random() * effectiveRelayers.length)];
 
     try {
       const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
@@ -523,11 +531,17 @@ async function commitEvidenceOnChain(
   // commitEvidence() is onlyOwnerOrOperator on the Diamond — use the relayer pool
   // (lifecycle operators) to avoid nonce conflicts when multiple settlements run concurrently.
   // Fall back to ADMIN_PRIVATE_KEY if no relayer pool is configured.
-  const relayers = loadRelayerPoolFromEnv({
+  const allRelayers = loadRelayerPoolFromEnv({
     pool: 'evidence_commit',
     globalJsonEnv: 'RELAYER_PRIVATE_KEYS_JSON',
     allowFallbackSingleKey: true,
   });
+  
+  // Exclude the admin key from the pool to distribute load across dedicated relayers
+  const adminAddress = process.env.DIAMOND_OWNER_ADDRESS?.toLowerCase() || '';
+  const filteredRelayers = allRelayers.filter(r => r.address.toLowerCase() !== adminAddress);
+  const relayers = filteredRelayers.length > 0 ? filteredRelayers : allRelayers;
+  
   if (relayers.length === 0) {
     console.error(`[commitEvidence] ABORT: no relayer keys configured (check RELAYER_PRIVATE_KEYS_JSON or RELAYER_PRIVATE_KEY env vars)`);
     return { ok: false, error: 'no_relayer_keys_configured' };
