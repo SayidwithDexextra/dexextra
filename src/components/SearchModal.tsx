@@ -460,7 +460,14 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
   const modalContent = (
     <div 
       className={isMobile ? 'fixed inset-0 z-[9999]' : `fixed inset-0 z-[9999] flex items-center justify-center p-4 transition-opacity duration-500 ${isAnimating ? 'opacity-100' : 'opacity-0'}`}
-      style={isMobile ? undefined : {
+      style={isMobile ? {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: '100%',
+      } : {
         position: 'fixed',
         top: 0,
         left: 0,
@@ -483,11 +490,13 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         }
         style={isMobile ? {
           width: '100vw',
-          height: '100dvh',
+          height: '100%',
+          minHeight: '100dvh',
           zIndex: 10000,
           transform: isAnimating ? 'translateX(0)' : 'translateX(100%)',
           overflowX: 'hidden',
           overflowY: 'hidden',
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         } : {
           maxWidth: '900px',
           maxHeight: '85vh',
@@ -518,7 +527,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         {/* Inner scrollable area (on mobile: flex-1 with padding; on desktop: direct children) */}
         <div className={isMobile ? 'flex-1 overflow-y-auto' : ''} style={isMobile ? { padding: '12px 16px' } : undefined}>
         {/* Search Input Section */}
-        <div className={isMobile ? 'mb-2' : 'mb-3'}>
+        <div className={isMobile ? 'mb-2 flex-shrink-0' : 'mb-3'}>
           <div className="relative">
             <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-t-fg-muted">
               {searchResults.isLoading ? (
@@ -555,7 +564,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
         </div>
 
         {/* Content Sections */}
-        <div className="search-modal-scroll overflow-y-auto" style={{ maxHeight: isMobile ? 'calc(100dvh - 140px)' : 'calc(85vh - 100px)' }}>
+        <div className={isMobile ? '' : 'search-modal-scroll overflow-y-auto'} style={isMobile ? undefined : { maxHeight: 'calc(85vh - 100px)' }}>
           {/* Error Message */}
           {searchResults.error && (
             <div className="bg-t-card border border-t-stroke rounded-md p-2.5 mb-3">
