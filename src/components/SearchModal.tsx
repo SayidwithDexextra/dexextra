@@ -677,7 +677,12 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                   <div key={groupKey} className="group/card rounded-md border border-t-stroke transition-all duration-200">
                     {/* Primary market row */}
                     <div className="group bg-t-card hover:bg-t-card-hover rounded-t-md transition-all duration-200">
-                      <div className="flex items-center justify-between p-2.5">
+                      <div
+                        className={isMobile
+                          ? 'flex flex-col gap-2 p-2.5'
+                          : 'flex items-center justify-between p-2.5'
+                        }
+                      >
                         <div
                           className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
                           role="button"
@@ -706,24 +711,27 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                               </div>
                             )}
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-left text-[13px] font-medium text-t-fg group-hover:underline">
+                              <div className={isMobile ? 'flex flex-col gap-0.5' : 'flex items-center gap-1.5'}>
+                                <span className="text-left text-[13px] font-medium text-t-fg group-hover:underline truncate">
                                   {market.symbol}
                                 </span>
                                 {hasHistory && group.seriesSlug && (
-                                  <span className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20 flex-shrink-0">
+                                  <span className="text-[9px] text-green-400 bg-green-400/10 px-1 py-0.5 rounded border border-green-400/20 w-fit flex-shrink-0">
                                     {group.seriesSlug}
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] text-t-fg-muted truncate max-w-[200px]">
+                              <div className={`text-[11px] text-t-fg-muted truncate ${isMobile ? 'max-w-full' : 'max-w-[200px]'}`}>
                                 {market.description}
                               </div>
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <div className="text-right min-w-[92px]">
+                        <div className={isMobile
+                          ? 'flex items-center justify-between pl-5'
+                          : 'flex items-center gap-3'
+                        }>
+                          <div className={isMobile ? 'text-left' : 'text-right min-w-[92px]'}>
                             <div className="text-[11px] text-t-fg font-mono">
                               {formatUsdNumber(market.initial_price, market.price_decimals ?? 4)}
                             </div>
@@ -733,8 +741,8 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                               {deploymentStatus || '—'}
                             </div>
                           </div>
-                          <div className="w-px h-6 bg-t-stroke" />
-                          <div className="text-right min-w-[110px] max-w-[160px]">
+                          {!isMobile && <div className="w-px h-6 bg-t-stroke" />}
+                          <div className={isMobile ? 'text-right' : 'text-right min-w-[110px] max-w-[160px]'}>
                             <div
                               className="text-[11px] text-t-fg-sub leading-none truncate"
                               title={metricSource.url || undefined}
@@ -755,7 +763,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                           </div>
                           {hasHistory && hasUnsettledHistory && (
                             <>
-                              <div className="w-px h-6 bg-t-stroke" />
+                              {!isMobile && <div className="w-px h-6 bg-t-stroke" />}
                               <div className="flex items-center gap-1 text-[9px] text-yellow-400 bg-yellow-400/10 px-1.5 py-0.5 rounded border border-yellow-400/20">
                                 <div className="w-1 h-1 rounded-full bg-yellow-400 animate-pulse" />
                                 <span>Rolling over</span>
@@ -764,7 +772,7 @@ export default function SearchModal({ isOpen, onClose }: SearchModalProps) {
                           )}
                           {hasHistory && !hasUnsettledHistory && (
                             <>
-                              <div className="w-px h-6 bg-t-stroke" />
+                              {!isMobile && <div className="w-px h-6 bg-t-stroke" />}
                               <button
                                 onClick={(e) => { e.stopPropagation(); toggleSeriesExpand(groupKey) }}
                                 className="flex items-center gap-1 text-[10px] text-t-fg-muted hover:text-t-fg px-1.5 py-1 rounded hover:bg-t-skeleton transition-all duration-200"

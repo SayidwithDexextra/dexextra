@@ -354,25 +354,42 @@ export async function settlementSyncLifecycleOnChain(
     allowFallbackSingleKey: true,
   });
   
-  // Exclude the admin key from the pool to distribute load across dedicated relayers
+  // Separate admin key (big block wallet) from regular relayers (small block)
   const adminAddress = process.env.DIAMOND_OWNER_ADDRESS?.toLowerCase() || '';
-  const relayers = allRelayers.filter(r => r.address.toLowerCase() !== adminAddress);
+  const adminKey = process.env.ADMIN_PRIVATE_KEY || '';
+  const smallBlockRelayers = allRelayers.filter(r => r.address.toLowerCase() !== adminAddress);
+  const bigBlockRelayer = adminKey ? { 
+    id: 'admin:bigblock', 
+    pool: 'lifecycle_sync', 
+    address: adminAddress ? ethers.getAddress(adminAddress) : '', 
+    privateKey: adminKey 
+  } : null;
   
-  // Fall back to full pool if filtering removed all relayers
-  const effectiveRelayers = relayers.length > 0 ? relayers : allRelayers;
+  // Use small block relayers first, fall back to all if none available
+  const effectiveRelayers = smallBlockRelayers.length > 0 ? smallBlockRelayers : allRelayers;
   
   if (effectiveRelayers.length === 0) {
     console.error(`[syncLifecycle] ABORT: no relayer keys configured (check RELAYER_PRIVATE_KEYS_JSON or RELAYER_PRIVATE_KEY env vars)`);
     return { ok: false, error: 'no_relayer_keys_configured' };
   }
 
-  console.log(`[syncLifecycle] START for ${market.market_identifier}: marketAddress=${market.market_address}, relayerPoolSize=${effectiveRelayers.length}, relayerAddresses=[${effectiveRelayers.map(r => r.address).join(',')}]`);
+  console.log(`[syncLifecycle] START for ${market.market_identifier}: marketAddress=${market.market_address}, relayerPoolSize=${effectiveRelayers.length}, bigBlockAvailable=${!!bigBlockRelayer}, relayerAddresses=[${effectiveRelayers.map(r => r.address).join(',')}]`);
 
   const maxAttempts = 2;
   let lastError = '';
+  let useBigBlock = false;
+  const BIG_BLOCK_GAS_THRESHOLD = 500_000n; // If estimated gas > 500k, use big block wallet
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const relayer = effectiveRelayers[Math.floor(Math.random() * effectiveRelayers.length)];
+  for (let attempt = 1; attempt <= maxAttempts + 1; attempt++) {
+    // On final attempt (attempt 3), try the big block admin wallet if available
+    const isBigBlockAttempt = attempt > maxAttempts && bigBlockRelayer && bigBlockRelayer.address;
+    const relayer = isBigBlockAttempt 
+      ? bigBlockRelayer!
+      : effectiveRelayers[Math.floor(Math.random() * effectiveRelayers.length)];
+    
+    if (isBigBlockAttempt) {
+      console.log(`[syncLifecycle] attempting BIG BLOCK fallback for ${market.market_identifier} with admin wallet ${relayer.address}`);
+    }
 
     try {
       const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
@@ -386,7 +403,7 @@ export async function settlementSyncLifecycleOnChain(
       // Pre-flight 1: verify lifecycle facet is reachable via a cheap view call
       try {
         const lifecycleState = await contract.getLifecycleState();
-        console.log(`[syncLifecycle] pre-flight getLifecycleState for ${market.market_identifier}: state=${lifecycleState}, attempt=${attempt}`);
+        console.log(`[syncLifecycle] pre-flight getLifecycleState for ${market.market_identifier}: state=${lifecycleState}, attempt=${attempt}${isBigBlockAttempt ? ' (bigblock)' : ''}`);
       } catch (viewErr: unknown) {
         const viewMsg = String(viewErr);
         console.warn(`[syncLifecycle] pre-flight getLifecycleState FAILED for ${market.market_identifier} (attempt ${attempt}): ${viewMsg.slice(0, 250)}`);
@@ -400,9 +417,10 @@ export async function settlementSyncLifecycleOnChain(
       try {
         const balance = await provider.getBalance(relayer.address);
         const balanceEth = ethers.formatEther(balance);
-        console.log(`[syncLifecycle] relayer balance for ${market.market_identifier}: ${balanceEth} ETH, relayer=${relayer.address}, attempt=${attempt}`);
+        console.log(`[syncLifecycle] relayer balance for ${market.market_identifier}: ${balanceEth} ETH, relayer=${relayer.address}, attempt=${attempt}${isBigBlockAttempt ? ' (bigblock)' : ''}`);
         if (balance === 0n) {
           console.error(`[syncLifecycle] FATAL: relayer ${relayer.address} has 0 ETH — cannot pay gas`);
+          if (!isBigBlockAttempt && attempt < maxAttempts) continue;
           return { ok: false, error: `relayer_zero_balance:${relayer.address}` };
         }
       } catch (balErr) {
@@ -431,9 +449,26 @@ export async function settlementSyncLifecycleOnChain(
         console.warn(`[syncLifecycle] simulation unclear, proceeding with explicit gasLimit for ${market.market_identifier}`);
       }
 
+      // Pre-flight 4: estimate gas and check if we need big block wallet
+      let estimatedGas = 1_000_000n;
+      try {
+        estimatedGas = await contract.syncLifecycle.estimateGas();
+        console.log(`[syncLifecycle] gas estimate for ${market.market_identifier}: ${estimatedGas.toString()}`);
+        
+        // If gas is high and we have a big block wallet available, switch to it
+        if (!isBigBlockAttempt && estimatedGas > BIG_BLOCK_GAS_THRESHOLD && bigBlockRelayer && bigBlockRelayer.address) {
+          console.log(`[syncLifecycle] gas estimate ${estimatedGas} > ${BIG_BLOCK_GAS_THRESHOLD} threshold, switching to big block wallet for ${market.market_identifier}`);
+          useBigBlock = true;
+          continue; // Skip to next iteration which will use big block
+        }
+      } catch (gasErr) {
+        console.warn(`[syncLifecycle] gas estimation failed (using default): ${String(gasErr).slice(0, 150)}`);
+      }
+
       const feeData = await provider.getFeeData();
+      const gasLimit = (estimatedGas * 130n) / 100n; // 30% buffer
       const txOverrides: Record<string, unknown> = {
-        gasLimit: 1_000_000n,
+        gasLimit: gasLimit > 1_000_000n ? gasLimit : 1_000_000n,
       };
       if (feeData.maxFeePerGas) {
         const maxFee = feeData.maxFeePerGas * 120n / 100n;
@@ -446,10 +481,10 @@ export async function settlementSyncLifecycleOnChain(
         txOverrides.maxPriorityFeePerGas = priorityFee;
       }
 
-      console.log(`[syncLifecycle] sending tx for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}): relayer=${relayer.address}, gasLimit=1000000, maxFeePerGas=${txOverrides.maxFeePerGas ? String(txOverrides.maxFeePerGas) : 'legacy'}`);
+      console.log(`[syncLifecycle] sending tx for ${market.market_identifier} (attempt ${attempt}/${maxAttempts}${isBigBlockAttempt ? ' BIGBLOCK' : ''}): relayer=${relayer.address}, gasLimit=${txOverrides.gasLimit}, maxFeePerGas=${txOverrides.maxFeePerGas ? String(txOverrides.maxFeePerGas) : 'legacy'}`);
 
       const tx = await contract.syncLifecycle(txOverrides);
-      console.log(`[syncLifecycle] tx SENT for ${market.market_identifier}: hash=${tx.hash}, relayer=${relayer.address} (attempt ${attempt})`);
+      console.log(`[syncLifecycle] tx SENT for ${market.market_identifier}: hash=${tx.hash}, relayer=${relayer.address} (attempt ${attempt}${isBigBlockAttempt ? ' bigblock' : ''})`);
 
       const receipt = await tx.wait();
       const success = receipt?.status === 1;
@@ -467,7 +502,7 @@ export async function settlementSyncLifecycleOnChain(
         } catch {}
       }
 
-      console.log(`[syncLifecycle] tx ${success ? 'CONFIRMED' : 'REVERTED'} for ${market.market_identifier}: txHash=${receipt?.hash}, status=${receipt?.status}, gasUsed=${receipt?.gasUsed?.toString()}, blockNumber=${receipt?.blockNumber}, previousState=${previousState}, newState=${newState}, logs=${receipt?.logs?.length ?? 0}, attempt=${attempt}`);
+      console.log(`[syncLifecycle] tx ${success ? 'CONFIRMED' : 'REVERTED'} for ${market.market_identifier}: txHash=${receipt?.hash}, status=${receipt?.status}, gasUsed=${receipt?.gasUsed?.toString()}, blockNumber=${receipt?.blockNumber}, previousState=${previousState}, newState=${newState}, logs=${receipt?.logs?.length ?? 0}, attempt=${attempt}${isBigBlockAttempt ? ' (bigblock)' : ''}`);
 
       if (!success) {
         lastError = `tx_reverted_onchain:status=0,gasUsed=${receipt?.gasUsed},tx=${receipt?.hash}`;
@@ -476,10 +511,15 @@ export async function settlementSyncLifecycleOnChain(
           await new Promise((r) => setTimeout(r, 2000 * attempt));
           continue;
         }
+        // Try big block on revert if not already using it
+        if (!isBigBlockAttempt && bigBlockRelayer && bigBlockRelayer.address) {
+          console.warn(`[syncLifecycle] on-chain revert, trying big block wallet...`);
+          continue;
+        }
         return { ok: false, error: lastError };
       }
 
-      console.log(`[syncLifecycle] SUCCESS for ${market.market_identifier}: previousState=${previousState}, newState=${newState}, tx=${receipt?.hash}`);
+      console.log(`[syncLifecycle] SUCCESS for ${market.market_identifier}: previousState=${previousState}, newState=${newState}, tx=${receipt?.hash}${isBigBlockAttempt ? ' (bigblock)' : ''}`);
       return { ok: true, previousState, newState };
     } catch (err: unknown) {
       const errMsg = String(err);
@@ -489,9 +529,10 @@ export async function settlementSyncLifecycleOnChain(
       const isNonce = errMsg.includes('nonce');
       const isRevert = errMsg.includes('CALL_EXCEPTION');
       const isInsufficientFunds = errMsg.includes('insufficient funds');
+      const isGasRelated = isEstimateGas || isInsufficientFunds || errMsg.includes('gas') || errMsg.includes('underpriced');
       const errorType = isEstimateGas ? 'estimateGas_revert' : isNonce ? 'nonce_conflict' : isRevert ? 'call_exception' : isInsufficientFunds ? 'insufficient_funds' : 'unknown';
 
-      console.error(`[syncLifecycle] attempt ${attempt}/${maxAttempts} EXCEPTION for ${market.market_identifier}: type=${errorType}, relayer=${relayer.address}, market=${market.market_address}, error=${errMsg.slice(0, 400)}`);
+      console.error(`[syncLifecycle] attempt ${attempt}/${maxAttempts}${isBigBlockAttempt ? ' (bigblock)' : ''} EXCEPTION for ${market.market_identifier}: type=${errorType}, relayer=${relayer.address}, market=${market.market_address}, error=${errMsg.slice(0, 400)}`);
 
       if (errMsg.includes('FunctionDoesNotExist')) {
         console.error(`[syncLifecycle] FATAL: lifecycle facet missing on Diamond ${market.market_address}`);
@@ -502,7 +543,14 @@ export async function settlementSyncLifecycleOnChain(
         return { ok: false, error: `lifecycle_not_initialized:${market.market_address}` };
       }
 
-      if (attempt < maxAttempts) {
+      // If gas-related error and we have big block wallet, try it
+      if (!isBigBlockAttempt && isGasRelated && bigBlockRelayer && bigBlockRelayer.address) {
+        console.warn(`[syncLifecycle] gas-related error, trying big block wallet...`);
+        useBigBlock = true;
+        continue;
+      }
+
+      if (attempt < maxAttempts || (!isBigBlockAttempt && bigBlockRelayer && bigBlockRelayer.address)) {
         const backoffMs = 2000 * attempt;
         console.warn(`[syncLifecycle] retrying in ${backoffMs}ms for ${market.market_identifier}...`);
         await new Promise((r) => setTimeout(r, backoffMs));
@@ -510,8 +558,9 @@ export async function settlementSyncLifecycleOnChain(
     }
   }
 
-  console.error(`[syncLifecycle] ALL ${maxAttempts} ATTEMPTS FAILED for ${market.market_identifier}: relayers=[${relayers.map(r => r.address).join(',')}], market=${market.market_address}, lastError=${lastError.slice(0, 500)}`);
-  return { ok: false, error: `sync_lifecycle_failed_after_${maxAttempts}_attempts:${lastError.slice(0, 500)}` };
+  const totalAttempts = bigBlockRelayer && bigBlockRelayer.address ? maxAttempts + 1 : maxAttempts;
+  console.error(`[syncLifecycle] ALL ${totalAttempts} ATTEMPTS FAILED for ${market.market_identifier}: relayers=[${effectiveRelayers.map(r => r.address).join(',')}], bigBlockUsed=${useBigBlock}, market=${market.market_address}, lastError=${lastError.slice(0, 500)}`);
+  return { ok: false, error: `sync_lifecycle_failed_after_${totalAttempts}_attempts:${lastError.slice(0, 500)}` };
 }
 
 async function commitEvidenceOnChain(
