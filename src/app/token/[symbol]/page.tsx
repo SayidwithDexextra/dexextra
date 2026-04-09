@@ -1579,6 +1579,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                     height="100%"
                     defaultView="orderbook"
                     hideViewToggle
+                    useLightweightState
                   />
                 }
                 tradesContent={
@@ -1723,6 +1724,7 @@ function TokenPageContent({ symbol, tradingAction, onSwitchNetwork }: { symbol: 
                   marketIdentifier={(md.market as any)?.market_identifier || symbol}
                   orderBookAddress={(md as any)?.orderBookAddress || (md.market as any)?.market_address || undefined}
                   height="100%"
+                  useLightweightState
                 />
               </div>
               <div className="w-80 flex flex-col gap-1 h-full">

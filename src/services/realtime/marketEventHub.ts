@@ -66,6 +66,33 @@ const ORDERBOOK_EVENTS_ABI = [
     ],
   },
   {
+    // OrderRested is emitted ONLY when an order actually rests on the book.
+    // This is the definitive event for UI order book state updates.
+    // Market orders that fully fill do NOT emit this event.
+    // Limit orders that fully cross (fill immediately) do NOT emit this event.
+    type: 'event',
+    name: 'OrderRested',
+    inputs: [
+      { indexed: true, name: 'orderId', type: 'uint256' },
+      { indexed: true, name: 'trader', type: 'address' },
+      { indexed: false, name: 'price', type: 'uint256' },
+      { indexed: false, name: 'amount', type: 'uint256' },
+      { indexed: false, name: 'isBuy', type: 'bool' },
+      { indexed: false, name: 'isMarginOrder', type: 'bool' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'OrderCancelled',
+    inputs: [
+      { indexed: true, name: 'orderId', type: 'uint256' },
+      { indexed: true, name: 'trader', type: 'address' },
+      { indexed: false, name: 'price', type: 'uint256' },
+      { indexed: false, name: 'amount', type: 'uint256' },
+      { indexed: false, name: 'isBuy', type: 'bool' },
+    ],
+  },
+  {
     type: 'event',
     name: 'TradeExecutionCompleted',
     inputs: [
@@ -283,6 +310,8 @@ function emit(u: Underlying, evt: MarketEvent) {
     } catch {}
     try {
       if (evt.type === 'order-placed') sub.onOrdersChanged?.();
+      if (evt.type === 'order-rested') sub.onOrdersChanged?.();
+      if (evt.type === 'order-cancelled') sub.onOrdersChanged?.();
       if (evt.type === 'trade-executed') sub.onTradesChanged?.();
       if (evt.type === 'settlement-update') sub.onSettlementChanged?.();
     } catch {}
@@ -346,20 +375,125 @@ function emit(u: Underlying, evt: MarketEvent) {
             }
           }));
         }
+        // OrderRested is the definitive event for UI order book state - order actually rested on book
+        if (evt.type === 'order-rested') {
+          const args: any = (evt.payload as any)?.args || {};
+          const orderId =
+            args?.orderId !== undefined ? String(args.orderId)
+            : (evt.payload as any)?.orderId !== undefined ? String((evt.payload as any).orderId)
+            : undefined;
+          const trader =
+            args?.trader !== undefined ? String(args.trader)
+            : (evt.payload as any)?.trader !== undefined ? String((evt.payload as any).trader)
+            : undefined;
+          const price =
+            args?.price !== undefined ? String(args.price)
+            : (evt.payload as any)?.price !== undefined ? String((evt.payload as any).price)
+            : undefined;
+          const amount =
+            args?.amount !== undefined ? String(args.amount)
+            : (evt.payload as any)?.amount !== undefined ? String((evt.payload as any).amount)
+            : undefined;
+          const isBuy =
+            args?.isBuy !== undefined ? Boolean(args.isBuy)
+            : (evt.payload as any)?.isBuy !== undefined ? Boolean((evt.payload as any).isBuy)
+            : undefined;
+          const isMarginOrder =
+            args?.isMarginOrder !== undefined ? Boolean(args.isMarginOrder)
+            : undefined;
+
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} dispatch:ordersUpdated (OrderRested)`, {
+            traceId,
+            symbol: String(evt.symbol || '').toUpperCase(),
+            source: evt.source,
+            txHash: (evt.payload as any)?.transactionHash,
+            blockNumber: (evt.payload as any)?.blockNumber,
+          });
+          window.dispatchEvent(new CustomEvent('ordersUpdated', {
+            detail: {
+              traceId,
+              symbol: evt.symbol,
+              source: evt.source,
+              txHash: (evt.payload as any)?.transactionHash,
+              blockNumber: (evt.payload as any)?.blockNumber,
+              timestamp: evt.timestamp,
+              // OrderRested is the definitive event - this order IS resting on the book
+              eventType: 'OrderRested',
+              orderId,
+              trader,
+              price,
+              amount,
+              isBuy,
+              isMarginOrder,
+            }
+          }));
+        }
+        if (evt.type === 'order-cancelled') {
+          const args: any = (evt.payload as any)?.args || {};
+          const orderId =
+            args?.orderId !== undefined ? String(args.orderId)
+            : (evt.payload as any)?.orderId !== undefined ? String((evt.payload as any).orderId)
+            : undefined;
+          const trader =
+            args?.trader !== undefined ? String(args.trader)
+            : (evt.payload as any)?.trader !== undefined ? String((evt.payload as any).trader)
+            : undefined;
+          const price =
+            args?.price !== undefined ? String(args.price)
+            : (evt.payload as any)?.price !== undefined ? String((evt.payload as any).price)
+            : undefined;
+          const amount =
+            args?.amount !== undefined ? String(args.amount)
+            : (evt.payload as any)?.amount !== undefined ? String((evt.payload as any).amount)
+            : undefined;
+          const isBuy =
+            args?.isBuy !== undefined ? Boolean(args.isBuy)
+            : (evt.payload as any)?.isBuy !== undefined ? Boolean((evt.payload as any).isBuy)
+            : undefined;
+
+          // eslint-disable-next-line no-console
+          console.log(`${UI_UPDATE_PREFIX} dispatch:ordersUpdated (cancelled)`, {
+            traceId,
+            symbol: String(evt.symbol || '').toUpperCase(),
+            source: evt.source,
+            txHash: (evt.payload as any)?.transactionHash,
+            blockNumber: (evt.payload as any)?.blockNumber,
+          });
+          window.dispatchEvent(new CustomEvent('ordersUpdated', {
+            detail: {
+              traceId,
+              symbol: evt.symbol,
+              source: evt.source,
+              txHash: (evt.payload as any)?.transactionHash,
+              blockNumber: (evt.payload as any)?.blockNumber,
+              timestamp: evt.timestamp,
+              eventType: 'OrderCancelled',
+              orderId,
+              trader,
+              price,
+              amount,
+              isBuy,
+            }
+          }));
+        }
         if (evt.type === 'trade-executed') {
           const args: any = (evt.payload as any)?.args || {};
           let buyer: string | undefined = undefined;
           let seller: string | undefined = undefined;
           let price: string | undefined = undefined;
           let amount: string | undefined = undefined;
+          let isBuyOrder: boolean | undefined = undefined;
           try {
             if (args?.buyer && args?.seller) {
               buyer = String(args.buyer);
               seller = String(args.seller);
               price = args?.price !== undefined ? String(args.price) : undefined;
               amount = args?.amount !== undefined ? String(args.amount) : undefined;
+              // For TradeExecutionCompleted, isBuy refers to the maker order's side
+              isBuyOrder = args?.isBuy !== undefined ? Boolean(args.isBuy) : undefined;
             } else if (args?.maker && args?.taker) {
-              const isBuyOrder = Boolean(args?.isBuyOrder);
+              isBuyOrder = Boolean(args?.isBuyOrder);
               const maker = String(args.maker);
               const taker = String(args.taker);
               buyer = isBuyOrder ? maker : taker;
@@ -390,6 +524,56 @@ function emit(u: Underlying, evt: MarketEvent) {
               amount,
             }
           }));
+          
+          // Also dispatch ordersUpdated for trade fills so the lightweight order book can update
+          // This removes the filled liquidity from the book
+          // TradeExecutionCompleted doesn't include isBuy, so we dispatch TWO events:
+          // one for bids (buyer is maker) and one for asks (seller is maker)
+          // The lightweight store will handle removing liquidity from whichever side has it
+          if (price !== undefined && amount !== undefined) {
+            // eslint-disable-next-line no-console
+            console.log(`${UI_UPDATE_PREFIX} dispatch:ordersUpdated (trade fill - both sides)`, {
+              traceId,
+              symbol: String(evt.symbol || '').toUpperCase(),
+              source: evt.source,
+              price,
+              amount,
+              buyer,
+              seller,
+            });
+            // Dispatch for the buy side (buyer was maker with resting bid)
+            window.dispatchEvent(new CustomEvent('ordersUpdated', {
+              detail: {
+                traceId: traceId + ':bid',
+                symbol: evt.symbol,
+                source: evt.source,
+                txHash: (evt.payload as any)?.transactionHash,
+                blockNumber: (evt.payload as any)?.blockNumber,
+                timestamp: evt.timestamp,
+                eventType: 'TradeExecutionCompleted',
+                isBuy: true,
+                price,
+                amount,
+                trader: buyer,
+              }
+            }));
+            // Dispatch for the sell side (seller was maker with resting ask)
+            window.dispatchEvent(new CustomEvent('ordersUpdated', {
+              detail: {
+                traceId: traceId + ':ask',
+                symbol: evt.symbol,
+                source: evt.source,
+                txHash: (evt.payload as any)?.transactionHash,
+                blockNumber: (evt.payload as any)?.blockNumber,
+                timestamp: evt.timestamp,
+                eventType: 'TradeExecutionCompleted',
+                isBuy: false,
+                price,
+                amount,
+                trader: seller,
+              }
+            }));
+          }
         }
         if (evt.type === 'settlement-update') {
           const args: any = (evt.payload as any)?.args || {};
@@ -482,6 +666,63 @@ function ensureUnderlying(symbol: string, address: Address): Underlying {
     u.unsubs.push(() => {
       try {
         unwatchOrderPlaced?.();
+      } catch {}
+    });
+
+    // OrderRested watcher - emitted ONLY when an order rests on the book
+    // This is the definitive event for UI order book state updates
+    const unwatchOrderRested = wsClient.watchContractEvent({
+      address,
+      abi: ORDERBOOK_EVENTS_ABI as any,
+      eventName: 'OrderRested',
+      onLogs: (logs: any[]) => {
+        logs?.forEach((log) =>
+          emit(u, {
+            type: 'order-rested',
+            source: 'onchain',
+            symbol,
+            address,
+            timestamp: nowMs(),
+            payload: log,
+          })
+        );
+      },
+      onError: (err: any) => {
+        // eslint-disable-next-line no-console
+        console.error('[MarketEventHub] OrderRested watcher error', err);
+      },
+    });
+    u.unsubs.push(() => {
+      try {
+        unwatchOrderRested?.();
+      } catch {}
+    });
+
+    // OrderCancelled watcher for real-time cancellation updates
+    const unwatchOrderCancelled = wsClient.watchContractEvent({
+      address,
+      abi: ORDERBOOK_EVENTS_ABI as any,
+      eventName: 'OrderCancelled',
+      onLogs: (logs: any[]) => {
+        logs?.forEach((log) =>
+          emit(u, {
+            type: 'order-cancelled',
+            source: 'onchain',
+            symbol,
+            address,
+            timestamp: nowMs(),
+            payload: log,
+          })
+        );
+      },
+      onError: (err: any) => {
+        // eslint-disable-next-line no-console
+        console.error('[MarketEventHub] OrderCancelled watcher error', err);
+      },
+    });
+    u.unsubs.push(() => {
+      try {
+        unwatchOrderCancelled?.();
       } catch {}
     });
 
@@ -581,24 +822,121 @@ function ensureUnderlying(symbol: string, address: Address): Underlying {
         });
       } catch {}
     }
-  } catch (e) {
-    // WS not available or failed to init; ignore (polling covers data correctness)
+  } catch (e: any) {
+    // WS not available or failed to init; set up polling fallback
     logOnce(u, 'didLogOnchainSkipped', 'subscribe:onchain:skipped', {
       reason: 'ws_unavailable_or_failed',
       symbol: String(symbol || '').toUpperCase(),
       address: String(address).toLowerCase(),
+      error: e?.message || String(e),
     });
     // eslint-disable-next-line no-console
-    console.log(`${UI_UPDATE_PREFIX} hub:onchain:skipped`, {
+    console.log(`${UI_UPDATE_PREFIX} hub:onchain:skipped - setting up polling fallback`, {
       reason: 'ws_unavailable_or_failed',
       symbol: String(symbol || '').toUpperCase(),
       address: String(address).toLowerCase(),
       chainId: Number(CHAIN_CONFIG.chainId || 0),
+      error: e?.message || String(e),
     });
+    
+    // Set up polling fallback for chains that don't support eth_subscribe
+    setupPollingFallback(u, symbol, address);
   }
 
   hub.set(key, u);
   return u;
+}
+
+// Polling fallback for chains that don't support WebSocket subscriptions
+async function setupPollingFallback(u: Underlying, symbol: string, address: Address) {
+  const { createPublicClient, http } = await import('viem');
+  const { CHAIN_CONFIG } = await import('@/lib/contractConfig');
+  
+  let lastBlockNumber = 0n;
+  const POLL_INTERVAL = 3000; // 3 seconds
+  
+  const poll = async () => {
+    try {
+      const client = createPublicClient({
+        transport: http(CHAIN_CONFIG.rpcUrl),
+      });
+      
+      const currentBlock = await client.getBlockNumber();
+      if (lastBlockNumber === 0n) {
+        lastBlockNumber = currentBlock - 5n; // Start from 5 blocks ago
+      }
+      
+      if (currentBlock <= lastBlockNumber) return;
+      
+      // Fetch logs for order events
+      const logs = await client.getLogs({
+        address,
+        events: ORDERBOOK_EVENTS_ABI as any,
+        fromBlock: lastBlockNumber + 1n,
+        toBlock: currentBlock,
+      });
+      
+      lastBlockNumber = currentBlock;
+      
+      if (logs.length > 0) {
+        console.log(`[MarketEventHub:Polling] Got ${logs.length} events for ${symbol}`);
+      }
+      
+      for (const log of logs) {
+        const eventName = (log as any).eventName;
+        if (eventName === 'OrderPlaced') {
+          emit(u, {
+            type: 'order-placed',
+            source: 'onchain',
+            symbol,
+            address,
+            timestamp: nowMs(),
+            payload: log,
+          });
+        } else if (eventName === 'OrderRested') {
+          emit(u, {
+            type: 'order-rested',
+            source: 'onchain',
+            symbol,
+            address,
+            timestamp: nowMs(),
+            payload: log,
+          });
+        } else if (eventName === 'OrderCancelled') {
+          emit(u, {
+            type: 'order-cancelled',
+            source: 'onchain',
+            symbol,
+            address,
+            timestamp: nowMs(),
+            payload: log,
+          });
+        } else if (eventName === 'TradeExecutionCompleted' || eventName === 'TradeExecuted') {
+          emit(u, {
+            type: 'trade-executed',
+            source: 'onchain',
+            symbol,
+            address,
+            timestamp: nowMs(),
+            payload: log,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[MarketEventHub:Polling] Error:', err);
+    }
+  };
+  
+  // Start polling
+  const intervalId = setInterval(poll, POLL_INTERVAL);
+  poll(); // Initial poll
+  
+  // Add cleanup
+  u.unsubs.push(() => {
+    clearInterval(intervalId);
+  });
+  
+  console.log(`[MarketEventHub:Polling] Started polling for ${symbol} at ${address} every ${POLL_INTERVAL}ms`);
 }
 
 /**

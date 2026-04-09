@@ -510,6 +510,16 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
       if (fetchInProgressRef.current) {
         return;
       }
+      
+      // Throttle: prevent fetches within 1 second of each other (use lastRealtimeRefreshRef)
+      const now = Date.now();
+      const MIN_FETCH_INTERVAL_MS = 1000;
+      if (now - lastRealtimeRefreshRef.current < MIN_FETCH_INTERVAL_MS) {
+        // Skip this fetch, too soon after last one
+        return;
+      }
+      lastRealtimeRefreshRef.current = now;
+      
       fetchInProgressRef.current = true;
       try {
         // If no symbol and no valid explicit address is provided, do nothing until inputs are ready
@@ -883,6 +893,8 @@ export function useOrderBookContractData(symbol: string, _options?: UseOBOptions
       void fetchData();
     };
 
+    // Reset throttle timestamp on effect re-run to allow immediate first fetch
+    lastRealtimeRefreshRef.current = 0;
     fetchData();
 
     // Log mode: this hook operates read-only without requiring a wallet

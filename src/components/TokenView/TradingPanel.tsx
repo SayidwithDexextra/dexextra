@@ -18,6 +18,7 @@ import { submitSessionTrade, isSessionErrorMessage, ensureGaslessChain } from '@
 import { useSession } from '@/contexts/SessionContext';
 import WalletModal from '@/components/WalletModal';
 import { OrderFillLoadingModal, type OrderFillStatus } from '@/components/TokenView/OrderFillLoadingModal';
+import { dispatchOptimisticOrderEvent } from '@/hooks/useLightweightOrderBook';
 
 interface TradingPanelProps {
   tokenData: TokenData;
@@ -1686,6 +1687,28 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
 
         try {
           console.log('[UpGas][UI] market submit: using active session', { sessionId: activeSessionId });
+
+          // Optimistic UI update: simulate trade immediately for instant feedback
+          // Use `quantity` (token units) not `amount` (which may be USD)
+          const estimatedPrice = isBuy ? (md.bestAsk || md.markPrice || 0) : (md.bestBid || md.markPrice || 0);
+          const optimisticStartTime = Date.now();
+          console.log('[OptimisticUI] Pre-check:', { 
+            estimatedPrice, 
+            hasSimulateFunc: !!md.simulateOptimisticTrade, 
+            quantity,
+            willSimulate: estimatedPrice > 0 && !!md.simulateOptimisticTrade && quantity > 0,
+            timestamp: optimisticStartTime,
+          });
+          if (estimatedPrice > 0 && md.simulateOptimisticTrade && quantity > 0) {
+            const optResult = md.simulateOptimisticTrade(isBuy ? 'buy' : 'sell', 'market', estimatedPrice, quantity);
+            console.log('[OptimisticUI] Market order simulated:', optResult, { 
+              inputAmount: amount, 
+              tokenQuantity: quantity, 
+              isUsdMode,
+              elapsedMs: Date.now() - optimisticStartTime,
+            });
+          }
+
             const r = await submitSessionTrade({
               method: 'sessionPlaceMarginMarket',
               orderBook: obAddrForGasless!,
@@ -1727,6 +1750,8 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
               // Trigger immediate Order History refresh (Supabase write happens server-side before this returns)
               window.dispatchEvent(new CustomEvent('orderHistoryRefreshRequested', { detail: { trader: address, txHash, timestamp: now } }));
               // Also reuse existing realtime plumbing (open orders/history listeners)
+              // Include price so lightweight order book overlay can update
+              const estimatedPriceForEvent = isBuy ? (md.bestAsk || md.markPrice || 0) : (md.bestBid || md.markPrice || 0);
               window.dispatchEvent(new CustomEvent('ordersUpdated', {
                 detail: {
                   traceId: `gasless:${txHash}`,
@@ -1736,6 +1761,7 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
                   timestamp: now,
                   eventType: 'order-placed',
                   orderId: `tx:${txHash}`,
+                  price: BigInt(Math.round(estimatedPriceForEvent * 1e6)).toString(),
                   amount: (sizeWei as unknown as bigint)?.toString?.(),
                   isBuy,
                   isMarginOrder: true,
@@ -2112,6 +2138,20 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
             showError('Trading session is not enabled. Click Enable Trading before placing limit orders.', 'Session Required');
             markOrderFillError();
             return;
+          }
+
+          // Optimistic UI update: add liquidity immediately for limit orders
+          // Use `quantity` (token units) not `amount` (which may be USD)
+          const limitOptimisticStartTime = Date.now();
+          if (triggerPrice > 0 && md.simulateOptimisticTrade && quantity > 0) {
+            // For limit orders, we simulate as a limit which will add liquidity if it doesn't cross
+            const optResult = md.simulateOptimisticTrade(isBuy ? 'buy' : 'sell', 'limit', triggerPrice, quantity);
+            console.log('[OptimisticUI] Limit order simulated:', optResult, { 
+              inputAmount: amount, 
+              tokenQuantity: quantity, 
+              isUsdMode,
+              elapsedMs: Date.now() - limitOptimisticStartTime,
+            });
           }
 
             const r = await submitSessionTrade({

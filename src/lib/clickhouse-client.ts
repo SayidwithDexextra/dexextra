@@ -1547,6 +1547,158 @@ export class ClickHouseDataPipeline {
   }
 
   /**
+   * Insert a P&L snapshot for a user
+   */
+  async insertPnlSnapshot(snapshot: {
+    walletAddress: string;
+    snapshotDate: string; // YYYY-MM-DD
+    realizedPnl: number;
+    unrealizedPnl: number;
+    totalFees: number;
+    tradeCount: number;
+    totalVolume: number;
+    buyCount: number;
+    sellCount: number;
+  }): Promise<void> {
+    const client = this.ensureClient();
+    
+    try {
+      await client.insert({
+        table: 'user_pnl_snapshots',
+        values: [{
+          wallet_address: snapshot.walletAddress.toLowerCase(),
+          snapshot_date: snapshot.snapshotDate,
+          realized_pnl: snapshot.realizedPnl,
+          unrealized_pnl: snapshot.unrealizedPnl,
+          net_pnl: snapshot.realizedPnl + snapshot.unrealizedPnl,
+          total_fees: snapshot.totalFees,
+          trade_count: snapshot.tradeCount,
+          total_volume: snapshot.totalVolume,
+          buy_count: snapshot.buyCount,
+          sell_count: snapshot.sellCount,
+        }],
+        format: 'JSONEachRow',
+      });
+    } catch (error) {
+      console.error(`❌ Failed to insert P&L snapshot for ${snapshot.walletAddress}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Batch insert multiple P&L snapshots
+   */
+  async insertPnlSnapshots(snapshots: Array<{
+    walletAddress: string;
+    snapshotDate: string;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    totalFees: number;
+    tradeCount: number;
+    totalVolume: number;
+    buyCount: number;
+    sellCount: number;
+  }>): Promise<void> {
+    if (snapshots.length === 0) return;
+    
+    const client = this.ensureClient();
+    
+    try {
+      await client.insert({
+        table: 'user_pnl_snapshots',
+        values: snapshots.map(s => ({
+          wallet_address: s.walletAddress.toLowerCase(),
+          snapshot_date: s.snapshotDate,
+          realized_pnl: s.realizedPnl,
+          unrealized_pnl: s.unrealizedPnl,
+          net_pnl: s.realizedPnl + s.unrealizedPnl,
+          total_fees: s.totalFees,
+          trade_count: s.tradeCount,
+          total_volume: s.totalVolume,
+          buy_count: s.buyCount,
+          sell_count: s.sellCount,
+        })),
+        format: 'JSONEachRow',
+      });
+      console.log(`✅ Inserted ${snapshots.length} P&L snapshots`);
+    } catch (error) {
+      console.error(`❌ Failed to insert ${snapshots.length} P&L snapshots:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get P&L history for a user
+   */
+  async getUserPnlHistory(
+    walletAddress: string,
+    startDate?: string,
+    endDate?: string,
+    limit: number = 365
+  ): Promise<Array<{
+    date: string;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    netPnl: number;
+    totalFees: number;
+    tradeCount: number;
+    totalVolume: number;
+    buyCount: number;
+    sellCount: number;
+  }>> {
+    const client = this.ensureClient();
+    
+    const wallet = escapeSqlString(walletAddress.toLowerCase());
+    let dateFilter = '';
+    if (startDate) {
+      dateFilter += ` AND snapshot_date >= '${startDate}'`;
+    }
+    if (endDate) {
+      dateFilter += ` AND snapshot_date <= '${endDate}'`;
+    }
+    
+    try {
+      const result = await client.query({
+        query: `
+          SELECT
+            toString(snapshot_date) AS date,
+            realized_pnl AS realizedPnl,
+            unrealized_pnl AS unrealizedPnl,
+            net_pnl AS netPnl,
+            total_fees AS totalFees,
+            trade_count AS tradeCount,
+            total_volume AS totalVolume,
+            buy_count AS buyCount,
+            sell_count AS sellCount
+          FROM user_pnl_snapshots
+          WHERE wallet_address = '${wallet}'
+          ${dateFilter}
+          ORDER BY snapshot_date ASC
+          LIMIT ${limit}
+          SETTINGS max_execution_time = 10
+        `,
+        format: 'JSONEachRow',
+      });
+
+      const data = (await result.json()) as any[];
+      return data.map(row => ({
+        date: String(row.date),
+        realizedPnl: Number(row.realizedPnl) || 0,
+        unrealizedPnl: Number(row.unrealizedPnl) || 0,
+        netPnl: Number(row.netPnl) || 0,
+        totalFees: Number(row.totalFees) || 0,
+        tradeCount: Number(row.tradeCount) || 0,
+        totalVolume: Number(row.totalVolume) || 0,
+        buyCount: Number(row.buyCount) || 0,
+        sellCount: Number(row.sellCount) || 0,
+      }));
+    } catch (error) {
+      console.error(`❌ Failed to get P&L history for ${walletAddress}:`, error);
+      return [];
+    }
+  }
+
+  /**
    * Close the client and cleanup
    */
   async close(): Promise<void> {

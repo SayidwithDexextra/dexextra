@@ -2,6 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { ethers } from 'ethers';
 import { getMetricAIWorkerBaseUrl } from './metricAiWorker';
 import { loadRelayerPoolFromEnv } from './relayerKeys';
+import { calculateAndInsertUserSettlements } from './user-settlements';
 
 // ── Types ──
 
@@ -840,8 +841,10 @@ async function maybeStartSettlementWindow(
   }
 
   // Commit evidence hash on-chain before anything else (tamper-proof commitment).
-  // Use waybackPageUrl (the archived page) as the canonical evidence source; fall back to waybackUrl.
-  const evidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
+  // Use waybackUrl (the archived screenshot) as the PRIMARY evidence source — this is the exact
+  // image the AI analyzed, ensuring congruence between evidence, snapshot, and AI analysis.
+  // Fall back to waybackPageUrl (archived live page) only if screenshot archive is unavailable.
+  const evidenceUrl = ai.waybackUrl || ai.waybackPageUrl;
   let evidenceHash: string | null = null;
   let evidenceCommitStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
   if (evidenceUrl) {
@@ -1003,7 +1006,8 @@ async function maybeFinalizeSettlement(
       proposedPrice = ai.price;
 
       // Self-heal path: commit evidence on-chain (was previously missing)
-      const healEvidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
+      // Use waybackUrl (screenshot archive) as PRIMARY evidence for congruence with AI analysis
+      const healEvidenceUrl = ai.waybackUrl || ai.waybackPageUrl;
       let healEvidenceHash: string | null = null;
       let healEvidenceStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
       if (healEvidenceUrl) {
@@ -1154,6 +1158,22 @@ async function maybeFinalizeSettlement(
 
       reason: `db_finalize_failed:${error.message}`,
     };
+  }
+
+  // Calculate and insert user settlements for all users in this market
+  try {
+    const settlementResult = await calculateAndInsertUserSettlements(
+      supabase,
+      market.id,
+      market.market_identifier,
+      proposedPrice,
+      now
+    );
+    if (settlementResult.inserted > 0) {
+      console.log(`[settlement-engine] Inserted ${settlementResult.inserted} user settlements for ${market.market_identifier}`);
+    }
+  } catch (e: any) {
+    console.error(`[settlement-engine] Error calculating user settlements for ${market.market_identifier}:`, e?.message || e);
   }
 
   return {
@@ -1477,7 +1497,10 @@ export async function completeSettlementFromAIResult(
     return { ok: false, reason: 'zero_or_invalid_price_rejected' };
   }
 
-  const evidenceUrl = ai.waybackPageUrl || ai.waybackUrl;
+  // Use waybackUrl (screenshot archive) as PRIMARY evidence — this is the exact image the AI analyzed,
+  // ensuring congruence between the on-chain evidence, the archived snapshot, and the AI analysis.
+  // Fall back to waybackPageUrl (archived live page) only if screenshot archive is unavailable.
+  const evidenceUrl = ai.waybackUrl || ai.waybackPageUrl;
   let evidenceHash: string | null = null;
   let evidenceCommitStatus: 'committed' | 'already_committed' | 'no_evidence_url' | 'failed' = 'no_evidence_url';
   if (evidenceUrl) {

@@ -110,6 +110,13 @@ const SettingsIcon = () => (
   </svg>
 )
 
+const AnalyticsIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9 19V13M5 19V16M13 19V9M17 19V5M21 19V11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M3 19H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+  </svg>
+)
+
 interface NavItem {
   id: string
   label: string
@@ -121,6 +128,7 @@ const navigationItems: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: OverviewIcon, route: '/' },
   { id: 'explore', label: 'Explore', icon: ExploreIcon, route: '/explore' },
   { id: 'watchlist', label: 'Watchlist', icon: WatchlistIcon, route: '/watchlist' },
+  { id: 'analytics', label: 'Analytics', icon: AnalyticsIcon, route: '/analytics' },
   { id: 'rewards', label: 'Rewards', icon: RewardsIcon, route: '/rewards' },
   // { id: 'favorites', label: 'Favorites', icon: FavoritesIcon, route: '/favorites' },
   // { id: 'send', label: 'Send', icon: SendIcon, route: '/send' },

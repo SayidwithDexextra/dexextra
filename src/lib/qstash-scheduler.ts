@@ -328,3 +328,77 @@ export async function cancelMarketSchedule(scheduleIds: ScheduleIds): Promise<vo
     }),
   );
 }
+
+/**
+ * Schedule a recurring daily P&L snapshot cron job.
+ * Runs at 00:05 UTC every day (after midnight to capture full day).
+ */
+export async function scheduleDailyPnlSnapshots(): Promise<string | null> {
+  const client = getClient();
+  if (!client) {
+    console.warn('[qstash-scheduler] QSTASH_TOKEN not configured, skipping P&L snapshot schedule');
+    return null;
+  }
+
+  const baseUrl = getBaseUrl();
+  const destination = `${baseUrl}/api/cron/pnl-snapshots`;
+  const cronSecret = process.env.CRON_SECRET;
+
+  try {
+    // Create a recurring schedule using QStash Schedules API
+    const res = await client.schedules.create({
+      destination,
+      cron: '5 0 * * *', // 00:05 UTC daily
+      headers: cronSecret ? { 'Authorization': `Bearer ${cronSecret}` } : undefined,
+      retries: 3,
+    });
+
+    console.log('[qstash-scheduler] Created daily P&L snapshot schedule', {
+      scheduleId: res.scheduleId,
+      cron: '5 0 * * * (00:05 UTC daily)',
+      destination,
+    });
+
+    return res.scheduleId;
+  } catch (e: any) {
+    console.error('[qstash-scheduler] Failed to create P&L snapshot schedule:', e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * List all QStash schedules (for debugging/management).
+ */
+export async function listSchedules(): Promise<Array<{ scheduleId: string; cron: string; destination: string }>> {
+  const client = getClient();
+  if (!client) return [];
+
+  try {
+    const schedules = await client.schedules.list();
+    return schedules.map(s => ({
+      scheduleId: s.scheduleId,
+      cron: s.cron || '',
+      destination: s.destination,
+    }));
+  } catch (e: any) {
+    console.error('[qstash-scheduler] Failed to list schedules:', e?.message || e);
+    return [];
+  }
+}
+
+/**
+ * Delete a QStash schedule by ID.
+ */
+export async function deleteSchedule(scheduleId: string): Promise<boolean> {
+  const client = getClient();
+  if (!client) return false;
+
+  try {
+    await client.schedules.delete(scheduleId);
+    console.log('[qstash-scheduler] Deleted schedule', scheduleId);
+    return true;
+  } catch (e: any) {
+    console.error('[qstash-scheduler] Failed to delete schedule:', e?.message || e);
+    return false;
+  }
+}

@@ -16,6 +16,13 @@ contract OBOrderPlacementFacet {
     event OrderPlaced(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder);
     event OrderCancelled(uint256 indexed orderId, address indexed trader);
     event OrderModified(uint256 indexed oldOrderId, uint256 indexed newOrderId, address indexed trader, uint256 newPrice, uint256 newAmount);
+    
+    /// @notice Emitted ONLY when an order rests on the book (unfilled portion of a limit order).
+    /// @dev This event is specifically for UI order book state updates. It tells the frontend
+    ///      exactly how much liquidity was added to the book at what price level.
+    ///      Market orders that fully fill do NOT emit this event.
+    ///      Limit orders that fully cross (fill immediately) do NOT emit this event.
+    event OrderRested(uint256 indexed orderId, address indexed trader, uint256 price, uint256 amount, bool isBuy, bool isMarginOrder);
     // Legacy Market Order events for tooling parity
     event MarketOrderAttempt(address indexed user, bool isBuy, uint256 amount, uint256 referencePrice, uint256 slippageBps);
     event MarketOrderLiquidityCheck(bool isBuy, uint256 bestOppositePrice, bool hasLiquidity);
@@ -787,6 +794,8 @@ contract OBOrderPlacementFacet {
             s.userOrders[trader].push(orderId);
             if (isBuy) { _addToBuyBook(s, orderId, price, remaining); } else { _addToSellBook(s, orderId, price, remaining); }
             emit OrderPlaced(orderId, trader, price, remaining, isBuy, isMarginOrder);
+            // Emit OrderRested for UI order book state updates - this confirms liquidity was added to the book
+            emit OrderRested(orderId, trader, price, remaining, isBuy, isMarginOrder);
         } else {
             if (isMarginOrder) {
                 bytes32 rid4 = _reservationId(s, trader, orderId);

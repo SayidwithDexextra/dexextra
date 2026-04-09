@@ -82,7 +82,7 @@ function serializeOrder(raw: readonly [bigint, `0x${string}`, bigint, bigint, bo
   };
 }
 
-// ── Fetch all markets from Supabase ────────────────────────────────────
+// ── Fetch all markets from Supabase (with retry) ──────────────────────
 interface MarketRow {
   symbol: string;
   market_address: string;
@@ -91,7 +91,7 @@ interface MarketRow {
   market_status: string;
 }
 
-async function fetchMarkets(): Promise<MarketRow[]> {
+async function fetchMarketsOnce(): Promise<MarketRow[]> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from('markets')
@@ -99,6 +99,22 @@ async function fetchMarkets(): Promise<MarketRow[]> {
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Supabase markets query failed: ${error.message}`);
   return (data || []).filter((m: MarketRow) => !!m.market_address);
+}
+
+async function fetchMarkets(retries = 2, delayMs = 500): Promise<MarketRow[]> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetchMarketsOnce();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`[debug/orders-v2] fetchMarkets attempt ${attempt + 1} failed:`, lastError.message);
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError ?? new Error('fetchMarkets failed after retries');
 }
 
 // ── Core: iterate order IDs on a single OrderBook contract ─────────────
@@ -294,9 +310,17 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[debug/orders-v2] Error:', message);
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error('[debug/orders-v2] Error:', message, stack);
     return NextResponse.json(
-      { ok: false, error: message, elapsed_ms: Date.now() - t0 },
+      {
+        ok: false,
+        error: message,
+        hint: message.includes('fetch failed')
+          ? 'Network error reaching Supabase. This is usually transient - retry in a few seconds.'
+          : undefined,
+        elapsed_ms: Date.now() - t0,
+      },
       { status: 500 },
     );
   }

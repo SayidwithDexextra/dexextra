@@ -6,6 +6,7 @@ import { sendWithNonceRetry, withRelayer, isInsufficientFundsError } from '@/lib
 import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
 import { computeRelayerProof } from '@/lib/relayerMerkle';
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { gaslessTradeRateLimit, gaslessTradeGlobalRateLimit, tripCircuitBreaker, isCircuitBreakerOpen } from '@/lib/rate-limit';
 
 class HttpError extends Error {
   status: number;
@@ -297,6 +298,50 @@ function selectorFor(method: string): string | null {
 
 export async function POST(req: Request) {
   try {
+    // --- Circuit breaker check ---
+    const circuitStatus = await isCircuitBreakerOpen();
+    if (circuitStatus.open) {
+      console.warn('[GASLESS][API][trade] circuit breaker open', circuitStatus);
+      return NextResponse.json(
+        { 
+          error: 'service_temporarily_unavailable', 
+          message: 'Gasless trading is temporarily unavailable. Please try again in a minute.',
+          reason: circuitStatus.reason,
+          retryAfter: 60 
+        },
+        { status: 503, headers: { 'Retry-After': '60' } }
+      );
+    }
+
+    // --- Rate limiting ---
+    const forwarded = req.headers.get('x-forwarded-for');
+    const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
+    const identifier = `gasless:${ip}`;
+    
+    try {
+      // Global rate limit (protect against distributed attacks)
+      const { success: globalSuccess } = await gaslessTradeGlobalRateLimit.limit('gasless:global');
+      if (!globalSuccess) {
+        console.warn('[GASLESS][API][trade] global rate limit exceeded');
+        return NextResponse.json(
+          { error: 'rate_limit_exceeded', message: 'Service is experiencing high traffic. Please try again shortly.' },
+          { status: 429, headers: { 'Retry-After': '10' } }
+        );
+      }
+
+      // Per-IP rate limit
+      const { success: ipSuccess } = await gaslessTradeRateLimit.limit(identifier);
+      if (!ipSuccess) {
+        console.warn('[GASLESS][API][trade] rate limit exceeded for', identifier);
+        return NextResponse.json(
+          { error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' },
+          { status: 429, headers: { 'Retry-After': '30' } }
+        );
+      }
+    } catch (rateLimitError) {
+      console.warn('[GASLESS][API][trade] rate limit check failed, allowing request:', rateLimitError);
+    }
+
     const body = await req.json();
     const orderBook: string = body?.orderBook;
     const method: string = body?.method;
@@ -1361,9 +1406,16 @@ export async function POST(req: Request) {
     }
     if (isInsufficientFundsError(e) || String(e?.message || '').includes('insufficient funds for gas')) {
       console.error('[GASLESS][API][trade] all relayers out of funds', e?.message || e);
+      // Trip circuit breaker to prevent further spam while relayers are empty
+      await tripCircuitBreaker('all_relayers_out_of_funds');
+      console.warn('[GASLESS][API][trade] circuit breaker tripped - relayers out of funds');
       return NextResponse.json(
-        { error: 'all_relayers_insufficient_funds', message: 'All relayers in the pool have insufficient gas funds. Please try again later.' },
-        { status: 503 }
+        { 
+          error: 'all_relayers_insufficient_funds', 
+          message: 'All relayers in the pool have insufficient gas funds. Please try again later.',
+          retryAfter: 60
+        },
+        { status: 503, headers: { 'Retry-After': '60' } }
       );
     }
     console.error('[GASLESS][API][trade] error', e?.message || e);

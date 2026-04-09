@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { AnimatedOrderRow } from '@/components/ui/AnimatedOrderRow';
 import { useMarketData } from '@/contexts/MarketDataContext';
+import { useOrderBook as useLightweightOrderBookDirect } from '@/stores/lightweightOrderBookStore';
 import { useAllTrades, type OnChainTrade } from '@/hooks/useAllTrades';
 import { Tooltip } from '@/components/ui/Tooltip';
 
@@ -86,6 +87,8 @@ interface TransactionTableProps {
   orderBookAddress?: string; // Optional explicit OB address to bypass symbol resolution
   defaultView?: 'orderbook' | 'transactions';
   hideViewToggle?: boolean;
+  /** Use lightweight order book store for instant UI updates (optimistic state) */
+  useLightweightState?: boolean;
 }
 
 interface OrderFromAPI {
@@ -122,7 +125,11 @@ function formatAmountDisplay(value: number, displayDecimals = 4): string {
   if (value < 0.00000001 && value > 0) {
     return value.toFixed(12);
   }
-  return value.toFixed(displayDecimals);
+  // Use Intl.NumberFormat for thousand separators on larger numbers
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: displayDecimals,
+    maximumFractionDigits: displayDecimals
+  }).format(value);
 }
 
 function shortAddress(addr: string): string {
@@ -185,7 +192,7 @@ function TradeTooltipContent({ trade, side }: { trade: OnChainTrade; side: strin
   );
 }
 
-export default function TransactionTable({ marketId, marketIdentifier, currentPrice, height = '100%', orderBookAddress, defaultView = 'orderbook', hideViewToggle = false }: TransactionTableProps) {
+export default function TransactionTable({ marketId, marketIdentifier, currentPrice, height = '100%', orderBookAddress, defaultView = 'orderbook', hideViewToggle = false, useLightweightState = false }: TransactionTableProps) {
   const [view, setView] = useState<'transactions' | 'orderbook'>(defaultView);
   
   // Log when market ID or identifier changes
@@ -243,7 +250,9 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
   };
 
   // When fresh depth arrives, clear overlay so we don't "double count" (base has caught up).
+  // LEGACY MODE ONLY - skip when using lightweight state
   useEffect(() => {
+    if (useLightweightState) return;
     try {
       const overlay = depthOverlayRef.current;
       if (overlay.bidsDelta.size === 0 && overlay.asksDelta.size === 0 && 
@@ -256,10 +265,15 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       console.log('[RealTimeToken] ui:orderbook:overlay:cleared', { market: validMarketIdentifier });
       setDepthOverlayTick((x) => x + 1);
     } catch {}
-  }, [md.lastUpdated, validMarketIdentifier]);
+  }, [md.lastUpdated, validMarketIdentifier, useLightweightState]);
 
+  // Legacy depth overlay event handler - DISABLED when useLightweightState is true
+  // The lightweight order book store handles optimistic updates directly
   useEffect(() => {
+    // Skip legacy overlay system when using lightweight state
+    if (useLightweightState) return;
     if (typeof window === 'undefined') return;
+    
     const onOrdersUpdated = (e: any) => {
       const detail = (e as CustomEvent)?.detail as any;
       const sym = String(detail?.symbol || '').trim().toUpperCase();
@@ -402,15 +416,83 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
     window.addEventListener('ordersUpdated', onOrdersUpdated as EventListener);
     return () => window.removeEventListener('ordersUpdated', onOrdersUpdated as EventListener);
-  }, [validMarketIdentifier]);
+  }, [validMarketIdentifier, useLightweightState]);
 
-  const obData = useMemo(() => ({
-    depth: md.depth,
-    bestBid: md.bestBid ?? 0,
-    bestAsk: md.bestAsk ?? 0,
-    orderBookAddress: md.orderBookAddress,
-    lastUpdated: md.lastUpdated ?? new Date().toISOString()
-  }), [md.depth, md.bestBid, md.bestAsk, md.orderBookAddress, md.lastUpdated]);
+// When useLightweightState is enabled, subscribe directly to Zustand store for instant updates
+  // This bypasses the context layer which may have re-render delays
+  const lightweightOBDirect = useLightweightOrderBookDirect(validMarketIdentifier);
+  const lightweightOB = useLightweightState ? lightweightOBDirect : md.lightweightOrderBook;
+  
+  // Debug: log when lightweightOB changes with precise timing
+  const lastOBUpdateRef = React.useRef<number>(0);
+  const storeUpdateTimestampRef = React.useRef<number>(0);
+  
+  // Listen for store update events to measure React re-render lag
+  useEffect(() => {
+    if (!useLightweightState || typeof window === 'undefined') return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      storeUpdateTimestampRef.current = detail?.timestamp || Date.now();
+      console.log('[TransactionTable] Store update event received:', detail);
+    };
+    window.addEventListener('lightweightOBUpdated', handler);
+    return () => window.removeEventListener('lightweightOBUpdated', handler);
+  }, [useLightweightState]);
+  
+  useEffect(() => {
+    if (useLightweightState && lightweightOB) {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastOBUpdateRef.current;
+      const lagFromStoreEvent = storeUpdateTimestampRef.current > 0 ? now - storeUpdateTimestampRef.current : -1;
+      console.log('[TransactionTable] lightweightOB RENDER triggered:', {
+        bidsCount: lightweightOB.bids?.length,
+        asksCount: lightweightOB.asks?.length,
+        snapshotSource: lightweightOB.snapshotSource,
+        storeLastUpdated: lightweightOB.lastUpdated,
+        renderTimestamp: now,
+        lagFromStoreUpdate: now - lightweightOB.lastUpdated,
+        lagFromStoreEvent,
+        timeSinceLastRender: timeSinceLastUpdate,
+      });
+      lastOBUpdateRef.current = now;
+    }
+  }, [lightweightOB, useLightweightState]);
+  
+  const obData = useMemo(() => {
+    // If lightweight state is enabled and we have data, use it for faster updates
+    if (useLightweightState && lightweightOB) {
+      console.log('[TransactionTable] Using lightweight order book data', {
+        bidsCount: lightweightOB.bids.length,
+        asksCount: lightweightOB.asks.length,
+        source: lightweightOB.snapshotSource,
+      });
+      return {
+        depth: {
+          bidPrices: lightweightOB.bids.map(l => l.price),
+          bidAmounts: lightweightOB.bids.map(l => l.amount),
+          askPrices: lightweightOB.asks.map(l => l.price),
+          askAmounts: lightweightOB.asks.map(l => l.amount),
+        },
+        bestBid: lightweightOB.bestBid,
+        bestAsk: lightweightOB.bestAsk,
+        orderBookAddress: md.orderBookAddress,
+        lastUpdated: new Date(lightweightOB.lastUpdated).toISOString(),
+        isLightweight: true,
+        snapshotSource: lightweightOB.snapshotSource,
+      };
+    }
+    
+    // Fallback to standard MarketData depth
+    return {
+      depth: md.depth,
+      bestBid: md.bestBid ?? 0,
+      bestAsk: md.bestAsk ?? 0,
+      orderBookAddress: md.orderBookAddress,
+      lastUpdated: md.lastUpdated ?? new Date().toISOString(),
+      isLightweight: false,
+      snapshotSource: 'api' as const,
+    };
+  }, [useLightweightState, lightweightOB, md.depth, md.bestBid, md.bestAsk, md.orderBookAddress, md.lastUpdated]);
 
   const obLoading = md.isLoading;
   const obError = md.error;
@@ -500,8 +582,16 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
 
       const askOrders = [...askBestFirst].reverse(); // Display order: highest→lowest (best ask at bottom)
 
-      console.log('🔍 [ORDERBOOK][ONCHAIN] Bids:', bidOrders.length, 'Asks:', askOrders.length);
+      console.log('🔍 [ORDERBOOK][ONCHAIN] Bids:', bidOrders.length, 'Asks:', askOrders.length, useLightweightState ? '(lightweight mode)' : '(legacy mode)');
+      
+      // When using lightweight state, the data already has optimistic updates applied
+      // Skip the legacy overlay system entirely
+      if (useLightweightState) {
+        return { bids: bidOrders, asks: askOrders };
+      }
+      
       // Apply optimistic overlay deltas (best-effort) so the book updates instantly on events
+      // LEGACY MODE ONLY - the lightweight order book store handles this natively
       try {
         const now = Date.now();
         const overlay = depthOverlayRef.current;
@@ -585,7 +675,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
       .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest ask first for descending display
     console.log('🔍 [ORDERBOOK][DB] Bids:', buyOrders.length, 'Asks:', sellOrders.length);
     return { bids: buyOrders, asks: sellOrders };
-  }, [obData?.depth, pendingOrders, depthOverlayTick]);
+  }, [obData?.depth, pendingOrders, depthOverlayTick, useLightweightState]);
 
   // Auto-scroll asks to bottom when pinned.
   useEffect(() => {

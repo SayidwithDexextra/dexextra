@@ -6,8 +6,12 @@ import { useMarketTicker } from '@/hooks/useMarketTicker';
 import { useOrderBookContractData } from '@/hooks/useOrderBookContractData';
 import { useOrderBook } from '@/hooks/useOrderBook';
 import { usePositions as usePositionsHook } from '@/hooks/usePositions';
+import { useLightweightOrderBookStore, useOrderBook as useLightweightOB } from '@/stores/lightweightOrderBookStore';
+import { useWallet } from '@/hooks/useWallet';
 import type { Market } from '@/hooks/useMarkets';
 import type { TokenData } from '@/types/token';
+import { createPublicClient, http, type Address } from 'viem';
+import { CHAIN_CONFIG } from '@/lib/contractConfig';
 
 interface MarketDataContextValue {
   symbol: string;
@@ -61,6 +65,15 @@ interface MarketDataContextValue {
   positionsState: ReturnType<typeof usePositionsHook>;
   enablePositions: () => void;
   disablePositions: () => void;
+
+  // Lightweight order book for optimistic updates (fast UI)
+  lightweightOrderBook: ReturnType<typeof useLightweightOB>;
+  simulateOptimisticTrade: (
+    side: 'buy' | 'sell',
+    type: 'market' | 'limit',
+    price: number,
+    amount: number
+  ) => { filledPrice: number; filledAmount: number; priceImpact: number };
 }
 
 const MarketDataContext = createContext<MarketDataContextValue | undefined>(undefined);
@@ -73,6 +86,10 @@ interface ProviderProps {
 }
 
 export function MarketDataProvider({ symbol, children, tickerEnabled = true }: ProviderProps) {
+  // Get user's wallet address for filtering own orders from event processing
+  const wallet = useWallet() as any;
+  const userAddress: string | null = wallet?.walletData?.address ?? wallet?.address ?? null;
+
   const { market, isLoading: isLoadingMarket, error: marketError, refetch } = useMarket(symbol);
   const { data: dbTicker } = useMarketTicker({
     marketId: (market as any)?.id || undefined,
@@ -97,6 +114,164 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
   // Positions gating
   const [positionsEnabled, setPositionsEnabled] = useState<boolean>(false);
   const positionsState = usePositionsHook(symbol, { enabled: positionsEnabled });
+
+  // Lightweight order book for instant UI updates
+  const lightweightStore = useLightweightOrderBookStore();
+  const lightweightOrderBook = useLightweightOB(symbol);
+
+  // SIMPLE DIRECT BLOCKCHAIN EVENT LISTENER
+  // Polls for new events every 3 seconds and updates the order book
+  const marketAddress = (market as any)?.market_address as Address | undefined;
+  const lastBlockRef = useRef<bigint>(0n);
+  
+  useEffect(() => {
+    if (!marketAddress || !symbol) return;
+    
+    const ORDER_EVENTS_ABI = [
+      {
+        type: 'event',
+        name: 'OrderPlaced',
+        inputs: [
+          { indexed: true, name: 'orderId', type: 'uint256' },
+          { indexed: true, name: 'trader', type: 'address' },
+          { indexed: false, name: 'price', type: 'uint256' },
+          { indexed: false, name: 'amount', type: 'uint256' },
+          { indexed: false, name: 'isBuy', type: 'bool' },
+          { indexed: false, name: 'isMarginOrder', type: 'bool' },
+        ],
+      },
+      {
+        type: 'event',
+        name: 'OrderRested',
+        inputs: [
+          { indexed: true, name: 'orderId', type: 'uint256' },
+          { indexed: true, name: 'trader', type: 'address' },
+          { indexed: false, name: 'price', type: 'uint256' },
+          { indexed: false, name: 'amount', type: 'uint256' },
+          { indexed: false, name: 'isBuy', type: 'bool' },
+          { indexed: false, name: 'isMarginOrder', type: 'bool' },
+        ],
+      },
+      {
+        type: 'event',
+        name: 'TradeExecutionCompleted',
+        inputs: [
+          { indexed: true, name: 'buyer', type: 'address' },
+          { indexed: true, name: 'seller', type: 'address' },
+          { indexed: false, name: 'price', type: 'uint256' },
+          { indexed: false, name: 'amount', type: 'uint256' },
+        ],
+      },
+    ] as const;
+    
+    const pollEvents = async () => {
+      try {
+        const client = createPublicClient({
+          transport: http(CHAIN_CONFIG.rpcUrl),
+        });
+        
+        const currentBlock = await client.getBlockNumber();
+        
+        // Initialize from 10 blocks ago on first run
+        if (lastBlockRef.current === 0n) {
+          lastBlockRef.current = currentBlock > 10n ? currentBlock - 10n : 0n;
+        }
+        
+        if (currentBlock <= lastBlockRef.current) return;
+        
+        const logs = await client.getLogs({
+          address: marketAddress,
+          events: ORDER_EVENTS_ABI,
+          fromBlock: lastBlockRef.current + 1n,
+          toBlock: currentBlock,
+        });
+        
+        lastBlockRef.current = currentBlock;
+        
+        if (logs.length === 0) return;
+        
+        for (const log of logs) {
+          const eventName = (log as any).eventName;
+          const args = (log as any).args || {};
+          const myAddress = userAddress?.toLowerCase() || '';
+          
+          // Scale values: price is 1e6, amount is 1e18
+          const price = args.price ? Number(args.price) / 1e6 : 0;
+          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
+          const isBuy = args.isBuy;
+          
+          // Get trader address - different field names for different events
+          const trader = args.trader ? String(args.trader).toLowerCase() : '';
+          const buyer = args.buyer ? String(args.buyer).toLowerCase() : '';
+          const seller = args.seller ? String(args.seller).toLowerCase() : '';
+          
+          // Check if this is our own order/trade
+          const isOwnOrder = myAddress && (
+            trader === myAddress || 
+            buyer === myAddress || 
+            seller === myAddress
+          );
+          
+          // Skip ALL events involving our address - already handled by optimistic updates
+          if (isOwnOrder) continue;
+          
+          if (eventName === 'OrderRested') {
+            // Limit order rested on book - ADD liquidity
+            const side = isBuy ? 'buy' : 'sell';
+            lightweightStore.addLiquidity(symbol, side, price, amount);
+          } else if (eventName === 'TradeExecutionCompleted') {
+            // Trade executed - REMOVE liquidity from BOTH sides (we don't know which was maker)
+            lightweightStore.removeLiquidity(symbol, 'buy', price, amount);
+            lightweightStore.removeLiquidity(symbol, 'sell', price, amount);
+          }
+        }
+      } catch (err) {
+        console.error('[BlockchainEvents] Error polling events:', err);
+      }
+    };
+    
+    // Poll immediately and then every 3 seconds
+    pollEvents();
+    const interval = setInterval(pollEvents, 3000);
+    
+    return () => clearInterval(interval);
+  }, [marketAddress, symbol, userAddress, lightweightStore]);
+  
+  // Periodically clean up stale pending trades (every 30 seconds)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      lightweightStore.cleanupStaleTrades(120_000); // 2 minute timeout
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [lightweightStore]);
+
+  // Initialize lightweight order book when depth data is loaded from API/RPC
+  const lastDepthHashRef = useRef<string>('');
+  useEffect(() => {
+    if (!obLive?.depth) return;
+    const depth = obLive.depth;
+    if (!depth.bidPrices?.length && !depth.askPrices?.length) return;
+
+    // Create a simple hash to detect changes and avoid re-initializing on same data
+    const hash = `${depth.bidPrices[0] || 0}-${depth.askPrices[0] || 0}-${depth.bidPrices.length}-${depth.askPrices.length}`;
+    if (hash === lastDepthHashRef.current) return;
+    lastDepthHashRef.current = hash;
+
+    lightweightStore.initializeOrderBook(symbol, depth, 'api');
+    console.log(`[MarketDataContext] Lightweight order book initialized for ${symbol}`);
+  }, [symbol, obLive?.depth, lightweightStore]);
+
+  // Optimistic trade simulation wrapper
+  const simulateOptimisticTrade = useMemo(() => {
+    return (
+      side: 'buy' | 'sell',
+      type: 'market' | 'limit',
+      price: number,
+      amount: number
+    ) => {
+      return lightweightStore.simulateTrade(symbol, side, type, price, amount);
+    };
+  }, [symbol, lightweightStore]);
 
   // Compute resolved price (same strategy used in page previously)
   const resolvedPrice = useMemo(() => {
@@ -198,7 +373,11 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
 
     positionsState,
     enablePositions: () => setPositionsEnabled(true),
-    disablePositions: () => setPositionsEnabled(false)
+    disablePositions: () => setPositionsEnabled(false),
+
+    // Lightweight order book
+    lightweightOrderBook,
+    simulateOptimisticTrade,
   };
 
   // Listen for cross-route deployment completion to force-refresh this market
