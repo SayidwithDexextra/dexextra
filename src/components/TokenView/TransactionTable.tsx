@@ -562,7 +562,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         created_at: nowIso,
         trader_wallet_address: '0x0000000000000000000000000000000000000000'
       }))
-        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0)
+        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0.0001)
         .sort((a, b) => (b.price || 0) - (a.price || 0)); // Highest bid first (best bid first)
 
       // Ask prices should be treated as best→worse internally (lowest→highest),
@@ -577,7 +577,7 @@ export default function TransactionTable({ marketId, marketIdentifier, currentPr
         created_at: nowIso,
         trader_wallet_address: '0x0000000000000000000000000000000000000000'
       }))
-        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0)
+        .filter((o) => Number(o.price || 0) > 0 && Number(o.quantity || 0) > 0.0001)
         .sort((a, b) => (a.price || 0) - (b.price || 0)); // Lowest ask first (best ask first)
 
       const askOrders = [...askBestFirst].reverse(); // Display order: highest→lowest (best ask at bottom)

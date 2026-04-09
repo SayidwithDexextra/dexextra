@@ -136,8 +136,10 @@ function buildLevels(prices: number[], amounts: number[], descending: boolean): 
 }
 
 function recalculateTotals(levels: OrderBookLevel[]): OrderBookLevel[] {
+  // Filter out levels with zero or near-zero amounts before recalculating
+  const filtered = levels.filter(level => level.amount > 0.00000001);
   let cumulative = 0;
-  return levels.map(level => {
+  return filtered.map(level => {
     cumulative += level.amount;
     return { ...level, total: cumulative };
   });
