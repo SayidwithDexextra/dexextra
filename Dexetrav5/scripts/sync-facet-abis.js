@@ -16,6 +16,7 @@ function log(step, status, data) {
 async function main() {
   const facetNames = [
     'OBAdminFacet',
+    'OBAdminViewFacet',
     'OBPricingFacet',
     'OBOrderPlacementFacet',
     'OBTradeExecutionFacet',

@@ -423,6 +423,184 @@ contract OBTradeExecutionFacet {
             try s.vault.deductFees(trader, totalFee, ownerAddr) { } catch { }
         }
     }
+
+    /// @notice Execute multiple trades in a single batch for gas efficiency
+    /// @dev Aggregates taker position update, processes each maker separately, updates mark price once at end
+    /// @param taker The address of the taker (aggressor)
+    /// @param takerIsBuy True if taker is buying, false if selling
+    /// @param takerIsMargin True if taker order is a margin order
+    /// @param matches Array of pending matches to execute
+    function obExecuteTradeBatch(
+        address taker,
+        bool takerIsBuy,
+        bool takerIsMargin,
+        OrderBookStorage.PendingMatch[] calldata matches
+    ) external {
+        if (matches.length == 0) return;
+        
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        require(!s.nonReentrantLock, "reentrancy");
+        s.nonReentrantLock = true;
+        
+        require(taker != address(0), "OB: zero taker");
+        require(takerIsMargin, "OrderBook: spot trading disabled for futures markets");
+        
+        uint256 takerTotalAmount = 0;
+        uint256 takerTotalNotional = 0;
+        uint256 takerTotalFee = 0;
+        uint256 lastPrice = 0;
+        
+        bool useSplitFees = s.takerFeeBps > 0 || s.makerFeeBps > 0;
+        uint256 takerBps = s.takerFeeBps;
+        uint256 makerBps = s.makerFeeBps;
+        address protocolAddr = s.protocolFeeRecipient;
+        address ownerAddr = s.feeRecipient;
+        uint256 shareBps = s.protocolFeeShareBps;
+        
+        for (uint256 i = 0; i < matches.length; i++) {
+            OrderBookStorage.PendingMatch calldata m = matches[i];
+            require(m.counterparty != address(0), "OB: zero counterparty");
+            require(m.counterpartyIsMargin == takerIsMargin, "OrderBook: cannot mix margin and spot");
+            
+            address buyer = takerIsBuy ? taker : m.counterparty;
+            address seller = takerIsBuy ? m.counterparty : taker;
+            
+            emit TradeExecutionStarted(buyer, seller, m.price, m.amount, takerIsMargin, m.counterpartyIsMargin);
+            
+            uint256 notional6 = Math.mulDiv(m.amount, m.price, 1e18);
+            uint256 makerFee = 0;
+            
+            if (useSplitFees) {
+                uint256 takerFeeForMatch = Math.mulDiv(notional6, takerBps, 10000);
+                makerFee = Math.mulDiv(notional6, makerBps, 10000);
+                takerTotalFee += takerFeeForMatch;
+                
+                if (makerFee > 0 && m.counterparty != address(this)) {
+                    _distributeFee(s, m.counterparty, makerFee, shareBps, protocolAddr, ownerAddr);
+                }
+            } else if (s.tradingFee > 0) {
+                uint256 feePerSide = Math.mulDiv(notional6, s.tradingFee, 10000);
+                takerTotalFee += feePerSide;
+                makerFee = feePerSide;
+                if (m.counterparty != address(this)) {
+                    try s.vault.deductFees(m.counterparty, makerFee, s.feeRecipient) { } catch { }
+                }
+            }
+            
+            if (makerFee > 0) {
+                emit FeesDeducted(
+                    takerIsBuy ? taker : m.counterparty,
+                    takerIsBuy ? 0 : makerFee,
+                    takerIsBuy ? m.counterparty : taker,
+                    takerIsBuy ? makerFee : 0
+                );
+            }
+            
+            (int256 makerOld, uint256 makerEntry, uint256 makerLocked) = _getSummary(s, m.counterparty);
+            int256 makerDelta = takerIsBuy ? -int256(m.amount) : int256(m.amount);
+            
+            _assertPreTradeSolvency(s, m.counterparty, makerOld, makerEntry, makerLocked, makerDelta, m.price);
+            
+            if (m.counterparty != address(this)) {
+                int256 makerNewNet = makerOld + makerDelta;
+                uint256 makerBasis = _basisPriceForMargin(makerOld, makerDelta, makerEntry, m.price);
+                uint256 mrMakerTotal = _calculateTotalRequiredMargin(s, makerNewNet, makerBasis);
+                try s.vault.updatePositionWithMargin(m.counterparty, s.marketId, makerDelta, m.price, mrMakerTotal) { } catch { }
+            }
+            
+            takerTotalAmount += m.amount;
+            takerTotalNotional += notional6;
+            lastPrice = m.price;
+            
+            _recordTrade(s, buyer, seller, m.price, m.amount, takerIsBuy ? 0 : makerFee, takerIsBuy ? makerFee : 0);
+            
+            emit TradeExecutionCompleted(buyer, seller, m.price, m.amount);
+        }
+        
+        if (takerTotalFee > 0 && taker != address(this)) {
+            if (useSplitFees) {
+                _distributeFee(s, taker, takerTotalFee, shareBps, protocolAddr, ownerAddr);
+            } else {
+                try s.vault.deductFees(taker, takerTotalFee, s.feeRecipient) { } catch { }
+            }
+        }
+        
+        (int256 takerOld, uint256 takerEntry, uint256 takerLocked) = _getSummary(s, taker);
+        int256 takerDelta = takerIsBuy ? int256(takerTotalAmount) : -int256(takerTotalAmount);
+        uint256 weightedAvgPrice = takerTotalAmount > 0 ? Math.mulDiv(takerTotalNotional, 1e18, takerTotalAmount) : lastPrice;
+        
+        _assertPreTradeSolvency(s, taker, takerOld, takerEntry, takerLocked, takerDelta, weightedAvgPrice);
+        
+        if (taker != address(this)) {
+            int256 takerNewNet = takerOld + takerDelta;
+            uint256 takerBasis = _basisPriceForMargin(takerOld, takerDelta, takerEntry, weightedAvgPrice);
+            uint256 mrTakerTotal = _calculateTotalRequiredMargin(s, takerNewNet, takerBasis);
+            try s.vault.updatePositionWithMargin(taker, s.marketId, takerDelta, weightedAvgPrice, mrTakerTotal) { } catch { }
+        }
+        
+        s.lastTradePrice = lastPrice;
+        uint256 currentMark = _calculateMarkPriceFromFacet();
+        s.lastMarkPrice = currentMark;
+        try s.vault.updateMarkPrice(s.marketId, currentMark) { } catch { }
+        emit PriceUpdated(s.lastTradePrice, currentMark);
+        
+        if (taker != address(0) && taker != address(this) && !s.isKnownUser[taker]) {
+            s.isKnownUser[taker] = true;
+            s.allKnownUsers.push(taker);
+        }
+        
+        s.nonReentrantLock = false;
+    }
+    
+    /// @dev Internal helper to record a trade without updating positions or mark price
+    function _recordTrade(
+        OrderBookStorage.State storage s,
+        address buyer,
+        address seller,
+        uint256 price,
+        uint256 amount,
+        uint256 buyerFee,
+        uint256 sellerFee
+    ) private {
+        uint256 tradeId = s.nextTradeId == 0 ? 1 : s.nextTradeId;
+        s.trades[tradeId] = OrderBookStorage.Trade({
+            tradeId: tradeId,
+            buyer: buyer,
+            seller: seller,
+            price: price,
+            amount: amount,
+            timestamp: block.timestamp,
+            buyOrderId: 0,
+            sellOrderId: 0,
+            buyerIsMargin: true,
+            sellerIsMargin: true,
+            tradeValue: Math.mulDiv(amount, price, 1e18),
+            buyerFee: buyerFee,
+            sellerFee: sellerFee
+        });
+        s.userTradeIds[buyer].push(tradeId);
+        s.userTradeIds[seller].push(tradeId);
+        s.totalTradeCount += 1;
+        s.nextTradeId = tradeId + 1;
+        
+        uint8 idx = s.lastTwentyIndex;
+        s.lastTwentyTradeIds[idx] = tradeId;
+        unchecked { idx = (idx + 1) % 20; }
+        s.lastTwentyIndex = idx;
+        if (s.lastTwentyCount < 20) { s.lastTwentyCount += 1; }
+        
+        if (buyer != address(0) && buyer != address(this) && !s.isKnownUser[buyer]) {
+            s.isKnownUser[buyer] = true;
+            s.allKnownUsers.push(buyer);
+        }
+        if (seller != address(0) && seller != address(this) && !s.isKnownUser[seller]) {
+            s.isKnownUser[seller] = true;
+            s.allKnownUsers.push(seller);
+        }
+        
+        uint256 liqPrice = (s.liquidationMode || buyer == address(this) || seller == address(this)) ? s.lastMarkPrice : 0;
+        emit TradeRecorded(s.marketId, buyer, seller, price, amount, buyerFee, sellerFee, block.timestamp, liqPrice);
+    }
 }
 
 

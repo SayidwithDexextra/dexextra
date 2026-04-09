@@ -14,6 +14,7 @@ import {
   resolveFactoryVault,
 } from '@/lib/contracts';
 import { loadRelayerPoolFromEnv } from '@/lib/relayerKeys';
+import OBAdminViewFacetArtifact from '@/lib/abis/facets/OBAdminViewFacet.json';
 import MarketLifecycleFacetArtifact from '@/lib/abis/facets/MarketLifecycleFacet.json';
 import MetaTradeFacetArtifact from '@/lib/abis/facets/MetaTradeFacet.json';
 import OrderBookVaultAdminFacetArtifact from '@/lib/abis/facets/OrderBookVaultAdminFacet.json';
@@ -244,6 +245,7 @@ export async function deployMarket(
     (process.env as any).NEXT_PUBLIC_ORDER_BOOK_INIT_FACET ||
     '';
   const adminFacet = process.env.OB_ADMIN_FACET || (process.env as any).NEXT_PUBLIC_OB_ADMIN_FACET;
+  const adminViewFacet = process.env.OB_ADMIN_VIEW_FACET || (process.env as any).NEXT_PUBLIC_OB_ADMIN_VIEW_FACET;
   const pricingFacet = process.env.OB_PRICING_FACET || (process.env as any).NEXT_PUBLIC_OB_PRICING_FACET;
   const placementFacet = process.env.OB_ORDER_PLACEMENT_FACET || (process.env as any).NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
   const execFacet = process.env.OB_TRADE_EXECUTION_FACET || (process.env as any).NEXT_PUBLIC_OB_TRADE_EXECUTION_FACET;
@@ -263,7 +265,7 @@ export async function deployMarket(
   if (!pk) throw new Error('ADMIN_PRIVATE_KEY not configured');
   if (!factoryAddress || !ethers.isAddress(factoryAddress)) throw new Error('Factory address not configured');
   if (!initFacet || !ethers.isAddress(initFacet)) throw new Error('Init facet address not configured');
-  if (!adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !vaultFacet || !lifecycleFacet || !metaTradeFacet) {
+  if (!adminFacet || !adminViewFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !vaultFacet || !lifecycleFacet || !metaTradeFacet) {
     throw new Error('One or more facet addresses are missing');
   }
   if (!coreVaultAddress || !ethers.isAddress(coreVaultAddress)) throw new Error('CoreVault address not configured');
@@ -306,6 +308,7 @@ export async function deployMarket(
 
   // ── Load ABIs & build cut ──
   const adminAbi = loadFacetAbi('OBAdminFacet', OBAdminFacetABI as any[]);
+  const adminViewAbi = (OBAdminViewFacetArtifact as any)?.abi || [];
   const pricingAbi = loadFacetAbi('OBPricingFacet', OBPricingFacetABI as any[]);
   const placementAbi = loadFacetAbi('OBOrderPlacementFacet', OBOrderPlacementFacetABI as any[]);
   const execAbi = loadFacetAbi('OBTradeExecutionFacet', OBTradeExecutionFacetABI as any[]);
@@ -318,6 +321,7 @@ export async function deployMarket(
 
   let cut = [
     { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(adminAbi) },
+    { facetAddress: adminViewFacet, action: 0, functionSelectors: selectorsFromAbi(adminViewAbi) },
     { facetAddress: pricingFacet, action: 0, functionSelectors: selectorsFromAbi(pricingAbi) },
     { facetAddress: placementFacet, action: 0, functionSelectors: selectorsFromAbi(placementAbi) },
     { facetAddress: execFacet, action: 0, functionSelectors: selectorsFromAbi(execAbi) },

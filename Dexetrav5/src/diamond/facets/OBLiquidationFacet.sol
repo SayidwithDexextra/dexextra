@@ -132,6 +132,43 @@ contract OBLiquidationFacet {
         emit LiquidationCheckTriggered(currentMark, s.lastMarkPrice);
         _checkPositionsForLiquidation(currentMark);
     }
+    
+    /// @notice Lightweight liquidation check triggered by order book changes
+    /// @dev Only triggers full liquidation scan if mark price crosses liquidation bounds
+    /// @param newMarkPrice The current mark price to check against
+    function onMarkPriceUpdate(uint256 newMarkPrice) external {
+        OrderBookStorage.State storage s = OrderBookStorage.state();
+        
+        if (s.liquidationInProgress || s.liquidationTrackingActive) {
+            return;
+        }
+        
+        if (newMarkPrice == 0) {
+            return;
+        }
+        
+        bool shouldScan = false;
+        
+        if (s.highestLongLiqPrice > 0 && newMarkPrice <= s.highestLongLiqPrice) {
+            shouldScan = true;
+        }
+        
+        if (!shouldScan && s.lowestShortLiqPrice > 0 && newMarkPrice >= s.lowestShortLiqPrice) {
+            shouldScan = true;
+        }
+        
+        if (!shouldScan) {
+            uint256 lastCheck = s.lastLiquidationCheck;
+            if (block.timestamp > lastCheck + 60) {
+                shouldScan = true;
+            }
+        }
+        
+        if (shouldScan) {
+            s.lastMarkPrice = newMarkPrice;
+            _checkPositionsForLiquidation(newMarkPrice);
+        }
+    }
 
     function _checkPositionsForLiquidation(uint256 markPrice) internal {
         OrderBookStorage.State storage s = OrderBookStorage.state();
@@ -286,7 +323,7 @@ contract OBLiquidationFacet {
 
         // Create synthetic order and cross book
         OrderBookStorage.Order memory liqOrder = OrderBookStorage.Order({
-            orderId: 0, trader: address(this), price: isBuy ? maxPrice : minPrice, amount: amount, isBuy: isBuy, timestamp: block.timestamp, nextOrderId: 0, marginRequired: 0, isMarginOrder: true
+            orderId: 0, trader: address(this), price: isBuy ? maxPrice : minPrice, amount: amount, isBuy: isBuy, timestamp: block.timestamp, nextOrderId: 0, prevOrderId: 0, marginRequired: 0, isMarginOrder: true
         });
         uint256 remaining = amount;
         emit LiquidationMarketOrderAttempt(trader, amount, isBuy, markPrice);

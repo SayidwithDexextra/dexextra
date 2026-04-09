@@ -6,9 +6,18 @@ import "../interfaces/ICoreVault.sol";
 library OrderBookStorage {
     bytes32 internal constant STORAGE_SLOT = keccak256("hyperliquid.orderbook.storage.v1");
 
-    struct Order { uint256 orderId; address trader; uint256 price; uint256 amount; bool isBuy; uint256 timestamp; uint256 nextOrderId; uint256 marginRequired; bool isMarginOrder; }
+    struct Order { uint256 orderId; address trader; uint256 price; uint256 amount; bool isBuy; uint256 timestamp; uint256 nextOrderId; uint256 prevOrderId; uint256 marginRequired; bool isMarginOrder; }
     struct PriceLevel { uint256 totalAmount; uint256 firstOrderId; uint256 lastOrderId; bool exists; }
     struct Trade { uint256 tradeId; address buyer; address seller; uint256 price; uint256 amount; uint256 timestamp; uint256 buyOrderId; uint256 sellOrderId; bool buyerIsMargin; bool sellerIsMargin; uint256 tradeValue; uint256 buyerFee; uint256 sellerFee; }
+    
+    /// @dev Struct for batched trade execution - collects matches during matching loop
+    struct PendingMatch {
+        address counterparty;
+        uint256 price;
+        uint256 amount;
+        bool counterpartyIsMargin;
+        uint256 restingOrderId;
+    }
 
     // ============ GAS-OPTIMIZED LIQUIDATION STRUCTURES ============
     
@@ -154,6 +163,14 @@ library OrderBookStorage {
         uint256 makerFeeBps;              // e.g. 15 = 0.015%
         address protocolFeeRecipient;     // centralized protocol address (gets protocolFeeShareBps)
         uint256 protocolFeeShareBps;      // e.g. 8000 = 80% to protocol, remainder to market owner (feeRecipient)
+
+        // ============ SORTED PRICE LINKED LIST SENTINELS ============
+        uint256 buyPriceHead;             // Head of sorted buy price linked list (highest price)
+        uint256 sellPriceHead;            // Head of sorted sell price linked list (lowest price)
+        
+        // ============ DEFERRED LIQUIDATION TRACKING ============
+        uint256 liquidationDirtyCount;    // Counter for deferred liquidation checks
+        uint256 lastLiquidationTriggerBlock; // Block when last liquidation check was triggered
     }
 
     function state() internal pure returns (State storage s) {

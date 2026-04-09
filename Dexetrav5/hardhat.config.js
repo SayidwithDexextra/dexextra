@@ -24,14 +24,38 @@ const creatorAccounts = process.env.CREATOR_PRIVATE_KEY
 
 const config = {
   solidity: {
-    version: "0.8.22",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 1,
+    compilers: [
+      {
+        version: "0.8.22",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 1,
+          },
+          viaIR: true,
+          evmVersion: "istanbul",
+        },
       },
-      viaIR: true,
-      evmVersion: "istanbul",
+    ],
+    overrides: {
+      "src/diamond/facets/OBOrderPlacementFacet.sol": {
+        version: "0.8.22",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 1,
+            details: {
+              yul: true,
+              yulDetails: {
+                stackAllocation: true,
+                optimizerSteps: "dhfoDgvulfnTUtnIf"
+              }
+            }
+          },
+          viaIR: true,
+          evmVersion: "istanbul",
+        },
+      },
     },
   },
   // Enable Sourcify verification and point to Parsec's instance

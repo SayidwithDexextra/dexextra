@@ -5,6 +5,7 @@ import path from 'path';
 // These JSON files are bundled with the app
 // Note: If you update facet contracts, regenerate these JSONs
 import OBAdminFacetArtifact from '@/lib/abis/facets/OBAdminFacet.json';
+import OBAdminViewFacetArtifact from '@/lib/abis/facets/OBAdminViewFacet.json';
 import OBPricingFacetArtifact from '@/lib/abis/facets/OBPricingFacet.json';
 import OBOrderPlacementFacetArtifact from '@/lib/abis/facets/OBOrderPlacementFacet.json';
 import OBTradeExecutionFacetArtifact from '@/lib/abis/facets/OBTradeExecutionFacet.json';
@@ -116,6 +117,7 @@ function extractAbi(artifact: any): any[] {
 function loadFacetAbi(contractName: string): any[] {
   switch (contractName) {
     case 'OBAdminFacet': return extractAbi(OBAdminFacetArtifact);
+    case 'OBAdminViewFacet': return extractAbi(OBAdminViewFacetArtifact);
     case 'OBPricingFacet': return extractAbi(OBPricingFacetArtifact);
     case 'OBOrderPlacementFacet': return extractAbi(OBOrderPlacementFacetArtifact);
     case 'OBTradeExecutionFacet': return extractAbi(OBTradeExecutionFacetArtifact);
@@ -136,6 +138,7 @@ export async function GET() {
       process.env.ORDER_BOOK_INIT_FACET || process.env.NEXT_PUBLIC_ORDER_BOOK_INIT_FACET;
 
     const adminFacet = process.env.OB_ADMIN_FACET || process.env.NEXT_PUBLIC_OB_ADMIN_FACET;
+    const adminViewFacet = process.env.OB_ADMIN_VIEW_FACET || process.env.NEXT_PUBLIC_OB_ADMIN_VIEW_FACET;
     const pricingFacet = process.env.OB_PRICING_FACET || process.env.NEXT_PUBLIC_OB_PRICING_FACET;
     const placementFacet =
       process.env.OB_ORDER_PLACEMENT_FACET || process.env.NEXT_PUBLIC_OB_ORDER_PLACEMENT_FACET;
@@ -152,11 +155,12 @@ export async function GET() {
     const lifecycleFacet = process.env.MARKET_LIFECYCLE_FACET || process.env.NEXT_PUBLIC_MARKET_LIFECYCLE_FACET;
     const metaTradeFacet = process.env.META_TRADE_FACET || process.env.NEXT_PUBLIC_META_TRADE_FACET;
 
-    if (!initFacet || !adminFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !vaultFacet || !lifecycleFacet || !metaTradeFacet) {
+    if (!initFacet || !adminFacet || !adminViewFacet || !pricingFacet || !placementFacet || !execFacet || !liqFacet || !viewFacet || !settleFacet || !vaultFacet || !lifecycleFacet || !metaTradeFacet) {
       logStep('validate_env', 'error', {
         missing: {
           initFacet: !initFacet,
           adminFacet: !adminFacet,
+          adminViewFacet: !adminViewFacet,
           pricingFacet: !pricingFacet,
           placementFacet: !placementFacet,
           execFacet: !execFacet,
@@ -174,6 +178,7 @@ export async function GET() {
 
     // Load ABIs from statically shipped JSON to avoid selector drift/duplication
     const adminAbi = loadFacetAbi('OBAdminFacet');
+    const adminViewAbi = loadFacetAbi('OBAdminViewFacet');
     const pricingAbi = loadFacetAbi('OBPricingFacet');
     const placementAbi = loadFacetAbi('OBOrderPlacementFacet');
     const execAbi = loadFacetAbi('OBTradeExecutionFacet');
@@ -186,6 +191,7 @@ export async function GET() {
 
     const cut = [
       { facetAddress: adminFacet, action: 0, functionSelectors: selectorsFromAbi(adminAbi) },
+      { facetAddress: adminViewFacet, action: 0, functionSelectors: selectorsFromAbi(adminViewAbi) },
       { facetAddress: pricingFacet, action: 0, functionSelectors: selectorsFromAbi(pricingAbi) },
       { facetAddress: placementFacet, action: 0, functionSelectors: selectorsFromAbi(placementAbi) },
       { facetAddress: execFacet, action: 0, functionSelectors: selectorsFromAbi(execAbi) },

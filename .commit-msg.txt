@@ -1,0 +1,15 @@
+feat: deploy optimized order book facets with O(1) operations
+
+- OBOrderPlacementFacet: sorted linked lists, O(1) price navigation, batched matching
+- OBTradeExecutionFacet: batch trade execution support (obExecuteTradeBatch)
+- OBLiquidationFacet: deferred liquidation checks
+- OBAdminViewFacet: new facet with admin/migration view functions
+
+New deployed addresses (HyperLiquid mainnet):
+- OBOrderPlacementFacet: 0xcfB3641163D585D07F06962797b5447843C58Ca9
+- OBTradeExecutionFacet: 0x290f70DA54f8E465Fc59df589A5507C716491241
+- OBLiquidationFacet: 0x99FeB17BE0FE9BbfbfDFBFe606bdDBD86F5a50AA
+- OBAdminViewFacet: 0x12928F88aF39FBA9e2B976642617391619F27E36
+
+Updated /api/orderbook/cut and deploy-market.ts to include OBAdminViewFacet.
+Synced ABIs for rollover children and new-markets page.

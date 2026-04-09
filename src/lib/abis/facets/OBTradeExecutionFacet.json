@@ -868,6 +868,61 @@
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "taker",
+          "type": "address"
+        },
+        {
+          "internalType": "bool",
+          "name": "takerIsBuy",
+          "type": "bool"
+        },
+        {
+          "internalType": "bool",
+          "name": "takerIsMargin",
+          "type": "bool"
+        },
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "counterparty",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "price",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "amount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bool",
+              "name": "counterpartyIsMargin",
+              "type": "bool"
+            },
+            {
+              "internalType": "uint256",
+              "name": "restingOrderId",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct OrderBookStorage.PendingMatch[]",
+          "name": "matches",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "obExecuteTradeBatch",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     }
   ]
 }
