@@ -314,30 +314,40 @@ export async function POST(req: Request) {
     const fastMode = String(process.env.GASLESS_FAST_MODE || '').toLowerCase() === 'true';
     console.log(`[TIMING][trade] fastMode=${fastMode}`);
     
-    // --- Circuit breaker check (parallelize with rate limit) ---
-    const circuitPromise = isCircuitBreakerOpen();
+    // --- Skip rate limiting entirely if GASLESS_SKIP_RATE_LIMIT=true (or in fast mode) ---
+    const skipRateLimit = fastMode || String(process.env.GASLESS_SKIP_RATE_LIMIT || '').toLowerCase() === 'true';
     
-    // --- Rate limiting (run in parallel with circuit breaker) ---
-    const forwarded = req.headers.get('x-forwarded-for');
-    const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
-    const identifier = `gasless:${ip}`;
+    let circuitStatus = { open: false, reason: null };
+    let rateLimitResult = { globalSuccess: true, ipSuccess: true };
     
-    const rateLimitPromise = (async () => {
-      try {
-        const [globalResult, ipResult] = await Promise.all([
-          gaslessTradeGlobalRateLimit.limit('gasless:global'),
-          gaslessTradeRateLimit.limit(identifier),
-        ]);
-        return { globalSuccess: globalResult.success, ipSuccess: ipResult.success };
-      } catch (rateLimitError) {
-        console.warn('[GASLESS][API][trade] rate limit check failed, allowing request:', rateLimitError);
-        return { globalSuccess: true, ipSuccess: true };
-      }
-    })();
+    if (skipRateLimit) {
+      logTiming('rate_limit_skipped');
+    } else {
+      // --- Circuit breaker check (parallelize with rate limit) ---
+      const circuitPromise = isCircuitBreakerOpen();
+      
+      // --- Rate limiting (run in parallel with circuit breaker) ---
+      const forwarded = req.headers.get('x-forwarded-for');
+      const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
+      const identifier = `gasless:${ip}`;
+      
+      const rateLimitPromise = (async () => {
+        try {
+          const [globalResult, ipResult] = await Promise.all([
+            gaslessTradeGlobalRateLimit.limit('gasless:global'),
+            gaslessTradeRateLimit.limit(identifier),
+          ]);
+          return { globalSuccess: globalResult.success, ipSuccess: ipResult.success };
+        } catch (rateLimitError) {
+          console.warn('[GASLESS][API][trade] rate limit check failed, allowing request:', rateLimitError);
+          return { globalSuccess: true, ipSuccess: true };
+        }
+      })();
 
-    // Await both in parallel
-    const [circuitStatus, rateLimitResult] = await Promise.all([circuitPromise, rateLimitPromise]);
-    logTiming('rate_limit_done');
+      // Await both in parallel
+      [circuitStatus, rateLimitResult] = await Promise.all([circuitPromise, rateLimitPromise]);
+      logTiming('rate_limit_done');
+    }
     
     if (circuitStatus.open) {
       console.warn('[GASLESS][API][trade] circuit breaker open', circuitStatus);
