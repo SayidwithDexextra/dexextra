@@ -297,9 +297,35 @@ function selectorFor(method: string): string | null {
 }
 
 export async function POST(req: Request) {
+  const reqStartTime = Date.now();
   try {
-    // --- Circuit breaker check ---
-    const circuitStatus = await isCircuitBreakerOpen();
+    // --- FAST PATH: Skip expensive checks when GASLESS_FAST_MODE=true ---
+    const fastMode = String(process.env.GASLESS_FAST_MODE || '').toLowerCase() === 'true';
+    
+    // --- Circuit breaker check (parallelize with rate limit) ---
+    const circuitPromise = isCircuitBreakerOpen();
+    
+    // --- Rate limiting (run in parallel with circuit breaker) ---
+    const forwarded = req.headers.get('x-forwarded-for');
+    const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
+    const identifier = `gasless:${ip}`;
+    
+    const rateLimitPromise = (async () => {
+      try {
+        const [globalResult, ipResult] = await Promise.all([
+          gaslessTradeGlobalRateLimit.limit('gasless:global'),
+          gaslessTradeRateLimit.limit(identifier),
+        ]);
+        return { globalSuccess: globalResult.success, ipSuccess: ipResult.success };
+      } catch (rateLimitError) {
+        console.warn('[GASLESS][API][trade] rate limit check failed, allowing request:', rateLimitError);
+        return { globalSuccess: true, ipSuccess: true };
+      }
+    })();
+
+    // Await both in parallel
+    const [circuitStatus, rateLimitResult] = await Promise.all([circuitPromise, rateLimitPromise]);
+    
     if (circuitStatus.open) {
       console.warn('[GASLESS][API][trade] circuit breaker open', circuitStatus);
       return NextResponse.json(
@@ -313,33 +339,19 @@ export async function POST(req: Request) {
       );
     }
 
-    // --- Rate limiting ---
-    const forwarded = req.headers.get('x-forwarded-for');
-    const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
-    const identifier = `gasless:${ip}`;
-    
-    try {
-      // Global rate limit (protect against distributed attacks)
-      const { success: globalSuccess } = await gaslessTradeGlobalRateLimit.limit('gasless:global');
-      if (!globalSuccess) {
-        console.warn('[GASLESS][API][trade] global rate limit exceeded');
-        return NextResponse.json(
-          { error: 'rate_limit_exceeded', message: 'Service is experiencing high traffic. Please try again shortly.' },
-          { status: 429, headers: { 'Retry-After': '10' } }
-        );
-      }
-
-      // Per-IP rate limit
-      const { success: ipSuccess } = await gaslessTradeRateLimit.limit(identifier);
-      if (!ipSuccess) {
-        console.warn('[GASLESS][API][trade] rate limit exceeded for', identifier);
-        return NextResponse.json(
-          { error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' },
-          { status: 429, headers: { 'Retry-After': '30' } }
-        );
-      }
-    } catch (rateLimitError) {
-      console.warn('[GASLESS][API][trade] rate limit check failed, allowing request:', rateLimitError);
+    if (!rateLimitResult.globalSuccess) {
+      console.warn('[GASLESS][API][trade] global rate limit exceeded');
+      return NextResponse.json(
+        { error: 'rate_limit_exceeded', message: 'Service is experiencing high traffic. Please try again shortly.' },
+        { status: 429, headers: { 'Retry-After': '10' } }
+      );
+    }
+    if (!rateLimitResult.ipSuccess) {
+      console.warn('[GASLESS][API][trade] rate limit exceeded for', identifier);
+      return NextResponse.json(
+        { error: 'rate_limit_exceeded', message: 'Too many requests. Please slow down.' },
+        { status: 429, headers: { 'Retry-After': '30' } }
+      );
     }
 
     const body = await req.json();
@@ -349,14 +361,15 @@ export async function POST(req: Request) {
     const signature: string = body?.signature;
     const sessionId: string | undefined = body?.sessionId;
     const params = body?.params;
-    console.log('[GASLESS][API][trade] incoming', { orderBook, method });
+    console.log('[GASLESS][API][trade] incoming', { orderBook, method, fastMode });
     console.log('[UpGas][API][trade] incoming', {
       orderBook,
       method,
       isSession: Boolean(sessionId) && String(method).startsWith('session'),
       hasMessage: !!message,
       hasSignature: typeof signature === 'string',
-      hasSessionId: !!sessionId
+      hasSessionId: !!sessionId,
+      fastMode,
     });
     if (!orderBook || !ethers.isAddress(orderBook)) {
       return NextResponse.json({ error: 'invalid orderBook' }, { status: 400 });
@@ -373,14 +386,6 @@ export async function POST(req: Request) {
     }
     const rpcUrl = process.env.RPC_URL || process.env.RPC_URL_HYPEREVM;
     const registryAddress = process.env.SESSION_REGISTRY_ADDRESS;
-    console.log('[GASLESS][API][trade] env', {
-      rpcUrlUsed: rpcUrl ? (rpcUrl.includes('http') ? rpcUrl : 'set') : 'unset',
-      chainIdEnv: process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || 'unset',
-    });
-    console.log('[UpGas][API][trade] env', {
-      rpcUrlSet: !!rpcUrl,
-      chainIdEnv: process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || 'unset'
-    });
     if (!rpcUrl) {
       return NextResponse.json({ error: 'server misconfigured' }, { status: 500 });
     }
@@ -390,29 +395,28 @@ export async function POST(req: Request) {
       }
     }
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    try {
-      const net = await provider.getNetwork();
-      console.log('[GASLESS][API][trade] provider network', { chainId: String(net.chainId) });
-      console.log('[UpGas][API][trade] provider network', { chainId: String(net.chainId) });
-    } catch {}
+    
+    // Skip network check and code check in fast mode - these add ~200-400ms
+    if (!fastMode) {
+      try {
+        const net = await provider.getNetwork();
+        console.log('[UpGas][API][trade] provider network', { chainId: String(net.chainId) });
+      } catch {}
 
-    // Hard guard: if the OrderBook address has no code on this RPC/chain,
-    // sending a tx will either revert (missing selector) or silently "succeed" against an EOA.
-    // That produces the exact UX bug: UI reports success but nothing is placed on-chain.
-    try {
-      const code = await provider.getCode(orderBook);
-      if (!code || code === '0x') {
-        return NextResponse.json(
-          { error: 'orderbook_not_deployed', orderBook },
-          { status: 400 }
-        );
+      try {
+        const code = await provider.getCode(orderBook);
+        if (!code || code === '0x') {
+          return NextResponse.json(
+            { error: 'orderbook_not_deployed', orderBook },
+            { status: 400 }
+          );
+        }
+      } catch (codeErr: any) {
+        console.warn('[UpGas][API][trade] orderBook code check failed', {
+          orderBook,
+          error: codeErr?.shortMessage || codeErr?.message || String(codeErr),
+        });
       }
-    } catch (codeErr: any) {
-      console.warn('[UpGas][API][trade] orderBook code check failed', {
-        orderBook,
-        error: codeErr?.shortMessage || codeErr?.message || String(codeErr),
-      });
-      // continue; downstream call will still fail if misconfigured
     }
     // Session V2: session is authorized to a relayer *set* (Merkle root) in the registry.
     // Any relayer in our configured keyset can submit, but it must pass a valid Merkle proof.
@@ -665,127 +669,134 @@ export async function POST(req: Request) {
           console.log('[UpGas][API][trade] session path selected', { method, sessionId, params, relayer: wallet.address, proofLen: relayerProof.length });
 
           // On-chain diagnostics (helps when RPC omits revert data, producing "missing revert data")
-          try {
-            const registry = new ethers.Contract(registryAddress!, (GlobalSessionRegistry as any).abi, provider);
-            const s = await registry.sessions(sessionId);
-            const traderOnchain = String(s?.trader || ethers.ZeroAddress);
-            const expiryOnchain = Number(s?.expiry || 0);
-            const revokedOnchain = Boolean(s?.revoked);
-            const maxNotionalPerTradeOnchain = BigInt(s?.maxNotionalPerTrade ?? 0);
-            const maxNotionalPerSessionOnchain = BigInt(s?.maxNotionalPerSession ?? 0);
-            const sessionNotionalUsedOnchain = BigInt(s?.sessionNotionalUsed ?? 0);
-            const methodsBitmapOnchain = String(s?.methodsBitmap || ethers.ZeroHash);
-            const allowed = await registry.allowedOrderbook(orderBook);
-            const proofOk = await registry.isRelayerAllowed(sessionId, wallet.address, relayerProof);
+          // SKIP in fast mode - these checks add 300-600ms of RPC latency
+          if (!fastMode) {
+            try {
+              const registry = new ethers.Contract(registryAddress!, (GlobalSessionRegistry as any).abi, provider);
+              // OPTIMIZATION: Run all 3 RPC calls in parallel instead of sequentially
+              const [s, allowed, proofOk] = await Promise.all([
+                registry.sessions(sessionId),
+                registry.allowedOrderbook(orderBook),
+                registry.isRelayerAllowed(sessionId, wallet.address, relayerProof),
+              ]);
+              const traderOnchain = String(s?.trader || ethers.ZeroAddress);
+              const expiryOnchain = Number(s?.expiry || 0);
+              const revokedOnchain = Boolean(s?.revoked);
+              const maxNotionalPerTradeOnchain = BigInt(s?.maxNotionalPerTrade ?? 0);
+              const maxNotionalPerSessionOnchain = BigInt(s?.maxNotionalPerSession ?? 0);
+              const sessionNotionalUsedOnchain = BigInt(s?.sessionNotionalUsed ?? 0);
+              const methodsBitmapOnchain = String(s?.methodsBitmap || ethers.ZeroHash);
 
-            const now = Math.floor(Date.now() / 1000);
-            const traderMatches =
-              traderOnchain &&
-              traderOnchain !== ethers.ZeroAddress &&
-              traderOnchain.toLowerCase() === String(params.trader).toLowerCase();
+              const now = Math.floor(Date.now() / 1000);
+              const traderMatches =
+                traderOnchain &&
+                traderOnchain !== ethers.ZeroAddress &&
+                traderOnchain.toLowerCase() === String(params.trader).toLowerCase();
 
-            console.log('[UpGas][API][trade] session diagnostics', {
-              sessionId,
-              traderOnchain,
-              traderParam: params.trader,
-              traderMatches,
-              expiryOnchain,
-              now,
-              revokedOnchain,
-              maxNotionalPerTrade: maxNotionalPerTradeOnchain.toString(),
-              maxNotionalPerSession: maxNotionalPerSessionOnchain.toString(),
-              sessionNotionalUsed: sessionNotionalUsedOnchain.toString(),
-              methodsBitmap: methodsBitmapOnchain,
-              allowedOrderbook: Boolean(allowed),
-              relayer: wallet.address,
-              proofOk: Boolean(proofOk),
-              proofLen: relayerProof.length,
-            });
+              console.log('[UpGas][API][trade] session diagnostics', {
+                sessionId,
+                traderOnchain,
+                traderParam: params.trader,
+                traderMatches,
+                expiryOnchain,
+                now,
+                revokedOnchain,
+                maxNotionalPerTrade: maxNotionalPerTradeOnchain.toString(),
+                maxNotionalPerSession: maxNotionalPerSessionOnchain.toString(),
+                sessionNotionalUsed: sessionNotionalUsedOnchain.toString(),
+                methodsBitmap: methodsBitmapOnchain,
+                allowedOrderbook: Boolean(allowed),
+                relayer: wallet.address,
+                proofOk: Boolean(proofOk),
+                proofLen: relayerProof.length,
+              });
 
-            if (traderOnchain === ethers.ZeroAddress) {
-              throw new HttpError(400, { error: 'session_unknown', sessionId });
-            }
-            if (!traderMatches) {
-              throw new HttpError(400, { error: 'session_bad_trader', expected: traderOnchain, got: params.trader });
-            }
-            if (revokedOnchain) {
-              throw new HttpError(400, { error: 'session_revoked', sessionId });
-            }
-            if (expiryOnchain > 0 && now > expiryOnchain) {
-              throw new HttpError(400, { error: 'session_expired', sessionId, now, expiry: expiryOnchain });
-            }
-            if (!allowed) {
-              throw new HttpError(400, { error: 'session_orderbook_not_allowed', orderBook, registry: registryAddress });
-            }
-            if (!proofOk) {
-              throw new HttpError(400, { error: 'session_bad_relayer', relayer: wallet.address, proofLen: relayerProof.length });
-            }
+              if (traderOnchain === ethers.ZeroAddress) {
+                throw new HttpError(400, { error: 'session_unknown', sessionId });
+              }
+              if (!traderMatches) {
+                throw new HttpError(400, { error: 'session_bad_trader', expected: traderOnchain, got: params.trader });
+              }
+              if (revokedOnchain) {
+                throw new HttpError(400, { error: 'session_revoked', sessionId });
+              }
+              if (expiryOnchain > 0 && now > expiryOnchain) {
+                throw new HttpError(400, { error: 'session_expired', sessionId, now, expiry: expiryOnchain });
+              }
+              if (!allowed) {
+                throw new HttpError(400, { error: 'session_orderbook_not_allowed', orderBook, registry: registryAddress });
+              }
+              if (!proofOk) {
+                throw new HttpError(400, { error: 'session_bad_relayer', relayer: wallet.address, proofLen: relayerProof.length });
+              }
 
-            // Session policy checks (so we can fail fast with a useful error instead of a revert-without-data)
-            const methodBitIndex =
-              method === 'sessionPlaceLimit'
-                ? 0n
-                : method === 'sessionPlaceMarginLimit'
-                ? 1n
-                : method === 'sessionPlaceMarket'
-                ? 2n
-                : method === 'sessionPlaceMarginMarket'
-                ? 3n
-                : method === 'sessionModifyOrder'
-                ? 4n
-                : method === 'sessionCancelOrder'
-                ? 5n
-                : null;
-            if (methodBitIndex !== null) {
-              const bitmap = BigInt(methodsBitmapOnchain);
-              const allowedByBitmap = (bitmap & (1n << methodBitIndex)) !== 0n;
-              if (!allowedByBitmap) {
+              // Session policy checks (so we can fail fast with a useful error instead of a revert-without-data)
+              const methodBitIndex =
+                method === 'sessionPlaceLimit'
+                  ? 0n
+                  : method === 'sessionPlaceMarginLimit'
+                  ? 1n
+                  : method === 'sessionPlaceMarket'
+                  ? 2n
+                  : method === 'sessionPlaceMarginMarket'
+                  ? 3n
+                  : method === 'sessionModifyOrder'
+                  ? 4n
+                  : method === 'sessionCancelOrder'
+                  ? 5n
+                  : null;
+              if (methodBitIndex !== null) {
+                const bitmap = BigInt(methodsBitmapOnchain);
+                const allowedByBitmap = (bitmap & (1n << methodBitIndex)) !== 0n;
+                if (!allowedByBitmap) {
+                  throw new HttpError(400, {
+                    error: 'session_method_denied',
+                    method,
+                    methodBitIndex: methodBitIndex.toString(),
+                    methodsBitmap: methodsBitmapOnchain,
+                  });
+                }
+              }
+
+              // Notional caps: registry uses "notional" computed by MetaTradeFacet: amount * price / 1e18 (6 decimals)
+              const notional6 =
+                method === 'sessionCancelOrder'
+                  ? 0n
+                  : method === 'sessionPlaceMarket' || method === 'sessionPlaceMarginMarket'
+                  ? 0n // market notional depends on book ref price; registry still enforces it at execution time
+                  : (() => {
+                      const price = parseBigintish(params?.price, 'price');
+                      const amount = parseBigintish(params?.amount, 'amount');
+                      return (amount * price) / 1_000_000_000_000_000_000n;
+                    })();
+
+              if (maxNotionalPerTradeOnchain > 0n && notional6 > maxNotionalPerTradeOnchain) {
                 throw new HttpError(400, {
-                  error: 'session_method_denied',
-                  method,
-                  methodBitIndex: methodBitIndex.toString(),
-                  methodsBitmap: methodsBitmapOnchain,
+                  error: 'session_trade_cap',
+                  notional6: notional6.toString(),
+                  maxNotionalPerTrade: maxNotionalPerTradeOnchain.toString(),
                 });
               }
-            }
-
-            // Notional caps: registry uses "notional" computed by MetaTradeFacet: amount * price / 1e18 (6 decimals)
-            const notional6 =
-              method === 'sessionCancelOrder'
-                ? 0n
-                : method === 'sessionPlaceMarket' || method === 'sessionPlaceMarginMarket'
-                ? 0n // market notional depends on book ref price; registry still enforces it at execution time
-                : (() => {
-                    const price = parseBigintish(params?.price, 'price');
-                    const amount = parseBigintish(params?.amount, 'amount');
-                    return (amount * price) / 1_000_000_000_000_000_000n;
-                  })();
-
-            if (maxNotionalPerTradeOnchain > 0n && notional6 > maxNotionalPerTradeOnchain) {
-              throw new HttpError(400, {
-                error: 'session_trade_cap',
-                notional6: notional6.toString(),
-                maxNotionalPerTrade: maxNotionalPerTradeOnchain.toString(),
+              if (maxNotionalPerSessionOnchain > 0n && sessionNotionalUsedOnchain + notional6 > maxNotionalPerSessionOnchain) {
+                throw new HttpError(400, {
+                  error: 'session_session_cap',
+                  notional6: notional6.toString(),
+                  sessionNotionalUsed: sessionNotionalUsedOnchain.toString(),
+                  maxNotionalPerSession: maxNotionalPerSessionOnchain.toString(),
+                });
+              }
+            } catch (diagErr: any) {
+              if (diagErr instanceof HttpError) throw diagErr;
+              console.warn('[UpGas][API][trade] session diagnostics failed', {
+                method,
+                error: diagErr?.reason || diagErr?.shortMessage || diagErr?.message || String(diagErr),
               });
             }
-            if (maxNotionalPerSessionOnchain > 0n && sessionNotionalUsedOnchain + notional6 > maxNotionalPerSessionOnchain) {
-              throw new HttpError(400, {
-                error: 'session_session_cap',
-                notional6: notional6.toString(),
-                sessionNotionalUsed: sessionNotionalUsedOnchain.toString(),
-                maxNotionalPerSession: maxNotionalPerSessionOnchain.toString(),
-              });
-            }
-          } catch (diagErr: any) {
-            if (diagErr instanceof HttpError) throw diagErr;
-            console.warn('[UpGas][API][trade] session diagnostics failed', {
-              method,
-              error: diagErr?.reason || diagErr?.shortMessage || diagErr?.message || String(diagErr),
-            });
           }
 
           // Orderbook/vault prechecks for margin orders (gives a useful error even when RPC omits revert data)
-          if (method === 'sessionPlaceMarginLimit' || method === 'sessionPlaceMarginMarket') {
+          // SKIP in fast mode - these checks add 1000-2000ms of RPC latency (10+ sequential calls)
+          if (!fastMode && (method === 'sessionPlaceMarginLimit' || method === 'sessionPlaceMarginMarket')) {
             try {
               const view = new ethers.Contract(
                 orderBook,
@@ -801,19 +812,29 @@ export async function POST(req: Request) {
                 ],
                 provider
               );
-              const [enabled, maxLev, marginReq] = await view.getLeverageInfo();
-
+              
+              // OPTIMIZATION: Parallelize initial view calls
+              const [leverageResult, feeResult, marketResult, bestBidResult, bestAskResult] = await Promise.all([
+                view.getLeverageInfo(),
+                view.getFeeStructure().catch(() => [0n, 0n, null, 0n, 0n]),
+                view.marketStatic(),
+                view.bestBid(),
+                view.bestAsk(),
+              ]);
+              
+              const [enabled, maxLev, marginReq] = leverageResult;
+              const [takerFeeBps, makerFeeBps, , , legacyTradingFee] = feeResult;
+              const [vaultAddr, marketId] = marketResult;
+              const bestBid = BigInt(bestBidResult);
+              const bestAsk = BigInt(bestAskResult);
+              
               let estimatedFeeBps = 0n;
               try {
-                const [takerFeeBps, makerFeeBps, , , legacyTradingFee] = await view.getFeeStructure();
                 const taker = BigInt(takerFeeBps);
                 const maker = BigInt(makerFeeBps);
                 const legacy = BigInt(legacyTradingFee);
                 estimatedFeeBps = (taker > 0n || maker > 0n) ? (taker > maker ? taker : maker) : legacy;
-              } catch (_feeErr) {
-                // Fall through with 0; fee precheck is best-effort
-              }
-              const [vaultAddr, marketId] = await view.marketStatic();
+              } catch (_feeErr) {}
 
               const vault = new ethers.Contract(
                 vaultAddr,
@@ -827,10 +848,17 @@ export async function POST(req: Request) {
                 provider
               );
 
-              const settled = await vault.marketSettled(marketId);
+              // OPTIMIZATION: Parallelize vault checks
+              const ORDERBOOK_ROLE = ethers.id('ORDERBOOK_ROLE');
+              const [settled, assignedOb, hasOrderbookRole, available6Raw] = await Promise.all([
+                vault.marketSettled(marketId),
+                vault.marketToOrderBook(marketId),
+                vault.hasRole(ORDERBOOK_ROLE, orderBook),
+                vault.getAvailableCollateral.staticCall(params.trader),
+              ]);
+              
               if (settled) throw new HttpError(400, { error: 'ob_settled', marketId });
 
-              const assignedOb = await vault.marketToOrderBook(marketId);
               if (!assignedOb || String(assignedOb) === ethers.ZeroAddress) {
                 throw new HttpError(400, { error: 'vault_market_not_assigned', marketId, vault: vaultAddr });
               }
@@ -844,10 +872,6 @@ export async function POST(req: Request) {
                 });
               }
 
-              // reserveMargin/releaseExcessMargin/unreserveMargin are protected by ORDERBOOK_ROLE in CoreVault.
-              // If this isn't granted to the orderbook diamond, margin orders will revert with an AccessControl error.
-              const ORDERBOOK_ROLE = ethers.id('ORDERBOOK_ROLE');
-              const hasOrderbookRole = await vault.hasRole(ORDERBOOK_ROLE, orderBook);
               if (!hasOrderbookRole) {
                 throw new HttpError(400, {
                   error: 'vault_orderbook_role_missing',
@@ -869,16 +893,11 @@ export async function POST(req: Request) {
               const isBuy = Boolean(params?.isBuy);
               let price: bigint;
               if (method === 'sessionPlaceMarginMarket') {
-                // For market orders, approximate price from top-of-book instead of expecting a client-supplied limit price
-                const bestBid = BigInt(await view.bestBid());
-                const bestAsk = BigInt(await view.bestAsk());
                 const refPrice = isBuy ? bestAsk : bestBid;
                 if (refPrice <= 0n) {
                   throw new HttpError(400, { error: 'ob_no_liquidity_for_market', side: isBuy ? 'buy' : 'sell' });
                 }
                 price = refPrice;
-                // Persist the same resolved market reference price used for relayer precheck
-                // so SUBMITTED history rows don't end up with null/zero price.
                 if (params && (params.price === undefined || params.price === null || params.price === '0' || params.price === 0)) {
                   params.price = refPrice.toString();
                 }
@@ -889,160 +908,69 @@ export async function POST(req: Request) {
               if (price <= 0n) throw new HttpError(400, { error: 'price_must_be_gt_0' });
               if (amount <= 0n) throw new HttpError(400, { error: 'amount_must_be_gt_0' });
 
-              // If this margin LIMIT order would immediately cross, ensure the top-of-book opposite order is also margin.
-              // Otherwise OBTradeExecutionFacet will revert: "OrderBook: cannot mix margin and spot trades".
-              try {
-                const bestBid = BigInt(await view.bestBid());
-                const bestAsk = BigInt(await view.bestAsk());
-                const crosses = isBuy ? (bestAsk > 0n && bestAsk <= price) : (bestBid > 0n && bestBid >= price);
-                console.log('[UpGas][API][trade] crossing check', {
-                  isBuy,
-                  limitPrice: price.toString(),
-                  bestBid: bestBid.toString(),
-                  bestAsk: bestAsk.toString(),
-                  crosses,
-                });
-                if (!isBuy && bestBid > 0n && bestBid >= price) {
-                  const lvl: any = await view.buyLevels(bestBid);
-                  const firstId = BigInt(lvl?.firstOrderId ?? 0);
-                  if (firstId > 0n) {
-                    const top: any = await view.getOrder(firstId);
-                    const topIsMargin = Boolean(top?.isMarginOrder);
-                    if (!topIsMargin) {
-                      throw new HttpError(400, {
-                        error: 'crosses_spot_liquidity',
-                        side: 'sell',
-                        limitPrice: price.toString(),
-                        bestBid: bestBid.toString(),
-                        topOrderId: firstId.toString(),
-                        topOrderIsMargin: false,
-                      });
-                    }
-                  }
-                }
-                if (isBuy && bestAsk > 0n && bestAsk <= price) {
-                  const lvl: any = await view.sellLevels(bestAsk);
-                  const firstId = BigInt(lvl?.firstOrderId ?? 0);
-                  if (firstId > 0n) {
-                    const top: any = await view.getOrder(firstId);
-                    const topIsMargin = Boolean(top?.isMarginOrder);
-                    if (!topIsMargin) {
-                      throw new HttpError(400, {
-                        error: 'crosses_spot_liquidity',
-                        side: 'buy',
-                        limitPrice: price.toString(),
-                        bestAsk: bestAsk.toString(),
-                        topOrderId: firstId.toString(),
-                        topOrderIsMargin: false,
-                      });
-                    }
-                  }
-                }
-
-                // If we are crossing and the trader is closing an existing position at a loss,
-                // OBTradeExecutionFacet can revert with "OrderBook: closing loss exceeds position margin".
-                // We approximate the first execution price as bestBid/bestAsk and precheck that invariant.
-                if (crosses) {
-                  const [posSize, entryPriceRaw] = await vault.getPositionSummary.staticCall(params.trader, marketId);
-                  const currentNet = BigInt(posSize as any);
-                  const entryPricePos = BigInt(entryPriceRaw as any);
-                  const closing =
-                    (currentNet > 0n && !isBuy) || // long closing via sell
-                    (currentNet < 0n && isBuy);    // short closing via buy
-                  if (closing && entryPricePos > 0n) {
-                    const absDelta = amount >= 0n ? amount : -amount;
-                    const posAbs = currentNet >= 0n ? currentNet : -currentNet;
-                    const closeAbs = absDelta > posAbs ? posAbs : absDelta;
-                    if (closeAbs > 0n) {
-                      const execPrice = isBuy ? bestAsk : bestBid;
-                      if (execPrice > 0n) {
-                        // tradingLossClosed6 = closeAbs * (entry - exec) / 1e18 (for long) or (exec - entry) for short
-                        let loss6 = 0n;
-                        if (currentNet > 0n) {
-                          if (execPrice < entryPricePos) loss6 = (closeAbs * (entryPricePos - execPrice)) / 1_000_000_000_000_000_000n;
-                        } else {
-                          if (execPrice > entryPricePos) loss6 = (closeAbs * (execPrice - entryPricePos)) / 1_000_000_000_000_000_000n;
-                        }
-                        if (loss6 > 0n) {
-                          const marginBpsClose = currentNet > 0n ? BigInt(marginReq) : 15000n;
-                          const notionalEntry6 = (closeAbs * entryPricePos) / 1_000_000_000_000_000_000n;
-                          const released6 = (notionalEntry6 * marginBpsClose) / 10000n;
-                          console.log('[UpGas][API][trade] closing-loss precheck', {
-                            trader: params.trader,
-                            currentNet: currentNet.toString(),
-                            entryPrice: entryPricePos.toString(),
-                            execPrice: execPrice.toString(),
-                            closeAbs: closeAbs.toString(),
-                            loss6: loss6.toString(),
-                            released6: released6.toString(),
-                            marginBpsClose: marginBpsClose.toString(),
-                          });
-                          if (loss6 > released6) {
-                            throw new HttpError(400, {
-                              error: 'closing_loss_exceeds_position_margin',
-                              loss6: loss6.toString(),
-                              released6: released6.toString(),
-                              entryPrice: entryPricePos.toString(),
-                              execPrice: execPrice.toString(),
-                              closeAbs: closeAbs.toString(),
-                              currentNet: currentNet.toString(),
-                            });
-                          }
-                        }
+              // Crossing check - uses already-fetched bestBid/bestAsk
+              const crosses = isBuy ? (bestAsk > 0n && bestAsk <= price) : (bestBid > 0n && bestBid >= price);
+              if (crosses) {
+                // Only do expensive order-level checks if actually crossing
+                try {
+                  if (!isBuy && bestBid > 0n && bestBid >= price) {
+                    const lvl: any = await view.buyLevels(bestBid);
+                    const firstId = BigInt(lvl?.firstOrderId ?? 0);
+                    if (firstId > 0n) {
+                      const top: any = await view.getOrder(firstId);
+                      if (!Boolean(top?.isMarginOrder)) {
+                        throw new HttpError(400, {
+                          error: 'crosses_spot_liquidity',
+                          side: 'sell',
+                          limitPrice: price.toString(),
+                          bestBid: bestBid.toString(),
+                          topOrderId: firstId.toString(),
+                          topOrderIsMargin: false,
+                        });
                       }
                     }
                   }
+                  if (isBuy && bestAsk > 0n && bestAsk <= price) {
+                    const lvl: any = await view.sellLevels(bestAsk);
+                    const firstId = BigInt(lvl?.firstOrderId ?? 0);
+                    if (firstId > 0n) {
+                      const top: any = await view.getOrder(firstId);
+                      if (!Boolean(top?.isMarginOrder)) {
+                        throw new HttpError(400, {
+                          error: 'crosses_spot_liquidity',
+                          side: 'buy',
+                          limitPrice: price.toString(),
+                          bestAsk: bestAsk.toString(),
+                          topOrderId: firstId.toString(),
+                          topOrderIsMargin: false,
+                        });
+                      }
+                    }
+                  }
+                } catch (crossErr: any) {
+                  if (crossErr instanceof HttpError) throw crossErr;
                 }
-              } catch (crossErr: any) {
-                if (crossErr instanceof HttpError) throw crossErr;
               }
 
-              // Position-aware margin: only require margin for net new exposure.
-              // Closing or reducing an existing position releases margin, not consumes it.
+              // Position-aware margin check
               let effectiveAmount = amount < 1_000_000_000_000n ? 1_000_000_000_000n : amount;
               try {
                 const [posSize] = await vault.getPositionSummary.staticCall(params.trader, marketId);
                 const currentNet = BigInt(posSize as any);
-                const isReducing =
-                  (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
+                const isReducing = (currentNet > 0n && !isBuy) || (currentNet < 0n && isBuy);
                 if (isReducing) {
                   const absCurrentSize = currentNet >= 0n ? currentNet : -currentNet;
-                  if (effectiveAmount <= absCurrentSize) {
-                    effectiveAmount = 0n;
-                  } else {
-                    effectiveAmount = effectiveAmount - absCurrentSize;
-                  }
+                  effectiveAmount = effectiveAmount <= absCurrentSize ? 0n : effectiveAmount - absCurrentSize;
                 }
-              } catch (_posErr) {
-                // Fall through with full amount if position query fails
-              }
+              } catch (_posErr) {}
 
               const fullNotional6 = (amount * price) / 1_000_000_000_000_000_000n;
               const estimatedFee6 = estimatedFeeBps > 0n ? (fullNotional6 * estimatedFeeBps) / 10000n : 0n;
-
               const notional6 = (effectiveAmount * price) / 1_000_000_000_000_000_000n;
               const marginBps = isBuy ? BigInt(marginReq) : 15000n;
               const marginRequired6 = (notional6 * marginBps) / 10000n;
               const totalRequired6 = marginRequired6 + estimatedFee6;
-              const available6 = BigInt(await vault.getAvailableCollateral.staticCall(params.trader));
-
-              console.log('[UpGas][API][trade] margin precheck', {
-                trader: params.trader,
-                isBuy,
-                price: price.toString(),
-                amount: amount.toString(),
-                effectiveAmount: effectiveAmount.toString(),
-                notional6: notional6.toString(),
-                marginBps: marginBps.toString(),
-                marginRequired6: marginRequired6.toString(),
-                estimatedFee6: estimatedFee6.toString(),
-                totalRequired6: totalRequired6.toString(),
-                available6: available6.toString(),
-                vault: vaultAddr,
-                marketId,
-                assignedOrderBook: String(assignedOb),
-                hasOrderbookRole,
-              });
+              const available6 = BigInt(available6Raw);
 
               if (available6 < totalRequired6) {
                 throw new HttpError(400, {
@@ -1065,26 +993,28 @@ export async function POST(req: Request) {
           }
 
           // Preflight eth_call to get a readable revert when available (some RPCs omit revert data on estimateGas)
-          try {
-            const fn = (meta as any)[method]
-            if (typeof fn === 'function') {
-              await fn.staticCall?.(
-                ...(method === 'sessionPlaceLimit'
-                  ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof]
-                  : method === 'sessionPlaceMarginLimit'
-                  ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof]
-                  : method === 'sessionPlaceMarket'
-                  ? [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof]
-                  : method === 'sessionPlaceMarginMarket'
-                  ? [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof]
-                  : method === 'sessionModifyOrder'
-                  ? [sessionId, params?.trader, params?.orderId, params?.price, params?.amount, relayerProof]
-                  : method === 'sessionCancelOrder'
-                  ? [sessionId, params?.trader, params?.orderId, relayerProof]
-                  : [])
-              )
-            }
-          } catch (pre: any) {
+          // SKIP in fast mode - this duplicates work and adds ~200-500ms
+          if (!fastMode) {
+            try {
+              const fn = (meta as any)[method]
+              if (typeof fn === 'function') {
+                await fn.staticCall?.(
+                  ...(method === 'sessionPlaceLimit'
+                    ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof]
+                    : method === 'sessionPlaceMarginLimit'
+                    ? [sessionId, params?.trader, params?.price, params?.amount, params?.isBuy, relayerProof]
+                    : method === 'sessionPlaceMarket'
+                    ? [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof]
+                    : method === 'sessionPlaceMarginMarket'
+                    ? [sessionId, params?.trader, params?.amount, params?.isBuy, relayerProof]
+                    : method === 'sessionModifyOrder'
+                    ? [sessionId, params?.trader, params?.orderId, params?.price, params?.amount, relayerProof]
+                    : method === 'sessionCancelOrder'
+                    ? [sessionId, params?.trader, params?.orderId, relayerProof]
+                    : [])
+                )
+              }
+            } catch (pre: any) {
             const data = extractRevertData(pre);
             const decoded = data ? decodeRevertData(data) : null;
             const decodedMsg = decoded?.message || decoded?.kind || null;
@@ -1115,7 +1045,8 @@ export async function POST(req: Request) {
 
             // Log only for other preflight failures; do not fail the session path.
             // Some RPCs can be flaky here and we'd rather rely on the mined receipt when configured.
-          }
+            }
+          } // end if (!fastMode) for preflight
           switch (method) {
             case 'sessionPlaceLimit':
               return await sendWithNonceRetry({
@@ -1389,8 +1320,9 @@ export async function POST(req: Request) {
         });
       }
     }
-    console.log('[GASLESS][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
-    console.log('[UpGas][API][trade] broadcasted', { txHash: tx.hash, waitConfirms });
+    const totalElapsedMs = Date.now() - reqStartTime;
+    console.log('[GASLESS][API][trade] broadcasted', { txHash: tx.hash, waitConfirms, totalElapsedMs, fastMode });
+    console.log('[UpGas][API][trade] broadcasted', { txHash: tx.hash, waitConfirms, totalElapsedMs, fastMode });
     return NextResponse.json({
       txHash: tx.hash,
       pending: true,
@@ -1399,6 +1331,8 @@ export async function POST(req: Request) {
       routedPool,
       estimatedFromAddress,
       reroutedToBig,
+      serverElapsedMs: totalElapsedMs,
+      fastMode,
     });
   } catch (e: any) {
     if (e instanceof HttpError) {
