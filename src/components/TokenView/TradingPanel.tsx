@@ -1701,6 +1701,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           });
           if (estimatedPrice > 0 && md.simulateOptimisticTrade && quantity > 0) {
             const optResult = md.simulateOptimisticTrade(isBuy ? 'buy' : 'sell', 'market', estimatedPrice, quantity);
+            // Record this as a taker trade to avoid double-counting when event arrives
+            if (md.recordTakerTrade) {
+              md.recordTakerTrade(estimatedPrice);
+            }
             console.log('[OptimisticUI] Market order simulated:', optResult, { 
               inputAmount: amount, 
               tokenQuantity: quantity, 
@@ -2146,6 +2150,10 @@ export default function TradingPanel({ tokenData, initialAction, marketData }: T
           if (triggerPrice > 0 && md.simulateOptimisticTrade && quantity > 0) {
             // For limit orders, we simulate as a limit which will add liquidity if it doesn't cross
             const optResult = md.simulateOptimisticTrade(isBuy ? 'buy' : 'sell', 'limit', triggerPrice, quantity);
+            // If the limit order crosses (filledAmount > 0), record as taker trade
+            if (optResult.filledAmount > 0 && md.recordTakerTrade) {
+              md.recordTakerTrade(triggerPrice);
+            }
             console.log('[OptimisticUI] Limit order simulated:', optResult, { 
               inputAmount: amount, 
               tokenQuantity: quantity, 

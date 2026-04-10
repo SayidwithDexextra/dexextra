@@ -74,6 +74,8 @@ interface MarketDataContextValue {
     price: number,
     amount: number
   ) => { filledPrice: number; filledAmount: number; priceImpact: number };
+  // Record that we initiated a trade as taker (to avoid double-counting on event receipt)
+  recordTakerTrade: (price: number) => void;
 }
 
 const MarketDataContext = createContext<MarketDataContextValue | undefined>(undefined);
@@ -119,6 +121,33 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
   const lightweightStore = useLightweightOrderBookStore();
   const lightweightOrderBook = useLightweightOB(symbol);
 
+  // Track recent trades we initiated as TAKER (to avoid double-counting)
+  // Format: Set of "price:timestamp" strings, auto-expires after 30 seconds
+  const recentTakerTradesRef = useRef<Set<string>>(new Set());
+  
+  // Function to record that we placed a trade as taker (called from TradingPanel via context)
+  const recordTakerTrade = useCallback((price: number) => {
+    const key = `${price.toFixed(6)}:${Date.now()}`;
+    recentTakerTradesRef.current.add(key);
+    // Auto-cleanup after 30 seconds
+    setTimeout(() => {
+      recentTakerTradesRef.current.delete(key);
+    }, 30000);
+  }, []);
+  
+  // Check if a trade at this price was recently initiated by us as taker
+  const isRecentTakerTrade = useCallback((price: number): boolean => {
+    const now = Date.now();
+    const priceStr = price.toFixed(6);
+    for (const key of recentTakerTradesRef.current) {
+      const [keyPrice, keyTime] = key.split(':');
+      if (keyPrice === priceStr && now - parseInt(keyTime) < 30000) {
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
   // WEBSOCKET BLOCKCHAIN EVENT LISTENERS
   // Uses watchContractEvent for real-time event subscriptions
   const marketAddress = (market as any)?.market_address as Address | undefined;
@@ -129,6 +158,19 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
       console.warn('[BlockchainEvents] No WebSocket RPC URL configured, event listeners disabled');
       return;
     }
+    
+    const ORDER_PLACED_ABI = {
+      type: 'event',
+      name: 'OrderPlaced',
+      inputs: [
+        { indexed: true, name: 'orderId', type: 'uint256' },
+        { indexed: true, name: 'trader', type: 'address' },
+        { indexed: false, name: 'price', type: 'uint256' },
+        { indexed: false, name: 'amount', type: 'uint256' },
+        { indexed: false, name: 'isBuy', type: 'bool' },
+        { indexed: false, name: 'isMarginOrder', type: 'bool' },
+      ],
+    } as const;
     
     const ORDER_RESTED_ABI = {
       type: 'event',
@@ -161,6 +203,34 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     const myAddress = userAddress?.toLowerCase() || '';
     
     console.log(`[BlockchainEvents] Starting WebSocket listeners for ${symbol} at ${marketAddress}`);
+    
+    // Watch for OrderPlaced events (logging only - not used for UI updates)
+    const unwatchOrderPlaced = client.watchContractEvent({
+      address: marketAddress,
+      abi: [ORDER_PLACED_ABI],
+      eventName: 'OrderPlaced',
+      onLogs: (logs) => {
+        for (const log of logs) {
+          const args = log.args as any;
+          const price = args.price ? Number(args.price) / 1e6 : 0;
+          const amount = args.amount ? Number(args.amount) / 1e18 : 0;
+          const isBuy = args.isBuy;
+          const trader = args.trader ? String(args.trader).toLowerCase() : '';
+          const orderId = args.orderId ? String(args.orderId) : '?';
+          
+          console.log(`[BlockchainEvents] OrderPlaced received (LOG ONLY)`, {
+            orderId,
+            price: price.toFixed(4),
+            amount: amount.toFixed(6),
+            isBuy,
+            trader: trader.slice(0, 10) + '...',
+          });
+        }
+      },
+      onError: (error) => {
+        console.error('[BlockchainEvents] OrderPlaced watcher error:', error);
+      },
+    });
     
     // Watch for OrderRested events (limit orders resting on the book)
     const unwatchOrderRested = client.watchContractEvent({
@@ -211,16 +281,22 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
           const buyer = args.buyer ? String(args.buyer).toLowerCase() : '';
           const seller = args.seller ? String(args.seller).toLowerCase() : '';
           
+          const isInvolved = myAddress && (buyer === myAddress || seller === myAddress);
+          const isTaker = isInvolved && isRecentTakerTrade(price);
+          
           console.log(`[BlockchainEvents] TradeExecutionCompleted received`, {
             price: price.toFixed(4),
             amount: amount.toFixed(6),
             buyer: buyer.slice(0, 10) + '...',
             seller: seller.slice(0, 10) + '...',
+            isInvolved,
+            isTaker,
           });
           
-          // Skip own trades - already handled by optimistic updates
-          if (myAddress && (buyer === myAddress || seller === myAddress)) {
-            console.log(`[BlockchainEvents] Skipping own TradeExecutionCompleted event`);
+          // Only skip if we're the TAKER (initiated the trade from TradingPanel)
+          // If we're the MAKER (our resting order got filled), we need the UI update
+          if (isTaker) {
+            console.log(`[BlockchainEvents] Skipping own TAKER trade (already updated optimistically)`);
             continue;
           }
           
@@ -237,10 +313,11 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     
     return () => {
       console.log(`[BlockchainEvents] Stopping WebSocket listeners for ${symbol}`);
+      unwatchOrderPlaced();
       unwatchOrderRested();
       unwatchTradeExecuted();
     };
-  }, [marketAddress, symbol, userAddress, lightweightStore]);
+  }, [marketAddress, symbol, userAddress, lightweightStore, isRecentTakerTrade]);
 
   // FALLBACK POLLING: For markets without OrderRested upgrade
   // Periodically fetch fresh order book data from API and re-initialize the lightweight store
@@ -436,6 +513,7 @@ export function MarketDataProvider({ symbol, children, tickerEnabled = true }: P
     // Lightweight order book
     lightweightOrderBook,
     simulateOptimisticTrade,
+    recordTakerTrade,
   };
 
   // Listen for cross-route deployment completion to force-refresh this market
